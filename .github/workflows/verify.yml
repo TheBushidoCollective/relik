@@ -74,3 +74,46 @@ jobs:
 
       - name: Notify path
         run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/notify-path.ts
+
+      # Official OpenTimelineIO 0.18.1 conformance. The generator derives
+      # expected ranges from the pinned library, not from this repo's
+      # evaluator. A mismatch here is a real disagreement with the standard.
+      - name: Install OTIO conformance tools
+        run: |
+          python3 -m pip install --user 'opentimelineio==0.18.1'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install headless Chrome
+        run: |
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends wget ca-certificates
+            wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y /tmp/chrome.deb
+          fi
+          google-chrome --headless=new --disable-gpu --dump-dom about:blank >/dev/null
+
+      - name: OTIO conformance
+        run: |
+          python3 scripts/generate-otio-fixtures.py --check
+          bash scripts/generate-otio-media.sh --check
+
+      # Loopback-only end-to-end path: publish an .otiod, decrypt, play in
+      # headless Chrome, post track-specific feedback, read it back through a
+      # fresh MCP process, and republish a revision. No production writes.
+      - name: OTIO path
+        env:
+          RELIC_OTIO_CHROME_PATH: ${{ env.RELIC_OTIO_CHROME_PATH }}
+        run: |
+          bun run --cwd packages/relic-mcp build
+          if [ -z "${RELIC_OTIO_CHROME_PATH:-}" ]; then
+            if command -v google-chrome >/dev/null 2>&1; then
+              export RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)"
+            elif command -v chromium >/dev/null 2>&1; then
+              export RELIC_OTIO_CHROME_PATH="$(command -v chromium)"
+            else
+              echo "No headless Chrome found. Set RELIC_OTIO_CHROME_PATH." >&2
+              exit 1
+            fi
+          fi
+          bun packages/relic-mcp/test/otio-path.ts
