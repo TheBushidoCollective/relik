@@ -48,6 +48,7 @@ const packagedFloors = {
 };
 
 const clearedRuntimeEnvironment = new Set([
+  'ALL_PROXY',
   'AR',
   'AS',
   'BUN_INSTALL',
@@ -65,6 +66,8 @@ const clearedRuntimeEnvironment = new Set([
   'DYLD_INSERT_LIBRARIES',
   'DYLD_LIBRARY_PATH',
   'GYP',
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
   'INIT_CWD',
   'LD',
   'LDFLAGS',
@@ -79,6 +82,7 @@ const clearedRuntimeEnvironment = new Set([
   'NODE_OPTIONS',
   'NODE_PATH',
   'NODE_REPL_HISTORY',
+  'NO_PROXY',
   'OLDPWD',
   'PWD',
   'PYTHON',
