@@ -407,11 +407,15 @@ function chooseSequenceFrame(
     }
   }
 
+  const mediaKey = node.active_media_reference_key;
   diagnostics.push({
     severity: 'warning',
     code: 'missing-media',
     message: `Image sequence frame for ${node.name || node.id} is not in the bundle`,
-    target: { node_id: node.id, media_key: node.active_media_reference_key ?? undefined },
+    target: {
+      node_id: node.id,
+      ...(typeof mediaKey === 'string' ? { media_key: mediaKey } : {}),
+    },
   });
   return { path: null, frame: undefined, kind: 'media', diagnostics };
 }
@@ -793,6 +797,7 @@ function buildVideoContribution(
   }
   diagnostics.push(...localDiagnostics);
   const trackId = trackPath[trackPath.length - 1] ?? node.parent_id ?? node.id;
+  const transitionType = transition?.transition_type;
   return {
     track_id: trackId,
     track_index: trackPath.length > 0 ? trackPath.length - 1 : 0,
@@ -801,10 +806,12 @@ function buildVideoContribution(
     media_key: node.active_media_reference_key ?? null,
     bundle_path: sampleKind === 'black' ? null : bundlePath,
     source_time: relative ?? media,
-    source_frame: sourceFrame,
+    ...(sourceFrame === undefined ? {} : { source_frame: sourceFrame }),
     alpha: 1,
     transition_weight: weight,
-    transition_type: transition?.transition_type,
+    ...(transitionType === undefined
+      ? {}
+      : { transition_type: transitionType }),
     active_effects: (node.effects ?? []).filter((effect) => effect.enabled),
     diagnostics: localDiagnostics,
     ancestry,
@@ -835,6 +842,7 @@ function buildAudioContribution(
     : null;
   if (handle) localDiagnostics.push(handle);
   diagnostics.push(...localDiagnostics);
+  const transitionType = transition?.transition_type;
   return {
     track_id: track.id,
     track_index: 0,
@@ -845,7 +853,9 @@ function buildAudioContribution(
     source_time: relative ?? media,
     volume: 1,
     transition_weight: weight,
-    transition_type: transition?.transition_type,
+    ...(transitionType === undefined
+      ? {}
+      : { transition_type: transitionType }),
     active_effects: (node.effects ?? []).filter((effect) => effect.enabled),
     diagnostics: localDiagnostics,
     ancestry,

@@ -19,6 +19,7 @@ import {
 } from '../src/errors.ts';
 import { generateKey, KEY_BYTES } from '../src/fragment.ts';
 import { deriveKeys } from '../src/rfc8188.ts';
+import type { OtioAnchorV1 } from '../src/otio-types.ts';
 
 /**
  * HKDF-SHA256 over the fragment key, run here rather than through the module,
@@ -688,7 +689,9 @@ describe('OTIO anchors', () => {
     return Buffer.from(framed).toString('base64url');
   }
 
-  function anchor(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  function anchor(): OtioAnchorV1;
+  function anchor(overrides: Record<string, unknown>): Record<string, unknown>;
+  function anchor(overrides: Record<string, unknown> = {}): unknown {
     return {
       kind: 'otio',
       v: 1,
@@ -711,7 +714,7 @@ describe('OTIO anchors', () => {
     const sealed = await encryptComment(key, {
       body: 'hold this frame',
       display_name: null,
-      anchor: anchor() as never,
+      anchor: anchor(),
     });
     const opened = await decryptComment(key, sealed);
     expect(opened.body).toBe('hold this frame');
