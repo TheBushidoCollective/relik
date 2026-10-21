@@ -1651,7 +1651,7 @@ export const INSTRUCTIONS = `Relic encrypts a file on this machine and uploads \
 only ciphertext. The key lives in the URL fragment, which browsers never send \
 to a server.
 
-Nine things that change how you should act:
+Publishing rules:
 1. The full link is the credential: anyone holding it can read the file. Never \
 paste it into a tracker, log, or channel.
 2. A relic carries a plaintext title, defaulting to the filename: the service \
@@ -1670,15 +1670,11 @@ about that relic.
 8. Previews are unencrypted: publish and republish upload the first screen by \
 default. Pass cover: false for anything not public. OTIO previews are a generic \
 card with only the public title and format, never media frames or track metadata. \
-Ordinary file publishing needs Node 18+. An .otiod directory uses the \
-source-included prebuilt Node-API helper on macOS arm64 or x64 with a 15.0 \
-binary deployment floor, or Linux glibc 2.28+ arm64 or x64. Before it reads a \
-bundle on either platform, the helper verifies on the running kernel that \
-beneath-root resolution refuses parent and absolute escapes from a held directory \
-and that the no-symlink flag is accepted. Symlink refusal, held-descriptor \
-behavior, and replacement behavior are verified by the CI probe on the listed \
-versions. It is never downloaded or compiled at runtime; targets that cannot \
-satisfy those requirements refuse the directory instead of using pathname checks.
+Ordinary files need Node 18+. .otiod packaging uses source-included Node-API \
+prebuilds: macOS arm64/x64 (15.0 binary floor), Linux glibc 2.28+ arm64/x64. \
+A running-kernel self-test must verify held-root confinement and no-symlink \
+flag support; otherwise packaging is refused. No runtime build/download or \
+pathname fallback. See relic_describe_client for tested systems.
 9. relic_republish emails followers a change notice naming the title and version, \
 never the key; pass notify: false to skip it. relic_share returns a share email \
 with the full link to draft in the sharer's mailbox but never sends it. Readers \
