@@ -1245,12 +1245,20 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
     ] as const) {
       const map = otioSamplingMap(clip);
       if (!map) throw new Error('expected bound sampling map');
-      for (const [timelineValue, expectedSample] of [
-        [0, 19],
-        [4, 14],
+      expect(map.available_start).toEqual(availableStart);
+      for (const [timelineValue, mediaValue, fileValue] of [
+        [0, 109, 19],
+        [4, 104, 14],
       ] as const) {
         const timelineTime = { value: timelineValue, rate: timelineRate };
         const sampled = sampleOtioMedia(map, timelineTime);
+        expect(sampled.rate).toBe(sourceRate);
+        expect(
+          compareRationalTimes(sampled, {
+            value: mediaValue,
+            rate: sourceRate,
+          })
+        ).toBe(0);
         const evaluated = evaluateOtioAt(
           document,
           'timeline-reverse',
@@ -1258,10 +1266,13 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
         ).video_contributions.find(
           (contribution) => contribution.node_id === 'clip-reverse'
         );
-        const expected = { value: expectedSample, rate: sourceRate };
-        expect(compareRationalTimes(sampled, expected)).toBe(0);
+        if (!evaluated) throw new Error('expected reverse contribution');
+        expect(evaluated.source_time.rate).toBe(sourceRate);
         expect(
-          compareRationalTimes(evaluated?.source_time ?? expected, expected)
+          compareRationalTimes(evaluated.source_time, {
+            value: fileValue,
+            rate: sourceRate,
+          })
         ).toBe(0);
       }
     }

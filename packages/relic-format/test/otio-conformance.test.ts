@@ -69,7 +69,7 @@ describe('official OTIO placement and Relik sampling', () => {
     const plate = at200.video_contributions.find((item) => item.node_id === 'clip-nested-plate');
     const flare = at200.video_contributions.find((item) => item.node_id === 'clip-nested-flare');
     expect(plate?.source_frame).toBe(1009);
-    expect(plate?.bundle_path).toBe('media/plate_1009.png');
+    expect<string | null | undefined>(plate?.bundle_path).toBe('media/plate_1009.png');
     expect(flare).toBeDefined();
     expect(node(doc, 'track-nested-plate-base').timeline_range).not.toBeNull();
     expect(node(doc, 'track-nested-fx-glow').timeline_range).not.toBeNull();
@@ -176,9 +176,9 @@ describe('official OTIO placement and Relik sampling', () => {
     const two = evaluateOtioAt(doc, timelineId, { value: 2, rate: 24 });
     const stepOne = one.video_contributions.find((item) => item.node_id === 'clip-sequence-step-two');
     const stepTwo = two.video_contributions.find((item) => item.node_id === 'clip-sequence-step-two');
-    expect(stepOne?.bundle_path).toBe('media/step_0000.png');
-    expect(stepTwo?.bundle_path).toBe('media/step_0002.png');
+    expect<string | null | undefined>(stepOne?.bundle_path).toBe('media/step_0000.png');
+    expect<string | null | undefined>(stepTwo?.bundle_path).toBe('media/step_0002.png');
     const signed = one.video_contributions.find((item) => item.node_id === 'clip-sequence-signed-start');
-    expect(signed?.bundle_path).toBe('media/signed_-0002.png');
+    expect<string | null | undefined>(signed?.bundle_path).toBe('media/signed_-0002.png');
   });
 });

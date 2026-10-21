@@ -97,6 +97,34 @@ function rawOracleSequence(
   };
 }
 
+interface OracleSequenceVector {
+  readonly number_of_images_in_sequence: number;
+  readonly images: readonly {
+    readonly image_index: number;
+    readonly target_url: string;
+  }[];
+}
+
+function oracleSequenceVector(
+  vector: Record<string, unknown>
+): OracleSequenceVector {
+  const count = vector['number_of_images_in_sequence'];
+  const rawImages = vector['images'];
+  if (typeof count !== 'number' || !Array.isArray(rawImages)) {
+    throw new Error('expected oracle image-sequence vector');
+  }
+  const images = rawImages.map((image) => {
+    const record = asRecord(image);
+    const imageIndex = record['image_index'];
+    const targetUrl = record['target_url'];
+    if (typeof imageIndex !== 'number' || typeof targetUrl !== 'string') {
+      throw new Error('expected oracle image');
+    }
+    return { image_index: imageIndex, target_url: targetUrl };
+  });
+  return { number_of_images_in_sequence: count, images };
+}
+
 describe('OTIO image-sequence semantics', () => {
   test('matches every official image-sequence oracle vector', () => {
     const oracle = JSON.parse(
@@ -111,16 +139,16 @@ describe('OTIO image-sequence semantics', () => {
 
     for (const vector of vectors) {
       const sequence = requiredSequence(rawOracleSequence(vector));
-      const images = vector['images'];
-      if (!Array.isArray(images)) throw new Error('expected oracle image list');
-      expect(sequence.count).toBe(vector['number_of_images_in_sequence']);
-      for (const image of images) {
-        const entry = asRecord(image);
-        const index = entry['image_index'];
-        if (typeof index !== 'number')
-          throw new Error('expected oracle image index');
-        expect(sequence.url(index)).toBe(entry['target_url']);
-        expect(sequence.entry(index)).toBe(entry['target_url']);
+      const oracleVector = oracleSequenceVector(vector);
+      expect(sequence.count).toBe(oracleVector.number_of_images_in_sequence);
+      expect(oracleVector.images.length).toBe(
+        oracleVector.number_of_images_in_sequence
+      );
+      for (const image of oracleVector.images) {
+        expect(sequence.url(image.image_index)).toBe(image.target_url);
+        expect<string | null>(sequence.entry(image.image_index)).toBe(
+          image.target_url
+        );
       }
     }
   });
@@ -130,28 +158,28 @@ describe('OTIO image-sequence semantics', () => {
       imageSequence({ target_url_base: 'media', name_prefix: '/plate_' })
     );
     expect(slashPrefix.url(0)).toBe('media//plate_1001.png');
-    expect(slashPrefix.entry(0)).toBe('media/plate_1001.png');
+    expect<string | null>(slashPrefix.entry(0)).toBe('media/plate_1001.png');
 
     const rootBase = requiredSequence(imageSequence({ target_url_base: '' }));
     expect(rootBase.url(0)).toBe('plate_1001.png');
-    expect(rootBase.entry(0)).toBe('media/plate_1001.png');
+    expect<string | null>(rootBase.entry(0)).toBe('media/plate_1001.png');
 
     const querySuffix = requiredSequence(
       imageSequence({ name_suffix: '.png?v=1' })
     );
     expect(querySuffix.url(0)).toBe('media/plate_1001.png?v=1');
-    expect(querySuffix.entry(0)).toBe('media/plate_1001.png');
+    expect<string | null>(querySuffix.entry(0)).toBe('media/plate_1001.png');
 
     const backslashBase = requiredSequence(
       imageSequence({ target_url_base: 'media\\' })
     );
     expect(backslashBase.url(0)).toBe('media\\/plate_1001.png');
-    expect(backslashBase.entry(0)).toBe('media/plate_1001.png');
+    expect<string | null>(backslashBase.entry(0)).toBe('media/plate_1001.png');
 
     const frameBase = requiredSequence(
       imageSequence({ target_url_base: 'frames' })
     );
-    expect(frameBase.entry(0)).toBe('media/frames/plate_1001.png');
+    expect<string | null>(frameBase.entry(0)).toBe('media/frames/plate_1001.png');
 
     const traversingBase = requiredSequence(
       imageSequence({ target_url_base: 'media/sub/../' })
@@ -206,7 +234,7 @@ describe('OTIO image-sequence semantics', () => {
       (_, index) => `media/plate_${String(index + 1001).padStart(4, '0')}.png`
     );
     const media = mediaIndex(names);
-    expect(otioSequenceFrameEntries(record, media)).toEqual(names);
+    expect<readonly string[]>(otioSequenceFrameEntries(record, media)).toEqual(names);
     expect(
       otioSequenceFrameEntries(
         imageSequence({ target_url_base: 'media/sub/../' }),
@@ -216,19 +244,19 @@ describe('OTIO image-sequence semantics', () => {
   });
 
   test('decodes canonical entry names exactly once', () => {
-    expect(
+    expect<string | null>(
       requiredSequence(imageSequence({ name_prefix: 'a%20b_' })).entry(0)
     ).toBe('media/a b_1001.png');
-    expect(
+    expect<string | null>(
       requiredSequence(imageSequence({ name_prefix: 'a%2520b_' })).entry(0)
     ).toBe('media/a%20b_1001.png');
-    expect(
+    expect<string | null>(
       requiredSequence(imageSequence({ name_prefix: '%3F_' })).entry(0)
     ).toBe('media/?_1001.png');
-    expect(
+    expect<string | null>(
       requiredSequence(imageSequence({ name_prefix: '%25_' })).entry(0)
     ).toBe('media/%_1001.png');
-    expect(
+    expect<string | null>(
       requiredSequence(imageSequence({ name_prefix: '%23_' })).entry(0)
     ).toBe('media/#_1001.png');
   });

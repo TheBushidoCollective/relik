@@ -896,7 +896,9 @@ function buildAudioContribution(
   };
 }
 
-function isSequence(ref: OtioMediaReference | null): ref is OtioMediaReference {
+function isSequence(
+  ref: OtioMediaReference | null
+): ref is OtioMediaReference & { readonly schema: 'ImageSequenceReference.1' } {
   return ref?.schema === 'ImageSequenceReference.1';
 }
 
