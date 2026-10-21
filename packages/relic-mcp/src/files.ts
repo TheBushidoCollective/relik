@@ -19,6 +19,7 @@ export const nodeFiles: FileReader = {
   async stat(path) {
     const info = await lstat(path).catch(() => undefined);
     if (info === undefined) return { kind: 'other' };
+    if (info.isSymbolicLink()) return { kind: 'symlink' };
     if (info.isDirectory()) return { kind: 'directory' };
     if (!info.isFile()) return { kind: 'other' };
     return { kind: 'file', size: info.size };

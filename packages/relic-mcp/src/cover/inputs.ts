@@ -47,6 +47,25 @@ export async function planCover(
     };
   }
 
+  // Generic cover for OTIO: public title and format label only.
+  // Detected before media screenshots or archive listing to prevent leaking
+  // timeline metadata, track names, or media frames into the unencrypted cover.
+  if (
+    source.rendererClass === 'otio' ||
+    source.filename.toLowerCase().endsWith('.otio') ||
+    source.filename.toLowerCase().endsWith('.otioz') ||
+    source.filename.toLowerCase().endsWith('.otiod')
+  ) {
+    return {
+      kind: 'skip',
+      outcome: {
+        status: 'skipped',
+        reason: 'no_cover_for_class',
+        detail: 'Generic cover used for OTIO (public title and format label only)',
+      },
+    };
+  }
+
   const declaredMimetype = guessMimetype(source.filename, source.rendererClass);
   const routeDecision = routeFor(
     source.filename,
