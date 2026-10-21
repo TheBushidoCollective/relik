@@ -42,5 +42,15 @@
       "quoteStyle": "single",
       "trailingCommas": "es5"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "packages/relic-format/test/fixtures/otio/expected-oracle.json"
+      ],
+      "formatter": {
+        "enabled": false
+      }
+    }
+  ]
 }
