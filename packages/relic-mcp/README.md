@@ -158,13 +158,14 @@ The client ships its JavaScript as readable source: `dist/relic-mcp.js` is a
 single unminified file and the TypeScript it was built from is in the same
 package. There is one narrow exception for automatic `.otiod` directory
 packaging. It uses a source-included Node-API secure-open helper, prebuilt in
-the npm tarball for the supported Darwin and Linux targets. That helper pins
-the selected directory in the kernel and opens regular descendants without
+the npm tarball for macOS 15 or newer on arm64 and x64, plus glibc 2.28 or
+newer Linux on arm64 and x64 with kernel 5.6 or newer. That helper pins the
+selected directory in the kernel and opens regular descendants without
 following symlinks. It never downloads a helper, invokes Python, or compiles
-at install or publish time. If the installed platform, architecture, or kernel
-cannot provide the confined-open primitive, `.otiod` packaging refuses rather
-than using a pathname fallback. Ordinary file publishing remains plain Node 18
-or newer. The cover rendering page assets in `dist/cover/` contain the
+at install or publish time. If the installed platform, architecture, libc, or
+kernel cannot provide the confined-open primitive, `.otiod` packaging refuses
+rather than using a pathname fallback. Ordinary file publishing remains plain
+Node 18 or newer. The cover rendering page assets in `dist/cover/` contain the
 unminified cover bundle built from `@relic/viewer`, with vendored React, pdfjs,
 and sucrase for offline document rendering in local Chrome. Releases carry npm
 provenance, a cryptographic attestation binding the tarball to a specific commit
@@ -224,8 +225,8 @@ above. The handshake-based revisions (`2025-11-25` and earlier) are still
 answered.
 
 Requires Node 18 or newer. Automatic `.otiod` packaging additionally requires
-a packaged native helper on the current architecture, Linux kernel 5.6 or
-newer, or macOS 15 or newer. Unsupported targets refuse that directory feature
-without reducing ordinary file publishing.
+one of four packaged targets: macOS 15+ arm64, macOS 15+ x64, Linux glibc
+2.28+ kernel 5.6+ arm64, or Linux glibc 2.28+ kernel 5.6+ x64. Unsupported
+targets refuse that directory feature without reducing ordinary file publishing.
 
 MIT licensed. Source: https://github.com/TheBushidoCollective/relic

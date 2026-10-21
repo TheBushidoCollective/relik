@@ -29,6 +29,23 @@ const nodeBin = dirname(process.execPath);
 const npm = join(nodeBin, process.platform === 'win32' ? 'npm.cmd' : 'npm');
 const nodeOnlyPath = `${nodeBin}${process.platform === 'win32' ? ';' : ':'}/usr/bin:/bin`;
 
+function packagedTarget() {
+  if (process.platform === 'darwin' && process.arch === 'arm64') {
+    return 'darwin-arm64';
+  }
+  if (process.platform === 'darwin' && process.arch === 'x64') {
+    return 'darwin-x64';
+  }
+  if (process.platform === 'linux' && process.arch === 'arm64') {
+    return 'linux-arm64-gnu';
+  }
+  if (process.platform === 'linux' && process.arch === 'x64') {
+    return 'linux-x64-gnu';
+  }
+  throw new Error(`no packaged native target for ${process.platform}/${process.arch}`);
+}
+
+
 function run(command, args, options = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
@@ -155,6 +172,16 @@ async function main() {
     await access(bin);
     await access(join(packageRoot, 'prebuilds'));
     await access(join(packageRoot, 'native'));
+    await run(
+      process.execPath,
+      [
+        join(packageRoot, 'native', 'build.mjs'),
+        '--check',
+        '--target',
+        packagedTarget(),
+      ],
+      { cwd: runtime }
+    );
 
     const uploaded = [];
     const requests = [];

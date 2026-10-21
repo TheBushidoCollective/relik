@@ -2,7 +2,39 @@
 
 import { lstat, readFile } from 'node:fs/promises';
 import { basename as pathBasename, resolve as pathResolve } from 'node:path';
-import type { FileReader } from './publish.ts';
+import {
+  openNativeBundleRoot,
+  type NativeBundleRoot,
+  type NativeOpenedRegularFile,
+} from './native-secure-open.ts';
+import type {
+  ConfinedBundleDirectory,
+  ConfinedBundleFile,
+  FileReader,
+} from './publish.ts';
+
+function confinedFile(file: NativeOpenedRegularFile): ConfinedBundleFile {
+  return {
+    size: file.size,
+    readBounded(maxBytes) {
+      return file.read(maxBytes);
+    },
+    close() {
+      return file.close();
+    },
+  };
+}
+
+function confinedDirectory(root: NativeBundleRoot): ConfinedBundleDirectory {
+  return {
+    async openRegular(relativePath) {
+      return confinedFile(await root.openRegular(relativePath));
+    },
+    close() {
+      return root.close();
+    },
+  };
+}
 
 export const nodeFiles: FileReader = {
   resolve(path) {
@@ -27,5 +59,9 @@ export const nodeFiles: FileReader = {
 
   async read(path) {
     return new Uint8Array(await readFile(path));
+  },
+
+  async openBundleRoot(path) {
+    return confinedDirectory(await openNativeBundleRoot(path));
   },
 };

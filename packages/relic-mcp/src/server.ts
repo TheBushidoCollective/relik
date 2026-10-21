@@ -3128,10 +3128,11 @@ relic.
 
 The code doing all of this is on disk in this package and can be read. The only
 compiled component is the source-included Node-API secure-open helper used for
-automatic .otiod directory packaging. Its supported Darwin and Linux prebuilts
-ship in this package; it is never downloaded or compiled at runtime, and an
-unsupported platform refuses .otiod packaging rather than using a pathname
-fallback. Nothing is fetched from the network and executed.`;
+automatic .otiod directory packaging. It ships for macOS 15+ arm64 and x64,
+plus Linux glibc 2.28+ kernel 5.6+ arm64 and x64. It is never downloaded or
+compiled at runtime, and an unsupported platform, architecture, libc, or kernel
+refuses .otiod packaging rather than using a pathname fallback. Nothing is
+fetched from the network and executed.`;
 }
 
 /** Read newline-delimited JSON-RPC from a stream and write responses back. */

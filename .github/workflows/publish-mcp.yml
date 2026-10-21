@@ -1,8 +1,7 @@
 name: publish-mcp
 
-# Publishing is manual and versioned, never on every merge. The package is
-# code that runs on other people's machines with access to their files, so a
-# release is a decision somebody makes, not a side effect of a commit.
+# Publishing is manual and versioned. The package can read local files, so a
+# release is an explicit decision rather than a merge side effect.
 on:
   workflow_dispatch:
     inputs:
@@ -11,7 +10,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: 'Pack and inspect without publishing'
+        description: 'Pack and prove without publishing'
         type: boolean
         default: true
 
@@ -21,21 +20,63 @@ concurrency:
 
 permissions:
   contents: read
-  # Trusted publishing: npm exchanges this OIDC token for both publish
-  # authorization and a provenance attestation. There is no NPM_TOKEN, and
-  # there should never be one. A long-lived token is a credential that can
-  # leak; this one is minted per run and scoped to this workflow.
   id-token: write
 
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
 
-  publish:
-    needs: verify
-    runs-on: ubuntu-latest
+  native-build:
+    name: native ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build and audit the target prebuild
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          NODE_INCLUDE="$(node -p "const p = require('node:path'); p.join(p.dirname(p.dirname(process.execPath)), 'include', 'node')")"
+          test -f "$NODE_INCLUDE/node_api.h"
+          node packages/relic-mcp/native/build.mjs \
+            --target "$TARGET" \
+            --node-include "$NODE_INCLUDE" \
+            --cc "${CC:-cc}"
+          node packages/relic-mcp/native/build.mjs --check --target "$TARGET"
+
+          OUT="$RUNNER_TEMP/native-$TARGET"
+          mkdir -p "$OUT"
+          cp "packages/relic-mcp/prebuilds/$TARGET/secure_open.node" "$OUT/"
+          cp "packages/relic-mcp/prebuilds/$TARGET/build-info.json" "$OUT/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-${{ matrix.target }}
+          if-no-files-found: error
+
+  pack:
+    needs: [verify, native-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -44,20 +85,8 @@ jobs:
           install: true
           cache: true
 
-      # npm, not bun, does the publishing: provenance attestation is an npm
-      # CLI feature and this is the path that produces a verifiable link
-      # between the tarball and this commit.
-      # Node 24, not a pin at the documented minimum. Trusted publishing needs
-      # Node >= 22.14.0, but that is a floor rather than a target: pinning
-      # 22.14.0 exactly makes `npm@latest` uninstallable, because current npm
-      # requires ^22.22.2 || ^24.15.0 || >=26.
-      #
-      # No `registry-url`. That option writes an .npmrc containing
-      # `_authToken=${NODE_AUTH_TOKEN}`, and with no token in the environment
-      # setup-node substitutes a placeholder. npm then presents a garbage
-      # credential instead of falling through to OIDC, and the failure looks
-      # like a bad secret rather than a misconfiguration. registry.npmjs.org
-      # is the default anyway.
+      # Trusted publishing requires a current npm. No registry-url is set: it
+      # would materialize a placeholder token and prevent OIDC from taking over.
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -71,24 +100,40 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Set the version and drop the workspace protocol in one pass, with
-      # node rather than `npm version`.
-      #
-      # Before the build, not after. The build generates the plugin manifests
-      # from package.json, so building first would stamp them with the version
-      # this release is replacing and publish a tarball that disagrees with
-      # itself about what it is.
-      #
-      # `npm version` resolves the dependency tree, and any npm command run
-      # inside this directory walks up to the workspace root and resolves the
-      # sibling packages too. Those still carry bun's `workspace:*`, which npm
-      # rejects with EUNSUPPORTEDPROTOCOL. Stripping this package's own
-      # manifest does not help, because the manifests npm chokes on belong to
-      # its siblings.
-      #
-      # Editing the JSON directly sidesteps resolution entirely. Every later
-      # npm invocation carries --no-workspaces for the same reason.
-      - name: Set the version and strip the workspace protocol
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-arm64
+          path: ${{ runner.temp }}/native/darwin-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-x64
+          path: ${{ runner.temp }}/native/darwin-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-linux-arm64-gnu
+          path: ${{ runner.temp }}/native/linux-arm64-gnu
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64-gnu
+          path: ${{ runner.temp }}/native/linux-x64-gnu
+
+      - name: Place audited prebuilds in the package
+        run: |
+          set -euo pipefail
+          for TARGET in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            DEST="packages/relic-mcp/prebuilds/$TARGET"
+            mkdir -p "$DEST"
+            cp "$RUNNER_TEMP/native/$TARGET/secure_open.node" "$DEST/"
+            cp "$RUNNER_TEMP/native/$TARGET/build-info.json" "$DEST/"
+          done
+          # This portable check proves the tarball carries all audited files.
+          # Per-target jobs above and packed-target probes below perform the
+          # platform-specific otool/readelf checks.
+          node packages/relic-mcp/native/build.mjs --check --metadata-only
+
+      # npm cannot resolve bun workspace protocol dependencies from a package
+      # directory. Write only this release copy, then publish its tarball.
+      - name: Set release version
         working-directory: packages/relic-mcp
         run: |
           node -e '
@@ -97,17 +142,12 @@ jobs:
             pkg.version = process.argv[1];
             delete pkg.devDependencies;
             fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-            console.log(`${pkg.name}@${pkg.version}`);
           ' "${{ inputs.version }}"
 
-      - name: Build the readable bundle
+      - name: Build the readable bundle and native loader
         run: bun run --filter 'relic-mcp' build
 
-      # The manifests are generated, so the only way they can be wrong is if
-      # the build read a stale package.json. Assert they agree before anything
-      # is published, because a plugin that reports the wrong version installs
-      # fine and then never updates.
-      - name: Check the plugin manifests carry this version
+      - name: Check generated plugin manifests
         working-directory: packages/relic-mcp
         run: |
           set -euo pipefail
@@ -117,142 +157,149 @@ jobs:
           node -e '
             const fs = require("node:fs");
             const want = process.argv[1];
-            const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
-            const plugin = read(".claude-plugin/plugin.json");
-            const market = read(".claude-plugin/marketplace.json");
-            const found = [
-              ["plugin.json", plugin.version],
-              ["marketplace plugin", market.plugins[0].version],
-              ["marketplace metadata", market.metadata.version],
-            ];
-            for (const [where, got] of found) {
-              if (got !== want) {
-                console.error(`${where} says ${got}, expected ${want}`);
-                process.exit(1);
-              }
+            const plugin = JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8"));
+            const market = JSON.parse(fs.readFileSync(".claude-plugin/marketplace.json", "utf8"));
+            const found = [plugin.version, market.plugins[0].version, market.metadata.version];
+            if (found.some((value) => value !== want)) {
+              throw new Error(`plugin manifests disagree with ${want}: ${found.join(", ")}`);
             }
-            console.log(`manifests agree at ${want}`);
           ' "${{ inputs.version }}"
 
-      # The bundle is what runs on a user machine. Assert the properties that
-      # make it inspectable and runnable before it goes anywhere.
-      - name: Check the artifact
+      - name: Pack the release tarball
+        id: package
         working-directory: packages/relic-mcp
         run: |
           set -euo pipefail
-          BUNDLE=dist/relic-mcp.js
+          TARBALL="$(npm pack --pack-destination "$RUNNER_TEMP" --silent --no-workspaces)"
+          test -f "$RUNNER_TEMP/$TARBALL"
+          echo "tarball=$RUNNER_TEMP/$TARBALL" >> "$GITHUB_OUTPUT"
 
-          head -1 "$BUNDLE" | grep -q '^#!/usr/bin/env node'
-          test -x "$BUNDLE"
-
-          # Not minified: the whole reason this ships as source rather than a
-          # compiled binary is that somebody can read it.
-          LINES=$(wc -l < "$BUNDLE")
-          echo "bundle is $LINES lines"
-          test "$LINES" -gt 200
-
-          # It has to run under plain Node, which is what npx will have.
-          #
-          # The origin is supplied because the server requires one and refuses
-          # to start without it. That refusal is the point: an unconfigured
-          # install should fail at startup naming the variable rather than at
-          # the first publish with a DNS error. The value is irrelevant here,
-          # since nothing is published; only that the bundle boots and answers.
-          echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' \
-            | RELIC_SERVICE_ORIGIN=https://relic.invalid node "$BUNDLE" \
-            | grep -q relic_publish
-
-          # And it starts without one, so `--help` works on a machine that has
-          # never configured anything.
-          node "$BUNDLE" --help | grep -q 'relic-mcp install'
-
-      # The manifest is not the tarball. npm normalizes `bin` on publish and
-      # will silently drop an entry it dislikes, which produces a package that
-      # installs fine and whose `npx relic-mcp` resolves to nothing. The only
-      # honest check is to install the real tarball and run the real bin.
-      - name: Install the tarball and run its bin, as npx would
+      - name: Check packed contents
         working-directory: packages/relic-mcp
         run: |
           set -euo pipefail
-          TARBALL="$(npm pack --pack-destination "$RUNNER_TEMP" --silent --no-workspaces | tail -1)"
-          PROBE="$RUNNER_TEMP/installprobe"
-          rm -rf "$PROBE" && mkdir -p "$PROBE"
+          TARBALL="${{ steps.package.outputs.tarball }}"
+          PROBE="$RUNNER_TEMP/contents-probe"
+          mkdir -p "$PROBE"
           cd "$PROBE"
           npm init -y >/dev/null
-          npm install "$RUNNER_TEMP/$TARBALL" >/dev/null
-
-          test -L node_modules/.bin/relic-mcp \
-            || { echo "bin was dropped: npx relic-mcp would not work"; exit 1; }
-
-          echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' \
-            | RELIC_SERVICE_ORIGIN=https://relic.invalid ./node_modules/.bin/relic-mcp \
-            | grep -q relic_describe_client
-
-          # The package is also the Claude Code plugin, which only holds if the
-          # manifests survive packing. npm is historically uneven about
-          # dot-prefixed entries in `files`, and this is the same class of bug
-          # as the `bin` entry it used to drop: installs fine, silently does
-          # less than it claims.
+          npm install --ignore-scripts --no-audit --no-fund --offline "$TARBALL" >/dev/null
           for FILE in \
+            node_modules/relic-mcp/dist/relic-mcp.js \
+            node_modules/relic-mcp/dist/native-secure-open.js \
+            node_modules/relic-mcp/dist/native-secure-open.d.ts \
+            node_modules/relic-mcp/native/secure-open.c \
+            node_modules/relic-mcp/native/build.mjs \
+            node_modules/relic-mcp/scripts/prove-packed-native.mjs \
             node_modules/relic-mcp/.claude-plugin/plugin.json \
             node_modules/relic-mcp/.claude-plugin/marketplace.json \
             node_modules/relic-mcp/mcp-servers.json \
             node_modules/relic-mcp/skills/relic/SKILL.md
           do
-            test -f "$FILE" || {
-              echo "$FILE is missing from the tarball; the package would not be installable as a plugin"
-              exit 1
-            }
+            test -f "$FILE" || { echo "$FILE is missing from the tarball"; exit 1; }
+          done
+          for TARGET in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            test -f "node_modules/relic-mcp/prebuilds/$TARGET/secure_open.node"
+            test -f "node_modules/relic-mcp/prebuilds/$TARGET/build-info.json"
           done
 
-          # The package renders covers inside headless Chrome using assets
-          # bundled into dist/cover/. Assert that all six assets survived packing.
-          for FILE in \
-            node_modules/relic-mcp/dist/cover/index.html \
-            node_modules/relic-mcp/dist/cover/cover.js \
-            node_modules/relic-mcp/dist/cover/cover.css \
-            node_modules/relic-mcp/dist/cover/styles.css \
-            node_modules/relic-mcp/dist/cover/frame.html \
-            node_modules/relic-mcp/dist/cover/pdf.worker.mjs
-          do
-            test -f "$FILE" || {
-              echo "$FILE is missing from the tarball; the package would not be able to render covers"
-              exit 1
-            }
-          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relic-mcp-tarball
+          path: ${{ steps.package.outputs.tarball }}
+          if-no-files-found: error
 
-          # And the installer has to run from the packed copy, not just in dev.
-          ./node_modules/.bin/relic-mcp --help | grep -q 'relic-mcp install'
-
-      - name: Pack and list contents
+      - name: Summarize packed artifact
         working-directory: packages/relic-mcp
         run: |
-          npm pack --dry-run --no-workspaces
           {
             echo "### relic-mcp ${{ inputs.version }}"
             npm pack --dry-run --json --no-workspaces | node -e '
               let raw = "";
-              process.stdin.on("data", (d) => (raw += d));
+              process.stdin.on("data", (chunk) => (raw += chunk));
               process.stdin.on("end", () => {
-                // npm returns an array normally and a bare object under
-                // --no-workspaces. Accept either rather than guessing.
                 const parsed = JSON.parse(raw);
                 const meta = Array.isArray(parsed) ? parsed[0] : parsed;
-                console.log(
-                  `files: ${meta.entryCount}, unpacked: ${meta.unpackedSize} bytes`
-                );
+                console.log(`files: ${meta.entryCount}, unpacked: ${meta.unpackedSize} bytes`);
               });
             '
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # No NODE_AUTH_TOKEN. Authorization comes from the OIDC token above,
-      # and npm attaches provenance automatically under trusted publishing.
-      #
-      # This requires the package to already exist on npm with this repository
-      # and workflow configured as its trusted publisher. The very first
-      # publish of a new package cannot use it, which is why 0.1.0 was pushed
-      # by hand.
+  packed-native-probe:
+    needs: pack
+    name: packed native ${{ matrix.target }} on Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+            node: '18.20.8'
+          - runner: macos-15
+            target: darwin-arm64
+            node: '24'
+          - runner: macos-15-intel
+            target: darwin-x64
+            node: '18.20.8'
+          - runner: macos-15-intel
+            target: darwin-x64
+            node: '24'
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            node: '18.20.8'
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            node: '24'
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+            node: '18.20.8'
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+            node: '24'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: relic-mcp-tarball
+          path: ${{ runner.temp }}/tarball
+
+      - name: Prove the installed tarball without Bun or the checkout
+        run: |
+          set -euo pipefail
+          set -- "$RUNNER_TEMP"/tarball/*.tgz
+          test -f "$1"
+          RELIC_MCP_PROVE_HIDE_SOURCE=1 \
+          RELIC_MCP_PROVE_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+          node packages/relic-mcp/scripts/prove-packed-native.mjs "$1"
+
+  publish:
+    needs: [pack, packed-native-probe]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@latest
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: relic-mcp-tarball
+          path: ${{ runner.temp }}/tarball
+
       - name: Publish
         if: ${{ !inputs.dry_run }}
-        working-directory: packages/relic-mcp
-        run: npm publish --access public --no-workspaces
+        run: |
+          set -euo pipefail
+          set -- "$RUNNER_TEMP"/tarball/*.tgz
+          test -f "$1"
+          npm publish "$1" --access public

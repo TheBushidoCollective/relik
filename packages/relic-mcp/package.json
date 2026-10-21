@@ -32,6 +32,7 @@
     "native",
     "prebuilds",
     "src",
+    "scripts",
     "README.md",
     ".claude-plugin",
     "skills",
@@ -61,10 +62,11 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "bun run build.ts",
+    "build": "node native/local-build.mjs && bun run build.ts",
     "native:build": "node native/build.mjs",
     "native:check": "node native/build.mjs --check",
-    "prepack": "node native/build.mjs --check"
+    "native:local": "node native/local-build.mjs",
+    "prepack": "node native/build.mjs --check --metadata-only"
   },
   "devDependencies": {
     "@relic/format": "workspace:*",
