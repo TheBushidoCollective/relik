@@ -736,9 +736,10 @@ async function main() {
     process.chdir(runtime);
     sourceRoot = sourceIsolationRequest();
     if (sourceRoot !== undefined) {
-      hiddenSource = `${sourceRoot}.hidden-packed-native-proof`;
-      await assertAbsent(hiddenSource, 'hidden source checkout');
-      await rename(sourceRoot, hiddenSource);
+      const hidden = `${sourceRoot}.hidden-packed-native-proof`;
+      await assertAbsent(hidden, 'hidden source checkout');
+      await rename(sourceRoot, hidden);
+      hiddenSource = hidden;
     }
 
     await run(
