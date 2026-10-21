@@ -20,7 +20,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TheBushidoCollective/relic.git",
+    "url": "git+https://github.com/TheBushidoCollective/relik.git",
     "directory": "packages/relic-mcp"
   },
   "homepage": "https://github.com/TheBushidoCollective/relic#readme",
@@ -67,7 +67,7 @@
     "native:build": "node native/build.mjs",
     "native:check": "node native/build.mjs --check",
     "native:local": "node native/local-build.mjs",
-    "prepack": "node native/build.mjs --check --metadata-only"
+    "prepack": "node native/build.mjs --check --metadata-only --release"
   },
   "devDependencies": {
     "@relic/format": "workspace:*",

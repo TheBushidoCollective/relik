@@ -26,12 +26,15 @@ It takes a **path, not content**. That is deliberate: the plaintext never
 enters the conversation, so it is never in the transcript, never in a model
 context window, and never in whatever stores those. Do not read a file into
 context and pass its text; pass where it lives. A standard OpenTimelineIO
-directory (`.otiod`) is automatically packaged into a standard `.otioz`
-archive on a packaged native target: macOS arm64 or x64 with a 15.0 binary
-deployment floor, or Linux glibc 2.28+ kernel 5.6+ arm64 or x64. macOS
-conversion also requires the strict confinement self-test to pass on the
-running kernel. A failed requirement refuses conversion rather than falling
-back to pathname checks. Arbitrary directories are refused.
+directory (`.otiod`) is automatically packaged into a
+standard `.otioz` archive on a packaged native target: macOS arm64 or x64 with
+a 15.0 binary deployment floor, or Linux glibc 2.28+ arm64 or x64. On either
+platform, before it reads a bundle, the helper verifies on the running kernel
+that beneath-root resolution refuses parent and absolute escapes from a held
+directory and that the no-symlink flag is accepted. Symlink refusal,
+held-descriptor behavior, and replacement behavior are verified by the CI probe
+on the listed versions. A failed requirement refuses conversion rather than
+falling back to pathname checks. Arbitrary directories are refused.
 
 When the task is to update the same source, call `relic_lookup_source` first:
 

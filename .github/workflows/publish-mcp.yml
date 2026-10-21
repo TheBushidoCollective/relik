@@ -90,11 +90,16 @@ jobs:
         if: matrix.platform == 'darwin'
         run: |
           set -euo pipefail
-          export DEVELOPER_DIR="/Applications/Xcode_26.0.1.app/Contents/Developer"
+          PIN_FILE="packages/relic-mcp/native/darwin-release-toolchain.json"
+          DEVELOPER_DIR="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).developerDir' "$PIN_FILE")"
+          XCODE_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).xcodeVersion' "$PIN_FILE")"
+          PINNED_SDK_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).sdkVersion' "$PIN_FILE")"
+          export DEVELOPER_DIR
           test -d "$DEVELOPER_DIR"
-          test "$(xcodebuild -version | awk 'NR == 1 { print $2 }')" = "26.0.1"
+          test "$(xcodebuild -version | awk 'NR == 1 { print $2 }')" = "$XCODE_VERSION"
           SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
           SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+          test "$SDK_VERSION" = "$PINNED_SDK_VERSION"
           CC="$(xcrun --sdk macosx --find clang)"
           case "$SDKROOT" in "$DEVELOPER_DIR"/*) ;; *) echo "unexpected SDK: $SDKROOT" >&2; exit 1;; esac
           case "$CC" in "$DEVELOPER_DIR"/*) ;; *) echo "unexpected compiler: $CC" >&2; exit 1;; esac
@@ -145,7 +150,8 @@ jobs:
           node packages/relic-mcp/native/build.mjs \
             --target "$TARGET" \
             --node-include "$NODE_INCLUDE" \
-            --output-dir "$OUT"
+            --output-dir "$OUT" \
+            --release
           test -f "$OUT/secure_open.node"
           test -f "$OUT/build-info.json"
 
@@ -163,7 +169,8 @@ jobs:
             --target "$TARGET" \
             --node-include "$NODE_INCLUDE" \
             --cc "$RELIC_RELEASE_CC" \
-            --output-dir "$OUT"
+            --output-dir "$OUT" \
+            --release
           test -f "$OUT/secure_open.node"
           test -f "$OUT/build-info.json"
 
@@ -264,7 +271,7 @@ jobs:
           # This portable check proves the tarball carries all audited files.
           # Per-target jobs above and packed-target probes below perform the
           # platform-specific otool/readelf checks.
-          node packages/relic-mcp/native/build.mjs --check --metadata-only
+          node packages/relic-mcp/native/build.mjs --check --metadata-only --release
 
       - name: Snapshot audited native prebuilds
         run: |
@@ -605,10 +612,11 @@ jobs:
             --read-only \
             --user "$(id -u):$(id -g)" \
             --tmpfs /tmp:rw,nosuid,nodev,noexec,mode=1777,size=512m \
+            --tmpfs /work:rw,nosuid,nodev,exec,mode=1777,size=512m \
             --entrypoint /node/bin/node \
             --env PATH=/node/bin \
-            --env HOME=/tmp \
-            --env TMPDIR=/tmp \
+            --env HOME=/work \
+            --env TMPDIR=/work \
             --env CC= \
             --env CXX= \
             --env AR= \

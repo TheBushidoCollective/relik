@@ -816,18 +816,21 @@ Authorised by Jason Waldrip on 2026-10-20.
 rule, that the npm client contains readable JavaScript only, is reversed for
 one operation: automatic `.otiod` packaging. Jason Waldrip authorized a small,
 source-included, ABI-stable Node-API helper with four prebuilt targets: macOS
-arm64 and x64 with a 15.0 binary deployment floor, Linux glibc 2.28+ kernel
-5.6+ arm64, and Linux glibc 2.28+ kernel 5.6+ x64. It pins the selected bundle
-root and opens descendants using kernel confinement, so a pathname replacement
-cannot redirect a media read outside that root. The helper is audited from
-source in the tarball. It is never downloaded, built with Python, or compiled
-on an installed machine. Linux requires `openat2`; macOS requires
-`O_RESOLVE_BENEATH` and `O_NOFOLLOW_ANY`. On macOS, `.otiod` conversion starts
-only after a strict confinement self-test passes on the running kernel. The
-15.0 deployment floor permits the binary to load; each kernel still proves the
-primitive for itself. An unsupported platform, architecture, libc, or primitive
-refuses `.otiod` packaging. It never falls back to JavaScript path checks.
-Ordinary single-file publishing remains plain Node 18 or newer.
+arm64 and x64 with a 15.0 binary deployment floor, plus Linux glibc 2.28+
+arm64 and x64. It pins the selected bundle root and opens descendants using
+kernel confinement, so a pathname replacement cannot redirect a media read
+outside that root. The helper is audited from source in the tarball. It is never
+downloaded, built with Python, or compiled on an installed machine. Linux
+requires `openat2`; macOS requires `O_RESOLVE_BENEATH` and `O_NOFOLLOW_ANY`.
+On either platform, before it reads a bundle, the helper verifies on the
+running kernel that beneath-root resolution refuses parent and absolute escapes
+from a held directory and that the no-symlink flag is accepted. Symlink refusal,
+held-descriptor behavior, and replacement behavior are verified by the CI probe
+on the listed versions. The 15.0 deployment floor permits the binary to load;
+each kernel still proves the primitive for itself. An unsupported platform,
+architecture, libc, or primitive refuses `.otiod` packaging. It never falls
+back to JavaScript path checks. Ordinary single-file publishing remains plain
+Node 18 or newer.
 
 **The ten-value taxonomy and telemetry boundary.**
 The coarse renderer class expands from nine to ten values: `markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `media`, `archive`, `binary`, `otio`.
