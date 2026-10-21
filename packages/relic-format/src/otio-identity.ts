@@ -9,13 +9,14 @@ import type {
   OtioAnchorV1,
   OtioDiagnostic,
   OtioDocumentV1,
+  OtioEffect,
   OtioIdentityOrigin,
+  OtioMarker,
   OtioMediaEntry,
   OtioMediaReference,
   OtioNode,
   OtioProjectionStatus,
   OtioRationalTime,
-  OtioSourceSpan,
   OtioTimeRange,
 } from './otio-types.ts';
 import {
@@ -28,19 +29,9 @@ import {
 } from './otio-timing.ts';
 
 /**
- * SHA-256 computation in pure JS/WebCrypto for document digest and fingerprints.
+ * Pure synchronous SHA-256 for document digest and structural fingerprints.
  */
-function sha256Hex(data: Uint8Array | string): string {
-  const bytes =
-    typeof data === 'string' ? new TextEncoder().encode(data) : data;
-
-  // Simple, deterministic 32-bit FNV/Murmur combination for stable offline fallback or SHA-256
-  // We can use crypto.subtle if async, or a pure synchronous SHA-256 implementation:
-  return syncSha256(bytes);
-}
-
 function syncSha256(bytes: Uint8Array): string {
-  // Pure synchronous SHA-256 implementation
   const K = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
     0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
@@ -142,6 +133,30 @@ function rotr(x: number, n: number): number {
   return ((x >>> n) | (x << (32 - n))) >>> 0;
 }
 
+interface RawNodeIntermediate {
+  readonly pointer: string;
+  readonly parentPointer: string | null;
+  readonly childPointers: string[];
+  readonly schema: string;
+  readonly schema_version?: number;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly authoredId: string | null;
+  readonly fpHash: string;
+  readonly track_kind?: string;
+  readonly source_range?: OtioTimeRange | null;
+  readonly available_range?: OtioTimeRange | null;
+  readonly media_references?: Record<string, OtioMediaReference>;
+  readonly active_media_reference_key?: string | null;
+  readonly effects?: OtioEffect[];
+  readonly markers?: OtioMarker[];
+  readonly transition_type?: string;
+  readonly in_offset?: OtioRationalTime;
+  readonly out_offset?: OtioRationalTime;
+  readonly metadata?: Record<string, unknown>;
+  readonly diagnostics: OtioDiagnostic[];
+}
+
 /**
  * Parse an OTIO JSON document into a structured OtioDocumentV1.
  */
@@ -154,71 +169,55 @@ export function readOtioDocument(
   const docSha256 = syncSha256(bytes);
   const rawObj = parseOtioJson(bytes) as Record<string, unknown>;
 
-  const nodes: Record<string, OtioNode> = {};
-  const timelineIds: string[] = [];
-  const diagnostics: OtioDiagnostic[] = [];
+  const intermediateNodes = new Map<string, RawNodeIntermediate>();
+  const authoredIdCounts = new Map<string, number>();
+  const fpHashCounts = new Map<string, number>();
   const globalStartTimes: Record<string, OtioRationalTime> = {};
-  const mediaMap: Record<string, OtioMediaEntry> = {
-    ...(options?.mediaIndex ?? {}),
-  };
+  const rootTimelinePointers: string[] = [];
+  const docDiagnostics: OtioDiagnostic[] = [];
 
-  const authoredIdsSeen = new Map<string, number>();
-
-  // First pass: identify and assign IDs
-  function processObject(
+  // Pass 1: traverse AST, collect structural fingerprints and authored IDs
+  function traverse(
     obj: Record<string, unknown>,
     pointer: string,
-    parentId: string | null
-  ): string {
+    parentPointer: string | null
+  ): void {
     const schema =
       typeof obj['OTIO_SCHEMA'] === 'string' ? obj['OTIO_SCHEMA'] : 'Unknown.1';
+    let schemaVersion: number | undefined;
+    const dotIdx = schema.lastIndexOf('.');
+    if (dotIdx > 0) {
+      const verNum = parseInt(schema.slice(dotIdx + 1), 10);
+      if (!isNaN(verNum)) schemaVersion = verNum;
+    }
+
     const name = typeof obj['name'] === 'string' ? obj['name'] : '';
+    const enabled = obj['enabled'] !== false;
     const metadata =
       typeof obj['metadata'] === 'object' && obj['metadata'] !== null
         ? (obj['metadata'] as Record<string, unknown>)
         : {};
 
-    // Authored ID
+    const nodeDiagnostics: OtioDiagnostic[] = [];
+
+    // Check authored ID
     let authoredId: string | null = null;
     const relicMeta = metadata['relic'];
     if (typeof relicMeta === 'object' && relicMeta !== null) {
       const rid = (relicMeta as Record<string, unknown>)['id'];
       if (typeof rid === 'string' && rid.length > 0) {
         authoredId = rid;
+        authoredIdCounts.set(
+          authoredId,
+          (authoredIdCounts.get(authoredId) ?? 0) + 1
+        );
       }
     }
 
-    let nodeId = authoredId;
-    let identityOrigin: OtioIdentityOrigin = 'authored';
-
-    if (authoredId) {
-      const count = (authoredIdsSeen.get(authoredId) ?? 0) + 1;
-      authoredIdsSeen.set(authoredId, count);
-      if (count > 1) {
-        identityOrigin = 'derived-duplicate';
-        diagnostics.push({
-          severity: 'warning',
-          code: 'ambiguous-identity',
-          message: `Duplicate authored ID detected: ${authoredId}`,
-          target: { json_pointer: pointer },
-        });
-        nodeId = `${authoredId}#dup${count}`;
-      }
-    } else {
-      // Derive structural fingerprint
-      const fp = `${schema}:${name}:${pointer}`;
-      const hash = syncSha256(new TextEncoder().encode(fp)).slice(0, 16);
-      nodeId = `otio_${hash}`;
-      identityOrigin = 'derived-unique';
-    }
-
-    const enabled = obj['enabled'] !== false;
-    const childrenIds: string[] = [];
-
-    // Parse ranges
     const sourceRange = parseTimeRange(obj['source_range']);
+    const availableRange = parseTimeRange(obj['available_range']);
 
-    // Parse media references (for Clip.1 and Clip.2)
+    // Parse media references
     const mediaRefs: Record<string, OtioMediaReference> = {};
     let activeKey: string | null = null;
 
@@ -245,33 +244,75 @@ export function readOtioDocument(
       }
     }
 
-    // Process children
-    if (Array.isArray(obj['tracks'])) {
-      // Timeline tracks (Stack)
-      const stackObj = obj['tracks'] as unknown;
-      if (typeof stackObj === 'object' && stackObj !== null) {
-        const stackId = processObject(
-          stackObj as Record<string, unknown>,
-          `${pointer}/tracks`,
-          nodeId
-        );
-        childrenIds.push(stackId);
-      }
-    } else if (Array.isArray(obj['children'])) {
-      // Stack or Track children
-      const children = obj['children'] as Record<string, unknown>[];
-      for (let i = 0; i < children.length; i++) {
-        const c = children[i];
-        if (typeof c === 'object' && c !== null) {
-          const cId = processObject(c, `${pointer}/children/${i}`, nodeId);
-          childrenIds.push(cId);
+    // Parse effects
+    const effects: OtioEffect[] = [];
+    if (Array.isArray(obj['effects'])) {
+      for (const eff of obj['effects']) {
+        if (typeof eff === 'object' && eff !== null) {
+          const effSchema =
+            typeof eff['OTIO_SCHEMA'] === 'string'
+              ? eff['OTIO_SCHEMA']
+              : 'Effect.1';
+          const effName =
+            typeof eff['name'] === 'string' ? eff['name'] : undefined;
+          const effEffectName =
+            typeof eff['effect_name'] === 'string'
+              ? eff['effect_name']
+              : undefined;
+          const effEnabled = eff['enabled'] !== false;
+          const timeScalar =
+            typeof eff['time_scalar'] === 'number'
+              ? eff['time_scalar']
+              : undefined;
+          const effMeta =
+            typeof eff['metadata'] === 'object' && eff['metadata'] !== null
+              ? eff['metadata']
+              : {};
+
+          effects.push({
+            schema: effSchema,
+            name: effName,
+            effect_name: effEffectName,
+            enabled: effEnabled,
+            time_scalar: timeScalar,
+            metadata: effMeta,
+          });
         }
       }
     }
 
-    let trackKind: string | undefined;
-    if (schema.startsWith('Track')) {
-      trackKind = typeof obj['kind'] === 'string' ? obj['kind'] : 'Video';
+    // Parse markers
+    const markers: OtioMarker[] = [];
+    if (Array.isArray(obj['markers'])) {
+      for (const m of obj['markers']) {
+        if (typeof m === 'object' && m !== null) {
+          const mSchema =
+            typeof m['OTIO_SCHEMA'] === 'string'
+              ? m['OTIO_SCHEMA']
+              : 'Marker.1';
+          const mName = typeof m['name'] === 'string' ? m['name'] : undefined;
+          const color = typeof m['color'] === 'string' ? m['color'] : undefined;
+          const comment =
+            typeof m['comment'] === 'string' ? m['comment'] : undefined;
+          const markedRange = parseTimeRange(m['marked_range']) ?? {
+            start_time: { value: 0, rate: 24 },
+            duration: { value: 0, rate: 24 },
+          };
+          const mMeta =
+            typeof m['metadata'] === 'object' && m['metadata'] !== null
+              ? m['metadata']
+              : {};
+
+          markers.push({
+            schema: mSchema,
+            name: mName,
+            color,
+            marked_range: markedRange,
+            comment,
+            metadata: mMeta,
+          });
+        }
+      }
     }
 
     // Transitions
@@ -287,47 +328,209 @@ export function readOtioDocument(
       outOffset = parseRationalTime(obj['out_offset']);
     }
 
-    const node: OtioNode = {
-      id: nodeId as string,
-      identity_origin: identityOrigin,
-      json_pointer: pointer,
+    let trackKind: string | undefined;
+    if (schema.startsWith('Track')) {
+      trackKind = typeof obj['kind'] === 'string' ? obj['kind'] : 'Video';
+    }
+
+    // Process children pointers
+    const childPointers: string[] = [];
+
+    // Support standard Timeline.tracks Stack object and array
+    if (obj['tracks'] !== undefined && obj['tracks'] !== null) {
+      if (Array.isArray(obj['tracks'])) {
+        for (let i = 0; i < obj['tracks'].length; i++) {
+          const c = obj['tracks'][i];
+          if (typeof c === 'object' && c !== null) {
+            const cp = `${pointer}/tracks/${i}`;
+            childPointers.push(cp);
+            traverse(c, cp, pointer);
+          }
+        }
+      } else if (typeof obj['tracks'] === 'object') {
+        const cp = `${pointer}/tracks`;
+        childPointers.push(cp);
+        traverse(obj['tracks'] as Record<string, unknown>, cp, pointer);
+      }
+    } else if (Array.isArray(obj['children'])) {
+      for (let i = 0; i < obj['children'].length; i++) {
+        const c = obj['children'][i];
+        if (typeof c === 'object' && c !== null) {
+          const cp = `${pointer}/children/${i}`;
+          childPointers.push(cp);
+          traverse(c, cp, pointer);
+        }
+      }
+    }
+
+    // Lossless structural fingerprint
+    const mediaSummary =
+      activeKey && mediaRefs[activeKey]
+        ? `${mediaRefs[activeKey].schema}:${mediaRefs[activeKey].target_url ?? mediaRefs[activeKey].target_url_base ?? ''}`
+        : '';
+    const srcRangeSummary = sourceRange
+      ? `${sourceRange.start_time.value}/${sourceRange.start_time.rate}:${sourceRange.duration.value}/${sourceRange.duration.rate}`
+      : '';
+    const effSummary = effects
+      .map((e) => `${e.schema}:${e.time_scalar ?? ''}`)
+      .join(',');
+
+    const fpString = `${schema}|${name}|${trackKind ?? ''}|${srcRangeSummary}|${mediaSummary}|${effSummary}`;
+    const fpHash = syncSha256(new TextEncoder().encode(fpString)).slice(0, 16);
+
+    fpHashCounts.set(fpHash, (fpHashCounts.get(fpHash) ?? 0) + 1);
+
+    if (schema.startsWith('Timeline')) {
+      rootTimelinePointers.push(pointer);
+      if (obj['global_start_time']) {
+        const gst = parseRationalTime(obj['global_start_time']);
+        if (gst) globalStartTimes[pointer] = gst;
+      }
+    }
+
+    intermediateNodes.set(pointer, {
+      pointer,
+      parentPointer,
+      childPointers,
       schema,
+      schema_version: schemaVersion,
       name,
       enabled,
-      parent_id: parentId,
-      children_ids: childrenIds,
+      authoredId,
+      fpHash,
       track_kind: trackKind,
       source_range: sourceRange,
+      available_range: availableRange,
       media_references: mediaRefs,
       active_media_reference_key: activeKey,
+      effects,
+      markers,
       transition_type: transitionType,
       in_offset: inOffset,
       out_offset: outOffset,
       metadata,
-    };
+      diagnostics: nodeDiagnostics,
+    });
+  }
 
-    nodes[nodeId as string] = node;
+  traverse(rawObj, '', null);
 
-    if (schema.startsWith('Timeline')) {
-      timelineIds.push(nodeId as string);
-      if (obj['global_start_time']) {
-        const gst = parseRationalTime(obj['global_start_time']);
-        if (gst) globalStartTimes[nodeId as string] = gst;
+  // Pass 2: assign unique and duplicate-derived identities
+  const pointerToFinalId = new Map<string, string>();
+  const authoredOccurrences = new Map<string, number>();
+  const fpOccurrences = new Map<string, number>();
+
+  for (const [ptr, raw] of intermediateNodes) {
+    if (raw.authoredId) {
+      const total = authoredIdCounts.get(raw.authoredId) ?? 1;
+      const occ = (authoredOccurrences.get(raw.authoredId) ?? 0) + 1;
+      authoredOccurrences.set(raw.authoredId, occ);
+
+      if (total === 1) {
+        pointerToFinalId.set(ptr, raw.authoredId);
+      } else {
+        // ALL occurrences of duplicate authored IDs are marked derived-duplicate
+        pointerToFinalId.set(ptr, `${raw.authoredId}#dup_${occ}`);
+      }
+    } else {
+      const total = fpHashCounts.get(raw.fpHash) ?? 1;
+      const occ = (fpOccurrences.get(raw.fpHash) ?? 0) + 1;
+      fpOccurrences.set(raw.fpHash, occ);
+
+      if (total === 1) {
+        pointerToFinalId.set(ptr, `otio_${raw.fpHash}`);
+      } else {
+        pointerToFinalId.set(ptr, `otio_${raw.fpHash}#dup_${occ}`);
+      }
+    }
+  }
+
+  // Construct OtioNode map
+  const nodes: Record<string, OtioNode> = {};
+  const timelineIds: string[] = [];
+
+  for (const [ptr, raw] of intermediateNodes) {
+    const finalId = pointerToFinalId.get(ptr) as string;
+    const parentId = raw.parentPointer
+      ? (pointerToFinalId.get(raw.parentPointer) ?? null)
+      : null;
+    const childrenIds = raw.childPointers.map(
+      (cp) => pointerToFinalId.get(cp) as string
+    );
+
+    let origin: OtioIdentityOrigin = 'authored';
+    if (raw.authoredId) {
+      const count = authoredIdCounts.get(raw.authoredId) ?? 1;
+      if (count > 1) {
+        origin = 'derived-duplicate';
+        raw.diagnostics.push({
+          severity: 'warning',
+          code: 'ambiguous-identity',
+          message: `Duplicate authored ID detected: ${raw.authoredId}`,
+          target: { node_id: finalId, json_pointer: ptr },
+        });
+      }
+    } else {
+      const count = fpHashCounts.get(raw.fpHash) ?? 1;
+      if (count === 1) {
+        origin = 'derived-unique';
+      } else {
+        origin = 'derived-duplicate';
+        raw.diagnostics.push({
+          severity: 'info',
+          code: 'ambiguous-identity',
+          message: `Multiple identical structural items detected with fingerprint ${raw.fpHash}`,
+          target: { node_id: finalId, json_pointer: ptr },
+        });
       }
     }
 
-    return nodeId as string;
+    const otioNode: OtioNode = {
+      id: finalId,
+      identity_origin: origin,
+      json_pointer: ptr,
+      schema: raw.schema,
+      schema_version: raw.schema_version,
+      name: raw.name,
+      enabled: raw.enabled,
+      parent_id: parentId,
+      children_ids: childrenIds,
+      track_kind: raw.track_kind,
+      source_range: raw.source_range,
+      available_range: raw.available_range,
+      media_references: raw.media_references,
+      active_media_reference_key: raw.active_media_reference_key,
+      effects: raw.effects,
+      markers: raw.markers,
+      transition_type: raw.transition_type,
+      in_offset: raw.in_offset,
+      out_offset: raw.out_offset,
+      metadata: raw.metadata,
+      diagnostics: raw.diagnostics,
+    };
+
+    nodes[finalId] = otioNode;
+
+    if (raw.schema.startsWith('Timeline')) {
+      timelineIds.push(finalId);
+      if (globalStartTimes[ptr]) {
+        globalStartTimes[finalId] = globalStartTimes[ptr] as OtioRationalTime;
+        delete globalStartTimes[ptr];
+      }
+    }
   }
 
-  processObject(rawObj, '', null);
-
-  // Second pass: compute parent ranges and timeline ranges sequentially
+  // Pass 3: recursive timeline placement calculation
   for (const tid of timelineIds) {
     const tNode = nodes[tid];
     if (tNode) {
-      computeTimelinePlacements(nodes, tNode);
+      computeTimelinePlacements(nodes, tNode, docDiagnostics);
     }
   }
+
+  const mediaMap: Record<string, OtioMediaEntry> = {
+    ...(options?.mediaIndex ?? {}),
+  };
 
   return {
     version: 1,
@@ -335,18 +538,30 @@ export function readOtioDocument(
     timeline_ids: timelineIds,
     nodes,
     media: mediaMap,
-    diagnostics,
+    diagnostics: docDiagnostics,
     global_start_times: globalStartTimes,
   };
 }
 
+/**
+ * Compute placements recursively for Tracks, Stacks, and nested compositions.
+ */
 function computeTimelinePlacements(
   nodes: Record<string, OtioNode>,
-  root: OtioNode
+  root: OtioNode,
+  diagnosticsOut: OtioDiagnostic[]
 ): void {
-  // Placement on timeline
-  const zeroRate = 24;
-  const zeroTime: OtioRationalTime = { value: 0, rate: zeroRate };
+  // Determine root timeline rate
+  let defaultRate = 24;
+  for (const childId of root.children_ids) {
+    const child = nodes[childId];
+    if (child?.source_range) {
+      defaultRate = child.source_range.duration.rate;
+      break;
+    }
+  }
+
+  const zeroTime: OtioRationalTime = { value: 0, rate: defaultRate };
 
   function placeChildren(
     node: OtioNode,
@@ -355,15 +570,50 @@ function computeTimelinePlacements(
     if (node.schema.startsWith('Track')) {
       // Sequential placement
       let cursor = currentStart;
+
       for (const childId of node.children_ids) {
         const child = nodes[childId];
         if (!child) continue;
 
-        let duration: OtioRationalTime = { value: 0, rate: cursor.rate };
+        let duration: OtioRationalTime | null = null;
+
         if (child.source_range) {
           duration = rescaleTime(child.source_range.duration, cursor.rate);
+        } else if (child.available_range) {
+          duration = rescaleTime(child.available_range.duration, cursor.rate);
+        } else if (child.media_references && child.active_media_reference_key) {
+          const m = child.media_references[child.active_media_reference_key];
+          if (m?.available_range) {
+            duration = rescaleTime(m.available_range.duration, cursor.rate);
+          }
         } else if (child.schema.startsWith('Transition')) {
           duration = { value: 0, rate: cursor.rate };
+        } else if (
+          child.schema.startsWith('Stack') ||
+          child.schema.startsWith('Track')
+        ) {
+          // Nested composition
+          const nestedEnd = placeChildren(child, {
+            value: 0,
+            rate: cursor.rate,
+          });
+          duration = rescaleTime(nestedEnd, cursor.rate);
+        }
+
+        if (duration === null) {
+          diagnosticsOut.push({
+            severity: 'warning',
+            code: 'unplaced-item',
+            message: `Cannot determine duration for item ${child.name || child.id}; marked as unplaced`,
+            target: { node_id: child.id, json_pointer: child.json_pointer },
+          });
+          const mutable = child as unknown as {
+            parent_range: OtioTimeRange | null;
+            timeline_range: OtioTimeRange | null;
+          };
+          mutable.parent_range = null;
+          mutable.timeline_range = null;
+          continue;
         }
 
         const itemRange: OtioTimeRange = {
@@ -498,46 +748,207 @@ export function resolveOtioAnchor(
     };
   }
 
-  // Cross-revision projection
   let status: OtioProjectionStatus = 'same';
   let mappedRange: OtioTimeRange | undefined = anchor.range;
   let mappedTrackId: string | null | undefined = anchor.track_id;
   let mappedItemId: string | undefined = anchor.item_id;
 
-  // Remapping order:
-  // 1. Authored ID
-  // 2. Structural fingerprint
-  // 3. Otherwise ambiguous / changed / missing
   if (anchor.item_id) {
     const origNode = originalDocument.nodes[anchor.item_id];
     if (!origNode) {
       status = 'missing';
+      mappedRange = undefined;
+    } else if (origNode.identity_origin === 'derived-duplicate') {
+      // Identical duplicate occurrences must remain ambiguous
+      status = 'ambiguous';
     } else {
       let matchedNode: OtioNode | null = null;
       let matchCount = 0;
 
-      for (const nid in currentDocument.nodes) {
-        const cand = currentDocument.nodes[nid];
-        if (!cand) continue;
-        if (cand.id === origNode.id && cand.identity_origin === 'authored') {
-          matchedNode = cand;
-          matchCount++;
+      // 1. Try authored ID
+      if (origNode.identity_origin === 'authored') {
+        for (const nid in currentDocument.nodes) {
+          const cand = currentDocument.nodes[nid];
+          if (!cand) continue;
+          if (cand.id === origNode.id && cand.identity_origin === 'authored') {
+            matchedNode = cand;
+            matchCount++;
+          }
         }
       }
 
-      if (matchCount === 1 && matchedNode) {
+      // 2. Try structural fingerprint if no unique authored match
+      if (matchCount === 0 && origNode.identity_origin === 'derived-unique') {
+        for (const nid in currentDocument.nodes) {
+          const cand = currentDocument.nodes[nid];
+          if (!cand) continue;
+          if (
+            cand.schema === origNode.schema &&
+            cand.name === origNode.name &&
+            cand.track_kind === origNode.track_kind
+          ) {
+            const origMedia = getActiveMediaUrl(origNode);
+            const candMedia = getActiveMediaUrl(cand);
+            if (origMedia === candMedia) {
+              matchedNode = cand;
+              matchCount++;
+            }
+          }
+        }
+      }
+
+      if (matchCount > 1) {
+        status = 'ambiguous';
+      } else if (matchCount === 1 && matchedNode) {
         mappedItemId = matchedNode.id;
         mappedTrackId = matchedNode.parent_id;
-        if (matchedNode.timeline_range) {
-          mappedRange = matchedNode.timeline_range;
-          status = 'mapped';
+
+        // Check effects for non-invertible retiming / freeze
+        let hasAmbiguousRetiming = false;
+        if (matchedNode.effects) {
+          for (const eff of matchedNode.effects) {
+            if (eff.enabled) {
+              if (
+                eff.schema.startsWith('FreezeFrame') ||
+                (eff.schema.startsWith('LinearTimeWarp') &&
+                  eff.time_scalar !== 1)
+              ) {
+                hasAmbiguousRetiming = true;
+                break;
+              }
+            }
+          }
         }
-      } else if (matchCount > 1) {
-        status = 'ambiguous';
+
+        if (hasAmbiguousRetiming) {
+          status = 'ambiguous';
+        } else if (
+          origNode.timeline_range &&
+          origNode.source_range &&
+          matchedNode.timeline_range &&
+          matchedNode.source_range
+        ) {
+          // Source interval mapping
+          const offset = subtractRationalTimes(
+            anchor.range.start_time,
+            origNode.timeline_range.start_time
+          );
+          const anchorSourceStart = addRationalTimes(
+            origNode.source_range.start_time,
+            offset
+          );
+          const anchorSourceEnd = addRationalTimes(
+            anchorSourceStart,
+            anchor.range.duration
+          );
+
+          const curSourceStart = matchedNode.source_range.start_time;
+          const curSourceEnd = rangeEndTime(matchedNode.source_range);
+
+          const cmpStart = compareRationalTimes(
+            anchorSourceStart,
+            curSourceEnd
+          );
+          const cmpEnd = compareRationalTimes(anchorSourceEnd, curSourceStart);
+
+          if (cmpStart >= 0 || cmpEnd <= 0) {
+            // Completely trimmed out
+            status = 'missing';
+            mappedRange = undefined;
+          } else {
+            const isFullyContained =
+              compareRationalTimes(anchorSourceStart, curSourceStart) >= 0 &&
+              compareRationalTimes(anchorSourceEnd, curSourceEnd) <= 0;
+
+            if (isFullyContained) {
+              const newOffset = subtractRationalTimes(
+                anchorSourceStart,
+                curSourceStart
+              );
+              const newTimelineStart = addRationalTimes(
+                matchedNode.timeline_range.start_time,
+                newOffset
+              );
+              mappedRange = {
+                start_time: newTimelineStart,
+                duration: anchor.range.duration,
+              };
+              status = 'mapped';
+            } else {
+              // Partially trimmed
+              const overlapStart =
+                compareRationalTimes(anchorSourceStart, curSourceStart) >= 0
+                  ? anchorSourceStart
+                  : curSourceStart;
+              const overlapEnd =
+                compareRationalTimes(anchorSourceEnd, curSourceEnd) <= 0
+                  ? anchorSourceEnd
+                  : curSourceEnd;
+              const overlapDur = subtractRationalTimes(
+                overlapEnd,
+                overlapStart
+              );
+              const newOffset = subtractRationalTimes(
+                overlapStart,
+                curSourceStart
+              );
+              const newTimelineStart = addRationalTimes(
+                matchedNode.timeline_range.start_time,
+                newOffset
+              );
+              mappedRange = {
+                start_time: newTimelineStart,
+                duration: overlapDur,
+              };
+              status = 'partial';
+            }
+          }
+        } else {
+          status = 'changed';
+        }
+      } else {
+        status = 'missing';
+        mappedRange = undefined;
+      }
+    }
+  } else if (anchor.track_id) {
+    let trackFound = false;
+    for (const nid in currentDocument.nodes) {
+      const cand = currentDocument.nodes[nid];
+      if (cand && cand.id === anchor.track_id) {
+        trackFound = true;
+        break;
+      }
+    }
+    if (!trackFound) {
+      status = 'missing';
+      mappedRange = undefined;
+    } else {
+      // Compare source spans in range to determine if changed
+      const origSpans = sourceSpans;
+      const curSpans = sourceSpansForOtioRange(
+        currentDocument,
+        anchor.timeline_id,
+        anchor.track_id,
+        anchor.range
+      );
+      if (
+        origSpans.length === curSpans.length &&
+        origSpans.every((s, idx) => s.node_id === curSpans[idx]?.node_id)
+      ) {
+        status = 'mapped';
+      } else if (curSpans.length > 0) {
+        status = 'changed';
       } else {
         status = 'missing';
       }
     }
+  } else {
+    // Composition level
+    const timelineFound = currentDocument.timeline_ids.includes(
+      anchor.timeline_id
+    );
+    status = timelineFound ? 'mapped' : 'missing';
   }
 
   return {
@@ -549,4 +960,10 @@ export function resolveOtioAnchor(
     source_spans: sourceSpans,
     diagnostics: [],
   };
+}
+
+function getActiveMediaUrl(node: OtioNode): string | null {
+  if (!node.media_references || !node.active_media_reference_key) return null;
+  const ref = node.media_references[node.active_media_reference_key];
+  return ref?.target_url ?? ref?.target_url_base ?? null;
 }
