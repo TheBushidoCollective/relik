@@ -210,9 +210,10 @@ describe('the version the server reports', () => {
     expect(SERVER_VERSION).toBe('0.0.0-dev');
   });
 
-  test('is stamped from package.json when the bundle is built', async () => {
+  test('stamps bundle and plugin launch config from package.json when built', async () => {
     const root = new URL('../', import.meta.url).pathname;
     const pkg = (await Bun.file(`${root}package.json`).json()) as {
+      name: string;
       version: string;
     };
 
@@ -226,6 +227,38 @@ describe('the version the server reports', () => {
     const bundle = await Bun.file(`${root}dist/relic-mcp.js`).text();
     expect(bundle).toContain(pkg.version);
     expect(bundle).not.toContain('process.env.RELIC_MCP_VERSION');
+
+    const plugin = (await Bun.file(
+      `${root}.claude-plugin/plugin.json`
+    ).json()) as {
+      version: string;
+      mcpServers: string;
+    };
+    const marketplace = (await Bun.file(
+      `${root}.claude-plugin/marketplace.json`
+    ).json()) as {
+      plugins: Array<{ version: string }>;
+      metadata: { version: string };
+    };
+    const mcpServers = (await Bun.file(`${root}mcp-servers.json`).json()) as {
+      relic: {
+        type: string;
+        command: string;
+        args: string[];
+        env: Record<string, string>;
+      };
+    };
+
+    expect(plugin.version).toBe(pkg.version);
+    expect(plugin.mcpServers).toBe('./mcp-servers.json');
+    expect(marketplace.plugins[0]?.version).toBe(pkg.version);
+    expect(marketplace.metadata.version).toBe(pkg.version);
+    expect(mcpServers.relic).toEqual({
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', `${pkg.name}@${pkg.version}`],
+      env: { RELIC_CLIENT_NAME: `relic-plugin/${pkg.version}` },
+    });
   });
 });
 

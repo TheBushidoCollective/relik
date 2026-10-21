@@ -93,15 +93,13 @@ console.log(
 );
 
 /**
- * Generate the Claude Code manifests from package.json.
+ * Generate the Claude Code manifests and their MCP launch configuration from
+ * package.json. The package and plugin are one artifact, so installing either
+ * must describe the same client version without a separately maintained pin.
  *
- * The package and the plugin are the same artifact: installing from npm and
- * installing from the repo have to describe the same thing, and a version that
- * only matches because somebody remembered to edit it in four places will stop
- * matching. Generating them means package.json is the one source of truth, and
- * a stale manifest cannot be committed because it is not committed at all.
+ * mcp-servers.json is committed as the current generated output so a checkout
+ * remains installable before its first build. Every release build overwrites it.
  */
-// Read above, before the build, because the bundle is stamped from it too.
 
 const PLUGIN_DESCRIPTION =
   'Publish a file from your machine as an encrypted, shareable link. The ' +
@@ -111,6 +109,23 @@ const PLUGIN_DESCRIPTION =
 
 const author = { name: 'The Bushido Collective', url: 'https://thebushido.co' };
 const homepage = 'https://github.com/TheBushidoCollective/relic';
+
+const pluginMcpServers = {
+  relic: {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', `${pkg.name}@${pkg.version}`],
+    env: {
+      RELIC_CLIENT_NAME: `relic-plugin/${pkg.version}`,
+    },
+  },
+};
+
+await Bun.write(
+  './mcp-servers.json',
+  `${JSON.stringify(pluginMcpServers, null, 2)}\n`
+);
+
 
 await mkdir('./.claude-plugin', { recursive: true });
 
@@ -170,4 +185,4 @@ await Bun.write(
   )}\n`
 );
 
-console.log(`wrote plugin manifests at version ${pkg.version}`);
+console.log(`wrote plugin manifests and launch config at version ${pkg.version}`);

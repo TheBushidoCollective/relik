@@ -10,6 +10,8 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -43,6 +45,115 @@ function packagedTarget() {
     return 'linux-x64-gnu';
   }
   throw new Error(`no packaged native target for ${process.platform}/${process.arch}`);
+}
+
+function recordAt(value, label) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value;
+}
+
+function stringAt(record, field, label) {
+  const value = record[field];
+  if (typeof value !== 'string') throw new Error(`${label}.${field} must be a string`);
+  return value;
+}
+
+async function assertPackagedLaunchContract(packageRoot) {
+  const packageMetadata = recordAt(
+    JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')),
+    'installed package.json'
+  );
+  const packageName = stringAt(packageMetadata, 'name', 'installed package.json');
+  const packageVersion = stringAt(
+    packageMetadata,
+    'version',
+    'installed package.json'
+  );
+  const expectedPackage = `${packageName}@${packageVersion}`;
+
+  const plugin = recordAt(
+    JSON.parse(
+      await readFile(
+        join(packageRoot, '.claude-plugin', 'plugin.json'),
+        'utf8'
+      )
+    ),
+    'installed plugin manifest'
+  );
+  const marketplace = recordAt(
+    JSON.parse(
+      await readFile(
+        join(packageRoot, '.claude-plugin', 'marketplace.json'),
+        'utf8'
+      )
+    ),
+    'installed marketplace manifest'
+  );
+  const mcpServers = recordAt(
+    JSON.parse(await readFile(join(packageRoot, 'mcp-servers.json'), 'utf8')),
+    'installed MCP launch config'
+  );
+  const launcher = recordAt(mcpServers.relic, 'installed MCP launch config.relic');
+  const args = launcher.args;
+  if (
+    stringAt(launcher, 'type', 'installed MCP launch config.relic') !== 'stdio' ||
+    stringAt(launcher, 'command', 'installed MCP launch config.relic') !== 'npx' ||
+    !Array.isArray(args) ||
+    args.length !== 2 ||
+    args[0] !== '-y' ||
+    args[1] !== expectedPackage
+  ) {
+    throw new Error(
+      `installed MCP launch config does not pin ${expectedPackage}`
+    );
+  }
+  const env = recordAt(
+    launcher.env,
+    'installed MCP launch config.relic.env'
+  );
+  if (
+    stringAt(
+      env,
+      'RELIC_CLIENT_NAME',
+      'installed MCP launch config.relic.env'
+    ) !== `relic-plugin/${packageVersion}`
+  ) {
+    throw new Error(
+      `installed MCP launch config has the wrong client version for ${packageVersion}`
+    );
+  }
+
+  const plugins = marketplace.plugins;
+  if (!Array.isArray(plugins) || plugins.length !== 1) {
+    throw new Error('installed marketplace manifest must carry one plugin');
+  }
+  const marketplacePlugin = recordAt(
+    plugins[0],
+    'installed marketplace manifest.plugins[0]'
+  );
+  const manifestVersions = [
+    stringAt(plugin, 'version', 'installed plugin manifest'),
+    stringAt(
+      marketplacePlugin,
+      'version',
+      'installed marketplace manifest.plugins[0]'
+    ),
+    stringAt(
+      recordAt(marketplace.metadata, 'installed marketplace manifest.metadata'),
+      'version',
+      'installed marketplace manifest.metadata'
+    ),
+  ];
+  if (manifestVersions.some((version) => version !== packageVersion)) {
+    throw new Error(
+      `installed plugin manifests disagree with ${packageVersion}: ${manifestVersions.join(', ')}`
+    );
+  }
+  if (stringAt(plugin, 'mcpServers', 'installed plugin manifest') !== './mcp-servers.json') {
+    throw new Error('installed plugin manifest does not reference mcp-servers.json');
+  }
 }
 
 
@@ -148,7 +259,9 @@ async function callPublish(bin, cwd, origin, path) {
 
 async function main() {
   await access(tarball);
-  const temporary = await mkdtemp(join(tmpdir(), 'relic-mcp-packed-native-'));
+  const temporary = await mkdtemp(
+    join(await realpath(tmpdir()), 'relic-mcp-packed-native-')
+  );
   let hiddenSource;
   try {
     const install = join(temporary, 'install');
@@ -172,6 +285,7 @@ async function main() {
     await access(bin);
     await access(join(packageRoot, 'prebuilds'));
     await access(join(packageRoot, 'native'));
+    await assertPackagedLaunchContract(packageRoot);
     await run(
       process.execPath,
       [
