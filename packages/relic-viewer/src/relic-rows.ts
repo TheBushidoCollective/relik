@@ -53,6 +53,8 @@ export function dashboardPreview(renderer: string | undefined): {
     case 'jsx':
     case 'sandboxed-jsx':
       return { kind: 'component', label: 'Component' };
+    case 'otio':
+      return { kind: 'media', label: 'OTIO timeline' };
     case 'media':
       return { kind: 'media', label: 'Media' };
     case 'pdf':

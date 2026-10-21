@@ -38,6 +38,7 @@ import { isImageElement } from './annotate-region.ts';
 import { formatTimecode, formatTimecodeTenths } from './annotate-time.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import { createMediaPlayer, type TimeAimDetail } from './media-player.ts';
+import { disposeOtioViews, otioControllerFor, type OtioAimDetail } from './otio-bridge.ts';
 import {
   landmarkScrollDelta,
   nearestScrollLandmark,
@@ -1295,6 +1296,22 @@ export function buildCurrentStage(
     case 'media':
       main.appendChild(renderMediaView(view));
       break;
+    case 'otio': {
+      const root = document.createElement('section');
+      root.className = 'otio-view';
+      root.textContent = 'Loading OTIO';
+      main.appendChild(root);
+      void import('./otio-view.ts')
+        .then(({ mountOtioView }) =>
+          mountOtioView(root, { content: view.content, revision: view.version })
+        )
+        .catch(() => {
+          if (root.dataset['disposed'] === 'true') return;
+          root.textContent = 'OTIO could not be loaded.';
+          root.dataset['ready'] = 'error';
+        });
+      break;
+    }
     case 'sandboxed-html':
       main.appendChild(renderSandboxedHtml(view, usercontentOrigin));
       break;
@@ -3598,7 +3615,7 @@ export function paintPendingMark(
  */
 export function anchorSurfaceFor(host: HTMLElement): AnchorSurface | undefined {
   const candidates = host.querySelectorAll(
-    'img.relic-image, video.relic-media, audio.relic-media, iframe.usercontent-frame, canvas.relic-page'
+    '.otio-view, img.relic-image, video.relic-media, audio.relic-media, iframe.usercontent-frame, canvas.relic-page'
   );
   if (candidates.length > 1) return undefined;
   const only = candidates.item?.(0) ?? candidates[0];
@@ -4887,8 +4904,8 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       // A moment or a span on the scrubber. Written in a panel over the
       // scrubber, exactly as a selection is written over the words, and
       // handed to the sidebar only when the page cannot compose here.
-      next.addEventListener('relic:time-aim', ((
-        event: CustomEvent<TimeAimDetail>
+      const aimTemporal = ((
+        event: CustomEvent<TimeAimDetail | OtioAimDetail>
       ) => {
         const detail = event.detail;
         if (!detail?.anchor) return;
@@ -4921,7 +4938,9 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           return;
         }
         aim(detail.anchor, false, false);
-      }) as EventListener);
+      }) as EventListener;
+      next.addEventListener('relic:time-aim', aimTemporal);
+      next.addEventListener('relic:otio-aim', aimTemporal);
 
       // A box on a rendered page. Self-guarding on a `canvas.relic-page`
       // target, so it costs nothing on the classes that have no pages.
@@ -5011,7 +5030,8 @@ export function buildThread(
   view: ReadyView,
   relicId: string,
   deps: ViewerDeps,
-  onCount: (count: number) => void
+  onCount: (count: number) => void,
+  onViewOriginal?: (version: number) => void
 ): ThreadHandle {
   const section = document.createElement('aside');
   section.className = 'thread';
@@ -5107,6 +5127,67 @@ export function buildThread(
   let session: SessionState = { kind: 'unknown' };
   let host: HTMLElement | undefined;
   let lastEntries: readonly CommentEntry[] = [];
+  const originalViews = new Map<number, Promise<ReadyView | undefined>>();
+  const projectionAttempts = new Set<string>();
+  const projectionFailures = new Set<string>();
+
+  const addOtioFeedbackContext = (row: HTMLElement, entry: CommentEntry): void => {
+    if (entry.kind !== 'open' || entry.anchor?.kind !== 'otio') return;
+    const anchor = entry.anchor;
+    if (anchor.relic_version === view.version) return;
+    const projection = host === undefined ? undefined :
+      otioControllerFor(host)?.projection(anchor);
+    const context = document.createElement('div');
+    context.className = 'otio-feedback-projection';
+    context.dataset['projectionStatus'] = projection?.status ??
+      (projectionFailures.has(entry.id) ? 'unavailable' : 'loading');
+    const label = document.createElement('span');
+    label.textContent = `v${anchor.relic_version} → v${view.version} · ${
+      projection?.status ?? (projectionFailures.has(entry.id)
+        ? 'Original context unavailable' : 'Loading original version')
+    }`;
+    const original = document.createElement('button');
+    original.type = 'button';
+    original.className = 'otio-view-original';
+    original.textContent = 'View original';
+    original.addEventListener('click', (event) => {
+      event.stopPropagation();
+      onViewOriginal?.(anchor.relic_version);
+    });
+    context.append(label, original);
+    row.appendChild(context);
+  };
+
+  const projectEarlierOtioFeedback = async (entries: readonly CommentEntry[]): Promise<void> => {
+    if (host === undefined) return;
+    const controller = otioControllerFor(host);
+    if (controller === undefined) return;
+    let changed = false;
+    await Promise.all(entries.map(async (entry) => {
+      if (entry.kind !== 'open' || entry.anchor?.kind !== 'otio' ||
+          entry.anchor.relic_version === view.version || projectionAttempts.has(entry.id)) return;
+      projectionAttempts.add(entry.id);
+      const anchor = entry.anchor;
+      try {
+        let original = originalViews.get(anchor.relic_version);
+        if (original === undefined) {
+          original = loadHistoricalVersion(relicId, anchor.relic_version, view, deps)
+            .then((result) => result.kind === 'ready' ? result.view : undefined);
+          originalViews.set(anchor.relic_version, original);
+        }
+        const originalView = await original;
+        if (originalView === undefined) throw new Error('Original context unavailable');
+        await controller.project(anchor, originalView.content);
+      } catch {
+        projectionFailures.add(entry.id);
+      }
+      changed = true;
+    }));
+    if (changed && host !== undefined && otioControllerFor(host) === controller) {
+      paintMarks(lastEntries);
+      rerenderRows?.();
+    }
+  };
   /**
    * Comment ids whose mark is real but has nowhere to land on this page.
    *
@@ -5177,6 +5258,7 @@ export function buildThread(
     if (host === undefined) return;
     unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
+    otioControllerFor(host)?.clearMarks();
     host
       .querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
       ?.contentWindow?.postMessage({ type: 'relic:clear-marks' }, '*');
@@ -5270,6 +5352,7 @@ export function buildThread(
         { type: 'relic:quiet-marks', ids: settled },
         '*'
       );
+    void projectEarlierOtioFeedback(entries);
   };
 
   /**
@@ -5473,9 +5556,9 @@ export function buildThread(
     );
     const rows = document.createElement('ol');
     rows.className = 'popover-thread';
-    rows.appendChild(
-      commentRow(entry, unplaceable.has(entry.id), undefined, replies, false)
-    );
+    const row = commentRow(entry, unplaceable.has(entry.id), undefined, replies, false);
+    addOtioFeedbackContext(row, entry);
+    rows.appendChild(row);
 
     const id = entry.id;
     const actions: PopoverAction[] = [];
@@ -5800,8 +5883,8 @@ export function buildThread(
     if (
       held !== undefined &&
       layer.current() === held.panel &&
-      held.anchor.kind === 'time' &&
-      anchor.kind === 'time'
+      ((held.anchor.kind === 'time' && anchor.kind === 'time') ||
+       (held.anchor.kind === 'otio' && anchor.kind === 'otio'))
     ) {
       held.anchor = anchor;
       held.target.textContent = markTargetLabel(anchor);
@@ -5853,7 +5936,7 @@ export function buildThread(
           // comment on the last thing selected. A moment or a span never
           // went through the chip, and clearing it would also put focus in
           // the sidebar, which a fullscreen stage cannot even show.
-          if (aimed.kind !== 'time') marks.clear();
+          if (aimed.kind !== 'time' && aimed.kind !== 'otio') marks.clear();
           window.getSelection()?.removeAllRanges();
           closeCard();
           await refresh();
@@ -6110,6 +6193,11 @@ export function buildThread(
     const isCurrentVersion = view.version === view.currentVersion;
     const hasHistory = view.currentVersion > 1;
     const filteredEntries = state.entries.filter((entry) => {
+      // OTIO's authenticated revision is authoritative. Earlier feedback stays
+      // visible with a separately resolved projection, never guessed positions.
+      if (entry.kind === 'open' && entry.anchor?.kind === 'otio') {
+        return entry.anchor.relic_version <= viewedVersion;
+      }
       // 1. When a relic has no version history (currentVersion <= 1), there is
       // no version dimension for a reader to navigate. Every comment shows
       // regardless of stored version so single-version relics never lose rows.
@@ -6143,7 +6231,9 @@ export function buildThread(
         node.entry.id !== null && unplaceable.has(node.entry.id);
       const addressed =
         node.entry.id !== null ? addressedMap.get(node.entry.id) : null;
-      return commentRow(node.entry, isUnplaceable, addressed, replies, isReply);
+      const row = commentRow(node.entry, isUnplaceable, addressed, replies, isReply);
+      addOtioFeedbackContext(row, node.entry);
+      return row;
     };
 
     const renderRows = (): void => {
@@ -6395,6 +6485,10 @@ export function buildThread(
         });
         next.addEventListener('relic:frame-ready', () => {
           paintMarks(lastEntries);
+        });
+        next.addEventListener('relic:otio-ready', () => {
+          paintMarks(lastEntries);
+          rerenderRows?.();
         });
         // Time marks wait for the media's duration. When it arrives they
         // land, and the rows that said they could not are drawn again.
@@ -6942,11 +7036,12 @@ export function renderReady(
         const replacement = barFor(false);
         bar.replaceWith(replacement);
         bar = replacement;
-      });
+      }, (version) => { void showVersion(version); });
     } else {
       thread = undefined;
     }
     const stage = buildStageWrap(viewToShow, usercontentOrigin);
+    disposeOtioViews(document.body);
     document.body.replaceChildren(
       bar,
       buildRelicRow(stage, thread?.element, thread?.resizer, thread?.tab)
@@ -6993,7 +7088,7 @@ export function renderReady(
       const replacement = barFor(false);
       bar.replaceWith(replacement);
       bar = replacement;
-    });
+    }, (version) => { void showVersion(version); });
   }
 
   showSingle(activeView);
