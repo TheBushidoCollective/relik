@@ -15,7 +15,11 @@
         "children": [
             {
                 "OTIO_SCHEMA": "Track.1",
-                "metadata": {},
+                "metadata": {
+                    "relic": {
+                        "id": "track-asymmetric"
+                    }
+                },
                 "name": "Video Track",
                 "source_range": null,
                 "effects": [],
