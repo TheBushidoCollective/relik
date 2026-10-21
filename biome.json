@@ -13,6 +13,7 @@
       "**/*.js",
       "**/*.jsx",
       "**/*.json",
+      "!packages/relic-format/test/fixtures/otio/edge-cases/faithful-tokens.otio.json",
       "!**/node_modules",
       "!**/dist",
       "!**/.terraform",
