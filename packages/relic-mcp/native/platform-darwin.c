@@ -219,7 +219,7 @@ int relic_probe_confined_open(struct relic_open_error *error) {
 
 int relic_open_root(const char *path, struct relic_open_error *error) {
   const int flags =
-    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NOFOLLOW_ANY | O_CLOEXEC |
+    O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC |
     O_NONBLOCK | O_NOCTTY;
   const int fd = open(path, flags);
 

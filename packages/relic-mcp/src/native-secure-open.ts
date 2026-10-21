@@ -38,14 +38,6 @@ interface NativeSecureOpenBinding {
   openBundleRoot(path: string): unknown;
 }
 
-interface ProcessReportHeader {
-  readonly glibcVersionRuntime?: unknown;
-}
-
-interface ProcessReport {
-  getReport(): { readonly header?: ProcessReportHeader };
-}
-
 const nativeRequire = createRequire(import.meta.url);
 let loadedBinding: NativeSecureOpenBinding | undefined;
 
@@ -86,12 +78,14 @@ function requireNodeApiVersion(): void {
 }
 
 function requireGlibc228(): void {
-  const report = (process as typeof process & { report?: ProcessReport })
-    .report;
   let glibcVersion: unknown;
 
   try {
-    glibcVersion = report?.getReport().header?.glibcVersionRuntime;
+    const report = process.report?.getReport();
+    const header = report && 'header' in report ? report.header : undefined;
+    if (typeof header === 'object' && header !== null && 'glibcVersionRuntime' in header) {
+      glibcVersion = header.glibcVersionRuntime;
+    }
   } catch (cause) {
     throw nativeError(
       'ERR_RELIC_NATIVE_UNSUPPORTED_LIBC',
