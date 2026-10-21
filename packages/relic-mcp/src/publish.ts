@@ -12,6 +12,7 @@
  * make deliberate.
  */
 
+import { inflateRawSync } from 'node:zlib';
 import {
   deriveRendererClass,
   deriveShareProof,
@@ -19,7 +20,9 @@ import {
   encryptRelic,
   generateKey,
   generateRelicId,
+  indexOtioZip,
   normalizeTitle,
+  parseOtioJson,
   type RendererClass,
   relicUrl,
   shareVerifierFor,
@@ -31,6 +34,7 @@ import type {
 } from '@relic/format/cover';
 import { keyToMnemonic } from '@relic/format/mnemonic';
 import { uploadCover } from './cover/upload.ts';
+import { bundleOtiod } from './otio-bundle.ts';
 import {
   loadPublishedSource,
   resolveSourceIdentity,
@@ -101,7 +105,8 @@ export type ClientCode =
   | 'current_version_unavailable'
   | 'local_comment_not_found'
   | 'local_comment_unreadable'
-  | 'app_response_unusable';
+  | 'app_response_unusable'
+  | 'otio_bundle_invalid';
 export class PublishError extends Error {
   override readonly name = 'PublishError';
   constructor(
@@ -136,7 +141,7 @@ export interface FileReader {
   stat(
     path: string
   ): Promise<
-    { kind: 'file'; size: number } | { kind: 'directory' } | { kind: 'other' }
+    { kind: 'file'; size: number } | { kind: 'directory' } | { kind: 'symlink' } | { kind: 'other' }
   >;
   read(path: string): Promise<Uint8Array>;
   resolve(path: string): string;
@@ -596,7 +601,24 @@ export async function readSource(
   const resolvedPath = files.resolve(path);
   const stat = await files.stat(resolvedPath);
 
+  if (stat.kind === 'symlink') {
+    throw new PublishError(
+      'source_not_regular_file',
+      `${resolvedPath} is a symlink`
+    );
+  }
+
   if (stat.kind === 'directory') {
+    const base = files.basename(resolvedPath);
+    if (base.toLowerCase().endsWith('.otiod')) {
+      // Securely package the .otiod bundle into a standard deterministic .otioz archive.
+      const bundled = await bundleOtiod(resolvedPath, files);
+      return {
+        bytes: bundled.bytes,
+        basename: bundled.defaultFilename,
+        resolvedPath: bundled.resolvedPath,
+      };
+    }
     // format.md 3.1 fixes entry count at exactly 1 in version 1, so a
     // directory cannot be represented as a multi-entry relic at all.
     // Publishing one would mean silently tarring it into an opaque blob that
@@ -626,6 +648,36 @@ export async function readSource(
       'source_unreadable',
       `could not read ${resolvedPath}: ${(error as Error).message}`
     );
+  }
+
+  const base = files.basename(resolvedPath).toLowerCase();
+  if (base.endsWith('.otioz')) {
+    // Validate existing .otioz archive structurally before grant/upload.
+    try {
+      await indexOtioZip(bytes, {
+        inflater: async (compressed) => {
+          return new Uint8Array(inflateRawSync(compressed));
+        },
+      });
+    } catch (err) {
+      throw new PublishError(
+        'otio_bundle_invalid',
+        `Invalid .otioz archive: ${(err as Error).message}`
+      );
+    }
+  } else if (base.endsWith('.otio')) {
+    // Validate raw .otio JSON structurally.
+    try {
+      const parsed = parseOtioJson(bytes);
+      if (typeof parsed !== 'object' || parsed === null) {
+        throw new Error('root must be a JSON object');
+      }
+    } catch (err) {
+      throw new PublishError(
+        'otio_bundle_invalid',
+        `Invalid .otio JSON: ${(err as Error).message}`
+      );
+    }
   }
 
   return { bytes, basename: files.basename(resolvedPath), resolvedPath };
@@ -841,6 +893,7 @@ const CLASS_FALLBACK: Readonly<Record<RendererClass, string>> = {
   pdf: 'application/pdf',
   image: 'application/octet-stream',
   media: 'application/octet-stream',
+  otio: 'application/x-otioz',
   archive: 'application/octet-stream',
   binary: 'application/octet-stream',
 };
