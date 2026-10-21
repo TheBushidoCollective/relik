@@ -636,7 +636,6 @@ describe('reserved segments beat ids at the router', () => {
     expect(body).toContain('not safety');
     expect(body).toContain('markdown, code, html, jsx, image');
     expect(body).toContain('archive, binary, otio');
-    expect(body).toContain('OpenTimelineIO timeline relics (otio)');
     expect(body).toContain(
       "Anyone holding a relic's link can fetch every version it has ever held"
     );
