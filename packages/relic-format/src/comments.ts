@@ -538,16 +538,30 @@ function parseAnchor(value: unknown): CommentAnchor | null {
   if (kind === 'otio') {
     const v = anchor['v'];
     if (v !== 1) {
-      return { kind: 'unsupported', declared: `otio-v${String(v)}` };
+      // A future version is a primitive the writer chose, not an object.
+      // String() on `{toString: null, valueOf: null}` throws TypeError, and
+      // that throw used to escape one row and hide the rest of the thread.
+      // A non-primitive is a malformed envelope, not a version this reader
+      // is too old to show.
+      if (!isJsonPrimitive(v)) {
+        throw new MalformedCommentError(
+          'otio anchor version is not a primitive, so it is not a future ' +
+            'version'
+        );
+      }
+      return {
+        kind: 'unsupported',
+        declared: `otio-v${primitiveVersionLabel(v)}`,
+      };
     }
     const relicVersion = anchor['relic_version'];
     if (
       typeof relicVersion !== 'number' ||
-      !Number.isInteger(relicVersion) ||
+      !Number.isSafeInteger(relicVersion) ||
       relicVersion < 1
     ) {
       throw new MalformedCommentError(
-        'otio anchor relic_version is not a positive integer'
+        'otio anchor relic_version is not a positive safe integer'
       );
     }
     const docSha = anchor['document_sha256'];
@@ -556,108 +570,20 @@ function parseAnchor(value: unknown): CommentAnchor | null {
         'otio anchor document_sha256 is not a 64-character hex hash'
       );
     }
-    const timelineId = anchor['timeline_id'];
-    if (typeof timelineId !== 'string' || timelineId.length === 0) {
-      throw new MalformedCommentError(
-        'otio anchor timeline_id is missing or empty'
-      );
-    }
-    const trackId = anchor['track_id'];
-    if (
-      trackId !== null &&
-      (typeof trackId !== 'string' || trackId.length === 0)
-    ) {
-      throw new MalformedCommentError(
-        'otio anchor track_id is neither null nor a non-empty string'
-      );
-    }
-    const itemId = anchor['item_id'];
-    if (
-      itemId !== undefined &&
-      (typeof itemId !== 'string' || itemId.length === 0)
-    ) {
-      throw new MalformedCommentError(
-        'otio anchor item_id is present and is not a non-empty string'
-      );
-    }
-    const rangeVal = anchor['range'];
-    if (typeof rangeVal !== 'object' || rangeVal === null) {
-      throw new MalformedCommentError('otio anchor range is not an object');
-    }
-    const rangeObj = rangeVal as Record<string, unknown>;
-    const startVal = rangeObj['start_time'];
-    if (typeof startVal !== 'object' || startVal === null) {
-      throw new MalformedCommentError(
-        'otio anchor range start_time is missing or not an object'
-      );
-    }
-    const sVal = (startVal as Record<string, unknown>)['value'];
-    const sRate = (startVal as Record<string, unknown>)['rate'];
-    if (typeof sVal !== 'number' || !Number.isFinite(sVal)) {
-      throw new MalformedCommentError(
-        'otio anchor range start_time value is not a finite number'
-      );
-    }
-    if (typeof sRate !== 'number' || !Number.isFinite(sRate) || sRate <= 0) {
-      throw new MalformedCommentError(
-        'otio anchor range start_time rate is not a positive finite number'
-      );
-    }
-    refuseExtra(
-      startVal as Record<string, unknown>,
-      ['value', 'rate'],
-      'range start_time'
+    const timelineId = requireOtioId(
+      anchor['timeline_id'],
+      'otio anchor timeline_id'
     );
-
-    const durVal = rangeObj['duration'];
-    if (typeof durVal !== 'object' || durVal === null) {
-      throw new MalformedCommentError(
-        'otio anchor range duration is missing or not an object'
-      );
-    }
-    const dVal = (durVal as Record<string, unknown>)['value'];
-    const dRate = (durVal as Record<string, unknown>)['rate'];
-    if (typeof dVal !== 'number' || !Number.isFinite(dVal) || dVal < 0) {
-      throw new MalformedCommentError(
-        'otio anchor range duration value is not a non-negative finite number'
-      );
-    }
-    if (typeof dRate !== 'number' || !Number.isFinite(dRate) || dRate <= 0) {
-      throw new MalformedCommentError(
-        'otio anchor range duration rate is not a positive finite number'
-      );
-    }
-    refuseExtra(
-      durVal as Record<string, unknown>,
-      ['value', 'rate'],
-      'range duration'
+    const trackId = requireOtioIdOrNull(
+      anchor['track_id'],
+      'otio anchor track_id'
     );
-    refuseExtra(rangeObj, ['start_time', 'duration'], 'otio range');
-
-    const snapshotVal = anchor['snapshot'];
-    if (typeof snapshotVal !== 'object' || snapshotVal === null) {
-      throw new MalformedCommentError('otio anchor snapshot is not an object');
-    }
-    const snapObj = snapshotVal as Record<string, unknown>;
-    const snapTimeline = snapObj['timeline'];
-    if (typeof snapTimeline !== 'string') {
-      throw new MalformedCommentError(
-        'otio anchor snapshot timeline is not a string'
-      );
-    }
-    const snapTrack = snapObj['track'];
-    if (snapTrack !== null && typeof snapTrack !== 'string') {
-      throw new MalformedCommentError(
-        'otio anchor snapshot track is neither null nor a string'
-      );
-    }
-    const snapItem = snapObj['item'];
-    if (snapItem !== null && typeof snapItem !== 'string') {
-      throw new MalformedCommentError(
-        'otio anchor snapshot item is neither null nor a string'
-      );
-    }
-    refuseExtra(snapObj, ['timeline', 'track', 'item'], 'otio snapshot');
+    const itemId =
+      anchor['item_id'] === undefined
+        ? undefined
+        : requireOtioId(anchor['item_id'], 'otio anchor item_id');
+    const range = requireOtioRange(anchor['range']);
+    const snapshot = requireOtioSnapshot(anchor['snapshot']);
 
     refuseExtra(
       anchor,
@@ -683,21 +609,15 @@ function parseAnchor(value: unknown): CommentAnchor | null {
       timeline_id: timelineId,
       track_id: trackId,
       ...(itemId === undefined ? {} : { item_id: itemId }),
-      range: {
-        start_time: { value: sVal, rate: sRate },
-        duration: { value: dVal, rate: dRate },
-      },
-      snapshot: {
-        timeline: snapTimeline,
-        track: snapTrack,
-        item: snapItem,
-      },
+      range,
+      snapshot,
     };
 
     const encoded = new TextEncoder().encode(JSON.stringify(otioAnchor)).length;
     if (encoded > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
       throw new MalformedCommentError(
-        `otio anchor encoded size ${encoded} bytes exceeds cap of ${COMMENT_ANCHOR_OTIO_LIMIT_BYTES}`
+        `otio anchor encoded size ${encoded} bytes exceeds cap of ` +
+          `${COMMENT_ANCHOR_OTIO_LIMIT_BYTES}`
       );
     }
     return otioAnchor;
@@ -893,6 +813,171 @@ function decodeBase64url(encoded: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+/**
+ * A JSON primitive is the only thing a future OTIO anchor version can be.
+ *
+ * `null` and a missing field are primitives too: this reader already reports
+ * those as unsupported rather than as tampering. An object, an array, or a
+ * function is not a version, and formatting it with `String()` can throw.
+ */
+function isJsonPrimitive(
+  value: unknown
+): value is string | number | boolean | null | undefined {
+  return (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
+}
+
+/**
+ * A short label for a future version.
+ *
+ * Only called after `isJsonPrimitive`, so `String()` cannot throw. A hostile
+ * string version is truncated so the unsupported mark cannot grow without
+ * bound inside an otherwise readable comment.
+ */
+function primitiveVersionLabel(
+  value: string | number | boolean | null | undefined
+): string {
+  if (typeof value === 'string') {
+    let out = '';
+    const encoder = new TextEncoder();
+    for (const character of value) {
+      if (character === '\u0000') break;
+      const next = out + character;
+      if (encoder.encode(next).length > 32) break;
+      out = next;
+    }
+    return out;
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    if (Number.isNaN(value)) return 'NaN';
+    return value > 0 ? 'Infinity' : '-Infinity';
+  }
+  return String(value);
+}
+
+function boundOtioText(value: string, label: string): string {
+  if (value.includes('\u0000')) {
+    throw new MalformedCommentError(`${label} contains a NUL`);
+  }
+  const bytes = new TextEncoder().encode(value).length;
+  if (bytes > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
+    throw new MalformedCommentError(
+      `${label} is ${bytes} bytes, over the ` +
+        `${COMMENT_ANCHOR_OTIO_LIMIT_BYTES}-byte anchor cap`
+    );
+  }
+  return value;
+}
+
+function requireOtioId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new MalformedCommentError(`${label} is missing or empty`);
+  }
+  return boundOtioText(value, label);
+}
+
+function requireOtioIdOrNull(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new MalformedCommentError(
+      `${label} is neither null nor a non-empty string`
+    );
+  }
+  return boundOtioText(value, label);
+}
+
+function requireOtioRational(
+  value: unknown,
+  label: string,
+  allowNegative: boolean
+): OtioRationalTime {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new MalformedCommentError(`${label} is missing or not an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const rationalValue = record['value'];
+  const rate = record['rate'];
+  if (
+    typeof rationalValue !== 'number' ||
+    !Number.isFinite(rationalValue) ||
+    Math.abs(rationalValue) > Number.MAX_SAFE_INTEGER ||
+    (!allowNegative && rationalValue < 0)
+  ) {
+    throw new MalformedCommentError(
+      allowNegative
+        ? `${label} value is not a safe finite number`
+        : `${label} value is not a non-negative safe finite number`
+    );
+  }
+  if (
+    typeof rate !== 'number' ||
+    !Number.isFinite(rate) ||
+    rate <= 0 ||
+    rate > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new MalformedCommentError(
+      `${label} rate is not a positive safe finite number`
+    );
+  }
+  refuseExtra(record, ['value', 'rate'], label);
+  return { value: rationalValue, rate };
+}
+
+function requireOtioRange(value: unknown): OtioAnchorV1['range'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new MalformedCommentError('otio anchor range is not an object');
+  }
+  const range = value as Record<string, unknown>;
+  const start = requireOtioRational(
+    range['start_time'],
+    'otio anchor range start_time',
+    true
+  );
+  const duration = requireOtioRational(
+    range['duration'],
+    'otio anchor range duration',
+    false
+  );
+  refuseExtra(range, ['start_time', 'duration'], 'otio range');
+  return { start_time: start, duration };
+}
+
+function requireOtioSnapshot(value: unknown): OtioAnchorV1['snapshot'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new MalformedCommentError('otio anchor snapshot is not an object');
+  }
+  const snapshot = value as Record<string, unknown>;
+  if (typeof snapshot['timeline'] !== 'string') {
+    throw new MalformedCommentError(
+      'otio anchor snapshot timeline is not a string'
+    );
+  }
+  const timeline = boundOtioText(
+    snapshot['timeline'],
+    'otio anchor snapshot timeline'
+  );
+  const track = requireOtioLabel(
+    snapshot['track'],
+    'otio anchor snapshot track'
+  );
+  const item = requireOtioLabel(snapshot['item'], 'otio anchor snapshot item');
+  refuseExtra(snapshot, ['timeline', 'track', 'item'], 'otio snapshot');
+  return { timeline, track, item };
+}
+
+function requireOtioLabel(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') {
+    throw new MalformedCommentError(`${label} is neither null nor a string`);
+  }
+  return boundOtioText(value, label);
 }
 
 /**
