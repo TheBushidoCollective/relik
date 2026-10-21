@@ -475,6 +475,23 @@ try {
       'decoded playback did not expose two ready audio elements'
     );
     console.log(`AUDIO ready=${audioReady}`);
+    for (const [width, scheme] of [
+      [1440, 'light'],
+      [390, 'light'],
+      [1440, 'dark'],
+      [390, 'dark'],
+    ] as const) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: width < 600,
+      });
+      await browser.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: scheme }],
+      });
+      await browser.screenshot(`${width}-${scheme}`);
+    }
     await browser.screenshot('desktop-selected');
   } finally {
     await browser.close();
@@ -626,10 +643,14 @@ try {
 
   assert.equal(mails.length, 0, 'the proof sent mail');
   console.log('OTIO_PATH_OK');
-} finally {
+ } finally {
+  const kept = join(process.cwd(), 'otio-path-shots');
+  await rm(kept, { recursive: true, force: true });
+  await Bun.spawn(['cp', '-R', shotDir, kept]).exited;
+  console.log(`SHOTS ${kept}`);
   await service.stop(true);
   await rm(scratch, { recursive: true, force: true });
-}
+ }
 
 
 function duplicateItemId(document: OtioDocumentV1): string | undefined {
