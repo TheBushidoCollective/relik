@@ -863,8 +863,10 @@ describe('OTIO bundling', () => {
         if (expectedEntry === undefined) {
           throw new Error(`Missing frame expectation for ${example.name}`);
         }
+        // Probe the interior of each frame's presentation window rather than
+        // its start, so floating-point time conversion cannot land on a boundary.
         const evaluation = evaluateOtioAt(document, timelineId, {
-          value: index * sequence.frameStep,
+          value: (index + 0.5) * sequence.frameStep,
           rate: example.sampleRate,
         });
         const contribution = evaluation.video_contributions.find(
