@@ -136,7 +136,7 @@ static int expect_confined_bytes(int root_fd, const char *path, const char *expe
 }
 
 int main(void) {
-  char base_template[] = "/tmp/relic-darwin-confinement.XXXXXX";
+  char base_template[] = "/private/tmp/relic-darwin-confinement.XXXXXX";
   char root[PATH_MAX] = {0};
   char moved_root[PATH_MAX] = {0};
   char root_link[PATH_MAX] = {0};
