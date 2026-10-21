@@ -1192,8 +1192,27 @@ async function openBrowser(
   );
   if (found.kind !== 'found') throw new Error('unreachable');
   const profile = await mkdtemp(join(tmpdir(), 'relic-otio-chrome-'));
+  const shared = chromeArgs(found.path, profile);
+  assert.deepEqual(
+    shared.filter(
+      (arg) =>
+        arg.startsWith('--proxy-bypass-list=') ||
+        arg.startsWith('--host-resolver-rules=')
+    ),
+    [
+      '--host-resolver-rules=MAP * ~NOTFOUND',
+      '--proxy-bypass-list=<-loopback>',
+    ],
+    'shared Chrome network isolation changed; re-derive the OTIO loopback exception'
+  );
   const args = [
-    ...chromeArgs(found.path, profile),
+    ...shared.map((arg) =>
+      arg === '--proxy-bypass-list=<-loopback>'
+        ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${service.port}`
+        : arg === '--host-resolver-rules=MAP * ~NOTFOUND'
+          ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
+          : arg
+    ),
     '--autoplay-policy=no-user-gesture-required',
   ];
   const child = spawn(found.path, args, {
@@ -1260,20 +1279,41 @@ async function openBrowser(
       )
       .catch(() => {});
   });
-  await cdp.send('Network.setCookie', {
-    name: 'relic_session',
-    value: sessionToken,
-    url: origin,
-    httpOnly: true,
-    secure: false,
-    sameSite: 'Lax',
-  });
+  await cdp.send(
+    'Network.setCookie',
+    {
+      name: 'relic_session',
+      value: sessionToken,
+      url: origin,
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+    },
+    sessionId
+  );
   const loaded = cdp.waitForEvent('Page.loadEventFired', {
     sessionId,
     timeoutMs: 20000,
   });
-  await cdp.send('Page.navigate', { url }, sessionId);
+  const navigated = await cdp.send('Page.navigate', { url }, sessionId);
+  if (navigated['errorText'] !== undefined) {
+    loaded.catch(() => {});
+    assert.fail(`navigation failed: ${String(navigated['errorText'])}`);
+  }
   await loaded;
+  const landed = await cdp.send(
+    'Runtime.evaluate',
+    {
+      expression: 'location.origin',
+      returnByValue: true,
+    },
+    sessionId
+  );
+  assert.equal(
+    (landed['result'] as { value?: unknown } | undefined)?.value,
+    origin,
+    'browser did not land on the service origin'
+  );
   return {
     blocked,
     continuedNonLoopback,
@@ -1419,7 +1459,10 @@ async function canvasRowCenter(browser: ChromeSession): Promise<number> {
     for (let x = 0; x < canvas.width; x++) out.push(data[x * 4], data[x * 4 + 1], data[x * 4 + 2]);
     return out;
   })()`);
-  assert.ok(row && row.length > 0 && row.length % 3 === 0, 'canvas row missing');
+  assert.ok(
+    row && row.length > 0 && row.length % 3 === 0,
+    'canvas row missing'
+  );
   return rowCenter(Uint8Array.from(row), row.length / 3);
 }
 
