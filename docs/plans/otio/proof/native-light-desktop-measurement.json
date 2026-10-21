@@ -1,0 +1,48 @@
+{
+  "url": "http://127.0.0.1:60688/y8tvcrkaqtgfn07dchdcyr9b7c",
+  "measuredAt": "2026-10-21T17:21:53.375Z",
+  "viewport": {
+    "w": 1440,
+    "h": 900
+  },
+  "tells": [],
+  "fingerprint": {
+    "typography": {
+      "h1Family": "unknown",
+      "h1Class": "unknown",
+      "h2Family": "system-ui",
+      "h2Class": "sans",
+      "bodyFamily": "system-ui",
+      "bodyClass": "sans"
+    },
+    "palette": {
+      "groundLightness": 0.95,
+      "groundWarmth": 0,
+      "ink": "rgb(22, 25, 26)",
+      "inkLightness": 0.09,
+      "accentHues": [
+        180,
+        300,
+        240
+      ],
+      "darkBandCount": 0
+    },
+    "shape": {
+      "medianRadius": 0,
+      "pillCount": 0,
+      "shadowUsage": 0
+    },
+    "skeleton": {
+      "sections": [
+        "list-grid"
+      ],
+      "eyebrowRatio": 0,
+      "twoToneHeadline": false,
+      "heroAlignment": "none"
+    },
+    "imagery": {
+      "photoAreaShare": 0,
+      "photoCount": 0
+    }
+  }
+}

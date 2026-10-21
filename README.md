@@ -53,6 +53,11 @@ download-only. For OpenTimelineIO relics, unencrypted first-screen media
 rendering is skipped by default to prevent private timeline cuts or frames from
 leaking into unencrypted link unfurl previews.
 
+OTIO comment rows show the sealed revision, rational range and stable track ID
+with the feedback, distinguishing same-named tracks. Native reader screenshots,
+measurements and interaction results are recorded in
+[`docs/plans/otio/proof/native-interactions.json`](docs/plans/otio/proof/native-interactions.json).
+
 `/policy` states the whole trade: the telemetry, the optional plaintext title,
 the per-relic cover image raster stored in the clear for unfurl cards
 (rendered by default and declined with `cover: false`, with generic cards for

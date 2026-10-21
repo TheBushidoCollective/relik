@@ -4033,9 +4033,13 @@ canvas.relic-page {
 .otio-track-grid { position: relative; min-width: 760px; }
 .otio-ruler, .otio-track-row { display: grid; grid-template-columns: var(--otio-label-width) minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
 .otio-ruler-label { position: sticky; z-index: 7; left: 0; padding: .35rem .6rem; border-right: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft); font: .6rem var(--mono); }
-.otio-ruler-ticks { height: 26px; position: relative; overflow: hidden; }
-.otio-ruler-ticks span { position: absolute; top: 5px; color: var(--ink-soft); font: .53rem var(--mono); }
+.otio-ruler-ticks { container-name: otio-ruler; container-type: inline-size; height: 26px; position: relative; overflow: hidden; }
+.otio-ruler-ticks span { position: absolute; top: 5px; color: var(--ink-soft); font: .53rem var(--mono); transform: translateX(-50%); }
+.otio-ruler-ticks span:first-child { transform: none; }
 .otio-ruler-ticks span:last-child { transform: translateX(-100%); }
+@container otio-ruler (max-width: 54rem) {
+  .otio-ruler-ticks span:nth-child(2n) { display: none; }
+}
 .otio-track-label { position: sticky; left: 0; z-index: 6; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .4rem .45rem; border-right: 1px solid var(--rule-strong); background: var(--surface); }
 .otio-track-code { flex: 0 0 auto; color: var(--ink-soft); font: .6rem var(--mono); }
 .otio-track-name { flex: 1; min-width: 0; line-height: 1.35; }
@@ -4079,6 +4083,8 @@ canvas.relic-page {
 .otio-diagnostics { padding: .5rem .75rem; }
 .otio-diagnostics:empty { display: none; }
 .otio-diagnostic { margin: .35rem 0; color: var(--oxide); font: .68rem/1.6 var(--mono); overflow-wrap: anywhere; }
+.otio-feedback-target { margin: .6rem 0; padding: .35rem .55rem; border-left: 2px solid var(--patina); background: var(--diff-added); color: var(--ink); font: .66rem/1.6 var(--mono); overflow-wrap: anywhere; }
+.otio-feedback-target span { display: block; margin-top: .15rem; color: var(--ink-soft); font-size: .6rem; }
 .otio-feedback-projection { display: flex; align-items: baseline; flex-wrap: wrap; gap: .5rem; padding: .5rem 0 0; font: .66rem/1.6 var(--mono); color: var(--oxide); }
 .otio-view-original { border: 1px solid var(--rule-strong); background: var(--surface); color: var(--patina-ink); padding: .2rem .4rem; font: .68rem var(--sans); cursor: pointer; }
 .otio-view button:focus-visible, .otio-view input:focus-visible, .otio-view select:focus-visible, .otio-track-rail:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
