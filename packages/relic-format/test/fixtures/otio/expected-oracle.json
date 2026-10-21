@@ -1,0 +1,495 @@
+{
+  "version": 1,
+  "generator": {
+    "recipe": "uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py",
+    "otio_version": "opentimelineio==0.18.1"
+  },
+  "fixtures": {
+    "standard-sample": {
+      "timeline_name": "Relik Feature Editorial",
+      "global_start_time": {
+        "value": 86400.0,
+        "rate": 24.0
+      },
+      "duration": {
+        "value": 240.0,
+        "rate": 24.0
+      },
+      "tracks": [
+        {
+          "id": "track-v1-main",
+          "name": "Video 1",
+          "kind": "Video",
+          "child_count": 5,
+          "duration": {
+            "value": 240.0,
+            "rate": 24.0
+          }
+        },
+        {
+          "id": "track-v2-main",
+          "name": "Video 2",
+          "kind": "Video",
+          "child_count": 5,
+          "duration": {
+            "value": 300.0,
+            "rate": 30.0
+          }
+        },
+        {
+          "id": "track-v2-duplicate",
+          "name": "Video 2",
+          "kind": "Video",
+          "child_count": 1,
+          "duration": {
+            "value": 240.0,
+            "rate": 24.0
+          }
+        },
+        {
+          "id": "track-a1-main",
+          "name": "Dialogue DX",
+          "kind": "Audio",
+          "child_count": 1,
+          "duration": {
+            "value": 480000.0,
+            "rate": 48000.0
+          }
+        },
+        {
+          "id": "track-a2-main",
+          "name": "Music MX",
+          "kind": "Audio",
+          "child_count": 2,
+          "duration": {
+            "value": 480000.0,
+            "rate": 48000.0
+          }
+        },
+        {
+          "id": "track-a3-duplicate",
+          "name": "Dialogue DX",
+          "kind": "Audio",
+          "child_count": 1,
+          "duration": {
+            "value": 480000.0,
+            "rate": 48000.0
+          }
+        }
+      ],
+      "evaluations_at_time": [
+        {
+          "time": {
+            "value": 0.0,
+            "rate": 24.0
+          },
+          "video_layers": [
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-primary-a",
+              "media_url": "media/primary_a.mp4",
+              "source_time": {
+                "value": 48.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 24.0,
+                "rate": 24.0
+              },
+              "weight": 1.0
+            },
+            {
+              "track_id": "track-v2-main",
+              "clip_id": "clip-v2-pip-alpha",
+              "media_url": "media/overlay_alpha.webm",
+              "source_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "file_relative_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "weight": 1.0
+            }
+          ],
+          "audio_layers": [
+            {
+              "track_id": "track-a1-main",
+              "clip_id": "clip-a1-interview",
+              "media_url": "media/dx_mic1.wav",
+              "source_time": {
+                "value": 0.0,
+                "rate": 48000.0
+              }
+            }
+          ]
+        },
+        {
+          "time": {
+            "value": 36.0,
+            "rate": 24.0
+          },
+          "video_layers": [
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-primary-a",
+              "media_url": "media/primary_a.mp4",
+              "source_time": {
+                "value": 84.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 60.0,
+                "rate": 24.0
+              },
+              "weight": 1.0
+            },
+            {
+              "track_id": "track-v2-main",
+              "clip_id": "clip-v2-pip-alpha",
+              "media_url": "media/overlay_alpha.webm",
+              "source_time": {
+                "value": 45.0,
+                "rate": 30.0
+              },
+              "file_relative_time": {
+                "value": 45.0,
+                "rate": 30.0
+              },
+              "weight": 1.0
+            }
+          ],
+          "audio_layers": [
+            {
+              "track_id": "track-a1-main",
+              "clip_id": "clip-a1-interview",
+              "media_url": "media/dx_mic1.wav",
+              "source_time": {
+                "value": 72000.0,
+                "rate": 48000.0
+              }
+            }
+          ]
+        },
+        {
+          "time": {
+            "value": 66.0,
+            "rate": 24.0
+          },
+          "video_layers": [
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-primary-a",
+              "media_url": "media/primary_a.mp4",
+              "source_time": {
+                "value": 114.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 90.0,
+                "rate": 24.0
+              },
+              "weight": 0.75
+            },
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-secondary-b",
+              "media_url": "media/secondary_b.mp4",
+              "source_time": {
+                "value": 18.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 18.0,
+                "rate": 24.0
+              },
+              "weight": 0.25
+            },
+            {
+              "track_id": "track-v2-main",
+              "clip_id": "clip-v2-timewarp",
+              "media_url": "media/primary_a.mp4",
+              "source_time": {
+                "value": 36.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 12.0,
+                "rate": 24.0
+              },
+              "weight": 1.0
+            }
+          ]
+        },
+        {
+          "time": {
+            "value": 72.0,
+            "rate": 24.0
+          },
+          "video_layers": [
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-primary-a",
+              "media_url": "media/primary_a.mp4",
+              "source_time": {
+                "value": 120.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 96.0,
+                "rate": 24.0
+              },
+              "weight": 0.5
+            },
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-secondary-b",
+              "media_url": "media/secondary_b.mp4",
+              "source_time": {
+                "value": 24.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 24.0,
+                "rate": 24.0
+              },
+              "weight": 0.5
+            }
+          ]
+        },
+        {
+          "time": {
+            "value": 78.0,
+            "rate": 24.0
+          },
+          "video_layers": [
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-primary-a",
+              "media_url": "media/primary_a.mp4",
+              "source_time": {
+                "value": 126.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 102.0,
+                "rate": 24.0
+              },
+              "weight": 0.25
+            },
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-secondary-b",
+              "media_url": "media/secondary_b.mp4",
+              "source_time": {
+                "value": 30.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 30.0,
+                "rate": 24.0
+              },
+              "weight": 0.75
+            }
+          ]
+        },
+        {
+          "time": {
+            "value": 100.0,
+            "rate": 24.0
+          },
+          "video_layers": [
+            {
+              "track_id": "track-v1-main",
+              "clip_id": "clip-v1-secondary-b",
+              "media_url": "media/secondary_b.mp4",
+              "source_time": {
+                "value": 52.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 52.0,
+                "rate": 24.0
+              },
+              "weight": 1.0
+            },
+            {
+              "track_id": "track-v2-main",
+              "clip_id": "clip-v2-freeze",
+              "media_url": "media/secondary_b.mp4",
+              "source_time": {
+                "value": 0.0,
+                "rate": 24.0
+              },
+              "file_relative_time": {
+                "value": 0.0,
+                "rate": 24.0
+              },
+              "weight": 1.0
+            }
+          ]
+        },
+        {
+          "time": {
+            "value": 180.0,
+            "rate": 24.0
+          },
+          "video_layers": [],
+          "audio_layers": [
+            {
+              "track_id": "track-a1-main",
+              "clip_id": "clip-a1-interview",
+              "media_url": "media/dx_mic1.wav",
+              "source_time": {
+                "value": 360000.0,
+                "rate": 48000.0
+              }
+            },
+            {
+              "track_id": "track-a2-main",
+              "clip_id": "clip-a2-bed",
+              "media_url": "media/mx_bed.wav",
+              "source_time": {
+                "value": 264000.0,
+                "rate": 48000.0
+              }
+            }
+          ]
+        },
+        {
+          "time": {
+            "value": 200.0,
+            "rate": 24.0
+          },
+          "video_layers": [
+            {
+              "track_id": "track-nested-plate-base",
+              "clip_id": "clip-nested-plate",
+              "media_url": "media/vfx_plates/plate_1009.png",
+              "source_time": {
+                "value": 8.0,
+                "rate": 24.0
+              },
+              "weight": 1.0
+            },
+            {
+              "track_id": "track-nested-fx-glow",
+              "clip_id": "clip-nested-flare",
+              "media_url": "media/fx_flare.webm",
+              "source_time": {
+                "value": 8.0,
+                "rate": 24.0
+              },
+              "weight": 1.0
+            }
+          ]
+        }
+      ],
+      "source_spans_queries": [
+        {
+          "track_id": "track-v1-main",
+          "query_range": {
+            "start_time": {
+              "value": 20.0,
+              "rate": 24.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 24.0
+            }
+          },
+          "expected_spans": [
+            {
+              "clip_id": "clip-v1-primary-a",
+              "media_url": "media/primary_a.mp4",
+              "source_range": {
+                "start_time": {
+                  "value": 68.0,
+                  "rate": 24.0
+                },
+                "duration": {
+                  "value": 30.0,
+                  "rate": 24.0
+                }
+              },
+              "file_relative_range": {
+                "start_time": {
+                  "value": 44.0,
+                  "rate": 24.0
+                },
+                "duration": {
+                  "value": 30.0,
+                  "rate": 24.0
+                }
+              }
+            }
+          ]
+        },
+        {
+          "track_id": "track-v1-main",
+          "query_range": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 24.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 24.0
+            }
+          },
+          "expected_spans": [
+            {
+              "clip_id": "clip-v1-primary-a",
+              "media_url": "media/primary_a.mp4",
+              "source_range": {
+                "start_time": {
+                  "value": 108.0,
+                  "rate": 24.0
+                },
+                "duration": {
+                  "value": 12.0,
+                  "rate": 24.0
+                }
+              },
+              "file_relative_range": {
+                "start_time": {
+                  "value": 84.0,
+                  "rate": 24.0
+                },
+                "duration": {
+                  "value": 12.0,
+                  "rate": 24.0
+                }
+              }
+            },
+            {
+              "clip_id": "clip-v1-secondary-b",
+              "media_url": "media/secondary_b.mp4",
+              "source_range": {
+                "start_time": {
+                  "value": 24.0,
+                  "rate": 24.0
+                },
+                "duration": {
+                  "value": 18.0,
+                  "rate": 24.0
+                }
+              },
+              "file_relative_range": {
+                "start_time": {
+                  "value": 24.0,
+                  "rate": 24.0
+                },
+                "duration": {
+                  "value": 18.0,
+                  "rate": 24.0
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

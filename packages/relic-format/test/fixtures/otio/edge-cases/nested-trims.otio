@@ -1,0 +1,179 @@
+{
+    "OTIO_SCHEMA": "Timeline.1",
+    "metadata": {},
+    "name": "Nested Trims Conformance",
+    "global_start_time": null,
+    "tracks": {
+        "OTIO_SCHEMA": "Stack.1",
+        "metadata": {},
+        "name": "tracks",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "relic": {
+                        "id": "track-nested-master"
+                    }
+                },
+                "name": "Master Track",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "color": null,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {},
+                        "name": "Head Clip",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 24.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": null,
+                                "available_image_bounds": null,
+                                "target_url": "media/primary_a.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Stack.1",
+                        "metadata": {
+                            "relic": {
+                                "id": "stack-inner-trims"
+                            }
+                        },
+                        "name": "Inner Stack",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 12.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "children": [
+                            {
+                                "OTIO_SCHEMA": "Track.1",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "track-inner-1"
+                                    }
+                                },
+                                "name": "Inner Track 1",
+                                "source_range": null,
+                                "effects": [],
+                                "markers": [],
+                                "enabled": true,
+                                "color": null,
+                                "children": [
+                                    {
+                                        "OTIO_SCHEMA": "Clip.2",
+                                        "metadata": {},
+                                        "name": "Inner Clip 1",
+                                        "source_range": {
+                                            "OTIO_SCHEMA": "TimeRange.1",
+                                            "duration": {
+                                                "OTIO_SCHEMA": "RationalTime.1",
+                                                "rate": 24.0,
+                                                "value": 72.0
+                                            },
+                                            "start_time": {
+                                                "OTIO_SCHEMA": "RationalTime.1",
+                                                "rate": 24.0,
+                                                "value": 0.0
+                                            }
+                                        },
+                                        "effects": [],
+                                        "markers": [],
+                                        "enabled": true,
+                                        "color": null,
+                                        "media_references": {
+                                            "DEFAULT_MEDIA": {
+                                                "OTIO_SCHEMA": "ExternalReference.1",
+                                                "metadata": {},
+                                                "name": "",
+                                                "available_range": null,
+                                                "available_image_bounds": null,
+                                                "target_url": "media/secondary_b.mp4"
+                                            }
+                                        },
+                                        "active_media_reference_key": "DEFAULT_MEDIA"
+                                    }
+                                ],
+                                "kind": "Video"
+                            }
+                        ]
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {},
+                        "name": "Tail Clip",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 24.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": null,
+                                "available_image_bounds": null,
+                                "target_url": "media/primary_a.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    }
+                ],
+                "kind": "Video"
+            }
+        ]
+    }
+}

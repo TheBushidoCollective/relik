@@ -1,0 +1,918 @@
+{
+    "OTIO_SCHEMA": "Timeline.1",
+    "metadata": {},
+    "name": "Relik Feature Editorial",
+    "global_start_time": {
+        "OTIO_SCHEMA": "RationalTime.1",
+        "rate": 24.0,
+        "value": 86400.0
+    },
+    "tracks": {
+        "OTIO_SCHEMA": "Stack.1",
+        "metadata": {},
+        "name": "tracks",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "relic": {
+                        "id": "track-v1-main"
+                    }
+                },
+                "name": "Video 1",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "color": null,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-v1-primary-a"
+                            }
+                        },
+                        "name": "Primary Grade A",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 72.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [
+                            {
+                                "OTIO_SCHEMA": "Marker.2",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "marker-v1-c1-red"
+                                    }
+                                },
+                                "name": "Grade Correction Required",
+                                "color": "RED",
+                                "marked_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 0.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 36.0
+                                    }
+                                },
+                                "comment": "Clipping in highlights around actor edge"
+                            }
+                        ],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 144.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 24.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/primary_a.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Transition.1",
+                        "metadata": {
+                            "relic": {
+                                "id": "trans-v1-dissolve-1"
+                            }
+                        },
+                        "name": "SMPTE_Dissolve_1",
+                        "in_offset": {
+                            "OTIO_SCHEMA": "RationalTime.1",
+                            "rate": 24.0,
+                            "value": 12.0
+                        },
+                        "out_offset": {
+                            "OTIO_SCHEMA": "RationalTime.1",
+                            "rate": 24.0,
+                            "value": 12.0
+                        },
+                        "transition_type": "SMPTE_Dissolve"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-v1-secondary-b"
+                            }
+                        },
+                        "name": "Secondary Grade B",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 96.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 24.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [
+                            {
+                                "OTIO_SCHEMA": "Marker.2",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "marker-v1-c2-magenta"
+                                    }
+                                },
+                                "name": "VFX Temp Plate Range",
+                                "color": "MAGENTA",
+                                "marked_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 24.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 48.0
+                                    }
+                                },
+                                "comment": "Replace with final 4K composite plate"
+                            }
+                        ],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "original": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 144.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 0.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/secondary_b_prores.mov"
+                            },
+                            "proxy": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 144.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 0.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/secondary_b.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "proxy"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Gap.1",
+                        "metadata": {
+                            "relic": {
+                                "id": "gap-v1-slug"
+                            }
+                        },
+                        "name": "Slug V1",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 24.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null
+                    },
+                    {
+                        "OTIO_SCHEMA": "Stack.1",
+                        "metadata": {
+                            "relic": {
+                                "id": "stack-vfx-submaster"
+                            }
+                        },
+                        "name": "VFX Submaster Stack",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "children": [
+                            {
+                                "OTIO_SCHEMA": "Track.1",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "track-nested-plate-base"
+                                    }
+                                },
+                                "name": "Plate Base",
+                                "source_range": null,
+                                "effects": [],
+                                "markers": [],
+                                "enabled": true,
+                                "color": null,
+                                "children": [
+                                    {
+                                        "OTIO_SCHEMA": "Clip.2",
+                                        "metadata": {
+                                            "relic": {
+                                                "id": "clip-nested-plate"
+                                            }
+                                        },
+                                        "name": "Background CG Plate",
+                                        "source_range": {
+                                            "OTIO_SCHEMA": "TimeRange.1",
+                                            "duration": {
+                                                "OTIO_SCHEMA": "RationalTime.1",
+                                                "rate": 24.0,
+                                                "value": 48.0
+                                            },
+                                            "start_time": {
+                                                "OTIO_SCHEMA": "RationalTime.1",
+                                                "rate": 24.0,
+                                                "value": 0.0
+                                            }
+                                        },
+                                        "effects": [],
+                                        "markers": [],
+                                        "enabled": true,
+                                        "color": null,
+                                        "media_references": {
+                                            "DEFAULT_MEDIA": {
+                                                "OTIO_SCHEMA": "ImageSequenceReference.1",
+                                                "metadata": {},
+                                                "name": "",
+                                                "available_range": null,
+                                                "available_image_bounds": null,
+                                                "target_url_base": "media/vfx_plates/",
+                                                "name_prefix": "plate_",
+                                                "name_suffix": ".png",
+                                                "start_frame": 1001,
+                                                "frame_step": 1,
+                                                "rate": 24.0,
+                                                "frame_zero_padding": 4,
+                                                "missing_frame_policy": "hold"
+                                            }
+                                        },
+                                        "active_media_reference_key": "DEFAULT_MEDIA"
+                                    }
+                                ],
+                                "kind": "Video"
+                            },
+                            {
+                                "OTIO_SCHEMA": "Track.1",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "track-nested-fx-glow"
+                                    }
+                                },
+                                "name": "FX Glow",
+                                "source_range": null,
+                                "effects": [],
+                                "markers": [],
+                                "enabled": true,
+                                "color": null,
+                                "children": [
+                                    {
+                                        "OTIO_SCHEMA": "Clip.2",
+                                        "metadata": {
+                                            "relic": {
+                                                "id": "clip-nested-flare"
+                                            }
+                                        },
+                                        "name": "Energy Flare CG",
+                                        "source_range": {
+                                            "OTIO_SCHEMA": "TimeRange.1",
+                                            "duration": {
+                                                "OTIO_SCHEMA": "RationalTime.1",
+                                                "rate": 24.0,
+                                                "value": 48.0
+                                            },
+                                            "start_time": {
+                                                "OTIO_SCHEMA": "RationalTime.1",
+                                                "rate": 24.0,
+                                                "value": 0.0
+                                            }
+                                        },
+                                        "effects": [],
+                                        "markers": [],
+                                        "enabled": true,
+                                        "color": null,
+                                        "media_references": {
+                                            "DEFAULT_MEDIA": {
+                                                "OTIO_SCHEMA": "ExternalReference.1",
+                                                "metadata": {},
+                                                "name": "",
+                                                "available_range": null,
+                                                "available_image_bounds": null,
+                                                "target_url": "media/fx_flare.webm"
+                                            }
+                                        },
+                                        "active_media_reference_key": "DEFAULT_MEDIA"
+                                    }
+                                ],
+                                "kind": "Video"
+                            }
+                        ]
+                    }
+                ],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "relic": {
+                        "id": "track-v2-main"
+                    }
+                },
+                "name": "Video 2",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "color": null,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-v2-pip-alpha"
+                            }
+                        },
+                        "name": "Picture-in-Picture Alpha",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 30.0,
+                                "value": 60.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 30.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 30.0,
+                                        "value": 150.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 30.0,
+                                        "value": 0.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/overlay_alpha.webm"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-v2-timewarp"
+                            }
+                        },
+                        "name": "Speed Ramp Action",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "LinearTimeWarp.1",
+                                "metadata": {},
+                                "name": "SpeedUp",
+                                "effect_name": "LinearTimeWarp",
+                                "enabled": true,
+                                "time_scalar": 2.0
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 144.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 24.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/primary_a.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-v2-freeze"
+                            }
+                        },
+                        "name": "Hero Freeze Frame",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "FreezeFrame.1",
+                                "metadata": {},
+                                "name": "Freeze",
+                                "effect_name": "FreezeFrame",
+                                "enabled": true,
+                                "time_scalar": 0.0
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 144.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 0.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/secondary_b.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-v2-unsupported"
+                            }
+                        },
+                        "name": "Grade Custom Look",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "Effect.1",
+                                "metadata": {},
+                                "name": "CustomLook",
+                                "effect_name": "MagicBulletLook",
+                                "enabled": true
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 144.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 24.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/primary_a.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
+                        "OTIO_SCHEMA": "Gap.1",
+                        "metadata": {
+                            "relic": {
+                                "id": "gap-v2-end"
+                            }
+                        },
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null
+                    }
+                ],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "relic": {
+                        "id": "track-v2-duplicate"
+                    }
+                },
+                "name": "Video 2",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "color": null,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Gap.1",
+                        "metadata": {},
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 240.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null
+                    }
+                ],
+                "kind": "Video"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "relic": {
+                        "id": "track-a1-main"
+                    }
+                },
+                "name": "Dialogue DX",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "color": null,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-a1-interview"
+                            }
+                        },
+                        "name": "Interview Mic 1",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 480000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [
+                            {
+                                "OTIO_SCHEMA": "Marker.2",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "marker-a1-pop-yellow"
+                                    }
+                                },
+                                "name": "Audio Pop",
+                                "color": "YELLOW",
+                                "marked_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 48000.0,
+                                        "value": 0.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 48000.0,
+                                        "value": 360000.0
+                                    }
+                                },
+                                "comment": "Check boom mic cable crackle"
+                            }
+                        ],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 48000.0,
+                                        "value": 480000.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 48000.0,
+                                        "value": 0.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/dx_mic1.wav"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    }
+                ],
+                "kind": "Audio"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "relic": {
+                        "id": "track-a2-main"
+                    }
+                },
+                "name": "Music MX",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "color": null,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Gap.1",
+                        "metadata": {},
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 96000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-a2-bed"
+                            }
+                        },
+                        "name": "Orchestral Bed",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 384000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 48000.0,
+                                        "value": 384000.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 48000.0,
+                                        "value": 0.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/mx_bed.wav"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    }
+                ],
+                "kind": "Audio"
+            },
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "metadata": {
+                    "relic": {
+                        "id": "track-a3-duplicate"
+                    }
+                },
+                "name": "Dialogue DX",
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "color": null,
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Gap.1",
+                        "metadata": {},
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 480000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 48000.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": true,
+                        "color": null
+                    }
+                ],
+                "kind": "Audio"
+            }
+        ]
+    }
+}
