@@ -298,13 +298,16 @@ export async function indexOtioZip(
     const localHeaderOffset = view.getUint32(cursor + 42, true);
     const extAttr = view.getUint32(cursor + 38, true);
 
-    // Check for symlink (Unix mode 0120000)
+    // Check for special Unix file types (symlinks, FIFOs, char/block devices, sockets)
     const unixMode = extAttr >>> 16;
-    if ((unixMode & 0o170000) === 0o120000) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        'Symlink entries are prohibited'
-      );
+    if (unixMode !== 0) {
+      const fileType = unixMode & 0o170000;
+      if (fileType !== 0o100000 && fileType !== 0o040000) {
+        throw new OtioZipError(
+          'corrupt-archive',
+          `Non-regular file type in ZIP entry prohibited: ${rawName}`
+        );
+      }
     }
 
     const rawNameBytes = archiveBytes.subarray(
@@ -366,14 +369,66 @@ export async function indexOtioZip(
       );
     }
 
+    const localFlags = view.getUint16(localHeaderOffset + 6, true);
+    const localMethod = view.getUint16(localHeaderOffset + 8, true);
+    const localCrc = view.getUint32(localHeaderOffset + 14, true);
+    const localCompSize = view.getUint32(localHeaderOffset + 18, true);
+    const localUncompSize = view.getUint32(localHeaderOffset + 22, true);
     const localNameLen = view.getUint16(localHeaderOffset + 26, true);
     const localExtraLen = view.getUint16(localHeaderOffset + 28, true);
-    const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
 
-    if (dataOffset + compSize > archiveBytes.length) {
+    if (localMethod !== method) {
       throw new OtioZipError(
         'corrupt-archive',
-        'File data extends beyond archive'
+        `Mismatched compression method in local header: ${rawName}`
+      );
+    }
+    if ((localFlags & 0x0008) === 0) {
+      if (localCrc !== crcVal) {
+        throw new OtioZipError(
+          'corrupt-archive',
+          `Mismatched CRC in local header: ${rawName}`
+        );
+      }
+      if (localCompSize !== compSize) {
+        throw new OtioZipError(
+          'corrupt-archive',
+          `Mismatched compressed size in local header: ${rawName}`
+        );
+      }
+      if (localUncompSize !== uncompSize) {
+        throw new OtioZipError(
+          'corrupt-archive',
+          `Mismatched uncompressed size in local header: ${rawName}`
+        );
+      }
+    }
+
+    if (localHeaderOffset + 30 + localNameLen > archiveBytes.length) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `Local header name extends beyond archive: ${rawName}`
+      );
+    }
+    const localNameBytes = archiveBytes.subarray(
+      localHeaderOffset + 30,
+      localHeaderOffset + 30 + localNameLen
+    );
+    const localName = new TextDecoder('utf-8', { fatal: false }).decode(
+      localNameBytes
+    );
+    if (localName !== rawName) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `Local and central directory filenames disagree: ${rawName}`
+      );
+    }
+
+    const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
+    if (dataOffset + compSize > cdOffset) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `File data overlaps central directory: ${rawName}`
       );
     }
 
