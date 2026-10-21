@@ -276,9 +276,14 @@ async function assertPackagedNativeFiles(packageRoot) {
     join(packageRoot, 'dist', 'relic-mcp.js'),
     join(packageRoot, 'dist', 'native-secure-open.js'),
     join(packageRoot, 'dist', 'native-secure-open.d.ts'),
+    join(packageRoot, 'native'),
+    join(packageRoot, 'native', 'build.mjs'),
+    join(packageRoot, 'native', 'local-build.mjs'),
+    join(packageRoot, 'native', 'platform-darwin.c'),
+    join(packageRoot, 'native', 'platform-linux.c'),
+    join(packageRoot, 'native', 'platform.h'),
     join(packageRoot, 'native', 'secure-open.c'),
     join(packageRoot, 'native', 'secure-open.d.ts'),
-    join(packageRoot, 'native', 'build.mjs'),
     join(packageRoot, 'scripts', 'prove-packed-native.mjs'),
   ]) {
     await access(required);
