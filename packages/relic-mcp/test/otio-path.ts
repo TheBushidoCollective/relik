@@ -1951,7 +1951,8 @@ try {
     mapped_range: TimeRange | null;
   };
   assert.equal(insertExpect.status, 'mapped');
-  assert.ok(insertExpect.mapped_range, 'insert projection missing');
+  const insertRange = insertExpect.mapped_range;
+  assert.ok(insertRange, 'insert projection missing');
   const insertIds = original.map((entry) => String(entry['comment_id']));
   const inserted = await callMcp('relic_republish', {
     relic_id: relicId,
@@ -1990,6 +1991,71 @@ try {
     'insert projection does not match the official shifted range'
   );
   assert.notEqual(movedProjection.status, 'same');
+  const primaryAfterInsert = commentByBody(afterInsert, primaryBody);
+  const primaryCommentId = String(primaryAfterInsert['comment_id']);
+  const insertedVersion = String(inserted['version']);
+  const insertBrowser = await openBrowser(shareUrl, sessionToken);
+  try {
+    await waitReady(insertBrowser);
+    const projectedMark = await insertBrowser.evaluate<{
+      readonly version: string;
+      readonly projection: string;
+      readonly start: string;
+      readonly duration: string;
+      readonly rate: string;
+      readonly rowProjection: string;
+    }>(`(() => {
+      const { promise, resolve } = Promise.withResolvers();
+      const expectedVersion = ${JSON.stringify(String(inserted['version']))};
+      const commentId = ${JSON.stringify(primaryCommentId)};
+      const started = Date.now();
+      const inspect = () => {
+        const root = document.querySelector('.otio-view');
+        const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
+          (node) => node.getAttribute('data-comment-id') === commentId
+        );
+        const comment = [...document.querySelectorAll('[data-comment-id]')].find(
+          (node) => node.getAttribute('data-comment-id') === commentId
+        );
+        const row = comment?.querySelector('.otio-feedback-projection');
+        const state = {
+          version: root?.getAttribute('data-version') ?? '',
+          projection: mark?.getAttribute('data-projection') ?? '',
+          start: mark?.getAttribute('data-start') ?? '',
+          duration: mark?.getAttribute('data-duration') ?? '',
+          rate: mark?.getAttribute('data-rate') ?? '',
+          rowProjection: row?.getAttribute('data-projection-status') ?? '',
+        };
+        if (
+          state.version === expectedVersion &&
+          state.projection === 'mapped' &&
+          state.rowProjection === 'mapped'
+        ) {
+          resolve(state);
+          return;
+        }
+        if (Date.now() - started > 10000) {
+          resolve(state);
+          return;
+        }
+        setTimeout(inspect, 100);
+      };
+      inspect();
+      return promise;
+    })()`);
+    assert.equal(
+      projectedMark.version,
+      insertedVersion,
+      'viewer did not open the inserted revision'
+    );
+    assert.equal(projectedMark.projection, 'mapped');
+    assert.equal(projectedMark.rowProjection, 'mapped');
+    assert.equal(projectedMark.start, String(insertRange.start_time.value));
+    assert.equal(projectedMark.duration, String(insertRange.duration.value));
+    assert.equal(projectedMark.rate, String(insertRange.start_time.rate));
+  } finally {
+    await insertBrowser.close();
+  }
   pass('revision-insert');
 
   const trimDir = join(scratch, 'trim.otiod');
