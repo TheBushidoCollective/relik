@@ -35,7 +35,9 @@ import {
   indexOtioZip,
   isOtioz,
   isRawOtio,
-  otioBundleEntryFor,
+  type OpenedRelic,
+  type OtioAnchorResolution,
+  type OtioAnchorV1,
   otioBundleMediaIndex,
   type OtioMediaEntry,
   type OtioNode,
@@ -1019,17 +1021,6 @@ function ancestry(
   return chain;
 }
 
-function mediaDigest(
-  document: OtioDocumentV1,
-  bundlePath: string | null
-): string | null {
-  if (!bundlePath) return null;
-  const entry = otioBundleEntryFor(bundlePath, (name) =>
-    Object.hasOwn(document.media, name)
-  );
-  return entry === null ? null : (document.media[entry]?.sha256 ?? null);
-}
-
 function intersectionsFor(
   document: OtioDocumentV1,
   spans: readonly OtioSourceSpan[]
@@ -1051,7 +1042,10 @@ function intersectionsFor(
       source_mapping: span.source_mapping,
       active_media_reference_key: span.active_media_reference_key,
       bundle_path: span.bundle_path,
-      media_digest: mediaDigest(document, span.bundle_path),
+      media_digest:
+        span.bundle_path === null
+          ? null
+          : (document.media[span.bundle_path]?.sha256 ?? null),
       media_references: span.media_references,
       markers: span.markers,
       effects: span.effects,

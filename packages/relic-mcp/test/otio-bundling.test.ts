@@ -193,7 +193,7 @@ function timelineWithClips(
 async function writeBundleRelative(
   directory: string,
   relative: string,
-  contents: string
+  contents: string | Uint8Array
 ): Promise<void> {
   const parts = relative.split('/');
   const filename = parts.pop();
@@ -657,6 +657,15 @@ describe('OTIO bundling', () => {
         sampleRate: 24,
       },
       {
+        name: 'fragment-suffix',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'fragment_',
+          name_suffix: '.png#t=1',
+        }),
+        sampleRate: 24,
+      },
+      {
         name: 'backslash-base',
         record: imageSequenceRecord({
           target_url_base: 'media\\',
@@ -762,6 +771,41 @@ describe('OTIO bundling', () => {
         sampleRate: 24,
       },
     ];
+    const expectedEntriesByCase: Readonly<Record<string, readonly string[]>> = {
+      'root-base': ['media/root_1001.png', 'media/root_1002.png'],
+      'frames-base': [
+        'media/frames/subfolder_1001.png',
+        'media/frames/subfolder_1002.png',
+      ],
+      'slash-prefix': ['media/plate_1001.png', 'media/plate_1002.png'],
+      'query-suffix': ['media/query_1001.png', 'media/query_1002.png'],
+      'fragment-suffix': ['media/fragment_1001.png', 'media/fragment_1002.png'],
+      'backslash-base': [
+        'media/backslash_1001.png',
+        'media/backslash_1002.png',
+      ],
+      'signed-padding': ['media/signed_-0003.png', 'media/signed_-0002.png'],
+      'mixed-rate': Array.from(
+        { length: 60 },
+        (_, index) => `media/mixed_${String(1001 + index).padStart(4, '0')}.png`
+      ),
+      stepped: [
+        'media/step_1001.png',
+        'media/step_1003.png',
+        'media/step_1005.png',
+      ],
+      defaults: ['media/1', 'media/2'],
+      'encoded-reserved': [
+        'media/reserved?1001#%%20.png',
+        'media/reserved?1002#%%20.png',
+      ],
+      'literal-percent': [
+        'media/literal-1001-%20.png',
+        'media/literal-1002-%20.png',
+      ],
+      'literal-space': ['media/literal-1001- .png', 'media/literal-1002- .png'],
+      'zero-images': [],
+    };
 
     for (const example of cases) {
       const directory = join(scratch, `${example.name}.otiod`);
@@ -773,28 +817,27 @@ describe('OTIO bundling', () => {
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, 'content.otio'), content);
 
-      const frames: Array<{
-        readonly entry: string;
-        readonly relative: string;
-      }> = [];
+      const expectedEntries = expectedEntriesByCase[example.name];
+      if (!expectedEntries) {
+        throw new Error(`Missing literal expectation for ${example.name}`);
+      }
+      expect(sequence.count).toBe(expectedEntries.length);
+      const actualEntries: readonly (string | null)[] = Array.from(
+        { length: sequence.count },
+        (_, index) => sequence.entry(index)
+      );
+      expect(actualEntries).toEqual(expectedEntries);
       for (let index = 0; index < sequence.count; index++) {
-        const entry = sequence.entry(index);
-        if (entry === null) {
-          throw new Error(`Expected canonical entry for ${example.name}`);
-        }
         const relative = sanitizeOtioBundlePath(sequence.url(index));
-        frames.push({ entry, relative });
         await writeBundleRelative(
           directory,
           relative,
           `${example.name}:${index}`
         );
       }
-      const expectedEntries = Array.from(
-        new Set(frames.map((frame) => frame.entry))
-      ).sort();
+      const sortedExpectedEntries = [...expectedEntries].sort();
       if (example.firstEntry !== undefined) {
-        expect(frames[0]?.entry).toBe(example.firstEntry);
+        expect(actualEntries[0]).toBe(example.firstEntry);
       }
 
       const bundled = await bundleOtiod(directory, nodeFiles);
@@ -802,11 +845,11 @@ describe('OTIO bundling', () => {
       const archiveEntries = Array.from(archive.entries.keys())
         .filter((name) => name.startsWith('media/'))
         .sort();
-      expect(archiveEntries).toEqual(expectedEntries);
+      expect(archiveEntries).toEqual(sortedExpectedEntries);
 
       const mediaIndex = await otioBundleMediaIndex(archive);
       expect(otioSequenceFrameEntries(example.record, mediaIndex)).toEqual(
-        expectedEntries
+        sortedExpectedEntries
       );
 
       if (sequence.count === 0) continue;
@@ -816,7 +859,10 @@ describe('OTIO bundling', () => {
         throw new Error(`Expected timeline for ${example.name}`);
       }
       for (let index = 0; index < sequence.count; index++) {
-        const expectedEntry = sequence.entry(index);
+        const expectedEntry = expectedEntries[index];
+        if (expectedEntry === undefined) {
+          throw new Error(`Missing frame expectation for ${example.name}`);
+        }
         const evaluation = evaluateOtioAt(document, timelineId, {
           value: index * sequence.frameStep,
           rate: example.sampleRate,
@@ -824,9 +870,66 @@ describe('OTIO bundling', () => {
         const contribution = evaluation.video_contributions.find(
           (item) => item.node_id === clipId
         );
-        expect(contribution?.bundle_path).toBe(expectedEntry);
+        const actualBundlePath: string | null =
+          contribution?.bundle_path ?? null;
+        expect(actualBundlePath).toBe(expectedEntry);
       }
     }
+  });
+
+  test('packs same-bundle single-decoded entries from their own disk bytes', async () => {
+    const cases = [
+      {
+        id: 'encoded-question',
+        authored: 'media/%253F.png',
+        entry: 'media/%3F.png',
+        bytes: new Uint8Array([0x25, 0x33, 0x46, 0x00, 0x01]),
+      },
+      {
+        id: 'literal-question',
+        authored: 'media/%3F.png',
+        entry: 'media/?.png',
+        bytes: new Uint8Array([0x3f, 0x00, 0x02]),
+      },
+      {
+        id: 'encoded-space',
+        authored: 'media/a%2520b.png',
+        entry: 'media/a%20b.png',
+        bytes: new Uint8Array([0x61, 0x25, 0x32, 0x30, 0x00, 0x03]),
+      },
+      {
+        id: 'literal-space',
+        authored: 'media/a%20b.png',
+        entry: 'media/a b.png',
+        bytes: new Uint8Array([0x61, 0x20, 0x62, 0x00, 0x04]),
+      },
+    ] as const;
+    const directory = join(scratch, 'same-bundle-entries.otiod');
+    const content = JSON.stringify(
+      timelineWithClips(
+        'same-bundle-entries',
+        cases.map(({ id, authored }) => externalClip(id, authored))
+      )
+    );
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'content.otio'), content);
+    for (const { entry, bytes } of cases) {
+      await writeBundleRelative(directory, entry, bytes);
+    }
+
+    const bundled = await bundleOtiod(directory, nodeFiles);
+    const archive = await indexBundle(bundled.bytes);
+    const expectedEntries = cases.map(({ entry }) => entry).sort();
+    const archiveEntries = Array.from(archive.entries.keys())
+      .filter((name) => name.startsWith('media/'))
+      .sort();
+    expect(archiveEntries).toEqual(expectedEntries);
+    for (const { entry, bytes } of cases) {
+      expect(await archive.readEntry(entry)).toEqual(bytes);
+    }
+
+    const mediaIndex = await otioBundleMediaIndex(archive);
+    expect(Object.keys(mediaIndex).sort()).toEqual(expectedEntries);
   });
 
   test('refuses unsafe image sequence bases through the shared path sanitizer', async () => {

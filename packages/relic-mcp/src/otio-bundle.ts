@@ -14,6 +14,7 @@ import {
   MAX_EXPANDED_ZIP_BYTES,
   MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
   otioBundleEntryName,
+  type OtioBundleEntryName,
   parseOtioJson,
   readOtioImageSequence,
   sanitizeOtioBundlePath,
@@ -263,7 +264,7 @@ interface CollectedMedia {
 }
 
 class MediaCollector {
-  readonly results = new Map<string, CollectedMedia>();
+  readonly results = new Map<OtioBundleEntryName, CollectedMedia>();
   private candidateWork = 0;
   private headerBytes = 0;
 
@@ -447,7 +448,7 @@ function traverseComposable(
  */
 export function collectReferencedMedia(
   obj: unknown,
-  results: Map<string, CollectedMedia>,
+  results: Map<OtioBundleEntryName, CollectedMedia>,
   options?: {
     readonly maxHeaderBytes?: number;
     readonly maxCandidateWork?: number;
@@ -609,14 +610,14 @@ export async function bundleOtiod(
       );
     }
 
-    const mediaRefMap = new Map<string, CollectedMedia>();
+    const mediaRefMap = new Map<OtioBundleEntryName, CollectedMedia>();
     collectReferencedMedia(otioJson, mediaRefMap, {
       maxCandidateWork: MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
       maxHeaderBytes: limit - baseZipHeaderBytes(),
     });
 
     const mediaEntries: Array<{
-      readonly name: string;
+      readonly name: OtioBundleEntryName;
       readonly data: Uint8Array;
     }> = [];
     for (const archivePath of Array.from(mediaRefMap.keys()).sort()) {

@@ -2014,10 +2014,13 @@ try {
         const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
           (node) => node.getAttribute('data-comment-id') === commentId
         );
-        const comment = [...document.querySelectorAll('[data-comment-id]')].find(
-          (node) => node.getAttribute('data-comment-id') === commentId
+        const row = [
+          ...document.querySelectorAll('.otio-feedback-projection'),
+        ].find(
+          (node) =>
+            node.closest('[data-comment-id]')?.getAttribute('data-comment-id') ===
+            commentId
         );
-        const row = comment?.querySelector('.otio-feedback-projection');
         const state = {
           version: root?.getAttribute('data-version') ?? '',
           projection: mark?.getAttribute('data-projection') ?? '',
