@@ -14,14 +14,112 @@
 import { ContentTooLargeError, RelicFormatError } from './errors.ts';
 import type {
   InflaterFn,
+  OtioBundleEntryName,
+  OtioMediaEntry,
   OtioZipEntryInfo,
   OtioZipIndex,
 } from './otio-types.ts';
 
 export const MAX_EXPANDED_ZIP_BYTES = 100 * 1024 * 1024; // 100 MiB safety limit
 
-const ZIP64_U16 = 0xffff;
-const ZIP64_U32 = 0xffffffff;
+/**
+ * Standard OTIOZ reserves three ZIP entries for `content.otio`,
+ * `version.txt`, and the end-of-central-directory sentinel.
+ */
+export const MAX_OTIO_BUNDLE_MEDIA_ENTRIES = 0xffff - 3;
+
+function hasControlCharacter(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 32 || code === 127) return true;
+  }
+  return false;
+}
+
+/**
+ * Normalizes a relative OTIO media reference into the one path model used by
+ * packing, playback, and continuity hashing.
+ */
+export function sanitizeOtioBundlePath(raw: string): string {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.trim().length === 0) {
+    throw new Error('Empty media reference path');
+  }
+  if (hasControlCharacter(raw)) {
+    throw new Error(`Control character in media reference path: ${raw}`);
+  }
+
+  let path = raw.trim();
+  const suffixStart = path.search(/[?#]/);
+  if (suffixStart >= 0) path = path.slice(0, suffixStart);
+  if (path.length === 0) throw new Error('Empty media reference path');
+
+  const scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.exec(path);
+  if (scheme) {
+    if (scheme[0].toLowerCase() !== 'file:') {
+      throw new Error(`Prohibited URL scheme in media reference path: ${raw}`);
+    }
+    path = path.slice(scheme[0].length);
+    if (path.startsWith('/') || path.startsWith('\\')) {
+      throw new Error(`Absolute path in media reference: ${raw}`);
+    }
+  }
+
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    throw new Error(
+      `Malformed percent-encoding in media reference path: ${raw}`
+    );
+  }
+  if (hasControlCharacter(path)) {
+    throw new Error(`Control character in media reference path: ${raw}`);
+  }
+  if (path.startsWith('/') || path.startsWith('\\')) {
+    throw new Error(`Absolute path in media reference: ${raw}`);
+  }
+  if (/^[a-zA-Z]:/.test(path)) {
+    throw new Error(`Prohibited URL scheme in media reference path: ${raw}`);
+  }
+
+  const segments: string[] = [];
+  for (const segment of path.split(/[/\\]+/)) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      throw new Error(`Path traversal in media reference: ${raw}`);
+    }
+    segments.push(segment);
+  }
+  if (segments.length === 0) throw new Error('Empty media reference path');
+  return segments.join('/');
+}
+
+/** Converts an already-sanitized reference path into its OTIOZ entry name. */
+export function otioBundleEntryName(relativePath: string): OtioBundleEntryName {
+  return (
+    relativePath.startsWith('media/') ? relativePath : `media/${relativePath}`
+  ) as OtioBundleEntryName;
+}
+
+/** Returns the canonical archive entry for a reference, or null on refusal. */
+export function otioBundleEntry(reference: string): OtioBundleEntryName | null {
+  try {
+    return otioBundleEntryName(sanitizeOtioBundlePath(reference));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves a reference only when its canonical archive entry exists in the
+ * caller's index.
+ */
+export function otioBundleEntryFor(
+  reference: string,
+  isEntry: (name: OtioBundleEntryName) => boolean
+): OtioBundleEntryName | null {
+  const entry = otioBundleEntry(reference);
+  return entry !== null && isEntry(entry) ? entry : null;
+}
 const ZIP64_EXTRA_ID = 0x0001;
 const ZIP64_EOCD_LOCATOR = 0x07064b50;
 const EOCD_SIG = 0x06054b50;
@@ -432,7 +530,10 @@ export async function indexOtioZip(
     );
   }
 
-  if (cdOffset > archiveBytes.length || cdSize > archiveBytes.length - cdOffset) {
+  if (
+    cdOffset > archiveBytes.length ||
+    cdSize > archiveBytes.length - cdOffset
+  ) {
     throw new OtioZipError(
       'corrupt-archive',
       'Central directory points beyond end of archive'
@@ -514,7 +615,10 @@ export async function indexOtioZip(
     rejectZip64Sentinel(uncompSize, ZIP64_U32, 'uncompressed size');
     rejectZip64Sentinel(localHeaderOffset, ZIP64_U32, 'local header offset');
 
-    const rawNameBytes = archiveBytes.subarray(cursor + 46, cursor + 46 + nameLen);
+    const rawNameBytes = archiveBytes.subarray(
+      cursor + 46,
+      cursor + 46 + nameLen
+    );
     const rawName = decodeZipName(rawNameBytes, 'central directory');
     const extraStart = cursor + 46 + nameLen;
     assertNoZip64Extra(
@@ -559,7 +663,10 @@ export async function indexOtioZip(
       );
     }
 
-    if (localHeaderOffset + 30 > archiveBytes.length || localHeaderOffset >= cdOffset) {
+    if (
+      localHeaderOffset + 30 > archiveBytes.length ||
+      localHeaderOffset >= cdOffset
+    ) {
       throw new OtioZipError(
         'corrupt-archive',
         'Local header offset beyond archive'
@@ -808,7 +915,7 @@ export async function indexOtioZip(
   // Compute content sha256
   const hashBuf = await crypto.subtle.digest(
     'SHA-256',
-    contentOtioBytes.slice().buffer as ArrayBuffer
+    digestInput(contentOtioBytes)
   );
   const contentSha256 = Array.from(new Uint8Array(hashBuf))
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -821,4 +928,47 @@ export async function indexOtioZip(
     contentSha256,
     readEntry: readEntryData,
   };
+}
+
+function digestInput(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (isArrayBufferBacked(bytes)) return bytes;
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', digestInput(bytes));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Materializes the regular archive entries beneath `media/` in lexical order.
+ * Digest reads stay sequential so an archive cannot fan out decompression or
+ * hashing work beyond the ZIP indexer's existing byte limits.
+ */
+export async function otioBundleMediaIndex(
+  zip: OtioZipIndex,
+  options?: { readonly digests?: boolean }
+): Promise<Record<string, OtioMediaEntry>> {
+  const media = Object.create(null) as Record<string, OtioMediaEntry>;
+  const entries = [...zip.entries.values()]
+    .filter((entry) => entry.name.startsWith('media/') && !entry.isDirectory)
+    .sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    );
+  for (const entry of entries) {
+    const bytes = options?.digests
+      ? await zip.readEntry(entry.name)
+      : undefined;
+    media[entry.name] = {
+      key: entry.name,
+      bundle_path: entry.name,
+      size: entry.uncompressedSize,
+      ...(bytes === undefined ? {} : { sha256: await sha256Hex(bytes) }),
+    };
+  }
+  return media;
 }

@@ -1,6 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { readOtioDocument, resolveOtioAnchor } from '../src/otio-identity.ts';
-import type { OtioAnchorResolution, OtioAnchorV1, OtioTimeRange } from '../src/otio-types.ts';
+import { compareRationalTimes, rangeEndTime } from '../src/otio-timing.ts';
+import type {
+  OtioAnchorResolution,
+  OtioAnchorV1,
+  OtioMediaEntry,
+  OtioTimeRange,
+} from '../src/otio-types.ts';
 
 function clip(id: string, start: number, duration: number, scalar?: number) {
   return {
@@ -179,13 +187,13 @@ function d3Anchor(
   };
 }
 
-function mediaIndex(sha256: string) {
+function mediaIndex(sha256?: string) {
   return {
     'media/primary_a.mp4': {
       key: 'media/primary_a.mp4',
       bundle_path: 'media/primary_a.mp4',
       size: 1,
-      sha256,
+      ...(sha256 === undefined ? {} : { sha256 }),
     },
   };
 }
@@ -289,7 +297,6 @@ describe('OTIO identity and projection', () => {
     expectRange(resolved.source_spans[0]?.source_range ?? undefined, 0, 0);
   });
 
-
   test('a freeze current revision is ambiguous when it must be inverted', () => {
     const original = readOtioDocument(timeline([clip('clip', 0, 24, 0)]));
     const current = readOtioDocument(
@@ -302,7 +309,6 @@ describe('OTIO identity and projection', () => {
     expect(resolved.source_spans).toHaveLength(1);
     expectNoMappedIdentityFields(resolved);
   });
-
 
   test('a forward anchor is ambiguous when the current revision freezes it', () => {
     const original = readOtioDocument(timeline([clip('clip', 0, 24)]));
@@ -324,7 +330,6 @@ describe('OTIO identity and projection', () => {
     expect(resolved.source_spans.length).toBeGreaterThan(0);
   });
 
-
   test('an item on another track changes the anchor', () => {
     const doc = readOtioDocument(twoTrackTimeline());
     const resolved = resolveOtioAnchor(
@@ -334,7 +339,6 @@ describe('OTIO identity and projection', () => {
     expect(resolved.status).toBe('changed');
     expect(resolved.diagnostics[0]?.code).toBe('invalid-timing');
   });
-
 
   test('different indexed media digest prevents same for identical JSON', () => {
     const source = timeline([clip('clip', 0, 24)]);
@@ -355,6 +359,394 @@ describe('OTIO identity and projection', () => {
     expect(resolveOtioAnchor(saved, original, matching).status).toBe('same');
   });
 
+  test('requires complete equal media witnesses for authored and derived nodes', () => {
+    const source = (authored: boolean): string =>
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-continuity' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-continuity' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  ...(authored
+                    ? { metadata: { relic: { id: 'clip-continuity' } } }
+                    : {}),
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/continuity.mp4',
+                    available_range: {
+                      start_time: { value: 0, rate: 24 },
+                      duration: { value: 24, rate: 24 },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      });
+    const indexed = (sha256?: string) => ({
+      'media/continuity.mp4': {
+        key: 'media/continuity.mp4',
+        bundle_path: 'media/continuity.mp4',
+        size: 1,
+        ...(sha256 === undefined ? {} : { sha256 }),
+      },
+    });
+    const read = (authored: boolean, sha256: string | null | undefined) => {
+      const json = source(authored);
+      if (sha256 === undefined) return readOtioDocument(json);
+      return readOtioDocument(json, {
+        mediaIndex: indexed(sha256 === null ? undefined : sha256),
+      });
+    };
+
+    for (const authored of [true, false]) {
+      const noIndex = read(authored, undefined);
+      const noIndexAgain = read(authored, undefined);
+      const equal = read(authored, 'a'.repeat(64));
+      const changed = read(authored, 'b'.repeat(64));
+      const missing = read(authored, null);
+      const clip = Object.values(noIndex.nodes).find(
+        (node) => node.schema === 'Clip.1'
+      );
+      if (!clip) throw new Error('expected continuity clip');
+      const saved: OtioAnchorV1 = {
+        kind: 'otio',
+        v: 1,
+        relic_version: 1,
+        document_sha256: noIndex.document_sha256,
+        timeline_id: 'timeline-continuity',
+        track_id: 'track-continuity',
+        item_id: clip.id,
+        range: {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: 12, rate: 24 },
+        },
+        snapshot: { timeline: 'continuity', track: 'continuity', item: 'clip' },
+      };
+
+      expect(resolveOtioAnchor(saved, noIndex, noIndex).status).toBe('same');
+      expect(resolveOtioAnchor(saved, noIndex, noIndexAgain).status).toBe(
+        'same'
+      );
+      expect(
+        resolveOtioAnchor(saved, equal, read(authored, 'a'.repeat(64))).status
+      ).toBe('same');
+      expect(resolveOtioAnchor(saved, equal, changed).status).toBe('changed');
+      expect(resolveOtioAnchor(saved, equal, missing).status).toBe('changed');
+      expect(
+        resolveOtioAnchor(saved, missing, read(authored, null)).status
+      ).toBe('changed');
+      expect(resolveOtioAnchor(saved, noIndex, equal).status).toBe('changed');
+    }
+  });
+
+  test('witnesses only actual canonical image-sequence frames', () => {
+    const source = JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline-sequence-continuity' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            kind: 'Video',
+            metadata: { relic: { id: 'track-sequence-continuity' } },
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: 'clip-sequence-continuity' } },
+                source_range: {
+                  start_time: { value: 0, rate: 24 },
+                  duration: { value: 48, rate: 24 },
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ImageSequenceReference.1',
+                  target_url_base: 'media/',
+                  name_prefix: 'plate_',
+                  name_suffix: '.png',
+                  start_frame: 1001,
+                  frame_step: 1,
+                  rate: 24,
+                  frame_zero_padding: 4,
+                  available_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    duration: {
+                      OTIO_SCHEMA: 'RationalTime.1',
+                      value: 48,
+                      rate: 24,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const names = Array.from(
+      { length: 48 },
+      (_, index) => `media/plate_${String(index + 1001).padStart(4, '0')}.png`
+    );
+    const media = (
+      changed?: Readonly<Record<string, string | null>>
+    ): Record<string, OtioMediaEntry> => {
+      const index = Object.create(null) as Record<string, OtioMediaEntry>;
+      for (const name of names) {
+        const digest = changed?.[name] ?? 'a'.repeat(64);
+        if (digest === null) continue;
+        index[name] = {
+          key: name,
+          bundle_path: name,
+          size: 1,
+          sha256: digest,
+        };
+      }
+      return index;
+    };
+    const original = readOtioDocument(source, { mediaIndex: media() });
+    const saved: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: original.document_sha256,
+      timeline_id: 'timeline-sequence-continuity',
+      track_id: 'track-sequence-continuity',
+      item_id: 'clip-sequence-continuity',
+      range: {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: 12, rate: 24 },
+      },
+      snapshot: { timeline: 'sequence', track: 'sequence', item: 'plates' },
+    };
+    const changedFrame = readOtioDocument(source, {
+      mediaIndex: media({ 'media/plate_1001.png': 'b'.repeat(64) }),
+    });
+    const missingFrame = readOtioDocument(source, {
+      mediaIndex: media({ 'media/plate_1002.png': null }),
+    });
+    const irrelevant = media();
+    for (const name of [
+      'media/plate_1049.png',
+      'media/plate_v2_1001.png',
+      'media/plate_01001.png',
+    ]) {
+      irrelevant[name] = {
+        key: name,
+        bundle_path: name,
+        size: 1,
+        sha256: 'b'.repeat(64),
+      };
+    }
+
+    expect(resolveOtioAnchor(saved, original, changedFrame).status).toBe(
+      'changed'
+    );
+    expect(resolveOtioAnchor(saved, original, missingFrame).status).toBe(
+      'changed'
+    );
+    expect(
+      resolveOtioAnchor(
+        saved,
+        original,
+        readOtioDocument(source, { mediaIndex: irrelevant })
+      ).status
+    ).toBe('same');
+  });
+
+  test('uses canonical external reference names in continuity witnesses', () => {
+    const source = (targetUrl: string): string =>
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-reference-continuity' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-reference-continuity' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip-reference-continuity' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: targetUrl,
+                    available_range: {
+                      start_time: { value: 0, rate: 24 },
+                      duration: { value: 24, rate: 24 },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      });
+    const indexed = (entry: string, sha256: string) => ({
+      [entry]: { key: entry, bundle_path: entry, size: 1, sha256 },
+    });
+
+    for (const [reference, entry] of [
+      ['primary_a.mp4', 'media/primary_a.mp4'],
+      ['./media/x.mp4', 'media/x.mp4'],
+      ['file:media/x.mp4', 'media/x.mp4'],
+      ['media/a%20b.mp4', 'media/a b.mp4'],
+    ] as const) {
+      const json = source(reference);
+      const original = readOtioDocument(json, {
+        mediaIndex: indexed(entry, 'a'.repeat(64)),
+      });
+      const current = readOtioDocument(json, {
+        mediaIndex: indexed(entry, 'a'.repeat(64)),
+      });
+      const changed = readOtioDocument(json, {
+        mediaIndex: indexed(entry, 'b'.repeat(64)),
+      });
+      const saved: OtioAnchorV1 = {
+        kind: 'otio',
+        v: 1,
+        relic_version: 1,
+        document_sha256: original.document_sha256,
+        timeline_id: 'timeline-reference-continuity',
+        track_id: 'track-reference-continuity',
+        item_id: 'clip-reference-continuity',
+        range: {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: 12, rate: 24 },
+        },
+        snapshot: {
+          timeline: 'reference',
+          track: 'reference',
+          item: 'reference',
+        },
+      };
+      expect(resolveOtioAnchor(saved, original, current).status).toBe('same');
+      expect(resolveOtioAnchor(saved, original, changed).status).toBe(
+        'changed'
+      );
+    }
+  });
+
+  test('keeps JSON-only identities stable while continuity witnesses media', () => {
+    const content = readFileSync(
+      new URL(
+        './fixtures/otio/standard-sample.otiod/content.otio',
+        import.meta.url
+      )
+    );
+    const noIndex = readOtioDocument(content);
+    const unhashedIndex = readOtioDocument(content, {
+      mediaIndex: mediaIndex(),
+    });
+    const primaryBytes = readFileSync(
+      new URL(
+        './fixtures/otio/standard-sample.otiod/media/primary_a.mp4',
+        import.meta.url
+      )
+    );
+    const hashedIndex = readOtioDocument(content, {
+      mediaIndex: mediaIndex(
+        createHash('sha256').update(primaryBytes).digest('hex')
+      ),
+    });
+    const identities = (document: typeof noIndex) =>
+      Object.values(document.nodes)
+        .map((node) => `${node.id}\n${node.fingerprint}`)
+        .sort();
+
+    expect(identities(unhashedIndex)).toEqual(identities(noIndex));
+    expect(identities(hashedIndex)).toEqual(identities(noIndex));
+    expect(noIndex.timeline_ids).toEqual([
+      'otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754',
+    ]);
+
+    const point: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: noIndex.document_sha256,
+      timeline_id:
+        'otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754',
+      track_id: 'track-v1-main',
+      item_id: 'clip-v1-primary-a',
+      range: {
+        start_time: { value: 36, rate: 24 },
+        duration: { value: 0, rate: 24 },
+      },
+      snapshot: {
+        timeline: 'Editorial Master',
+        track: 'Video 1',
+        item: 'Primary Grade A',
+      },
+    };
+    const { item_id: _pointItemId, ...wholeTrackAnchor } = point;
+    const sourceAnchors: readonly OtioAnchorV1[] = [
+      point,
+      {
+        ...point,
+        track_id: 'track-v2-duplicate',
+        item_id: 'clip-v2-duplicate-disabled',
+        range: {
+          start_time: { value: 12, rate: 24 },
+          duration: { value: 12, rate: 24 },
+        },
+      },
+      {
+        ...wholeTrackAnchor,
+        track_id: 'track-v2-duplicate',
+        range: {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: 240, rate: 24 },
+        },
+      },
+      {
+        ...point,
+        track_id: 'track-v2-main',
+        item_id: 'clip-v2-timewarp',
+        range: {
+          start_time: { value: 72, rate: 24 },
+          duration: { value: 0, rate: 24 },
+        },
+      },
+    ];
+
+    for (const anchorFromSource of sourceAnchors) {
+      expect(resolveOtioAnchor(anchorFromSource, hashedIndex).status).toBe(
+        'same'
+      );
+    }
+    expect(resolveOtioAnchor(point, noIndex, hashedIndex).status).toBe(
+      'changed'
+    );
+    expect(resolveOtioAnchor(point, hashedIndex, hashedIndex).status).toBe(
+      'same'
+    );
+    const separatelyHashed = readOtioDocument(content, {
+      mediaIndex: mediaIndex(
+        createHash('sha256').update(primaryBytes).digest('hex')
+      ),
+    });
+    expect(resolveOtioAnchor(point, hashedIndex, separatelyHashed).status).toBe(
+      'same'
+    );
+  });
 
   test('a nested trim maps only current exposed media', () => {
     const original = readOtioDocument(documentD3(12, 60));
@@ -386,7 +778,6 @@ describe('OTIO identity and projection', () => {
     expectRange(mapped.mapped_range, 36, 12);
     expectRange(mapped.mapped_ranges?.[0], 36, 12);
   });
-
 
   test('rejects an item/range combination outside the original item exposure', () => {
     const original = readOtioDocument(
@@ -852,9 +1243,48 @@ describe('OTIO original selection and reverse projection edges', () => {
     };
     const resolved = resolveOtioAnchor(rateAware, original, current);
     expect(resolved.status).toBe('mapped');
-    expect(resolved.mapped_range).toEqual({
-      start_time: { value: 0, rate: timelineRate },
-      duration: { value: 8, rate: timelineRate },
-    });
+    const mapped = resolved.mapped_range;
+    if (!mapped) throw new Error('expected mapped range');
+    expect(resolved.mapped_ranges).toHaveLength(1);
+    expect(resolved.mapped_ranges?.[0]).toEqual(mapped);
+    expect(mapped.start_time.rate).toBe(timelineRate);
+    expect(mapped.duration.rate).toBe(timelineRate);
+    expect(
+      compareRationalTimes(mapped.start_time, { value: 0, rate: timelineRate })
+    ).toBe(0);
+    expect(
+      compareRationalTimes(rangeEndTime(mapped), {
+        value: 8,
+        rate: timelineRate,
+      })
+    ).toBe(0);
+
+    const shorterCurrent = readOtioDocument(
+      fractionalReverseTimeline(8, sourceRate)
+    );
+    const partial = resolveOtioAnchor(rateAware, original, shorterCurrent);
+    expect(partial.status).toBe('partial');
+    const partialRange = partial.mapped_range;
+    if (!partialRange) throw new Error('expected partial mapped range');
+    expect(partialRange.start_time.rate).toBe(sourceRate);
+    expect(partialRange.duration.rate).toBe(sourceRate);
+    expect(
+      compareRationalTimes(partialRange.start_time, {
+        value: 0,
+        rate: sourceRate,
+      })
+    ).toBe(0);
+    expect(
+      compareRationalTimes(rangeEndTime(partialRange), {
+        value: 8,
+        rate: sourceRate,
+      })
+    ).toBe(0);
+    expect(
+      compareRationalTimes(rangeEndTime(partialRange), {
+        value: 8,
+        rate: timelineRate,
+      })
+    ).toBeLessThan(0);
   });
 });

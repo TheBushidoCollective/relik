@@ -11,6 +11,14 @@ import {
   stringifyOtioJson,
 } from './otio-json.ts';
 import {
+  otioSequenceFrameEntries,
+  readOtioImageSequence,
+} from './otio-sequence.ts';
+import {
+  MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
+  otioBundleEntryFor,
+} from './otio-zip.ts';
+import {
   addRationalTimes,
   bindOtioSamplingMap,
   compareRationalTimes,
@@ -276,36 +284,10 @@ function stripRelicId(value: unknown): unknown {
   return out;
 }
 
-function referencedPaths(value: unknown, into: Set<string>): void {
-  if (!value || typeof value !== 'object') return;
-  if (Array.isArray(value)) {
-    for (const item of value) referencedPaths(item, into);
-    return;
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    if ((key === 'target_url' || key === 'target_url_base') && typeof record[key] === 'string') {
-      into.add(record[key] as string);
-    }
-    referencedPaths(record[key], into);
-  }
-}
-
-function fingerprintOf(
-  raw: Record<string, unknown>,
-  media: Readonly<Record<string, OtioMediaEntry>>
-): string {
-  const canonical = stringifyOtioJson(stripIdentity(raw));
-  const paths = new Set<string>();
-  referencedPaths(raw, paths);
-  const digests = [...paths]
-    .sort()
-    .map((path) => {
-      const entry = hasOwn(media, path) ? media[path] : undefined;
-      return entry?.sha256 ? `${path} ${entry.sha256}` : '';
-    })
-    .filter((line) => line.length > 0);
-  return syncSha256(new TextEncoder().encode(digests.length > 0 ? `${canonical}\n${digests.join('\n')}` : canonical));
+function fingerprintOf(raw: Record<string, unknown>): string {
+  return syncSha256(
+    new TextEncoder().encode(stringifyOtioJson(stripIdentity(raw)))
+  );
 }
 
 function parseMedia(raw: Record<string, unknown>): OtioMediaReference {
@@ -528,7 +510,7 @@ export function readOtioDocument(
         visit(child, childPointer, pointer);
       });
     }
-    const hash = fingerprintOf(raw, media);
+    const hash = fingerprintOf(raw);
     fingerprintCounts.set(hash, (fingerprintCounts.get(hash) ?? 0) + 1);
     const parsedSchemaVersion = schemaVersion(schema);
     const trackKind =
@@ -1089,16 +1071,125 @@ function inTimeline(document: OtioDocumentV1, timelineId: string, nodeId: string
   return false;
 }
 
-function digestMismatch(left: OtioDocumentV1, right: OtioDocumentV1, leftNode: OtioNode, rightNode: OtioNode): boolean {
-  const paths = new Set<string>();
-  referencedPaths(leftNode.raw, paths);
-  referencedPaths(rightNode.raw, paths);
-  for (const path of paths) {
-    const a = hasOwn(left.media, path) ? left.media[path]?.sha256 : undefined;
-    const b = hasOwn(right.media, path) ? right.media[path]?.sha256 : undefined;
-    if (a && b && a !== b) return true;
+interface MediaWitness {
+  readonly facts: readonly string[];
+  readonly complete: boolean;
+  readonly allDigestsPresent: boolean;
+}
+
+const mediaWitnessCache = new WeakMap<
+  OtioDocumentV1,
+  WeakMap<OtioNode, MediaWitness>
+>();
+
+function mediaWitness(document: OtioDocumentV1, node: OtioNode): MediaWitness {
+  const facts = new Set<string>();
+  const seen = new WeakSet<object>();
+  let sequenceImages = 0;
+  let complete = true;
+  let allDigestsPresent = true;
+
+  const appendEntry = (
+    entries: Array<readonly [string, string | null]>,
+    name: string
+  ): void => {
+    const entry = hasOwn(document.media, name)
+      ? document.media[name]
+      : undefined;
+    const digest = entry?.sha256 || null;
+    if (digest === null) allDigestsPresent = false;
+    entries.push([name, digest]);
+  };
+
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    const entries: Array<readonly [string, string | null]> = [];
+    if (record['OTIO_SCHEMA'] === 'ImageSequenceReference.1') {
+      const read = readOtioImageSequence(record);
+      if (read.ok) {
+        if (
+          sequenceImages >
+          MAX_OTIO_BUNDLE_MEDIA_ENTRIES - read.sequence.count
+        ) {
+          complete = false;
+        } else {
+          sequenceImages += read.sequence.count;
+          for (const name of otioSequenceFrameEntries(record, document.media)) {
+            appendEntry(entries, name);
+          }
+        }
+      } else if (read.reason.startsWith('image sequence count exceeds')) {
+        complete = false;
+      }
+      facts.add(
+        JSON.stringify([stringifyOtioJson(stripIdentity(record)), entries])
+      );
+    } else if (typeof record['target_url'] === 'string') {
+      const entry = otioBundleEntryFor(record['target_url'], (name) =>
+        hasOwn(document.media, name)
+      );
+      if (entry !== null) appendEntry(entries, entry);
+      facts.add(
+        JSON.stringify([stringifyOtioJson(stripIdentity(record)), entries])
+      );
+    }
+
+    for (const key of Object.keys(record)) visit(record[key]);
+  };
+
+  visit(node.raw);
+  return {
+    facts: [...facts].sort(),
+    complete,
+    allDigestsPresent,
+  };
+}
+
+function mediaWitnessFor(
+  document: OtioDocumentV1,
+  node: OtioNode
+): MediaWitness {
+  let byNode = mediaWitnessCache.get(document);
+  if (!byNode) {
+    byNode = new WeakMap<OtioNode, MediaWitness>();
+    mediaWitnessCache.set(document, byNode);
   }
-  return false;
+  const cached = byNode.get(node);
+  if (cached) return cached;
+  const witness = mediaWitness(document, node);
+  byNode.set(node, witness);
+  return witness;
+}
+
+function mediaContinuous(
+  left: OtioDocumentV1,
+  right: OtioDocumentV1,
+  leftNode: OtioNode,
+  rightNode: OtioNode
+): boolean {
+  if (left === right) return true;
+  const leftWitness = mediaWitnessFor(left, leftNode);
+  const rightWitness = mediaWitnessFor(right, rightNode);
+  if (
+    !leftWitness.complete ||
+    !rightWitness.complete ||
+    !leftWitness.allDigestsPresent ||
+    !rightWitness.allDigestsPresent ||
+    leftWitness.facts.length !== rightWitness.facts.length
+  ) {
+    return false;
+  }
+  return leftWitness.facts.every(
+    (fact, index) => fact === rightWitness.facts[index]
+  );
 }
 
 function matchNode(
@@ -1116,7 +1207,7 @@ function matchNode(
     if (matches.length > 1) return { status: 'ambiguous' };
     const match = matches[0];
     if (!match) return { status: 'missing' };
-    if (digestMismatch(original, current, source, match)) return { status: 'changed' };
+    if (!mediaContinuous(original, current, source, match)) return { status: 'changed' };
     return { status: 'unique', node: match };
   }
   const matches = Object.keys(current.nodes)
@@ -1125,7 +1216,7 @@ function matchNode(
   if (matches.length > 1) return { status: 'ambiguous' };
   const match = matches[0];
   if (!match) return { status: 'missing' };
-  if (digestMismatch(original, current, source, match)) return { status: 'changed' };
+  if (!mediaContinuous(original, current, source, match)) return { status: 'changed' };
   return { status: 'unique', node: match };
 }
 
@@ -1182,7 +1273,7 @@ function sameTargets(
     return Boolean(
       originalNode &&
         currentNode &&
-        !digestMismatch(original, current, originalNode, currentNode)
+        mediaContinuous(original, current, originalNode, currentNode)
     );
   });
 }

@@ -5,15 +5,24 @@ import {
   evaluateOtioAt,
   intersectRanges,
   markersForOtioTimeline,
+  otioSamplingMap,
   rangeContainsTime,
   rescaleTime,
+  sampleOtioMedia,
   secondsToTime,
   sourceSpansForOtioRange,
   subtractRationalTimes,
   timeToSeconds,
 } from '../src/otio-timing.ts';
 import { readOtioDocument } from '../src/otio-identity.ts';
-import type { OtioDocumentV1, OtioNode, OtioRationalTime, OtioTimeRange, OtioVideoComposition } from '../src/otio-types.ts';
+import type {
+  OtioDocumentV1,
+  OtioMediaEntry,
+  OtioNode,
+  OtioRationalTime,
+  OtioTimeRange,
+  OtioVideoComposition,
+} from '../src/otio-types.ts';
 
 describe('otio-timing rational arithmetic and mixed rates', () => {
   test('timeToSeconds throws on zero or non-finite rate', () => {
@@ -410,7 +419,6 @@ describe('otio-timing evaluator and source spans', () => {
     });
   });
 
-
   test('keeps an unknown available range free of missing-handle claims', () => {
     const doc = readOtioDocument(timingJson(false));
     const timelineId = doc.timeline_ids[0] as string;
@@ -490,7 +498,6 @@ describe('otio-timing evaluator and source spans', () => {
       shortSpan?.diagnostics.some((item) => item.code === 'missing-handles')
     ).toBe(true);
   });
-
 
   test('treats a span ending at availability end as available', () => {
     const makeDocument = (availableEnd: number) =>
@@ -1189,7 +1196,75 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
     expect(mixedFull?.file_relative_source_range).toEqual(
       explicitFull?.file_relative_source_range
     );
-    expect(mixedFull?.source_mapping).toEqual(explicitFull?.source_mapping);
+    if (!explicitFull?.source_mapping || !mixedFull?.source_mapping) {
+      throw new Error('expected reverse source mappings');
+    }
+    const explicitMapping = explicitFull.source_mapping;
+    const mixedMapping = mixedFull.source_mapping;
+    expect(mixedMapping.source_origin).toEqual(explicitMapping.source_origin);
+    expect(explicitMapping.source_origin).toEqual({
+      value: 19,
+      rate: sourceRate,
+    });
+    expect(explicitMapping.scalar).toBe(-1);
+    expect(mixedMapping.scalar).toBe(-1);
+    expect(explicitMapping.timeline_origin).toEqual(
+      explicitFull.intersected_timeline_range.start_time
+    );
+    expect(mixedMapping.timeline_origin).toEqual(
+      mixedFull.intersected_timeline_range.start_time
+    );
+    expect([sourceRate, timelineRate]).toContain(
+      explicitMapping.timeline_origin.rate
+    );
+    expect([sourceRate, timelineRate]).toContain(
+      mixedMapping.timeline_origin.rate
+    );
+    expect(
+      compareRationalTimes(explicitMapping.timeline_origin, {
+        value: 0,
+        rate: timelineRate,
+      })
+    ).toBe(0);
+    expect(
+      compareRationalTimes(mixedMapping.timeline_origin, {
+        value: 0,
+        rate: timelineRate,
+      })
+    ).toBe(0);
+    expect(
+      compareRationalTimes(
+        explicitMapping.timeline_origin,
+        mixedMapping.timeline_origin
+      )
+    ).toBe(0);
+
+    for (const [document, clip] of [
+      [explicit, requiredNode(explicit, 'clip-reverse')],
+      [mixed, requiredNode(mixed, 'clip-reverse')],
+    ] as const) {
+      const map = otioSamplingMap(clip);
+      if (!map) throw new Error('expected bound sampling map');
+      for (const [timelineValue, expectedSample] of [
+        [0, 19],
+        [4, 14],
+      ] as const) {
+        const timelineTime = { value: timelineValue, rate: timelineRate };
+        const sampled = sampleOtioMedia(map, timelineTime);
+        const evaluated = evaluateOtioAt(
+          document,
+          'timeline-reverse',
+          timelineTime
+        ).video_contributions.find(
+          (contribution) => contribution.node_id === 'clip-reverse'
+        );
+        const expected = { value: expectedSample, rate: sourceRate };
+        expect(compareRationalTimes(sampled, expected)).toBe(0);
+        expect(
+          compareRationalTimes(evaluated?.source_time ?? expected, expected)
+        ).toBe(0);
+      }
+    }
   });
 
   test('counts leading transition offsets in natural track availability without moving cuts', () => {
@@ -1281,5 +1356,202 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
     expect(clip.parent_range).toBeNull();
     expect(clip.timeline_range).toBeNull();
     expect(clip.visible_timeline_range).toBeNull();
+  });
+
+  test('uses canonical entries for external, sequence, and zero-image media', () => {
+    const media = (name: string): Record<string, OtioMediaEntry> => ({
+      [name]: { key: name, bundle_path: name, size: 1 },
+    });
+    const imageReference = (
+      overrides: Readonly<Record<string, unknown>> = {}
+    ): Record<string, unknown> => ({
+      OTIO_SCHEMA: 'ImageSequenceReference.1',
+      target_url_base: 'frames',
+      name_prefix: 'plate_',
+      name_suffix: '.png',
+      start_frame: 1001,
+      frame_step: 1,
+      rate: 24,
+      frame_zero_padding: 4,
+      missing_frame_policy: 'error',
+      available_range: {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: { OTIO_SCHEMA: 'RationalTime.1', value: 0, rate: 24 },
+        duration: { OTIO_SCHEMA: 'RationalTime.1', value: 48, rate: 24 },
+      },
+      ...overrides,
+    });
+    const document = (
+      reference: Record<string, unknown>,
+      mediaIndex: Record<string, OtioMediaEntry> = Object.create(
+        null
+      ) as Record<string, OtioMediaEntry>,
+      kind = 'Video'
+    ): OtioDocumentV1 =>
+      readOtioDocument(
+        JSON.stringify({
+          OTIO_SCHEMA: 'Timeline.1',
+          metadata: { relic: { id: 'timeline-sequence' } },
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: [
+              {
+                OTIO_SCHEMA: 'Track.1',
+                kind,
+                metadata: { relic: { id: 'track-sequence' } },
+                children: [
+                  {
+                    OTIO_SCHEMA: 'Clip.1',
+                    metadata: { relic: { id: 'clip-sequence' } },
+                    source_range: {
+                      start_time: { value: 0, rate: 24 },
+                      duration: { value: 48, rate: 24 },
+                    },
+                    media_reference: reference,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+        { mediaIndex }
+      );
+
+    for (const [reference, entry] of [
+      [imageReference(), 'media/frames/plate_1001.png'],
+      [
+        imageReference({ target_url_base: 'media', name_prefix: '/plate_' }),
+        'media/plate_1001.png',
+      ],
+      [
+        imageReference({ target_url_base: 'media/', name_suffix: '.png?v=1' }),
+        'media/plate_1001.png',
+      ],
+      [
+        imageReference({ target_url_base: 'media/', name_prefix: '%3F_' }),
+        'media/?_1001.png',
+      ],
+      [
+        imageReference({ target_url_base: 'media/', name_prefix: '%23_' }),
+        'media/#_1001.png',
+      ],
+    ] as const) {
+      const doc = document(reference, media(entry));
+      const evaluated = evaluateOtioAt(doc, 'timeline-sequence', {
+        value: 0,
+        rate: 24,
+      });
+      expect(evaluated.video_contributions[0]?.bundle_path).toBe(entry);
+      expect(
+        sourceSpansForOtioRange(doc, 'timeline-sequence', 'track-sequence', {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: 1, rate: 24 },
+        })[0]?.bundle_path
+      ).toBeNull();
+    }
+
+    const rateThirty = document(
+      imageReference({ target_url_base: 'media/', rate: 30 }),
+      media('media/plate_1051.png')
+    );
+    expect(
+      evaluateOtioAt(rateThirty, 'timeline-sequence', { value: 40, rate: 24 })
+        .video_contributions[0]?.bundle_path
+    ).toBe('media/plate_1051.png');
+
+    for (const policy of ['error', 'hold', 'black'] as const) {
+      const zero = document(
+        imageReference({ available_range: null, missing_frame_policy: policy }),
+        media('media/frames/plate_1001.png')
+      );
+      const contribution = evaluateOtioAt(zero, 'timeline-sequence', {
+        value: 0,
+        rate: 24,
+      }).video_contributions[0];
+      if (policy === 'black') {
+        expect(contribution?.sample_kind).toBe('black');
+        expect(contribution?.bundle_path).toBeNull();
+      } else {
+        expect(contribution?.sample_kind).toBe('media');
+        expect(contribution?.bundle_path).toBeNull();
+        expect(
+          contribution?.diagnostics.some(
+            (diagnostic) => diagnostic.code === 'missing-media'
+          )
+        ).toBe(true);
+      }
+    }
+
+    const invalid = document(imageReference({ frame_zero_padding: 33 }));
+    const invalidContribution = evaluateOtioAt(invalid, 'timeline-sequence', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    expect(invalidContribution?.bundle_path).toBeNull();
+    expect(invalidContribution?.source_frame).toBeUndefined();
+    expect(
+      invalidContribution?.diagnostics.some(
+        (diagnostic) => diagnostic.code === 'invalid-timing'
+      )
+    ).toBe(true);
+
+    const external = {
+      OTIO_SCHEMA: 'ExternalReference.1',
+      target_url: 'media/a%2520b.mp4',
+      available_range: {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: 48, rate: 24 },
+      },
+    };
+    const externalVideo = document(external);
+    expect(
+      evaluateOtioAt(externalVideo, 'timeline-sequence', {
+        value: 0,
+        rate: 24,
+      }).video_contributions[0]?.bundle_path
+    ).toBe('media/a%20b.mp4');
+    expect(
+      sourceSpansForOtioRange(
+        externalVideo,
+        'timeline-sequence',
+        'track-sequence',
+        {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: 1, rate: 24 },
+        }
+      )[0]?.bundle_path
+    ).toBe('media/a%20b.mp4');
+    const externalAudio = document(external, Object.create(null), 'Audio');
+    expect(
+      evaluateOtioAt(externalAudio, 'timeline-sequence', {
+        value: 0,
+        rate: 24,
+      }).audio_contributions[0]?.bundle_path
+    ).toBe('media/a%20b.mp4');
+    for (const [targetUrl, entry] of [
+      ['media/%253F.png', 'media/%3F.png'],
+      ['media/%3F.png', 'media/?.png'],
+      ['media/a%2520b.png', 'media/a%20b.png'],
+      ['media/a%20b.png', 'media/a b.png'],
+    ] as const) {
+      const canonical = document({ ...external, target_url: targetUrl });
+      expect(
+        evaluateOtioAt(canonical, 'timeline-sequence', {
+          value: 0,
+          rate: 24,
+        }).video_contributions[0]?.bundle_path
+      ).toBe(entry);
+      expect(
+        sourceSpansForOtioRange(
+          canonical,
+          'timeline-sequence',
+          'track-sequence',
+          {
+            start_time: { value: 0, rate: 24 },
+            duration: { value: 1, rate: 24 },
+          }
+        )[0]?.bundle_path
+      ).toBe(entry);
+    }
   });
 });
