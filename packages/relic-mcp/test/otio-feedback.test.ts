@@ -165,29 +165,42 @@ function createOtioz(entries: readonly OtiozFixtureEntry[]): Uint8Array {
   return archive;
 }
 
+function completeFetchDouble(
+  implementation: (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ) => Promise<Response>
+): typeof globalThis.fetch {
+  return Object.assign(implementation, {
+    preconnect: globalThis.fetch.preconnect,
+  });
+}
+
 function shimFetch(): typeof globalThis.fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(typeof input === 'string' ? input : String(input));
-    if (url.origin === SERVICE) {
-      if (url.pathname.endsWith('/mint') && init?.body) {
-        mintBodies.push(JSON.parse(String(init.body)));
+  return completeFetchDouble(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === 'string' ? input : String(input));
+      if (url.origin === SERVICE) {
+        if (url.pathname.endsWith('/mint') && init?.body) {
+          mintBodies.push(JSON.parse(String(init.body)));
+        }
+        const headers = new Headers(init?.headers);
+        headers.set('x-forwarded-for', '198.51.100.10');
+        return app.fetch(new Request(url.toString(), { ...init, headers }));
       }
-      const headers = new Headers(init?.headers);
-      headers.set('x-forwarded-for', '198.51.100.10');
-      return app.fetch(new Request(url.toString(), { ...init, headers }));
-    }
-    if (url.hostname === 'storage.invalid') {
-      const key = url.pathname.replace(/^\/(?:upload|o)\//, '');
-      if (init?.method === 'PUT') {
-        storage.put(key, new Uint8Array(init.body as Uint8Array));
-        return new Response(null, { status: 200 });
+      if (url.hostname === 'storage.invalid') {
+        const key = url.pathname.replace(/^\/(?:upload|o)\//, '');
+        if (init?.method === 'PUT') {
+          storage.put(key, new Uint8Array(init.body as Uint8Array));
+          return new Response(null, { status: 200 });
+        }
+        const bytes = await storage.read(key);
+        if (bytes === undefined) return new Response(null, { status: 404 });
+        return new Response(bytes as unknown as BodyInit, { status: 200 });
       }
-      const bytes = await storage.read(key);
-      if (bytes === undefined) return new Response(null, { status: 404 });
-      return new Response(bytes as unknown as BodyInit, { status: 200 });
+      return new Response(null, { status: 404 });
     }
-    return new Response(null, { status: 404 });
-  }) as typeof globalThis.fetch;
+  );
 }
 
 beforeEach(async () => {
@@ -244,10 +257,10 @@ describe('OTIO comment anchors', () => {
     let fetches = 0;
     const idle: PublishDeps = {
       ...deps,
-      fetch: (async () => {
+      fetch: completeFetchDouble(async () => {
         fetches += 1;
         return new Response(null, { status: 500 });
-      }) as typeof globalThis.fetch,
+      }),
     };
     const comment = {
       comment_id: 'c1',
@@ -567,26 +580,32 @@ describe('OTIO comment anchors', () => {
     mintBodies = [];
     const forged: PublishDeps = {
       ...deps,
-      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(typeof input === 'string' ? input : String(input));
-        if (
-          url.origin === SERVICE &&
-          url.pathname.endsWith('/mint') &&
-          init?.body
-        ) {
-          const body = JSON.parse(String(init.body)) as { version?: number };
-          if (body.version === 1) {
-            mintBodies.push(body);
-            return Response.json({
-              url: currentDescriptor.url,
-              object_length: currentDescriptor.object_length,
-              version: 1,
-              current_version: 2,
-            });
+      fetch: completeFetchDouble(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(
+            typeof input === 'string' ? input : String(input)
+          );
+          if (
+            url.origin === SERVICE &&
+            url.pathname.endsWith('/mint') &&
+            init?.body
+          ) {
+            const body = JSON.parse(String(init.body)) as {
+              version?: number;
+            };
+            if (body.version === 1) {
+              mintBodies.push(body);
+              return Response.json({
+                url: currentDescriptor.url,
+                object_length: currentDescriptor.object_length,
+                version: 1,
+                current_version: 2,
+              });
+            }
           }
+          return deps.fetch(input, init);
         }
-        return deps.fetch(input, init);
-      }) as typeof globalThis.fetch,
+      ),
     };
     const response = await handleMessage(
       {
