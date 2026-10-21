@@ -63,7 +63,9 @@ const fixtureDir = fileURLToPath(
 );
 
 // Resolve the harness-owned temporary parent, never an input bundle or its entries.
-const scratch = await mkdtemp(join(await realpath(tmpdir()), 'relic-otio-path-'));
+const scratch = await mkdtemp(
+  join(await realpath(tmpdir()), 'relic-otio-path-')
+);
 const statePath = join(scratch, 'state.json');
 const shotDir = join(scratch, 'shots');
 const mediaDir = join(scratch, 'media');
@@ -2392,7 +2394,20 @@ try {
   assert.equal(insertExpect.status, 'mapped');
   const insertRange = insertExpect.mapped_range;
   assert.ok(insertRange, 'insert projection missing');
+  const reviewer = 'reader@example.test';
   const insertIds = original.map((entry) => String(entry['comment_id']));
+  assert.deepEqual(
+    await store.listCommenters(relicId),
+    ['reader@example.test'],
+    'the stop record must cover every follower the acknowledgements notify'
+  );
+  // `notify: false` skips only the change notice. Addressed replies normally notify
+  // the local reviewer, who has stopped email through the existing opt-out record.
+  await store.putOptOut({
+    relicId,
+    addressHash: await sha256Hex(reviewer),
+    at: fakeNow,
+  });
   const inserted = await callMcp('relic_republish', {
     relic_id: relicId,
     path: insertDir,
@@ -2700,7 +2715,9 @@ try {
   assert.equal(
     mails.length,
     0,
-    `the proof captured ${mails.length} mail send(s)`
+    `the proof captured ${mails.length} mail send(s): ${JSON.stringify(
+      mails.map(({ to, mail }) => ({ to, subject: mail.subject }))
+    )}`
   );
   pass('no-mail');
 
