@@ -30,7 +30,7 @@
 
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -62,7 +62,8 @@ const fixtureDir = fileURLToPath(
   )
 );
 
-const scratch = await mkdtemp(join(tmpdir(), 'relic-otio-path-'));
+// Resolve the harness-owned temporary parent, never an input bundle or its entries.
+const scratch = await mkdtemp(join(await realpath(tmpdir()), 'relic-otio-path-'));
 const statePath = join(scratch, 'state.json');
 const shotDir = join(scratch, 'shots');
 const mediaDir = join(scratch, 'media');
@@ -1620,7 +1621,6 @@ async function assertTrackVisible(
     `default view hid track ${trackId} before the negative-head probe`
   );
 }
-
 
 async function selectTrack(
   browser: ChromeSession,

@@ -1540,7 +1540,9 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
       value: 0,
       rate: 24,
     }).video_contributions[0];
-    expect(heldPreStart?.bundle_path).toBe('media/frames/plate_1002.png');
+    expect<string | null | undefined>(heldPreStart?.bundle_path).toBe(
+      'media/frames/plate_1002.png'
+    );
     expect(heldPreStart?.source_frame).toBe(1002);
 
     const invalid = document(imageReference({ frame_zero_padding: 33 }));
