@@ -394,6 +394,7 @@ async function createSession(email = 'reader@example.test'): Promise<string> {
 const ORACLE = String.raw`
 import json, os, shutil, sys, zipfile
 from pathlib import Path
+from collections.abc import Mapping
 
 os.environ.setdefault("OTIO_PLUGIN_MANIFEST_PATH", sys.argv[1])
 import opentimelineio as otio
@@ -417,7 +418,7 @@ def close(a, b):
 
 def relic_id(item):
     meta = item.metadata.get("relic") if item.metadata else None
-    if isinstance(meta, dict):
+    if isinstance(meta, Mapping):
         return meta.get("id")
     return None
 
@@ -448,21 +449,21 @@ def establish(timeline, primary):
         raise SystemExit("primary clip has no parent range")
     start = parent.start_time
     expected = primary.source_range.start_time
-    forward = timeline.transformed_time(start, primary)
+    forward = timeline.tracks.transformed_time(start, primary)
     if close(forward, expected):
         return start.rate
-    backward = primary.transformed_time(start, timeline)
+    backward = primary.transformed_time(start, timeline.tracks)
     if close(backward, expected):
         raise SystemExit("transform direction is reversed; refusing to guess offsets")
     global_start = timeline.global_start_time
     if global_start is not None:
         shifted = start - global_start
-        if close(timeline.transformed_time(shifted, primary), expected):
+        if close(timeline.tracks.transformed_time(shifted, primary), expected):
             raise SystemExit("timeline time includes global_start; viewer frames would be wrong")
     raise SystemExit("could not map primary source start through the official timeline")
 
 def source_at(timeline, clip, t):
-    return timeline.transformed_time(t, clip)
+    return timeline.tracks.transformed_time(t, clip)
 
 def bundle_of(clip):
     ref = clip.media_reference
@@ -772,7 +773,7 @@ def project(path, relic, source_range):
     if overlap_end <= overlap_start:
         return {"status": "missing", "mapped_range": None}
     surviving = otio.opentime.TimeRange(overlap_start, overlap_end - overlap_start)
-    editorial = clip.transformed_time_range(surviving, timeline)
+    editorial = clip.transformed_time_range(surviving, timeline.tracks)
     status = "partial" if not close(overlap_end - overlap_start, duration) else "mapped"
     return {"status": status, "mapped_range": range_json(editorial)}
 
