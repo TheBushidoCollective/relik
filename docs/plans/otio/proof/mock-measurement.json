@@ -1,6 +1,6 @@
 {
-  "url": "http://127.0.0.1:50622/",
-  "measuredAt": "2026-10-21T05:59:59.908Z",
+  "url": "http://127.0.0.1:57594/",
+  "measuredAt": "2026-10-21T23:56:35.170Z",
   "viewport": {
     "w": 1440,
     "h": 900
@@ -20,7 +20,11 @@
       "groundWarmth": -0.02,
       "ink": "rgb(230, 233, 231)",
       "inkLightness": 0.91,
-      "accentHues": [165, 300, 0],
+      "accentHues": [
+        165,
+        300,
+        0
+      ],
       "darkBandCount": 1
     },
     "shape": {
@@ -29,7 +33,11 @@
       "shadowUsage": 0
     },
     "skeleton": {
-      "sections": ["hero", "list-grid", "hero"],
+      "sections": [
+        "hero",
+        "list-grid",
+        "hero"
+      ],
       "eyebrowRatio": 0,
       "twoToneHeadline": false,
       "heroAlignment": "left"
