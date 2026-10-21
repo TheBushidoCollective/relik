@@ -80,7 +80,7 @@ jobs:
       # evaluator. A mismatch here is a real disagreement with the standard.
       - name: Install OTIO conformance tools
         run: |
-          python3 -m pip install --user 'opentimelineio==0.18.1'
+          curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install headless Chrome
@@ -95,7 +95,7 @@ jobs:
 
       - name: OTIO conformance
         run: |
-          python3 scripts/generate-otio-fixtures.py --check
+          uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py --check
           bash scripts/generate-otio-media.sh --check
 
       # Loopback-only end-to-end path: publish an .otiod, decrypt, play in

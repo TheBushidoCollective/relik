@@ -19,7 +19,7 @@
  * Prerequisites, all pinned:
  *   mise exec -- bun install --frozen-lockfile
  *   mise exec -- bun run --cwd packages/relic-mcp build
- *   python3 -m pip install 'opentimelineio==0.18.1'
+ *   uv run --with opentimelineio==0.18.1 python3 -c 'import opentimelineio'
  *   ffmpeg on PATH
  *   a headless Chrome, named by RELIC_OTIO_CHROME_PATH (falls back to
  *   RELIC_CHROME_PATH when that names an executable, never to a headed browser)
@@ -302,7 +302,7 @@ async function officialArchiveCheck(archive: Uint8Array): Promise<void> {
   const scriptPath = join(scratch, 'official-read.py');
   await writeFile(scriptPath, script);
   const child = Bun.spawn(
-    ['python3', scriptPath, archivePath],
+    ['uv', 'run', '--with', 'opentimelineio==0.18.1', 'python3', scriptPath, archivePath],
     { stdout: 'pipe', stderr: 'pipe', env: { ...process.env } }
   );
   const [stdout, stderr, exit] = await Promise.all([
