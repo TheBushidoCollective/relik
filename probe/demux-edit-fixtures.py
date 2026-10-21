@@ -29,3 +29,9 @@ for position in positions.values():
     struct.pack_into('>I', loop, position, original_size + 12)
 (root / 'media/loop-edit.mp4').write_bytes(loop)
 print('Wrote focused single-short, media-rate-2, and looped edit-list fixtures')
+
+webm = bytearray((root / 'media/fr30.webm').read_bytes())
+w = webm.index(bytes.fromhex('23e383'))
+assert webm[w + 3] == 0x84
+webm[w:w + 8] = bytes.fromhex('ec86') + bytes(6)
+(root / 'media/no-duration.webm').write_bytes(webm)

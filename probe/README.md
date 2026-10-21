@@ -32,3 +32,21 @@ No product source was edited for these probes. Repository verification, tests, l
 ## Additional package research
 
 Any subsequent dependency probe is isolated from product dependencies. Published-package source, dependencies, archives, generated bundles, and native artifacts must not be committed here. Record the exact package version, public artifact URL and integrity, API used, input fixtures, and measured results instead.
+
+
+## Released demuxer characterization and amended reader spec
+
+See [reader-amendment.md](reader-amendment.md) for the settled actual-PTS window contract, fixed resource budgets, narrow edit-safety gate, MPL distribution requirements, ownership, and source/API evidence. Reproduce with:
+
+```sh
+probe/demux-fetch.sh
+probe/gen-media.sh
+probe/demux-gen-media.sh
+python3 probe/demux-edit-fixtures.py
+python3 probe/demux-ffprobe.py
+mise exec -- bun probe/mediabunny-run.ts
+```
+
+The exact dependency is mediabunny@1.62.0, MPL-2.0. The downloaded package is ignored and is not committed. Its immutable tarball SHA256 is verified by demux-fetch.sh. The published library's metadata-only packet API is exercised against generated MP4, MOV, B-frame, WebM, VFR, unsupported edit-list, shortened single-edit, and absent-final-duration controls. Actual observations are in mediabunny-results.json; independent packet metadata are in demux-ffprobe.json.
+
+Correction to the original ideal-FPS raw probe: WebM's encoded PTS are quantized. Its earlier native-CFR midpoint success count used a nominal-FPS oracle and must not be read as proof of encoded-window membership. The amended spec and package probe use actual packet presentation windows instead. Original rational samples and anchors stay unchanged.

@@ -1349,6 +1349,126 @@
       ]
     },
     {
+      "path": "/media/no-duration.webm",
+      "blobBytes": 2680,
+      "format": "WebM",
+      "resolution": 1000,
+      "packetCount": 90,
+      "readCalls": 16,
+      "readBytes": 2680,
+      "largestRead": 2183,
+      "sourceDisposed": true,
+      "videoDuration": 3,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.033,
+          "sequence": 481,
+          "byteLength": 37,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.033,
+          "duration": 0.034,
+          "sequence": 482,
+          "byteLength": 17,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.067,
+          "duration": 0.033,
+          "sequence": 483,
+          "byteLength": 17,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.1,
+          "duration": 0.033,
+          "sequence": 484,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.133,
+          "duration": 0.034,
+          "sequence": 485,
+          "byteLength": 19,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.167,
+          "duration": 0.033,
+          "sequence": 486,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 2.967,
+        "duration": 0,
+        "sequence": 570,
+        "byteLength": 17,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.033,
+        0.067,
+        0.1,
+        0.133,
+        0.167,
+        0.2,
+        0.233
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.033,
+        0.067,
+        0.1,
+        0.133,
+        0.167,
+        0.2,
+        0.233
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.033
+          ],
+          "target": 0.0165,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.0165,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 2.95,
+          "window": [
+            2.933,
+            2.967
+          ],
+          "target": 2.95,
+          "presentedIndex": 88,
+          "actualCurrentTime": 2.95,
+          "packetOrdinal": 88
+        },
+        {
+          "time": 2.98,
+          "window": null
+        }
+      ]
+    },
+    {
       "path": "/media/short-edit.mp4",
       "blobBytes": 3122,
       "format": "MP4",
