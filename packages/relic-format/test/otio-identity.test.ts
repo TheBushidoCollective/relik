@@ -504,8 +504,11 @@ describe('OTIO identity and projection', () => {
     ): Record<string, OtioMediaEntry> => {
       const index = Object.create(null) as Record<string, OtioMediaEntry>;
       for (const name of names) {
-        const digest = changed?.[name] ?? 'a'.repeat(64);
-        if (digest === null) continue;
+        const digest =
+          changed !== undefined && Object.hasOwn(changed, name)
+            ? changed[name]
+            : 'a'.repeat(64);
+        if (digest === null || digest === undefined) continue;
         index[name] = {
           key: name,
           bundle_path: name,
@@ -536,6 +539,11 @@ describe('OTIO identity and projection', () => {
     const missingFrame = readOtioDocument(source, {
       mediaIndex: media({ 'media/plate_1002.png': null }),
     });
+    expect(Object.keys(missingFrame.media)).toHaveLength(47);
+    expect(missingFrame.media['media/plate_1002.png']).toBeUndefined();
+    expect(changedFrame.media['media/plate_1001.png']?.sha256).toBe(
+      'b'.repeat(64)
+    );
     const irrelevant = media();
     for (const name of [
       'media/plate_1049.png',
@@ -1144,6 +1152,30 @@ describe('OTIO original selection and reverse projection edges', () => {
     const missing = resolveOtioAnchor(saved, original, withoutDescendant);
     expect(missing.status).toBe('missing');
     expect(missing.mapped_ranges).toEqual([]);
+
+    const indexedMedia = (sha256: string): Record<string, OtioMediaEntry> => ({
+      'media/x.mp4': {
+        key: 'media/x.mp4',
+        bundle_path: 'media/x.mp4',
+        size: 1,
+        sha256,
+      },
+    });
+    const bytesOriginal = readOtioDocument(documentD3(12, 60), {
+      mediaIndex: indexedMedia('a'.repeat(64)),
+    });
+    const bytesSame = readOtioDocument(documentD3(12, 60), {
+      mediaIndex: indexedMedia('a'.repeat(64)),
+    });
+    const bytesChanged = readOtioDocument(documentD3(12, 60), {
+      mediaIndex: indexedMedia('b'.repeat(64)),
+    });
+    expect(resolveOtioAnchor(saved, bytesOriginal, bytesSame).status).toBe(
+      'same'
+    );
+    const bytesMissing = resolveOtioAnchor(saved, bytesOriginal, bytesChanged);
+    expect(bytesMissing.status).toBe('missing');
+    expect(bytesMissing.mapped_ranges).toEqual([]);
   });
 
   test('retains whole-track traversal for anchors without an item target', () => {

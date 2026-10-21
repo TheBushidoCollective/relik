@@ -1192,32 +1192,70 @@ function mediaContinuous(
   );
 }
 
+type CurrentNodeMatch =
+  | {
+      readonly status: 'unique';
+      readonly source: OtioNode;
+      readonly node: OtioNode;
+    }
+  | { readonly status: 'ambiguous' | 'missing' };
+
+type NodeMatch = CurrentNodeMatch | { readonly status: 'changed' };
+
+function findCurrentNode(
+  original: OtioDocumentV1,
+  current: OtioDocumentV1,
+  nodeId: string
+): CurrentNodeMatch {
+  const source = nodeOf(original, nodeId);
+  if (!source) return { status: 'missing' };
+  if (source.identity_origin === 'derived-duplicate') {
+    return { status: 'ambiguous' };
+  }
+  if (source.identity_origin === 'authored') {
+    const matches = Object.keys(current.nodes)
+      .map((id) => nodeOf(current, id))
+      .filter(
+        (node): node is OtioNode =>
+          Boolean(
+            node &&
+              node.id === source.id &&
+              node.identity_origin === 'authored'
+          )
+      );
+    if (matches.length > 1) return { status: 'ambiguous' };
+    const match = matches[0];
+    if (!match) return { status: 'missing' };
+    return { status: 'unique', source, node: match };
+  }
+  const matches = Object.keys(current.nodes)
+    .map((id) => nodeOf(current, id))
+    .filter(
+      (node): node is OtioNode =>
+        Boolean(
+          node &&
+            node.identity_origin !== 'derived-duplicate' &&
+            node.fingerprint &&
+            node.fingerprint === source.fingerprint
+        )
+    );
+  if (matches.length > 1) return { status: 'ambiguous' };
+  const match = matches[0];
+  if (!match) return { status: 'missing' };
+  return { status: 'unique', source, node: match };
+}
+
 function matchNode(
   original: OtioDocumentV1,
   current: OtioDocumentV1,
   nodeId: string
-): { status: 'unique' | 'ambiguous' | 'missing' | 'changed'; node?: OtioNode } {
-  const source = nodeOf(original, nodeId);
-  if (!source) return { status: 'missing' };
-  if (source.identity_origin === 'derived-duplicate') return { status: 'ambiguous' };
-  if (source.identity_origin === 'authored') {
-    const matches = Object.keys(current.nodes)
-      .map((id) => nodeOf(current, id))
-      .filter((node): node is OtioNode => Boolean(node && node.id === source.id && node.identity_origin === 'authored'));
-    if (matches.length > 1) return { status: 'ambiguous' };
-    const match = matches[0];
-    if (!match) return { status: 'missing' };
-    if (!mediaContinuous(original, current, source, match)) return { status: 'changed' };
-    return { status: 'unique', node: match };
+): NodeMatch {
+  const match = findCurrentNode(original, current, nodeId);
+  if (match.status !== 'unique') return match;
+  if (!mediaContinuous(original, current, match.source, match.node)) {
+    return { status: 'changed' };
   }
-  const matches = Object.keys(current.nodes)
-    .map((id) => nodeOf(current, id))
-    .filter((node): node is OtioNode => Boolean(node && node.identity_origin !== 'derived-duplicate' && node.fingerprint && node.fingerprint === source.fingerprint));
-  if (matches.length > 1) return { status: 'ambiguous' };
-  const match = matches[0];
-  if (!match) return { status: 'missing' };
-  if (!mediaContinuous(original, current, source, match)) return { status: 'changed' };
-  return { status: 'unique', node: match };
+  return match;
 }
 
 interface OriginalAnchorSelection {
@@ -1459,13 +1497,12 @@ export function resolveOtioAnchor(
   let currentContainer: OtioNode | undefined;
   let containerUnresolved = false;
   if (selection.containerId) {
-    const match = matchNode(
+    const match = findCurrentNode(
       originalDocument,
       currentDocument,
       selection.containerId
     );
     if (match.status === 'ambiguous') ambiguous = true;
-    if (match.status === 'changed') changed = true;
     if (match.status === 'missing') missing = true;
     if (match.status === 'unique') currentContainer = match.node;
     else containerUnresolved = true;

@@ -755,13 +755,13 @@ describe('otio-zip security indexing and subtype detection', () => {
       /^Malformed percent-encoding/
     );
 
-    expect(otioBundleEntry('media/%253F.png')).toBe('media/%3F.png');
-    expect(otioBundleEntry('media/%3F.png')).toBe('media/?.png');
-    expect(otioBundleEntry('media/a%2520b.png')).toBe('media/a%20b.png');
-    expect(otioBundleEntry('media/a%20b.png')).toBe('media/a b.png');
-    expect(otioBundleEntry('media/x.png?v=1')).toBe('media/x.png');
-    expect(otioBundleEntry('media/x.png#t=1')).toBe('media/x.png');
-    expect(
+    expect<string | null>(otioBundleEntry('media/%253F.png')).toBe('media/%3F.png');
+    expect<string | null>(otioBundleEntry('media/%3F.png')).toBe('media/?.png');
+    expect<string | null>(otioBundleEntry('media/a%2520b.png')).toBe('media/a%20b.png');
+    expect<string | null>(otioBundleEntry('media/a%20b.png')).toBe('media/a b.png');
+    expect<string | null>(otioBundleEntry('media/x.png?v=1')).toBe('media/x.png');
+    expect<string | null>(otioBundleEntry('media/x.png#t=1')).toBe('media/x.png');
+    expect<string | null>(
       otioBundleEntryFor(
         'file:media/clip.mov',
         (name) => name === 'media/clip.mov'
