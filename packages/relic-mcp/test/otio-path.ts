@@ -501,10 +501,27 @@ def span_for(timeline, clip, t):
         "source_seconds": float(source.rescaled_to(1).value) if source is not None else None,
     }
 
-def image_url(ref, number):
+def image_index_at(ref, sample):
+    count = ref.number_of_images_in_sequence()
+    available = ref.available_range
+    if available is None:
+        raise SystemExit("sequence has no available range")
+    for index in range(count):
+        start = ref.presentation_time_for_image_number(index)
+        end = (
+            ref.presentation_time_for_image_number(index + 1)
+            if index + 1 < count
+            else available.end_time_exclusive()
+        )
+        window = otio.opentime.TimeRange.range_from_start_end_time(start, end)
+        if window.contains(sample.rescaled_to(start.rate)):
+            return index
+    raise SystemExit("source sample is outside sequence presentation windows")
+
+def image_url(ref, index):
     if not hasattr(ref, "target_url_for_image_number"):
         raise SystemExit("official image-number API is missing")
-    url = ref.target_url_for_image_number(int(number))
+    url = ref.target_url_for_image_number(int(index))
     if url.startswith("http://") or url.startswith("https://") or ".." in url:
         raise SystemExit("image URL is not a bundle path: %s" % url)
     return url
@@ -545,9 +562,11 @@ def derive(archive, out_dir):
     local = source_at(timeline, plate, sample)
     ref = plate.media_reference
     local_frames = int(round(local.rescaled_to(ref.rate).value))
-    image_number = int(ref.start_frame) + int(ref.frame_step) * local_frames
-    url = image_url(ref, image_number)
-    predecessor = image_url(ref, image_number - int(ref.frame_step))
+    image_index = image_index_at(ref, local)
+    if image_index == 0:
+        raise SystemExit("nested sample has no predecessor for hold proof")
+    url = image_url(ref, image_index)
+    predecessor = image_url(ref, image_index - 1)
     zf = zipfile.ZipFile(archive)
     for needed in (url, predecessor):
         if needed not in zf.namelist():
@@ -816,9 +835,12 @@ def mutate(op, src, dest, extra):
     if op == "states":
         plate = next(item for item in walk(timeline) if relic_id(item) == "clip-nested-plate")
         ref = plate.media_reference
-        local = otio.opentime.RationalTime(8, ref.rate)
-        number = int(ref.start_frame) + int(ref.frame_step) * int(round(local.value))
-        missing = ref.target_url_for_image_number(number)
+        sample = json.loads(extra)
+        local = source_at(
+            timeline, plate,
+            otio.opentime.RationalTime(sample["value"], sample["rate"]),
+        )
+        missing = image_url(ref, image_index_at(ref, local))
         target = Path(dest) / missing
         if target.exists():
             target.unlink()
@@ -872,15 +894,18 @@ else:
 
 async function oracle(args: string[], input?: string): Promise<string> {
   const script = join(scratch, 'official-otio.py');
-  await writeFile(emptyManifest, JSON.stringify({
-    OTIO_SCHEMA: 'PluginManifest.1',
-    adapters: [],
-    hook_scripts: [],
-    hooks: {},
-    media_linkers: [],
-    schemadefs: [],
-    version_manifests: {},
-  }));
+  await writeFile(
+    emptyManifest,
+    JSON.stringify({
+      OTIO_SCHEMA: 'PluginManifest.1',
+      adapters: [],
+      hook_scripts: [],
+      hooks: {},
+      media_linkers: [],
+      schemadefs: [],
+      version_manifests: {},
+    })
+  );
   await writeFile(script, ORACLE);
   const result = await runChild(
     [
@@ -2066,13 +2091,20 @@ try {
   pass('revision-ambiguous');
 
   const stateDir = join(scratch, 'states.otiod');
-  const stateJson = await oracle(['mutate', 'states', fixtureDir, stateDir]);
+  const stateJson = await oracle([
+    'mutate',
+    'states',
+    fixtureDir,
+    stateDir,
+    JSON.stringify({ value: plan.nested_frame, rate: plan.timeline_rate }),
+  ]);
   const statePlan = JSON.parse(stateJson) as {
     missing_file: string;
     black_frame: number;
     codec_frame: number;
     codec_media: string;
   };
+  assert.equal(statePlan.missing_file, plan.nested_image_file);
   const statePublished = await callMcp('relic_publish', {
     path: stateDir,
     title: 'OTIO state proof',
