@@ -10,7 +10,7 @@
 
 import {
   MAX_EXPANDED_ZIP_BYTES,
-  otioBundleEntryFor,
+  type OtioBundleEntryName,
   type OtioZipEntryInfo,
   type OtioZipIndex,
 } from '@relic/format';
@@ -35,12 +35,12 @@ function blobBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 export interface OtioMediaResolver {
-  /** Resolve bundle path to a local Blob. Returns null if missing or invalid. */
-  resolveBlob(bundlePath: string): Promise<Blob | null>;
-  /** Resolve bundle path to an Object URL. Returns null if missing or invalid. */
-  resolveUrl(bundlePath: string): Promise<string | null>;
-  /** Check if a bundle path exists in the archive index. */
-  hasEntry(bundlePath: string): boolean;
+  /** Resolve a canonical bundle entry name to a local Blob. */
+  resolveBlob(entryName: OtioBundleEntryName): Promise<Blob | null>;
+  /** Resolve a canonical bundle entry name to an Object URL. */
+  resolveUrl(entryName: OtioBundleEntryName): Promise<string | null>;
+  /** Check whether a canonical bundle entry name exists in the archive index. */
+  hasEntry(entryName: OtioBundleEntryName): boolean;
   /** Get cumulative decompressed bytes charged so far. */
   getDecompressedBytes(): number;
   /** Revoke all created Object URLs and clear memory. */
@@ -51,8 +51,9 @@ export interface OtioMediaResolver {
  * Infer media MIME type from file extension.
  */
 export function inferMediaMimeType(filename: string): string {
-  const clean = filename.split('?')[0]?.split('#')[0] ?? filename;
-  const ext = clean.split('.').pop()?.toLowerCase();
+  const segment = filename.slice(filename.lastIndexOf('/') + 1);
+  const dot = segment.lastIndexOf('.');
+  const ext = dot === -1 ? '' : segment.slice(dot + 1).toLowerCase();
   switch (ext) {
     case 'mp4':
     case 'm4v':
@@ -106,21 +107,22 @@ export function createOtioMediaResolver(
   let chargedBytes = 0;
   let disposed = false;
 
-  const blobByEntry = new Map<string, Blob>();
-  const urlByEntry = new Map<string, string>();
-  const blobInflight = new Map<string, Promise<Blob>>();
-  const urlInflight = new Map<string, Promise<string | null>>();
-  const failures = new Map<string, Error>();
+  const blobByEntry = new Map<OtioBundleEntryName, Blob>();
+  const urlByEntry = new Map<OtioBundleEntryName, string>();
+  const blobInflight = new Map<OtioBundleEntryName, Promise<Blob>>();
+  const urlInflight = new Map<OtioBundleEntryName, Promise<string | null>>();
+  const failures = new Map<OtioBundleEntryName, Error>();
   const allocatedUrls = new Set<string>();
 
-  function canonicalName(bundlePath: string): string | null {
-    return otioBundleEntryFor(bundlePath, (name) => {
-      const entry = zipIndex.entries.get(name);
-      return entry !== undefined && !entry.isDirectory;
-    });
+  function exactMediaEntry(
+    entryName: OtioBundleEntryName
+  ): OtioZipEntryInfo | null {
+    if (!entryName.startsWith('media/')) return null;
+    const entry = zipIndex.entries.get(entryName);
+    return entry && !entry.isDirectory ? entry : null;
   }
 
-  function limitError(entryName: string, size: number): Error {
+  function limitError(entryName: OtioBundleEntryName, size: number): Error {
     return new Error(
       `Decompression limit exceeded: ${entryName} (${size} bytes) ` +
         `would exceed aggregate cap of ${maxDecompressedBytes} bytes ` +
@@ -128,7 +130,7 @@ export function createOtioMediaResolver(
     );
   }
 
-  function loadEntry(entryName: string): Promise<Blob> {
+  function loadEntry(entryName: OtioBundleEntryName): Promise<Blob> {
     const cached = blobByEntry.get(entryName);
     if (cached) return Promise.resolve(cached);
     const pending = blobInflight.get(entryName);
@@ -136,7 +138,7 @@ export function createOtioMediaResolver(
     const prior = failures.get(entryName);
     if (prior) return Promise.reject(prior);
 
-    const entry: OtioZipEntryInfo | undefined = zipIndex.entries.get(entryName);
+    const entry = exactMediaEntry(entryName);
     if (!entry) {
       return Promise.reject(new Error(`Entry not found: ${entryName}`));
     }
@@ -191,7 +193,7 @@ export function createOtioMediaResolver(
     return promise;
   }
 
-  function createUrl(entryName: string): Promise<string | null> {
+  function createUrl(entryName: OtioBundleEntryName): Promise<string | null> {
     return loadEntry(entryName)
       .then((blob) => {
         if (disposed) return null;
@@ -215,26 +217,25 @@ export function createOtioMediaResolver(
   }
 
   return {
-    hasEntry(bundlePath: string): boolean {
-      if (disposed) return false;
-      return canonicalName(bundlePath) !== null;
+    hasEntry(entryName: OtioBundleEntryName): boolean {
+      return !disposed && exactMediaEntry(entryName) !== null;
     },
 
     getDecompressedBytes(): number {
       return chargedBytes;
     },
 
-    resolveBlob(bundlePath: string): Promise<Blob | null> {
-      if (disposed) return Promise.resolve(null);
-      const entryName = canonicalName(bundlePath);
-      if (!entryName) return Promise.resolve(null);
+    resolveBlob(entryName: OtioBundleEntryName): Promise<Blob | null> {
+      if (disposed || !exactMediaEntry(entryName)) {
+        return Promise.resolve(null);
+      }
       return loadEntry(entryName);
     },
 
-    resolveUrl(bundlePath: string): Promise<string | null> {
-      if (disposed) return Promise.resolve(null);
-      const entryName = canonicalName(bundlePath);
-      if (!entryName) return Promise.resolve(null);
+    resolveUrl(entryName: OtioBundleEntryName): Promise<string | null> {
+      if (disposed || !exactMediaEntry(entryName)) {
+        return Promise.resolve(null);
+      }
       const cached = urlByEntry.get(entryName);
       if (cached) return Promise.resolve(cached);
       const pending = urlInflight.get(entryName);

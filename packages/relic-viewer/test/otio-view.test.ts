@@ -531,6 +531,46 @@ describe('OTIO archive projection reader', () => {
       expect(controller).toBeDefined();
       controller?.dispose();
     });
+    test('checks the original digest before reading corrupt current archive media', async () => {
+      const expectedContent = projectionContent();
+      const wrongOriginal = otioz(structuralContent(), []);
+      const unused = new Uint8Array([8, 6, 7, 5]);
+      const current = otioz(expectedContent, [
+        {
+          name: 'media/unused.mp4',
+          bytes: unused,
+          crc: crc32(unused) ^ 1,
+        },
+      ]);
+      const browserDocument = readOtioDocument(expectedContent);
+      const timelineId = browserDocument.timeline_ids[0];
+      if (!timelineId) throw new Error('expected projection timeline');
+      const browserAnchor = createOtioSelection(
+        browserDocument,
+        timelineId,
+        'projection-track',
+        1,
+        range(0, 12)
+      );
+      const root = new ViewElement('div');
+  
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: current,
+        revision: 3,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected OTIO controller');
+  
+      try {
+        await expect(
+          controller.project({ ...browserAnchor, relic_version: 1 }, wrongOriginal)
+        ).rejects.toThrow(
+          'Original OTIO document digest differs from the encrypted anchor.'
+        );
+      } finally {
+        controller.dispose();
+      }
+    });
   });
 });
 
