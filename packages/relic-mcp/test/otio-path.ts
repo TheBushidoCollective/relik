@@ -628,7 +628,10 @@ def derive(archive, out_dir):
         base = v1.range_of_child(clip)
         if base is None:
             raise SystemExit("official range_of_child returned no range for %s" % (relic_id(clip) or clip.name))
-        pre, post = v1.handles_of_child(clip)
+        parent = clip.parent()
+        if parent is None:
+            raise SystemExit("official clip has no immediate parent for %s" % (relic_id(clip) or clip.name))
+        pre, post = parent.handles_of_child(clip)
         start = base.start_time
         end = base.end_time_exclusive()
         if pre is not None:
