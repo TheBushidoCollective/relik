@@ -797,3 +797,36 @@ Authorised by Jason Waldrip on 2026-10-15.
 - Unsubscribe stops emails per relic only, not globally across all relics.
 - Comment edits and resolutions produce no emails.
 - If a server crashes mid-delivery, remaining unsent emails in the batch are dropped rather than retried to prevent duplicate deliveries.
+
+## 2026-10-20: OpenTimelineIO native playback, directory bundle exception, and the ten-value taxonomy
+
+Authorised by Jason Waldrip on 2026-10-20.
+
+**The reversal.** Relic originally barred first-party rendering of archives or directories (`frame.md` §Non-goals: "No first-party rendering of archives or arbitrary binaries. Download-only in the first release", `publish.md` §1.2: "A directory is refused", and `format.md` §3.1: "entry count at exactly 1"). That restriction is reversed for standard OpenTimelineIO bundles: Relic provides native in-browser timeline playback and structural inspection for OpenTimelineIO timelines (`RendererClass: otio`, `CLASS_BEHAVIOUR.otio: 'plays'`, `RenderRoute: otio`). A publisher supplying a standards-compliant `.otiod` directory bundle has it packaged automatically by `relic-mcp` into a deterministic standard `.otioz` archive (`content.otio` with DEFLATE, `version.txt` set to `1.0.0` with DEFLATE, and referenced media under `media/` STORED). Existing `.otioz` archives are published directly without recompression, and raw `.otio` files receive a structural inspector without remote media fetching.
+
+**What stays true.**
+1. *Arbitrary directories remain strictly refused:* Only a directory with the `.otiod` extension conforming to the OpenTimelineIO bundle specification is accepted for automated packaging. Any other directory refuses with `source_is_directory` before any network activity or encryption.
+2. *General archives remain download-only:* ZIP, TAR, GZ, and arbitrary archive formats continue to take class `archive` and download to the recipient's device (`CLASS_BEHAVIOUR.archive: 'downloads'`).
+3. *Single-entry container invariant:* Packaging `.otiod` into `.otioz` occurs before container encryption. The ciphertext container envelope continues to hold exactly one entry (the `.otioz` bundle), maintaining container version 1 invariants without a format bump.
+4. *Strict local bundle containment:* Relative media references resolve strictly against the bundle root. Absolute paths, parent traversals (`..`), symlinks, device files, FIFOs, sockets, and remote network schemes (HTTP, HTTPS, FTP) are rejected.
+5. *100 MiB safety ceiling:* The 100 MiB limit applies both to archive bytes and aggregate expanded bytes. Bounded decompression counts emitted bytes during inflation and rejects decompression bombs or corrupt CRCs.
+6. *Original source identity preserved:* Logical source identity for `.otiod` remains the directory's Git-relative path or realpath rather than the transient `.otioz` package name, ensuring source lookup and republish detection work transparently across sessions.
+
+**The ten-value taxonomy and telemetry boundary.**
+The coarse renderer class expands from nine to ten values: `markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `media`, `archive`, `binary`, `otio`.
+`CLASS_BEHAVIOUR.otio` is `'plays'`, generating card copy: `"An OpenTimelineIO timeline. It plays in your browser, and only someone holding the whole link, including the part after the #, can open it."`
+`RENDERABLE_CLASSES` remains unchanged as `{markdown, code, html, jsx, image, pdf}`: it represents historical telemetry vocabulary bounding the document and markup success metric, and `otio` sits outside it alongside `media`.
+
+**The generic cover exception.**
+By default, `relic-mcp` generates an unencrypted 1200x630 cover image for renderable documents and media. For `otio` relics, unencrypted first-screen media rendering is skipped by default. Unfurl previews display a generic card carrying the publisher-declared title and format label. This exception protects sensitive timeline media frames, cuts, and track metadata from leaking into unencrypted link preview caches without the decryption key.
+
+**Codec, effect, and browser boundaries.**
+Browser playback operates under browser-managed SDR decoding with canvas composition and additive audio. There is no universal effect execution engine, plugin runner, transcode service, or remote asset resolver. Codec decoding is verified via actual element loading rather than speculative `canPlayType`. Unsupported effects, unrecognized schemas, and missing media trigger explicit diagnostic states (`unsupported-effect`, `unsupported-codec`, `unsupported-schema`, `missing-media`) and provide a deliberate "Preview base media without unsupported effects" control. Incomplete playback is never disguised as complete fidelity.
+
+**Encrypted timeline feedback anchoring.**
+Reviewers can anchor point comments or half-open range comments to specific tracks or the entire composition. A new anchor kind (`kind: 'otio'`, `v: 1`) carries rational time coordinates (`{value, rate}`), timeline ID, track ID, optional item ID, document SHA-256, and human snapshot labels. Anchor payloads fit within the 1,536-byte budget before encryption and the 8,192 base64url character ciphertext cap. Comment bodies and anchors remain encrypted under the relic's derived comment key. Historical comments resolve against the original revision's decrypted document, and conservative current-revision projections (`same`, `mapped`, `partial`, `changed`, `ambiguous`, `missing`) are reported separately to publisher agents without rewriting original anchors.
+
+**Residuals:**
+- Browser playback is limited to browser-supported SDR video and audio formats; professional codecs (ProRes, DNxHD) or RAW formats require pre-transcoded web-compatible proxy media inside the bundle.
+- Nonlinear retiming and complex transitions without web-native equivalents fall back to base media preview or diagnostic placeholders.
+- A raw `.otio` file lacking bundled media provides structural track inspection and download, not media playback.

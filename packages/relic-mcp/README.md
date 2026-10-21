@@ -25,23 +25,30 @@ For any client that takes a JSON config:
 ## What it does with your file
 
 1. Reads it from disk, in this process. It is never sent anywhere in plaintext.
+   A standard OpenTimelineIO directory (`.otiod`) is automatically packaged into
+   a deterministic standard `.otioz` archive; arbitrary directories are refused.
 2. Draws a 128-bit key and a 26-character relic id independently from your
    machine's CSPRNG. Neither derives from the other.
 3. Encrypts locally with AES-128-GCM under RFC 8188 `aes128gcm` framing.
 4. Uploads **only ciphertext**, straight to object storage under a signed URL.
    It does not pass through the Relic service.
-5. Tells the service four things: a coarse renderer class from an eight-value
-   list, this client's name, the ciphertext's byte length, and the title, which
-   defaults to the filename and is stored in the clear. By default, it also
-   renders a 1200x630 cover image of the file's first screen in local headless
-   Chrome and uploads it unencrypted via `POST /api/relics/{id}/cover` for link
-   preview cards (pass `cover: false` to decline). Not the mimetype, not the
-   contents.
+5. Tells the service four things: a coarse renderer class from a ten-value
+   list (`markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `media`, `archive`,
+   `binary`, `otio`), this client's name, the ciphertext's byte length, and the
+   title, which defaults to the filename and is stored in the clear. By default,
+   it also renders a 1200x630 cover image of the file's first screen in local
+   headless Chrome and uploads it unencrypted via `POST /api/relics/{id}/cover`
+   for link preview cards (pass `cover: false` to decline). OpenTimelineIO
+   timeline relics (`otio`) skip unencrypted first-screen media rendering by
+   default, using a generic card carrying the title and format label to protect
+   private timeline cuts and media from leaking into unencrypted link previews.
+   Not the mimetype, not the contents.
 6. Records the relic's id, key, and publish token locally, in a 0600 file
    under your user config directory, so the relic can be republished from
-   this machine later. See [Republishing](#republishing). The service never
-   receives the key or the token plaintext; it keeps only a SHA-256 of the
-   token.
+   this machine later. See [Republishing](#republishing). Preserves logical
+   source identity for `.otiod` directories as the original directory path so
+   republishing detects the source across sessions. The service never receives
+   the key or the token plaintext; it keeps only a SHA-256 of the token.
 7. Returns a shareable URL whose fragment holds the decryption key. Fragments
    are never sent to a server by a browser.
 Call the `relic_describe_client` tool and it will tell you all of this itself,

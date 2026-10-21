@@ -94,12 +94,12 @@ constant card `card.v1.png`. The command exercises this fallback path.
 It asserts the Open Graph and Twitter block lands after the character-set
 declaration and before the first `link` or `script` tag, because an unfurler
 range-fetches the head and metadata outside that range produces no card at
-all. It also asserts that the card reveals the relic's coarse renderer class
-across renderable and download-only types, catching description drift between
-browser and download tails and proving the class reaches the card even when
-the publisher declines a title. It catches false download claims on audio and
-video relics by asserting that sniffed media relics carry the played tail and
-the media fallback title. It then publishes the same file with an empty
+It also asserts that the card reveals the relic's coarse renderer class
+across renderable, playable (`media`, `otio`), and download-only types,
+catching description drift between browser, played, and download tails and
+proving the class reaches the card even when the publisher declines a title.
+It catches false download claims on audio, video, and timeline relics by
+asserting that media and otio relics carry the played tail.
 title and `cover: false`, proves the name reaches no field on the relic row,
 fetches the card image and reads 1200x630 out of its PNG header, and confirms
 neither shell fetch spent an open.
@@ -252,4 +252,33 @@ Success for phase 1 ends with:
 
 ```text
 PROBE relic_id=<id> version=2
+```
+
+## OpenTimelineIO end-to-end path
+
+Run from the repository root:
+
+```bash
+bun packages/relic-mcp/test/otio-path.ts
+```
+
+The command starts a full service on loopback with `MemoryStore` and `MemoryStorage`, serving real built viewer assets. Every MCP operation runs through a fresh Node stdio process.
+
+It exercises:
+1. Publishing a standard `.otiod` directory bundle through real MCP stdio, verifying automated packaging into a deterministic standard `.otioz` archive.
+2. Inspecting stored ciphertext and decrypting locally.
+3. Verifying archive layout against the official OpenTimelineIO specification (`content.otio` DEFLATE, `version.txt` 1.0.0 DEFLATE, and referenced media STORED).
+4. Opening the returned link in a fresh headless browser.
+5. Exercising transport, playback, and seeking, measuring decoded video frames and audio contributions.
+6. Selecting track-specific points and ranges in the viewer UI and submitting encrypted feedback.
+7. Confirming server storage rows contain only opaque ciphertext, with no track IDs, time ranges, or source paths in the clear.
+8. Reading feedback via a fresh MCP process with `version: "*"` and `resolve_anchors: true`.
+9. Asserting exact rational time coordinates and original source context mapping.
+10. Republishing a revision and verifying safe current projection alongside immutable historical anchors.
+11. Verifying ambiguous revisions produce explicit ambiguous diagnostics rather than false mappings.
+
+Success ends with:
+
+```text
+OTIO_PATH_OK
 ```

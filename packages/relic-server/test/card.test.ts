@@ -62,6 +62,13 @@ describe('cardCopy', () => {
     expect(copy.description).toContain('It opens in your browser');
     expect(copy.description).not.toContain('downloads to your device');
   });
+
+  test('otio relic description plays in browser and does not download to device', () => {
+    const copy = cardCopy('otio');
+    expect(copy.title).toBe('An OpenTimelineIO relic');
+    expect(copy.description).toContain('It plays in your browser');
+    expect(copy.description).not.toContain('downloads to your device');
+  });
 });
 
 describe('COVER_ALT', () => {

@@ -3,7 +3,7 @@
  *
  * The server holds only ciphertext and metadata, plus optional unencrypted
  * cover images stored in object storage for link previews. Nothing here is
- * finer than the seven-value renderer class and the publishing client name,
+ * finer than the ten-value renderer class and the publishing client name,
  * which is the whole of what the frame conceded (`spec/format.md` 3.2).
  * A filename or a declared mimetype appearing in this file is drift.
  */

@@ -378,6 +378,29 @@ describe('the shell', () => {
     );
     expect(body).toContain('<title>A media relic</title>');
   });
+  test('a relic published as otio serves the otio phrase and played tail on og:description and twitter:description', async () => {
+    const { id } = await publish({ rendererClass: 'otio' });
+    const response = await app.fetch(req(`/${id}`));
+    const body = await response.text();
+
+    const expectedDescription =
+      'An OpenTimelineIO timeline. It plays in your browser, and only someone holding the whole link, including the part after the #, can open it.';
+
+    expect(body).toContain(
+      `<meta property="og:description" content="${expectedDescription}">`
+    );
+    expect(body).toContain(
+      `<meta name="twitter:description" content="${expectedDescription}">`
+    );
+    expect(body).not.toContain('downloads to your device');
+    expect(body).toContain(
+      '<meta property="og:title" content="An OpenTimelineIO relic">'
+    );
+    expect(body).toContain(
+      '<meta name="twitter:title" content="An OpenTimelineIO relic">'
+    );
+    expect(body).toContain('<title>An OpenTimelineIO relic</title>');
+  });
 
   test('a title containing quotes and angle brackets cannot break out', async () => {
     const hostileTitle = 'hello "evil" <script>alert(1)</script>';
@@ -612,6 +635,8 @@ describe('reserved segments beat ids at the router', () => {
     expect(body).toContain('renders without them');
     expect(body).toContain('not safety');
     expect(body).toContain('markdown, code, html, jsx, image');
+    expect(body).toContain('archive, binary, otio');
+    expect(body).toContain('OpenTimelineIO timeline relics (otio)');
     expect(body).toContain(
       "Anyone holding a relic's link can fetch every version it has ever held"
     );
