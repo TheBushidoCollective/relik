@@ -348,7 +348,7 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
     const target = projectedSelection?.target;
     const trackId = target ? target.track : anchor?.track_id ?? null;
     for (const [id, rail] of rails) {
-      rail.querySelectorAll('.otio-selection').forEach(node => node.remove());
+      for (const node of rail.querySelectorAll('.otio-selection')) node.remove();
       rail.dataset['selected'] = String(anchor !== null && trackId === id);
     }
     inputIn.disabled = selected === null || mode === 'track';
@@ -750,18 +750,16 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
         original = readOtioForProjection(content);
         originals.set(key, original);
       }
+      const originalDocument = await original;
+      if (originalDocument.document_sha256 !== anchor.document_sha256) {
+        throw new Error('Original OTIO document digest differs from the encrypted anchor.');
+      }
       let current = currentProjectionDocument;
       if (!current) {
         current = readOtioForProjection(options.content);
         currentProjectionDocument = current;
       }
-      const [originalDocument, currentDocument] = await Promise.all([
-        original,
-        current,
-      ]);
-      if (originalDocument.document_sha256 !== anchor.document_sha256) {
-        throw new Error('Original OTIO document digest differs from the encrypted anchor.');
-      }
+      const currentDocument = await current;
       const result = resolveOtioAnchor(anchor, originalDocument, currentDocument);
       projections.set(projectionsKey(anchor), result);
       return result;

@@ -7,6 +7,7 @@
  */
 
 import type {
+  OtioBundleEntryName,
   OtioDiagnostic,
   OtioDocumentV1,
   OtioEffect,
@@ -59,7 +60,7 @@ export interface CreateOtioPlaybackOptions {
   readonly resolveMedia:
     | OtioMediaResolver
     | ((
-        bundlePath: string
+        entryName: OtioBundleEntryName
       ) => Promise<string | Blob | null> | string | Blob | null);
   readonly audioContext?: AudioContext;
 }
@@ -772,7 +773,7 @@ export function createOtioPlayback(
     }
   }
 
-  async function resolveOne(path: string): Promise<string | null> {
+  async function resolveOne(path: OtioBundleEntryName): Promise<string | null> {
     if (isDisposed) return null;
     if (
       typeof resolveMedia === 'object' &&
@@ -807,7 +808,7 @@ export function createOtioPlayback(
     return url;
   }
 
-  function sharedUrl(path: string): Promise<string | null> {
+  function sharedUrl(path: OtioBundleEntryName): Promise<string | null> {
     const existing = urlPromises.get(path);
     if (existing) return existing;
     const pending = resolveOne(path);
@@ -869,7 +870,7 @@ export function createOtioPlayback(
 
   function acquireVideo(
     key: string,
-    path: string,
+    path: OtioBundleEntryName,
     gen: number
   ): Promise<LoadedVideo | null> {
     const existing = videoPromises.get(key);
@@ -929,7 +930,7 @@ export function createOtioPlayback(
 
   function acquireAudio(
     key: string,
-    path: string,
+    path: OtioBundleEntryName,
     trackId: string,
     gen: number
   ): Promise<LoadedAudio | null> {
@@ -998,7 +999,7 @@ export function createOtioPlayback(
   }
 
   function acquireImage(
-    path: string,
+    path: OtioBundleEntryName,
     gen: number
   ): Promise<LoadedImage | null> {
     const existing = imagePromises.get(path);
