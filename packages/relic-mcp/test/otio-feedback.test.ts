@@ -492,10 +492,78 @@ describe('OTIO comment anchors', () => {
         span.ancestry.some((node) => node.id === 'track-b')
       )
     ).toBe(false);
+    expect(resolved.intersections[0]?.bundle_path).toBe('media/shot.mov');
     expect(resolved.intersections[0]?.media_digest).toBe(
       await sha256Hex(media)
     );
     expect(resolved.current_projection.status).toBe('same');
+  });
+
+  test('reads same-bundle single-decoded media digests from selected bytes', async () => {
+    const encoder = new TextEncoder();
+    const cases = [
+      {
+        id: 'encoded-question',
+        authored: 'media/%253F.png',
+        entry: 'media/%3F.png',
+        bytes: encoder.encode('encoded question bytes'),
+      },
+      {
+        id: 'literal-question',
+        authored: 'media/%3F.png',
+        entry: 'media/?.png',
+        bytes: encoder.encode('literal question bytes'),
+      },
+      {
+        id: 'encoded-space',
+        authored: 'media/a%2520b.png',
+        entry: 'media/a%20b.png',
+        bytes: encoder.encode('encoded space bytes'),
+      },
+      {
+        id: 'literal-space',
+        authored: 'media/a%20b.png',
+        entry: 'media/a b.png',
+        bytes: encoder.encode('literal space bytes'),
+      },
+    ] as const;
+    const text = timelineWithItems(
+      cases.map(({ id, authored }) => clip(id, id, authored))
+    );
+    const archive = otioArchive(
+      text,
+      cases.map(({ entry, bytes }) => ({ name: entry, bytes }))
+    );
+    const browserDocument = await browserOtioDocument(archive);
+    for (const { entry } of cases) {
+      expect(browserDocument.media[entry]?.sha256).toBeUndefined();
+    }
+
+    const path = join(scratch, 'single-decoded-media.otioz');
+    await writeFile(path, archive);
+    const published = await publish({ path, cover: false }, deps);
+
+    for (const [index, example] of cases.entries()) {
+      const body = `Check ${example.id}.`;
+      const anchor = otioAnchor(
+        browserDocument,
+        'track-v1',
+        example.id,
+        {
+          start_time: { value: index * 24, rate: 24 },
+          duration: { value: 1, rate: 24 },
+        },
+        { timeline: 'Cut', track: 'V1', item: example.id }
+      );
+      await postComment({ relic_id: published.relic_id, body, anchor }, deps);
+
+      const resolved = await resolvedOtioComment(published.relic_id, body);
+      const span = resolved.intersections.find(
+        (intersection) => intersection.node_id === example.id
+      );
+      expect(span?.bundle_path).toBe(example.entry);
+      expect(span?.media_digest).toBe(await sha256Hex(example.bytes));
+    }
   });
 
   test('marks a source range changed when its referenced archive media changes', async () => {
@@ -681,6 +749,7 @@ describe('OTIO comment anchors', () => {
 
     const resolved = await resolvedOtioComment(published.relic_id, body);
     expect(resolved.status).toBe('resolved');
+    expect(resolved.intersections[0]?.bundle_path).toBeNull();
     expect(resolved.intersections[0]?.media_digest).toBeNull();
     expect(resolved.current_projection.status).toBe('changed');
     expect(resolved.current_projection).not.toHaveProperty('mapped_range');
