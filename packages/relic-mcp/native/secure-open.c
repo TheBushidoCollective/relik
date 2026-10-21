@@ -40,6 +40,16 @@ struct relic_file_handle {
   bool closed;
 };
 
+static const napi_type_tag relic_root_handle_tag = {
+  0x8aa70d1f53e94f11ULL,
+  0x8868ccdb92f448b3ULL,
+};
+
+static const napi_type_tag relic_file_handle_tag = {
+  0x1e541d5a85f14818ULL,
+  0xae26c5d85c2f4e4aULL,
+};
+
 enum relic_read_result {
   RELIC_READ_OK = 0,
   RELIC_READ_CHANGED = 1,
@@ -416,9 +426,20 @@ static struct relic_root_handle *relic_get_root(
   napi_env env,
   napi_value receiver
 ) {
+  bool tag_matches = false;
   struct relic_root_handle *root = NULL;
 
-  if (napi_unwrap(env, receiver, (void **)&root) != napi_ok || root == NULL) {
+  if (
+    napi_check_object_type_tag(
+      env,
+      receiver,
+      &relic_root_handle_tag,
+      &tag_matches
+    ) != napi_ok ||
+    !tag_matches ||
+    napi_unwrap(env, receiver, (void **)&root) != napi_ok ||
+    root == NULL
+  ) {
     relic_throw_error(env, "ERR_RELIC_NATIVE_INVALID_PATH", "invalid native bundle root handle");
     return NULL;
   }
@@ -429,9 +450,20 @@ static struct relic_file_handle *relic_get_file(
   napi_env env,
   napi_value receiver
 ) {
+  bool tag_matches = false;
   struct relic_file_handle *file = NULL;
 
-  if (napi_unwrap(env, receiver, (void **)&file) != napi_ok || file == NULL) {
+  if (
+    napi_check_object_type_tag(
+      env,
+      receiver,
+      &relic_file_handle_tag,
+      &tag_matches
+    ) != napi_ok ||
+    !tag_matches ||
+    napi_unwrap(env, receiver, (void **)&file) != napi_ok ||
+    file == NULL
+  ) {
     relic_throw_error(env, "ERR_RELIC_NATIVE_INVALID_PATH", "invalid native file handle");
     return NULL;
   }
@@ -479,6 +511,7 @@ static napi_value relic_make_file(napi_env env, int fd, off_t size) {
   if (
     napi_define_properties(env, object, 1, &size_property) != napi_ok ||
     napi_define_properties(env, object, 2, methods) != napi_ok ||
+    napi_type_tag_object(env, object, &relic_file_handle_tag) != napi_ok ||
     napi_wrap(env, object, file, relic_file_finalize, NULL, NULL) != napi_ok
   ) {
     close(fd);
@@ -508,6 +541,7 @@ static napi_value relic_make_root(napi_env env, int fd) {
   if (
     napi_create_object(env, &object) != napi_ok ||
     napi_define_properties(env, object, 2, methods) != napi_ok ||
+    napi_type_tag_object(env, object, &relic_root_handle_tag) != napi_ok ||
     napi_wrap(env, object, root, relic_root_finalize, NULL, NULL) != napi_ok
   ) {
     close(fd);
