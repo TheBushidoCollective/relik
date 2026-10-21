@@ -36,6 +36,7 @@ import {
   isOtioz,
   isRawOtio,
   type OpenedRelic,
+  type OtioAnchorResolution,
   type OtioAnchorV1,
   type OtioDocumentV1,
   type OtioRationalTime,
@@ -45,7 +46,6 @@ import {
   readOtioDocument,
   type RendererClass,
   resolveOtioAnchor,
-  sourceSpansForOtioRange,
   timeToSeconds,
 } from '@relic/format';
 import { boxPosition, type CommentRecord, formatTimecode } from './comments.ts';
@@ -99,6 +99,7 @@ export interface OtioIntersection {
   readonly source_range: OtioTimeRange | null;
   readonly available_range: OtioTimeRange | null;
   readonly file_relative_source_range: OtioTimeRange | null;
+  readonly source_mapping: OtioSourceSpan['source_mapping'];
   readonly active_media_reference_key: string | null;
   readonly bundle_path: string | null;
   readonly media_digest: string | null;
@@ -120,12 +121,13 @@ export interface OtioCurrentProjection {
     | 'unresolvable';
   readonly explanation: string;
   readonly mapped_range?: OtioTimeRange;
+  readonly mapped_ranges?: readonly OtioTimeRange[];
+  readonly mapped_timeline_id?: string;
   readonly mapped_track_id?: string | null;
   readonly mapped_item_id?: string;
   readonly mapped_start_seconds?: number | null;
   readonly mapped_start_timecode?: string;
 }
-
 
 export type ResolvedAnchor =
   | {
@@ -707,7 +709,6 @@ type RelicFetch =
       readonly error: string;
     };
 
-
 /**
  * Fetch and decrypt one relic revision.
  *
@@ -785,10 +786,7 @@ async function fetchAndDecryptRelic(
         'The service mint did not name the relic revision, so historical content was not decrypted against a guessed version.',
     };
   }
-  if (
-    requestedVersion !== undefined &&
-    servedVersion !== requestedVersion
-  ) {
+  if (requestedVersion !== undefined && servedVersion !== requestedVersion) {
     return {
       ok: false,
       error: `Requested relic version ${requestedVersion} but the service returned version ${servedVersion}.`,
@@ -884,26 +882,40 @@ function findTextOccurrence(
 }
 
 const nodeInflater: InflaterFn = (compressed, uncompressedSize, maxBytes) => {
-  const { promise, resolve, reject } = Promise.withResolvers<Uint8Array>();
+  if (
+    !Number.isSafeInteger(uncompressedSize) ||
+    uncompressedSize < 0 ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 0
+  ) {
+    return Promise.reject(
+      new Error('decompression sizes must be non-negative safe integers')
+    );
+  }
   if (uncompressedSize > maxBytes) {
-    reject(
+    return Promise.reject(
       new Error(
         `declared decompressed size ${uncompressedSize} exceeds ${maxBytes}`
       )
     );
-    return promise;
   }
-  inflateRaw(Buffer.from(compressed), (error, result) => {
-    if (error) {
-      reject(error);
-      return;
-    }
-    if (result.length > maxBytes) {
-      reject(new Error(`inflated size ${result.length} exceeds ${maxBytes}`));
-      return;
-    }
-    resolve(new Uint8Array(result));
-  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<Uint8Array>();
+  try {
+    inflateRaw(compressed, { maxOutputLength: maxBytes }, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (result.length > maxBytes) {
+        reject(new Error(`inflated size ${result.length} exceeds ${maxBytes}`));
+        return;
+      }
+      resolve(result);
+    });
+  } catch (error) {
+    reject(error);
+  }
   return promise;
 };
 
@@ -975,7 +987,11 @@ function displayTimecode(
   time: OtioRationalTime,
   globalStart?: OtioRationalTime
 ): string {
-  if (!Number.isFinite(time.value) || !Number.isFinite(time.rate) || time.rate <= 0) {
+  if (
+    !Number.isFinite(time.value) ||
+    !Number.isFinite(time.rate) ||
+    time.rate <= 0
+  ) {
     return 'unknown';
   }
   const shifted =
@@ -1049,6 +1065,7 @@ function intersectionsFor(
       source_range: span.source_range,
       available_range: span.available_range,
       file_relative_source_range: span.file_relative_source_range,
+      source_mapping: span.source_mapping,
       active_media_reference_key: span.active_media_reference_key,
       bundle_path: span.bundle_path,
       media_digest: mediaDigest(document, span.bundle_path),
@@ -1060,7 +1077,10 @@ function intersectionsFor(
   });
 }
 
-function rangeClock(range: OtioTimeRange, globalStart?: OtioRationalTime): {
+function rangeClock(
+  range: OtioTimeRange,
+  globalStart?: OtioRationalTime
+): {
   readonly point: boolean;
   readonly start_seconds: number | null;
   readonly duration_seconds: number | null;
@@ -1075,7 +1095,9 @@ function rangeClock(range: OtioTimeRange, globalStart?: OtioRationalTime): {
       ? null
       : startSeconds + durationSeconds;
   const endTime = {
-    value: range.start_time.value + range.duration.value * (range.start_time.rate / range.duration.rate),
+    value:
+      range.start_time.value +
+      range.duration.value * (range.start_time.rate / range.duration.rate),
     rate: range.start_time.rate,
   };
   return {
@@ -1105,7 +1127,9 @@ function documentFor(
   return pending;
 }
 
-function projectionExplanation(status: OtioCurrentProjection['status']): string {
+function projectionExplanation(
+  status: OtioCurrentProjection['status']
+): string {
   switch (status) {
     case 'same':
       return 'The current revision still contains this range.';
@@ -1123,6 +1147,15 @@ function projectionExplanation(status: OtioCurrentProjection['status']): string 
       return 'The current revision could not be read.';
   }
 }
+
+const OTIO_ANCHOR_VERSION_UNSTAMPED =
+  'The service did not stamp this comment with a usable revision, so the sealed OTIO anchor revision cannot be verified and artifact content was not fetched.';
+const OTIO_ANCHOR_VERSION_MISMATCH =
+  'The sealed OTIO anchor revision does not match the service-stamped comment version, so artifact content was not fetched.';
+const OTIO_DOCUMENT_DIGEST_MISMATCH =
+  'The sealed OTIO document digest does not match the requested revision, so artifact-derived context was withheld.';
+const OTIO_SOURCE_ANCHOR_INVALID =
+  'The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld.';
 
 async function resolveOtioComment(
   comment: CommentRecord,
@@ -1146,46 +1179,110 @@ async function resolveOtioComment(
     start_timecode: clock.start_timecode,
     end_timecode: clock.end_timecode,
   };
+  const unresolvable = (
+    explanation: string,
+    projectionExplanation: string
+  ): CommentRecord => ({
+    ...comment,
+    resolved: {
+      kind: 'otio',
+      status: 'unresolvable',
+      explanation,
+      timeline_path: [],
+      intersections: [],
+      current_projection: {
+        status: 'unresolvable',
+        current_version: null,
+        explanation: projectionExplanation,
+      },
+      ...base,
+    },
+  });
+  const projectionFromCore = (
+    projected: OtioAnchorResolution,
+    currentVersion: number,
+    currentDocument: OtioDocumentV1
+  ): OtioCurrentProjection => {
+    const copied = {
+      status: projected.status,
+      current_version: currentVersion,
+      explanation: projectionExplanation(projected.status),
+      ...(projected.mapped_ranges === undefined
+        ? {}
+        : { mapped_ranges: projected.mapped_ranges }),
+      ...(projected.mapped_timeline_id === undefined
+        ? {}
+        : { mapped_timeline_id: projected.mapped_timeline_id }),
+      ...(projected.mapped_track_id === undefined
+        ? {}
+        : { mapped_track_id: projected.mapped_track_id }),
+      ...(projected.mapped_item_id === undefined
+        ? {}
+        : { mapped_item_id: projected.mapped_item_id }),
+    };
+    if (projected.mapped_range === undefined) return copied;
+
+    const mappedClock = rangeClock(
+      projected.mapped_range,
+      projected.mapped_timeline_id === undefined
+        ? undefined
+        : currentDocument.global_start_times?.[projected.mapped_timeline_id]
+    );
+    return {
+      ...copied,
+      mapped_range: projected.mapped_range,
+      mapped_start_seconds: mappedClock.start_seconds,
+      mapped_start_timecode: mappedClock.start_timecode,
+    };
+  };
+
+  if (
+    typeof comment.version !== 'number' ||
+    !Number.isSafeInteger(comment.version) ||
+    comment.version < 1
+  ) {
+    return unresolvable(
+      OTIO_ANCHOR_VERSION_UNSTAMPED,
+      OTIO_ANCHOR_VERSION_UNSTAMPED
+    );
+  }
+  if (comment.version !== anchor.relic_version) {
+    return unresolvable(
+      OTIO_ANCHOR_VERSION_MISMATCH,
+      OTIO_ANCHOR_VERSION_MISMATCH
+    );
+  }
+
   const original = await documentFor(
     anchor.relic_version,
     loadRevision,
     documents
   );
   if (!original.ok) {
-    return {
-      ...comment,
-      resolved: {
-        kind: 'otio',
-        status: 'unresolvable',
-        explanation: original.error,
-        timeline_path: [],
-        intersections: [],
-        current_projection: {
-          status: 'unresolvable',
-          current_version: null,
-          explanation:
-            'The original revision could not be read, so no current projection was attempted.',
-        },
-        ...base,
-      },
-    };
+    return unresolvable(
+      original.error,
+      'The original revision could not be read, so no current projection was attempted.'
+    );
   }
 
   const document = original.document;
-  const spans = sourceSpansForOtioRange(
-    document,
-    anchor.timeline_id,
-    anchor.track_id,
-    anchor.range
-  );
+  if (document.document_sha256 !== anchor.document_sha256) {
+    return unresolvable(
+      OTIO_DOCUMENT_DIGEST_MISMATCH,
+      OTIO_DOCUMENT_DIGEST_MISMATCH
+    );
+  }
+
+  const originalProjection = resolveOtioAnchor(anchor, document);
+  if (originalProjection.status !== 'same') {
+    return unresolvable(OTIO_SOURCE_ANCHOR_INVALID, OTIO_SOURCE_ANCHOR_INVALID);
+  }
+
+  const spans = originalProjection.source_spans;
   const timelinePath = ancestry(
     document,
     anchor.track_id ?? anchor.timeline_id
   );
-  const digestNote =
-    document.document_sha256 === anchor.document_sha256
-      ? ''
-      : ` Sealed digest ${anchor.document_sha256} does not match decrypted document ${document.document_sha256}.`;
   const globalStart = document.global_start_times?.[anchor.timeline_id];
   const displayed = rangeClock(anchor.range, globalStart);
 
@@ -1198,16 +1295,11 @@ async function resolveOtioComment(
       explanation: latest.error,
     };
   } else if (latest.version === anchor.relic_version) {
-    currentProjection = {
-      status: 'same',
-      current_version: latest.version,
-      explanation: projectionExplanation('same'),
-      mapped_range: anchor.range,
-      mapped_track_id: anchor.track_id,
-      mapped_item_id: anchor.item_id,
-      mapped_start_seconds: displayed.start_seconds,
-      mapped_start_timecode: displayed.start_timecode,
-    };
+    currentProjection = projectionFromCore(
+      resolveOtioAnchor(anchor, document, document),
+      latest.currentVersion,
+      document
+    );
   } else {
     const current = await documentFor(latest.version, loadRevision, documents);
     if (!current.ok) {
@@ -1217,32 +1309,11 @@ async function resolveOtioComment(
         explanation: current.error,
       };
     } else {
-      const mapped = resolveOtioAnchor(anchor, document, current.document);
-      const safe =
-        mapped.status === 'same' ||
-        mapped.status === 'mapped' ||
-        mapped.status === 'partial';
-      const mappedClock =
-        safe && mapped.mapped_range
-          ? rangeClock(
-              mapped.mapped_range,
-              current.document.global_start_times?.[anchor.timeline_id]
-            )
-          : undefined;
-      currentProjection = {
-        status: mapped.status,
-        current_version: latest.currentVersion,
-        explanation: projectionExplanation(mapped.status),
-        ...(safe && mapped.mapped_range
-          ? {
-              mapped_range: mapped.mapped_range,
-              mapped_track_id: mapped.mapped_track_id,
-              mapped_item_id: mapped.mapped_item_id,
-              mapped_start_seconds: mappedClock?.start_seconds ?? null,
-              mapped_start_timecode: mappedClock?.start_timecode,
-            }
-          : {}),
-      };
+      currentProjection = projectionFromCore(
+        resolveOtioAnchor(anchor, document, current.document),
+        latest.currentVersion,
+        current.document
+      );
     }
   }
 
@@ -1253,8 +1324,7 @@ async function resolveOtioComment(
       status: 'resolved',
       explanation:
         `Original revision ${anchor.relic_version} on ${anchor.snapshot.timeline}` +
-        `${anchor.snapshot.track ? ` / ${anchor.snapshot.track}` : ''}.` +
-        digestNote,
+        `${anchor.snapshot.track ? ` / ${anchor.snapshot.track}` : ''}.`,
       timeline_path: timelinePath,
       intersections: intersectionsFor(document, spans),
       current_projection: currentProjection,
@@ -1264,8 +1334,6 @@ async function resolveOtioComment(
     },
   };
 }
-
-
 
 /**
  * Resolve anchors against the revision each comment was made on.
@@ -1291,6 +1359,8 @@ export async function resolveAnchors(
     return { comments, imageBlocks: [] };
   }
 
+  // OTIO version and digest gates decide whether their revisions may be read.
+  // Eagerly loading the batch would fetch a latest revision for a rejected seal.
   const loads = new Map<string, Promise<RelicFetch>>();
   const loadRevision = (version: number | undefined): Promise<RelicFetch> => {
     const key = version === undefined ? 'latest' : String(version);
@@ -1302,17 +1372,6 @@ export async function resolveAnchors(
     return pending;
   };
   const documents = new Map<number, Promise<OtioParse>>();
-  const wanted = new Set<number | undefined>();
-  for (const comment of comments) {
-    if (!comment.readable || comment.anchor === null) continue;
-    if (comment.anchor.kind === 'otio') {
-      wanted.add(comment.anchor.relic_version);
-      wanted.add(undefined);
-    } else {
-      wanted.add(comment.version ?? undefined);
-    }
-  }
-  await Promise.all([...wanted].map((version) => loadRevision(version)));
 
   const updatedComments: CommentRecord[] = [];
   const imageBlocks: ResolvedImageBlock[] = [];
