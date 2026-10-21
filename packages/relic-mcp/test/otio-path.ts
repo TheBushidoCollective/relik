@@ -318,6 +318,25 @@ async function officialArchiveCheck(archive: Uint8Array): Promise<void> {
   const parsed = JSON.parse(stdout) as { name: string; tracks: number };
   assert.equal(parsed.name, 'Relik Feature Editorial');
   assert.ok(parsed.tracks >= 2, `expected multiple tracks, got ${parsed.tracks}`);
+  const versionRaw = await Bun.file(join(fixtureDir, 'version.txt')).text();
+  assert.equal(versionRaw, '1.0.0\n', 'version.txt must be 1.0.0 plus a newline');
+  const sourceRead = Bun.spawn(
+    ['uv', 'run', '--with', 'opentimelineio==0.18.1', 'python3', scriptPath, fixtureDir],
+    { stdout: 'pipe', stderr: 'pipe', env: { ...process.env } }
+  );
+  const [sourceOut, sourceErr, sourceExit] = await Promise.all([
+    new Response(sourceRead.stdout).text(),
+    new Response(sourceRead.stderr).text(),
+    sourceRead.exited,
+  ]);
+  assert.equal(
+    sourceExit,
+    0,
+    `official OTIO reader rejected standard-sample.otiod: ${sourceErr}`
+  );
+  const sourceParsed = JSON.parse(sourceOut) as { name: string; tracks: number };
+  assert.equal(sourceParsed.name, parsed.name);
+  assert.equal(sourceParsed.tracks, parsed.tracks);
  }
 
  interface OfficialHit {
