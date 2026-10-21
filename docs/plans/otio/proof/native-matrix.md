@@ -13,7 +13,7 @@ The macOS binary floor permits the helper to load. It does not establish confine
 
 ## Required CI observations
 
-No release-matrix cell has been recorded in this document yet. Each row remains pending until the linked workflow run records its own output.
+All four native build jobs passed for commit `36c02f19eb3a29179b3f188d3eb289026fa075bf` in [dry run 39652819003](https://github.com/TheBushidoCollective/relik/actions/runs/39652819003). This includes each artifact audit and both Darwin SDK semantic probes. Verification failed at lint, so CI packing and the eight installed-runtime cells did not run. The complete release-matrix rows remain pending.
 
 | Target | Native build and probe evidence | Packed runtime evidence | Status |
 | --- | --- | --- | --- |
@@ -23,6 +23,14 @@ No release-matrix cell has been recorded in this document yet. Each row remains 
 | `linux-x64-gnu` | Native x64 runner and `quay.io/pypa/manylinux_2_28_x86_64@sha256:b74a5b6f1705ecff17be8bd792589bef9b3b039766d12205720ecd2a9e919192`. Record host `uname -r` and `uname -m`, container `uname -m`, `getconf GNU_LIBC_VERSION`, compiler identity, image digest, and the `readelf` audit. | Installed tarball in the same native manylinux 2.28 architecture container under Node `18.20.8` and Node `24.22.0`. The container mounts only the selected Node installation, proof script, and tarball. Record host kernel, container architecture, and glibc output. | Pending |
 
 The Linux container shares the runner's kernel. A recorded result therefore identifies the observed host kernel and proves the live feature probe on that kernel. It does not establish execution on another kernel release.
+
+## Local installed-package observations
+
+The unpublished `relic-mcp-0.3.0.tgz` candidate contains all four native artifacts from dry run 39652819003. Their source and binary metadata checks passed after JavaScript bundling and before packing. On Darwin arm64, the installed-package proof printed `packed native Node proof passed` under Node `18.20.8` and `24.15.0`. It installed offline with scripts disabled, exercised native held-descriptor and hostile-path checks, published a valid directory to a loopback-only service, and published an ordinary file with the selected native binary hidden.
+
+The observed local runtime was macOS `27.0.1`, Darwin kernel `27.0.0` (`xnu-13432.1.9~1/RELEASE_ARM64_T6050`), arm64. The standalone production-platform confinement probe also passed with Apple clang `21.0.0` and macOS SDK `27.0`: controlled outside files were accessible without confinement; confined absolute and parent escapes returned errno `107`; root, leaf, intermediate and replaced-directory symlinks returned errno `62`; a held root descriptor preserved the original bytes after rename.
+
+The local proof did not hide the source checkout and does not replace the isolated CI runtime matrix. No package was published and no live service received test traffic.
 
 ## Developer build
 
