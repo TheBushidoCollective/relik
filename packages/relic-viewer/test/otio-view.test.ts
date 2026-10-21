@@ -1,8 +1,21 @@
-import { describe, expect, test } from 'bun:test';
-import { readOtioDocument, type OtioAnchorResolution, type OtioAnchorV1 } from '@relic/format';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import {
+  crc32,
+  readOtioDocument,
+  type OtioAnchorResolution,
+  type OtioAnchorV1,
+} from '@relic/format';
 import { otioAdapter, otioTargetLabel } from '../src/annotate-otio.ts';
 import { attachOtioController, otioControllerFor, type OtioUiController } from '../src/otio-bridge.ts';
-import { createOtioSelection, formatOtioTime, otioLanes, otioProjectionTarget, otioScopeRange } from '../src/otio-view.ts';
+import {
+  createOtioSelection,
+  formatOtioTime,
+  mountOtioView,
+  otioLanes,
+  otioProjectionTarget,
+  otioScopeRange,
+  readOtioForProjection,
+} from '../src/otio-view.ts';
 
 const range = (start: number, duration: number) => ({ start_time: { value: start, rate: 24 }, duration: { value: duration, rate: 24 } });
 const clip = (id: string, name: string) => ({
@@ -29,6 +42,497 @@ const anchor = createOtioSelection(document, 'timeline', 'video-second', 1, rang
 function resolution(status: OtioAnchorResolution['status']): OtioAnchorResolution {
   return { status, original_anchor: anchor, mapped_ranges: [range(24, 12)], mapped_range: range(24, 12), mapped_timeline_id: 'timeline', mapped_track_id: 'video-second', source_spans: [], diagnostics: [] };
 }
+
+interface StoredZipEntry {
+  readonly name: string;
+  readonly bytes: Uint8Array;
+  readonly crc?: number;
+}
+
+function createStoredZip(entries: readonly StoredZipEntry[]): Uint8Array {
+  const locals: Uint8Array[] = [];
+  const directories: Uint8Array[] = [];
+  const offsets: number[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const name = new TextEncoder().encode(entry.name);
+    const checksum = entry.crc ?? crc32(entry.bytes);
+    const local = new Uint8Array(30 + name.length + entry.bytes.length);
+    const view = new DataView(local.buffer);
+    view.setUint32(0, 0x04034b50, true);
+    view.setUint16(4, 20, true);
+    view.setUint16(6, 0, true);
+    view.setUint16(8, 0, true);
+    view.setUint16(10, 0, true);
+    view.setUint16(12, 0, true);
+    view.setUint32(14, checksum, true);
+    view.setUint32(18, entry.bytes.length, true);
+    view.setUint32(22, entry.bytes.length, true);
+    view.setUint16(26, name.length, true);
+    view.setUint16(28, 0, true);
+    local.set(name, 30);
+    local.set(entry.bytes, 30 + name.length);
+    offsets.push(offset);
+    locals.push(local);
+    offset += local.length;
+  }
+
+  const directoryOffset = offset;
+  for (const [index, entry] of entries.entries()) {
+    const name = new TextEncoder().encode(entry.name);
+    const checksum = entry.crc ?? crc32(entry.bytes);
+    const central = new Uint8Array(46 + name.length);
+    const view = new DataView(central.buffer);
+    view.setUint32(0, 0x02014b50, true);
+    view.setUint16(4, 20, true);
+    view.setUint16(6, 20, true);
+    view.setUint16(8, 0, true);
+    view.setUint16(10, 0, true);
+    view.setUint16(12, 0, true);
+    view.setUint16(14, 0, true);
+    view.setUint32(16, checksum, true);
+    view.setUint32(20, entry.bytes.length, true);
+    view.setUint32(24, entry.bytes.length, true);
+    view.setUint16(28, name.length, true);
+    view.setUint16(30, 0, true);
+    view.setUint16(32, 0, true);
+    view.setUint16(34, 0, true);
+    view.setUint16(36, 0, true);
+    view.setUint32(38, 0, true);
+    view.setUint32(42, offsets[index] ?? 0, true);
+    central.set(name, 46);
+    directories.push(central);
+    offset += central.length;
+  }
+
+  const footer = new Uint8Array(22);
+  const footerView = new DataView(footer.buffer);
+  footerView.setUint32(0, 0x06054b50, true);
+  footerView.setUint16(4, 0, true);
+  footerView.setUint16(6, 0, true);
+  footerView.setUint16(8, entries.length, true);
+  footerView.setUint16(10, entries.length, true);
+  footerView.setUint32(12, offset - directoryOffset, true);
+  footerView.setUint32(16, directoryOffset, true);
+  footerView.setUint16(20, 0, true);
+
+  const archive = new Uint8Array(offset + footer.length);
+  let cursor = 0;
+  for (const local of locals) {
+    archive.set(local, cursor);
+    cursor += local.length;
+  }
+  for (const directory of directories) {
+    archive.set(directory, cursor);
+    cursor += directory.length;
+  }
+  archive.set(footer, cursor);
+  return archive;
+}
+
+function otioz(
+  content: Uint8Array,
+  media: readonly StoredZipEntry[]
+): Uint8Array {
+  return createStoredZip([
+    { name: 'version.txt', bytes: new TextEncoder().encode('1.0.0\n') },
+    { name: 'content.otio', bytes: content },
+    ...media,
+  ]);
+}
+
+function projectionContent(): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      name: 'Projection source',
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Dialogue',
+            kind: 'Audio',
+            metadata: { relic: { id: 'projection-track' } },
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'Interview',
+                metadata: { relic: { id: 'projection-clip' } },
+                source_range: range(0, 24),
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: 'clip.mp4',
+                  available_range: range(0, 24),
+                },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
+function structuralContent(): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      name: 'Structural only',
+      tracks: { OTIO_SCHEMA: 'Stack.1', children: [] },
+    })
+  );
+}
+
+class ViewElement {
+  className = '';
+  textContent = '';
+  hidden = false;
+  tabIndex = 0;
+  type = '';
+  title = '';
+  min = '';
+  max = '';
+  value = '';
+  src = '';
+  preload = '';
+  muted = false;
+  playsInline = false;
+  volume = 1;
+  currentTime = 0;
+  readyState = 4;
+  error: MediaError | null = null;
+  width = 0;
+  height = 0;
+  parentElement: ViewElement | null = null;
+  readonly children: ViewElement[] = [];
+  readonly dataset: Record<string, string> = {};
+  readonly attributes = new Map<string, string>();
+  readonly style = {
+    setProperty: (): void => {},
+    position: '',
+    width: '',
+    height: '',
+    overflow: '',
+    clipPath: '',
+    pointerEvents: '',
+  };
+  readonly classList = {
+    add: (...names: string[]): void => {
+      const current = new Set(this.className.split(/\s+/).filter(Boolean));
+      for (const name of names) current.add(name);
+      this.className = [...current].join(' ');
+    },
+    remove: (...names: string[]): void => {
+      const current = new Set(this.className.split(/\s+/).filter(Boolean));
+      for (const name of names) current.delete(name);
+      this.className = [...current].join(' ');
+    },
+    toggle: (name: string, force?: boolean): boolean => {
+      const current = new Set(this.className.split(/\s+/).filter(Boolean));
+      const next = force ?? !current.has(name);
+      if (next) current.add(name);
+      else current.delete(name);
+      this.className = [...current].join(' ');
+      return next;
+    },
+  };
+
+  constructor(readonly tagName: string) {}
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes.delete(name);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
+  }
+
+  append(...children: ViewElement[]): void {
+    for (const child of children) this.appendChild(child);
+  }
+
+  appendChild(child: ViewElement): ViewElement {
+    child.remove();
+    child.parentElement = this;
+    this.children.push(child);
+    return child;
+  }
+
+  replaceChildren(...children: ViewElement[]): void {
+    for (const child of this.children) child.parentElement = null;
+    this.children.length = 0;
+    this.append(...children);
+  }
+
+  remove(): void {
+    const parent = this.parentElement;
+    if (!parent) return;
+    const index = parent.children.indexOf(this);
+    if (index >= 0) parent.children.splice(index, 1);
+    this.parentElement = null;
+  }
+
+  addEventListener(): void {}
+
+  removeEventListener(): void {}
+
+  dispatchEvent(): boolean {
+    return true;
+  }
+
+  querySelector(): null {
+    return null;
+  }
+
+  querySelectorAll(): ViewElement[] {
+    return [];
+  }
+
+  matches(selector: string): boolean {
+    return selector === '.otio-view'
+      ? this.className.split(/\s+/).includes('otio-view')
+      : false;
+  }
+
+  closest(): null {
+    return null;
+  }
+
+  getBoundingClientRect(): DOMRect {
+    return {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      top: 0,
+      right: 1,
+      bottom: 1,
+      left: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  scrollIntoView(): void {}
+
+  setPointerCapture(): void {}
+
+  pause(): void {}
+
+  play(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+class ViewCanvas extends ViewElement {
+  private readonly context = {
+    fillStyle: '#000000',
+    globalAlpha: 1,
+    globalCompositeOperation: 'source-over',
+    clearRect: (): void => {},
+    fillRect: (): void => {},
+    drawImage: (): void => {},
+  };
+
+  constructor() {
+    super('canvas');
+  }
+
+  getContext(kind: string): CanvasRenderingContext2D | null {
+    return kind === '2d'
+      ? (this.context as unknown as CanvasRenderingContext2D)
+      : null;
+  }
+}
+
+function installProjectionDom(): () => void {
+  const globals = ['document', 'window', 'MutationObserver'] as const;
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const name of globals) {
+    previous.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+  }
+  const body = new ViewElement('body');
+  const documentStub = {
+    body,
+    createElement: (tag: string): ViewElement =>
+      tag === 'canvas' ? new ViewCanvas() : new ViewElement(tag),
+    createElementNS: (_namespace: string, tag: string): ViewElement =>
+      new ViewElement(tag),
+  };
+
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    writable: true,
+    value: documentStub,
+  });
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    writable: true,
+    value: {
+      addEventListener: (): void => {},
+      removeEventListener: (): void => {},
+    },
+  });
+  Object.defineProperty(globalThis, 'MutationObserver', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+
+  const createObjectUrl = Object.getOwnPropertyDescriptor(
+    URL,
+    'createObjectURL'
+  );
+  const revokeObjectUrl = Object.getOwnPropertyDescriptor(
+    URL,
+    'revokeObjectURL'
+  );
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    writable: true,
+    value: (): string => 'blob:otio-view-test',
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    writable: true,
+    value: (): void => {},
+  });
+
+  return () => {
+    for (const name of globals) {
+      const descriptor = previous.get(name);
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+    if (createObjectUrl)
+      Object.defineProperty(URL, 'createObjectURL', createObjectUrl);
+    else Reflect.deleteProperty(URL, 'createObjectURL');
+    if (revokeObjectUrl)
+      Object.defineProperty(URL, 'revokeObjectURL', revokeObjectUrl);
+    else Reflect.deleteProperty(URL, 'revokeObjectURL');
+  };
+}
+describe('OTIO archive projection reader', () => {
+  test('keeps JSON identities while indexing every bundled media digest', async () => {
+    const content = projectionContent();
+    const projected = await readOtioForProjection(
+      otioz(content, [
+        {
+          name: 'media/clip.mp4',
+          bytes: new Uint8Array([1, 2, 3, 4]),
+        },
+      ])
+    );
+    const raw = readOtioDocument(content);
+
+    expect(projected.timeline_ids).toEqual(raw.timeline_ids);
+    expect(Object.keys(projected.nodes).sort()).toEqual(
+      Object.keys(raw.nodes).sort()
+    );
+    expect(Object.keys(projected.media)).toEqual(['media/clip.mp4']);
+    for (const entry of Object.values(projected.media)) {
+      expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  describe('mounted projection', () => {
+    let restoreDom: (() => void) | undefined;
+
+    beforeEach(() => {
+      restoreDom = installProjectionDom();
+    });
+
+    afterEach(() => {
+      restoreDom?.();
+      restoreDom = undefined;
+    });
+
+    test('reads hashed original and current revisions through the controller', async () => {
+      const content = projectionContent();
+      const current = otioz(content, [
+        {
+          name: 'media/clip.mp4',
+          bytes: new Uint8Array([1, 2, 3, 4]),
+        },
+      ]);
+      const original = otioz(content, [
+        {
+          name: 'media/clip.mp4',
+          bytes: new Uint8Array([1, 2, 3, 4]),
+        },
+      ]);
+      const changed = otioz(content, [
+        {
+          name: 'media/clip.mp4',
+          bytes: new Uint8Array([1, 2, 3, 5]),
+        },
+      ]);
+      const browserDocument = readOtioDocument(content);
+      const timelineId = browserDocument.timeline_ids[0];
+      if (!timelineId) throw new Error('expected projection timeline');
+      const browserAnchor = createOtioSelection(
+        browserDocument,
+        timelineId,
+        'projection-track',
+        1,
+        range(0, 12)
+      );
+      const root = new ViewElement('div');
+
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: current,
+        revision: 3,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected OTIO controller');
+
+      try {
+        expect(
+          (
+            await controller.project(
+              { ...browserAnchor, relic_version: 1 },
+              original
+            )
+          ).status
+        ).toBe('same');
+        expect(
+          (
+            await controller.project(
+              { ...browserAnchor, relic_version: 2 },
+              changed
+            )
+          ).status
+        ).toBe('changed');
+      } finally {
+        controller.dispose();
+      }
+    });
+
+    test('mounts without reading unreferenced bundle media', async () => {
+      const unused = new Uint8Array([8, 6, 7, 5]);
+      const root = new ViewElement('div');
+
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: otioz(structuralContent(), [
+          {
+            name: 'media/unused.mp4',
+            bytes: unused,
+            crc: crc32(unused) ^ 1,
+          },
+        ]),
+        revision: 1,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      expect(controller).toBeDefined();
+      controller?.dispose();
+    });
+  });
+});
 
 describe('OTIO track selection contract', () => {
   test('two identically named tracks retain independent IDs and paths', () => {

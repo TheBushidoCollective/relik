@@ -193,7 +193,7 @@ popup, and a scripted click is rejected.
 - **Time ranges and rational time:** Rational time `{value, rate}` is preserved across all coordinate systems. Mixed rates, non-zero start times, and source trims are supported natively.
 - **Transitions and retiming:** Evaluates `SMPTE_Dissolve` transitions by blending premultiplied track contributions into an intermediate track surface before stacking. Evaluates `LinearTimeWarp` scalar retiming and freeze frames. Image sequences (`ImageSequenceReference`) resolve frames from bundled media with frame step and missing frame policies.
 - **Fidelity boundaries and diagnostic states:** Browser playback operates in browser-managed SDR. Unsupported effects, proprietary plugins, unknown schemas, and unavailable codecs trigger explicit diagnostic states (`supported`, `missing-media`, `unsupported-codec`, `unsupported-effect`, `unsupported-schema`, `invalid-timing`, `unsupported-browser`). An incomplete preview provides a deliberate "Preview base media without unsupported effects" control; it is never claimed as full fidelity.
-- **Security:** The viewer never executes bundled code, plugins, or SchemaDef expressions. All media references resolve strictly to bundled local media; remote network fetches are barred.
+- **Security:** The viewer never executes bundled code, plugins, or SchemaDef expressions. All media references resolve only to existing non-directory entries beneath bundled `media/`; remote network fetches are barred.
 - **Chunk loading:** The OTIO parser and playback engine are lazy-loaded on demand to preserve the initial viewer shell budget.
 ## 4. The sandbox boundary
 

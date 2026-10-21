@@ -4,6 +4,7 @@ import {
   markersForOtioTimeline,
   indexOtioZip,
   isRawOtio,
+  otioBundleMediaIndex,
   rangeEndTime,
   readOtioDocument,
   rescaleTime,
@@ -14,7 +15,6 @@ import {
   type OtioAnchorResolution,
   type OtioAnchorV1,
   type OtioDocumentV1,
-  type OtioMediaEntry,
   type OtioNode,
   type OtioRationalTime,
   type OtioSourceSpan,
@@ -117,14 +117,20 @@ interface ParsedOtioContent {
   readonly zip?: OtioZipIndex;
 }
 
-async function parseContent(content: Uint8Array): Promise<ParsedOtioContent> {
+async function parseContent(
+  content: Uint8Array,
+  digests: boolean
+): Promise<ParsedOtioContent> {
   if (isRawOtio(content)) return { document: readOtioDocument(content) };
   const zip = await indexOtioZip(content);
-  const media: Record<string, OtioMediaEntry> = Object.create(null);
-  for (const [name, entry] of zip.entries) {
-    if (name.startsWith('media/') && !entry.isDirectory) media[name] = { key: name, bundle_path: name, size: entry.uncompressedSize };
-  }
+  const media = await otioBundleMediaIndex(zip, { digests });
   return { document: readOtioDocument(zip.contentOtioBytes, { mediaIndex: media }), zip };
+}
+
+export async function readOtioForProjection(
+  content: Uint8Array
+): Promise<OtioDocumentV1> {
+  return (await parseContent(content, true)).document;
 }
 
 interface Lane {
@@ -175,7 +181,7 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
   root.classList.add('otio-view'); root.dataset['ready'] = 'false'; root.dataset['version'] = String(options.revision);
   const loading = element('p', 'otio-loading', 'Loading OTIO'); root.replaceChildren(loading);
   let parsed: ParsedOtioContent;
-  try { parsed = await parseContent(options.content); }
+  try { parsed = await parseContent(options.content, false); }
   catch (error) {
     if (root.dataset['disposed'] === 'true') return;
     root.dataset['ready'] = 'error'; root.replaceChildren(element('p', 'otio-diagnostic', error instanceof Error ? error.message : 'OTIO could not be read.')); return;
@@ -203,6 +209,7 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
   const rows = new Map<string, HTMLElement>();
   const projections = new Map<string, OtioAnchorResolution>();
   const originals = new Map<string, Promise<OtioDocumentV1>>();
+  let currentProjectionDocument: Promise<OtioDocumentV1> | undefined;
   const marks = new Map<string, readonly HTMLElement[]>();
   const cleanup: (() => void)[] = [];
 
@@ -739,10 +746,25 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
     async project(anchor, content) {
       const key = `${anchor.relic_version}:${anchor.document_sha256}`;
       let original = originals.get(key);
-      if (!original) { original = parseContent(content).then(result => result.document); originals.set(key, original); }
-      const document = await original;
-      if (document.document_sha256 !== anchor.document_sha256) throw new Error('Original OTIO document digest differs from the encrypted anchor.');
-      const result = resolveOtioAnchor(anchor, document, doc); projections.set(projectionsKey(anchor), result); return result;
+      if (!original) {
+        original = readOtioForProjection(content);
+        originals.set(key, original);
+      }
+      let current = currentProjectionDocument;
+      if (!current) {
+        current = readOtioForProjection(options.content);
+        currentProjectionDocument = current;
+      }
+      const [originalDocument, currentDocument] = await Promise.all([
+        original,
+        current,
+      ]);
+      if (originalDocument.document_sha256 !== anchor.document_sha256) {
+        throw new Error('Original OTIO document digest differs from the encrypted anchor.');
+      }
+      const result = resolveOtioAnchor(anchor, originalDocument, currentDocument);
+      projections.set(projectionsKey(anchor), result);
+      return result;
     },
     projection: anchor => projections.get(projectionsKey(anchor)),
     dispose() { if (disposed) return; disposed = true; root.dataset['disposed'] = 'true'; unsubscribe?.(); playback?.dispose(); resolver?.dispose(); for (const dispose of cleanup) dispose(); },
