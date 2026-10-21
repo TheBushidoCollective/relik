@@ -13,7 +13,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { inflateRawSync } from 'node:zlib';
-import { indexOtioZip } from '@relic/format';
+import {
+  evaluateOtioAt,
+  indexOtioZip,
+  otioBundleMediaIndex,
+  otioSequenceFrameEntries,
+  readOtioDocument,
+  readOtioImageSequence,
+  sanitizeOtioBundlePath,
+} from '@relic/format';
 import { nodeFiles } from '../src/files.ts';
 import {
   buildZipArchive,
@@ -30,7 +38,6 @@ import { republish } from '../src/republish.ts';
 
 const SERVICE = 'https://relic.example';
 const runFile = promisify(execFile);
-
 
 let scratch: string;
 let deps: PublishDeps;
@@ -95,6 +102,104 @@ function grant(version: string): Record<string, unknown> {
     report_url: `${SERVICE}/abuse`,
     disclosure_url: `${SERVICE}/disclosure`,
   };
+}
+
+async function indexBundle(bytes: Uint8Array) {
+  return indexOtioZip(bytes, {
+    inflater: async (compressed, _uncompressedSize, maxBytes) =>
+      new Uint8Array(inflateRawSync(compressed, { maxOutputLength: maxBytes })),
+  });
+}
+
+function imageSequenceRecord(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    OTIO_SCHEMA: 'ImageSequenceReference.1',
+    target_url_base: 'media',
+    name_prefix: 'plate_',
+    name_suffix: '.png',
+    start_frame: 1001,
+    frame_step: 1,
+    rate: 24,
+    frame_zero_padding: 4,
+    available_range: {
+      OTIO_SCHEMA: 'TimeRange.1',
+      start_time: { value: 0, rate: 24 },
+      duration: { OTIO_SCHEMA: 'RationalTime.1', value: 2, rate: 24 },
+    },
+    ...overrides,
+  };
+}
+
+function requiredSequence(record: Record<string, unknown>) {
+  const read = readOtioImageSequence(record);
+  if (!read.ok) throw new Error(read.reason);
+  return read.sequence;
+}
+
+function sequenceClip(
+  id: string,
+  mediaReference: Record<string, unknown>
+): Record<string, unknown> {
+  const availableRange = mediaReference['available_range'];
+  const sourceRange =
+    availableRange !== null &&
+    typeof availableRange === 'object' &&
+    !Array.isArray(availableRange)
+      ? { source_range: availableRange }
+      : {};
+  return {
+    OTIO_SCHEMA: 'Clip.1',
+    metadata: { relic: { id } },
+    ...sourceRange,
+    media_reference: mediaReference,
+  };
+}
+
+function externalClip(id: string, targetUrl: string): Record<string, unknown> {
+  return {
+    OTIO_SCHEMA: 'Clip.1',
+    metadata: { relic: { id } },
+    media_reference: {
+      OTIO_SCHEMA: 'ExternalReference.1',
+      target_url: targetUrl,
+    },
+  };
+}
+
+function timelineWithClips(
+  id: string,
+  children: readonly Record<string, unknown>[]
+): Record<string, unknown> {
+  return {
+    OTIO_SCHEMA: 'Timeline.1',
+    metadata: { relic: { id: `timeline-${id}` } },
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      metadata: { relic: { id: `stack-${id}` } },
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          kind: 'Video',
+          metadata: { relic: { id: `track-${id}` } },
+          children,
+        },
+      ],
+    },
+  };
+}
+
+async function writeBundleRelative(
+  directory: string,
+  relative: string,
+  contents: string
+): Promise<void> {
+  const parts = relative.split('/');
+  const filename = parts.pop();
+  if (!filename) throw new Error(`Expected file name in ${relative}`);
+  await mkdir(join(directory, ...parts), { recursive: true });
+  await writeFile(join(directory, ...parts, filename), contents);
 }
 
 describe('OTIO bundling', () => {
@@ -220,10 +325,7 @@ describe('OTIO bundling', () => {
     expect(view.getUint32(centralOffset, true)).toBe(0x02014b50);
     expect(view.getUint16(centralOffset + 8, true) & 0x0800).toBe(0x0800);
     expect(
-      archive.slice(
-        centralOffset + 46,
-        centralOffset + 46 + nameBytes.length
-      )
+      archive.slice(centralOffset + 46, centralOffset + 46 + nameBytes.length)
     ).toEqual(nameBytes);
 
     const decoded = await runFile('python3', [
@@ -512,6 +614,473 @@ describe('OTIO bundling', () => {
       expect(indexed.entries.has(name)).toBe(true);
     }
     expect(indexed.entries.has('media/never-opened.mp4')).toBe(false);
+  });
+
+  test('packs image sequences through the same canonical entries as hashing and playback', async () => {
+    const cases: Array<{
+      readonly name: string;
+      readonly record: Record<string, unknown>;
+      readonly sampleRate: number;
+      readonly firstEntry?: string;
+    }> = [
+      {
+        name: 'root-base',
+        record: imageSequenceRecord({
+          target_url_base: '',
+          name_prefix: 'root_',
+        }),
+        sampleRate: 24,
+      },
+      {
+        name: 'frames-base',
+        record: imageSequenceRecord({
+          target_url_base: 'frames',
+          name_prefix: 'subfolder_',
+        }),
+        sampleRate: 24,
+      },
+      {
+        name: 'slash-prefix',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: '/plate_',
+        }),
+        sampleRate: 24,
+      },
+      {
+        name: 'query-suffix',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'query_',
+          name_suffix: '.png?v=1',
+        }),
+        sampleRate: 24,
+      },
+      {
+        name: 'backslash-base',
+        record: imageSequenceRecord({
+          target_url_base: 'media\\',
+          name_prefix: 'backslash_',
+        }),
+        sampleRate: 24,
+      },
+      {
+        name: 'signed-padding',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'signed_',
+          start_frame: -3,
+          frame_zero_padding: 4,
+        }),
+        sampleRate: 24,
+      },
+      {
+        name: 'mixed-rate',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'mixed_',
+          rate: 30,
+          available_range: {
+            OTIO_SCHEMA: 'TimeRange.1',
+            start_time: { value: 0, rate: 24 },
+            duration: {
+              OTIO_SCHEMA: 'RationalTime.1',
+              value: 48,
+              rate: 24,
+            },
+          },
+        }),
+        sampleRate: 30,
+      },
+      {
+        name: 'stepped',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'step_',
+          frame_step: 2,
+          available_range: {
+            OTIO_SCHEMA: 'TimeRange.1',
+            start_time: { value: 0, rate: 24 },
+            duration: {
+              OTIO_SCHEMA: 'RationalTime.1',
+              value: 7,
+              rate: 24,
+            },
+          },
+        }),
+        sampleRate: 24,
+      },
+      {
+        name: 'defaults',
+        record: {
+          OTIO_SCHEMA: 'ImageSequenceReference.1',
+          available_range: {
+            OTIO_SCHEMA: 'TimeRange.1',
+            start_time: { value: 0, rate: 1 },
+            duration: {
+              OTIO_SCHEMA: 'RationalTime.1',
+              value: 2,
+              rate: 1,
+            },
+          },
+        },
+        sampleRate: 1,
+      },
+      {
+        name: 'encoded-reserved',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'reserved%3F',
+          name_suffix: '%23%25%2520.png',
+        }),
+        sampleRate: 24,
+        firstEntry: 'media/reserved?1001#%%20.png',
+      },
+      {
+        name: 'literal-percent',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'literal-',
+          name_suffix: '-%2520.png',
+        }),
+        sampleRate: 24,
+        firstEntry: 'media/literal-1001-%20.png',
+      },
+      {
+        name: 'literal-space',
+        record: imageSequenceRecord({
+          target_url_base: 'media',
+          name_prefix: 'literal-',
+          name_suffix: '-%20.png',
+        }),
+        sampleRate: 24,
+        firstEntry: 'media/literal-1001- .png',
+      },
+      {
+        name: 'zero-images',
+        record: imageSequenceRecord({ available_range: null }),
+        sampleRate: 24,
+      },
+    ];
+
+    for (const example of cases) {
+      const directory = join(scratch, `${example.name}.otiod`);
+      const sequence = requiredSequence(example.record);
+      const clipId = `clip-${example.name}`;
+      const content = JSON.stringify(
+        timelineWithClips(example.name, [sequenceClip(clipId, example.record)])
+      );
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'content.otio'), content);
+
+      const frames: Array<{
+        readonly entry: string;
+        readonly relative: string;
+      }> = [];
+      for (let index = 0; index < sequence.count; index++) {
+        const entry = sequence.entry(index);
+        if (entry === null) {
+          throw new Error(`Expected canonical entry for ${example.name}`);
+        }
+        const relative = sanitizeOtioBundlePath(sequence.url(index));
+        frames.push({ entry, relative });
+        await writeBundleRelative(
+          directory,
+          relative,
+          `${example.name}:${index}`
+        );
+      }
+      const expectedEntries = Array.from(
+        new Set(frames.map((frame) => frame.entry))
+      ).sort();
+      if (example.firstEntry !== undefined) {
+        expect(frames[0]?.entry).toBe(example.firstEntry);
+      }
+
+      const bundled = await bundleOtiod(directory, nodeFiles);
+      const archive = await indexBundle(bundled.bytes);
+      const archiveEntries = Array.from(archive.entries.keys())
+        .filter((name) => name.startsWith('media/'))
+        .sort();
+      expect(archiveEntries).toEqual(expectedEntries);
+
+      const mediaIndex = await otioBundleMediaIndex(archive);
+      expect(otioSequenceFrameEntries(example.record, mediaIndex)).toEqual(
+        expectedEntries
+      );
+
+      if (sequence.count === 0) continue;
+      const document = readOtioDocument(content, { mediaIndex });
+      const timelineId = document.timeline_ids[0];
+      if (timelineId === undefined) {
+        throw new Error(`Expected timeline for ${example.name}`);
+      }
+      for (let index = 0; index < sequence.count; index++) {
+        const expectedEntry = sequence.entry(index);
+        const evaluation = evaluateOtioAt(document, timelineId, {
+          value: index * sequence.frameStep,
+          rate: example.sampleRate,
+        });
+        const contribution = evaluation.video_contributions.find(
+          (item) => item.node_id === clipId
+        );
+        expect(contribution?.bundle_path).toBe(expectedEntry);
+      }
+    }
+  });
+
+  test('refuses unsafe image sequence bases through the shared path sanitizer', async () => {
+    const cases = [
+      { name: 'parent', base: '../', reason: 'Path traversal' },
+      { name: 'media-parent', base: 'media/../', reason: 'Path traversal' },
+      {
+        name: 'nested-parent',
+        base: 'media/sub/../',
+        reason: 'Path traversal',
+      },
+      { name: 'absolute', base: '/abs/', reason: 'Absolute path' },
+      { name: 'file-absolute', base: 'file:///x/', reason: 'Absolute path' },
+      { name: 'remote', base: 'http://x/', reason: 'Prohibited URL scheme' },
+    ] as const;
+
+    for (const example of cases) {
+      const directory = join(scratch, `unsafe-${example.name}.otiod`);
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, 'content.otio'),
+        JSON.stringify(
+          timelineWithClips(example.name, [
+            sequenceClip(
+              `clip-${example.name}`,
+              imageSequenceRecord({ target_url_base: example.base })
+            ),
+          ])
+        )
+      );
+
+      let thrown: unknown;
+      try {
+        await bundleOtiod(directory, nodeFiles);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(PublishError);
+      expect((thrown as PublishError).code).toBe('otio_bundle_invalid');
+      expect((thrown as Error).message).toContain(example.reason);
+    }
+  });
+
+  test('refuses malformed shared image sequence bounds before reading media', async () => {
+    const cases = [
+      { name: 'zero-step', record: imageSequenceRecord({ frame_step: 0 }) },
+      {
+        name: 'too-much-padding',
+        record: imageSequenceRecord({ frame_zero_padding: 33 }),
+      },
+      {
+        name: 'non-string-base',
+        record: imageSequenceRecord({ target_url_base: 1 }),
+      },
+      {
+        name: 'too-many-frames',
+        record: imageSequenceRecord({
+          available_range: {
+            OTIO_SCHEMA: 'TimeRange.1',
+            start_time: { value: 0, rate: 24 },
+            duration: {
+              OTIO_SCHEMA: 'RationalTime.1',
+              value: 65_533,
+              rate: 24,
+            },
+          },
+        }),
+      },
+      {
+        name: 'too-long-url',
+        record: imageSequenceRecord({
+          target_url_base: `media/${'x'.repeat(1_010)}`,
+        }),
+      },
+      {
+        name: 'malformed-range',
+        record: imageSequenceRecord({
+          available_range: {
+            OTIO_SCHEMA: 'TimeRange.1',
+            duration: {
+              OTIO_SCHEMA: 'RationalTime.1',
+              value: 'nope',
+              rate: 24,
+            },
+          },
+        }),
+      },
+    ] as const;
+
+    for (const example of cases) {
+      const directory = join(scratch, `${example.name}.otiod`);
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, 'content.otio'),
+        JSON.stringify(
+          timelineWithClips(example.name, [
+            sequenceClip(`clip-${example.name}`, example.record),
+          ])
+        )
+      );
+
+      let thrown: unknown;
+      try {
+        await bundleOtiod(directory, nodeFiles);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(PublishError);
+      expect((thrown as PublishError).code).toBe('otio_bundle_invalid');
+      expect((thrown as Error).message).toContain('ImageSequenceReference.1');
+    }
+  });
+
+  test('omits missing sequence frames while retaining required references', async () => {
+    const directory = join(scratch, 'missing-sequence-frame.otiod');
+    const record = imageSequenceRecord({
+      target_url_base: 'frames',
+      available_range: {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: { value: 0, rate: 24 },
+        duration: { OTIO_SCHEMA: 'RationalTime.1', value: 3, rate: 24 },
+      },
+    });
+    const sequence = requiredSequence(record);
+    const frames: Array<{ readonly entry: string; readonly relative: string }> =
+      [];
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, 'content.otio'),
+      JSON.stringify(
+        timelineWithClips('missing-sequence-frame', [
+          sequenceClip('clip-missing-sequence-frame', record),
+        ])
+      )
+    );
+    for (let index = 0; index < sequence.count; index++) {
+      const entry = sequence.entry(index);
+      if (entry === null) throw new Error('Expected sequence archive entry');
+      const relative = sanitizeOtioBundlePath(sequence.url(index));
+      frames.push({ entry, relative });
+      await writeBundleRelative(directory, relative, `frame:${index}`);
+    }
+    const missing = frames[1];
+    if (missing === undefined)
+      throw new Error('Expected three sequence frames');
+    await rm(join(directory, ...missing.relative.split('/')));
+
+    const bundled = await bundleOtiod(directory, nodeFiles);
+    const archive = await indexBundle(bundled.bytes);
+    expect(
+      Array.from(archive.entries.keys())
+        .filter((name) => name.startsWith('media/'))
+        .sort()
+    ).toEqual(
+      frames
+        .filter((frame) => frame !== missing)
+        .map((frame) => frame.entry)
+        .sort()
+    );
+    expect(archive.entries.has(missing.entry)).toBe(false);
+
+    const missingExternal = join(scratch, 'missing-external.otiod');
+    await mkdir(missingExternal, { recursive: true });
+    await writeFile(
+      join(missingExternal, 'content.otio'),
+      JSON.stringify(
+        timelineWithClips('missing-external', [
+          externalClip('clip-missing-external', 'missing.mp4'),
+        ])
+      )
+    );
+    let missingExternalError: unknown;
+    try {
+      await bundleOtiod(missingExternal, nodeFiles);
+    } catch (error) {
+      missingExternalError = error;
+    }
+    expect(missingExternalError).toBeInstanceOf(PublishError);
+    expect((missingExternalError as PublishError).code).toBe(
+      'source_unreadable'
+    );
+
+    const requiredWins = join(scratch, 'required-wins.otiod');
+    const sharedRecord = imageSequenceRecord({
+      target_url_base: 'media',
+      name_prefix: 'shared_',
+      available_range: {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: { value: 0, rate: 24 },
+        duration: { OTIO_SCHEMA: 'RationalTime.1', value: 1, rate: 24 },
+      },
+    });
+    const sharedSequence = requiredSequence(sharedRecord);
+    const sharedTarget = sanitizeOtioBundlePath(sharedSequence.url(0));
+    await mkdir(requiredWins, { recursive: true });
+    await writeFile(
+      join(requiredWins, 'content.otio'),
+      JSON.stringify(
+        timelineWithClips('required-wins', [
+          sequenceClip('clip-optional-frame', sharedRecord),
+          externalClip('clip-required-external', sharedTarget),
+        ])
+      )
+    );
+    let requiredWinsError: unknown;
+    try {
+      await bundleOtiod(requiredWins, nodeFiles);
+    } catch (error) {
+      requiredWinsError = error;
+    }
+    expect(requiredWinsError).toBeInstanceOf(PublishError);
+    expect((requiredWinsError as PublishError).code).toBe('source_unreadable');
+  });
+
+  test('packs no media for image sequences with null or absent available ranges', async () => {
+    const cases = [
+      {
+        name: 'null-available-range',
+        record: imageSequenceRecord({ available_range: null }),
+      },
+      {
+        name: 'absent-available-range',
+        record: {
+          OTIO_SCHEMA: 'ImageSequenceReference.1',
+          target_url_base: 'media',
+          name_prefix: 'absent_',
+          name_suffix: '.png',
+          start_frame: 1,
+          frame_step: 1,
+          rate: 24,
+          frame_zero_padding: 4,
+        },
+      },
+    ] as const;
+
+    for (const example of cases) {
+      const directory = join(scratch, `${example.name}.otiod`);
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, 'content.otio'),
+        JSON.stringify(
+          timelineWithClips(example.name, [
+            sequenceClip(`clip-${example.name}`, example.record),
+          ])
+        )
+      );
+
+      const bundled = await bundleOtiod(directory, nodeFiles);
+      const archive = await indexBundle(bundled.bytes);
+      expect(Array.from(archive.entries.keys()).sort()).toEqual([
+        'content.otio',
+        'version.txt',
+      ]);
+    }
   });
 
   test('refuses symlink roots, content, and a linked media directory before a grant or upload', async () => {
