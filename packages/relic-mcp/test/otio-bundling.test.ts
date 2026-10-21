@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { execFile } from 'node:child_process';
 import {
   mkdir,
   mkdtemp,
+  realpath,
   rename,
   rm,
   symlink,
@@ -9,8 +11,10 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { inflateRawSync } from 'node:zlib';
 import { indexOtioZip } from '@relic/format';
+import { nodeFiles } from '../src/files.ts';
 import {
   buildZipArchive,
   bundleOtiod,
@@ -25,12 +29,16 @@ import {
 import { republish } from '../src/republish.ts';
 
 const SERVICE = 'https://relic.example';
+const runFile = promisify(execFile);
+
 
 let scratch: string;
 let deps: PublishDeps;
 
 beforeEach(async () => {
-  scratch = await mkdtemp(join(tmpdir(), 'relic-otio-bundling-'));
+  scratch = await mkdtemp(
+    join(await realpath(tmpdir()), 'relic-otio-bundling-')
+  );
   process.env['RELIC_PUBLISH_STATE'] = join(
     scratch,
     'state',
@@ -188,6 +196,42 @@ describe('OTIO bundling', () => {
     expect(new TextDecoder().decode(contentBytes)).toBe(
       JSON.stringify(contentOtio, null, 2)
     );
+  });
+
+  test('marks Unicode media paths as UTF-8 for standard ZIP readers', async () => {
+    const entryName = 'media/café-日本語.mov';
+    const data = new TextEncoder().encode('unicode media bytes');
+    const archive = buildZipArchive([{ name: entryName, data, method: 0 }]);
+    const archivePath = join(scratch, 'unicode-names.otioz');
+    await writeFile(archivePath, archive);
+
+    // Raw fields prove both ZIP header records carry bit 11. The unzip calls
+    // below are independent reader checks, not a second implementation parser.
+    const view = new DataView(
+      archive.buffer,
+      archive.byteOffset,
+      archive.byteLength
+    );
+    const nameBytes = new TextEncoder().encode(entryName);
+    expect(view.getUint32(0, true)).toBe(0x04034b50);
+    expect(view.getUint16(6, true) & 0x0800).toBe(0x0800);
+    expect(archive.slice(30, 30 + nameBytes.length)).toEqual(nameBytes);
+
+    const centralOffset = 30 + nameBytes.length + data.length;
+    expect(view.getUint32(centralOffset, true)).toBe(0x02014b50);
+    expect(view.getUint16(centralOffset + 8, true) & 0x0800).toBe(0x0800);
+    expect(
+      archive.slice(
+        centralOffset + 46,
+        centralOffset + 46 + nameBytes.length
+      )
+    ).toEqual(nameBytes);
+
+    const listed = await runFile('unzip', ['-Z1', archivePath]);
+    expect(String(listed.stdout).trim().split(/\r?\n/)).toContain(entryName);
+
+    const extracted = await runFile('unzip', ['-p', archivePath, entryName]);
+    expect(String(extracted.stdout)).toBe('unicode media bytes');
   });
 
   test('rejects path traversal and out-of-root reads', async () => {
@@ -539,11 +583,12 @@ describe('OTIO bundling', () => {
     const root = await nodeFiles.openBundleRoot(dir);
     let held: ConfinedBundleFile | undefined;
     try {
-      held = await root.openRegular('media/held.mp4');
+      const heldFile = await root.openRegular('media/held.mp4');
+      held = heldFile;
       await rename(heldPath, join(media, 'held-original.mp4'));
       await symlink(outsidePath, heldPath);
       try {
-        const bytes = await held.readBounded(1024);
+        const bytes = await heldFile.readBounded(1024);
         expect(new TextDecoder().decode(bytes)).toBe('held bytes');
       } catch {
         // A platform may refuse the descriptor after a concurrent rename. It

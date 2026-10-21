@@ -44,6 +44,8 @@ export const MAX_ZIP_ENTRY_COUNT = 0xffff;
 export const MAX_MEDIA_ENTRY_COUNT = MAX_ZIP_ENTRY_COUNT - 3;
 const MAX_ZIP_FILENAME_BYTES = 0xffff;
 const ZIP_ENTRY_HEADER_BYTES = 30 + 46;
+// Every entry name is encoded by TextEncoder, so both ZIP headers must mark it UTF-8.
+const ZIP_UTF8_FILENAME_FLAG = 0x0800;
 const VERSION_BYTES = new TextEncoder().encode('1.0.0');
 const TEXT_ENCODER = new TextEncoder();
 const MAX_RAW_REFERENCE_CHARS = MAX_ZIP_FILENAME_BYTES * 3;
@@ -201,7 +203,7 @@ export function buildZipArchive(
     localHeaderOffsets.push(offset);
     view.setUint32(offset + 0, 0x04034b50, true);
     view.setUint16(offset + 4, 20, true);
-    view.setUint16(offset + 6, 0, true);
+    view.setUint16(offset + 6, ZIP_UTF8_FILENAME_FLAG, true);
     view.setUint16(offset + 8, item.entry.method, true);
     view.setUint16(offset + 10, dosTime, true);
     view.setUint16(offset + 12, dosDate, true);
@@ -223,7 +225,7 @@ export function buildZipArchive(
     view.setUint32(centralCursor + 0, 0x02014b50, true);
     view.setUint16(centralCursor + 4, 0x0014, true);
     view.setUint16(centralCursor + 6, 20, true);
-    view.setUint16(centralCursor + 8, 0, true);
+    view.setUint16(centralCursor + 8, ZIP_UTF8_FILENAME_FLAG, true);
     view.setUint16(centralCursor + 10, item.entry.method, true);
     view.setUint16(centralCursor + 12, dosTime, true);
     view.setUint16(centralCursor + 14, dosDate, true);
@@ -402,8 +404,9 @@ function requiredSafeInteger(
   where: string
 ): number {
   const value = record[field];
-  if (!Number.isSafeInteger(value))
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
     bundleRefusal(`${where}.${field} must be a safe integer`);
+  }
   return value;
 }
 
