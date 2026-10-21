@@ -23,8 +23,7 @@ import type {
 export const MAX_EXPANDED_ZIP_BYTES = 100 * 1024 * 1024; // 100 MiB safety limit
 
 /**
- * Standard OTIOZ reserves three ZIP entries for `content.otio`,
- * `version.txt`, and the end-of-central-directory sentinel.
+ * Two reserved members and ZIP64's unusable count leave 65,532 media entries.
  */
 export const MAX_OTIO_BUNDLE_MEDIA_ENTRIES = 0xffff - 3;
 
@@ -120,6 +119,9 @@ export function otioBundleEntryFor(
   const entry = otioBundleEntry(reference);
   return entry !== null && isEntry(entry) ? entry : null;
 }
+
+const ZIP64_U16 = 0xffff;
+const ZIP64_U32 = 0xffffffff;
 const ZIP64_EXTRA_ID = 0x0001;
 const ZIP64_EOCD_LOCATOR = 0x07064b50;
 const EOCD_SIG = 0x06054b50;
