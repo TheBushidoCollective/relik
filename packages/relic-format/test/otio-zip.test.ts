@@ -8,6 +8,10 @@ import {
   isRawOtio,
   MAX_EXPANDED_ZIP_BYTES,
   OtioZipError,
+  otioBundleEntry,
+  otioBundleEntryFor,
+  otioBundleMediaIndex,
+  sanitizeOtioBundlePath,
 } from '../src/otio-zip.ts';
 
 interface ZipFileDef {
@@ -20,7 +24,6 @@ interface ZipFileDef {
   uncompressedSize?: number;
   crc32?: number;
 }
-
 
 function createZipBuffer(files: ZipFileDef[]): Uint8Array {
   const localChunks: Uint8Array[] = [];
@@ -167,7 +170,9 @@ function localDataOffset(view: DataView, localHeader: number): number {
 }
 
 function localEntryEnd(view: DataView, localHeader: number): number {
-  return localDataOffset(view, localHeader) + view.getUint32(localHeader + 18, true);
+  return (
+    localDataOffset(view, localHeader) + view.getUint32(localHeader + 18, true)
+  );
 }
 
 function withEocdComment(zip: Uint8Array, comment: Uint8Array): Uint8Array {
@@ -215,7 +220,6 @@ async function expectZipFailure(
   }
   throw new Error(`indexOtioZip accepted an archive that must fail ${code}`);
 }
-
 
 describe('otio-zip security indexing and subtype detection', () => {
   const validVersionTxt = new TextEncoder().encode('1.0.0\n');
@@ -434,14 +438,17 @@ describe('otio-zip security indexing and subtype detection', () => {
     const outerLocal = findZipHeader(zip, 'media/outer.bin', 0x04034b50, 30);
     const outerCd = findZipHeader(zip, 'media/outer.bin', 0x02014b50, 46);
     const innerLocal = findZipHeader(zip, 'media/inner.bin', 0x04034b50, 30);
-    const nestedSize = localEntryEnd(view, innerLocal) - localDataOffset(view, outerLocal);
+    const nestedSize =
+      localEntryEnd(view, innerLocal) - localDataOffset(view, outerLocal);
 
     view.setUint32(outerLocal + 18, nestedSize, true);
     view.setUint32(outerLocal + 22, nestedSize, true);
     view.setUint32(outerCd + 20, nestedSize, true);
     view.setUint32(outerCd + 24, nestedSize, true);
 
-    expect(localEntryEnd(view, outerLocal)).toBe(localEntryEnd(view, innerLocal));
+    expect(localEntryEnd(view, outerLocal)).toBe(
+      localEntryEnd(view, innerLocal)
+    );
     await expectZipFailure(zip, 'corrupt-archive');
   });
 
@@ -687,5 +694,108 @@ describe('otio-zip security indexing and subtype detection', () => {
     const [a, b] = await Promise.all([first, second]);
     expect(a).toBe(b);
     expect(Array.from(a)).toEqual([4, 5, 6, 7]);
+  });
+
+  test('uses the shared single-decode media path model', () => {
+    expect(sanitizeOtioBundlePath('media/video.mp4')).toBe('media/video.mp4');
+    expect(sanitizeOtioBundlePath('clips/scene_01.webm')).toBe(
+      'clips/scene_01.webm'
+    );
+    expect(sanitizeOtioBundlePath('media%2Fclip%2Epng')).toBe('media/clip.png');
+    expect(sanitizeOtioBundlePath('file:media/audio.wav')).toBe(
+      'media/audio.wav'
+    );
+    expect(sanitizeOtioBundlePath('media/clip.mov?v=1#t=1')).toBe(
+      'media/clip.mov'
+    );
+    expect(sanitizeOtioBundlePath('media\\x.png')).toBe('media/x.png');
+
+    for (const path of [
+      'http://example.test/clip.mov',
+      'https://example.test/clip.mov',
+      'ftp://example.test/clip.mov',
+      'data:text/plain,clip',
+      'blob:https://example.test/clip',
+      'javascript:alert(1)',
+      'C:/media/clip.mov',
+      'D:\\media\\clip.mov',
+    ]) {
+      expect(() => sanitizeOtioBundlePath(path)).toThrow(
+        /^Prohibited URL scheme/
+      );
+    }
+    for (const path of [
+      '/var/media/clip.mov',
+      '\\Windows\\Media\\clip.mov',
+      'file:///etc/passwd',
+      'file://localhost/clip.mov',
+    ]) {
+      expect(() => sanitizeOtioBundlePath(path)).toThrow(/^Absolute path/);
+    }
+    for (const path of [
+      '../outside.mov',
+      'media/../../outside.mov',
+      './media/sub/../clip.mov',
+    ]) {
+      expect(() => sanitizeOtioBundlePath(path)).toThrow(/^Path traversal/);
+    }
+    for (const path of [
+      'media/\0clip.mov',
+      'media/\x1fclip.mov',
+      'media/%00clip.mov',
+    ]) {
+      expect(() => sanitizeOtioBundlePath(path)).toThrow(/^Control character/);
+    }
+    for (const path of ['', '   ', '.']) {
+      expect(() => sanitizeOtioBundlePath(path)).toThrow(
+        /^Empty media reference path/
+      );
+    }
+    expect(() => sanitizeOtioBundlePath('media/%')).toThrow(
+      /^Malformed percent-encoding/
+    );
+
+    expect(otioBundleEntry('media/%253F.png')).toBe('media/%3F.png');
+    expect(otioBundleEntry('media/%3F.png')).toBe('media/?.png');
+    expect(otioBundleEntry('media/a%2520b.png')).toBe('media/a%20b.png');
+    expect(otioBundleEntry('media/a%20b.png')).toBe('media/a b.png');
+    expect(otioBundleEntry('media/x.png?v=1')).toBe('media/x.png');
+    expect(otioBundleEntry('media/x.png#t=1')).toBe('media/x.png');
+    expect(
+      otioBundleEntryFor(
+        'file:media/clip.mov',
+        (name) => name === 'media/clip.mov'
+      )
+    ).toBe('media/clip.mov');
+  });
+
+  test('builds a null-prototype media index in canonical lexical order', async () => {
+    const archive = createZipBuffer([
+      { name: 'version.txt', data: validVersionTxt },
+      { name: 'content.otio', data: validContentOtio },
+      { name: 'media/z.bin', data: new Uint8Array([3]) },
+      { name: 'media/empty/', data: new Uint8Array() },
+      { name: 'media/a.bin', data: new Uint8Array([1, 2]) },
+      { name: 'outside.bin', data: new Uint8Array([4]) },
+    ]);
+    const indexed = await indexOtioZip(archive);
+    const reads: string[] = [];
+    const media = await otioBundleMediaIndex(
+      {
+        ...indexed,
+        readEntry: async (name, inflater) => {
+          reads.push(name);
+          return indexed.readEntry(name, inflater);
+        },
+      },
+      { digests: true }
+    );
+
+    expect(Object.getPrototypeOf(media)).toBeNull();
+    expect(Object.keys(media)).toEqual(['media/a.bin', 'media/z.bin']);
+    expect(reads).toEqual(['media/a.bin', 'media/z.bin']);
+    expect(media['media/a.bin']?.bundle_path).toBe('media/a.bin');
+    expect(media['media/a.bin']?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(media['media/z.bin']?.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 });

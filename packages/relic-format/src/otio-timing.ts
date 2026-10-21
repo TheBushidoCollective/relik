@@ -7,8 +7,11 @@
  * Flat video transition_weight is reporting only.
  */
 
+import { readOtioImageSequence } from './otio-sequence.ts';
+import { otioBundleEntry } from './otio-zip.ts';
 import type {
   OtioAudioContribution,
+  OtioBundleEntryName,
   OtioDiagnostic,
   OtioDocumentV1,
   OtioEffect,
@@ -25,8 +28,6 @@ import type {
 } from './otio-types.ts';
 
 const EPSILON_SECONDS = 1e-7;
-const MAX_FRAME_PAD = 32;
-const MAX_SEQUENCE_PATH = 1024;
 
 export interface OtioBoundMap {
   /** Root time of local_origin. Independent of ancestor clipping. */
@@ -296,36 +297,6 @@ function activeReference(node: OtioNode): OtioMediaReference | null {
   return refs[key] ?? null;
 }
 
-function formatFrame(frame: number, pad: number): string | null {
-  if (!Number.isSafeInteger(frame)) return null;
-  if (!Number.isInteger(pad) || pad < 0 || pad > MAX_FRAME_PAD) return null;
-  const negative = frame < 0;
-  const digits = String(Math.abs(frame));
-  const body = digits.length >= pad ? digits : digits.padStart(pad, '0');
-  return `${negative ? '-' : ''}${body}`;
-}
-
-function joinSequenceUrl(
-  ref: OtioMediaReference,
-  imageIndex: number
-): { path: string; frame: number } | null {
-  const step = ref.frame_step ?? 1;
-  const start = ref.start_frame ?? 0;
-  const pad = ref.frame_zero_padding ?? 0;
-  if (!Number.isFinite(step) || step <= 0) return null;
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(imageIndex)) {
-    return null;
-  }
-  const frame = start + imageIndex * step;
-  const text = formatFrame(frame, pad);
-  if (text === null || !Number.isSafeInteger(frame)) return null;
-  const base = ref.target_url_base ?? '';
-  const slash = base.length > 0 && !base.endsWith('/') ? '/' : '';
-  const path = `${base}${slash}${ref.name_prefix ?? ''}${text}${ref.name_suffix ?? ''}`;
-  if (path.length === 0 || path.length > MAX_SEQUENCE_PATH) return null;
-  return { path, frame };
-}
-
 function sequenceOffset(
   ref: OtioMediaReference,
   media: OtioRationalTime
@@ -333,22 +304,15 @@ function sequenceOffset(
   const rate = ref.rate && ref.rate > 0 ? ref.rate : media.rate;
   const local = rescaleTime(media, rate);
   const start = ref.available_range?.start_time;
-  const offset = start ? subtractRationalTimes(local, rescaleTime(start, rate)) : local;
+  const offset = start
+    ? subtractRationalTimes(local, rescaleTime(start, rate))
+    : local;
   if (!Number.isFinite(offset.value)) return null;
   return offset.value;
 }
 
-function presentationImageCount(ref: OtioMediaReference): number | null {
-  const step = ref.frame_step ?? 1;
-  const duration = ref.available_range?.duration.value;
-  if (!duration || !Number.isFinite(duration) || !Number.isFinite(step) || step <= 0) {
-    return null;
-  }
-  return Math.floor(duration / step);
-}
-
 interface SequenceChoice {
-  readonly path: string | null;
+  readonly path: OtioBundleEntryName | null;
   readonly frame: number | undefined;
   readonly kind: 'media' | 'black';
   readonly diagnostics: OtioDiagnostic[];
@@ -361,9 +325,20 @@ function chooseSequenceFrame(
   media: OtioRationalTime
 ): SequenceChoice {
   const diagnostics: OtioDiagnostic[] = [];
-  const step = ref.frame_step ?? 1;
+  const read = readOtioImageSequence(ref.raw ?? ref);
+  if (!read.ok) {
+    diagnostics.push({
+      severity: 'error',
+      code: 'invalid-timing',
+      message: `Image sequence on ${node.name || node.id} is not representable: ${read.reason}`,
+      target: { node_id: node.id, json_pointer: node.json_pointer },
+    });
+    return { path: null, frame: undefined, kind: 'media', diagnostics };
+  }
+
+  const sequence = read.sequence;
   const offset = sequenceOffset(ref, media);
-  if (offset === null || !Number.isFinite(step) || step <= 0) {
+  if (offset === null) {
     diagnostics.push({
       severity: 'error',
       code: 'invalid-timing',
@@ -372,21 +347,25 @@ function chooseSequenceFrame(
     });
     return { path: null, frame: undefined, kind: 'media', diagnostics };
   }
-  const imageIndex = Math.floor(offset / step);
-  const count = presentationImageCount(ref);
-  const outside = imageIndex < 0 || (count !== null && imageIndex >= count);
+
+  const imageIndex = Math.floor(offset / sequence.frameStep);
+  const outside = imageIndex < 0 || imageIndex >= sequence.count;
   const policy = ref.missing_frame_policy ?? 'error';
   const indexHasEntries = Object.keys(document.media).length > 0;
-
-  const resolve = (index: number): { path: string; frame: number } | null => {
-    const built = joinSequenceUrl(ref, index);
-    return built;
+  const resolve = (
+    index: number
+  ): { path: OtioBundleEntryName; frame: number } | null => {
+    try {
+      const path = sequence.entry(index);
+      return path === null ? null : { path, frame: sequence.frame(index) };
+    } catch (error) {
+      if (error instanceof RangeError) return null;
+      throw error;
+    }
   };
-
-  const inIndex = (path: string): boolean => {
-    if (!indexHasEntries) return true;
-    return Object.prototype.hasOwnProperty.call(document.media, path);
-  };
+  const inIndex = (path: string): boolean =>
+    !indexHasEntries ||
+    Object.prototype.hasOwnProperty.call(document.media, path);
 
   if (!outside) {
     const built = resolve(imageIndex);
@@ -413,14 +392,15 @@ function chooseSequenceFrame(
     return { path: null, frame: undefined, kind: 'black', diagnostics };
   }
 
-  if (policy === 'hold') {
-    const startIndex = outside
-      ? Math.max(0, (count ?? imageIndex) - 1)
-      : imageIndex - 1;
-    for (let index = startIndex; index >= 0; index -= 1) {
+  if (policy === 'hold' && sequence.count > 0) {
+    const startIndex = outside ? sequence.count - 1 : imageIndex - 1;
+    for (
+      let index = Math.min(startIndex, sequence.count - 1);
+      index >= 0;
+      index -= 1
+    ) {
       const built = resolve(index);
-      if (!built) continue;
-      if (!indexHasEntries || inIndex(built.path)) {
+      if (built && (!indexHasEntries || inIndex(built.path))) {
         return {
           path: built.path,
           frame: built.frame,
@@ -838,7 +818,7 @@ function buildVideoContribution(
       target: { node_id: node.id },
     });
   }
-  let bundlePath = ref?.target_url ?? null;
+  let bundlePath = ref?.target_url ? otioBundleEntry(ref.target_url) : null;
   let sourceFrame: number | undefined;
   let sampleKind: 'media' | 'black' = 'media';
   if (ref && isSequence(ref)) {
@@ -902,7 +882,7 @@ function buildAudioContribution(
     node_id: node.id,
     name: node.name,
     media_key: node.active_media_reference_key ?? null,
-    bundle_path: ref?.target_url ?? null,
+    bundle_path: ref?.target_url ? otioBundleEntry(ref.target_url) : null,
     source_time: relative ?? media,
     volume: 1,
     transition_weight: weight,
@@ -1122,7 +1102,11 @@ function spanFor(
     file_relative_source_range: fileRange,
     source_mapping: mapping,
     media_key: node.active_media_reference_key ?? null,
-    bundle_path: ref?.target_url ?? ref?.target_url_base ?? null,
+    bundle_path: isSequence(ref)
+      ? null
+      : ref?.target_url
+        ? otioBundleEntry(ref.target_url)
+        : null,
     active_media_reference_key: node.active_media_reference_key ?? null,
     media_references: node.media_references ?? Object.create(null),
     effects: node.effects ?? [],

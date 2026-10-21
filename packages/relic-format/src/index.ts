@@ -22,5 +22,6 @@ export * from './title.ts';
 export * from './otio-types.ts';
 export * from './otio-json.ts';
 export * from './otio-zip.ts';
+export * from './otio-sequence.ts';
 export * from './otio-timing.ts';
 export * from './otio-identity.ts';

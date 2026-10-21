@@ -20,6 +20,13 @@ export interface OtioTimeRange {
   readonly duration: OtioRationalTime;
 }
 
+declare const otioBundleEntryBrand: unique symbol;
+
+/** A canonical, single-decoded OTIOZ archive entry name. */
+export type OtioBundleEntryName = string & {
+  readonly [otioBundleEntryBrand]: true;
+};
+
 export type OtioIdentityOrigin =
   | 'authored'
   | 'derived-unique'
@@ -128,7 +135,7 @@ export interface OtioNode {
   readonly diagnostics?: readonly OtioDiagnostic[];
   /** Lossless parsed object. The reader always supplies it. */
   readonly raw?: unknown;
-  /** Full structural digest, excluding persistent identity metadata. */
+  /** Canonical JSON structural digest, excluding persistent identity metadata. */
   readonly fingerprint?: string;
 }
 
@@ -158,7 +165,7 @@ export interface OtioVideoContribution {
   readonly node_id: string;
   readonly name: string;
   readonly media_key: string | null;
-  readonly bundle_path: string | null;
+  readonly bundle_path: OtioBundleEntryName | null;
   /** File-relative when available_range is known. Otherwise the media-coordinate sample, with a diagnostic. */
   readonly source_time: OtioRationalTime;
   readonly source_frame?: number;
@@ -177,7 +184,7 @@ export interface OtioAudioContribution {
   readonly node_id: string;
   readonly name: string;
   readonly media_key: string | null;
-  readonly bundle_path: string | null;
+  readonly bundle_path: OtioBundleEntryName | null;
   readonly source_time: OtioRationalTime;
   readonly volume: number;
   readonly transition_weight: number;
@@ -252,7 +259,7 @@ export interface OtioSourceSpan {
   readonly file_relative_source_range: OtioTimeRange | null;
   readonly source_mapping: OtioSourceMapping | null;
   readonly media_key: string | null;
-  readonly bundle_path: string | null;
+  readonly bundle_path: OtioBundleEntryName | null;
   readonly active_media_reference_key: string | null;
   readonly media_references: Readonly<Record<string, OtioMediaReference>>;
   readonly effects: readonly OtioEffect[];
