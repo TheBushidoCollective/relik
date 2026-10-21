@@ -1991,7 +1991,10 @@ try {
     'insert projection does not match the official shifted range'
   );
   assert.notEqual(movedProjection.status, 'same');
-  const primaryAfterInsert = commentByBody(afterInsert, primaryBody);
+  const primaryAfterInsert = commentByBody(
+    afterInsert,
+    'Primary grade range, before the dissolve.'
+  );
   const primaryCommentId = String(primaryAfterInsert['comment_id']);
   const insertedVersion = String(inserted['version']);
   const insertBrowser = await openBrowser(shareUrl, sessionToken);

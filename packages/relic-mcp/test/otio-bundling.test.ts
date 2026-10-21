@@ -848,7 +848,7 @@ describe('OTIO bundling', () => {
       expect(archiveEntries).toEqual(sortedExpectedEntries);
 
       const mediaIndex = await otioBundleMediaIndex(archive);
-      expect(otioSequenceFrameEntries(example.record, mediaIndex)).toEqual(
+      expect<readonly string[]>(otioSequenceFrameEntries(example.record, mediaIndex)).toEqual(
         sortedExpectedEntries
       );
 

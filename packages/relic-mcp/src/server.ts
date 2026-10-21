@@ -3153,7 +3153,7 @@ directory and that the no-symlink flag is accepted. Symlink refusal,
 held-descriptor behavior, and replacement behavior are verified by the CI probe
 on the listed versions. The helper is never downloaded or compiled at runtime,
 and an unsupported platform, architecture, libc, or kernel configuration
-refuses `.otiod` packaging rather than using a pathname fallback. Nothing is
+refuses .otiod packaging rather than using a pathname fallback. Nothing is
 fetched from the network and executed.`;
 }
 
