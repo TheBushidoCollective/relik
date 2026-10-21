@@ -12,7 +12,11 @@ import {
   crc32,
   indexOtioZip,
   MAX_EXPANDED_ZIP_BYTES,
+  MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
+  otioBundleEntryName,
   parseOtioJson,
+  readOtioImageSequence,
+  sanitizeOtioBundlePath,
 } from '@relic/format';
 import {
   type ConfinedBundleDirectory,
@@ -40,8 +44,6 @@ interface ZipFileEntry {
 
 /** ZIP's non-ZIP64 entry-count sentinel is not usable by this writer. */
 export const MAX_ZIP_ENTRY_COUNT = 0xffff;
-/** content.otio and version.txt consume two of the 65,534 usable entries. */
-export const MAX_MEDIA_ENTRY_COUNT = MAX_ZIP_ENTRY_COUNT - 3;
 const MAX_ZIP_FILENAME_BYTES = 0xffff;
 const ZIP_ENTRY_HEADER_BYTES = 30 + 46;
 // Every entry name is encoded by TextEncoder, so both ZIP headers must mark it UTF-8.
@@ -255,82 +257,13 @@ export function buildZipArchive(
   return buffer;
 }
 
-interface ParsedMediaPath {
-  readonly archivePath: string;
-  readonly bundleRelativePath: string;
-}
-
-/** A single deliberate decode, then a relative POSIX path only. */
-function parseMediaReferenceUrl(rawUrl: string): ParsedMediaPath {
-  const trimmed = rawUrl.trim();
-  if (trimmed.length === 0) bundleRefusal('Empty media reference path');
-  if (trimmed.length > MAX_RAW_REFERENCE_CHARS || trimmed.includes('\0')) {
-    bundleRefusal('Media reference path exceeds the supported bound');
-  }
-
-  if (
-    /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) &&
-    !trimmed.startsWith('file:')
-  ) {
-    bundleRefusal(`Prohibited URL scheme in media reference: ${trimmed}`);
-  }
-  if (trimmed.startsWith('//')) {
-    bundleRefusal(`Network authority escape in media reference: ${trimmed}`);
-  }
-
-  let pathPart = trimmed;
-  if (pathPart.startsWith('file:')) {
-    pathPart = pathPart.slice(5);
-    if (pathPart.startsWith('///')) {
-      bundleRefusal(
-        `Absolute file URL prohibited in media reference: ${trimmed}`
-      );
-    }
-    if (pathPart.startsWith('//')) {
-      bundleRefusal(`File URL authority escape in media reference: ${trimmed}`);
-    }
-  }
-  if (pathPart.includes('\\')) {
-    bundleRefusal(`Backslashes prohibited in media reference: ${trimmed}`);
-  }
-
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(pathPart);
-  } catch {
-    bundleRefusal(`Malformed percent encoding in media reference: ${trimmed}`);
-  }
-  if (decoded.length > MAX_ZIP_FILENAME_BYTES || decoded.includes('\0')) {
-    bundleRefusal(
-      `Decoded media reference is too long or contains a null byte: ${trimmed}`
-    );
-  }
-  if (decoded.startsWith('/') || /^[a-zA-Z]:/.test(decoded)) {
-    bundleRefusal(`Absolute path prohibited in media reference: ${trimmed}`);
-  }
-
-  const segments: string[] = [];
-  for (const segment of decoded.split('/')) {
-    if (segment === '..') {
-      bundleRefusal(
-        `Path traversal (..) prohibited in media reference: ${trimmed}`
-      );
-    }
-    if (segment !== '' && segment !== '.') segments.push(segment);
-  }
-  if (segments.length === 0)
-    bundleRefusal(`Empty media reference path: ${trimmed}`);
-
-  const bundleRelativePath = segments.join('/');
-  const archivePath = bundleRelativePath.startsWith('media/')
-    ? bundleRelativePath
-    : `media/${bundleRelativePath}`;
-  utf8Length(archivePath, `Media archive path ${JSON.stringify(archivePath)}`);
-  return { archivePath, bundleRelativePath };
+interface CollectedMedia {
+  readonly relative: string;
+  readonly optional: boolean;
 }
 
 class MediaCollector {
-  readonly results = new Map<string, string>();
+  readonly results = new Map<string, CollectedMedia>();
   private candidateWork = 0;
   private headerBytes = 0;
 
@@ -351,27 +284,41 @@ class MediaCollector {
     this.candidateWork += count;
   }
 
-  addUrl(rawUrl: string, countWork = true): void {
+  addUrl(rawUrl: string, countWork: boolean, optional: boolean): void {
     if (countWork) this.reserveCandidateWork(1);
-    const parsed = parseMediaReferenceUrl(rawUrl);
-    const prior = this.results.get(parsed.archivePath);
+    if (rawUrl.length > MAX_RAW_REFERENCE_CHARS) {
+      bundleRefusal('Media reference path exceeds the supported bound');
+    }
+
+    let relative: string;
+    try {
+      relative = sanitizeOtioBundlePath(rawUrl);
+    } catch (error) {
+      bundleRefusal(error instanceof Error ? error.message : String(error));
+    }
+    const archivePath = otioBundleEntryName(relative);
+    const prior = this.results.get(archivePath);
     if (prior !== undefined) {
-      if (prior !== parsed.bundleRelativePath) {
+      if (prior.relative !== relative) {
         bundleRefusal(
-          `Distinct media paths ${prior} and ${parsed.bundleRelativePath} collapse onto ${parsed.archivePath}`
+          `Distinct media paths ${prior.relative} and ${relative} collapse onto ${archivePath}`
         );
       }
+      this.results.set(archivePath, {
+        relative,
+        optional: prior.optional && optional,
+      });
       return;
     }
-    if (this.results.size >= MAX_MEDIA_ENTRY_COUNT) {
+    if (this.results.size >= MAX_OTIO_BUNDLE_MEDIA_ENTRIES) {
       bundleRefusal(
-        `OTIO bundle exceeds the ${MAX_MEDIA_ENTRY_COUNT}-media ZIP entry limit`
+        `OTIO bundle exceeds the ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES}-media ZIP entry limit`
       );
     }
 
     const nameBytes = utf8Length(
-      parsed.archivePath,
-      `Media archive path ${parsed.archivePath}`
+      archivePath,
+      `Media archive path ${archivePath}`
     );
     const contribution = ZIP_ENTRY_HEADER_BYTES + nameBytes * 2;
     if (contribution > this.maxHeaderBytes - this.headerBytes) {
@@ -380,150 +327,24 @@ class MediaCollector {
       );
     }
     this.headerBytes += contribution;
-    this.results.set(parsed.archivePath, parsed.bundleRelativePath);
+    this.results.set(archivePath, { relative, optional });
   }
-}
-
-function requiredString(
-  record: Record<string, unknown>,
-  field: string,
-  where: string
-): string {
-  const value = record[field];
-  if (typeof value !== 'string')
-    bundleRefusal(`${where}.${field} must be a string`);
-  if (value.length > MAX_RAW_REFERENCE_CHARS) {
-    bundleRefusal(`${where}.${field} exceeds the media path bound`);
-  }
-  return value;
-}
-
-function requiredSafeInteger(
-  record: Record<string, unknown>,
-  field: string,
-  where: string
-): number {
-  const value = record[field];
-  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
-    bundleRefusal(`${where}.${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function requiredPositiveFinite(
-  record: Record<string, unknown>,
-  field: string,
-  where: string
-): number {
-  const value = record[field];
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    bundleRefusal(`${where}.${field} must be a finite positive number`);
-  }
-  return value;
-}
-
-function sequenceFrameCount(record: Record<string, unknown>): number {
-  const where = 'ImageSequenceReference.1';
-  const frameStep = requiredSafeInteger(record, 'frame_step', where);
-  if (frameStep <= 0)
-    bundleRefusal(`${where}.frame_step must be a positive integer`);
-  const sequenceRate = requiredPositiveFinite(record, 'rate', where);
-  const range = recordAt(record['available_range'], `${where}.available_range`);
-  if (schemaAt(range, `${where}.available_range`) !== 'TimeRange.1') {
-    bundleRefusal(`${where}.available_range must be TimeRange.1`);
-  }
-  const duration = recordAt(
-    range['duration'],
-    `${where}.available_range.duration`
-  );
-  if (
-    schemaAt(duration, `${where}.available_range.duration`) !== 'RationalTime.1'
-  ) {
-    bundleRefusal(`${where}.available_range.duration must be RationalTime.1`);
-  }
-  const durationValue = requiredPositiveFinite(
-    duration,
-    'value',
-    `${where}.available_range.duration`
-  );
-  const durationRate = requiredPositiveFinite(
-    duration,
-    'rate',
-    `${where}.available_range.duration`
-  );
-
-  // OTIO rescales duration to rate / frame_step and converts to frames.
-  // Math.trunc matches RationalTime::to_frames for a positive availability.
-  const rescaled = (durationValue / durationRate) * (sequenceRate / frameStep);
-  if (!Number.isFinite(rescaled) || rescaled <= 0) {
-    bundleRefusal(
-      `${where}.available_range cannot produce a positive frame count`
-    );
-  }
-  const count = Math.trunc(rescaled);
-  if (!Number.isSafeInteger(count) || count <= 0) {
-    bundleRefusal(`${where}.available_range frame count is unsafe or empty`);
-  }
-  return count;
-}
-
-function frameText(frame: number, padding: number): string {
-  const negative = frame < 0;
-  const digits = String(Math.abs(frame));
-  const paddedLength = Math.max(padding, digits.length);
-  if (paddedLength + (negative ? 1 : 0) > MAX_ZIP_FILENAME_BYTES) {
-    bundleRefusal('Image sequence frame padding exceeds the filename bound');
-  }
-  return `${negative ? '-' : ''}${'0'.repeat(paddedLength - digits.length)}${digits}`;
 }
 
 function addImageSequence(
   record: Record<string, unknown>,
   collector: MediaCollector
 ): void {
-  const where = 'ImageSequenceReference.1';
-  const targetUrlBase = requiredString(record, 'target_url_base', where);
-  const namePrefix = requiredString(record, 'name_prefix', where);
-  const nameSuffix = requiredString(record, 'name_suffix', where);
-  const startFrame = requiredSafeInteger(record, 'start_frame', where);
-  const frameStep = requiredSafeInteger(record, 'frame_step', where);
-  const padding = requiredSafeInteger(record, 'frame_zero_padding', where);
-  if (frameStep <= 0)
-    bundleRefusal(`${where}.frame_step must be a positive integer`);
-  if (padding < 0)
-    bundleRefusal(`${where}.frame_zero_padding must not be negative`);
-
-  const count = sequenceFrameCount(record);
-  const finalFrame = startFrame + (count - 1) * frameStep;
-  if (!Number.isSafeInteger(finalFrame)) {
-    bundleRefusal(`${where} final frame arithmetic exceeds safe integers`);
+  const read = readOtioImageSequence(record);
+  if (!read.ok) {
+    bundleRefusal(`ImageSequenceReference.1 ${read.reason}`);
   }
-  const separator =
-    targetUrlBase.endsWith('/') || namePrefix.startsWith('/') ? '' : '/';
-  const staticLength =
-    targetUrlBase.length +
-    separator.length +
-    namePrefix.length +
-    nameSuffix.length;
-  const maxFrameLength = Math.max(
-    frameText(startFrame, padding).length,
-    frameText(finalFrame, padding).length
-  );
-  if (staticLength + maxFrameLength > MAX_RAW_REFERENCE_CHARS) {
-    bundleRefusal(`${where} generated path exceeds the media path bound`);
-  }
+  const { sequence } = read;
+  if (sequence.count === 0) return;
 
-  // Reserve the whole series before materializing even one padded frame.
-  collector.reserveCandidateWork(count);
-  for (let index = 0; index < count; index++) {
-    const frame = startFrame + index * frameStep;
-    if (!Number.isSafeInteger(frame)) {
-      bundleRefusal(`${where} frame arithmetic exceeds safe integers`);
-    }
-    collector.addUrl(
-      `${targetUrlBase}${separator}${namePrefix}${frameText(frame, padding)}${nameSuffix}`,
-      false
-    );
+  collector.reserveCandidateWork(sequence.count);
+  for (let index = 0; index < sequence.count; index++) {
+    collector.addUrl(sequence.url(index), false, true);
   }
 }
 
@@ -541,7 +362,7 @@ function consumeMediaReference(
       if (target === null || target === undefined || target === '') return;
       if (typeof target !== 'string')
         bundleRefusal(`${where}.target_url must be a string`);
-      collector.addUrl(target);
+      collector.addUrl(target, true, false);
       return;
     }
     case 'ImageSequenceReference.1':
@@ -626,7 +447,7 @@ function traverseComposable(
  */
 export function collectReferencedMedia(
   obj: unknown,
-  results: Map<string, string>,
+  results: Map<string, CollectedMedia>,
   options?: {
     readonly maxHeaderBytes?: number;
     readonly maxCandidateWork?: number;
@@ -635,7 +456,7 @@ export function collectReferencedMedia(
   const root = recordAt(obj, 'content.otio');
   const schema = schemaAt(root, 'content.otio');
   const collector = new MediaCollector(
-    options?.maxCandidateWork ?? MAX_MEDIA_ENTRY_COUNT,
+    options?.maxCandidateWork ?? MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
     options?.maxHeaderBytes ?? MAX_EXPANDED_ZIP_BYTES
   );
 
@@ -649,8 +470,8 @@ export function collectReferencedMedia(
     traverseComposable(root, collector, 'content.otio');
   }
 
-  for (const [archivePath, sourcePath] of collector.results) {
-    results.set(archivePath, sourcePath);
+  for (const [archivePath, media] of collector.results) {
+    results.set(archivePath, media);
   }
 }
 
@@ -788,9 +609,9 @@ export async function bundleOtiod(
       );
     }
 
-    const mediaRefMap = new Map<string, string>();
+    const mediaRefMap = new Map<string, CollectedMedia>();
     collectReferencedMedia(otioJson, mediaRefMap, {
-      maxCandidateWork: MAX_MEDIA_ENTRY_COUNT,
+      maxCandidateWork: MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
       maxHeaderBytes: limit - baseZipHeaderBytes(),
     });
 
@@ -799,19 +620,20 @@ export async function bundleOtiod(
       readonly data: Uint8Array;
     }> = [];
     for (const archivePath of Array.from(mediaRefMap.keys()).sort()) {
-      const bundleRelativePath = mediaRefMap.get(archivePath)!;
+      const media = mediaRefMap.get(archivePath)!;
       let fileBytes: Uint8Array;
       try {
         fileBytes = await readMediaRegular(
           root,
-          bundleRelativePath,
+          media.relative,
           limit - aggregateUncompressed
         );
       } catch (error) {
         if (error instanceof PublishError) throw error;
+        if (media.optional && isNotFound(error)) continue;
         throw new PublishError(
           'source_unreadable',
-          `Could not securely read referenced media ${bundleRelativePath}: ${(error as Error).message}`
+          `Could not securely read referenced media ${media.relative}: ${(error as Error).message}`
         );
       }
       aggregateUncompressed += fileBytes.length;
