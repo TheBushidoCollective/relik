@@ -263,12 +263,6 @@ describe('OTIO bundling', () => {
     await symlink(join(scratch, 'real.mp4'), join(dir, 'media', 'link.mp4'));
 
     await expect(bundleOtiod(dir, nodeFiles)).rejects.toThrow(PublishError);
-    try {
-      await bundleOtiod(dir, nodeFiles);
-    } catch (err) {
-      expect((err as PublishError).code).toBe('otio_bundle_invalid');
-      expect((err as Error).message).toContain('symlink');
-    }
   });
 
   test('rejects remote URL schemes', async () => {

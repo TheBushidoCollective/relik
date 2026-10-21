@@ -269,10 +269,12 @@ export const TOOL_DEFINITION = {
     'By default a picture of the first screen is rendered locally and ' +
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
     'it. An .otiod directory is packaged into a standard .otioz archive ' +
-    '(content.otio, version.txt 1.0.0, and only referenced media under media/). ' +
-    'A raw .otio file or an existing .otioz archive is published as given. ' +
-    'OTIO covers use only the public title and format label; media frames stay ' +
-    'out of the unencrypted preview. Takes a filesystem path, never ' +
+    '(content.otio, version.txt 1.0.0, and only referenced media under media/) ' +
+    'only on macOS 15+ arm64 or x64, or Linux glibc 2.28+ kernel 5.6+ arm64 ' +
+    'or x64. Unsupported targets refuse it rather than using a pathname ' +
+    'fallback. A raw .otio file or an existing .otioz archive is published ' +
+    'as given. OTIO covers use only the public title and format label; media ' +
+    'frames stay out of the unencrypted preview. Takes a filesystem path, never ' +
     'inline content.',
   inputSchema: {
     type: 'object',
@@ -280,7 +282,7 @@ export const TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to the file or .otiod bundle directory to publish.',
+          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory.',
       },
       filename: {
         type: 'string',
@@ -387,10 +389,12 @@ export const REPUBLISH_TOOL_DEFINITION = {
     'By default a picture of the first screen is rendered locally and ' +
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
     'it. An .otiod directory is packaged into a standard .otioz archive ' +
-    '(content.otio, version.txt 1.0.0, and only referenced media under media/). ' +
-    'A raw .otio file or an existing .otioz archive is republished as given. ' +
-    'OTIO covers use only the public title and format label; media frames stay ' +
-    'out of the unencrypted preview.' +
+    '(content.otio, version.txt 1.0.0, and only referenced media under media/) ' +
+    'only on macOS 15+ arm64 or x64, or Linux glibc 2.28+ kernel 5.6+ arm64 ' +
+    'or x64. Unsupported targets refuse it rather than using a pathname ' +
+    'fallback. A raw .otio file or an existing .otioz archive is republished ' +
+    'as given. OTIO covers use only the public title and format label; media ' +
+    'frames stay out of the unencrypted preview.' +
     REPUBLISH_DISCIPLINE_DISCLOSURE +
     ' Each new version emails a change notice, naming the title and version and never the key, to each verified commenter and each address added with relic_share, minus any that stopped emails; pass notify: false to skip it. At most one email per person per relic per 10 minutes, and one stop link stops every email about that relic.',
   inputSchema: {
@@ -403,7 +407,7 @@ export const REPUBLISH_TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to the file or .otiod bundle directory that becomes the new version.',
+          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory that becomes the new version.',
       },
       filename: {
         type: 'string',
@@ -1660,7 +1664,9 @@ minutes). One stop link stops every email about that relic.
 8. By default relic_publish and relic_republish upload a picture of the file's \
 first screen, unencrypted, for link previews: the service and anyone holding \
 the link without the key can see it. Pass cover: false for anything you would \
-not show in a chat preview.
+not show in a chat preview. Automatic .otiod packaging needs a packaged native \
+helper on macOS 15+ arm64 or x64, or Linux glibc 2.28+ kernel 5.6+ arm64 or x64. \
+Otherwise it refuses rather than using pathname checks.
 9. relic_republish emails a change notice, naming the title and version but \
 never the key, to everyone following the relic; pass notify: false to skip \
 it. relic_share hands back a share email with the full link for you to draft \

@@ -27,7 +27,9 @@ enters the conversation, so it is never in the transcript, never in a model
 context window, and never in whatever stores those. Do not read a file into
 context and pass its text; pass where it lives. A standard OpenTimelineIO
 directory (`.otiod`) is automatically packaged into a standard `.otioz`
-archive; arbitrary directories are refused.
+archive only on a packaged native target: macOS 15+ arm64 or x64, or Linux
+glibc 2.28+ kernel 5.6+ arm64 or x64. Elsewhere it refuses rather than falling
+back to pathname checks. Arbitrary directories are refused.
 
 When the task is to update the same source, call `relic_lookup_source` first:
 
