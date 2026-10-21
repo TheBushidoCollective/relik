@@ -203,3 +203,8 @@ banner: '/*! Mediabunny 1.62.0; MPL-2.0; license: /assets/mediabunny-license.txt
 ```
 
 The dependency's positive final WebM duration is accepted only as a one-time declared packet duration on this audited release, never as an FPS estimate. Removing DefaultDuration from the otherwise identical generated WebM yields exactly duration=0 for the terminal packet. Its prior certified windows continue to select correctly, and its final query yields no window.
+
+
+## Playback test injection and ownership
+
+The exact private playback DI seam and A/B/C test ownership are settled in [playback-reader-di.md](playback-reader-di.md). B adds readVideoTiming?: typeof readOtioVideoTiming to CreateOtioPlaybackOptions, uses a per-controller binding, and supplies certified timing with real inert Blob resolver fixtures in Bun controller tests. C never supplies this override. A owns scanner/scheduler/resource tests and import-time worker laziness. No shared module mocks or production demuxer import are needed.
