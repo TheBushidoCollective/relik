@@ -20,7 +20,9 @@
  * carrying the same top privilege as `html`.
  */
 
-/** The nine values. Stored server-side against the relic ID, nowhere else. */
+import { isOtioz, isRawOtio } from './otio-zip.ts';
+
+/** The ten values. Stored server-side against the relic ID, nowhere else. */
 export type RendererClass =
   | 'markdown'
   | 'code'
@@ -29,6 +31,7 @@ export type RendererClass =
   | 'image'
   | 'pdf'
   | 'media'
+  | 'otio'
   | 'archive'
   | 'binary';
 
@@ -40,6 +43,7 @@ export const RENDERER_CLASSES: readonly RendererClass[] = [
   'image',
   'pdf',
   'media',
+  'otio',
   'archive',
   'binary',
 ];
@@ -91,6 +95,7 @@ export const CLASS_BEHAVIOUR: Record<RendererClass, ClassBehaviour> = {
   image: 'renders',
   pdf: 'renders',
   media: 'plays',
+  otio: 'plays',
   archive: 'downloads',
   binary: 'downloads',
 };
@@ -138,6 +143,8 @@ const EXTENSIONS: Readonly<Record<string, RendererClass>> = {
   htm: 'html',
   xhtml: 'html',
 
+  otio: 'otio',
+  otioz: 'otio',
   svg: 'image',
   png: 'image',
   jpg: 'image',
@@ -344,10 +351,16 @@ export function sniffContentClass(content: Uint8Array): RendererClass {
   if (content.length === 0) return 'binary';
 
   for (const signature of MAGIC) {
-    if (matchesMagic(content, signature)) return signature.cls;
+    if (matchesMagic(content, signature)) {
+      if (signature.cls === 'archive') {
+        if (isOtioz(content)) return 'otio';
+      }
+      return signature.cls;
+    }
   }
 
   if (looksTextual(content)) {
+    if (isRawOtio(content)) return 'otio';
     const head = new TextDecoder('utf-8', { fatal: false })
       .decode(content.slice(0, 256))
       .trimStart()
@@ -396,16 +409,28 @@ export function deriveRendererClass(
   if (content.length === 0) return 'binary';
 
   for (const signature of MAGIC) {
-    if (matchesMagic(content, signature)) return signature.cls;
+    if (matchesMagic(content, signature)) {
+      if (signature.cls === 'archive') {
+        if (isOtioz(content)) return 'otio';
+      }
+      return signature.cls;
+    }
   }
 
   const extension = extensionOf(filename);
   if (extension !== undefined) {
     const fromExtension = EXTENSIONS[extension];
-    if (fromExtension !== undefined) return fromExtension;
+    if (fromExtension !== undefined) {
+      if (fromExtension === 'otio') {
+        if (isOtioz(content) || isRawOtio(content)) return 'otio';
+        return sniffContentClass(content);
+      }
+      return fromExtension;
+    }
   }
 
   if (looksTextual(content)) {
+    if (isRawOtio(content)) return 'otio';
     const head = new TextDecoder('utf-8', { fatal: false })
       .decode(content.slice(0, 256))
       .trimStart()
@@ -416,7 +441,6 @@ export function deriveRendererClass(
 
   return 'binary';
 }
-
 /**
  * The declared-versus-sniffed disagreement rule (`spec/format.md` 3.6).
  *
@@ -441,6 +465,7 @@ export function leastPrivileged(
     'markdown',
     'code',
     'media',
+    'otio',
     'archive',
     'binary',
   ];

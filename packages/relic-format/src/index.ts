@@ -19,3 +19,8 @@ export * from './renderer-class.ts';
 export * from './rfc8188.ts';
 export * from './share.ts';
 export * from './title.ts';
+export * from './otio-types.ts';
+export * from './otio-json.ts';
+export * from './otio-zip.ts';
+export * from './otio-timing.ts';
+export * from './otio-identity.ts';
