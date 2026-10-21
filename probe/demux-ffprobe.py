@@ -9,6 +9,7 @@ names = [
     'fr24.mp4', 'fr24b.mp4', 'fr60.mp4', 'fr2997.mp4',
     'fr30.webm', 'fr24.webm', 'fr24b.mov',
     'fr24b-offset.mov', 'fr24b-trimmed.mov', 'vfr.mp4', 'vfr.webm',
+    'short-edit.mp4', 'loop-edit.mp4', 'rate-edit.mp4', 'no-duration.webm',
 ]
 report = {}
 for name in names:

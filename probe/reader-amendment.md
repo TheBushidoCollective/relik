@@ -92,7 +92,7 @@ B imports only this bridge/types, never Mediabunny. There is no media-reference,
 
 1. Admit Blob size at most 100 MiB before constructing Input. Obtain one video track; zero or multiple tracks are unknown. No preference/guessing among video tracks.
 2. Subscribe to public `Logging.on('warn', ...)` and `Logging.on('error', ...)` before the first Input read. Any warning/error makes this job unknown. Each job runs alone in its own worker realm, so the global logger cannot mix files. Always remove listeners and call input.dispose in finally; outer cancellation/timeout terminates the worker.
-3. For MP4/MOV, run the narrow edit gate below. WebM needs no custom EBML reader.
+3. Use await input.getFormat() to classify the actual bytes, not mimeType/filename. For actual MP4/QTFF, run the narrow edit gate below. Actual WebM needs no custom EBML reader.
 4. Enumerate all metadata-only packets through getFirstPacket/getNextPacket, checking the packet/read budgets on every iteration. Retain only PTS and reported duration, not packet objects/data/sideData. Verify finite PTS and finite nonnegative duration. Duplicate PTS makes selection ambiguous and returns invalid-packet-timing.
 5. Sort by PTS, not sequenceNumber/decode order.
 6. For a non-final packet, use the next sorted PTS as the upper bound. If its positive reported duration ends earlier, keep the earlier end, leaving the uncovered gap uncertified. A zero reported duration can use the next PTS. For the final packet, use only a positive finite reported duration; zero means unknown tail, with no average/default FPS reconstruction. WebM source audit and a real no-DefaultDuration fixture confirm missing BlockDuration+DefaultDuration yields duration zero, not a positive guess. Positive terminal duration on the audited MP4/WebM paths comes from sample/container duration metadata; it is used once, never accumulated as an FPS cadence.
@@ -188,3 +188,18 @@ The fetch step verifies the immutable tarball's SHA256 and extracts it under ign
 Key observed results in probe/mediabunny-results.json: all returned packets have dataBytes=0 and metadataOnly=true; all Input sources report disposed=true; generated MP4/MOV require six app source reads, generated WebM sixteen. Known packet-window midpoint seeks display the indexed frames for ordinary MP4, MOV/B-frames, WebM and VFR probes. Unsupported multi/rate edits emit Logging warnings but continue. The shortened single edit emits no warning and silently disagrees with Chrome beyond its end. Removing WebM DefaultDuration yields a final reported duration of zero and no certified final interval in the probe.
 
 The research entry's unminified bundle size is only a scoped measurement, not a product-build or shell-budget result. Repository build/test/lint/formatter verification remains Main's responsibility after integration.
+
+
+## Additional measured build fact
+
+A custom Bun browser bundle of the research metadata-only entry with minify=true and splitting=false measured 204911 bytes (55894 gzip). Bun.build's explicit banner survived minification. This demonstrates the shipped toolchain supports preserving the required worker notice, and quantifies why the package must remain out of the eager shell. It does not measure the final product worker or viewer shell. The full metrics are in mediabunny-bundle-metrics.json.
+
+The measurement used the same entrypoint as mediabunny-run.ts with these added Bun.build options:
+
+```ts
+minify: true,
+splitting: false,
+banner: '/*! Mediabunny 1.62.0; MPL-2.0; license: /assets/mediabunny-license.txt; source: https://registry.npmjs.org/mediabunny/-/mediabunny-1.62.0.tgz */',
+```
+
+The dependency's positive final WebM duration is accepted only as a one-time declared packet duration on this audited release, never as an FPS estimate. Removing DefaultDuration from the otherwise identical generated WebM yields exactly duration=0 for the terminal packet. Its prior certified windows continue to select correctly, and its final query yields no window.
