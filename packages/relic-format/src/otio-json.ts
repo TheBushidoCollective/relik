@@ -7,8 +7,11 @@
  * - Non-finite float tokens emitted by Python OTIO (NaN, Infinity, -Infinity)
  *   which standard JSON.parse rejects.
  *
- * This module preserves exact tokens during parsing and re-serialization
- * so that packaged documents and metadata survive without silent corruption.
+ * Strict security:
+ * - Safe null-prototype objects (Object.create(null)) to prevent __proto__ prototype pollution.
+ * - Strict JSON number grammar: rejects leading zeros (012), trailing decimals (12.),
+ *   multiple decimals (1.2.3), and malformed exponent signs.
+ * - Strict non-finite token boundaries (rejects NaN123, InfinityFoo).
  */
 
 export class OtioRawNumber {
@@ -53,6 +56,8 @@ export function isOtioRawNumber(value: unknown): value is OtioRawNumber {
   );
 }
 
+const STRICT_NUMBER_REGEX = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
 export function parseOtioJson(input: string | Uint8Array): unknown {
   const text =
     typeof input === 'string'
@@ -94,12 +99,28 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
     }
     if (char === 'n') {
       if (text.startsWith('null', index)) {
-        index += 4;
-        return null;
+        const nextCode = text.charCodeAt(index + 4);
+        if (isDelimiter(nextCode)) {
+          index += 4;
+          return null;
+        }
       }
     }
-    // Check for non-finite tokens or numbers
     return parseNumberOrSpecial();
+  }
+
+  function isDelimiter(code: number): boolean {
+    return (
+      Number.isNaN(code) ||
+      code === 0x20 ||
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0d ||
+      code === 0x2c || // ','
+      code === 0x5d || // ']'
+      code === 0x7d || // '}'
+      code === 0x3a // ':'
+    );
   }
 
   function parseString(): string {
@@ -179,56 +200,52 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
   function parseNumberOrSpecial(): unknown {
     const start = index;
 
-    // Check for special tokens: NaN, Infinity, -Infinity
+    // Strict check for non-finite tokens
     if (text.startsWith('NaN', index)) {
-      index += 3;
-      return new OtioRawNumber('NaN', NaN);
+      if (isDelimiter(text.charCodeAt(index + 3))) {
+        index += 3;
+        return new OtioRawNumber('NaN', NaN);
+      }
+      throw new SyntaxError(`Malformed non-finite token at index ${index}`);
     }
     if (text.startsWith('Infinity', index)) {
-      index += 8;
-      return new OtioRawNumber('Infinity', Infinity);
+      if (isDelimiter(text.charCodeAt(index + 8))) {
+        index += 8;
+        return new OtioRawNumber('Infinity', Infinity);
+      }
+      throw new SyntaxError(`Malformed non-finite token at index ${index}`);
     }
     if (text.startsWith('+Infinity', index)) {
-      index += 9;
-      return new OtioRawNumber('+Infinity', Infinity);
+      if (isDelimiter(text.charCodeAt(index + 9))) {
+        index += 9;
+        return new OtioRawNumber('+Infinity', Infinity);
+      }
+      throw new SyntaxError(`Malformed non-finite token at index ${index}`);
     }
     if (text.startsWith('-Infinity', index)) {
-      index += 9;
-      return new OtioRawNumber('-Infinity', -Infinity);
+      if (isDelimiter(text.charCodeAt(index + 9))) {
+        index += 9;
+        return new OtioRawNumber('-Infinity', -Infinity);
+      }
+      throw new SyntaxError(`Malformed non-finite token at index ${index}`);
     }
 
-    if (text[index] === '-') {
+    // Read until delimiter
+    while (index < length && !isDelimiter(text.charCodeAt(index))) {
       index++;
     }
 
-    let isInteger = true;
-    while (index < length) {
-      const code = text.charCodeAt(index);
-      if (code >= 0x30 && code <= 0x39) {
-        index++;
-      } else if (code === 0x2e) {
-        // '.'
-        isInteger = false;
-        index++;
-      } else if (code === 0x65 || code === 0x45) {
-        // 'e' or 'E'
-        isInteger = false;
-        index++;
-        if (index < length && (text[index] === '+' || text[index] === '-')) {
-          index++;
-        }
-      } else {
-        break;
-      }
-    }
-
     const token = text.slice(start, index);
-    if (token === '' || token === '-') {
-      throw new SyntaxError(`Unexpected token at position ${start}: ${token}`);
+    if (!STRICT_NUMBER_REGEX.test(token)) {
+      throw new SyntaxError(
+        `Malformed JSON number token: ${token} at position ${start}`
+      );
     }
 
     const num = Number(token);
-    // If it's a large integer outside safe integer range:
+    const isInteger =
+      !token.includes('.') && !token.includes('e') && !token.includes('E');
+
     if (
       isInteger &&
       (num > Number.MAX_SAFE_INTEGER || num < Number.MIN_SAFE_INTEGER)
@@ -236,23 +253,25 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
       return new OtioRawNumber(token, num);
     }
 
-    // If Number(token) is not finite:
     if (!Number.isFinite(num)) {
       return new OtioRawNumber(token, num);
     }
 
-    // Standard finite number
     return num;
   }
 
   function parseBoolean(): boolean {
     if (text.startsWith('true', index)) {
-      index += 4;
-      return true;
+      if (isDelimiter(text.charCodeAt(index + 4))) {
+        index += 4;
+        return true;
+      }
     }
     if (text.startsWith('false', index)) {
-      index += 5;
-      return false;
+      if (isDelimiter(text.charCodeAt(index + 5))) {
+        index += 5;
+        return false;
+      }
     }
     throw new SyntaxError(`Unexpected token at position ${index}`);
   }
@@ -291,7 +310,8 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
 
   function parseObject(): Record<string, unknown> {
     index++; // skip '{'
-    const obj: Record<string, unknown> = {};
+    // Create null-prototype object to prevent prototype pollution (__proto__)
+    const obj: Record<string, unknown> = Object.create(null);
     skipWhitespace();
     if (index < length && text[index] === '}') {
       index++;
@@ -314,7 +334,14 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
       }
       index++; // skip ':'
       const val = parseValue();
-      obj[key] = val;
+
+      // Safely assign property without prototype pollution
+      Object.defineProperty(obj, key, {
+        value: val,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
 
       skipWhitespace();
       if (index >= length) {
