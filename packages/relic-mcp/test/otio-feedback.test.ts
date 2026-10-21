@@ -724,7 +724,7 @@ describe('OTIO comment anchors', () => {
     expect(resolved.current_projection.status).toBe('same');
   });
 
-  test('preserves sequence frame continuity across equal, changed, and missing frame revisions', async () => {
+  test('marks a sequence range changed when one referenced frame changes', async () => {
     const text = imageSequenceTimeline();
     const originalEntries = [
       {
@@ -756,7 +756,7 @@ describe('OTIO comment anchors', () => {
       throw new Error(sequence.reason);
     }
     expect(sequence.sequence.count).toBe(3);
-    expect(
+    expect<readonly string[]>(
       otioSequenceFrameEntries(
         sequenceReference.raw ?? sequenceReference,
         browserDocument.media
