@@ -18,6 +18,18 @@ export interface OtioMediaResolverOptions {
   readonly maxDecompressedBytes?: number;
 }
 
+/**
+ * Blob parts cannot take a SharedArrayBuffer-backed view. Keep normal ZIP
+ * entries as views of their original ArrayBuffer, and copy only shared bytes.
+ */
+function blobBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  const buffer = bytes.buffer;
+  if (buffer instanceof ArrayBuffer) {
+    return new Uint8Array(buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  return Uint8Array.from(bytes);
+}
+
 export interface OtioMediaResolver {
   /** Resolve bundle path to a local Blob. Returns null if missing or invalid. */
   resolveBlob(bundlePath: string): Promise<Blob | null>;
@@ -275,7 +287,7 @@ export function createOtioMediaResolver(
           failures.set(entryName, err);
           throw err;
         }
-        const blob = new Blob([bytes], {
+        const blob = new Blob([blobBytes(bytes)], {
           type: inferMediaMimeType(entryName),
         });
         blobByEntry.set(entryName, blob);

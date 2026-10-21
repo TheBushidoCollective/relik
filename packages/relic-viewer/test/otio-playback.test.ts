@@ -111,6 +111,7 @@ function paintTree(
 }
 
 class MockMedia {
+  pixel: Pixel = { r: 1, g: 0, b: 0, a: 1 };
   preload = '';
   playsInline = false;
   muted = false;
@@ -279,6 +280,7 @@ function buildDocument(options?: {
   const timelineRate = options?.timelineRate ?? rate;
   const timelineFrames = options?.timelineFrames ?? frames;
   const audioFrames = options?.audioFrames ?? frames;
+  const transitionHandle = 6;
   const audioChildren = options?.audioTransition
     ? ['audio_a', 'audio_trans', 'audio_b']
     : ['audio_a'];
@@ -310,6 +312,7 @@ function buildDocument(options?: {
       source_range: range(0, frames, rate),
       parent_range: range(0, frames, rate),
       timeline_range: range(0, frames, rate),
+      visible_timeline_range: range(0, frames, rate),
       active_media_reference_key: 'DEFAULT_MEDIA',
       media_references: {
         DEFAULT_MEDIA: {
@@ -335,6 +338,11 @@ function buildDocument(options?: {
       source_range: range(0, audioFrames, rate),
       parent_range: range(0, audioFrames, rate),
       timeline_range: range(0, audioFrames, rate),
+      visible_timeline_range: range(
+        0,
+        audioFrames + (options?.audioTransition ? transitionHandle : 0),
+        rate
+      ),
       active_media_reference_key: 'DEFAULT_MEDIA',
       media_references: {
         DEFAULT_MEDIA: {
@@ -352,6 +360,11 @@ function buildDocument(options?: {
       source_range: range(0, 24, rate),
       parent_range: range(audioFrames, 24, rate),
       timeline_range: range(audioFrames, 24, rate),
+      visible_timeline_range: range(
+        audioFrames - transitionHandle,
+        24 + transitionHandle,
+        rate
+      ),
       active_media_reference_key: 'DEFAULT_MEDIA',
       media_references: {
         DEFAULT_MEDIA: {
@@ -367,6 +380,11 @@ function buildDocument(options?: {
       transition_type: 'SMPTE_Dissolve',
       in_offset: { value: 6, rate },
       out_offset: { value: 6, rate },
+      timeline_range: range(
+        audioFrames - transitionHandle,
+        transitionHandle * 2,
+        rate
+      ),
     });
   }
   return {
@@ -516,88 +534,158 @@ describe('otio image budget', () => {
   });
 });
 
+const playbackGlobalKeys = [
+  'document',
+  'Image',
+  'Audio',
+  'AudioContext',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+] as const;
+type PlaybackGlobalKey = (typeof playbackGlobalKeys)[number];
+const urlMethodNames = ['createObjectURL', 'revokeObjectURL'] as const;
+type UrlMethodName = (typeof urlMethodNames)[number];
+
+function propertyDescriptors<T extends PropertyKey>(
+  target: object,
+  names: readonly T[]
+): Map<T, PropertyDescriptor | undefined> {
+  const descriptors = new Map<T, PropertyDescriptor | undefined>();
+  for (const name of names) {
+    descriptors.set(name, Object.getOwnPropertyDescriptor(target, name));
+  }
+  return descriptors;
+}
+
+function restoreProperty(
+  target: object,
+  name: PropertyKey,
+  descriptor: PropertyDescriptor | undefined
+): void {
+  if (descriptor === undefined) {
+    Reflect.deleteProperty(target, name);
+    return;
+  }
+  Object.defineProperty(target, name, descriptor);
+}
+
+function restorePlaybackEnvironment(
+  globals: ReadonlyMap<PlaybackGlobalKey, PropertyDescriptor | undefined>,
+  urlMethods: ReadonlyMap<UrlMethodName, PropertyDescriptor | undefined>
+): void {
+  try {
+    for (const name of urlMethodNames) {
+      restoreProperty(URL, name, urlMethods.get(name));
+    }
+  } finally {
+    for (const name of playbackGlobalKeys) {
+      restoreProperty(globalThis, name, globals.get(name));
+    }
+  }
+}
+
 describe('otio playback controller', () => {
   const created: MockMedia[] = [];
   let raf: FrameRequestCallback | null = null;
-  let originalDocument: unknown;
-  let originalImage: unknown;
-  let originalAudio: unknown;
-  let originalAudioContext: unknown;
-  let originalRaf: unknown;
-  let originalCancel: unknown;
+  let originalGlobals = new Map<
+    PlaybackGlobalKey,
+    PropertyDescriptor | undefined
+  >();
+  let originalUrlMethods = new Map<
+    UrlMethodName,
+    PropertyDescriptor | undefined
+  >();
   const createdUrls: string[] = [];
   const revokedUrls: string[] = [];
 
   beforeEach(() => {
     created.length = 0;
+    createdUrls.length = 0;
+    revokedUrls.length = 0;
     raf = null;
-    const env = globalThis as {
-      document?: unknown;
-      Image?: unknown;
-      Audio?: unknown;
-      AudioContext?: unknown;
-      requestAnimationFrame?: typeof requestAnimationFrame;
-      cancelAnimationFrame?: typeof cancelAnimationFrame;
-      URL?: {
-        createObjectURL: (blob: Blob) => string;
-        revokeObjectURL: (url: string) => void;
-      };
-    };
-    originalDocument = env.document;
-    originalImage = env.Image;
-    originalAudio = env.Audio;
-    originalAudioContext = env.AudioContext;
-    originalRaf = env.requestAnimationFrame;
-    originalCancel = env.cancelAnimationFrame;
-    env.Image = MockMedia;
-    env.Audio = MockMedia;
-    env.AudioContext = MockAudioContext;
-    env.document = {
-      createElement: (tag: string) => {
-        if (tag === 'canvas') return new SoftCanvas();
-        if (tag === 'video' || tag === 'audio') {
-          const media = new MockMedia();
-          created.push(media);
-          return media;
-        }
-        return hostElement();
-      },
-      body: hostElement(),
-    };
-    env.requestAnimationFrame = (cb: FrameRequestCallback) => {
-      raf = cb;
-      return 1;
-    };
-    env.cancelAnimationFrame = () => {
-      raf = null;
-    };
-    env.URL = {
-      createObjectURL: () => {
-        const url = `blob:owned-${createdUrls.length}`;
-        createdUrls.push(url);
-        return url;
-      },
-      revokeObjectURL: (url: string) => {
-        revokedUrls.push(url);
-      },
-    };
+    originalGlobals = propertyDescriptors(globalThis, playbackGlobalKeys);
+    originalUrlMethods = propertyDescriptors(URL, urlMethodNames);
+    try {
+      for (const [name, value] of [
+        ['Image', MockMedia],
+        ['Audio', MockMedia],
+        ['AudioContext', MockAudioContext],
+        [
+          'document',
+          {
+            createElement: (tag: string) => {
+              if (tag === 'canvas') return new SoftCanvas();
+              if (tag === 'video' || tag === 'audio') {
+                const media = new MockMedia();
+                created.push(media);
+                return media;
+              }
+              return hostElement();
+            },
+            body: hostElement(),
+          },
+        ],
+        [
+          'requestAnimationFrame',
+          (cb: FrameRequestCallback) => {
+            raf = cb;
+            return 1;
+          },
+        ],
+        [
+          'cancelAnimationFrame',
+          () => {
+            raf = null;
+          },
+        ],
+      ] as const) {
+        Object.defineProperty(globalThis, name, {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value,
+        });
+      }
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        writable: true,
+        value: () => {
+          const url = `blob:owned-${createdUrls.length}`;
+          createdUrls.push(url);
+          return url;
+        },
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        writable: true,
+        value: (url: string) => {
+          revokedUrls.push(url);
+        },
+      });
+    } catch (error) {
+      restorePlaybackEnvironment(originalGlobals, originalUrlMethods);
+      throw error;
+    }
   });
 
   afterEach(() => {
-    const env = globalThis as Record<string, unknown>;
-    env.document = originalDocument;
-    env.Image = originalImage;
-    env.Audio = originalAudio;
-    env.AudioContext = originalAudioContext;
-    env.requestAnimationFrame = originalRaf;
-    env.cancelAnimationFrame = originalCancel;
-    createdUrls.length = 0;
-    revokedUrls.length = 0;
+    try {
+      restorePlaybackEnvironment(originalGlobals, originalUrlMethods);
+    } finally {
+      createdUrls.length = 0;
+      revokedUrls.length = 0;
+    }
   });
 
-  function canvas(): HTMLCanvasElement {
-    return new SoftCanvas() as unknown as HTMLCanvasElement;
+  function canvas(output?: SoftCanvas): HTMLCanvasElement {
+    return (output ?? new SoftCanvas()) as unknown as HTMLCanvasElement;
   }
+
+  test('keeps the native URL constructor while object URLs are mocked', () => {
+    expect(new URL('https://relik.example/asset').hostname).toBe(
+      'relik.example'
+    );
+  });
 
   test('duration comes from timeline_range, not a 24 fallback', () => {
     const playback = createOtioPlayback({
@@ -640,20 +728,30 @@ describe('otio playback controller', () => {
 
   test('a later seek wins and clears buffering only when it finishes', async () => {
     const pending: Array<(value: string | null) => void> = [];
+    const clipStarted = Promise.withResolvers<void>();
+    const delayedClip = (): Promise<string | null> => {
+      const deferred = Promise.withResolvers<string | null>();
+      pending.push(deferred.resolve);
+      clipStarted.resolve();
+      return deferred.promise;
+    };
     const playback = createOtioPlayback({
       document: buildDocument(),
       timelineId: 'timeline_1',
       canvas: canvas(),
-      resolveMedia: () =>
-        new Promise<string | null>((resolve) => {
-          pending.push(resolve);
-        }),
+      resolveMedia: (path) =>
+        path === 'media/clip.mp4'
+          ? delayedClip()
+          : Promise.resolve('blob:dialogue'),
     });
     const first = playback.seek({ value: 0, rate: 24 });
-    await Promise.resolve();
+    await clipStarted.promise;
     const second = playback.seek({ value: 12, rate: 24 });
     expect(playback.getState().buffering).toBe(true);
-    pending[0]?.('blob:dialogue');
+    const resolveFirst = pending[0];
+    if (resolveFirst === undefined)
+      throw new Error('clip resolver did not start');
+    resolveFirst('blob:dialogue');
     await first;
     await second;
     expect(playback.getState().time.value).toBe(12);
@@ -663,19 +761,30 @@ describe('otio playback controller', () => {
 
   test('seek wait is not added to the transport clock', async () => {
     const pending: Array<(value: string | null) => void> = [];
+    const clipStarted = Promise.withResolvers<void>();
+    const delayedClip = (): Promise<string | null> => {
+      const deferred = Promise.withResolvers<string | null>();
+      pending.push(deferred.resolve);
+      clipStarted.resolve();
+      return deferred.promise;
+    };
     const playback = createOtioPlayback({
       document: buildDocument(),
       timelineId: 'timeline_1',
       canvas: canvas(),
-      resolveMedia: () =>
-        new Promise<string | null>((resolve) => {
-          pending.push(resolve);
-        }),
+      resolveMedia: (path) =>
+        path === 'media/clip.mp4'
+          ? delayedClip()
+          : Promise.resolve('blob:dialogue'),
     });
     await playback.play();
     const seek = playback.seek({ value: 12, rate: 24 });
+    await clipStarted.promise;
     raf?.(8000);
-    pending[0]?.('blob:dialogue');
+    const resolveFirst = pending[0];
+    if (resolveFirst === undefined)
+      throw new Error('clip resolver did not start');
+    resolveFirst('blob:dialogue');
     await seek;
     expect(playback.getState().time.value).toBe(12);
     playback.dispose();
@@ -728,24 +837,28 @@ describe('otio playback controller', () => {
     playback.dispose();
   });
 
-  test('unsupported effects block play until consent', async () => {
+  test('unsupported effects withhold rendered pixels until consent', async () => {
+    const output = new SoftCanvas();
     const playback = createOtioPlayback({
       document: buildDocument({ effect: true }),
       timelineId: 'timeline_1',
-      canvas: canvas(),
+      canvas: canvas(output),
       resolveMedia: async () => 'blob:clip',
     });
     await playback.seek({ value: 0, rate: 24 });
     expect(playback.getState().previewBlocked).toBe(true);
+    expect(output.pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
     await playback.play();
     expect(playback.getState().playing).toBe(false);
     playback.setBaseMediaPreviewAllowed(true);
+    await playback.seek({ value: 0, rate: 24 });
     expect(
       playback
         .getState()
         .diagnostics.some((issue) => issue.code === 'unsupported-effect')
     ).toBe(true);
     expect(playback.getState().previewBlocked).toBe(false);
+    expect(output.pixel).toEqual({ r: 1, g: 0, b: 0, a: 1 });
     await playback.play();
     expect(playback.getState().playing).toBe(true);
     playback.dispose();

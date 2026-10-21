@@ -139,7 +139,7 @@ describe('OTIO eager-shell bridge', () => {
   });
 
   test('adapter paint and reveal call the native controller without substituting time anchors', () => {
-    const root = { matches: (selector: string) => selector === '.otio-view' } as HTMLElement;
+    const root = { matches: (selector: string): boolean => selector === '.otio-view' } as HTMLElement;
     const seen: { anchor: OtioAnchorV1; id?: string }[] = [];
     const controller: OtioUiController = {
       document, revision: 1,

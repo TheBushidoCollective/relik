@@ -219,7 +219,7 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
   const tabs = element('div', 'otio-inspector-tabs'); tabs.setAttribute('role', 'tablist');
   const context = element('div', 'otio-context'); context.setAttribute('role', 'tabpanel');
   for (const value of ['inspector', 'markers', 'media'] as const) {
-    const tab = button(value[0].toUpperCase() + value.slice(1), 'otio-inspector-tab', () => { currentTab = value; paintInspector(); });
+    const tab = button(value.charAt(0).toUpperCase() + value.slice(1), 'otio-inspector-tab', () => { currentTab = value; paintInspector(); });
     tab.dataset['tab'] = value; tab.setAttribute('role', 'tab'); tabs.append(tab);
   }
   inspector.append(tabs, context); monitor.append(preview, inspector);
@@ -251,7 +251,7 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
     selectFrames(selectedTrack, start, end, false);
   });
   for (const value of ['point', 'range', 'track'] as const) {
-    const control = button(value[0].toUpperCase() + value.slice(1), 'otio-mode', () => {
+    const control = button(value.charAt(0).toUpperCase() + value.slice(1), 'otio-mode', () => {
       mode = value; const start = selected ? rescaleTime(selected.range.start_time, rate).value : currentFrame();
       const end = selected ? rescaleTime(rangeEndTime(selected.range), rate).value : start + 1;
       selectFrames(selectedTrack, value === 'track' ? 0 : start, value === 'point' ? start : value === 'track' ? frameCount() : Math.max(start + 1, end), false);
