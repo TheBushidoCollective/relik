@@ -71,21 +71,43 @@ static int expect_accessible(const char *label, const char *path, const char *ex
   return 0;
 }
 
-static int accepted_escape_errno(int error_number) {
-  if (error_number == EACCES) return 1;
+enum refusal_class {
+  REFUSAL_ESCAPE,
+  REFUSAL_SYMLINK,
+};
+
+static int accepted_refusal_errno(
+  enum refusal_class refusal_class,
+  int error_number
+) {
+  switch (refusal_class) {
+    case REFUSAL_ESCAPE:
+      if (error_number == EACCES) return 1;
 #ifdef ENOTCAPABLE
-#if ENOTCAPABLE != EACCES
-  if (error_number == ENOTCAPABLE) return 1;
+      if (error_number == ENOTCAPABLE) return 1;
 #endif
-#endif
+      return 0;
+    case REFUSAL_SYMLINK:
+      return error_number == ELOOP;
+  }
   return 0;
+}
+
+static const char *refusal_class_name(enum refusal_class refusal_class) {
+  switch (refusal_class) {
+    case REFUSAL_ESCAPE:
+      return "escape";
+    case REFUSAL_SYMLINK:
+      return "symlink";
+  }
+  return "unknown";
 }
 
 static int expect_refusal(
   const char *label,
   int file,
   const struct relic_open_error *error,
-  int require_escape_errno
+  enum refusal_class refusal_class
 ) {
   if (file >= 0) {
     close(file);
@@ -96,11 +118,12 @@ static int expect_refusal(
     fprintf(stderr, "darwin-confinement-probe: %s failed without errno\n", label);
     return -1;
   }
-  if (require_escape_errno && !accepted_escape_errno(error->errno_value)) {
+  if (!accepted_refusal_errno(refusal_class, error->errno_value)) {
     fprintf(
       stderr,
-      "darwin-confinement-probe: %s used unexpected escape errno=%d\n",
+      "darwin-confinement-probe: %s used unexpected %s errno=%d\n",
       label,
+      refusal_class_name(refusal_class),
       error->errno_value
     );
     return -1;
@@ -231,23 +254,58 @@ int main(void) {
   }
 
   error = (struct relic_open_error){0};
-  if (expect_refusal("parent escape", relic_open_descendant(root_fd, "../outside.txt", &error), &error, 1) != 0) {
+  if (
+    expect_refusal(
+      "parent escape",
+      relic_open_descendant(root_fd, "../outside.txt", &error),
+      &error,
+      REFUSAL_ESCAPE
+    ) != 0
+  ) {
     goto cleanup;
   }
   error = (struct relic_open_error){0};
-  if (expect_refusal("absolute escape", relic_open_descendant(root_fd, outside, &error), &error, 1) != 0) {
+  if (
+    expect_refusal(
+      "absolute escape",
+      relic_open_descendant(root_fd, outside, &error),
+      &error,
+      REFUSAL_ESCAPE
+    ) != 0
+  ) {
     goto cleanup;
   }
   error = (struct relic_open_error){0};
-  if (expect_refusal("root symlink", relic_open_root(root_link, &error), &error, 0) != 0) {
+  if (
+    expect_refusal(
+      "root symlink",
+      relic_open_root(root_link, &error),
+      &error,
+      REFUSAL_SYMLINK
+    ) != 0
+  ) {
     goto cleanup;
   }
   error = (struct relic_open_error){0};
-  if (expect_refusal("leaf symlink", relic_open_descendant(root_fd, "nested/leaf-link", &error), &error, 0) != 0) {
+  if (
+    expect_refusal(
+      "leaf symlink",
+      relic_open_descendant(root_fd, "nested/leaf-link", &error),
+      &error,
+      REFUSAL_SYMLINK
+    ) != 0
+  ) {
     goto cleanup;
   }
   error = (struct relic_open_error){0};
-  if (expect_refusal("intermediate symlink", relic_open_descendant(root_fd, "middle-link/outside.txt", &error), &error, 0) != 0) {
+  if (
+    expect_refusal(
+      "intermediate symlink",
+      relic_open_descendant(root_fd, "middle-link/outside.txt", &error),
+      &error,
+      REFUSAL_SYMLINK
+    ) != 0
+  ) {
     goto cleanup;
   }
 
@@ -269,12 +327,14 @@ int main(void) {
     goto cleanup;
   }
   error = (struct relic_open_error){0};
-  if (expect_refusal(
-        "replaced descendant symlink",
-        relic_open_descendant(root_fd, "nested/outside.txt", &error),
-        &error,
-        0
-      ) != 0) {
+  if (
+    expect_refusal(
+      "replaced descendant symlink",
+      relic_open_descendant(root_fd, "nested/outside.txt", &error),
+      &error,
+      REFUSAL_SYMLINK
+    ) != 0
+  ) {
     goto cleanup;
   }
 
