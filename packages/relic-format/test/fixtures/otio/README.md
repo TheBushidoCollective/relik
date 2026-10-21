@@ -58,6 +58,8 @@ File-relative time subtracts `available_range.start_time`. It is null when the l
 
 `edge-cases/faithful-tokens.otio.json` is not official-reader input. It keeps raw int64, `Infinity`, `NaN`, a `Marker.1` `time` field, and an unknown schema object. `missing-unsupported.otio` is the official writer output and stays readable.
 
+Because it intentionally contains bare `Infinity` and `NaN`, this is the only JSON fixture excluded from Biome parsing in `biome.json`. The dedicated semantic test parses it with `parseOtioJson`, checks token and legacy-schema round trips, and rejects trailing commas. `scripts/generate-otio-fixtures.py --check` keeps the committed text synchronized with the raw-token recipe. All ordinary JSON remains in Biome's includes.
+
 ## Media
 
 Video frames carry a bar whose x position is the frame index. Two decoded frames that match mean the offset cannot be proved. `overlay_alpha.webm` and `fx_flare.webm` are VP9 with a real alpha plane: the canvas is transparent before the bar is painted. `secondary_b_prores.mov` and `unsupported_prores.mov` are ProRes. The script refuses to write MJPEG under those names. The profile is whatever `ffprobe` records in `media/media-measured.json`, not a claim made by the filename.
