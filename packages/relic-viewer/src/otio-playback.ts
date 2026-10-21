@@ -7,6 +7,7 @@
  */
 
 import type {
+  OtioAudioContribution,
   OtioBundleEntryName,
   OtioDiagnostic,
   OtioDocumentV1,
@@ -423,6 +424,23 @@ function sampleKind(contrib: OtioVideoContribution): 'media' | 'black' {
   const kind = (contrib as OtioVideoContribution & { sample_kind?: string })
     .sample_kind;
   return kind === 'black' ? 'black' : 'media';
+}
+
+function sampleUnavailable(
+  contrib: OtioVideoContribution | OtioAudioContribution
+): boolean {
+  return (
+    contrib.diagnostics.some(
+      (diagnostic) => diagnostic.code === 'missing-handles'
+    ) || timeToSeconds(contrib.source_time) < 0
+  );
+}
+
+function videoDecoderTime(sourceTime: OtioRationalTime): number {
+  const floor = Math.floor(sourceTime.value);
+  const next = { value: floor + 1, rate: sourceTime.rate };
+  const frame = compareRationalTimes(next, sourceTime) <= 0 ? floor + 1 : floor;
+  return timeToSeconds({ value: frame + 0.5, rate: sourceTime.rate });
 }
 
 function ancestryOf(contrib: {
@@ -861,7 +879,7 @@ export function createOtioPlayback(
     media.addEventListener('loadeddata', onReady);
     media.addEventListener('error', onError);
     try {
-      media.currentTime = Math.max(0, target);
+      media.currentTime = target;
     } catch {
       finish(false);
       return promise;
@@ -1219,13 +1237,14 @@ export function createOtioPlayback(
       );
       return { kind: 'empty' };
     }
+    if (sampleUnavailable(contrib)) return { kind: 'empty' };
     const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
     const dup = seen.get(dupKey) ?? 0;
     seen.set(dupKey, dup + 1);
     const key = occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
     const video = await acquireVideo(key, contrib.bundle_path, gen);
     if (stale(gen) || !video) return { kind: 'empty' };
-    const target = Math.max(0, timeToSeconds(contrib.source_time));
+    const target = videoDecoderTime(contrib.source_time);
     const ready = await seekElement(video.element, target, gen);
     if (stale(gen)) return { kind: 'empty' };
     if (!ready) {
@@ -1277,6 +1296,7 @@ export function createOtioPlayback(
         }
         continue;
       }
+      if (sampleUnavailable(contrib)) continue;
       const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
       const dup = seen.get(dupKey) ?? 0;
       seen.set(dupKey, dup + 1);
@@ -1310,7 +1330,7 @@ export function createOtioPlayback(
       const gain = Math.max(0, contrib.volume * contrib.transition_weight);
       applyAudioGain(loaded, gain, audible);
       loaded.element.setAttribute('data-active', audible ? 'true' : 'false');
-      const target = Math.max(0, timeToSeconds(contrib.source_time));
+      const target = timeToSeconds(contrib.source_time);
       if (fidelity.kind === 'freeze' || !audible || !isPlaying) {
         loaded.element.pause();
         if (decodedAt.get(loaded.element) !== target) {

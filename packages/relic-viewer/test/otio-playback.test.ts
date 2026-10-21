@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import type { OtioDocumentV1, OtioNode, OtioRationalTime } from '@relic/format';
-import { evaluateOtioAt } from '@relic/format';
+import { evaluateOtioAt, readOtioDocument } from '@relic/format';
 import {
   createOtioPlayback,
   decodedImageAllowed,
@@ -10,6 +11,11 @@ import {
   type OtioVideoCompositionTree,
   renderOtioVideoTree,
 } from '../src/otio-playback.ts';
+
+const standardFixtureUrl = new URL(
+  '../../relic-format/test/fixtures/otio/standard-sample.otiod/content.otio',
+  import.meta.url
+);
 
 interface Pixel {
   r: number;
@@ -123,6 +129,7 @@ class MockMedia {
   naturalHeight = 64;
   error: MediaError | null = null;
   playbackRate = 1;
+  readonly seekTargets: number[] = [];
   private time = 0;
   private source = '';
   readonly attrs = new Map<string, string>();
@@ -149,6 +156,7 @@ class MockMedia {
   }
 
   set currentTime(value: number) {
+    this.seekTargets.push(value);
     this.time = value;
     queueMicrotask(() => {
       this.readyState = 2;
@@ -396,6 +404,60 @@ function buildDocument(options?: {
     diagnostics: [],
     global_start_times: { timeline_1: { value: 0, rate: 30 } },
   };
+}
+
+function sampledMediaDocument(options: {
+  readonly kind: 'Video' | 'Audio';
+  readonly rate: number;
+  readonly duration: number;
+  readonly availableStart?: number;
+}): OtioDocumentV1 {
+  const { kind, rate, duration, availableStart = 0 } = options;
+  const trackId = kind === 'Video' ? 'track_v' : 'track_a';
+  const clipId = kind === 'Video' ? 'clip_v' : 'clip_a';
+  const targetUrl = kind === 'Video' ? 'media/clip.mp4' : 'media/dialogue.wav';
+  const time = (value: number): Record<string, number | string> => ({
+    OTIO_SCHEMA: 'RationalTime.1',
+    value,
+    rate,
+  });
+  return readOtioDocument(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline_1' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        metadata: { relic: { id: 'stack_1' } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: trackId } },
+            kind,
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: clipId } },
+                source_range: {
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: time(0),
+                  duration: time(duration),
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: targetUrl,
+                  available_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(availableStart),
+                    duration: time(duration),
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
 }
 
 describe('otio composition tree', () => {
@@ -801,6 +863,77 @@ describe('otio playback controller', () => {
     playback.dispose();
   });
 
+  test('seeks video decoders to selected presentation-frame centers', async () => {
+    const decoderTimeAt = async (
+      doc: OtioDocumentV1,
+      time: OtioRationalTime
+    ): Promise<number> => {
+      const first = created.length;
+      const playback = createOtioPlayback({
+        document: doc,
+        timelineId: 'timeline_1',
+        canvas: canvas(),
+        resolveMedia: async () => 'blob:clip',
+      });
+      await playback.seek(time);
+      const decoder = created.slice(first).find((element) => element.muted);
+      playback.dispose();
+      if (!decoder) throw new Error('video decoder did not load');
+      return decoder.currentTime;
+    };
+
+    const video24 = sampledMediaDocument({
+      kind: 'Video',
+      rate: 24,
+      duration: 48,
+    });
+    const video30 = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+    expect(await decoderTimeAt(video24, { value: 32, rate: 24 })).toBe(
+      32.5 / 24
+    );
+    expect(
+      await decoderTimeAt(video24, {
+        value: 32 - Number.EPSILON * 32,
+        rate: 24,
+      })
+    ).toBe(32.5 / 24);
+    expect(
+      await decoderTimeAt(video30, {
+        value: 58.75,
+        rate: 30,
+      })
+    ).toBe(58.5 / 30);
+  });
+
+  test('withholds unavailable Video 2 fixture samples before they seek zero', async () => {
+    const doc = readOtioDocument(readFileSync(standardFixtureUrl));
+    const timelineId = doc.timeline_ids[0];
+    if (!timelineId) throw new Error('standard fixture has no timeline');
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId,
+      canvas: canvas(),
+      resolveMedia: async (path) => `blob:${path}`,
+    });
+
+    await playback.seek({ value: 48, rate: 24 });
+
+    const videoDecoders = created.filter((element) => element.muted);
+    expect(
+      videoDecoders.filter(
+        (element) => element.src === 'blob:media/primary_a.mp4'
+      )
+    ).toHaveLength(1);
+    expect(
+      videoDecoders.flatMap((element) => element.seekTargets)
+    ).not.toContain(0);
+    playback.dispose();
+  });
+
   test('same-file dissolve voices stay independent and apply weight once', async () => {
     const doc = buildDocument({ audioTransition: true, audioFrames: 24 });
     const audioContext = new MockAudioContext();
@@ -847,6 +980,36 @@ describe('otio playback controller', () => {
     playback.setTrackMute('track_a', true);
     expect(voice?.volume).toBe(0);
     await playback.seek({ value: 24, rate: 24 });
+    expect(voice?.paused).toBe(true);
+    expect(voice?.attrs.get('data-active')).toBe('false');
+    playback.dispose();
+  });
+
+  test('pauses a playing audio decoder for an unavailable -24/24 sample', async () => {
+    const doc = sampledMediaDocument({
+      kind: 'Audio',
+      rate: 24,
+      duration: 48,
+      availableStart: 24,
+    });
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:dialogue',
+    });
+
+    await playback.play();
+    await playback.seek({ value: 24, rate: 24 });
+    const voice = created.find(
+      (element) =>
+        element.attrs.get('data-bundle-path') === 'media/dialogue.wav'
+    );
+    expect(voice?.paused).toBe(false);
+    expect(voice?.attrs.get('data-active')).toBe('true');
+
+    await playback.seek({ value: 0, rate: 24 });
+
     expect(voice?.paused).toBe(true);
     expect(voice?.attrs.get('data-active')).toBe('false');
     playback.dispose();

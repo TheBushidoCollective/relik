@@ -392,12 +392,16 @@ function chooseSequenceFrame(
   }
 
   if (policy === 'hold' && sequence.count > 0) {
-    const startIndex = outside ? sequence.count - 1 : imageIndex - 1;
-    for (
-      let index = Math.min(startIndex, sequence.count - 1);
-      index >= 0;
-      index -= 1
-    ) {
+    const preStart = imageIndex < 0;
+    const startIndex = preStart
+      ? 0
+      : Math.min(
+          outside ? sequence.count - 1 : imageIndex - 1,
+          sequence.count - 1
+        );
+    const boundary = preStart ? sequence.count : -1;
+    const direction = preStart ? 1 : -1;
+    for (let index = startIndex; index !== boundary; index += direction) {
       const built = resolve(index);
       if (built && (!indexHasEntries || inIndex(built.path))) {
         return {
