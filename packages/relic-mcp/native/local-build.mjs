@@ -28,20 +28,22 @@ if (!existsSync(join(nodeInclude, 'node_api.h'))) {
   throw new Error(`Node headers are missing at ${nodeInclude}`);
 }
 
-const compiler = process.env['CC'] ?? (process.platform === 'darwin' ? 'clang' : 'cc');
-const result = spawnSync(
-  process.execPath,
-  [
-    join(nativeDirectory, 'build.mjs'),
-    '--target',
-    target,
-    '--node-include',
-    nodeInclude,
-    '--cc',
-    compiler,
-  ],
-  { stdio: 'inherit' }
-);
+if (process.platform === 'linux' && Object.prototype.hasOwnProperty.call(process.env, 'CC')) {
+  throw new Error('CC is Darwin-only; Linux native builds use the pinned manylinux toolchain');
+}
+
+const argumentsToRun = [
+  join(nativeDirectory, 'build.mjs'),
+  '--target',
+  target,
+  '--node-include',
+  nodeInclude,
+];
+if (process.platform === 'darwin') {
+  argumentsToRun.push('--cc', process.env['CC'] ?? 'clang');
+}
+
+const result = spawnSync(process.execPath, argumentsToRun, { stdio: 'inherit' });
 if (result.error !== undefined) throw result.error;
 if (result.status !== 0) {
   throw new Error(`native secure-open local build failed with status ${result.status}`);

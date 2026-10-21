@@ -28,9 +28,6 @@
 #error "secure_open requires O_NOFOLLOW_ANY from a macOS 15.0 SDK"
 #endif
 
-#ifndef ENOTCAPABLE
-#error "secure_open requires ENOTCAPABLE from a macOS 15.0 SDK"
-#endif
 
 static void relic_set_error(
   struct relic_open_error *error,
@@ -50,6 +47,16 @@ static int relic_same_directory(int first_fd, int second_fd) {
   if (fstat(first_fd, &first_stat) != 0) return 0;
   if (fstat(second_fd, &second_stat) != 0) return 0;
   return first_stat.st_dev == second_stat.st_dev && first_stat.st_ino == second_stat.st_ino;
+}
+
+static int relic_is_confinement_escape_errno(int error_number) {
+  if (error_number == EACCES) return 1;
+#ifdef ENOTCAPABLE
+#if ENOTCAPABLE != EACCES
+  if (error_number == ENOTCAPABLE) return 1;
+#endif
+#endif
+  return 0;
 }
 
 static int relic_probe_uncached(struct relic_open_error *error) {
@@ -100,7 +107,7 @@ static int relic_probe_uncached(struct relic_open_error *error) {
     );
     return -1;
   }
-  if (errno != ENOTCAPABLE) {
+  if (!relic_is_confinement_escape_errno(errno)) {
     probe_error = errno;
     close(root_fd);
     relic_set_error(
@@ -124,7 +131,7 @@ static int relic_probe_uncached(struct relic_open_error *error) {
     );
     return -1;
   }
-  if (errno != ENOTCAPABLE) {
+  if (!relic_is_confinement_escape_errno(errno)) {
     probe_error = errno;
     close(root_fd);
     relic_set_error(
@@ -174,9 +181,14 @@ static int relic_cache_probe_failure(int error_number) {
     case EINVAL:
     case EACCES:
     case EPERM:
-    case ENOTCAPABLE:
     case EOPNOTSUPP:
       return 1;
+#ifdef ENOTCAPABLE
+#if ENOTCAPABLE != EACCES
+    case ENOTCAPABLE:
+      return 1;
+#endif
+#endif
 #ifdef ENOTSUP
 #if ENOTSUP != EOPNOTSUPP
     case ENOTSUP:

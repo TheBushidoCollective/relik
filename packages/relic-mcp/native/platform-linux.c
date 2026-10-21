@@ -10,14 +10,15 @@
 #error "secure_open supports only Linux x86-64 and AArch64"
 #endif
 
+#include <asm/unistd.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/openat2.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#ifndef SYS_openat2
-#error "secure_open requires SYS_openat2 from the target Linux UAPI headers"
+#ifndef __NR_openat2
+#error "secure_open requires __NR_openat2 from the target Linux UAPI headers"
 #endif
 
 #ifndef RESOLVE_BENEATH
@@ -50,7 +51,7 @@ static int relic_openat2(
   how.mode = 0;
   how.resolve = resolve;
 
-  return (int)syscall(SYS_openat2, directory_fd, path, &how, sizeof(how));
+  return (int)syscall(__NR_openat2, directory_fd, path, &how, sizeof(how));
 }
 
 static int relic_probe_uncached(struct relic_open_error *error) {

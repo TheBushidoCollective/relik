@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "compilerPath": "/opt/rh/gcc-toolset-14/root/usr/bin/gcc",
+  "targets": {
+    "linux-arm64-gnu": {
+      "containerPlatform": "linux/arm64",
+      "image": "quay.io/pypa/manylinux_2_28_aarch64@sha256:0333f44c4eb759ec8f47b27bc9dc27b1c929932a267cf13ce0cff1a4b758cccb"
+    },
+    "linux-x64-gnu": {
+      "containerPlatform": "linux/amd64",
+      "image": "quay.io/pypa/manylinux_2_28_x86_64@sha256:b74a5b6f1705ecff17be8bd792589bef9b3b039766d12205720ecd2a9e919192"
+    }
+  }
+}
