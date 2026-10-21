@@ -331,15 +331,19 @@ with security consequences, not a cosmetic inconsistency.
 Something has to run on your machine, because encryption has to happen where
 the plaintext is. That is forced by the product, not chosen.
 
-What is chosen is that it arrives as **readable source rather than a compiled
-binary**. `dist/relic-mcp.js` is a single unminified file of about 1,100 lines,
-and it is exactly what executes. The cover rendering page assets in
-`dist/cover/` contain the unminified cover bundle built from `@relic/viewer`,
-with vendored React, pdfjs, and sucrase for local document rendering in
-headless Chrome. The TypeScript it was built from ships in the same package.
-Releases carry [npm provenance][provenance], which is a cryptographic
-attestation binding the published tarball to a specific commit and workflow
-in this repository.
+What is chosen is that its JavaScript arrives as readable source.
+`dist/relic-mcp.js` is a single unminified file and the TypeScript it was built
+from ships in the same package. The deliberate exception is automatic `.otiod`
+directory packaging: a source-included Node-API helper, prebuilt in the npm
+tarball for the supported Darwin and Linux targets, opens bundle descendants
+under kernel-enforced confinement. It never downloads a helper, invokes Python,
+or compiles on an installed machine. An unsupported platform or kernel refuses
+that directory feature rather than reopening paths in JavaScript. The cover
+rendering page assets in `dist/cover/` contain the unminified cover bundle built
+from `@relic/viewer`, with vendored React, pdfjs, and sucrase for local document
+rendering in headless Chrome. Releases carry [npm provenance][provenance], which
+is a cryptographic attestation binding the published tarball to a specific
+commit and workflow in this repository.
 
 There is also a `relic_describe_client` tool. Call it and the client tells you
 what it does with your file, what leaves the machine, and what the service can

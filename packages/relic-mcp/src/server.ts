@@ -1363,7 +1363,8 @@ export const COMMENT_TOOL_DEFINITION = {
           },
           document_sha256: {
             type: 'string',
-            description: 'OTIO: 64 hex characters of the original content.otio digest.',
+            description:
+              'OTIO: 64 hex characters of the original content.otio digest.',
           },
           timeline_id: {
             type: 'string',
@@ -3122,8 +3123,12 @@ URL, so it enters the model's context and your session transcript. That is
 structural, not a defect. Anyone who can read this conversation can open the
 relic.
 
-The code doing all of this is on disk in this package and can be read. Nothing
-is fetched from the network and executed.`;
+The code doing all of this is on disk in this package and can be read. The only
+compiled component is the source-included Node-API secure-open helper used for
+automatic .otiod directory packaging. Its supported Darwin and Linux prebuilts
+ship in this package; it is never downloaded or compiled at runtime, and an
+unsupported platform refuses .otiod packaging rather than using a pathname
+fallback. Nothing is fetched from the network and executed.`;
 }
 
 /** Read newline-delimited JSON-RPC from a stream and write responses back. */

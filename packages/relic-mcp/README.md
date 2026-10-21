@@ -154,10 +154,17 @@ Encryption has to happen where the plaintext is, so a hosted version of this
 would have to receive your file, which defeats the point. Nothing here is
 fetched from the network and executed.
 
-Because a local client is otherwise opaque, it ships as **readable source
-rather than a compiled binary**. `dist/relic-mcp.js` is a single unminified
-file and it is exactly what runs; the TypeScript it was built from is in the
-same package. The cover rendering page assets in `dist/cover/` contain the
+The client ships its JavaScript as readable source: `dist/relic-mcp.js` is a
+single unminified file and the TypeScript it was built from is in the same
+package. There is one narrow exception for automatic `.otiod` directory
+packaging. It uses a source-included Node-API secure-open helper, prebuilt in
+the npm tarball for the supported Darwin and Linux targets. That helper pins
+the selected directory in the kernel and opens regular descendants without
+following symlinks. It never downloads a helper, invokes Python, or compiles
+at install or publish time. If the installed platform, architecture, or kernel
+cannot provide the confined-open primitive, `.otiod` packaging refuses rather
+than using a pathname fallback. Ordinary file publishing remains plain Node 18
+or newer. The cover rendering page assets in `dist/cover/` contain the
 unminified cover bundle built from `@relic/viewer`, with vendored React, pdfjs,
 and sucrase for offline document rendering in local Chrome. Releases carry npm
 provenance, a cryptographic attestation binding the tarball to a specific commit
@@ -216,6 +223,9 @@ that does outlive a call is the per-machine publish state file described
 above. The handshake-based revisions (`2025-11-25` and earlier) are still
 answered.
 
-Requires Node 18 or newer.
+Requires Node 18 or newer. Automatic `.otiod` packaging additionally requires
+a packaged native helper on the current architecture, Linux kernel 5.6 or
+newer, or macOS 15 or newer. Unsupported targets refuse that directory feature
+without reducing ordinary file publishing.
 
 MIT licensed. Source: https://github.com/TheBushidoCollective/relic

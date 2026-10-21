@@ -31,6 +31,30 @@ function files(): FileReader {
     async read() {
       return new TextEncoder().encode('hello');
     },
+    async openBundleRoot() {
+      let rootClosed = false;
+      return {
+        async openRegular() {
+          if (rootClosed) throw new Error('bundle root is closed');
+          let fileClosed = false;
+          const bytes = new TextEncoder().encode('hello');
+          return {
+            size: bytes.length,
+            async readBounded(maxBytes) {
+              if (fileClosed) throw new Error('bundle file is closed');
+              if (bytes.length > maxBytes) throw new Error('EFBIG');
+              return bytes;
+            },
+            async close() {
+              fileClosed = true;
+            },
+          };
+        },
+        async close() {
+          rootClosed = true;
+        },
+      };
+    },
   };
 }
 
