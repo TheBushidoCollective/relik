@@ -13,7 +13,7 @@ import {
   timeToSeconds,
 } from '../src/otio-timing.ts';
 import { readOtioDocument } from '../src/otio-identity.ts';
-import type { OtioRationalTime, OtioTimeRange } from '../src/otio-types.ts';
+import type { OtioDocumentV1, OtioNode, OtioRationalTime, OtioTimeRange, OtioVideoComposition } from '../src/otio-types.ts';
 
 describe('otio-timing rational arithmetic and mixed rates', () => {
   test('timeToSeconds throws on zero or non-finite rate', () => {
@@ -91,7 +91,8 @@ describe('otio-timing rational arithmetic and mixed rates', () => {
 });
 
 describe('otio-timing evaluator and source spans', () => {
-  const timelineJson = JSON.stringify({
+  function timingJson(clipBAvailable = true): string {
+    return JSON.stringify({
     OTIO_SCHEMA: 'Timeline.1',
     name: 'Test Timeline',
     metadata: { relic: { id: 'timeline_1' } },
@@ -141,6 +142,14 @@ describe('otio-timing evaluator and source spans', () => {
               media_reference: {
                 OTIO_SCHEMA: 'ExternalReference.1',
                 target_url: 'media/secondary_b.mp4',
+                  ...(clipBAvailable
+                    ? {
+                        available_range: {
+                          start_time: { value: 0, rate: 24 },
+                          duration: { value: 96, rate: 24 },
+                        },
+                      }
+                    : {}),
               },
             },
           ],
@@ -148,6 +157,9 @@ describe('otio-timing evaluator and source spans', () => {
       ],
     },
   });
+  }
+
+  const timelineJson = timingJson();
 
   test('readOtioDocument parses Timeline.tracks Stack object and assigns identities', () => {
     const doc = readOtioDocument(timelineJson);
@@ -217,28 +229,67 @@ describe('otio-timing evaluator and source spans', () => {
     const transition = spans.find((span) => span.schema === 'Transition.1');
     expect(transition).toBeDefined();
     if (!transition) throw new Error('expected transition source span');
-    expect(spans.map((span) => span.node_id).sort()).toEqual([
-      'clip_a',
-      'clip_b',
-      transition.node_id,
-    ].sort());
+    expect(spans.map((span) => span.node_id).sort()).toEqual(
+      ['clip_a', 'clip_b', transition.node_id].sort()
+    );
 
     const clipA = spans.find((span) => span.node_id === 'clip_a');
     const clipB = spans.find((span) => span.node_id === 'clip_b');
 
-    expect(clipA?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
+    expect(clipA?.intersected_timeline_range.start_time.value).toBeCloseTo(
+      60,
+      5
+    );
     expect(clipA?.intersected_timeline_range.duration.value).toBeCloseTo(24, 5);
-    expect(clipA?.file_relative_source_range?.start_time.value).toBeCloseTo(84, 5);
-    expect(clipA?.file_relative_source_range?.duration.value).toBeCloseTo(24, 5);
+    expect(clipA?.file_relative_source_range?.start_time.value).toBeCloseTo(
+      84,
+      5
+    );
+    expect(clipA?.file_relative_source_range?.duration.value).toBeCloseTo(
+      24,
+      5
+    );
     expect(clipA?.source_mapping?.scalar).toBe(1);
 
-    expect(clipB?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
+    expect(clipB?.intersected_timeline_range.start_time.value).toBeCloseTo(
+      60,
+      5
+    );
     expect(clipB?.intersected_timeline_range.duration.value).toBeCloseTo(30, 5);
     expect(clipB?.source_range?.start_time.value).toBeCloseTo(-12, 5);
-    expect(clipB?.diagnostics.some((item) => item.code === 'missing-handles')).toBe(true);
+    expect(
+      clipB?.diagnostics.some((item) => item.code === 'missing-handles')
+    ).toBe(true);
 
-    expect(transition?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
-    expect(transition?.intersected_timeline_range.duration.value).toBeCloseTo(24, 5);
+    expect(clipB?.file_relative_source_range?.start_time.value).toBeCloseTo(
+      -12,
+      5
+    );
+    expect(clipB?.file_relative_source_range?.duration.value).toBeCloseTo(
+      30,
+      5
+    );
+    expect(clipB?.source_mapping).toEqual({
+      timeline_origin: { value: 60, rate: 24 },
+      source_origin: { value: -12, rate: 24 },
+      scalar: 1,
+    });
+    expect(
+      spans
+        .filter((span) =>
+          span.diagnostics.some((item) => item.code === 'missing-handles')
+        )
+        .map((span) => span.node_id)
+    ).toEqual(['clip_b']);
+
+    expect(transition?.intersected_timeline_range.start_time.value).toBeCloseTo(
+      60,
+      5
+    );
+    expect(transition?.intersected_timeline_range.duration.value).toBeCloseTo(
+      24,
+      5
+    );
   });
 
   test('projects legacy Marker.1 time only when canonical timing is absent or null', () => {
@@ -357,5 +408,878 @@ describe('otio-timing evaluator and source spans', () => {
       start_time: { value: 4, rate: 24 },
       duration: { value: 2, rate: 24 },
     });
+  });
+
+
+  test('keeps an unknown available range free of missing-handle claims', () => {
+    const doc = readOtioDocument(timingJson(false));
+    const timelineId = doc.timeline_ids[0] as string;
+    const spans = sourceSpansForOtioRange(doc, timelineId, 'track_v1', {
+      start_time: { value: 60, rate: 24 },
+      duration: { value: 30, rate: 24 },
+    });
+    const clipB = spans.find((span) => span.node_id === 'clip_b');
+    expect(clipB?.source_range).toEqual({
+      start_time: { value: -12, rate: 24 },
+      duration: { value: 30, rate: 24 },
+    });
+    expect(
+      clipB?.diagnostics.some((item) => item.code === 'missing-handles')
+    ).toBe(false);
+});
+
+  test('treats a span ending at availability end as available', () => {
+    const makeDocument = (availableEnd: number) =>
+      readOtioDocument(
+        JSON.stringify({
+          OTIO_SCHEMA: 'Timeline.1',
+          metadata: { relic: { id: 'timeline-full' } },
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: [
+              {
+                OTIO_SCHEMA: 'Track.1',
+                kind: 'Video',
+                metadata: { relic: { id: 'track-full' } },
+                children: [
+                  {
+                    OTIO_SCHEMA: 'Clip.1',
+                    metadata: { relic: { id: 'clip-full' } },
+                    source_range: {
+                      start_time: { value: 0, rate: 24 },
+                      duration: { value: 24, rate: 24 },
+                    },
+                    media_reference: {
+                      OTIO_SCHEMA: 'ExternalReference.1',
+                      target_url: 'media/full.mp4',
+                      available_range: {
+                        start_time: { value: 0, rate: 24 },
+                        duration: { value: availableEnd, rate: 24 },
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      );
+    const full = makeDocument(24);
+    const short = makeDocument(23);
+    const query = {
+      start_time: { value: 0, rate: 24 },
+      duration: { value: 24, rate: 24 },
+    };
+    const fullSpan = sourceSpansForOtioRange(
+      full,
+      'timeline-full',
+      'track-full',
+      query
+    )[0];
+    const shortSpan = sourceSpansForOtioRange(
+      short,
+      'timeline-full',
+      'track-full',
+      query
+    )[0];
+
+    expect(
+      fullSpan?.diagnostics.some((item) => item.code === 'missing-handles')
+    ).toBe(false);
+    expect(
+      shortSpan?.diagnostics.some((item) => item.code === 'missing-handles')
+    ).toBe(true);
+  });
+
+
+  test('treats a span ending at availability end as available', () => {
+    const makeDocument = (availableEnd: number) =>
+      readOtioDocument(
+        JSON.stringify({
+          OTIO_SCHEMA: 'Timeline.1',
+          metadata: { relic: { id: 'timeline-full' } },
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: [
+              {
+                OTIO_SCHEMA: 'Track.1',
+                kind: 'Video',
+                metadata: { relic: { id: 'track-full' } },
+                children: [
+                  {
+                    OTIO_SCHEMA: 'Clip.1',
+                    metadata: { relic: { id: 'clip-full' } },
+                    source_range: {
+                      start_time: { value: 0, rate: 24 },
+                      duration: { value: 24, rate: 24 },
+                    },
+                    media_reference: {
+                      OTIO_SCHEMA: 'ExternalReference.1',
+                      target_url: 'media/full.mp4',
+                      available_range: {
+                        start_time: { value: 0, rate: 24 },
+                        duration: { value: availableEnd, rate: 24 },
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      );
+    const full = makeDocument(24);
+    const short = makeDocument(23);
+    const query = {
+      start_time: { value: 0, rate: 24 },
+      duration: { value: 24, rate: 24 },
+    };
+    const fullSpan = sourceSpansForOtioRange(
+      full,
+      'timeline-full',
+      'track-full',
+      query
+    )[0];
+    const shortSpan = sourceSpansForOtioRange(
+      short,
+      'timeline-full',
+      'track-full',
+      query
+    )[0];
+
+    expect(
+      fullSpan?.diagnostics.some((item) => item.code === 'missing-handles')
+    ).toBe(false);
+    expect(
+      shortSpan?.diagnostics.some((item) => item.code === 'missing-handles')
+    ).toBe(true);
+  });
+});
+function rangeFromEndpoints(start: number, end: number, rate = 24) {
+  return {
+    start_time: { value: start, rate },
+    duration: { value: end - start, rate },
+  };
+}
+
+function clipNode(
+  id: string,
+  name: string,
+  sourceStart: number,
+  sourceEnd: number,
+  availableStart: number,
+  availableEnd: number,
+  scalar = 1,
+  markers?: unknown[]
+) {
+  return {
+    OTIO_SCHEMA: 'Clip.1',
+    name,
+    metadata: { relic: { id } },
+    source_range: rangeFromEndpoints(sourceStart, sourceEnd),
+    media_reference: {
+      OTIO_SCHEMA: 'ExternalReference.1',
+      target_url: `media/${id}.mp4`,
+      available_range: rangeFromEndpoints(availableStart, availableEnd),
+    },
+    effects:
+      scalar === 1
+        ? []
+        : [
+            {
+              OTIO_SCHEMA: 'LinearTimeWarp.1',
+              effect_name: 'LinearTimeWarp',
+              time_scalar: scalar,
+              enabled: true,
+            },
+          ],
+    ...(markers === undefined ? {} : { markers }),
+  };
+}
+
+function transitionNode(
+  id: string,
+  inOffset: number,
+  outOffset: number,
+  rate = 24
+) {
+  return {
+    OTIO_SCHEMA: 'Transition.1',
+    metadata: { relic: { id } },
+    transition_type: 'SMPTE_Dissolve',
+    in_offset: { value: inOffset, rate },
+    out_offset: { value: outOffset, rate },
+  };
+}
+
+function trackNode(id: string, children: unknown[], sourceRange?: unknown) {
+  return {
+    OTIO_SCHEMA: 'Track.1',
+    kind: 'Video',
+    metadata: { relic: { id } },
+    ...(sourceRange === undefined ? {} : { source_range: sourceRange }),
+    children,
+  };
+}
+
+function stackNode(
+  id: string,
+  children: unknown[],
+  sourceStart?: number,
+  sourceEnd?: number
+) {
+  return {
+    OTIO_SCHEMA: 'Stack.1',
+    metadata: { relic: { id } },
+    ...(sourceStart === undefined || sourceEnd === undefined
+      ? {}
+      : { source_range: rangeFromEndpoints(sourceStart, sourceEnd) }),
+    children,
+  };
+}
+
+function timelineWithTrack(
+  timelineId: string,
+  trackId: string,
+  children: unknown[],
+  trackSourceRange?: unknown
+): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    metadata: { relic: { id: timelineId } },
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      children: [trackNode(trackId, children, trackSourceRange)],
+    },
+  });
+}
+
+function requiredNode(document: OtioDocumentV1, id: string): OtioNode {
+  const found = document.nodes[id];
+  if (!found) throw new Error(`missing ${id}`);
+  return found;
+}
+
+function expectRange(
+  value: OtioTimeRange | null | undefined,
+  start: number,
+  duration: number,
+  rate = 24
+): void {
+  expect(value?.start_time.value).toBeCloseTo(start, 5);
+  expect(value?.start_time.rate).toBeCloseTo(rate, 5);
+  expect(value?.duration.value).toBeCloseTo(duration, 5);
+  expect(value?.duration.rate).toBeCloseTo(rate, 5);
+}
+
+function findComposition(
+  composition: OtioVideoComposition | null,
+  nodeId: string
+): OtioVideoComposition | null {
+  if (!composition || composition.kind === 'leaf') return null;
+  if (composition.node_id === nodeId) return composition;
+  if (composition.kind === 'stack') {
+    for (const child of composition.children) {
+      const found = findComposition(child, nodeId);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const branch of composition.branches) {
+    const found = findComposition(branch.child, nodeId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function documentD1(): string {
+  return timelineWithTrack('timeline-d1', 'track-m', [
+    clipNode('clip-h', 'H', 0, 24, 0, 48),
+    transitionNode('trans-t', 12, 12),
+    stackNode(
+      'stack-s',
+      [trackNode('track-i', [clipNode('clip-x', 'X', 0, 72, 0, 72)])],
+      12,
+      60
+    ),
+    clipNode('clip-z', 'Z', 0, 24, 0, 24),
+  ]);
+}
+
+function documentD2(): string {
+  return timelineWithTrack('timeline-d2', 'track-m2', [
+    stackNode(
+      'stack-s2',
+      [
+        trackNode('track-j', [
+          clipNode('clip-p', 'P', 0, 24, 0, 48),
+          transitionNode('trans-u', 12, 12),
+          clipNode('clip-q', 'Q', 12, 60, 0, 72),
+        ]),
+      ],
+      18,
+      48
+    ),
+  ]);
+}
+
+function documentD3(): string {
+  return timelineWithTrack('timeline-d3', 'track-m3', [
+    clipNode('clip-head', 'Head', 0, 24, 0, 24),
+    stackNode(
+      'stack-n',
+      [
+        trackNode('track-n', [
+          clipNode('clip-x', 'X', 0, 72, 0, 72, 1, [
+            {
+              OTIO_SCHEMA: 'Marker.2',
+              name: 'early',
+              marked_range: rangeFromEndpoints(0, 6),
+            },
+            {
+              OTIO_SCHEMA: 'Marker.2',
+              name: 'late',
+              marked_range: rangeFromEndpoints(12, 18),
+            },
+          ]),
+        ]),
+      ],
+      12,
+      60
+    ),
+    clipNode('clip-tail', 'Tail', 0, 24, 0, 24),
+  ]);
+}
+
+function reverseDocument(
+  scalar: number,
+  sourceRange = true,
+  sourceDuration = { value: 48, rate: 24 },
+  sourceStart = { value: 0, rate: 24 },
+  availableStart = { value: 0, rate: 24 },
+  availableDuration = { value: 48, rate: 24 }
+): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    metadata: { relic: { id: 'timeline-reverse' } },
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          kind: 'Video',
+          metadata: { relic: { id: 'track-reverse' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Clip.1',
+              metadata: { relic: { id: 'clip-reverse' } },
+              ...(sourceRange
+                ? {
+                    source_range: {
+                      start_time: sourceStart,
+                      duration: sourceDuration,
+                    },
+                  }
+                : {}),
+              media_reference: {
+                OTIO_SCHEMA: 'ExternalReference.1',
+                target_url: 'media/reverse.mp4',
+                available_range: {
+                  start_time: availableStart,
+                  duration: availableDuration,
+                },
+              },
+              effects: [
+                {
+                  OTIO_SCHEMA: 'LinearTimeWarp.1',
+                  effect_name: 'LinearTimeWarp',
+                  time_scalar: scalar,
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+function leadingTransitionDocument(
+  rate: number,
+  trackSourceRange?: OtioTimeRange
+): string {
+  return timelineWithTrack(
+    'timeline-leading',
+    'track-leading',
+    [
+      transitionNode('trans-leading', 6, 12, rate),
+      {
+        OTIO_SCHEMA: 'Clip.1',
+        metadata: { relic: { id: 'clip-leading' } },
+        source_range: {
+          start_time: { value: 0, rate },
+          duration: { value: 48, rate },
+        },
+        media_reference: {
+          OTIO_SCHEMA: 'ExternalReference.1',
+          target_url: 'media/leading.mp4',
+          available_range: {
+            start_time: { value: 0, rate },
+            duration: { value: 96, rate },
+          },
+        },
+      },
+      transitionNode('trans-trailing', 3, 9, rate),
+    ],
+    trackSourceRange
+  );
+}
+
+describe('OTIO nested exposure, reverse intervals, and track availability', () => {
+  test('keeps nested dissolve branches visible only through their inherited windows', () => {
+    const doc = readOtioDocument(documentD1());
+    const timelineId = 'timeline-d1';
+    const x = requiredNode(doc, 'clip-x');
+    expectRange(x.timeline_range, 24, 48);
+    expectRange(x.visible_timeline_range, 12, 60);
+
+    const at18 = evaluateOtioAt(doc, timelineId, { value: 18, rate: 24 });
+    expect(at18.video_contributions.map((item) => item.node_id).sort()).toEqual(
+      ['clip-h', 'clip-x']
+    );
+    const h18 = at18.video_contributions.find(
+      (item) => item.node_id === 'clip-h'
+    );
+    const x18 = at18.video_contributions.find(
+      (item) => item.node_id === 'clip-x'
+    );
+    expect(h18?.source_time.value).toBeCloseTo(18, 5);
+    expect(h18?.transition_weight).toBeCloseTo(0.75, 5);
+    expect(x18?.source_time.value).toBeCloseTo(6, 5);
+    expect(x18?.transition_weight).toBeCloseTo(0.25, 5);
+
+    const track = findComposition(at18.video_composition, 'track-m');
+    if (!track || track.kind !== 'track')
+      throw new Error('expected track-m composition');
+    expect(track.transition_id).toBe('trans-t');
+    expect(track.branches[0]?.weight).toBeCloseTo(0.75, 5);
+    expect(track.branches[0]?.child).toEqual({
+      kind: 'leaf',
+      contribution_index: 0,
+    });
+    expect(track.branches[1]?.weight).toBeCloseTo(0.25, 5);
+    const stack = track.branches[1]?.child;
+    if (!stack || stack.kind !== 'stack')
+      throw new Error('expected incoming stack');
+    expect(stack.node_id).toBe('stack-s');
+    const nestedTrack = findComposition(stack, 'track-i');
+    if (!nestedTrack || nestedTrack.kind !== 'track')
+      throw new Error('expected nested track');
+    expect(nestedTrack.branches[0]?.child).toEqual({
+      kind: 'leaf',
+      contribution_index: 1,
+    });
+
+    const at30 = evaluateOtioAt(doc, timelineId, { value: 30, rate: 24 });
+    const h30 = at30.video_contributions.find(
+      (item) => item.node_id === 'clip-h'
+    );
+    const x30 = at30.video_contributions.find(
+      (item) => item.node_id === 'clip-x'
+    );
+    expect(h30?.source_time.value).toBeCloseTo(30, 5);
+    expect(h30?.transition_weight).toBeCloseTo(0.25, 5);
+    expect(x30?.source_time.value).toBeCloseTo(18, 5);
+    expect(x30?.transition_weight).toBeCloseTo(0.75, 5);
+
+    const at36 = evaluateOtioAt(doc, timelineId, { value: 36, rate: 24 });
+    expect(at36.video_contributions).toHaveLength(1);
+    expect(at36.video_contributions[0]?.node_id).toBe('clip-x');
+    expect(at36.video_contributions[0]?.source_time.value).toBeCloseTo(24, 5);
+    expect(at36.video_contributions[0]?.transition_weight).toBeCloseTo(1, 5);
+
+    const late = sourceSpansForOtioRange(
+      doc,
+      timelineId,
+      'track-m',
+      rangeFromEndpoints(72, 84)
+    );
+    expect(late.map((span) => span.node_id)).toEqual(['clip-z']);
+    expectRange(late[0]?.source_range ?? undefined, 0, 12);
+
+    const early = sourceSpansForOtioRange(
+      doc,
+      timelineId,
+      'track-m',
+      rangeFromEndpoints(12, 24)
+    );
+    expect(early.map((span) => span.node_id).sort()).toEqual([
+      'clip-h',
+      'clip-x',
+      'trans-t',
+    ]);
+    expectRange(
+      early.find((span) => span.node_id === 'clip-h')?.source_range ??
+        undefined,
+      12,
+      12
+    );
+    expectRange(
+      early.find((span) => span.node_id === 'clip-x')?.source_range ??
+        undefined,
+      0,
+      12
+    );
+  });
+
+  test('keeps nested transition progress on its untrimmed window', () => {
+    const doc = readOtioDocument(documentD2());
+    const timelineId = 'timeline-d2';
+    expectRange(requiredNode(doc, 'trans-u').timeline_range, 0, 18);
+
+    const at0 = evaluateOtioAt(doc, timelineId, { value: 0, rate: 24 });
+    const p0 = at0.video_contributions.find(
+      (item) => item.node_id === 'clip-p'
+    );
+    const q0 = at0.video_contributions.find(
+      (item) => item.node_id === 'clip-q'
+    );
+    expect(p0?.source_time.value).toBeCloseTo(18, 5);
+    expect(p0?.transition_weight).toBeCloseTo(0.75, 5);
+    expect(q0?.source_time.value).toBeCloseTo(6, 5);
+    expect(q0?.transition_weight).toBeCloseTo(0.25, 5);
+
+    const at12 = evaluateOtioAt(doc, timelineId, { value: 12, rate: 24 });
+    const p12 = at12.video_contributions.find(
+      (item) => item.node_id === 'clip-p'
+    );
+    const q12 = at12.video_contributions.find(
+      (item) => item.node_id === 'clip-q'
+    );
+    expect(p12?.source_time.value).toBeCloseTo(30, 5);
+    expect(p12?.transition_weight).toBeCloseTo(0.25, 5);
+    expect(q12?.source_time.value).toBeCloseTo(18, 5);
+    expect(q12?.transition_weight).toBeCloseTo(0.75, 5);
+
+    const at18 = evaluateOtioAt(doc, timelineId, { value: 18, rate: 24 });
+    expect(at18.video_contributions).toHaveLength(1);
+    expect(at18.video_contributions[0]?.node_id).toBe('clip-q');
+    expect(at18.video_contributions[0]?.source_time.value).toBeCloseTo(24, 5);
+  });
+
+  test('nulls an unplaced subtree rather than retaining its nested exposure', () => {
+    const document = timelineWithTrack('timeline-unplaced', 'track-root', [
+      clipNode('clip-known', 'Known', 0, 24, 0, 24),
+      {
+        OTIO_SCHEMA: 'Clip.1',
+        metadata: { relic: { id: 'clip-unknown' } },
+        media_reference: {
+          OTIO_SCHEMA: 'ExternalReference.1',
+          target_url: 'media/unknown.mp4',
+        },
+      },
+      stackNode('stack-u', [
+        trackNode('track-u', [clipNode('leaf-u', 'Leaf', 0, 24, 0, 24)]),
+      ]),
+    ]);
+    const doc = readOtioDocument(document);
+    expect(requiredNode(doc, 'track-root').available_range).toBeNull();
+    const stack = requiredNode(doc, 'stack-u');
+    expect(
+      stack.diagnostics?.some((item) => item.code === 'unplaced-item')
+    ).toBe(true);
+    for (const id of ['track-u', 'leaf-u']) {
+      const node = requiredNode(doc, id);
+      expect(Object.hasOwn(node, 'timeline_range')).toBe(true);
+      expect(Object.hasOwn(node, 'visible_timeline_range')).toBe(true);
+      expect(node.timeline_range).toBeNull();
+      expect(node.visible_timeline_range).toBeNull();
+    }
+  });
+
+  test('clips markers to the nested editorial exposure', () => {
+    const doc = readOtioDocument(documentD3());
+    const markers = markersForOtioTimeline(doc, 'timeline-d3');
+    expect(markers.map((item) => item.marker.name)).toEqual(['late']);
+    expectRange(markers[0]?.timeline_range, 24, 6);
+  });
+
+  test('uses half-open reverse source extents while retaining exact point samples', () => {
+    const doc = readOtioDocument(reverseDocument(-1));
+    const full = sourceSpansForOtioRange(
+      doc,
+      'timeline-reverse',
+      'track-reverse',
+      rangeFromEndpoints(0, 48)
+    )[0];
+    const first = sourceSpansForOtioRange(
+      doc,
+      'timeline-reverse',
+      'track-reverse',
+      rangeFromEndpoints(0, 12)
+    )[0];
+    const middle = sourceSpansForOtioRange(
+      doc,
+      'timeline-reverse',
+      'track-reverse',
+      rangeFromEndpoints(12, 24)
+    )[0];
+    const pointZero = sourceSpansForOtioRange(
+      doc,
+      'timeline-reverse',
+      'track-reverse',
+      rangeFromEndpoints(0, 0)
+    )[0];
+    const pointLast = sourceSpansForOtioRange(
+      doc,
+      'timeline-reverse',
+      'track-reverse',
+      rangeFromEndpoints(47, 47)
+    )[0];
+
+    expectRange(full?.source_range ?? undefined, 0, 48);
+    expectRange(full?.file_relative_source_range ?? undefined, 0, 48);
+    expect(full?.source_mapping).toEqual({
+      timeline_origin: { value: 0, rate: 24 },
+      source_origin: { value: 47, rate: 24 },
+      scalar: -1,
+    });
+    expect(
+      full?.diagnostics.some((item) => item.code === 'missing-handles')
+    ).toBe(false);
+    expectRange(first?.source_range ?? undefined, 36, 12);
+    expect(first?.source_mapping?.source_origin.value).toBe(47);
+    expectRange(middle?.source_range ?? undefined, 24, 12);
+    expect(middle?.source_mapping?.source_origin.value).toBe(35);
+    expectRange(pointZero?.source_range ?? undefined, 47, 0);
+    expectRange(pointLast?.source_range ?? undefined, 0, 0);
+  });
+
+  test('uses the measured selection for availability-only and double-speed reverse clips', () => {
+    const explicit = readOtioDocument(reverseDocument(-1));
+    const availableOnly = readOtioDocument(reverseDocument(-1, false));
+    const query = rangeFromEndpoints(0, 48);
+    const explicitSpan = sourceSpansForOtioRange(
+      explicit,
+      'timeline-reverse',
+      'track-reverse',
+      query
+    )[0];
+    const availableOnlySpan = sourceSpansForOtioRange(
+      availableOnly,
+      'timeline-reverse',
+      'track-reverse',
+      query
+    )[0];
+    expect(availableOnlySpan?.source_range).toEqual(explicitSpan?.source_range);
+    expect(availableOnlySpan?.file_relative_source_range).toEqual(
+      explicitSpan?.file_relative_source_range
+    );
+    expect(availableOnlySpan?.source_mapping).toEqual(
+      explicitSpan?.source_mapping
+    );
+
+    const doubleSpeed = readOtioDocument(reverseDocument(-2));
+    const doubleSpan = sourceSpansForOtioRange(
+      doubleSpeed,
+      'timeline-reverse',
+      'track-reverse',
+      rangeFromEndpoints(0, 24)
+    )[0];
+    expectRange(doubleSpan?.source_range ?? undefined, 0, 48);
+    expect(doubleSpan?.source_mapping).toEqual({
+      timeline_origin: { value: 0, rate: 24 },
+      source_origin: { value: 47, rate: 24 },
+      scalar: -2,
+    });
+  });
+
+  test('preserves reverse sampling under mixed start and duration rates', () => {
+    const sourceRate = 30000 / 1001;
+    const timelineRate = 24000 / 1001;
+    const sourceStart = { value: 100, rate: sourceRate };
+    const availableStart = { value: 90, rate: sourceRate };
+    const availableDuration = { value: 30, rate: sourceRate };
+    const sourceDuration = { value: 10, rate: sourceRate };
+    const mixedDuration = { value: 8, rate: timelineRate };
+    const explicit = readOtioDocument(
+      reverseDocument(
+        -1,
+        true,
+        sourceDuration,
+        sourceStart,
+        availableStart,
+        availableDuration
+      )
+    );
+    const mixed = readOtioDocument(
+      reverseDocument(
+        -1,
+        true,
+        mixedDuration,
+        sourceStart,
+        availableStart,
+        availableDuration
+      )
+    );
+    const fullQuery: OtioTimeRange = {
+      start_time: { value: 0, rate: timelineRate },
+      duration: { value: 8, rate: timelineRate },
+    };
+    const halfQuery: OtioTimeRange = {
+      start_time: { value: 0, rate: timelineRate },
+      duration: { value: 4, rate: timelineRate },
+    };
+    const pointQuery: OtioTimeRange = {
+      start_time: { value: 4, rate: timelineRate },
+      duration: { value: 0, rate: timelineRate },
+    };
+    const explicitFull = sourceSpansForOtioRange(
+      explicit,
+      'timeline-reverse',
+      'track-reverse',
+      fullQuery
+    )[0];
+    const mixedFull = sourceSpansForOtioRange(
+      mixed,
+      'timeline-reverse',
+      'track-reverse',
+      fullQuery
+    )[0];
+    const explicitHalf = sourceSpansForOtioRange(
+      explicit,
+      'timeline-reverse',
+      'track-reverse',
+      halfQuery
+    )[0];
+    const explicitPoint = sourceSpansForOtioRange(
+      explicit,
+      'timeline-reverse',
+      'track-reverse',
+      pointQuery
+    )[0];
+
+    expectRange(explicitFull?.source_range ?? undefined, 100, 10, sourceRate);
+    expectRange(
+      explicitFull?.file_relative_source_range ?? undefined,
+      10,
+      10,
+      sourceRate
+    );
+    expect(explicitFull?.source_mapping?.source_origin).toEqual({
+      value: 19,
+      rate: sourceRate,
+    });
+    expectRange(explicitHalf?.source_range ?? undefined, 105, 5, sourceRate);
+    expectRange(
+      explicitHalf?.file_relative_source_range ?? undefined,
+      15,
+      5,
+      sourceRate
+    );
+    expectRange(explicitPoint?.source_range ?? undefined, 104, 0, sourceRate);
+    expectRange(
+      explicitPoint?.file_relative_source_range ?? undefined,
+      14,
+      0,
+      sourceRate
+    );
+    expect(mixedFull?.source_range).toEqual(explicitFull?.source_range);
+    expect(mixedFull?.file_relative_source_range).toEqual(
+      explicitFull?.file_relative_source_range
+    );
+    expect(mixedFull?.source_mapping).toEqual(explicitFull?.source_mapping);
+  });
+
+  test('counts leading transition offsets in natural track availability without moving cuts', () => {
+    const doc = readOtioDocument(leadingTransitionDocument(24));
+    const timeline = requiredNode(doc, 'timeline-leading');
+    const track = requiredNode(doc, 'track-leading');
+    const leading = requiredNode(doc, 'trans-leading');
+    const clip = requiredNode(doc, 'clip-leading');
+    const trailing = requiredNode(doc, 'trans-trailing');
+    expectRange(track.available_range, 0, 63);
+    expectRange(timeline.timeline_range, 0, 63);
+    expectRange(leading.parent_range, -6, 18);
+    expectRange(leading.timeline_range, 0, 12);
+    expectRange(clip.parent_range, 0, 48);
+    expectRange(clip.visible_timeline_range, 0, 57);
+    expectRange(trailing.parent_range, 45, 12);
+
+    const at0 = evaluateOtioAt(doc, 'timeline-leading', { value: 0, rate: 24 });
+    expect(at0.video_contributions[0]?.node_id).toBe('clip-leading');
+    expect(at0.video_contributions[0]?.transition_weight).toBeCloseTo(1 / 3, 5);
+    const at12 = evaluateOtioAt(doc, 'timeline-leading', {
+      value: 12,
+      rate: 24,
+    });
+    expect(at12.video_contributions[0]?.transition_weight).toBeCloseTo(1, 5);
+    const at48 = evaluateOtioAt(doc, 'timeline-leading', {
+      value: 48,
+      rate: 24,
+    });
+    expect(at48.video_contributions[0]?.transition_weight).toBeCloseTo(0.75, 5);
+    for (const time of [57, 62]) {
+      expect(
+        evaluateOtioAt(doc, 'timeline-leading', { value: time, rate: 24 })
+          .video_contributions
+      ).toEqual([]);
+    }
+  });
+
+  test('keeps leading transition availability and authored track trimming independent at fractional rates', () => {
+    const rate = 30000 / 1001;
+    const full = readOtioDocument(leadingTransitionDocument(rate));
+    const trimmedRange: OtioTimeRange = {
+      start_time: { value: 0, rate },
+      duration: { value: 24, rate },
+    };
+    const trimmed = readOtioDocument(
+      leadingTransitionDocument(rate, trimmedRange)
+    );
+    expectRange(
+      requiredNode(full, 'track-leading').available_range,
+      0,
+      63,
+      rate
+    );
+    expectRange(
+      requiredNode(full, 'timeline-leading').timeline_range,
+      0,
+      63,
+      rate
+    );
+    expectRange(
+      requiredNode(trimmed, 'track-leading').available_range,
+      0,
+      63,
+      rate
+    );
+    expectRange(
+      requiredNode(trimmed, 'timeline-leading').timeline_range,
+      0,
+      24,
+      rate
+    );
+  });
+
+  test('keeps unknown leading transition timing from manufacturing a later track range', () => {
+    const doc = readOtioDocument(
+      timelineWithTrack('timeline-poisoned', 'track-poisoned', [
+        {
+          OTIO_SCHEMA: 'Transition.1',
+          metadata: { relic: { id: 'trans-unknown' } },
+          transition_type: 'SMPTE_Dissolve',
+        },
+        clipNode('clip-after-unknown', 'After unknown', 0, 24, 0, 24),
+      ])
+    );
+    const track = requiredNode(doc, 'track-poisoned');
+    const clip = requiredNode(doc, 'clip-after-unknown');
+    expect(track.available_range).toBeNull();
+    expect(clip.parent_range).toBeNull();
+    expect(clip.timeline_range).toBeNull();
+    expect(clip.visible_timeline_range).toBeNull();
   });
 });
