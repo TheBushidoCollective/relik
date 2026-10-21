@@ -94,11 +94,79 @@ describe('official OTIO placement and Relik sampling', () => {
     expect(stack.source_range?.start_time.value).toBeCloseTo(12, 5);
     expect(stack.source_range?.duration.value).toBeCloseTo(48, 5);
     expect(stack.parent_range?.start_time.value).toBeCloseTo(24, 5);
-    const inner = Object.values(doc.nodes).find((item) => item.name === 'Inner Clip 1');
+    const track = node(doc, 'track-inner-1');
+    const inner = Object.values(doc.nodes).find(
+      (item) => item.name === 'Inner Clip 1'
+    );
+    expect(track.timeline_range?.start_time.value).toBeCloseTo(24, 5);
+    expect(track.timeline_range?.duration.value).toBeCloseTo(48, 5);
     expect(inner?.timeline_range?.start_time.value).toBeCloseTo(24, 5);
     expect(inner?.timeline_range?.duration.value).toBeCloseTo(48, 5);
-    const at24 = evaluateOtioAt(doc, timelineId, { value: 24, rate: 24 });
-    expect(at24.video_contributions[0]?.source_time.value).toBeCloseTo(12, 5);
+    expect(inner?.visible_timeline_range?.start_time.value).toBeCloseTo(24, 5);
+    expect(inner?.visible_timeline_range?.duration.value).toBeCloseTo(48, 5);
+
+    const expected: readonly [number, string, number][] = [
+      [12, 'Head Clip', 12],
+      [24, 'Inner Clip 1', 12],
+      [36, 'Inner Clip 1', 24],
+      [71, 'Inner Clip 1', 59],
+      [72, 'Tail Clip', 0],
+    ];
+    for (const [time, name, source] of expected) {
+      const evaluation = evaluateOtioAt(doc, timelineId, {
+        value: time,
+        rate: 24,
+      });
+      expect(evaluation.video_contributions).toHaveLength(1);
+      expect(evaluation.video_contributions[0]?.name).toBe(name);
+      expect(evaluation.video_contributions[0]?.source_time.value).toBeCloseTo(
+        source,
+        5
+      );
+    }
+
+    const full = sourceSpansForOtioRange(
+      doc,
+      timelineId,
+      'track-nested-master',
+      {
+        start_time: { value: 12, rate: 24 },
+        duration: { value: 72, rate: 24 },
+      }
+    );
+    expect(
+      full.map((span) => ({
+        name: span.name,
+        timeline: [
+          span.intersected_timeline_range.start_time.value,
+          span.intersected_timeline_range.duration.value,
+        ],
+        source: [
+          span.source_range?.start_time.value,
+          span.source_range?.duration.value,
+        ],
+      }))
+    ).toEqual([
+      { name: 'Head Clip', timeline: [12, 12], source: [12, 12] },
+      { name: 'Inner Clip 1', timeline: [24, 48], source: [12, 48] },
+      { name: 'Tail Clip', timeline: [72, 12], source: [0, 12] },
+    ]);
+
+    const innerOnly = sourceSpansForOtioRange(
+      doc,
+      timelineId,
+      'track-nested-master',
+      {
+        start_time: { value: 24, rate: 24 },
+        duration: { value: 48, rate: 24 },
+      }
+    );
+    expect(innerOnly).toHaveLength(1);
+    expect(innerOnly[0]?.name).toBe('Inner Clip 1');
+    expect(innerOnly[0]?.source_range).toEqual({
+      start_time: { value: 12, rate: 24 },
+      duration: { value: 48, rate: 24 },
+    });
   });
 
   test('step two keeps image zero for one source frame', () => {
