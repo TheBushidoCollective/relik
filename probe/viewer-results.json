@@ -1,0 +1,217 @@
+{
+ "viewer": [
+  {
+   "case": "viewer: 24-rate source on 24fps (control)",
+   "samples": 48,
+   "wrong": 0,
+   "examples": []
+  },
+  {
+   "case": "viewer: 24-rate source on 60fps (EDL-style rate)",
+   "samples": 48,
+   "wrong": 48,
+   "examples": [
+    {
+     "time": {
+      "value": 0,
+      "rate": 24
+     },
+     "index": 1,
+     "diagnostics": [],
+     "expected": 0
+    },
+    {
+     "time": {
+      "value": 1,
+      "rate": 24
+     },
+     "index": 3,
+     "diagnostics": [],
+     "expected": 2
+    },
+    {
+     "time": {
+      "value": 2,
+      "rate": 24
+     },
+     "index": 6,
+     "diagnostics": [],
+     "expected": 5
+    },
+    {
+     "time": {
+      "value": 3,
+      "rate": 24
+     },
+     "index": 8,
+     "diagnostics": [],
+     "expected": 7
+    },
+    {
+     "time": {
+      "value": 4,
+      "rate": 24
+     },
+     "index": 11,
+     "diagnostics": [],
+     "expected": 10
+    }
+   ]
+  },
+  {
+   "case": "viewer: rate-1 (from_seconds) source on 24fps",
+   "samples": 48,
+   "wrong": 46,
+   "examples": [
+    {
+     "time": {
+      "value": 0,
+      "rate": 1
+     },
+     "index": 12,
+     "diagnostics": [],
+     "expected": 0
+    },
+    {
+     "time": {
+      "value": 0.041666666666666664,
+      "rate": 1
+     },
+     "index": 12,
+     "diagnostics": [],
+     "expected": 1
+    },
+    {
+     "time": {
+      "value": 0.08333333333333333,
+      "rate": 1
+     },
+     "index": 12,
+     "diagnostics": [],
+     "expected": 2
+    },
+    {
+     "time": {
+      "value": 0.125,
+      "rate": 1
+     },
+     "index": 12,
+     "diagnostics": [],
+     "expected": 3
+    },
+    {
+     "time": {
+      "value": 0.16666666666666666,
+      "rate": 1
+     },
+     "index": 12,
+     "diagnostics": [],
+     "expected": 4
+    }
+   ]
+  },
+  {
+   "case": "viewer: 29.97-rate source on 24fps (mixed-rates fixture shape)",
+   "samples": 59,
+   "wrong": 24,
+   "examples": [
+    {
+     "time": {
+      "value": 1,
+      "rate": 29.97002997002997
+     },
+     "index": 1,
+     "diagnostics": [
+      "invalid-timing"
+     ],
+     "expected": 0
+    },
+    {
+     "time": {
+      "value": 2,
+      "rate": 29.97002997002997
+     },
+     "index": 2,
+     "diagnostics": [
+      "invalid-timing"
+     ],
+     "expected": 1
+    },
+    {
+     "time": {
+      "value": 6,
+      "rate": 29.97002997002997
+     },
+     "index": 5,
+     "diagnostics": [
+      "invalid-timing"
+     ],
+     "expected": 4
+    },
+    {
+     "time": {
+      "value": 7,
+      "rate": 29.97002997002997
+     },
+     "index": 6,
+     "diagnostics": [
+      "invalid-timing"
+     ],
+     "expected": 5
+    },
+    {
+     "time": {
+      "value": 11,
+      "rate": 29.97002997002997
+     },
+     "index": 9,
+     "diagnostics": [
+      "invalid-timing"
+     ],
+     "expected": 8
+    }
+   ]
+  },
+  {
+   "case": "viewer: strict negative, source 4@23.976 vs available 5@29.97",
+   "samples": 3,
+   "wrong": 2,
+   "examples": [
+    {
+     "time": {
+      "value": 0,
+      "rate": 23.976023976023978
+     },
+     "index": null,
+     "diagnostics": [],
+     "expected": 0
+    },
+    {
+     "time": {
+      "value": 2,
+      "rate": 23.976023976023978
+     },
+     "index": 3,
+     "diagnostics": [],
+     "expected": 2
+    }
+   ]
+  },
+  {
+   "case": "viewer: strict negative, sequential drift 12@23.976 + 55@29.97",
+   "samples": 2,
+   "wrong": 1,
+   "examples": [
+    {
+     "time": {
+      "value": 56,
+      "rate": 23.976023976023978
+     },
+     "index": null,
+     "diagnostics": [],
+     "expected": 0
+    }
+   ]
+  }
+ ]
+}
