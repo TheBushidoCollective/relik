@@ -472,12 +472,19 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
     if (state.buffering) previewStatus.append(element('p', 'otio-buffering', 'Buffering'));
     if (blocking.length) {
       previewStatus.append(...blocking.map(issue => element('p', 'otio-diagnostic', `${issue.code} · ${issue.message}`)));
-      if (blocking.some(issue => issue.code === 'unsupported-effect') && !allowBaseMedia) previewStatus.append(button('Preview base media without unsupported effects', 'otio-preview-base', () => { allowBaseMedia = true; previewStatus.hidden = true; root.classList.add('is-base-preview'); }));
+      if (blocking.some(issue => issue.code === 'unsupported-effect') && !allowBaseMedia) previewStatus.append(button('Preview base media without unsupported effects', 'otio-preview-base', () => {
+        allowBaseMedia = true;
+        root.classList.add('is-base-preview');
+        playback?.setBaseMediaPreviewAllowed(true);
+      }));
       if (allowBaseMedia && blocking.every(issue => issue.code === 'unsupported-effect')) { previewStatus.hidden = true; sdr.textContent = 'unsupported-effect · base media preview · browser-managed SDR'; }
     }
   }
   function initializeTimeline(): void {
     unsubscribe?.(); playback?.dispose(); selected = null; marks.clear(); collapsed.clear();
+    allowBaseMedia = false;
+    root.classList.remove('is-base-preview');
+    sdr.textContent = 'Composition · browser-managed SDR';
     timeline = timelineId ? doc.nodes[timelineId] : undefined; inspected = timeline;
     name.textContent = timeline?.name || 'OTIO'; root.dataset['timelineId'] = timelineId ?? '';
     if (!timeline || !timelineId) {
