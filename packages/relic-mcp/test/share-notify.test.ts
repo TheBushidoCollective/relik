@@ -232,6 +232,57 @@ describe('share-notify integration with server', () => {
     expect(sentMails.length).toBe(0);
   });
 
+  test('notify: false skips the change notice but still tells the commenter their comment was answered', async () => {
+    const filePath = join(scratch, 'ack.md');
+    await writeFile(filePath, '# Ack v1\n');
+    const published = await publish({ path: filePath, title: 'Ack Doc' }, deps);
+    const cookie = await createSession('reader@example.test');
+    const state = await loadPublishState(published.relic_id);
+    if (!state) throw new Error('State missing');
+    const commentKey = await deriveCommentKey(decodeKey(state.key));
+    const ciphertext = await encryptComment(commentKey, {
+      body: 'Reader feedback on v1',
+      display_name: null,
+      anchor: null,
+    });
+    const commentRes = await app.fetch(
+      new Request(`${SERVICE}/api/relics/${published.relic_id}/comments`, {
+        method: 'POST',
+        headers: {
+          cookie,
+          'content-type': 'application/json',
+          'x-forwarded-for': '198.51.100.11',
+        },
+        body: JSON.stringify({ ciphertext }),
+      })
+    );
+    expect(commentRes.status).toBe(201);
+    const { comment_id: commentId } = (await commentRes.json()) as {
+      comment_id: string;
+    };
+    sentMails = [];
+    await writeFile(filePath, '# Ack v2\n');
+    const repubRes = await republish(
+      {
+        relic_id: published.relic_id,
+        path: filePath,
+        title: 'Ack Doc',
+        notify: false,
+        addresses: [{ comment_id: commentId, note: 'Fixed in v2.' }],
+      },
+      deps
+    );
+    expect(repubRes.version).toBe(2);
+    expect(repubRes.notify).toBe(false);
+    expect(repubRes.acknowledgements).toHaveLength(1);
+    expect(sentMails.map(({ to, mail }) => [to, mail.subject])).toEqual([
+      ['reader@example.test', 'Your comment on "Ack Doc" was answered'],
+    ]);
+    expect(sentMails[0]?.mail.text).toContain(
+      'The publisher answered your comment on "Ack Doc".'
+    );
+  });
+
   test('a repeated share counts once', async () => {
     const filePath = join(scratch, 'repeat.md');
     await writeFile(filePath, '# Repeat v1\n');
