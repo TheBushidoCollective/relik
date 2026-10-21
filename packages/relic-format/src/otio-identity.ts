@@ -76,6 +76,7 @@ const KNOWN_SCHEMAS: Record<string, true> = {
 interface MutableNode {
   id: string;
   identity_origin: OtioIdentityOrigin;
+  authored_id?: string;
   json_pointer: string;
   schema: string;
   schema_version?: number;
@@ -737,6 +738,7 @@ export function readOtioDocument(
     }
     draft.node.id = id;
     draft.node.identity_origin = origin;
+    if (draft.authoredId) draft.node.authored_id = draft.authoredId;
     pointerToId.set(draft.pointer, id);
   }
 
@@ -1374,7 +1376,7 @@ function findCurrentNode(
       .map((id) => nodeOf(current, id))
       .filter((node): node is OtioNode =>
         Boolean(
-          node && node.id === source.id && node.identity_origin === 'authored'
+          node && node.authored_id === (source.authored_id ?? source.id)
         )
       );
     if (matches.length > 1) return { status: 'ambiguous' };
@@ -1386,10 +1388,7 @@ function findCurrentNode(
     .map((id) => nodeOf(current, id))
     .filter((node): node is OtioNode =>
       Boolean(
-        node &&
-          node.identity_origin !== 'derived-duplicate' &&
-          node.fingerprint &&
-          node.fingerprint === source.fingerprint
+        node && node.fingerprint && node.fingerprint === source.fingerprint
       )
     );
   if (matches.length > 1) return { status: 'ambiguous' };

@@ -111,6 +111,8 @@ export interface OtioMarker {
 export interface OtioNode {
   readonly id: string;
   readonly identity_origin: OtioIdentityOrigin;
+  /** metadata.relic.id as authored, kept when the ID is duplicated and renamed. */
+  readonly authored_id?: string;
   readonly json_pointer: string;
   readonly schema: string;
   readonly schema_version?: number;
