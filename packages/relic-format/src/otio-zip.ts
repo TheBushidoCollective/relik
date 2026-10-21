@@ -243,6 +243,19 @@ function rejectZip64Sentinel(
   }
 }
 
+function isArrayBufferBacked(
+  bytes: Uint8Array
+): bytes is Uint8Array<ArrayBuffer> {
+  return bytes.buffer instanceof ArrayBuffer;
+}
+
+function toDomWritableChunk(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (isArrayBufferBacked(bytes)) return bytes;
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
 /**
  * Default environment inflater using DecompressionStream.
  * `maxBytes` is the caller's hard output cap. Overflow cancels the stream
@@ -295,7 +308,7 @@ async function defaultInflater(
   };
 
   try {
-    const writeDone = writer.write(compressedData).then(
+    const writeDone = writer.write(toDomWritableChunk(compressedData)).then(
       () => writer.close(),
       () => undefined
     );
@@ -735,7 +748,6 @@ export async function indexOtioZip(
       );
     }
 
-    Object.freeze(decompressed);
     return decompressed;
   }
 
