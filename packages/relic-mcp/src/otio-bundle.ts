@@ -56,6 +56,16 @@ function sizeRefusal(message: string): never {
   throw new PublishError('local_size_precheck_failed', message);
 }
 
+function inflateRawBounded(compressed: Uint8Array, budget: number): Uint8Array {
+  const inflated = new Uint8Array(
+    inflateRawSync(compressed, { maxOutputLength: Math.max(1, budget) })
+  );
+  if (inflated.length > budget) {
+    throw new Error(`Inflated ZIP entry exceeds byte budget of ${budget}`);
+  }
+  return inflated;
+}
+
 function recordAt(value: unknown, where: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     bundleRefusal(`${where} must be an object`);
@@ -820,9 +830,7 @@ export async function bundleOtiod(
       await indexOtioZip(zipBytes, {
         maxExpandedBytes: limit,
         inflater: async (compressed, _uncompressedSize, maxBytes) =>
-          new Uint8Array(
-            inflateRawSync(compressed, { maxOutputLength: maxBytes })
-          ),
+          inflateRawBounded(compressed, maxBytes),
       });
     } catch (error) {
       throw new PublishError(

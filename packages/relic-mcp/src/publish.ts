@@ -620,6 +620,16 @@ export async function contentDigest(input: {
     .join('');
 }
 
+function inflateRawBounded(compressed: Uint8Array, budget: number): Uint8Array {
+  const inflated = new Uint8Array(
+    inflateRawSync(compressed, { maxOutputLength: Math.max(1, budget) })
+  );
+  if (inflated.length > budget) {
+    throw new Error(`Inflated ZIP entry exceeds byte budget of ${budget}`);
+  }
+  return inflated;
+}
+
 export async function readSource(
   path: string,
   files: FileReader
@@ -701,9 +711,7 @@ export async function readSource(
       await indexOtioZip(bytes, {
         maxExpandedBytes: PLAINTEXT_CAP_BYTES,
         inflater: async (compressed, _uncompressedSize, maxBytes) =>
-          new Uint8Array(
-            inflateRawSync(compressed, { maxOutputLength: maxBytes })
-          ),
+          inflateRawBounded(compressed, maxBytes),
       });
     } catch (err) {
       throw new PublishError(
