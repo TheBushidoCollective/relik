@@ -29,8 +29,8 @@ const RENDER_ROUTES: readonly RenderRoute[] = [
 ];
 
 describe('routeForClass and CLASS_BEHAVIOUR agreement', () => {
-  test('all nine renderer classes agree between viewer routing and class behaviour in both directions', () => {
-    expect(RENDERER_CLASSES.length).toBe(9);
+  test('all ten renderer classes agree between viewer routing and class behaviour in both directions', () => {
+    expect(RENDERER_CLASSES.length).toBe(10);
 
     for (const cls of RENDERER_CLASSES) {
       const behaviour = CLASS_BEHAVIOUR[cls];
@@ -44,14 +44,13 @@ describe('routeForClass and CLASS_BEHAVIOUR agreement', () => {
         expect(behaviour).toBe('downloads');
       }
 
-      // plays if and only if the route is media
+      // plays if and only if the route is media or otio
       if (behaviour === 'plays') {
-        expect(route).toBe('media');
+        expect(['media', 'otio']).toContain(route);
       }
-      if (route === 'media') {
+      if (route === 'media' || route === 'otio') {
         expect(behaviour).toBe('plays');
       }
-
       // renders if and only if the route is one of the render routes
       if (behaviour === 'renders') {
         expect(RENDER_ROUTES).toContain(route);

@@ -34,6 +34,7 @@
  * the drift this package exists to prevent.
  */
 
+import type { OtioAnchorV1, OtioRationalTime } from './otio-types.ts';
 import {
   CommentDecryptFailedError,
   CommentTooLargeError,
@@ -139,7 +140,14 @@ export type CommentAnchor =
       readonly rect?: AnchorRect;
       readonly exact?: string;
     }
+  | OtioAnchorV1
   | { readonly kind: 'unsupported'; readonly declared: string };
+
+/** Cap on encoded OTIO anchor bytes (1,536 bytes). */
+export const COMMENT_ANCHOR_OTIO_LIMIT_BYTES = 1536;
+
+/** Cap on final encrypted base64url comment ciphertext (8,192 characters). */
+export const COMMENT_CIPHERTEXT_LIMIT_CHARS = 8192;
 
 /** Longest quote stored on a text mark. A selection is not a document. */
 export const COMMENT_ANCHOR_QUOTE_LIMIT_BYTES = 512;
@@ -318,7 +326,15 @@ export async function encryptComment(
   const framed = new Uint8Array(nonce.length + sealed.length);
   framed.set(nonce, 0);
   framed.set(sealed, nonce.length);
-  return base64url(framed);
+  const ciphertext = base64url(framed);
+  if (ciphertext.length > COMMENT_CIPHERTEXT_LIMIT_CHARS) {
+    throw new CommentTooLargeError(
+      'ciphertext',
+      ciphertext.length,
+      COMMENT_CIPHERTEXT_LIMIT_CHARS
+    );
+  }
+  return ciphertext;
 }
 
 /**
@@ -519,6 +535,173 @@ function parseAnchor(value: unknown): CommentAnchor | null {
     };
   }
 
+  if (kind === 'otio') {
+    const v = anchor['v'];
+    if (v !== 1) {
+      return { kind: 'unsupported', declared: `otio-v${String(v)}` };
+    }
+    const relicVersion = anchor['relic_version'];
+    if (
+      typeof relicVersion !== 'number' ||
+      !Number.isInteger(relicVersion) ||
+      relicVersion < 1
+    ) {
+      throw new MalformedCommentError(
+        'otio anchor relic_version is not a positive integer'
+      );
+    }
+    const docSha = anchor['document_sha256'];
+    if (typeof docSha !== 'string' || !/^[0-9a-fA-F]{64}$/.test(docSha)) {
+      throw new MalformedCommentError(
+        'otio anchor document_sha256 is not a 64-character hex hash'
+      );
+    }
+    const timelineId = anchor['timeline_id'];
+    if (typeof timelineId !== 'string' || timelineId.length === 0) {
+      throw new MalformedCommentError(
+        'otio anchor timeline_id is missing or empty'
+      );
+    }
+    const trackId = anchor['track_id'];
+    if (
+      trackId !== null &&
+      (typeof trackId !== 'string' || trackId.length === 0)
+    ) {
+      throw new MalformedCommentError(
+        'otio anchor track_id is neither null nor a non-empty string'
+      );
+    }
+    const itemId = anchor['item_id'];
+    if (
+      itemId !== undefined &&
+      (typeof itemId !== 'string' || itemId.length === 0)
+    ) {
+      throw new MalformedCommentError(
+        'otio anchor item_id is present and is not a non-empty string'
+      );
+    }
+    const rangeVal = anchor['range'];
+    if (typeof rangeVal !== 'object' || rangeVal === null) {
+      throw new MalformedCommentError('otio anchor range is not an object');
+    }
+    const rangeObj = rangeVal as Record<string, unknown>;
+    const startVal = rangeObj['start_time'];
+    if (typeof startVal !== 'object' || startVal === null) {
+      throw new MalformedCommentError(
+        'otio anchor range start_time is missing or not an object'
+      );
+    }
+    const sVal = (startVal as Record<string, unknown>)['value'];
+    const sRate = (startVal as Record<string, unknown>)['rate'];
+    if (typeof sVal !== 'number' || !Number.isFinite(sVal)) {
+      throw new MalformedCommentError(
+        'otio anchor range start_time value is not a finite number'
+      );
+    }
+    if (typeof sRate !== 'number' || !Number.isFinite(sRate) || sRate <= 0) {
+      throw new MalformedCommentError(
+        'otio anchor range start_time rate is not a positive finite number'
+      );
+    }
+    refuseExtra(
+      startVal as Record<string, unknown>,
+      ['value', 'rate'],
+      'range start_time'
+    );
+
+    const durVal = rangeObj['duration'];
+    if (typeof durVal !== 'object' || durVal === null) {
+      throw new MalformedCommentError(
+        'otio anchor range duration is missing or not an object'
+      );
+    }
+    const dVal = (durVal as Record<string, unknown>)['value'];
+    const dRate = (durVal as Record<string, unknown>)['rate'];
+    if (typeof dVal !== 'number' || !Number.isFinite(dVal) || dVal < 0) {
+      throw new MalformedCommentError(
+        'otio anchor range duration value is not a non-negative finite number'
+      );
+    }
+    if (typeof dRate !== 'number' || !Number.isFinite(dRate) || dRate <= 0) {
+      throw new MalformedCommentError(
+        'otio anchor range duration rate is not a positive finite number'
+      );
+    }
+    refuseExtra(
+      durVal as Record<string, unknown>,
+      ['value', 'rate'],
+      'range duration'
+    );
+    refuseExtra(rangeObj, ['start_time', 'duration'], 'otio range');
+
+    const snapshotVal = anchor['snapshot'];
+    if (typeof snapshotVal !== 'object' || snapshotVal === null) {
+      throw new MalformedCommentError('otio anchor snapshot is not an object');
+    }
+    const snapObj = snapshotVal as Record<string, unknown>;
+    const snapTimeline = snapObj['timeline'];
+    if (typeof snapTimeline !== 'string') {
+      throw new MalformedCommentError(
+        'otio anchor snapshot timeline is not a string'
+      );
+    }
+    const snapTrack = snapObj['track'];
+    if (snapTrack !== null && typeof snapTrack !== 'string') {
+      throw new MalformedCommentError(
+        'otio anchor snapshot track is neither null nor a string'
+      );
+    }
+    const snapItem = snapObj['item'];
+    if (snapItem !== null && typeof snapItem !== 'string') {
+      throw new MalformedCommentError(
+        'otio anchor snapshot item is neither null nor a string'
+      );
+    }
+    refuseExtra(snapObj, ['timeline', 'track', 'item'], 'otio snapshot');
+
+    refuseExtra(
+      anchor,
+      [
+        'kind',
+        'v',
+        'relic_version',
+        'document_sha256',
+        'timeline_id',
+        'track_id',
+        'item_id',
+        'range',
+        'snapshot',
+      ],
+      'otio'
+    );
+
+    const otioAnchor: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: relicVersion,
+      document_sha256: docSha.toLowerCase(),
+      timeline_id: timelineId,
+      track_id: trackId,
+      ...(itemId === undefined ? {} : { item_id: itemId }),
+      range: {
+        start_time: { value: sVal, rate: sRate },
+        duration: { value: dVal, rate: dRate },
+      },
+      snapshot: {
+        timeline: snapTimeline,
+        track: snapTrack,
+        item: snapItem,
+      },
+    };
+
+    const encoded = new TextEncoder().encode(JSON.stringify(otioAnchor)).length;
+    if (encoded > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
+      throw new MalformedCommentError(
+        `otio anchor encoded size ${encoded} bytes exceeds cap of ${COMMENT_ANCHOR_OTIO_LIMIT_BYTES}`
+      );
+    }
+    return otioAnchor;
+  }
   // The forward-tolerant branch. A `kind` this build has never heard of is a
   // writer newer than this reader, which is a version gap and not a defect in
   // the comment, so it keeps its body and loses only the ability to be shown
@@ -547,6 +730,16 @@ function assertWritableAnchor(anchor: CommentAnchor): void {
   }
   if (anchor.kind === 'page' && anchor.exact !== undefined) {
     capQuote(anchor.exact);
+  }
+  if (anchor.kind === 'otio') {
+    const encoded = new TextEncoder().encode(JSON.stringify(anchor)).length;
+    if (encoded > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
+      throw new CommentTooLargeError(
+        'anchor',
+        encoded,
+        COMMENT_ANCHOR_OTIO_LIMIT_BYTES
+      );
+    }
   }
   // Every other field is a bounded number, and the bound is checked on the
   // way back in by `parseAnchor`. Round-tripping a value this side accepted
