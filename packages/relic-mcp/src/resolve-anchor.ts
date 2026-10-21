@@ -25,13 +25,28 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inflateRaw } from 'node:zlib';
 import {
   type AnchorRect,
   decodeKey,
   deriveRendererClass,
+  FORMAT_VERSION,
+  type InflaterFn,
+  indexOtioZip,
+  isOtioz,
+  isRawOtio,
   type OpenedRelic,
+  type OtioAnchorV1,
+  type OtioDocumentV1,
+  type OtioRationalTime,
+  type OtioSourceSpan,
+  type OtioTimeRange,
   openRelic,
+  readOtioDocument,
   type RendererClass,
+  resolveOtioAnchor,
+  sourceSpansForOtioRange,
+  timeToSeconds,
 } from '@relic/format';
 import { boxPosition, type CommentRecord, formatTimecode } from './comments.ts';
 import type { PublishDeps } from './publish.ts';
@@ -64,6 +79,53 @@ export interface ResolvedTextBlock {
 }
 
 export type ContentBlock = ResolvedTextBlock | ResolvedImageBlock;
+
+export interface OtioPathNode {
+  readonly id: string;
+  readonly name: string;
+  readonly schema: string;
+  readonly json_pointer: string;
+}
+
+export interface OtioIntersection {
+  readonly node_id: string;
+  readonly schema: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly json_pointer: string;
+  readonly ancestry: readonly OtioPathNode[];
+  readonly timeline_range: OtioTimeRange;
+  readonly intersected_timeline_range: OtioTimeRange;
+  readonly source_range: OtioTimeRange | null;
+  readonly available_range: OtioTimeRange | null;
+  readonly file_relative_source_range: OtioTimeRange | null;
+  readonly active_media_reference_key: string | null;
+  readonly bundle_path: string | null;
+  readonly media_digest: string | null;
+  readonly media_references: OtioSourceSpan['media_references'];
+  readonly markers: OtioSourceSpan['markers'];
+  readonly effects: OtioSourceSpan['effects'];
+  readonly diagnostics: OtioSourceSpan['diagnostics'];
+}
+
+export interface OtioCurrentProjection {
+  readonly current_version: number | null;
+  readonly status:
+    | 'same'
+    | 'mapped'
+    | 'partial'
+    | 'changed'
+    | 'ambiguous'
+    | 'missing'
+    | 'unresolvable';
+  readonly explanation: string;
+  readonly mapped_range?: OtioTimeRange;
+  readonly mapped_track_id?: string | null;
+  readonly mapped_item_id?: string;
+  readonly mapped_start_seconds?: number | null;
+  readonly mapped_start_timecode?: string;
+}
+
 
 export type ResolvedAnchor =
   | {
@@ -138,6 +200,27 @@ export type ResolvedAnchor =
       readonly status: 'unresolvable';
       readonly declared: string;
       readonly explanation: string;
+    }
+  | {
+      readonly kind: 'otio';
+      readonly status: 'resolved' | 'unresolvable';
+      readonly explanation: string;
+      readonly relic_version: number;
+      readonly document_sha256: string;
+      readonly snapshot: OtioAnchorV1['snapshot'];
+      readonly timeline_id: string;
+      readonly track_id: string | null;
+      readonly item_id?: string;
+      readonly timeline_path: readonly OtioPathNode[];
+      readonly range: OtioTimeRange;
+      readonly point: boolean;
+      readonly start_seconds: number | null;
+      readonly duration_seconds: number | null;
+      readonly end_seconds: number | null;
+      readonly start_timecode: string;
+      readonly end_timecode: string;
+      readonly intersections: readonly OtioIntersection[];
+      readonly current_projection: OtioCurrentProjection;
     };
 interface Deferred<T> {
   promise: Promise<T>;
@@ -612,13 +695,31 @@ export async function probeMediaDimensionsWithFfmpeg(
   }
 }
 
+type RelicFetch =
+  | {
+      readonly ok: true;
+      readonly opened: OpenedRelic;
+      readonly version: number;
+      readonly currentVersion: number;
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+    };
+
+
 /**
- * Fetch and decrypt the container for one relic, exactly once.
+ * Fetch and decrypt one relic revision.
+ *
+ * `requestedVersion` is the relic revision, posted to mint. Decryption always
+ * uses format version 1. Those are different version domains: passing the
+ * revision into `openRelic` rejects a valid container.
  */
 async function fetchAndDecryptRelic(
   relicId: string,
-  deps: PublishDeps
-): Promise<{ ok: true; opened: OpenedRelic } | { ok: false; error: string }> {
+  deps: PublishDeps,
+  requestedVersion?: number
+): Promise<RelicFetch> {
   const state = await loadPublishState(relicId);
   if (!state || !state.key) {
     return {
@@ -628,13 +729,21 @@ async function fetchAndDecryptRelic(
     };
   }
 
-  let mint: { url: string; object_length: number; version?: number };
+  let mint: {
+    url: string;
+    object_length: number;
+    version?: number;
+    current_version?: number;
+  };
   try {
     const mintResponse = await deps.fetch(
       `${deps.serviceOrigin}/api/relics/${relicId}/mint`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(
+          requestedVersion === undefined ? {} : { version: requestedVersion }
+        ),
       }
     );
     if (!mintResponse.ok) {
@@ -654,11 +763,35 @@ async function fetchAndDecryptRelic(
       url: string;
       object_length: number;
       version?: number;
+      current_version?: number;
     };
   } catch (error) {
     return {
       ok: false,
       error: `Network error reaching relic service: ${(error as Error).message}.`,
+    };
+  }
+
+  const servedVersion =
+    typeof mint.version === 'number' ? mint.version : requestedVersion;
+  const currentVersion =
+    typeof mint.current_version === 'number'
+      ? mint.current_version
+      : servedVersion;
+  if (servedVersion === undefined || currentVersion === undefined) {
+    return {
+      ok: false,
+      error:
+        'The service mint did not name the relic revision, so historical content was not decrypted against a guessed version.',
+    };
+  }
+  if (
+    requestedVersion !== undefined &&
+    servedVersion !== requestedVersion
+  ) {
+    return {
+      ok: false,
+      error: `Requested relic version ${requestedVersion} but the service returned version ${servedVersion}.`,
     };
   }
 
@@ -674,12 +807,13 @@ async function fetchAndDecryptRelic(
       await containerResponse.arrayBuffer()
     );
     const key = decodeKey(state.key);
-    const opened = await openRelic(
-      containerBytes,
-      key,
-      mint.version ?? state.version
-    );
-    return { ok: true, opened };
+    const opened = await openRelic(containerBytes, key, FORMAT_VERSION);
+    return {
+      ok: true,
+      opened,
+      version: servedVersion,
+      currentVersion,
+    };
   } catch (error) {
     return {
       ok: false,
@@ -749,8 +883,396 @@ function findTextOccurrence(
   return { matchIndex: bestIndex, line };
 }
 
+const nodeInflater: InflaterFn = (compressed, uncompressedSize, maxBytes) => {
+  const { promise, resolve, reject } = Promise.withResolvers<Uint8Array>();
+  if (uncompressedSize > maxBytes) {
+    reject(
+      new Error(
+        `declared decompressed size ${uncompressedSize} exceeds ${maxBytes}`
+      )
+    );
+    return promise;
+  }
+  inflateRaw(Buffer.from(compressed), (error, result) => {
+    if (error) {
+      reject(error);
+      return;
+    }
+    if (result.length > maxBytes) {
+      reject(new Error(`inflated size ${result.length} exceeds ${maxBytes}`));
+      return;
+    }
+    resolve(new Uint8Array(result));
+  });
+  return promise;
+};
+
+type OtioParse =
+  | { readonly ok: true; readonly document: OtioDocumentV1 }
+  | { readonly ok: false; readonly error: string };
+
+async function digestHex(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', copy);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function parseOpenedOtio(opened: OpenedRelic): Promise<OtioParse> {
+  try {
+    const filename = opened.envelope.entries[0]?.filename ?? '';
+    let source = opened.content;
+    const mediaIndex: Record<
+      string,
+      { key: string; bundle_path: string; size: number; sha256?: string }
+    > = {};
+    if (isOtioz(opened.content) || filename.toLowerCase().endsWith('.otioz')) {
+      const index = await indexOtioZip(opened.content, {
+        inflater: nodeInflater,
+      });
+      source = index.contentOtioBytes;
+      for (const [name, entry] of index.entries) {
+        if (!name.startsWith('media/') || entry.isDirectory) continue;
+        const bytes = await index.readEntry(name);
+        mediaIndex[name] = {
+          key: name,
+          bundle_path: name,
+          size: bytes.length,
+          sha256: await digestHex(bytes),
+        };
+      }
+    } else if (
+      !isRawOtio(opened.content) &&
+      !filename.toLowerCase().endsWith('.otio')
+    ) {
+      return {
+        ok: false,
+        error: `Relic content is not an OTIO document${filename ? ` (${filename})` : ''}.`,
+      };
+    }
+    return {
+      ok: true,
+      document: readOtioDocument(source, { mediaIndex }),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Failed to read OTIO document: ${(error as Error).message}.`,
+    };
+  }
+}
+
+function secondsOf(time: OtioRationalTime): number | null {
+  try {
+    return timeToSeconds(time);
+  } catch {
+    return null;
+  }
+}
+
+function displayTimecode(
+  time: OtioRationalTime,
+  globalStart?: OtioRationalTime
+): string {
+  if (!Number.isFinite(time.value) || !Number.isFinite(time.rate) || time.rate <= 0) {
+    return 'unknown';
+  }
+  const shifted =
+    globalStart && globalStart.rate > 0
+      ? time.value + globalStart.value * (time.rate / globalStart.rate)
+      : time.value;
+  const fps = Math.max(1, Math.round(time.rate));
+  const total = Math.max(0, Math.round(shifted));
+  const frames = total % fps;
+  const wholeSeconds = Math.floor(total / fps);
+  const seconds = wholeSeconds % 60;
+  const minutes = Math.floor(wholeSeconds / 60) % 60;
+  const hours = Math.floor(wholeSeconds / 3600);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}:${pad(frames)}`;
+}
+
+function ancestry(
+  document: OtioDocumentV1,
+  nodeId: string
+): readonly OtioPathNode[] {
+  const chain: OtioPathNode[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = nodeId;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const node = document.nodes[cursor];
+    if (!node) break;
+    chain.unshift({
+      id: node.id,
+      name: node.name,
+      schema: node.schema,
+      json_pointer: node.json_pointer,
+    });
+    cursor = node.parent_id;
+  }
+  return chain;
+}
+
+function mediaDigest(
+  document: OtioDocumentV1,
+  bundlePath: string | null
+): string | null {
+  if (!bundlePath) return null;
+  const normalized = bundlePath.replace(/^\.\//, '');
+  const direct = document.media[normalized] ?? document.media[bundlePath];
+  if (direct?.sha256) return direct.sha256;
+  for (const entry of Object.values(document.media)) {
+    if (entry.bundle_path === normalized || entry.key === normalized) {
+      return entry.sha256 ?? null;
+    }
+  }
+  return null;
+}
+
+function intersectionsFor(
+  document: OtioDocumentV1,
+  spans: readonly OtioSourceSpan[]
+): readonly OtioIntersection[] {
+  return spans.map((span) => {
+    const node = document.nodes[span.node_id];
+    return {
+      node_id: span.node_id,
+      schema: span.schema,
+      name: span.name,
+      enabled: span.enabled,
+      json_pointer: node?.json_pointer ?? '',
+      ancestry: ancestry(document, span.node_id),
+      timeline_range: span.timeline_range,
+      intersected_timeline_range: span.intersected_timeline_range,
+      source_range: span.source_range,
+      available_range: span.available_range,
+      file_relative_source_range: span.file_relative_source_range,
+      active_media_reference_key: span.active_media_reference_key,
+      bundle_path: span.bundle_path,
+      media_digest: mediaDigest(document, span.bundle_path),
+      media_references: span.media_references,
+      markers: span.markers,
+      effects: span.effects,
+      diagnostics: span.diagnostics,
+    };
+  });
+}
+
+function rangeClock(range: OtioTimeRange, globalStart?: OtioRationalTime): {
+  readonly point: boolean;
+  readonly start_seconds: number | null;
+  readonly duration_seconds: number | null;
+  readonly end_seconds: number | null;
+  readonly start_timecode: string;
+  readonly end_timecode: string;
+} {
+  const startSeconds = secondsOf(range.start_time);
+  const durationSeconds = secondsOf(range.duration);
+  const endSeconds =
+    startSeconds === null || durationSeconds === null
+      ? null
+      : startSeconds + durationSeconds;
+  const endTime = {
+    value: range.start_time.value + range.duration.value * (range.start_time.rate / range.duration.rate),
+    rate: range.start_time.rate,
+  };
+  return {
+    point: range.duration.value === 0,
+    start_seconds: startSeconds,
+    duration_seconds: durationSeconds,
+    end_seconds: endSeconds,
+    start_timecode: displayTimecode(range.start_time, globalStart),
+    end_timecode: displayTimecode(endTime, globalStart),
+  };
+}
+
+function documentFor(
+  version: number,
+  loadRevision: (version: number | undefined) => Promise<RelicFetch>,
+  documents: Map<number, Promise<OtioParse>>
+): Promise<OtioParse> {
+  let pending = documents.get(version);
+  if (!pending) {
+    pending = loadRevision(version).then((fetched) =>
+      fetched.ok
+        ? parseOpenedOtio(fetched.opened)
+        : { ok: false as const, error: fetched.error }
+    );
+    documents.set(version, pending);
+  }
+  return pending;
+}
+
+function projectionExplanation(status: OtioCurrentProjection['status']): string {
+  switch (status) {
+    case 'same':
+      return 'The current revision still contains this range.';
+    case 'mapped':
+      return 'The source interval maps uniquely into the current revision.';
+    case 'partial':
+      return 'Only part of the source interval remains in the current revision. The mapped range is that overlap, not a clamp of the original.';
+    case 'changed':
+      return 'The current revision changed this region. No coordinate was guessed.';
+    case 'ambiguous':
+      return 'More than one current item matches, or the mapping is not invertible. Duplicate clips were not guessed.';
+    case 'missing':
+      return 'The marked item or interval is absent from the current revision. It was not clamped into a nearby range.';
+    case 'unresolvable':
+      return 'The current revision could not be read.';
+  }
+}
+
+async function resolveOtioComment(
+  comment: CommentRecord,
+  anchor: OtioAnchorV1,
+  loadRevision: (version: number | undefined) => Promise<RelicFetch>,
+  documents: Map<number, Promise<OtioParse>>
+): Promise<CommentRecord> {
+  const clock = rangeClock(anchor.range);
+  const base = {
+    relic_version: anchor.relic_version,
+    document_sha256: anchor.document_sha256,
+    snapshot: anchor.snapshot,
+    timeline_id: anchor.timeline_id,
+    track_id: anchor.track_id,
+    ...(anchor.item_id === undefined ? {} : { item_id: anchor.item_id }),
+    range: anchor.range,
+    point: clock.point,
+    start_seconds: clock.start_seconds,
+    duration_seconds: clock.duration_seconds,
+    end_seconds: clock.end_seconds,
+    start_timecode: clock.start_timecode,
+    end_timecode: clock.end_timecode,
+  };
+  const original = await documentFor(
+    anchor.relic_version,
+    loadRevision,
+    documents
+  );
+  if (!original.ok) {
+    return {
+      ...comment,
+      resolved: {
+        kind: 'otio',
+        status: 'unresolvable',
+        explanation: original.error,
+        timeline_path: [],
+        intersections: [],
+        current_projection: {
+          status: 'unresolvable',
+          current_version: null,
+          explanation:
+            'The original revision could not be read, so no current projection was attempted.',
+        },
+        ...base,
+      },
+    };
+  }
+
+  const document = original.document;
+  const spans = sourceSpansForOtioRange(
+    document,
+    anchor.timeline_id,
+    anchor.track_id,
+    anchor.range
+  );
+  const timelinePath = ancestry(
+    document,
+    anchor.track_id ?? anchor.timeline_id
+  );
+  const digestNote =
+    document.document_sha256 === anchor.document_sha256
+      ? ''
+      : ` Sealed digest ${anchor.document_sha256} does not match decrypted document ${document.document_sha256}.`;
+  const globalStart = document.global_start_times?.[anchor.timeline_id];
+  const displayed = rangeClock(anchor.range, globalStart);
+
+  const latest = await loadRevision(undefined);
+  let currentProjection: OtioCurrentProjection;
+  if (!latest.ok) {
+    currentProjection = {
+      status: 'unresolvable',
+      current_version: null,
+      explanation: latest.error,
+    };
+  } else if (latest.version === anchor.relic_version) {
+    currentProjection = {
+      status: 'same',
+      current_version: latest.version,
+      explanation: projectionExplanation('same'),
+      mapped_range: anchor.range,
+      mapped_track_id: anchor.track_id,
+      mapped_item_id: anchor.item_id,
+      mapped_start_seconds: displayed.start_seconds,
+      mapped_start_timecode: displayed.start_timecode,
+    };
+  } else {
+    const current = await documentFor(latest.version, loadRevision, documents);
+    if (!current.ok) {
+      currentProjection = {
+        status: 'unresolvable',
+        current_version: latest.currentVersion,
+        explanation: current.error,
+      };
+    } else {
+      const mapped = resolveOtioAnchor(anchor, document, current.document);
+      const safe =
+        mapped.status === 'same' ||
+        mapped.status === 'mapped' ||
+        mapped.status === 'partial';
+      const mappedClock =
+        safe && mapped.mapped_range
+          ? rangeClock(
+              mapped.mapped_range,
+              current.document.global_start_times?.[anchor.timeline_id]
+            )
+          : undefined;
+      currentProjection = {
+        status: mapped.status,
+        current_version: latest.currentVersion,
+        explanation: projectionExplanation(mapped.status),
+        ...(safe && mapped.mapped_range
+          ? {
+              mapped_range: mapped.mapped_range,
+              mapped_track_id: mapped.mapped_track_id,
+              mapped_item_id: mapped.mapped_item_id,
+              mapped_start_seconds: mappedClock?.start_seconds ?? null,
+              mapped_start_timecode: mappedClock?.start_timecode,
+            }
+          : {}),
+      };
+    }
+  }
+
+  return {
+    ...comment,
+    resolved: {
+      kind: 'otio',
+      status: 'resolved',
+      explanation:
+        `Original revision ${anchor.relic_version} on ${anchor.snapshot.timeline}` +
+        `${anchor.snapshot.track ? ` / ${anchor.snapshot.track}` : ''}.` +
+        digestNote,
+      timeline_path: timelinePath,
+      intersections: intersectionsFor(document, spans),
+      current_projection: currentProjection,
+      ...base,
+      start_timecode: displayed.start_timecode,
+      end_timecode: displayed.end_timecode,
+    },
+  };
+}
+
+
+
 /**
- * Resolve anchors on comments by fetching and decrypting the relic once.
+ * Resolve anchors against the revision each comment was made on.
+ *
+ * Historical reads post `{ version }` and decrypt format version 1. The
+ * latest server revision is learned from the mint response, never from local
+ * publish state. One failed revision does not blank every other comment.
  */
 export async function resolveAnchors(
   relicId: string,
@@ -765,64 +1287,42 @@ export async function resolveAnchors(
   }
 
   const hasAnyAnchor = comments.some((c) => c.readable && c.anchor !== null);
-
-  // If no comment carries an anchor, avoid fetching or decrypting the relic.
   if (!hasAnyAnchor) {
     return { comments, imageBlocks: [] };
   }
 
-  const fetchResult = await fetchAndDecryptRelic(relicId, deps);
+  const loads = new Map<string, Promise<RelicFetch>>();
+  const loadRevision = (version: number | undefined): Promise<RelicFetch> => {
+    const key = version === undefined ? 'latest' : String(version);
+    let pending = loads.get(key);
+    if (!pending) {
+      pending = fetchAndDecryptRelic(relicId, deps, version);
+      loads.set(key, pending);
+    }
+    return pending;
+  };
+  const documents = new Map<number, Promise<OtioParse>>();
+  const wanted = new Set<number | undefined>();
+  for (const comment of comments) {
+    if (!comment.readable || comment.anchor === null) continue;
+    if (comment.anchor.kind === 'otio') {
+      wanted.add(comment.anchor.relic_version);
+      wanted.add(undefined);
+    } else {
+      wanted.add(comment.version ?? undefined);
+    }
+  }
+  await Promise.all([...wanted].map((version) => loadRevision(version)));
+
   const updatedComments: CommentRecord[] = [];
   const imageBlocks: ResolvedImageBlock[] = [];
-
-  if (!fetchResult.ok) {
-    for (const comment of comments) {
-      if (!comment.readable || comment.anchor === null) {
-        updatedComments.push(comment);
-        continue;
-      }
-      updatedComments.push({
-        ...comment,
-        resolved: {
-          kind: comment.anchor.kind,
-          status: 'unresolvable',
-          explanation: fetchResult.error,
-        } as ResolvedAnchor,
-      });
-    }
-    return { comments: updatedComments, imageBlocks: [] };
-  }
-
-  const { opened } = fetchResult;
-  const entry = opened.envelope.entries[0];
-  const filename = entry?.filename ?? '';
-  const mimetype = entry?.mimetype ?? '';
-  const rendererClass: RendererClass = deriveRendererClass(
-    opened.content,
-    filename
-  );
-
-  const isImage =
-    rendererClass === 'image' ||
-    mimetype.startsWith('image/') ||
-    /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(filename);
-
-  const isAudio =
-    mimetype.startsWith('audio/') ||
-    /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(filename);
-
-  const isVideo =
-    mimetype.startsWith('video/') ||
-    /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(filename) ||
-    (rendererClass === 'media' && !isAudio);
-  const isPdf =
-    mimetype === 'application/pdf' ||
-    /\.pdf$/i.test(filename) ||
-    (opened.content.length >= 4 &&
-      opened.content[0] === 0x25 &&
-      opened.content[1] === 0x50 &&
-      opened.content[2] === 0x44 &&
-      opened.content[3] === 0x46);
+  let opened: OpenedRelic | undefined;
+  let filename = '';
+  let rendererClass: RendererClass = 'binary';
+  let isImage = false;
+  let isAudio = false;
+  let isVideo = false;
+  let isPdf = false;
 
   for (const comment of comments) {
     if (!comment.readable || comment.anchor === null) {
@@ -831,6 +1331,64 @@ export async function resolveAnchors(
     }
 
     const { anchor } = comment;
+    if (anchor.kind === 'otio') {
+      updatedComments.push(
+        await resolveOtioComment(comment, anchor, loadRevision, documents)
+      );
+      continue;
+    }
+    if (anchor.kind === 'unsupported') {
+      const futureOtio = anchor.declared.startsWith('otio-v');
+      updatedComments.push({
+        ...comment,
+        resolved: {
+          kind: 'unsupported',
+          status: 'unresolvable',
+          declared: anchor.declared,
+          explanation: futureOtio
+            ? `Unsupported OTIO anchor version "${anchor.declared}". A newer anchor version is not evidence the comment was tampered with.`
+            : `Unsupported anchor kind "${anchor.declared}".`,
+        },
+      });
+      continue;
+    }
+
+    const fetched = await loadRevision(comment.version ?? undefined);
+    if (!fetched.ok) {
+      updatedComments.push({
+        ...comment,
+        resolved: {
+          kind: anchor.kind,
+          status: 'unresolvable',
+          explanation: fetched.error,
+        } as ResolvedAnchor,
+      });
+      continue;
+    }
+    opened = fetched.opened;
+    const entry = opened.envelope.entries[0];
+    filename = entry?.filename ?? '';
+    const mimetype = entry?.mimetype ?? '';
+    rendererClass = deriveRendererClass(opened.content, filename);
+    isImage =
+      rendererClass === 'image' ||
+      mimetype.startsWith('image/') ||
+      /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(filename);
+    isAudio =
+      mimetype.startsWith('audio/') ||
+      /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(filename);
+    isVideo =
+      mimetype.startsWith('video/') ||
+      /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(filename) ||
+      (rendererClass === 'media' && !isAudio);
+    isPdf =
+      mimetype === 'application/pdf' ||
+      /\.pdf$/i.test(filename) ||
+      (opened.content.length >= 4 &&
+        opened.content[0] === 0x25 &&
+        opened.content[1] === 0x50 &&
+        opened.content[2] === 0x44 &&
+        opened.content[3] === 0x46);
 
     switch (anchor.kind) {
       case 'text':
