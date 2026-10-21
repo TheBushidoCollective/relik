@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readOtioDocument, type OtioAnchorResolution, type OtioAnchorV1 } from '@relic/format';
 import { otioAdapter, otioTargetLabel } from '../src/annotate-otio.ts';
 import { attachOtioController, otioControllerFor, type OtioUiController } from '../src/otio-bridge.ts';
-import { createOtioSelection, formatOtioTime, otioLanes, otioProjectionTarget } from '../src/otio-view.ts';
+import { createOtioSelection, formatOtioTime, otioLanes, otioProjectionTarget, otioScopeRange } from '../src/otio-view.ts';
 
 const range = (start: number, duration: number) => ({ start_time: { value: start, rate: 24 }, duration: { value: duration, rate: 24 } });
 const clip = (id: string, name: string) => ({
@@ -27,7 +27,7 @@ const document = readOtioDocument(JSON.stringify({
 const anchor = createOtioSelection(document, 'timeline', 'video-second', 1, range(12, 0));
 
 function resolution(status: OtioAnchorResolution['status']): OtioAnchorResolution {
-  return { status, original_anchor: anchor, mapped_range: range(24, 12), mapped_track_id: 'video-second', source_spans: [], diagnostics: [] };
+  return { status, original_anchor: anchor, mapped_ranges: [range(24, 12)], mapped_range: range(24, 12), mapped_timeline_id: 'timeline', mapped_track_id: 'video-second', source_spans: [], diagnostics: [] };
 }
 
 describe('OTIO track selection contract', () => {
@@ -64,6 +64,14 @@ describe('OTIO track selection contract', () => {
     expect(multi.item_id).toBeUndefined();
   });
 
+  test('whole-track selection uses exposed core windows rather than the composition duration', () => {
+    expect(otioScopeRange(document, 'timeline', 'plate-track')).toEqual(range(48, 24));
+    expect(otioScopeRange(document, 'timeline', 'video-second')).toEqual(range(0, 24));
+    expect(otioScopeRange(document, 'timeline', null)).toEqual(range(0, 72));
+    expect(otioScopeRange(document, 'timeline', 'missing-track')).toBeUndefined();
+    expect(otioScopeRange(document, 'another-timeline', 'plate-track')).toBeUndefined();
+  });
+
   test('global start affects the displayed timecode only', () => {
     expect(formatOtioTime({ value: 36, rate: 24 }, { value: 86400, rate: 24 })).toBe('01:00:01:12');
     expect(anchor.range.start_time.value).toBe(12);
@@ -84,12 +92,43 @@ describe('OTIO revision-bound mark placement', () => {
     }
   });
 
-  test('safe and partial mappings use the separate range and leave the original immutable', () => {
+  test('safe and partial mappings use separate current ranges and leave the original immutable', () => {
     for (const status of ['mapped', 'partial', 'same'] as const) {
-      expect(otioProjectionTarget(anchor, 2, document, 'timeline', resolution(status))?.range).toEqual(range(24, 12));
+      expect(otioProjectionTarget(anchor, 2, document, 'timeline', resolution(status))?.ranges).toEqual([range(24, 12)]);
     }
     expect(anchor.range).toEqual(range(12, 0));
     expect(anchor.relic_version).toBe(1);
+  });
+
+  test('disjoint current pieces are retained without filling their gap', () => {
+    const pieces = [range(24, 12), range(60, 6)];
+    const projected = { ...resolution('partial'), mapped_ranges: pieces };
+    delete projected.mapped_range;
+    const target = otioProjectionTarget(anchor, 2, document, 'timeline', projected);
+    expect(target?.ranges).toBe(pieces);
+    expect(target?.track).toBe('video-second');
+    expect(anchor.range).toEqual(range(12, 0));
+  });
+
+  test('an explicitly empty projection never falls back to the old contiguous range', () => {
+    const projected = { ...resolution('partial'), mapped_ranges: [] };
+    expect(otioProjectionTarget(anchor, 2, document, 'timeline', projected)).toBeUndefined();
+  });
+
+  test('legacy contiguous output is used only when mapped_ranges is omitted', () => {
+    const projected = { ...resolution('mapped') };
+    delete projected.mapped_ranges;
+    expect(otioProjectionTarget(anchor, 2, document, 'timeline', projected)?.ranges).toEqual([range(24, 12)]);
+  });
+
+  test('placement requires the core mapped timeline identity, including composition projections', () => {
+    const missingTimeline = { ...resolution('mapped') };
+    delete missingTimeline.mapped_timeline_id;
+    expect(otioProjectionTarget(anchor, 2, document, 'timeline', missingTimeline)).toBeUndefined();
+    const wrongTimeline = { ...resolution('mapped'), mapped_timeline_id: 'another-timeline' };
+    expect(otioProjectionTarget(anchor, 2, document, 'timeline', wrongTimeline)).toBeUndefined();
+    const composition = { ...resolution('mapped'), mapped_track_id: null };
+    expect(otioProjectionTarget(anchor, 2, document, 'timeline', composition)?.track).toBeNull();
   });
 });
 

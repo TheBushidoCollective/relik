@@ -3996,6 +3996,10 @@ canvas.relic-page {
 .otio-preview-status p { max-width: 38rem; margin: 0; font: .75rem/1.6 var(--mono); color: #d2b49f; overflow-wrap: anywhere; }
 .otio-preview-status .otio-buffering { color: #e6e9e7; }
 .otio-preview-base { max-width: 30rem; padding: .5rem .7rem; color: #fff; background: var(--patina); border: 1px solid var(--patina); font-size: .75rem; cursor: pointer; }
+.otio-preview-scope { z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .5rem; }
+.otio-preview-block { padding: .15rem .3rem; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.otio-raw { margin-top: .6rem; min-width: 0; }
+.otio-raw summary { color: var(--ink-soft); font: .62rem/1.6 var(--mono); cursor: pointer; }
 .otio-inspector { background: var(--surface); min-width: 0; border-left: 1px solid var(--rule); }
 .otio-inspector-tabs { display: flex; border-bottom: 1px solid var(--rule); }
 .otio-inspector-tab { flex: 1; min-width: 0; padding: .6rem .4rem; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--ink-soft); font: .7rem var(--sans); cursor: pointer; }
@@ -4037,10 +4041,10 @@ canvas.relic-page {
 .otio-track-name { flex: 1; min-width: 0; line-height: 1.35; }
 .otio-track-name strong { display: block; font: 500 .65rem var(--sans); overflow-wrap: anywhere; }
 .otio-track-name small { display: block; color: var(--ink-soft); font: .48rem var(--mono); overflow-wrap: anywhere; }
-.otio-track-row[data-depth="1"] .otio-track-label { padding-left: .9rem; background: var(--ground); }
-.otio-track-row[data-depth="2"] .otio-track-label { padding-left: 1.2rem; background: var(--ground); }
+.otio-track-row:not([data-depth="0"]) .otio-track-label { padding-left: calc(.45rem + min(var(--otio-depth, 0), 4) * .35rem); background: var(--ground); }
 .otio-track-toggle, .otio-disclosure { flex: 0 0 auto; border: 0; background: transparent; color: var(--ink-soft); padding: .2rem; font: .53rem var(--sans); cursor: pointer; }
 .otio-track-toggle[aria-pressed="true"] { text-decoration: line-through; color: var(--oxide); }
+.otio-track-solo[aria-pressed="true"] { text-decoration: none; color: var(--patina-ink); background: var(--diff-added); }
 .otio-disclosure svg { width: 11px; height: 11px; display: block; fill: none; stroke: currentColor; }
 .otio-disclosure[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .otio-track-rail { position: relative; min-height: 54px; min-width: 0; cursor: crosshair; user-select: none; touch-action: pan-y; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--rule) calc(10% - 1px), var(--rule) 10%); }
@@ -4051,9 +4055,12 @@ canvas.relic-page {
 .otio-item[data-enabled="false"], .otio-track-row[data-enabled="false"] .otio-item { opacity: .5; }
 .otio-item.is-gap { border-style: dashed; color: var(--ink-soft); background: repeating-linear-gradient(135deg, transparent 0 4px, var(--rule) 4px 5px); }
 .otio-item.is-compound { border-top-color: var(--patina); }
-.otio-item.is-transition { z-index: 2; padding: 0; font-size: 0; background: linear-gradient(135deg, transparent 48%, var(--patina) 49%, var(--patina) 51%, transparent 52%); pointer-events: none; }
+.otio-item.is-transition { z-index: 2; padding: 0; font-size: 0; background: linear-gradient(135deg, transparent 48%, var(--patina) 49%, var(--patina) 51%, transparent 52%); }
 .otio-item.has-diagnostic { border-color: var(--oxide); color: var(--oxide); }
-.otio-item.is-unplaced { position: relative; display: block; left: auto; top: auto; bottom: auto; width: auto; margin: .2rem; border-style: dashed; color: var(--oxide); white-space: normal; }
+.otio-item.is-unplaced, .otio-item.is-trimmed-out { position: relative; display: block; left: auto; top: auto; bottom: auto; width: auto; margin: .2rem; border-style: dashed; color: var(--oxide); white-space: normal; }
+.otio-item.is-trimmed-out { color: var(--ink-soft); opacity: .6; }
+.otio-timeline-marker { position: absolute; top: 0; height: 5px; min-width: 7px; z-index: 4; padding: 0; border: 1px solid var(--ink); border-radius: 0; background: var(--otio-marker-color, var(--patina)); cursor: pointer; }
+.otio-timeline-marker.is-point { top: 1px; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); }
 .otio-selection { position: absolute; top: 1px; bottom: 1px; z-index: 3; min-width: 4px; border: 2px dashed var(--patina); background: color-mix(in srgb, var(--patina) 22%, transparent); pointer-events: none; }
 .otio-selection.is-point { width: 4px; transform: translateX(-50%); }
 .otio-comment-mark { position: absolute; bottom: 1px; height: 14px; min-width: 5px; z-index: 4; padding: 0; border: 1px solid var(--patina); border-left-width: 2px; border-right-width: 2px; border-radius: 0; background: color-mix(in srgb, var(--patina) 35%, var(--surface)); cursor: pointer; }
