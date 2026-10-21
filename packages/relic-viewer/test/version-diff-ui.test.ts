@@ -4,6 +4,7 @@ import {
   encodeFragment,
   encryptRelic,
   generateKey,
+  type OtioAnchorV1,
 } from '@relic/format';
 import { commentCipher } from '../src/comments.ts';
 import { MAX_DIFF_BYTES } from '../src/diff.ts';
@@ -1073,6 +1074,22 @@ describe('comment version scoping', () => {
 
   const RELIC_ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaa';
 
+  function otioAnchor(relicVersion: number): OtioAnchorV1 {
+    return {
+      kind: 'otio',
+      v: 1,
+      relic_version: relicVersion,
+      document_sha256: 'ab'.repeat(32),
+      timeline_id: 'timeline',
+      track_id: null,
+      range: {
+        start_time: { value: 12, rate: 24 },
+        duration: { value: 0, rate: 24 },
+      },
+      snapshot: { timeline: 'Timeline', track: null, item: null },
+    };
+  }
+
   async function createCommentFixture() {
     const key = generateKey();
     const shareUrl = `https://relik.example/${RELIC_ID}#${encodeFragment(key)}`;
@@ -1279,6 +1296,63 @@ describe('comment version scoping', () => {
     }) as unknown as ElementStub;
     const countSpan = withClass(bar, 'action-count')[0];
     expect(countSpan?.textContent).toBe(String(taskbarCount));
+  });
+
+  test('OTIO feedback binds sealed anchors to service-stamped revisions', async () => {
+    const { key, shareUrl, makeDeps } = await createCommentFixture();
+    const cipher = commentCipher(await deriveCommentKey(key));
+    const records = [
+      {
+        comment_id: 'otio-matching',
+        author: 'alice@example.com',
+        created_at: '2026-09-16T10:00:00.000Z',
+        ciphertext: await cipher.seal({
+          body: 'matching historical OTIO feedback',
+          display_name: null,
+          anchor: otioAnchor(1),
+        }),
+        version: 1,
+      },
+      {
+        comment_id: 'otio-mismatched',
+        author: 'bob@example.com',
+        created_at: '2026-09-16T11:00:00.000Z',
+        ciphertext: await cipher.seal({
+          body: 'mismatched OTIO feedback',
+          display_name: null,
+          anchor: otioAnchor(1),
+        }),
+        version: 2,
+      },
+    ];
+
+    const v2Thread = buildThread(
+      view('code', 2, undefined, 2, shareUrl),
+      RELIC_ID,
+      makeDeps(records),
+      () => {}
+    );
+    await v2Thread.ready;
+    const v2Element = v2Thread.element as unknown as ElementStub;
+    expect(textOf(v2Element)).toContain('matching historical OTIO feedback');
+    expect(textOf(v2Element)).toContain('mismatched OTIO feedback');
+    expect(withClass(v2Element, 'otio-view-original')).toHaveLength(1);
+    expect(
+      withClass(v2Element, 'otio-feedback-projection').some(
+        (context) => context.dataset['projectionStatus'] === 'unresolvable'
+      )
+    ).toBe(true);
+
+    const v1Thread = buildThread(
+      view('code', 1, undefined, 2, shareUrl),
+      RELIC_ID,
+      makeDeps(records),
+      () => {}
+    );
+    await v1Thread.ready;
+    const v1Element = v1Thread.element as unknown as ElementStub;
+    expect(textOf(v1Element)).toContain('matching historical OTIO feedback');
+    expect(textOf(v1Element)).not.toContain('mismatched OTIO feedback');
   });
 
   test('version scoping: a reply whose target is filtered out is not shown as an orphan', async () => {

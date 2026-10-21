@@ -411,12 +411,9 @@ function diagnostic(
   message: string,
   nodeId?: string
 ): OtioDiagnostic {
-  return {
-    severity,
-    code,
-    message,
-    target: nodeId ? { node_id: nodeId } : undefined,
-  };
+  return nodeId === undefined
+    ? { severity, code, message }
+    : { severity, code, message, target: { node_id: nodeId } };
 }
 
 function videoTree(
@@ -974,7 +971,7 @@ export function createOtioPlayback(
           entry.sourceNode = source;
           entry.gainNode = clip;
         } catch {
-          entry.gainNode = undefined;
+          // Keep the element-volume fallback when the media graph is unavailable.
         }
       }
       element.addEventListener('error', () => {

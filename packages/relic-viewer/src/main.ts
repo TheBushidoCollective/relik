@@ -5026,6 +5026,37 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     },
   };
 }
+
+function stampedCommentVersion(entry: CommentEntry): number | null {
+  const version = entry.version;
+  return typeof version === 'number' &&
+    Number.isSafeInteger(version) &&
+    version > 0
+    ? version
+    : null;
+}
+
+/**
+ * OTIO coordinates are sealed inside the body, while the service stamps the
+ * row's revision. They must agree before either one can place or fetch media.
+ */
+function sealedOtioAnchorMatchesEntryVersion(entry: CommentEntry): boolean {
+  if (entry.kind !== 'open' || entry.anchor?.kind !== 'otio') return false;
+  const version = stampedCommentVersion(entry);
+  return version !== null && entry.anchor.relic_version === version;
+}
+
+function visibleOtioEntryAtVersion(
+  entry: CommentEntry,
+  viewedVersion: number
+): boolean {
+  const version = stampedCommentVersion(entry);
+  if (version === null) return viewedVersion === 1;
+  return sealedOtioAnchorMatchesEntryVersion(entry)
+    ? version <= viewedVersion
+    : version === viewedVersion;
+}
+
 /**
  * The thread, in the service-origin chrome.
  *
@@ -5140,20 +5171,37 @@ export function buildThread(
   const projectionAttempts = new Set<string>();
   const projectionFailures = new Set<string>();
 
-  const addOtioFeedbackContext = (row: HTMLElement, entry: CommentEntry): void => {
+  const addOtioFeedbackContext = (
+    row: HTMLElement,
+    entry: CommentEntry
+  ): void => {
     if (entry.kind !== 'open' || entry.anchor?.kind !== 'otio') return;
     const anchor = entry.anchor;
-    if (anchor.relic_version === view.version) return;
-    const projection = host === undefined ? undefined :
-      otioControllerFor(host)?.projection(anchor);
     const context = document.createElement('div');
     context.className = 'otio-feedback-projection';
-    context.dataset['projectionStatus'] = projection?.status ??
-      (projectionFailures.has(entry.id) ? 'unavailable' : 'loading');
     const label = document.createElement('span');
+    if (!sealedOtioAnchorMatchesEntryVersion(entry)) {
+      context.dataset['projectionStatus'] = 'unresolvable';
+      label.textContent =
+        'This OTIO target is unresolvable because its sealed revision is not ' +
+        'bound to the version recorded with the comment.';
+      context.append(label);
+      row.appendChild(context);
+      return;
+    }
+    if (anchor.relic_version === view.version) return;
+    const projection =
+      host === undefined
+        ? undefined
+        : otioControllerFor(host)?.projection(anchor);
+    context.dataset['projectionStatus'] =
+      projection?.status ??
+      (projectionFailures.has(entry.id) ? 'unavailable' : 'loading');
     label.textContent = `Earlier feedback · v${anchor.relic_version} → v${view.version} · ${
-      projection?.status ?? (projectionFailures.has(entry.id)
-        ? 'Original context unavailable' : 'Loading original version')
+      projection?.status ??
+      (projectionFailures.has(entry.id)
+        ? 'Original context unavailable'
+        : 'Loading original version')
     }`;
     const original = document.createElement('button');
     original.type = 'button';
@@ -5173,8 +5221,15 @@ export function buildThread(
     if (controller === undefined) return;
     let changed = false;
     await Promise.all(entries.map(async (entry) => {
-      if (entry.kind !== 'open' || entry.anchor?.kind !== 'otio' ||
-          entry.anchor.relic_version === view.version || projectionAttempts.has(entry.id)) return;
+      if (
+        entry.kind !== 'open' ||
+        entry.anchor?.kind !== 'otio' ||
+        !sealedOtioAnchorMatchesEntryVersion(entry) ||
+        entry.anchor.relic_version === view.version ||
+        projectionAttempts.has(entry.id)
+      ) {
+        return;
+      }
       projectionAttempts.add(entry.id);
       const anchor = entry.anchor;
       try {
@@ -5281,6 +5336,12 @@ export function buildThread(
     unplaceable.clear();
     for (const entry of entries) {
       if (entry.kind !== 'open' || entry.anchor === null) continue;
+      if (
+        entry.anchor.kind === 'otio' &&
+        !sealedOtioAnchorMatchesEntryVersion(entry)
+      ) {
+        continue;
+      }
       number += 1;
       if (entry.anchor.kind === 'text') {
         wrapTextQuote(host, entry.anchor.quote, entry.id);
@@ -6164,6 +6225,12 @@ export function buildThread(
     if (entry === undefined || entry.kind !== 'open' || entry.anchor === null) {
       return;
     }
+    if (
+      entry.anchor.kind === 'otio' &&
+      !sealedOtioAnchorMatchesEntryVersion(entry)
+    ) {
+      return;
+    }
     const surface = anchorSurfaceFor(host);
     if (surface === undefined) return;
     const adapter = adapterFor(entry.anchor, surface);
@@ -6202,10 +6269,11 @@ export function buildThread(
     const isCurrentVersion = view.version === view.currentVersion;
     const hasHistory = view.currentVersion > 1;
     const filteredEntries = state.entries.filter((entry) => {
-      // OTIO's authenticated revision is authoritative. Earlier feedback stays
-      // visible with a separately resolved projection, never guessed positions.
+      // OTIO placement is eligible only when its sealed target is bound to the
+      // service-stamped revision. A mismatch remains on that service revision
+      // as unresolvable body text, never as a claimed historical coordinate.
       if (entry.kind === 'open' && entry.anchor?.kind === 'otio') {
-        return entry.anchor.relic_version <= viewedVersion;
+        return visibleOtioEntryAtVersion(entry, viewedVersion);
       }
       // 1. When a relic has no version history (currentVersion <= 1), there is
       // no version dimension for a reader to navigate. Every comment shows
