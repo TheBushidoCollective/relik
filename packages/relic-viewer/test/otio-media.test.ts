@@ -1,15 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import type {
-  OtioMediaReference,
-  OtioRationalTime,
-  OtioZipEntryInfo,
-  OtioZipIndex,
-} from '@relic/format';
+import type { OtioZipEntryInfo, OtioZipIndex } from '@relic/format';
 import {
   createOtioMediaResolver,
-  DEFAULT_MAX_DECOMPRESSED_BYTES,
   inferMediaMimeType,
-  resolveImageSequenceFramePath,
   sanitizeBundlePath,
 } from '../src/otio-media.ts';
 
@@ -104,60 +97,6 @@ describe('otio-media', () => {
     });
   });
 
-  describe('resolveImageSequenceFramePath', () => {
-    test('formats zero-padded frame numbers accurately', () => {
-      const ref: OtioMediaReference = {
-        schema: 'ImageSequenceReference.1',
-        target_url_base: 'media/seq/',
-        name_prefix: 'shot_',
-        name_suffix: '.png',
-        start_frame: 1001,
-        frame_step: 1,
-        rate: 24,
-        frame_zero_padding: 4,
-      };
-
-      // 0 seconds -> frame 1001
-      const t0: OtioRationalTime = { value: 0, rate: 24 };
-      expect(resolveImageSequenceFramePath(ref, t0)).toBe('media/seq/shot_1001.png');
-
-      // 1 second (24 frames) -> frame 1025
-      const t1: OtioRationalTime = { value: 24, rate: 24 };
-      expect(resolveImageSequenceFramePath(ref, t1)).toBe('media/seq/shot_1025.png');
-
-      // 0.5 seconds (12 frames) with frame_step=2
-      const stepRef: OtioMediaReference = {
-        ...ref,
-        frame_step: 2,
-      };
-      const tMid: OtioRationalTime = { value: 12, rate: 24 };
-      expect(resolveImageSequenceFramePath(stepRef, tMid)).toBe('media/seq/shot_1025.png');
-    });
-
-    test('handles unpadded frames', () => {
-      const ref: OtioMediaReference = {
-        schema: 'ImageSequenceReference',
-        target_url_base: 'frames/',
-        name_prefix: 'f',
-        name_suffix: '.jpg',
-        start_frame: 1,
-        frame_step: 1,
-        rate: 30,
-        frame_zero_padding: 0,
-      };
-
-      const t: OtioRationalTime = { value: 15, rate: 30 }; // 0.5s -> frame 15, total = 1 + 15 = 16
-      expect(resolveImageSequenceFramePath(ref, t)).toBe('frames/f16.jpg');
-    });
-
-    test('returns null for non-image-sequence schema', () => {
-      const ref: OtioMediaReference = {
-        schema: 'ExternalReference.1',
-        target_url: 'media/video.mp4',
-      };
-      expect(resolveImageSequenceFramePath(ref, { value: 0, rate: 24 })).toBeNull();
-    });
-  });
 
   describe('createOtioMediaResolver', () => {
     function makeMockZipIndex(entriesMap: Record<string, { size: number; bytes: Uint8Array }>): OtioZipIndex {
@@ -232,6 +171,85 @@ describe('otio-media', () => {
       resolver.dispose();
       expect(resolver.hasEntry('media/img.png')).toBe(false);
       expect(await resolver.resolveBlob('media/img.png')).toBeNull();
+    });
+
+    test('shares one inflation across aliases and concurrent callers', async () => {
+      let reads = 0;
+      const bytes = new Uint8Array([1, 2, 3, 4]);
+      const indexed = makeMockZipIndex({
+        'media/clip.mp4': { size: bytes.length, bytes },
+      });
+      const zip: OtioZipIndex = {
+        ...indexed,
+        readEntry: async (name: string) => {
+          reads += 1;
+          await Promise.resolve();
+          return indexed.readEntry(name);
+        },
+      };
+      const resolver = createOtioMediaResolver(zip);
+      const [first, second] = await Promise.all([
+        resolver.resolveBlob('media/clip.mp4'),
+        resolver.resolveBlob('clip.mp4'),
+        resolver.resolveBlob('media/./clip.mp4'),
+      ]);
+      expect(reads).toBe(1);
+      expect(first).toBe(second);
+      expect(resolver.getDecompressedBytes()).toBe(bytes.length);
+      resolver.dispose();
+    });
+
+    test('does not inflate a failed entry again', async () => {
+      let reads = 0;
+      const indexed = makeMockZipIndex({
+        'media/bad.mp4': { size: 4, bytes: new Uint8Array(4) },
+      });
+      const zip: OtioZipIndex = {
+        ...indexed,
+        readEntry: async () => {
+          reads += 1;
+          throw new Error('corrupt entry');
+        },
+      };
+      const resolver = createOtioMediaResolver(zip);
+      await expect(resolver.resolveBlob('media/bad.mp4')).rejects.toThrow(
+        'corrupt entry'
+      );
+      await expect(resolver.resolveBlob('media/bad.mp4')).rejects.toThrow(
+        'corrupt entry'
+      );
+      expect(reads).toBe(1);
+      resolver.dispose();
+    });
+
+    test('reserves bytes before a second entry can pass the cap', async () => {
+      let reads = 0;
+      const firstBytes = new Uint8Array(800);
+      const secondBytes = new Uint8Array(800);
+      const indexed = makeMockZipIndex({
+        'media/a.mp4': { size: firstBytes.length, bytes: firstBytes },
+        'media/b.mp4': { size: secondBytes.length, bytes: secondBytes },
+      });
+      const zip: OtioZipIndex = {
+        ...indexed,
+        readEntry: async (name: string) => {
+          reads += 1;
+          await Promise.resolve();
+          return indexed.readEntry(name);
+        },
+      };
+      const resolver = createOtioMediaResolver(zip, {
+        maxDecompressedBytes: 1000,
+      });
+      const results = await Promise.allSettled([
+        resolver.resolveBlob('media/a.mp4'),
+        resolver.resolveBlob('media/b.mp4'),
+      ]);
+      const fulfilled = results.filter((result) => result.status === 'fulfilled');
+      expect(fulfilled).toHaveLength(1);
+      expect(reads).toBe(1);
+      expect(resolver.getDecompressedBytes()).toBe(800);
+      resolver.dispose();
     });
   });
 });

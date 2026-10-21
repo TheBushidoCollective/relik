@@ -1,26 +1,16 @@
 /**
- * OpenTimelineIO native composition and playback controller for Relik viewer.
+ * OpenTimelineIO playback for the Relik viewer.
  *
- * Requirements:
- * - Driven solely by shared evaluator (evaluateOtioAt, OtioDocumentV1).
- * - Synchronized transport: play(), pause(), seek(time), subscribe().
- * - Frame / source offset accuracy with rational time arithmetic.
- * - Multi-track video composition in stack painter order (first child at bottom).
- * - Offscreen intermediate track surfaces with premultiplied weighted blend for SMPTE_Dissolve.
- * - Alpha composited over opaque black.
- * - Video elements are muted to prevent accidental embedded audio emissions.
- * - Authored audio tracks sum independently via Web Audio API, with per-track gain/mute/solo.
- * - FreezeFrame & LinearTimeWarp handling; explicit unsupported-browser refusal for reverse playback.
- * - ImageSequenceReference support with start_frame, frame_step, rate, padding, and error/hold/black policies.
- * - Bounded memory & resource lifecycle: revokes Object URLs, stops audio, cleans up listeners & rAF on dispose.
+ * The shared evaluator owns placement, sequence paths, and sampling. This
+ * controller owns decoders, the composition tree, the transport clock, and
+ * resource teardown. It does not dispose an injected media resolver.
  */
 
 import type {
-  OtioAudioContribution,
   OtioDiagnostic,
   OtioDocumentV1,
   OtioEffect,
-  OtioMediaReference,
+  OtioEvaluationResult,
   OtioNode,
   OtioRationalTime,
   OtioVideoContribution,
@@ -29,16 +19,15 @@ import {
   addRationalTimes,
   compareRationalTimes,
   evaluateOtioAt,
-  rangeEndTime,
   rescaleTime,
-  secondsToTime,
   timeToSeconds,
 } from '@relic/format';
-import {
-  inferMediaMimeType,
-  type OtioMediaResolver,
-  resolveImageSequenceFramePath,
-} from './otio-media.ts';
+import { inferMediaMimeType, type OtioMediaResolver } from './otio-media.ts';
+
+export const OTIO_MAX_IMAGE_EDGE = 4096;
+export const OTIO_MAX_IMAGE_PIXELS = 4096 * 4096;
+export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
+const HAVE_CURRENT_DATA = 2;
 
 export interface OtioTrackState {
   readonly id: string;
@@ -57,6 +46,8 @@ export interface OtioPlaybackState {
   readonly rate: number;
   readonly diagnostics: readonly OtioDiagnostic[];
   readonly tracks: Readonly<Record<string, OtioTrackState>>;
+  readonly baseMediaPreviewAllowed: boolean;
+  readonly previewBlocked: boolean;
 }
 
 export type OtioPlaybackListener = (state: OtioPlaybackState) => void;
@@ -67,7 +58,9 @@ export interface CreateOtioPlaybackOptions {
   readonly canvas: HTMLCanvasElement;
   readonly resolveMedia:
     | OtioMediaResolver
-    | ((bundlePath: string) => Promise<string | Blob | null> | string | Blob | null);
+    | ((
+        bundlePath: string
+      ) => Promise<string | Blob | null> | string | Blob | null);
   readonly audioContext?: AudioContext;
 }
 
@@ -80,96 +73,419 @@ export interface OtioPlaybackController {
   setTrackVisibility(trackId: string, visible: boolean): void;
   setTrackMute(trackId: string, muted: boolean): void;
   setTrackSolo(trackId: string, solo: boolean): void;
+  setBaseMediaPreviewAllowed(allowed: boolean): void;
   dispose(): void;
+}
+
+export type OtioVideoCompositionTree =
+  | {
+      readonly kind: 'stack';
+      readonly node_id: string;
+      readonly ancestry: readonly string[];
+      readonly children: readonly OtioVideoCompositionTree[];
+    }
+  | {
+      readonly kind: 'track';
+      readonly node_id: string;
+      readonly ancestry: readonly string[];
+      readonly transition_id?: string;
+      readonly branches: readonly {
+        readonly weight: number;
+        readonly child: OtioVideoCompositionTree | null;
+      }[];
+    }
+  | {
+      readonly kind: 'leaf';
+      readonly contribution_index: number;
+    };
+
+export type OtioPreparedLeaf =
+  | {
+      readonly kind: 'image';
+      readonly source: CanvasImageSource;
+      readonly alpha: number;
+    }
+  | { readonly kind: 'black' }
+  | { readonly kind: 'empty' };
+
+type FidelityKind = 'ok' | 'freeze' | 'effect' | 'rate';
+
+interface Fidelity {
+  readonly kind: FidelityKind;
+  readonly rate: number;
+  readonly diagnostic: OtioDiagnostic | null;
 }
 
 interface LoadedVideo {
   readonly element: HTMLVideoElement;
-  readonly url: string;
-  ready: boolean;
+  readonly key: string;
+  readonly path: string;
 }
 
 interface LoadedAudio {
   readonly element: HTMLAudioElement;
-  readonly url: string;
+  readonly key: string;
+  readonly path: string;
+  readonly trackId: string;
   sourceNode?: MediaElementAudioSourceNode;
   gainNode?: GainNode;
-  ready: boolean;
+  failed: boolean;
 }
 
 interface LoadedImage {
   readonly element: HTMLImageElement;
-  readonly url: string;
-  ready: boolean;
+  readonly path: string;
+  readonly pixels: number;
 }
 
-/**
- * Determine the timeline's editorial duration and nominal rate.
- */
-function computeTimelineDuration(
-  doc: OtioDocumentV1,
-  timelineId: string
-): { duration: OtioRationalTime; rate: number } {
-  const timelineNode = doc.nodes[timelineId];
-  const rate =
-    timelineNode?.global_start_time?.rate ??
-    timelineNode?.source_range?.duration.rate ??
-    24;
+interface ClockAnchor {
+  readonly wallMs: number;
+  readonly time: OtioRationalTime;
+}
 
-  if (timelineNode?.source_range?.duration && timelineNode.source_range.duration.value > 0) {
+export function decodedImageAllowed(width: number, height: number): boolean {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return false;
+  if (width <= 0 || height <= 0) return false;
+  if (width > OTIO_MAX_IMAGE_EDGE || height > OTIO_MAX_IMAGE_EDGE) return false;
+  if (width * height > OTIO_MAX_IMAGE_PIXELS) return false;
+  return true;
+}
+
+export class ImageFrameCache {
+  private readonly entries = new Map<
+    string,
+    { pixels: number; release: () => void }
+  >();
+  private readonly pinned = new Set<string>();
+  private pixels = 0;
+
+  constructor(private readonly budget: number) {}
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  get retainedPixels(): number {
+    return this.pixels;
+  }
+
+  clearPins(): void {
+    this.pinned.clear();
+  }
+
+  pin(key: string): void {
+    this.pinned.add(key);
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+  }
+
+  put(key: string, pixels: number, release: () => void): boolean {
+    if (!Number.isFinite(pixels) || pixels <= 0 || pixels > this.budget) {
+      release();
+      return false;
+    }
+    const existing = this.entries.get(key);
+    if (existing) {
+      this.pixels -= existing.pixels;
+      existing.release();
+      this.entries.delete(key);
+    }
+    this.entries.set(key, { pixels, release });
+    this.pixels += pixels;
+    this.pinned.add(key);
+    this.evict();
+    return this.entries.has(key);
+  }
+
+  evict(): void {
+    for (const [key, entry] of this.entries) {
+      if (this.pixels <= this.budget) break;
+      if (this.pinned.has(key)) continue;
+      this.pixels -= entry.pixels;
+      entry.release();
+      this.entries.delete(key);
+    }
+  }
+
+  releaseAll(): void {
+    for (const entry of this.entries.values()) entry.release();
+    this.entries.clear();
+    this.pinned.clear();
+    this.pixels = 0;
+  }
+}
+
+export function renderOtioVideoTree(
+  output: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  tree: OtioVideoCompositionTree | null,
+  leaves: readonly (OtioPreparedLeaf | null)[],
+  checkout: () => HTMLCanvasElement,
+  hidden?: (nodeId: string, ancestry: readonly string[]) => boolean
+): void {
+  output.globalCompositeOperation = 'source-over';
+  output.globalAlpha = 1;
+  output.fillStyle = '#000000';
+  output.fillRect(0, 0, width, height);
+  if (!tree) return;
+  const root = paintNode(tree, width, height, leaves, checkout, hidden);
+  if (!root) return;
+  output.globalCompositeOperation = 'source-over';
+  output.globalAlpha = 1;
+  output.drawImage(root, 0, 0, width, height);
+}
+
+function paintNode(
+  node: OtioVideoCompositionTree,
+  width: number,
+  height: number,
+  leaves: readonly (OtioPreparedLeaf | null)[],
+  checkout: () => HTMLCanvasElement,
+  hidden?: (nodeId: string, ancestry: readonly string[]) => boolean
+): HTMLCanvasElement | null {
+  if (node.kind !== 'leaf' && hidden?.(node.node_id, node.ancestry)) {
+    return null;
+  }
+  if (node.kind === 'leaf') {
+    const leaf = leaves[node.contribution_index] ?? null;
+    if (!leaf || leaf.kind === 'empty') return null;
+    const surface = checkout();
+    const ctx = surface.getContext('2d');
+    if (!ctx) return null;
+    ctx.clearRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+    if (leaf.kind === 'black') {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, width, height);
+    } else {
+      ctx.globalAlpha = clamp01(leaf.alpha);
+      ctx.drawImage(leaf.source, 0, 0, width, height);
+    }
+    ctx.globalAlpha = 1;
+    return surface;
+  }
+
+  const surface = checkout();
+  const ctx = surface.getContext('2d');
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, width, height);
+  ctx.globalAlpha = 1;
+  if (node.kind === 'stack') {
+    ctx.globalCompositeOperation = 'source-over';
+    for (const child of node.children) {
+      const painted = paintNode(
+        child,
+        width,
+        height,
+        leaves,
+        checkout,
+        hidden
+      );
+      if (!painted) continue;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.drawImage(painted, 0, 0, width, height);
+    }
+    return surface;
+  }
+
+  for (const branch of node.branches) {
+    if (!branch.child || !(branch.weight > 0)) continue;
+    const painted = paintNode(
+      branch.child,
+      width,
+      height,
+      leaves,
+      checkout,
+      hidden
+    );
+    if (!painted) continue;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = clamp01(branch.weight);
+    ctx.drawImage(painted, 0, 0, width, height);
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  return surface;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function schemaBase(schema: string): string {
+  return schema.split('.')[0] ?? schema;
+}
+
+function isFreeze(effect: OtioEffect): boolean {
+  return (
+    schemaBase(effect.schema) === 'FreezeFrame' ||
+    effect.effect_name === 'FreezeFrame'
+  );
+}
+
+function isLinear(effect: OtioEffect): boolean {
+  return (
+    schemaBase(effect.schema) === 'LinearTimeWarp' ||
+    effect.effect_name === 'LinearTimeWarp'
+  );
+}
+
+function isDissolve(type: string | undefined): boolean {
+  return type === 'SMPTE_Dissolve';
+}
+
+function effectFidelity(
+  effects: readonly OtioEffect[],
+  nodeId: string
+): Fidelity {
+  let rate = 1;
+  let freeze = false;
+  for (const effect of effects) {
+    if (!effect.enabled) continue;
+    if (isFreeze(effect)) {
+      freeze = true;
+      continue;
+    }
+    if (isLinear(effect)) {
+      const scalar = effect.time_scalar;
+      if (scalar === undefined || !Number.isFinite(scalar) || scalar < 0) {
+        return {
+          kind: 'rate',
+          rate: 1,
+          diagnostic: diagnostic(
+            'error',
+            'unsupported-browser',
+            `Reverse playback is not supported by this decoder` +
+              ` (time_scalar ${String(scalar)})`,
+            nodeId
+          ),
+        };
+      }
+      if (scalar === 0) {
+        freeze = true;
+        continue;
+      }
+      rate *= scalar;
+      continue;
+    }
     return {
-      duration: timelineNode.source_range.duration,
-      rate: timelineNode.source_range.duration.rate,
+      kind: 'effect',
+      rate: 1,
+      diagnostic: diagnostic(
+        'warning',
+        'unsupported-effect',
+        `Unsupported effect: ${effect.name || effect.effect_name || effect.schema}`,
+        nodeId
+      ),
     };
   }
-
-  // Calculate max extent of child tracks
-  let maxEndTime: OtioRationalTime = { value: 0, rate };
-
-  function inspectNode(node: OtioNode): void {
-    if (node.timeline_range) {
-      const end = rangeEndTime(node.timeline_range);
-      if (compareRationalTimes(end, maxEndTime) > 0) {
-        maxEndTime = end;
-      }
-    }
-    if (node.parent_range) {
-      const end = rangeEndTime(node.parent_range);
-      if (compareRationalTimes(end, maxEndTime) > 0) {
-        maxEndTime = end;
-      }
-    }
-    if (node.children_ids) {
-      for (const childId of node.children_ids) {
-        const child = doc.nodes[childId];
-        if (child) inspectNode(child);
-      }
-    }
+  if (freeze || rate === 0) {
+    return { kind: 'freeze', rate: 0, diagnostic: null };
   }
-
-  if (timelineNode) {
-    inspectNode(timelineNode);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return {
+      kind: 'rate',
+      rate: 1,
+      diagnostic: diagnostic(
+        'error',
+        'unsupported-browser',
+        'Reverse playback is not supported by this decoder',
+        nodeId
+      ),
+    };
   }
+  return { kind: 'ok', rate, diagnostic: null };
+}
 
+function diagnostic(
+  severity: OtioDiagnostic['severity'],
+  code: OtioDiagnostic['code'],
+  message: string,
+  nodeId?: string
+): OtioDiagnostic {
   return {
-    duration: maxEndTime.value > 0 ? maxEndTime : { value: 0, rate },
-    rate,
+    severity,
+    code,
+    message,
+    target: nodeId ? { node_id: nodeId } : undefined,
   };
 }
 
-/**
- * Find all tracks in the timeline hierarchy.
- */
+function videoTree(
+  result: OtioEvaluationResult
+): OtioVideoCompositionTree | null {
+  const extra = result as OtioEvaluationResult & {
+    video_composition?: OtioVideoCompositionTree | null;
+  };
+  return extra.video_composition ?? null;
+}
+
+function sampleKind(contrib: OtioVideoContribution): 'media' | 'black' {
+  const kind = (contrib as OtioVideoContribution & { sample_kind?: string })
+    .sample_kind;
+  return kind === 'black' ? 'black' : 'media';
+}
+
+function ancestryOf(contrib: {
+  readonly ancestry?: readonly string[];
+}): readonly string[] {
+  return contrib.ancestry ?? [];
+}
+
+function occurrenceKey(
+  nodeId: string,
+  ancestry: readonly string[],
+  dup: number
+): string {
+  return `${ancestry.join('\u0001')}\u0001${nodeId}\u0001${dup}`;
+}
+
+function readTimelineClock(
+  doc: OtioDocumentV1,
+  timelineId: string
+): { duration: OtioRationalTime; rate: number; known: boolean } {
+  const range = doc.nodes[timelineId]?.timeline_range;
+  if (
+    range &&
+    Number.isFinite(range.duration.value) &&
+    range.duration.value >= 0 &&
+    Number.isFinite(range.duration.rate) &&
+    range.duration.rate > 0
+  ) {
+    return {
+      duration: range.duration,
+      rate: range.duration.rate,
+      known: true,
+    };
+  }
+  const display = doc.global_start_times?.[timelineId];
+  if (display && Number.isFinite(display.rate) && display.rate > 0) {
+    return {
+      duration: { value: 0, rate: display.rate },
+      rate: display.rate,
+      known: false,
+    };
+  }
+  return { duration: { value: 0, rate: 1 }, rate: 1, known: false };
+}
+
 function collectTracks(
   doc: OtioDocumentV1,
   timelineId: string
 ): Record<string, OtioTrackState> {
   const tracks: Record<string, OtioTrackState> = {};
-  const timelineNode = doc.nodes[timelineId];
-  if (!timelineNode) return tracks;
-
-  function traverse(node: OtioNode): void {
-    if (node.schema.startsWith('Track')) {
+  const root = doc.nodes[timelineId];
+  if (!root) return tracks;
+  const visit = (node: OtioNode): void => {
+    if (schemaBase(node.schema) === 'Track') {
       const kind = node.track_kind === 'Audio' ? 'Audio' : 'Video';
       tracks[node.id] = {
         id: node.id,
@@ -180,55 +496,120 @@ function collectTracks(
         solo: false,
       };
     }
-    if (node.children_ids) {
-      for (const childId of node.children_ids) {
-        const child = doc.nodes[childId];
-        if (child) traverse(child);
-      }
+    for (const childId of node.children_ids) {
+      const child = doc.nodes[childId];
+      if (child) visit(child);
     }
-  }
-
-  traverse(timelineNode);
+  };
+  visit(root);
   return tracks;
 }
 
-/**
- * Create an OtioPlaybackController.
- */
+function isElement(value: unknown): value is HTMLElement {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as HTMLElement).setAttribute === 'function' &&
+    typeof (value as HTMLElement).appendChild === 'function'
+  );
+}
+
+function isAssignableUrl(url: string): boolean {
+  return url.startsWith('blob:');
+}
+
 export function createOtioPlayback(
   options: CreateOtioPlaybackOptions
 ): OtioPlaybackController {
   const { document: doc, timelineId, canvas, resolveMedia } = options;
-
-  const { duration, rate } = computeTimelineDuration(doc, timelineId);
+  const clock = readTimelineClock(doc, timelineId);
   const tracks: Record<string, OtioTrackState> = collectTracks(doc, timelineId);
 
-  let currentTime: OtioRationalTime = { value: 0, rate };
+  let currentTime: OtioRationalTime = { value: 0, rate: clock.rate };
   let isPlaying = false;
   let isBuffering = false;
   let isDisposed = false;
-
-  let animFrameId: number | null = null;
-  let lastFrameTimestamp: number | null = null;
+  let baseMediaPreviewAllowed = false;
+  let renderGeneration = 0;
+  let renderInFlight = false;
+  let frameHandle: number | null = null;
+  let clockAnchor: ClockAnchor | null = null;
+  let renderTail: Promise<void> = Promise.resolve();
 
   const listeners = new Set<OtioPlaybackListener>();
-  const customDiagnostics: OtioDiagnostic[] = [];
+  const mediaFailures = new Map<string, OtioDiagnostic>();
+  const urlPromises = new Map<string, Promise<string | null>>();
+  const ownedUrls = new Set<string>();
+  const videoPromises = new Map<string, Promise<LoadedVideo | null>>();
+  const audioPromises = new Map<string, Promise<LoadedAudio | null>>();
+  const imagePromises = new Map<string, Promise<LoadedImage | null>>();
+  const videos = new Map<string, LoadedVideo>();
+  const audios = new Map<string, LoadedAudio>();
+  const decodedAt = new WeakMap<HTMLMediaElement, number>();
+  const images = new ImageFrameCache(OTIO_RETAINED_IMAGE_PIXELS);
+  const imageElements = new Map<string, LoadedImage>();
+  const surfacePool: HTMLCanvasElement[] = [];
+  let surfaceCursor = 0;
 
-  // Media caches
-  const videoPool = new Map<string, LoadedVideo>();
-  const audioPool = new Map<string, LoadedAudio>();
-  const imagePool = new Map<string, LoadedImage>();
-  const lastValidImageSequenceFrames = new Map<string, HTMLImageElement>();
-  const localBlobUrls: string[] = [];
-
-  // Intermediate offscreen surfaces for transition blending per track
-  let trackCanvas: HTMLCanvasElement | null = null;
-  let trackCtx: CanvasRenderingContext2D | null = null;
-
-  // Web Audio Context setup
   let audioContext: AudioContext | null = options.audioContext ?? null;
-  let masterGainNode: GainNode | null = null;
-  const trackGainNodes = new Map<string, GainNode>();
+  let masterGain: GainNode | null = null;
+  const trackGains = new Map<string, GainNode>();
+  let audioGraph: HTMLElement | null = null;
+  let videoHost: HTMLElement | null = null;
+
+  function stale(gen: number): boolean {
+    return isDisposed || gen !== renderGeneration;
+  }
+
+  function outputSize(): { width: number; height: number } {
+    return {
+      width: canvas.width || 1920,
+      height: canvas.height || 1080,
+    };
+  }
+
+  function notify(): void {
+    if (isDisposed) return;
+    const state = getState();
+    for (const listener of listeners) {
+      try {
+        listener(state);
+      } catch {
+        // A subscriber error must not stop the transport.
+      }
+    }
+  }
+
+  function ensureHost(className: string): HTMLElement | null {
+    if (typeof document === 'undefined' || !document.createElement) return null;
+    const el = document.createElement('div');
+    if (!isElement(el)) return null;
+    el.className = className;
+    el.setAttribute('aria-hidden', 'true');
+    el.style.position = 'absolute';
+    el.style.width = '1px';
+    el.style.height = '1px';
+    el.style.overflow = 'hidden';
+    el.style.clipPath = 'inset(50%)';
+    el.style.pointerEvents = 'none';
+    const parent = canvas.parentElement ?? document.body ?? null;
+    if (parent && typeof parent.appendChild === 'function') {
+      parent.appendChild(el);
+    }
+    return el;
+  }
+
+  function audioHost(): HTMLElement | null {
+    if (audioGraph) return audioGraph;
+    audioGraph = ensureHost('otio-audio-graph');
+    return audioGraph;
+  }
+
+  function decoderHost(): HTMLElement | null {
+    if (videoHost) return videoHost;
+    videoHost = ensureHost('otio-video-decoders');
+    return videoHost;
+  }
 
   function getAudioContext(): AudioContext | null {
     if (isDisposed) return null;
@@ -239,27 +620,26 @@ export function createOtioPlayback(
         audioContext = null;
       }
     }
-    if (audioContext && !masterGainNode) {
+    if (audioContext && !masterGain) {
       try {
-        masterGainNode = audioContext.createGain();
-        masterGainNode.connect(audioContext.destination);
+        masterGain = audioContext.createGain();
+        masterGain.connect(audioContext.destination);
       } catch {
-        masterGainNode = null;
+        masterGain = null;
       }
     }
-    return audioContext;
+    return masterGain ? audioContext : null;
   }
 
-  function getTrackGainNode(trackId: string): GainNode | null {
+  function trackGain(trackId: string): GainNode | null {
     const ctx = getAudioContext();
-    if (!ctx || !masterGainNode) return null;
-
-    let node = trackGainNodes.get(trackId);
+    if (!ctx || !masterGain) return null;
+    let node = trackGains.get(trackId);
     if (!node) {
       try {
         node = ctx.createGain();
-        node.connect(masterGainNode);
-        trackGainNodes.set(trackId, node);
+        node.connect(masterGain);
+        trackGains.set(trackId, node);
       } catch {
         return null;
       }
@@ -267,603 +647,918 @@ export function createOtioPlayback(
     return node;
   }
 
-  function updateAudioGains(): void {
-    const hasAnyAudioSolo = Object.values(tracks).some(
-      (t) => t.kind === 'Audio' && t.solo
+  function anySolo(kind: 'Video' | 'Audio'): boolean {
+    return Object.values(tracks).some((track) => track.kind === kind && track.solo);
+  }
+
+  function trackAudible(trackId: string): boolean {
+    const track = tracks[trackId];
+    if (!track || track.kind !== 'Audio') return true;
+    if (track.muted) return false;
+    if (anySolo('Audio') && !track.solo) return false;
+    return true;
+  }
+
+  function videoHidden(nodeId: string, ancestry: readonly string[]): boolean {
+    const solo = anySolo('Video');
+    for (const id of [nodeId, ...ancestry]) {
+      const track = tracks[id];
+      if (!track || track.kind !== 'Video') continue;
+      if (!track.visible) return true;
+      if (solo && !track.solo) return true;
+    }
+    return false;
+  }
+
+  function unknownTransition(transitionId: string | undefined): boolean {
+    if (!transitionId) return false;
+    const node = doc.nodes[transitionId];
+    if (!node || node.enabled === false) return false;
+    return !isDissolve(node.transition_type);
+  }
+
+  function blockedTracks(tree: OtioVideoCompositionTree | null): Set<string> {
+    const blocked = new Set<string>();
+    if (!tree || baseMediaPreviewAllowed) return blocked;
+    const visit = (node: OtioVideoCompositionTree): void => {
+      if (node.kind === 'leaf') return;
+      if (node.kind === 'track') {
+        if (unknownTransition(node.transition_id)) blocked.add(node.node_id);
+        for (const branch of node.branches) {
+          if (branch.child) visit(branch.child);
+        }
+        return;
+      }
+      for (const child of node.children) visit(child);
+    };
+    visit(tree);
+    return blocked;
+  }
+
+  function transitionIssue(
+    type: string | undefined,
+    nodeId: string
+  ): OtioDiagnostic | null {
+    if (!type || isDissolve(type)) return null;
+    return diagnostic(
+      'warning',
+      'unsupported-effect',
+      `Unsupported transition: ${type}`,
+      nodeId
     );
+  }
 
-    for (const [trackId, track] of Object.entries(tracks)) {
-      if (track.kind !== 'Audio') continue;
-      const gainNode = getTrackGainNode(trackId);
-      if (!gainNode) continue;
+  function contributionIssues(
+    result: OtioEvaluationResult
+  ): OtioDiagnostic[] {
+    const issues: OtioDiagnostic[] = [];
+    const seen = new Set<string>();
+    const push = (issue: OtioDiagnostic | null): void => {
+      if (!issue) return;
+      const key = `${issue.code}:${issue.target?.node_id ?? ''}:${issue.message}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      issues.push(issue);
+    };
+    for (const contrib of result.video_contributions) {
+      push(effectFidelity(contrib.active_effects, contrib.node_id).diagnostic);
+      push(transitionIssue(contrib.transition_type, contrib.node_id));
+    }
+    for (const contrib of result.audio_contributions) {
+      push(effectFidelity(contrib.active_effects, contrib.node_id).diagnostic);
+      push(transitionIssue(contrib.transition_type, contrib.node_id));
+    }
+    const tree = videoTree(result);
+    if (tree) {
+      const visit = (node: OtioVideoCompositionTree): void => {
+        if (node.kind === 'track') {
+          if (unknownTransition(node.transition_id)) {
+            push(
+              diagnostic(
+                'warning',
+                'unsupported-effect',
+                `Unsupported transition: ${
+                  doc.nodes[node.transition_id ?? '']?.transition_type ??
+                  'unknown'
+                }`,
+                node.node_id
+              )
+            );
+          }
+          for (const branch of node.branches) {
+            if (branch.child) visit(branch.child);
+          }
+        } else if (node.kind === 'stack') {
+          for (const child of node.children) visit(child);
+        }
+      };
+      visit(tree);
+    }
+    return issues;
+  }
 
-      let targetGain = 1.0;
-      if (track.muted) {
-        targetGain = 0;
-      } else if (hasAnyAudioSolo && !track.solo) {
-        targetGain = 0;
-      }
+  function previewBlocked(result?: OtioEvaluationResult): boolean {
+    if (baseMediaPreviewAllowed) return false;
+    const evaluation =
+      result ?? evaluateOtioAt(doc, timelineId, currentTime);
+    return contributionIssues(evaluation).length > 0;
+  }
 
+  function revokeOwned(url: string): void {
+    ownedUrls.delete(url);
+    if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
       try {
-        gainNode.gain.value = targetGain;
+        URL.revokeObjectURL(url);
       } catch {
-        // Ignore audio node gain adjustment error
+        // Ignore revoke errors.
       }
     }
   }
 
-  function getTrackIntermediateCanvas(width: number, height: number): {
-    canvas: HTMLCanvasElement;
-    ctx: CanvasRenderingContext2D;
-  } | null {
-    if (typeof document === 'undefined') return null;
-    if (!trackCanvas) {
-      trackCanvas = document.createElement('canvas');
-      trackCanvas.width = width;
-      trackCanvas.height = height;
-      trackCtx = trackCanvas.getContext('2d');
-    } else {
-      if (trackCanvas.width !== width || trackCanvas.height !== height) {
-        trackCanvas.width = width;
-        trackCanvas.height = height;
-      }
-    }
-    if (!trackCtx) return null;
-    return { canvas: trackCanvas, ctx: trackCtx };
-  }
-
-  async function resolveBundleMediaUrl(bundlePath: string): Promise<string | null> {
+  async function resolveOne(path: string): Promise<string | null> {
     if (isDisposed) return null;
-
-    // Check if resolver is OtioMediaResolver object
-    if (typeof resolveMedia === 'object' && resolveMedia !== null && 'resolveUrl' in resolveMedia) {
-      return await resolveMedia.resolveUrl(bundlePath);
+    if (
+      typeof resolveMedia === 'object' &&
+      resolveMedia !== null &&
+      'resolveUrl' in resolveMedia
+    ) {
+      const url = await resolveMedia.resolveUrl(path);
+      if (isDisposed || !url || !isAssignableUrl(url)) return null;
+      return url;
     }
-
-    // Function resolver
-    if (typeof resolveMedia === 'function') {
-      const res = await resolveMedia(bundlePath);
-      if (typeof res === 'string') {
-        return res;
-      }
-      if (res instanceof Blob && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
-        const url = URL.createObjectURL(res);
-        localBlobUrls.push(url);
-        return url;
-      }
+    if (typeof resolveMedia !== 'function') return null;
+    const resolved = await resolveMedia(path);
+    if (isDisposed || resolved == null) return null;
+    if (typeof resolved === 'string') {
+      return isAssignableUrl(resolved) ? resolved : null;
     }
-
-    return null;
-  }
-
-  async function acquireVideo(bundlePath: string): Promise<LoadedVideo | null> {
+    if (!(resolved instanceof Blob)) return null;
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+      return null;
+    }
     if (isDisposed) return null;
-    const existing = videoPool.get(bundlePath);
-    if (existing) return existing;
-
-    const mediaUrl = await resolveBundleMediaUrl(bundlePath);
-    if (!mediaUrl || isDisposed) return null;
-
-    if (typeof document === 'undefined') return null;
-    const element = document.createElement('video');
-    element.preload = 'auto';
-    element.playsInline = true;
-    // CRITICAL: video elements must NEVER emit accidental embedded audio!
-    element.muted = true;
-    element.volume = 0;
-    element.src = mediaUrl;
-
-    const entry: LoadedVideo = {
-      element,
-      url: mediaUrl,
-      ready: false,
-    };
-    videoPool.set(bundlePath, entry);
-
-    // Wait for metadata
-    if (element.readyState >= 1) {
-      entry.ready = true;
-    } else {
-      const { promise, resolve } = Promise.withResolvers<void>();
-      const onLoaded = () => {
-        element.removeEventListener('loadedmetadata', onLoaded);
-        element.removeEventListener('error', onError);
-        entry.ready = true;
-        resolve();
-      };
-      const onError = () => {
-        element.removeEventListener('loadedmetadata', onLoaded);
-        element.removeEventListener('error', onError);
-        entry.ready = false;
-        resolve();
-      };
-      element.addEventListener('loadedmetadata', onLoaded);
-      element.addEventListener('error', onError);
-      await promise;
-    }
-    return entry;
-  }
-
-  async function acquireImage(bundlePath: string): Promise<LoadedImage | null> {
-    if (isDisposed) return null;
-    const existing = imagePool.get(bundlePath);
-    if (existing) return existing;
-
-    const mediaUrl = await resolveBundleMediaUrl(bundlePath);
-    if (!mediaUrl || isDisposed) return null;
-
-    if (typeof Image === 'undefined') return null;
-    const element = new Image();
-    element.src = mediaUrl;
-
-    const entry: LoadedImage = {
-      element,
-      url: mediaUrl,
-      ready: false,
-    };
-    imagePool.set(bundlePath, entry);
-    if (element.complete && element.naturalWidth > 0) {
-      entry.ready = true;
-    } else {
-      const { promise, resolve } = Promise.withResolvers<void>();
-      element.onload = () => {
-        entry.ready = true;
-        resolve();
-      };
-      element.onerror = () => {
-        entry.ready = false;
-        resolve();
-      };
-      await promise;
-    }
-    return entry;
-  }
-
-  async function acquireAudio(
-    trackId: string,
-    bundlePath: string
-  ): Promise<LoadedAudio | null> {
-    if (isDisposed) return null;
-    const cacheKey = `${trackId}:${bundlePath}`;
-    const existing = audioPool.get(cacheKey);
-    if (existing) return existing;
-
-    const mediaUrl = await resolveBundleMediaUrl(bundlePath);
-    if (!mediaUrl || isDisposed) return null;
-
-    if (typeof Audio === 'undefined') return null;
-    const element = new Audio(mediaUrl);
-    element.preload = 'auto';
-
-    const entry: LoadedAudio = {
-      element,
-      url: mediaUrl,
-      ready: false,
-    };
-    audioPool.set(cacheKey, entry);
-
-    const trackGain = getTrackGainNode(trackId);
-    const ctx = getAudioContext();
-    if (ctx && trackGain) {
+    const url = URL.createObjectURL(resolved);
+    if (isDisposed) {
       try {
-        const sourceNode = ctx.createMediaElementSource(element);
-        const clipGain = ctx.createGain();
-        sourceNode.connect(clipGain);
-        clipGain.connect(trackGain);
-        entry.sourceNode = sourceNode;
-        entry.gainNode = clipGain;
+        URL.revokeObjectURL(url);
       } catch {
-        // Fallback without Web Audio routing if MediaElementSource unavailable
+        // Ignore revoke errors.
       }
+      return null;
     }
-
-    return entry;
+    ownedUrls.add(url);
+    return url;
   }
 
-  function seekMediaElement(
+  function sharedUrl(path: string): Promise<string | null> {
+    const existing = urlPromises.get(path);
+    if (existing) return existing;
+    const pending = resolveOne(path);
+    urlPromises.set(path, pending);
+    return pending;
+  }
+
+  function rememberFailure(path: string, issue: OtioDiagnostic): void {
+    mediaFailures.set(path, issue);
+  }
+
+  function seekElement(
     media: HTMLMediaElement,
-    targetSeconds: number
-  ): Promise<void> {
-    if (Math.abs(media.currentTime - targetSeconds) <= 0.01) {
-      return Promise.resolve();
+    target: number,
+    gen: number
+  ): Promise<boolean> {
+    if (stale(gen)) return Promise.resolve(false);
+    if (decodedAt.get(media) === target && media.readyState >= HAVE_CURRENT_DATA) {
+      return Promise.resolve(true);
     }
-    const { promise, resolve } = Promise.withResolvers<void>();
-    const onSeeked = () => {
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    let settled = false;
+    const finish = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
       media.removeEventListener('seeked', onSeeked);
+      media.removeEventListener('loadeddata', onReady);
       media.removeEventListener('error', onError);
-      resolve();
+      if (ok && !stale(gen) && media.readyState >= HAVE_CURRENT_DATA) {
+        decodedAt.set(media, target);
+        resolve(true);
+        return;
+      }
+      resolve(false);
     };
-    const onError = () => {
-      media.removeEventListener('seeked', onSeeked);
-      media.removeEventListener('error', onError);
-      resolve();
+    const onSeeked = (): void => {
+      if (media.readyState >= HAVE_CURRENT_DATA) finish(true);
     };
+    const onReady = (): void => {
+      if (media.readyState >= HAVE_CURRENT_DATA && media.currentTime === target) {
+        finish(true);
+      }
+    };
+    const onError = (): void => finish(false);
     media.addEventListener('seeked', onSeeked);
+    media.addEventListener('loadeddata', onReady);
     media.addEventListener('error', onError);
     try {
-      media.currentTime = Math.max(0, targetSeconds);
+      media.currentTime = Math.max(0, target);
     } catch {
-      resolve();
+      finish(false);
+      return promise;
+    }
+    if (media.readyState >= HAVE_CURRENT_DATA && media.currentTime === target) {
+      finish(true);
     }
     return promise;
   }
 
-  /**
-   * Render composition onto canvas and synchronize audio.
-   */
-  async function renderComposition(
-    time: OtioRationalTime,
-    awaitDecodedFrames: boolean
-  ): Promise<void> {
-    if (isDisposed) return;
-
-    customDiagnostics.length = 0;
-    const evalResult = evaluateOtioAt(doc, timelineId, time);
-
-    // Group video contributions by track
-    const videoTracksMap = new Map<string, OtioVideoContribution[]>();
-    for (const contrib of evalResult.video_contributions) {
-      let list = videoTracksMap.get(contrib.track_id);
-      if (!list) {
-        list = [];
-        videoTracksMap.set(contrib.track_id, list);
+  function acquireVideo(
+    key: string,
+    path: string,
+    gen: number
+  ): Promise<LoadedVideo | null> {
+    const existing = videoPromises.get(key);
+    if (existing) return existing;
+    const pending = (async () => {
+      const url = await sharedUrl(path);
+      if (!url || isDisposed) return null;
+      if (typeof document === 'undefined' || !document.createElement) return null;
+      const element = document.createElement('video');
+      if (isDisposed) return null;
+      element.preload = 'auto';
+      element.playsInline = true;
+      element.muted = true;
+      element.volume = 0;
+      element.src = url;
+      const entry: LoadedVideo = { element, key, path };
+      videos.set(key, entry);
+      const host = decoderHost();
+      if (host) host.appendChild(element);
+      if (isDisposed) {
+        releaseVideo(entry);
+        return null;
       }
-      list.push(contrib);
-    }
-
-    // Check if any video track is soloed
-    const hasAnyVideoSolo = Object.values(tracks).some(
-      (t) => t.kind === 'Video' && t.solo
-    );
-
-    // Gather tracks in stack painter order: lowest track_index first (first child at bottom)
-    const sortedTrackIds = Array.from(videoTracksMap.keys()).sort((a, b) => {
-      const idxA = videoTracksMap.get(a)?.[0]?.track_index ?? 0;
-      const idxB = videoTracksMap.get(b)?.[0]?.track_index ?? 0;
-      return idxA - idxB;
-    });
-
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width || 1920;
-    const height = canvas.height || 1080;
-
-    // Clear canvas with opaque black
-    if (ctx) {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, width, height);
-    }
-
-    const intermediate = getTrackIntermediateCanvas(width, height);
-
-    // Process each video track in painter order
-    for (const trackId of sortedTrackIds) {
-      const trackState = tracks[trackId];
-      if (trackState) {
-        if (!trackState.visible) continue;
-        if (hasAnyVideoSolo && !trackState.solo) continue;
+      if (element.readyState < HAVE_CURRENT_DATA) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const done = (): void => {
+          element.removeEventListener('loadeddata', done);
+          element.removeEventListener('error', done);
+          resolve();
+        };
+        element.addEventListener('loadeddata', done);
+        element.addEventListener('error', done);
+        await promise;
       }
-
-      const contribs = videoTracksMap.get(trackId) ?? [];
-      if (contribs.length === 0) continue;
-
-      if (intermediate) {
-        intermediate.ctx.clearRect(0, 0, width, height);
+      if (isDisposed) {
+        releaseVideo(entry);
+        return null;
       }
-
-      for (let cIdx = 0; cIdx < contribs.length; cIdx++) {
-        const contrib = contribs[cIdx] as OtioVideoContribution;
-        const clipNode = doc.nodes[contrib.node_id];
-
-        // Validate effects
-        for (const eff of contrib.active_effects) {
-          if (!eff.enabled) continue;
-          if (eff.schema.startsWith('LinearTimeWarp')) {
-            if (eff.time_scalar !== undefined && eff.time_scalar < 0) {
-              customDiagnostics.push({
-                severity: 'error',
-                code: 'unsupported-browser',
-                message: `Reverse playback (time_scalar: ${eff.time_scalar}) is not supported by browser video decoder`,
-                target: { node_id: contrib.node_id },
-              });
-            }
-          } else if (!eff.schema.startsWith('FreezeFrame')) {
-            customDiagnostics.push({
-              severity: 'warning',
-              code: 'unsupported-effect',
-              message: `Unsupported effect: ${eff.name || eff.schema}`,
-              target: { node_id: contrib.node_id },
-            });
-          }
-        }
-
-        // Determine media reference
-        const activeKey = clipNode?.active_media_reference_key;
-        const activeMedia = activeKey && clipNode?.media_references
-          ? clipNode.media_references[activeKey]
-          : null;
-
-        let drawableElement: CanvasImageSource | null = null;
-        let isImageSeq = false;
-
-        if (activeMedia?.schema.startsWith('ImageSequenceReference')) {
-          isImageSeq = true;
-          const framePath = resolveImageSequenceFramePath(
-            activeMedia,
-            contrib.source_time
-          );
-
-          if (!framePath) {
-            customDiagnostics.push({
-              severity: 'error',
-              code: 'missing-media',
-              message: `Could not resolve image sequence frame at source time ${contrib.source_time.value}/${contrib.source_time.rate}`,
-              target: { node_id: contrib.node_id },
-            });
-          } else {
-            const mime = inferMediaMimeType(framePath);
-            if (mime === 'image/x-exr' || mime === 'image/x-dpx') {
-              customDiagnostics.push({
-                severity: 'error',
-                code: 'unsupported-codec',
-                message: `Unsupported image decoder: ${framePath}`,
-                target: { node_id: contrib.node_id },
-              });
-            } else {
-              const loaded = await acquireImage(framePath);
-              if (loaded && loaded.ready) {
-                drawableElement = loaded.element;
-                lastValidImageSequenceFrames.set(contrib.node_id, loaded.element);
-              } else {
-                // Apply missing frame policy
-                const policy = activeMedia.missing_frame_policy ?? 'error';
-                if (policy === 'hold') {
-                  const held = lastValidImageSequenceFrames.get(contrib.node_id);
-                  if (held) {
-                    drawableElement = held;
-                  }
-                } else if (policy === 'black') {
-                  // Transparent on track surface, black background
-                  drawableElement = null;
-                } else {
-                  customDiagnostics.push({
-                    severity: 'error',
-                    code: 'missing-media',
-                    message: `Missing frame in image sequence: ${framePath}`,
-                    target: { node_id: contrib.node_id },
-                  });
-                }
-              }
-            }
-          }
-        } else if (contrib.bundle_path) {
-          const mime = inferMediaMimeType(contrib.bundle_path);
-          if (mime.startsWith('video/')) {
-            const videoLoaded = await acquireVideo(contrib.bundle_path);
-            if (!videoLoaded || !videoLoaded.ready) {
-              customDiagnostics.push({
-                severity: 'error',
-                code: 'missing-media',
-                message: `Missing or unplayable video: ${contrib.bundle_path}`,
-                target: { node_id: contrib.node_id },
-              });
-            } else {
-              const targetSec = Math.max(0, timeToSeconds(contrib.source_time));
-              if (awaitDecodedFrames) {
-                await seekMediaElement(videoLoaded.element, targetSec);
-              } else if (Math.abs(videoLoaded.element.currentTime - targetSec) > 0.05) {
-                videoLoaded.element.currentTime = targetSec;
-              }
-              drawableElement = videoLoaded.element;
-            }
-          } else if (mime.startsWith('image/')) {
-            const imgLoaded = await acquireImage(contrib.bundle_path);
-            if (!imgLoaded || !imgLoaded.ready) {
-              customDiagnostics.push({
-                severity: 'error',
-                code: 'missing-media',
-                message: `Missing image: ${contrib.bundle_path}`,
-                target: { node_id: contrib.node_id },
-              });
-            } else {
-              drawableElement = imgLoaded.element;
-            }
-          } else {
-            customDiagnostics.push({
-              severity: 'error',
-              code: 'unsupported-codec',
-              message: `Unsupported codec for ${contrib.bundle_path}`,
-              target: { node_id: contrib.node_id },
-            });
-          }
-        } else {
-          customDiagnostics.push({
-            severity: 'error',
-            code: 'missing-media',
-            message: `No media reference for clip: ${contrib.name}`,
-            target: { node_id: contrib.node_id },
-          });
-        }
-
-        // Draw onto intermediate track surface
-        if (drawableElement && intermediate) {
-          const weight = Math.max(
-            0,
-            Math.min(1, contrib.transition_weight * contrib.alpha)
-          );
-
-          if (cIdx === 0) {
-            intermediate.ctx.globalCompositeOperation = 'source-over';
-            intermediate.ctx.globalAlpha = weight;
-            intermediate.ctx.drawImage(drawableElement, 0, 0, width, height);
-          } else {
-            // Premultiplied weighted blend for transitions
-            intermediate.ctx.globalCompositeOperation = 'lighter';
-            intermediate.ctx.globalAlpha = weight;
-            intermediate.ctx.drawImage(drawableElement, 0, 0, width, height);
-          }
-        }
+      if (element.error) {
+        rememberFailure(
+          path,
+          diagnostic(
+            'error',
+            'unsupported-codec',
+            `Undecodable video: ${path}`,
+            key
+          )
+        );
+        return null;
       }
+      mediaFailures.delete(path);
+      return entry;
+    })();
+    videoPromises.set(key, pending);
+    return pending;
+  }
 
-      // Composite track surface onto main canvas
-      if (intermediate && ctx) {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1.0;
-        ctx.drawImage(intermediate.canvas, 0, 0, width, height);
-      }
-    }
-
-    // Synchronize Audio Contributions
-    updateAudioGains();
-    for (const audioContrib of evalResult.audio_contributions) {
-      if (!audioContrib.bundle_path) continue;
-      const audioTrack = tracks[audioContrib.track_id];
-      if (audioTrack && audioTrack.muted) continue;
-
-      const loaded = await acquireAudio(audioContrib.track_id, audioContrib.bundle_path);
-      if (!loaded) continue;
-
-      const targetSec = Math.max(0, timeToSeconds(audioContrib.source_time));
-      if (Math.abs(loaded.element.currentTime - targetSec) > 0.15) {
-        loaded.element.currentTime = targetSec;
-      }
-
-      const effectiveVolume = audioContrib.volume * audioContrib.transition_weight;
-      if (loaded.gainNode) {
-        loaded.gainNode.gain.value = effectiveVolume;
-      } else {
-        loaded.element.volume = effectiveVolume;
-      }
-
-      if (isPlaying && loaded.element.paused) {
+  function acquireAudio(
+    key: string,
+    path: string,
+    trackId: string,
+    gen: number
+  ): Promise<LoadedAudio | null> {
+    const existing = audioPromises.get(key);
+    if (existing) return existing;
+    const pending = (async () => {
+      const url = await sharedUrl(path);
+      if (!url || isDisposed) return null;
+      const element =
+        typeof document !== 'undefined' && document.createElement
+          ? document.createElement('audio')
+          : typeof Audio !== 'undefined'
+            ? new Audio()
+            : null;
+      if (!element || isDisposed) return null;
+      element.preload = 'auto';
+      element.src = url;
+      const entry: LoadedAudio = {
+        element,
+        key,
+        path,
+        trackId,
+        failed: false,
+      };
+      audios.set(key, entry);
+      element.setAttribute('data-track-id', trackId);
+      element.setAttribute('data-bundle-path', path);
+      element.setAttribute('data-active', 'false');
+      const host = audioHost();
+      if (host) host.appendChild(element);
+      const ctx = getAudioContext();
+      const destination = trackGain(trackId);
+      if (ctx && destination) {
         try {
-          await loaded.element.play();
+          const source = ctx.createMediaElementSource(element);
+          const clip = ctx.createGain();
+          source.connect(clip);
+          clip.connect(destination);
+          entry.sourceNode = source;
+          entry.gainNode = clip;
         } catch {
-          // Ignore autoplay restriction or playback interruption
+          entry.gainNode = undefined;
         }
-      } else if (!isPlaying && !loaded.element.paused) {
-        loaded.element.pause();
       }
-    }
-  }
-
-  function notify(): void {
-    if (isDisposed) return;
-    const currentState = getState();
-    for (const listener of listeners) {
-      try {
-        listener(currentState);
-      } catch {
-        // Prevent subscriber error from crashing playback loop
-      }
-    }
-  }
-
-  function tick(timestamp: number): void {
-    if (isDisposed || !isPlaying) return;
-
-    if (lastFrameTimestamp !== null) {
-      const elapsedSeconds = (timestamp - lastFrameTimestamp) / 1000;
-      const deltaFrames = elapsedSeconds * rate;
-      const newTime = addRationalTimes(currentTime, {
-        value: deltaFrames,
-        rate,
-      });
-
-      if (compareRationalTimes(newTime, duration) >= 0) {
-        currentTime = duration;
-        isPlaying = false;
-        pauseAllMedia();
-        renderComposition(currentTime, false);
+      element.addEventListener('error', () => {
+        entry.failed = true;
+        rememberFailure(
+          path,
+          diagnostic(
+            'error',
+            'unsupported-codec',
+            `Undecodable audio: ${path}`,
+            key
+          )
+        );
         notify();
-        return;
-      } else {
-        currentTime = newTime;
+      });
+      if (isDisposed) {
+        releaseAudio(entry);
+        return null;
       }
-    }
+      return entry;
+    })();
+    audioPromises.set(key, pending);
+    return pending;
+  }
 
-    lastFrameTimestamp = timestamp;
-    renderComposition(currentTime, false);
-    notify();
-
-    if (isPlaying && !isDisposed) {
-      if (typeof requestAnimationFrame !== 'undefined') {
-        animFrameId = requestAnimationFrame(tick);
+  function acquireImage(
+    path: string,
+    gen: number
+  ): Promise<LoadedImage | null> {
+    const existing = imagePromises.get(path);
+    if (existing) return existing;
+    const pending = (async () => {
+      const url = await sharedUrl(path);
+      if (!url || isDisposed || typeof Image === 'undefined') return null;
+      const element = new Image();
+      element.src = url;
+      if (!element.complete || element.naturalWidth === 0) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const done = (): void => {
+          element.onload = null;
+          element.onerror = null;
+          resolve();
+        };
+        element.onload = done;
+        element.onerror = done;
+        await promise;
       }
+      if (isDisposed) {
+        element.src = '';
+        return null;
+      }
+      const width = element.naturalWidth;
+      const height = element.naturalHeight;
+      if (!decodedImageAllowed(width, height)) {
+        element.src = '';
+        rememberFailure(
+          path,
+          diagnostic(
+            'error',
+            'unsupported-codec',
+            `Decoded image exceeds the pixel budget: ${path}`,
+            path
+          )
+        );
+        return null;
+      }
+      if (width <= 0 || height <= 0) {
+        rememberFailure(
+          path,
+          diagnostic('error', 'missing-media', `Missing image: ${path}`, path)
+        );
+        return null;
+      }
+      const loaded: LoadedImage = {
+        element,
+        path,
+        pixels: width * height,
+      };
+      const kept = images.put(path, loaded.pixels, () => {
+        loaded.element.src = '';
+        imageElements.delete(path);
+      });
+      if (!kept) return null;
+      imageElements.set(path, loaded);
+      mediaFailures.delete(path);
+      return loaded;
+    })();
+    imagePromises.set(path, pending);
+    return pending;
+  }
+
+  function releaseVideo(entry: LoadedVideo): void {
+    try {
+      entry.element.pause();
+      entry.element.removeAttribute('src');
+      entry.element.load();
+    } catch {
+      // Ignore decoder reset errors.
     }
+    entry.element.remove();
+    videos.delete(entry.key);
+  }
+
+  function releaseAudio(entry: LoadedAudio): void {
+    try {
+      entry.element.pause();
+      entry.element.removeAttribute('src');
+      entry.element.load();
+      entry.gainNode?.disconnect();
+      entry.sourceNode?.disconnect();
+    } catch {
+      // Ignore audio reset errors.
+    }
+    entry.element.remove();
+    audios.delete(entry.key);
   }
 
   function pauseAllMedia(): void {
-    for (const video of videoPool.values()) {
-      video.element.pause();
-    }
-    for (const audio of audioPool.values()) {
+    for (const video of videos.values()) video.element.pause();
+    for (const audio of audios.values()) {
       audio.element.pause();
+      audio.element.setAttribute('data-active', 'false');
+      if (audio.gainNode) audio.gainNode.gain.value = 0;
+      else audio.element.volume = 0;
     }
   }
 
-  function getState(): OtioPlaybackState {
-    const evalRes = evaluateOtioAt(doc, timelineId, currentTime);
-    const allDiagnostics = [
-      ...evalRes.diagnostics,
-      ...customDiagnostics,
-    ];
+  function applyAudioGain(entry: LoadedAudio, gain: number, audible: boolean): void {
+    const trackScale = audible ? 1 : 0;
+    const node = trackGain(entry.trackId);
+    if (node) node.gain.value = trackScale;
+    if (entry.gainNode) {
+      entry.gainNode.gain.value = gain;
+      entry.element.volume = 1;
+      return;
+    }
+    entry.element.volume = Math.min(1, Math.max(0, gain * trackScale));
+  }
 
-    // Deduplicate diagnostics
-    const seen = new Set<string>();
-    const deduplicated: OtioDiagnostic[] = [];
-    for (const diag of allDiagnostics) {
-      const key = `${diag.code}:${diag.message}:${diag.target?.node_id ?? ''}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        deduplicated.push(diag);
+  function applyRate(element: HTMLMediaElement, rate: number): boolean {
+    if (!Number.isFinite(rate) || rate <= 0) return false;
+    try {
+      element.playbackRate = rate;
+    } catch {
+      return false;
+    }
+    return element.playbackRate === rate;
+  }
+
+  async function prepareLeaves(
+    result: OtioEvaluationResult,
+    tree: OtioVideoCompositionTree | null,
+    gen: number
+  ): Promise<(OtioPreparedLeaf | null)[]> {
+    const leaves: (OtioPreparedLeaf | null)[] = result.video_contributions.map(
+      () => null
+    );
+    if (!tree) return leaves;
+    const seen = new Map<string, number>();
+    const visit = async (node: OtioVideoCompositionTree): Promise<void> => {
+      if (stale(gen)) return;
+      if (node.kind === 'leaf') {
+        const contrib = result.video_contributions[node.contribution_index];
+        if (!contrib) return;
+        leaves[node.contribution_index] = await prepareLeaf(contrib, seen, gen);
+        return;
+      }
+      if (node.kind === 'stack') {
+        for (const child of node.children) await visit(child);
+        return;
+      }
+      for (const branch of node.branches) {
+        if (branch.child) await visit(branch.child);
+      }
+    };
+    await visit(tree);
+    return leaves;
+  }
+
+  async function prepareLeaf(
+    contrib: OtioVideoContribution,
+    seen: Map<string, number>,
+    gen: number
+  ): Promise<OtioPreparedLeaf> {
+    if (sampleKind(contrib) === 'black') return { kind: 'black' };
+    const fidelity = effectFidelity(contrib.active_effects, contrib.node_id);
+    const withheld =
+      !baseMediaPreviewAllowed &&
+      (fidelity.kind === 'effect' || fidelity.kind === 'rate');
+    if (withheld) return { kind: 'empty' };
+    if (!contrib.bundle_path) {
+      mediaFailures.set(
+        contrib.node_id,
+        diagnostic(
+          'error',
+          'missing-media',
+          `Missing video: ${contrib.name}`,
+          contrib.node_id
+        )
+      );
+      return { kind: 'empty' };
+    }
+    const mime = inferMediaMimeType(contrib.bundle_path);
+    if (mime === 'image/x-exr' || mime === 'image/x-dpx') {
+      rememberFailure(
+        contrib.bundle_path,
+        diagnostic(
+          'error',
+          'unsupported-codec',
+          `Unsupported image decoder: ${contrib.bundle_path}`,
+          contrib.node_id
+        )
+      );
+      return { kind: 'empty' };
+    }
+    if (mime.startsWith('image/')) {
+      const image = await acquireImage(contrib.bundle_path, gen);
+      if (stale(gen) || !image) return { kind: 'empty' };
+      images.pin(contrib.bundle_path);
+      return {
+        kind: 'image',
+        source: image.element,
+        alpha: contrib.alpha,
+      };
+    }
+    if (!mime.startsWith('video/')) {
+      rememberFailure(
+        contrib.bundle_path,
+        diagnostic(
+          'error',
+          'unsupported-codec',
+          `Unsupported codec for ${contrib.bundle_path}`,
+          contrib.node_id
+        )
+      );
+      return { kind: 'empty' };
+    }
+    const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
+    const dup = seen.get(dupKey) ?? 0;
+    seen.set(dupKey, dup + 1);
+    const key = occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
+    const video = await acquireVideo(key, contrib.bundle_path, gen);
+    if (stale(gen) || !video) return { kind: 'empty' };
+    const target = Math.max(0, timeToSeconds(contrib.source_time));
+    const ready = await seekElement(video.element, target, gen);
+    if (stale(gen)) return { kind: 'empty' };
+    if (!ready) {
+      rememberFailure(
+        contrib.bundle_path,
+        diagnostic(
+          'error',
+          'missing-media',
+          `Missing or unplayable video: ${contrib.bundle_path}`,
+          contrib.node_id
+        )
+      );
+      return { kind: 'empty' };
+    }
+    return {
+      kind: 'image',
+      source: video.element,
+      alpha: contrib.alpha,
+    };
+  }
+
+  async function reconcileAudio(
+    result: OtioEvaluationResult,
+    gen: number
+  ): Promise<void> {
+    const active = new Set<string>();
+    const seen = new Map<string, number>();
+    for (const contrib of result.audio_contributions) {
+      if (stale(gen)) return;
+      const fidelity = effectFidelity(contrib.active_effects, contrib.node_id);
+      const withheld =
+        !baseMediaPreviewAllowed &&
+        (fidelity.kind === 'effect' || fidelity.kind === 'rate');
+      if (!contrib.bundle_path) {
+        mediaFailures.set(
+          contrib.node_id,
+          diagnostic(
+            'error',
+            'missing-media',
+            `Missing audio: ${contrib.name}`,
+            contrib.node_id
+          )
+        );
+        continue;
+      }
+      if (withheld || fidelity.kind === 'rate') {
+        if (fidelity.diagnostic) {
+          mediaFailures.set(contrib.node_id, fidelity.diagnostic);
+        }
+        continue;
+      }
+      const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
+      const dup = seen.get(dupKey) ?? 0;
+      seen.set(dupKey, dup + 1);
+      const key = occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
+      active.add(key);
+      const loaded = await acquireAudio(
+        key,
+        contrib.bundle_path,
+        contrib.track_id,
+        gen
+      );
+      if (stale(gen)) {
+        loaded?.element.pause();
+        return;
+      }
+      if (!loaded || loaded.failed) {
+        if (!loaded) {
+          rememberFailure(
+            contrib.bundle_path,
+            diagnostic(
+              'error',
+              'missing-media',
+              `Missing audio: ${contrib.bundle_path}`,
+              contrib.node_id
+            )
+          );
+        }
+        continue;
+      }
+      const audible = trackAudible(contrib.track_id);
+      const gain = Math.max(0, contrib.volume * contrib.transition_weight);
+      applyAudioGain(loaded, gain, audible);
+      loaded.element.setAttribute('data-active', audible ? 'true' : 'false');
+      const target = Math.max(0, timeToSeconds(contrib.source_time));
+      if (fidelity.kind === 'freeze' || !audible || !isPlaying) {
+        loaded.element.pause();
+        if (decodedAt.get(loaded.element) !== target) {
+          await seekElement(loaded.element, target, gen);
+        }
+        continue;
+      }
+      const rate = fidelity.kind === 'effect' ? 1 : fidelity.rate;
+      if (!applyRate(loaded.element, rate)) {
+        loaded.element.pause();
+        applyAudioGain(loaded, 0, false);
+        rememberFailure(
+          contrib.bundle_path,
+          diagnostic(
+            'error',
+            'unsupported-browser',
+            `Decoder cannot apply playback rate ${rate}`,
+            contrib.node_id
+          )
+        );
+        continue;
+      }
+      const frame = 1 / Math.max(1, contrib.source_time.rate);
+      if (Math.abs(loaded.element.currentTime - target) > frame) {
+        await seekElement(loaded.element, target, gen);
+        if (stale(gen)) {
+          loaded.element.pause();
+          return;
+        }
+      }
+      if (loaded.element.paused) {
+        try {
+          await loaded.element.play();
+        } catch (error) {
+          rememberFailure(
+            contrib.bundle_path,
+            diagnostic(
+              'error',
+              'unsupported-browser',
+              `Audio playback failed: ${
+                error instanceof Error ? error.message : 'playback rejected'
+              }`,
+              contrib.node_id
+            )
+          );
+          notify();
+        }
       }
     }
+    for (const [key, entry] of audios) {
+      if (active.has(key)) continue;
+      entry.element.pause();
+      entry.element.setAttribute('data-active', 'false');
+      if (entry.gainNode) entry.gainNode.gain.value = 0;
+      else entry.element.volume = 0;
+    }
+  }
 
+  function paint(
+    tree: OtioVideoCompositionTree | null,
+    leaves: readonly (OtioPreparedLeaf | null)[]
+  ): void {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const { width, height } = outputSize();
+    surfaceCursor = 0;
+    const blocked = blockedTracks(tree);
+    renderOtioVideoTree(
+      ctx,
+      width,
+      height,
+      tree,
+      leaves,
+      () => {
+        let surface = surfacePool[surfaceCursor];
+        if (!surface && typeof document !== 'undefined') {
+          surface = document.createElement('canvas');
+          surfacePool.push(surface);
+        }
+        if (!surface) {
+          throw new Error('Canvas surface unavailable');
+        }
+        surfaceCursor += 1;
+        surface.width = width;
+        surface.height = height;
+        return surface;
+      },
+      (nodeId, ancestry) =>
+        videoHidden(nodeId, ancestry) || blocked.has(nodeId)
+    );
+  }
+
+  async function renderAt(time: OtioRationalTime, gen: number): Promise<void> {
+    if (stale(gen)) return;
+    renderInFlight = true;
+    try {
+      const evaluation = evaluateOtioAt(doc, timelineId, time);
+      if (stale(gen)) return;
+      images.clearPins();
+      const tree = videoTree(evaluation);
+      if (tree === null && evaluation.video_contributions.length > 0) {
+        mediaFailures.set(
+          timelineId,
+          diagnostic(
+            'error',
+            'invalid-timing',
+            'Video evaluation has no composition tree',
+            timelineId
+          )
+        );
+      }
+      const leaves = await prepareLeaves(evaluation, tree, gen);
+      if (stale(gen)) return;
+      try {
+        paint(tree, leaves);
+      } catch {
+        // A missing surface must not paint a stale frame.
+      }
+      images.evict();
+      await reconcileAudio(evaluation, gen);
+      if (stale(gen)) return;
+      isBuffering = false;
+      notify();
+    } finally {
+      if (gen === renderGeneration) renderInFlight = false;
+    }
+  }
+
+  function enqueueRender(time: OtioRationalTime, gen: number): Promise<void> {
+    const run = (): Promise<void> => renderAt(time, gen);
+    const done = renderTail.then(run, run);
+    renderTail = done.then(
+      () => undefined,
+      () => undefined
+    );
+    return done;
+  }
+
+  function scheduleTick(): void {
+    if (!isPlaying || isDisposed || frameHandle !== null) return;
+    if (typeof requestAnimationFrame !== 'function') return;
+    frameHandle = requestAnimationFrame(onTick);
+  }
+
+  function onTick(now: number): void {
+    frameHandle = null;
+    if (!isPlaying || isDisposed) return;
+    if (renderInFlight || isBuffering) {
+      clockAnchor = null;
+      scheduleTick();
+      return;
+    }
+    if (clockAnchor !== null && clock.rate > 0) {
+      const elapsed = (now - clockAnchor.wallMs) / 1000;
+      if (elapsed > 0) {
+        const advanced = addRationalTimes(clockAnchor.time, {
+          value: elapsed * clock.rate,
+          rate: clock.rate,
+        });
+        if (compareRationalTimes(advanced, clock.duration) >= 0) {
+          currentTime = clock.duration;
+          isPlaying = false;
+          clockAnchor = null;
+          pauseAllMedia();
+          void enqueueRender(currentTime, ++renderGeneration);
+          notify();
+          return;
+        }
+        currentTime = advanced;
+      }
+    }
+    clockAnchor = { wallMs: now, time: currentTime };
+    const gen = ++renderGeneration;
+    void enqueueRender(currentTime, gen).finally(() => {
+      if (isPlaying && !isDisposed && !isBuffering) scheduleTick();
+    });
+  }
+
+  function getState(): OtioPlaybackState {
+    const evaluation = evaluateOtioAt(doc, timelineId, currentTime);
+    const issues = [
+      ...evaluation.diagnostics,
+      ...contributionIssues(evaluation),
+      ...mediaFailures.values(),
+    ];
+    if (!clock.known) {
+      issues.unshift(
+        diagnostic(
+          'error',
+          'invalid-timing',
+          'Timeline has no canonical timeline_range',
+          timelineId
+        )
+      );
+    }
+    const seen = new Set<string>();
+    const diagnostics: OtioDiagnostic[] = [];
+    for (const issue of issues) {
+      const key = `${issue.code}:${issue.target?.node_id ?? ''}:${issue.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      diagnostics.push(issue);
+    }
     return {
       time: currentTime,
       playing: isPlaying,
       buffering: isBuffering,
-      duration,
-      rate,
-      diagnostics: deduplicated,
+      duration: clock.duration,
+      rate: clock.rate,
+      diagnostics,
       tracks: { ...tracks },
+      baseMediaPreviewAllowed,
+      previewBlocked: !baseMediaPreviewAllowed && contributionIssues(evaluation).length > 0,
     };
   }
 
-  // Initial draw
-  renderComposition(currentTime, false);
+  function clampTime(time: OtioRationalTime): OtioRationalTime {
+    if (!Number.isFinite(time.value) || time.value < 0) {
+      return { value: 0, rate: clock.rate };
+    }
+    if (compareRationalTimes(time, clock.duration) > 0) return clock.duration;
+    return rescaleTime(time, clock.rate);
+  }
 
   return {
     getState,
 
     async play(): Promise<void> {
       if (isDisposed || isPlaying) return;
-
+      if (previewBlocked()) {
+        notify();
+        return;
+      }
       const ctx = getAudioContext();
       if (ctx && ctx.state === 'suspended') {
         try {
           await ctx.resume();
         } catch {
-          // Ignore audio context resume error
+          // Ignore resume failure; fallback volume still applies.
         }
       }
-
+      if (isDisposed) return;
       isPlaying = true;
-      lastFrameTimestamp = null;
+      clockAnchor = null;
       notify();
-
-      if (typeof requestAnimationFrame !== 'undefined') {
-        animFrameId = requestAnimationFrame(tick);
-      }
+      scheduleTick();
     },
 
     pause(): void {
       if (isDisposed || !isPlaying) return;
       isPlaying = false;
-      if (animFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
-        cancelAnimationFrame(animFrameId);
-        animFrameId = null;
+      clockAnchor = null;
+      if (frameHandle !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(frameHandle);
+        frameHandle = null;
       }
       pauseAllMedia();
       notify();
@@ -871,22 +1566,17 @@ export function createOtioPlayback(
 
     async seek(time: OtioRationalTime): Promise<void> {
       if (isDisposed) return;
-
-      let clamped = time;
-      if (time.value < 0) {
-        clamped = { value: 0, rate: time.rate };
-      } else if (compareRationalTimes(time, duration) > 0) {
-        clamped = duration;
-      }
-
-      currentTime = rescaleTime(clamped, rate);
+      const gen = ++renderGeneration;
+      currentTime = clampTime(time);
+      clockAnchor = null;
       isBuffering = true;
       notify();
-
-      await renderComposition(currentTime, true);
-
+      await enqueueRender(currentTime, gen);
+      if (stale(gen)) return;
       isBuffering = false;
+      clockAnchor = null;
       notify();
+      if (isPlaying) scheduleTick();
     },
 
     subscribe(listener: OtioPlaybackListener): () => void {
@@ -900,110 +1590,86 @@ export function createOtioPlayback(
     setTrackVisibility(trackId: string, visible: boolean): void {
       if (isDisposed) return;
       const track = tracks[trackId];
-      if (track) {
-        tracks[trackId] = { ...track, visible };
-        renderComposition(currentTime, false);
-        notify();
-      }
+      if (!track) return;
+      tracks[trackId] = { ...track, visible };
+      notify();
+      void enqueueRender(currentTime, ++renderGeneration);
     },
 
     setTrackMute(trackId: string, muted: boolean): void {
       if (isDisposed) return;
       const track = tracks[trackId];
-      if (track) {
-        tracks[trackId] = { ...track, muted };
-        updateAudioGains();
-        notify();
+      if (!track) return;
+      tracks[trackId] = { ...track, muted };
+      for (const entry of audios.values()) {
+        if (entry.trackId !== trackId) continue;
+        applyAudioGain(entry, entry.gainNode?.gain.value ?? entry.element.volume, trackAudible(trackId));
+        if (!trackAudible(trackId)) {
+          entry.element.pause();
+          entry.element.setAttribute('data-active', 'false');
+        }
       }
+      notify();
     },
 
     setTrackSolo(trackId: string, solo: boolean): void {
       if (isDisposed) return;
       const track = tracks[trackId];
-      if (track) {
-        tracks[trackId] = { ...track, solo };
-        updateAudioGains();
-        renderComposition(currentTime, false);
-        notify();
-      }
+      if (!track) return;
+      tracks[trackId] = { ...track, solo };
+      notify();
+      void enqueueRender(currentTime, ++renderGeneration);
+    },
+
+    setBaseMediaPreviewAllowed(allowed: boolean): void {
+      if (isDisposed) return;
+      baseMediaPreviewAllowed = allowed;
+      notify();
+      void enqueueRender(currentTime, ++renderGeneration);
     },
 
     dispose(): void {
       if (isDisposed) return;
       isDisposed = true;
-
-      if (animFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
-        cancelAnimationFrame(animFrameId);
-        animFrameId = null;
+      isPlaying = false;
+      renderGeneration += 1;
+      renderInFlight = false;
+      clockAnchor = null;
+      if (frameHandle !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(frameHandle);
+        frameHandle = null;
       }
-
-      pauseAllMedia();
-
-      for (const video of videoPool.values()) {
-        try {
-          video.element.src = '';
-          video.element.load();
-        } catch {
-          // Ignore video element load/reset error
-        }
-      }
-      videoPool.clear();
-
-      for (const audio of audioPool.values()) {
-        try {
-          audio.element.src = '';
-          audio.element.load();
-          audio.gainNode?.disconnect();
-          audio.sourceNode?.disconnect();
-        } catch {
-          // Ignore audio element reset error
-        }
-      }
-      audioPool.clear();
-      imagePool.clear();
-      lastValidImageSequenceFrames.clear();
-
-      if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
-        for (const url of localBlobUrls) {
-          try {
-            URL.revokeObjectURL(url);
-          } catch {
-            // Ignore revoke error
-          }
-        }
-      }
-      localBlobUrls.length = 0;
-
-      if (typeof resolveMedia === 'object' && resolveMedia !== null && 'dispose' in resolveMedia) {
-        try {
-          resolveMedia.dispose();
-        } catch {
-          // Ignore resolver dispose error
-        }
-      }
-
+      for (const entry of videos.values()) releaseVideo(entry);
+      for (const entry of audios.values()) releaseAudio(entry);
+      images.releaseAll();
+      for (const image of imageElements.values()) image.element.src = '';
+      imageElements.clear();
+      videoPromises.clear();
+      audioPromises.clear();
+      imagePromises.clear();
+      for (const url of ownedUrls) revokeOwned(url);
+      ownedUrls.clear();
+      audioGraph?.remove();
+      videoHost?.remove();
+      audioGraph = null;
+      videoHost = null;
       if (audioContext && !options.audioContext) {
         try {
-          audioContext.close();
+          void audioContext.close();
         } catch {
-          // Ignore audio context close error
+          // Ignore context close errors.
         }
       }
       audioContext = null;
-      masterGainNode = null;
-      trackGainNodes.clear();
-
+      masterGain = null;
+      trackGains.clear();
       listeners.clear();
-      trackCanvas = null;
-      trackCtx = null;
-
-      // Clear main canvas
       const ctx = canvas.getContext('2d');
       if (ctx) {
         try {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
         } catch {
-          // Ignore canvas clear error
+          // Ignore canvas clear errors.
         }
       }
     },

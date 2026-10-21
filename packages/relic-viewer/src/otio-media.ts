@@ -1,25 +1,17 @@
 /**
  * OpenTimelineIO native media resolver for Relik viewer.
  *
- * Enforces bundle-only access:
- * - Pure byte-indexed access via OtioZipIndex.
- * - Strict URL/path validation: rejects remote schemes (http, https, ftp, etc.),
- *   absolute paths, authority escapes, path traversal (..).
- * - Single-pass deliberate percent-decoding.
- * - Bounded decompression tracking with configurable ceiling (default 100 MiB).
- * - Automatic MIME type sniffing and Blob / Object URL lifecycle management.
- * - Resolves ImageSequenceReference frames with padding, stepping, and policy.
- * - Full disposal of all created Object URLs.
+ * Bundle-only access: validated ZIP entries, no remote URLs, no sequence
+ * renumbering. The evaluator owns image-sequence paths. This module reserves
+ * archive bytes before inflation, shares one in-flight read per canonical
+ * entry, and remembers permanent read failures so playback cannot retry a
+ * bad entry every frame.
  */
 
-import type {
-  OtioMediaReference,
-  OtioRationalTime,
-  OtioZipIndex,
-} from '@relic/format';
-import { MAX_EXPANDED_ZIP_BYTES, timeToSeconds } from '@relic/format';
+import type { OtioZipEntryInfo, OtioZipIndex } from '@relic/format';
+import { MAX_EXPANDED_ZIP_BYTES } from '@relic/format';
 
-export const DEFAULT_MAX_DECOMPRESSED_BYTES = MAX_EXPANDED_ZIP_BYTES; // 100 MiB
+export const DEFAULT_MAX_DECOMPRESSED_BYTES = MAX_EXPANDED_ZIP_BYTES;
 
 export interface OtioMediaResolverOptions {
   /** Maximum cumulative decompressed bytes allowed across this resolver. */
@@ -33,7 +25,7 @@ export interface OtioMediaResolver {
   resolveUrl(bundlePath: string): Promise<string | null>;
   /** Check if a bundle path exists in the archive index. */
   hasEntry(bundlePath: string): boolean;
-  /** Get cumulative decompressed bytes so far. */
+  /** Get cumulative decompressed bytes charged so far. */
   getDecompressedBytes(): number;
   /** Revoke all created Object URLs and clear memory. */
   dispose(): void;
@@ -43,7 +35,7 @@ export interface OtioMediaResolver {
  * Infer media MIME type from file extension.
  */
 export function inferMediaMimeType(filename: string): string {
-  const clean = filename.split('?')[0].split('#')[0];
+  const clean = filename.split('?')[0]?.split('#')[0] ?? filename;
   const ext = clean.split('.').pop()?.toLowerCase();
   switch (ext) {
     case 'mp4':
@@ -99,64 +91,65 @@ export function sanitizeBundlePath(rawPath: string): string {
     throw new Error('Bundle media path must be a non-empty string');
   }
 
-  // Reject ASCII control characters
   for (let i = 0; i < rawPath.length; i++) {
     const code = rawPath.charCodeAt(i);
     if (code < 32 || code === 127) {
-      throw new Error(`Bundle media path contains control character at index ${i}`);
+      throw new Error(
+        `Bundle media path contains control character at index ${i}`
+      );
     }
   }
 
   let path = rawPath.trim();
 
-  // Strip query strings or fragments if present in target URLs
   const qIdx = path.indexOf('?');
   if (qIdx !== -1) path = path.slice(0, qIdx);
   const fIdx = path.indexOf('#');
   if (fIdx !== -1) path = path.slice(0, fIdx);
 
-  // Check for schemes
   const schemeMatch = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.exec(path);
   if (schemeMatch) {
     const scheme = schemeMatch[0].toLowerCase();
     if (scheme === 'file:') {
-      // Allow relative file: paths, but reject absolute or authority file://
       const after = path.slice(5);
-      if (after.startsWith('//') || after.startsWith('/') || after.startsWith('\\')) {
+      if (
+        after.startsWith('//') ||
+        after.startsWith('/') ||
+        after.startsWith('\\')
+      ) {
         throw new Error(`Forbidden absolute or remote file URI: ${rawPath}`);
       }
       path = after;
     } else {
-      throw new Error(`Forbidden remote media URL scheme: ${scheme} in ${rawPath}`);
+      throw new Error(
+        `Forbidden remote media URL scheme: ${scheme} in ${rawPath}`
+      );
     }
   }
 
-  // Single-pass deliberate percent-decoding
   try {
     path = decodeURIComponent(path);
   } catch {
     throw new Error(`Malformed percent-encoding in bundle path: ${rawPath}`);
   }
 
-  // Check again after decoding for control characters
   for (let i = 0; i < path.length; i++) {
     const code = path.charCodeAt(i);
     if (code < 32 || code === 127) {
-      throw new Error(`Bundle media path contains control character after decoding: ${rawPath}`);
+      throw new Error(
+        `Bundle media path contains control character after decoding: ${rawPath}`
+      );
     }
   }
 
-  // Reject Windows drive letters
   if (/^[a-zA-Z]:[/\\]/.test(path)) {
     throw new Error(`Forbidden absolute Windows drive path: ${rawPath}`);
   }
 
-  // Reject leading slashes
   if (path.startsWith('/') || path.startsWith('\\')) {
     throw new Error(`Forbidden absolute path: ${rawPath}`);
   }
 
-  // Normalize path segments and reject traversal above root
   const rawSegments = path.split(/[/\\]+/);
   const segments: string[] = [];
 
@@ -182,51 +175,10 @@ export function sanitizeBundlePath(rawPath: string): string {
 }
 
 /**
- * Resolve an ImageSequenceReference into the bundle path for a specific source time.
- */
-export function resolveImageSequenceFramePath(
-  ref: OtioMediaReference,
-  sourceTime: OtioRationalTime
-): string | null {
-  if (
-    ref.schema !== 'ImageSequenceReference' &&
-    !ref.schema.startsWith('ImageSequenceReference')
-  ) {
-    return null;
-  }
-
-  const rate = ref.rate && ref.rate > 0 ? ref.rate : sourceTime.rate;
-  const startFrame = ref.start_frame ?? 0;
-  const frameStep = ref.frame_step ?? 1;
-  const padding = ref.frame_zero_padding ?? 0;
-
-  const seconds = timeToSeconds(sourceTime);
-  const frameIndex = Math.floor(seconds * rate);
-  const frameNumber = startFrame + frameIndex * frameStep;
-
-  let paddedStr: string;
-  if (frameNumber < 0) {
-    paddedStr = String(frameNumber);
-  } else if (padding > 0) {
-    paddedStr = String(frameNumber).padStart(padding, '0');
-  } else {
-    paddedStr = String(frameNumber);
-  }
-
-  const base = ref.target_url_base ?? '';
-  const prefix = ref.name_prefix ?? '';
-  const suffix = ref.name_suffix ?? '';
-  const rawCombined = `${base}${prefix}${paddedStr}${suffix}`;
-
-  try {
-    return sanitizeBundlePath(rawCombined);
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Create a native bundle media resolver backed by an OtioZipIndex.
+ *
+ * The caller owns this object. Playback must not dispose a resolver it was
+ * given; the view disposes it on unmount so a timeline switch can reuse it.
  */
 export function createOtioMediaResolver(
   zipIndex: OtioZipIndex,
@@ -235,27 +187,28 @@ export function createOtioMediaResolver(
   const maxDecompressedBytes =
     options.maxDecompressedBytes ?? DEFAULT_MAX_DECOMPRESSED_BYTES;
 
-  let totalDecompressedBytes = 0;
+  let chargedBytes = 0;
   let disposed = false;
 
-  const blobCache = new Map<string, Blob>();
-  const urlCache = new Map<string, string>();
+  const blobByEntry = new Map<string, Blob>();
+  const urlByEntry = new Map<string, string>();
+  const blobInflight = new Map<string, Promise<Blob>>();
+  const urlInflight = new Map<string, Promise<string | null>>();
+  const failures = new Map<string, Error>();
   const allocatedUrls = new Set<string>();
 
   function findZipEntryName(normalizedPath: string): string | null {
     if (zipIndex.entries.has(normalizedPath)) {
       return normalizedPath;
     }
-    // Also try media/ prefix if omitted
     if (!normalizedPath.startsWith('media/')) {
       const withMedia = `media/${normalizedPath}`;
       if (zipIndex.entries.has(withMedia)) {
         return withMedia;
       }
     }
-    // Also try stripping media/ prefix if present
     if (normalizedPath.startsWith('media/')) {
-      const stripped = normalizedPath.slice(6);
+      const stripped = normalizedPath.slice('media/'.length);
       if (zipIndex.entries.has(stripped)) {
         return stripped;
       }
@@ -263,118 +216,157 @@ export function createOtioMediaResolver(
     return null;
   }
 
+  function canonicalName(bundlePath: string): string | null {
+    try {
+      return findZipEntryName(sanitizeBundlePath(bundlePath));
+    } catch {
+      return null;
+    }
+  }
+
+  function limitError(entryName: string, size: number): Error {
+    return new Error(
+      `Decompression limit exceeded: ${entryName} (${size} bytes) ` +
+        `would exceed aggregate cap of ${maxDecompressedBytes} bytes ` +
+        `(already decompressed ${chargedBytes})`
+    );
+  }
+
+  function loadEntry(entryName: string): Promise<Blob> {
+    const cached = blobByEntry.get(entryName);
+    if (cached) return Promise.resolve(cached);
+    const pending = blobInflight.get(entryName);
+    if (pending) return pending;
+    const prior = failures.get(entryName);
+    if (prior) return Promise.reject(prior);
+
+    const entry: OtioZipEntryInfo | undefined = zipIndex.entries.get(entryName);
+    if (!entry) {
+      return Promise.reject(new Error(`Entry not found: ${entryName}`));
+    }
+    const declared = entry.uncompressedSize;
+    if (
+      !Number.isFinite(declared) ||
+      declared < 0 ||
+      chargedBytes + declared > maxDecompressedBytes
+    ) {
+      const err = limitError(entryName, declared);
+      failures.set(entryName, err);
+      return Promise.reject(err);
+    }
+
+    chargedBytes += declared;
+    let adjusted = false;
+    const promise = (async () => {
+      try {
+        const bytes = await zipIndex.readEntry(entryName);
+        if (disposed) {
+          throw new Error('resolver disposed');
+        }
+        const actual = bytes.byteLength;
+        chargedBytes += actual - declared;
+        adjusted = true;
+        if (chargedBytes > maxDecompressedBytes) {
+          const err = new Error(
+            `Decompression limit exceeded: aggregate decompressed bytes ` +
+              `${chargedBytes} exceeds limit ${maxDecompressedBytes}`
+          );
+          chargedBytes -= actual;
+          failures.set(entryName, err);
+          throw err;
+        }
+        const blob = new Blob([bytes], {
+          type: inferMediaMimeType(entryName),
+        });
+        blobByEntry.set(entryName, blob);
+        return blob;
+      } catch (error) {
+        if (!adjusted) chargedBytes -= declared;
+        const err =
+          error instanceof Error ? error : new Error(String(error));
+        if (err.message !== 'resolver disposed') {
+          failures.set(entryName, err);
+        }
+        throw err;
+      } finally {
+        blobInflight.delete(entryName);
+      }
+    })();
+    blobInflight.set(entryName, promise);
+    return promise;
+  }
+
+  function createUrl(entryName: string): Promise<string | null> {
+    return loadEntry(entryName)
+      .then((blob) => {
+        if (disposed) return null;
+        const existing = urlByEntry.get(entryName);
+        if (existing) return existing;
+        if (
+          typeof URL === 'undefined' ||
+          typeof URL.createObjectURL !== 'function'
+        ) {
+          return null;
+        }
+        const url = URL.createObjectURL(blob);
+        urlByEntry.set(entryName, url);
+        allocatedUrls.add(url);
+        return url;
+      })
+      .catch(() => null)
+      .finally(() => {
+        urlInflight.delete(entryName);
+      });
+  }
+
   return {
     hasEntry(bundlePath: string): boolean {
       if (disposed) return false;
-      try {
-        const normalized = sanitizeBundlePath(bundlePath);
-        return findZipEntryName(normalized) !== null;
-      } catch {
-        return false;
-      }
+      return canonicalName(bundlePath) !== null;
     },
 
     getDecompressedBytes(): number {
-      return totalDecompressedBytes;
+      return chargedBytes;
     },
 
-    async resolveBlob(bundlePath: string): Promise<Blob | null> {
-      if (disposed) return null;
-
-      let normalized: string;
-      try {
-        normalized = sanitizeBundlePath(bundlePath);
-      } catch {
-        return null;
-      }
-
-      const cachedBlob = blobCache.get(normalized);
-      if (cachedBlob) {
-        return cachedBlob;
-      }
-
-      const entryName = findZipEntryName(normalized);
-      if (!entryName) {
-        return null;
-      }
-
-      const entry = zipIndex.entries.get(entryName);
-      if (!entry) {
-        return null;
-      }
-
-      // Check uncompressed size bound
-      if (totalDecompressedBytes + entry.uncompressedSize > maxDecompressedBytes) {
-        throw new Error(
-          `Decompression limit exceeded: ${entryName} (${entry.uncompressedSize} bytes) ` +
-            `would exceed aggregate cap of ${maxDecompressedBytes} bytes (already decompressed ${totalDecompressedBytes})`
-        );
-      }
-
-      const bytes = await zipIndex.readEntry(entryName);
-      if (disposed) return null;
-
-      totalDecompressedBytes += bytes.byteLength;
-      if (totalDecompressedBytes > maxDecompressedBytes) {
-        throw new Error(
-          `Decompression limit exceeded: aggregate decompressed bytes ${totalDecompressedBytes} exceeds limit ${maxDecompressedBytes}`
-        );
-      }
-
-      const mimeType = inferMediaMimeType(entryName);
-      const blob = new Blob([bytes], { type: mimeType });
-      blobCache.set(normalized, blob);
-      return blob;
+    resolveBlob(bundlePath: string): Promise<Blob | null> {
+      if (disposed) return Promise.resolve(null);
+      const entryName = canonicalName(bundlePath);
+      if (!entryName) return Promise.resolve(null);
+      return loadEntry(entryName);
     },
 
-    async resolveUrl(bundlePath: string): Promise<string | null> {
-      if (disposed) return null;
-
-      let normalized: string;
-      try {
-        normalized = sanitizeBundlePath(bundlePath);
-      } catch {
-        return null;
-      }
-
-      const cachedUrl = urlCache.get(normalized);
-      if (cachedUrl) {
-        return cachedUrl;
-      }
-
-      const blob = await this.resolveBlob(bundlePath);
-      if (!blob || disposed) {
-        return null;
-      }
-
-      // In browser/Node environments with URL.createObjectURL
-      if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
-        const url = URL.createObjectURL(blob);
-        urlCache.set(normalized, url);
-        allocatedUrls.add(url);
-        return url;
-      }
-
-      return null;
+    resolveUrl(bundlePath: string): Promise<string | null> {
+      if (disposed) return Promise.resolve(null);
+      const entryName = canonicalName(bundlePath);
+      if (!entryName) return Promise.resolve(null);
+      const cached = urlByEntry.get(entryName);
+      if (cached) return Promise.resolve(cached);
+      const pending = urlInflight.get(entryName);
+      if (pending) return pending;
+      const promise = createUrl(entryName);
+      urlInflight.set(entryName, promise);
+      return promise;
     },
 
     dispose(): void {
       if (disposed) return;
       disposed = true;
-
-      if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      if (
+        typeof URL !== 'undefined' &&
+        typeof URL.revokeObjectURL === 'function'
+      ) {
         for (const url of allocatedUrls) {
           try {
             URL.revokeObjectURL(url);
           } catch {
-            // Ignore revoke errors
+            // Ignore revoke errors.
           }
         }
       }
-
-      allocatedUrls.clear();
-      urlCache.clear();
-      blobCache.clear();
+      urlByEntry.clear();
+      blobByEntry.clear();
+      failures.clear();
     },
   };
 }
