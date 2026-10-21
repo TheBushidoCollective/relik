@@ -14,6 +14,7 @@
       "**/*.jsx",
       "**/*.json",
       "!packages/relic-format/test/fixtures/otio/edge-cases/faithful-tokens.otio.json",
+      "!packages/relic-mcp/mcp-servers.json",
       "!**/node_modules",
       "!**/dist",
       "!**/.terraform",

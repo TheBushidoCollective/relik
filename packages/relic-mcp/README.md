@@ -159,12 +159,15 @@ single unminified file and the TypeScript it was built from is in the same
 package. There is one narrow exception for automatic `.otiod` directory
 packaging. It uses a source-included Node-API secure-open helper, prebuilt in
 the npm tarball for macOS arm64 and x64 with a 15.0 binary deployment floor,
-plus glibc 2.28 or newer Linux on arm64 and x64 with kernel 5.6 or newer. On
-macOS, the helper must pass its strict confinement self-test on the current
-kernel before `.otiod` conversion runs. It never downloads a helper, invokes
-Python, or compiles at install or publish time. A missing packaged target or
-failed macOS self-test refuses `.otiod` packaging rather than using a pathname
-fallback. Ordinary file publishing remains plain Node 18 or newer. The cover
+plus glibc 2.28 or newer Linux on arm64 and x64. On either platform, before it
+reads a bundle, the helper verifies on the running kernel that beneath-root
+resolution refuses parent and absolute escapes from a held directory and that
+the no-symlink flag is accepted. Symlink refusal, held-descriptor behavior, and
+replacement behavior are verified by the CI probe on the listed versions. It
+never downloads a helper, invokes Python, or compiles at install or publish
+time. A missing packaged target or failed capability check refuses `.otiod`
+packaging rather than using a pathname fallback. Ordinary file publishing
+remains plain Node 18 or newer. The cover
 rendering page assets in `dist/cover/` contain the
 unminified cover bundle built from `@relic/viewer`, with vendored React, pdfjs,
 and sucrase for offline document rendering in local Chrome. Releases carry npm
@@ -226,9 +229,18 @@ answered.
 
 Requires Node 18 or newer. Automatic `.otiod` packaging additionally requires
 one of four packaged targets: macOS arm64 or x64 with a 15.0 binary deployment
-floor, or Linux glibc 2.28+ kernel 5.6+ arm64 or x64. On macOS, the strict
-confinement self-test must pass on the running kernel. A target or kernel that
-cannot satisfy that requirement refuses directory conversion without reducing
-ordinary file publishing.
+floor, or Linux glibc 2.28+ arm64 or x64. On either platform, before it reads
+a bundle, the helper verifies on the running kernel that beneath-root
+resolution refuses parent and absolute escapes from a held directory and that
+the no-symlink flag is accepted. Symlink refusal, held-descriptor behavior, and
+replacement behavior are verified by the CI probe on the listed versions. A
+target or kernel that cannot satisfy that requirement refuses directory
+conversion without reducing ordinary file publishing.
+
+Tested on macOS: CI native probes in dry run `39652819003` on macOS 15.7.9
+(`24G830`), Darwin 24.6.0 (`xnu-11417.140.69.711.44~1`) on arm64 and x64, with
+Xcode 26.0.1 and SDK 26.0 plus Xcode 16.4 and SDK 15.5; local macOS 27.0.1
+(`26A434`), Darwin 27.0.0 arm64, Homebrew clang 22.1.8, and SDK 27. An earlier
+historical local probe used Xcode clang 21.0.0 and SDK 27.
 
 MIT licensed. Source: https://github.com/TheBushidoCollective/relic

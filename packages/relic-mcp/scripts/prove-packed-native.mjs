@@ -19,7 +19,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
@@ -132,6 +132,18 @@ function errorCode(error) {
   return typeof error === 'object' && error !== null && 'code' in error
     ? error.code
     : undefined;
+}
+
+function errorField(error, field) {
+  return typeof error === 'object' && error !== null && field in error
+    ? error[field]
+    : undefined;
+}
+
+function nativeRefusalDetails(error) {
+  const describe = (value) =>
+    typeof value === 'string' ? JSON.stringify(value) : String(value);
+  return `code=${describe(errorField(error, 'code'))}, errno=${describe(errorField(error, 'errno'))}, syscall=${describe(errorField(error, 'syscall'))}, message=${describe(errorField(error, 'message'))}`;
 }
 
 function nodeOnlyEnvironment(overrides = {}) {
@@ -442,14 +454,46 @@ function assertPublished(response, label) {
   }
 }
 
-function assertRefused(response, label) {
+function assertRefused(response, label, expected) {
   if (
     response === null ||
     typeof response !== 'object' ||
     response.error !== undefined ||
-    response.result?.isError !== true
+    response.result === null ||
+    typeof response.result !== 'object' ||
+    response.result.isError !== true
   ) {
     throw new Error(`${label} was not refused by the MCP tool: ${JSON.stringify(response)}`);
+  }
+
+  const structuredContent = response.result.structuredContent;
+  const content = response.result.content;
+  const code =
+    structuredContent !== null && typeof structuredContent === 'object'
+      ? structuredContent.code
+      : undefined;
+  const firstContent = Array.isArray(content) ? content[0] : undefined;
+  const text =
+    firstContent !== null &&
+    typeof firstContent === 'object' &&
+    typeof firstContent.text === 'string'
+      ? firstContent.text
+      : undefined;
+
+  const expectedTexts = Array.isArray(expected.text) ? expected.text : [expected.text];
+  if (
+    code !== expected.code ||
+    text === undefined ||
+    expectedTexts.some((expectedText) => !text.includes(expectedText))
+  ) {
+    throw new Error(
+      `${label} had the wrong MCP refusal: expected structuredContent.code=${JSON.stringify(expected.code)} and content[0].text including ${JSON.stringify(expectedTexts)}; got code=${JSON.stringify(code)}, text=${JSON.stringify(text)}`
+    );
+  }
+  if (expected.requests.length !== expected.requestCount) {
+    throw new Error(
+      `${label} reached the loopback service: expected ${expected.requestCount} requests, found ${expected.requests.length}`
+    );
   }
 }
 
@@ -559,14 +603,23 @@ function assertBytes(actual, expected, label) {
   }
 }
 
-async function expectNativeRefusal(label, action) {
+async function expectNativeRefusal(label, expected, action) {
   try {
     await action();
   } catch (error) {
-    if (typeof errorCode(error) === 'string') return;
-    throw new Error(
-      `${label} failed without a native refusal code: ${error instanceof Error ? error.message : String(error)}`
-    );
+    const code = errorField(error, 'code');
+    const errno = errorField(error, 'errno');
+    if (
+      code !== expected.code ||
+      (expected.errno !== undefined && errno !== expected.errno)
+    ) {
+      const expectedErrno =
+        expected.errno === undefined ? '' : `, errno=${expected.errno}`;
+      throw new Error(
+        `${label} had an unexpected native refusal: expected code=${expected.code}${expectedErrno}; got ${nativeRefusalDetails(error)}`
+      );
+    }
+    return;
   }
   throw new Error(`${label} was accepted by the installed native loader`);
 }
@@ -581,6 +634,11 @@ async function proveInstalledNativeLoader(loaderPath, runtime) {
   const directRoot = join(runtime, 'native-direct.otiod');
   const insideBytes = Buffer.from('inside native bytes');
   const outsideBytes = Buffer.from('outside native bytes');
+  const lexicalPathRefusal = { code: 'ERR_RELIC_NATIVE_INVALID_PATH' };
+  const symlinkRefusal = {
+    code: 'ELOOP',
+    errno: os.constants.errno.ELOOP,
+  };
   await mkdir(outside);
   await writeFile(join(outside, 'secret.txt'), outsideBytes);
   await mkdir(join(directRoot, 'replaceable'), { recursive: true });
@@ -591,30 +649,46 @@ async function proveInstalledNativeLoader(loaderPath, runtime) {
 
   await withNativeRoot(openNativeBundleRoot, directRoot, async (root) => {
     assertBytes(await readNative(root, 'inside.txt'), insideBytes, 'native inside read');
-    await expectNativeRefusal('native traversal escape', async () => {
-      await readNative(root, '../native-outside/secret.txt');
-    });
-    await expectNativeRefusal('native absolute escape', async () => {
-      await readNative(root, join(outside, 'secret.txt'));
-    });
-    await expectNativeRefusal('native leaf symlink', async () => {
+    await expectNativeRefusal(
+      'native lexical traversal path',
+      lexicalPathRefusal,
+      async () => {
+        await readNative(root, '../native-outside/secret.txt');
+      }
+    );
+    await expectNativeRefusal(
+      'native lexical absolute path',
+      lexicalPathRefusal,
+      async () => {
+        await readNative(root, join(outside, 'secret.txt'));
+      }
+    );
+    await expectNativeRefusal('native leaf symlink', symlinkRefusal, async () => {
       await readNative(root, 'leaf.txt');
     });
-    await expectNativeRefusal('native intermediate symlink', async () => {
-      await readNative(root, 'intermediate/secret.txt');
-    });
+    await expectNativeRefusal(
+      'native intermediate symlink',
+      symlinkRefusal,
+      async () => {
+        await readNative(root, 'intermediate/secret.txt');
+      }
+    );
 
     const replaced = join(directRoot, 'replaceable');
     await rename(replaced, `${replaced}.original`);
     await symlink(outside, replaced, 'dir');
-    await expectNativeRefusal('native replaced descendant directory', async () => {
-      await readNative(root, 'replaceable/secret.txt');
-    });
+    await expectNativeRefusal(
+      'native replaced descendant directory',
+      symlinkRefusal,
+      async () => {
+        await readNative(root, 'replaceable/secret.txt');
+      }
+    );
   });
 
   const rootSymlink = join(runtime, 'native-root-symlink.otiod');
   await symlink(directRoot, rootSymlink, 'dir');
-  await expectNativeRefusal('native root symlink', async () => {
+  await expectNativeRefusal('native root symlink', symlinkRefusal, async () => {
     await withNativeRoot(openNativeBundleRoot, rootSymlink, async () => undefined);
   });
 
@@ -726,7 +800,7 @@ async function main() {
     // This is the only realpath in the proof. Bundle paths remain lexical so a
     // source checkout can never become a fallback through canonicalization.
     temporary = await mkdtemp(
-      join(await realpath(tmpdir()), 'relic-mcp-packed-native-')
+      join(await realpath(os.tmpdir()), 'relic-mcp-packed-native-')
     );
     const install = join(temporary, 'install');
     const runtime = join(temporary, 'runtime');
@@ -840,23 +914,50 @@ async function main() {
       throw new Error('valid packed .otiod publish did not upload one nonempty ciphertext object');
     }
 
-    for (const [label, path] of [
-      ['traversal .otiod bundle', fixtures.traversal],
-      ['symlinked .otiod bundle', fixtures.symlinked],
+    for (const [label, path, expected] of [
+      [
+        'traversal .otiod bundle',
+        fixtures.traversal,
+        {
+          code: 'otio_bundle_invalid',
+          text: 'Path traversal',
+        },
+      ],
+      [
+        'symlinked .otiod bundle',
+        fixtures.symlinked,
+        {
+          code: 'source_unreadable',
+          text: ['media/link/secret.mp4', 'confined descendant failed'],
+        },
+      ],
     ]) {
       const requestCount = requests.length;
       const refused = await callPublish(bin, runtime, origin, path);
-      assertRefused(refused, label);
-      if (requests.length !== requestCount) {
-        throw new Error(`${label} reached the service after local refusal`);
-      }
+      assertRefused(refused, label, { ...expected, requests, requestCount });
     }
 
     await withHiddenPath(nativeBinary, 'selected native prebuild', async () => {
+      const requestCount = requests.length;
+      const uploadCount = uploaded.length;
+      const missingPrebuild = await callPublish(bin, runtime, origin, fixtures.valid);
+      assertRefused(missingPrebuild, 'valid .otiod without native prebuild', {
+        code: 'source_not_regular_file',
+        text: `native secure-open prebuild is missing for ${packagedTarget()}`,
+        requests,
+        requestCount,
+      });
+      if (uploaded.length !== uploadCount) {
+        throw new Error('valid .otiod without native prebuild uploaded ciphertext');
+      }
+
       const ordinary = await callPublish(bin, runtime, origin, fixtures.ordinary);
       assertPublished(ordinary, 'ordinary file publish without native prebuild');
-      if (uploaded.length !== 2 || uploaded[1].length === 0) {
-        throw new Error('ordinary file publish without native prebuild did not upload ciphertext');
+      if (
+        uploaded.length !== uploadCount + 1 ||
+        uploaded[uploadCount]?.length === 0
+      ) {
+        throw new Error('ordinary file publish without native prebuild did not upload one ciphertext object');
       }
     });
   } catch (error) {

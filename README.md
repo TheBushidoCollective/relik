@@ -341,11 +341,14 @@ What is chosen is that its JavaScript arrives as readable source.
 from ships in the same package. The deliberate exception is automatic `.otiod`
 directory packaging: a source-included Node-API helper, prebuilt in the npm
 tarball for macOS arm64 and x64 with a 15.0 binary deployment floor, plus Linux
-glibc 2.28+ kernel 5.6+ arm64 and x64. On macOS, `.otiod` conversion runs only
-after the helper's strict confinement self-test passes on the current kernel. A
-kernel that lacks the primitive refuses the directory feature rather than
-reopening paths in JavaScript. The helper never downloads, invokes Python, or
-compiles on an installed machine. The cover
+glibc 2.28+ arm64 and x64. On either platform, before it reads a bundle, the
+helper verifies on the running kernel that beneath-root resolution refuses
+parent and absolute escapes from a held directory and that the no-symlink flag
+is accepted. Symlink refusal, held-descriptor behavior, and replacement
+behavior are verified by the CI probe on the listed versions. A kernel that
+lacks the primitive refuses the directory feature rather than reopening paths
+in JavaScript. The helper never downloads, invokes Python, or compiles on an
+installed machine. The cover
 rendering page assets in `dist/cover/` contain the unminified cover bundle built
 from `@relic/viewer`, with vendored React, pdfjs, and sucrase for local document
 rendering in headless Chrome. Releases carry [npm provenance][provenance], which
