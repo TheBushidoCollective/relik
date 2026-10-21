@@ -45,11 +45,19 @@ about network reach, not safety: the code runs in your browser, can use your
 CPU, and can render whatever it wants. The viewer says so on the page before the
 content renders, and so does `/policy`.
 
+The viewer renders Markdown, code, HTML, JSX, still images, PDF, and provides
+in-browser players for audio and video media and OpenTimelineIO timelines
+(`.otiod` directories packaged as `.otioz`, or `.otioz` archives). Arbitrary
+directories remain refused, while general archives and binaries remain
+download-only. For OpenTimelineIO relics, unencrypted first-screen media
+rendering is skipped by default to prevent private timeline cuts or frames from
+leaking into unencrypted link unfurl previews.
+
 `/policy` states the whole trade: the telemetry, the optional plaintext title,
 the per-relic cover image raster stored in the clear for unfurl cards
-(rendered by default and declined with `cover: false`), and what the operator
-learns. The frame conditions the telemetry on that statement being readable
-before anybody publishes.
+(rendered by default and declined with `cover: false`, with generic cards for
+OpenTimelineIO), and what the operator learns. The frame conditions the
+telemetry on that statement being readable before anybody publishes.
 
 ## The packages
 
@@ -87,8 +95,11 @@ restart.
 ## Connecting the MCP server
 
 Relic exposes `relic_publish`, which takes a filesystem path (and optional
-`title` and `cover` arguments for link unfurls) and never inline content, and
-`relic_describe_client`, which explains what the client does with your file
+`title` and `cover` arguments for link unfurls) and never inline content.
+Standard OpenTimelineIO directories (`.otiod`) are automatically packaged into
+standard `.otioz` archives for native in-browser timeline viewing while
+preserving the directory path as source identity; arbitrary directories are
+refused. `relic_describe_client` explains what the client does with your file
 without reading it or contacting anything.
 
 It also exposes `relic_republish`, which posts a new version of a file to an

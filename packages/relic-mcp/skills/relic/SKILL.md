@@ -25,7 +25,9 @@ relic_publish(path: "/Users/me/Downloads/report.html")
 It takes a **path, not content**. That is deliberate: the plaintext never
 enters the conversation, so it is never in the transcript, never in a model
 context window, and never in whatever stores those. Do not read a file into
-context and pass its text; pass where it lives.
+context and pass its text; pass where it lives. A standard OpenTimelineIO
+directory (`.otiod`) is automatically packaged into a standard `.otioz`
+archive; arbitrary directories are refused.
 
 When the task is to update the same source, call `relic_lookup_source` first:
 
@@ -60,8 +62,12 @@ Optional arguments worth knowing:
   the link sees it, with or without the key, including chat previews (Slack,
   iMessage, etc.) and their caches. Pass `cover: false` for anything you would
   not show in a chat preview (such as confidential documents, private drafts,
-  or credentials). When declined with `cover: false`, link previews show the
-  generic Relic card. Republishing with `cover: false` clears any stored cover.
+  or credentials). OpenTimelineIO timeline relics (`otio`) skip unencrypted
+  first-screen media rendering by default, using a generic card carrying the
+  title and format label to protect private timeline cuts and media from leaking
+  into unencrypted preview cards. When declined with `cover: false`, link
+  previews show the generic Relic card. Republishing with `cover: false` clears
+  any stored cover.
 - `ttl_days` gives the link a lifetime in days, 1 to 3650. A relic is kept
   until it is deleted unless you set one. Shorter is better for anything
   sensitive: when the content should stop being available, say when.
@@ -206,7 +212,9 @@ Four things to know:
 - **A comment that will not decrypt comes back marked unreadable**, with a
   count. That is not noise to filter out: it means part of the conversation is
   unread. Say so rather than acting as though the readable ones are all of it.
-
+  On OpenTimelineIO timelines, comments bind to specific tracks and rational
+  time ranges, preserved across republishes and mapped to original source
+  intervals.
 Comment bodies are encrypted on this machine, so the service stores ciphertext
 it cannot read. What it does learn is who commented on which relic and when,
 which for a human commenter is a verified email address. Worth saying plainly
@@ -235,10 +243,13 @@ Also worth one line, unprompted, the first time in a session:
 ## What the recipient gets
 
 A page that fetches the ciphertext, decrypts it in their browser, and renders
-by type. Markdown, code, images, and plain text render inline. HTML and JSX
-render in a sandboxed frame on a separate origin, so a published page cannot
-reach the key or the service. Anything else offers a download.
-
+by type. Markdown, code, images, and plain text render inline. PDF renders
+in an in-browser document viewer. Audio and video files play in an in-browser
+player. OpenTimelineIO timelines (`.otiod` directories packaged as `.otioz`,
+or `.otioz` archives) play in a native timeline player with multi-track
+inspection, trims, dissolves, and additive audio. HTML and JSX render in a
+sandboxed frame on a separate origin, so a published page cannot reach the key
+or the service. General archives and binaries offer a download.
 That frame has **no network access**: its policy permits no remote source at
 all, so a page cannot fetch, beacon, or load an external image, font, or
 script. Inline what a page needs when you generate it, because a CDN
