@@ -1378,7 +1378,7 @@ export const COMMENT_TOOL_DEFINITION = {
             type: 'integer',
             minimum: 1,
             description:
-              'OTIO: the relic revision this mark was made on. Sealed, not the format version.',
+              'OTIO: the relic revision this mark was made on. The comment is stored against this revision even when newer revisions exist. Sealed, not the format version.',
           },
           document_sha256: {
             type: 'string',

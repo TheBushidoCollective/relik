@@ -698,6 +698,7 @@ export async function postComment(
     {
       publish_token: state.publish_token,
       ciphertext,
+      ...(anchor?.kind === 'otio' ? { version: anchor.relic_version } : {}),
       ...(addresses == null ? {} : { addresses }),
     }
   );
