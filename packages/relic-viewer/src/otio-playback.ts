@@ -436,6 +436,47 @@ export function createOtioPlayback(
     return entry;
   }
 
+  function mountAudioElement(element: HTMLAudioElement): void {
+    element.hidden = true;
+    element.setAttribute('aria-hidden', 'true');
+    element.preload = 'auto';
+    const parent =
+      typeof document !== 'undefined'
+        ? (document.body ?? document.documentElement)
+        : null;
+    if (
+      parent &&
+      typeof parent.appendChild === 'function' &&
+      element.parentNode !== parent
+    ) {
+      parent.appendChild(element);
+    }
+  }
+
+  function unmountAudioElement(element: HTMLAudioElement): void {
+    if (typeof element.remove === 'function') {
+      element.remove();
+      return;
+    }
+    const parent = element.parentNode;
+    if (parent && typeof parent.removeChild === 'function') {
+      parent.removeChild(element);
+    }
+  }
+
+  async function whenAudioHasData(element: HTMLAudioElement): Promise<void> {
+    if (element.readyState >= 2) return;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const done = () => {
+      element.removeEventListener('loadeddata', done);
+      element.removeEventListener('error', done);
+      resolve();
+    };
+    element.addEventListener('loadeddata', done);
+    element.addEventListener('error', done);
+    await promise;
+  }
+
   async function acquireAudio(
     trackId: string,
     bundlePath: string
@@ -451,11 +492,12 @@ export function createOtioPlayback(
     if (typeof Audio === 'undefined') return null;
     const element = new Audio(mediaUrl);
     element.preload = 'auto';
+    mountAudioElement(element);
 
     const entry: LoadedAudio = {
       element,
       url: mediaUrl,
-      ready: false,
+      ready: element.readyState >= 2,
     };
     audioPool.set(cacheKey, entry);
 
@@ -474,6 +516,8 @@ export function createOtioPlayback(
       }
     }
 
+    await whenAudioHasData(element);
+    entry.ready = element.readyState >= 2;
     return entry;
   }
 
@@ -739,8 +783,10 @@ export function createOtioPlayback(
       }
     }
 
-    // Synchronize Audio Contributions
+    // Synchronize Audio Contributions. Active decoded elements stay in the
+    // document so a headless proof can see them. Hidden, not a window hook.
     updateAudioGains();
+    const activeAudio = new Set<HTMLAudioElement>();
     for (const audioContrib of evalResult.audio_contributions) {
       if (!audioContrib.bundle_path) continue;
       const audioTrack = tracks[audioContrib.track_id];
@@ -748,6 +794,8 @@ export function createOtioPlayback(
 
       const loaded = await acquireAudio(audioContrib.track_id, audioContrib.bundle_path);
       if (!loaded) continue;
+      mountAudioElement(loaded.element);
+      activeAudio.add(loaded.element);
 
       const targetSec = sourceSeconds(audioContrib.source_time);
       if (targetSec === null) {
@@ -781,6 +829,12 @@ export function createOtioPlayback(
         }
       } else if (!isPlaying && !loaded.element.paused) {
         loaded.element.pause();
+      }
+    }
+    for (const pooled of audioPool.values()) {
+      if (!activeAudio.has(pooled.element)) {
+        pooled.element.pause();
+        unmountAudioElement(pooled.element);
       }
     }
   }
@@ -1000,6 +1054,8 @@ export function createOtioPlayback(
 
       for (const audio of audioPool.values()) {
         try {
+          audio.element.pause();
+          unmountAudioElement(audio.element);
           audio.element.src = '';
           audio.element.load();
           audio.gainNode?.disconnect();
