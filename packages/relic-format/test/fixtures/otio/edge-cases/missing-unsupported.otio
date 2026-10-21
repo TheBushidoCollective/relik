@@ -75,7 +75,8 @@
                         "OTIO_SCHEMA": "Clip.2",
                         "metadata": {
                             "relic": {
-                                "codec": "ProRes 4444 XQ",
+                                "codec": "prores",
+                                "note": "Profile is whatever ffprobe records in media-measured.json. The filename is not a profile claim.",
                                 "status": "unsupported-codec"
                             }
                         },
@@ -104,7 +105,7 @@
                                 "name": "",
                                 "available_range": null,
                                 "available_image_bounds": null,
-                                "target_url": "media/prores_4444_xq.mov"
+                                "target_url": "media/unsupported_prores.mov"
                             }
                         },
                         "active_media_reference_key": "DEFAULT_MEDIA"

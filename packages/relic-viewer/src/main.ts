@@ -5151,7 +5151,7 @@ export function buildThread(
     context.dataset['projectionStatus'] = projection?.status ??
       (projectionFailures.has(entry.id) ? 'unavailable' : 'loading');
     const label = document.createElement('span');
-    label.textContent = `v${anchor.relic_version} → v${view.version} · ${
+    label.textContent = `Earlier feedback · v${anchor.relic_version} → v${view.version} · ${
       projection?.status ?? (projectionFailures.has(entry.id)
         ? 'Original context unavailable' : 'Loading original version')
     }`;

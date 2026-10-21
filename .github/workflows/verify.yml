@@ -21,7 +21,7 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -78,10 +78,10 @@ jobs:
       # Official OpenTimelineIO 0.18.1 conformance. The generator derives
       # expected ranges from the pinned library, not from this repo's
       # evaluator. A mismatch here is a real disagreement with the standard.
-      - name: Install OTIO conformance tools
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.22"
 
       - name: Install headless Chrome
         run: |
@@ -95,17 +95,27 @@ jobs:
 
       - name: OTIO conformance
         run: |
+          command -v ffmpeg >/dev/null
+          command -v ffprobe >/dev/null
+          command -v uv >/dev/null
           uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py --check
           bash scripts/generate-otio-media.sh --check
 
-      # Loopback-only end-to-end path: publish an .otiod, decrypt, play in
-      # headless Chrome, post track-specific feedback, read it back through a
-      # fresh MCP process, and republish a revision. No production writes.
+      # Loopback-only path. The script prints OTIO_PATH_OK only after the
+      # browser, official reader, and fresh MCP readback all pass.
       - name: OTIO path
         env:
           RELIC_OTIO_CHROME_PATH: ${{ env.RELIC_OTIO_CHROME_PATH }}
         run: |
           bun run --cwd packages/relic-mcp build
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            echo "ffmpeg and ffprobe are required" >&2
+            exit 1
+          fi
+          if ! command -v uv >/dev/null; then
+            echo "pinned uv is required" >&2
+            exit 1
+          fi
           if [ -z "${RELIC_OTIO_CHROME_PATH:-}" ]; then
             if command -v google-chrome >/dev/null 2>&1; then
               export RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)"

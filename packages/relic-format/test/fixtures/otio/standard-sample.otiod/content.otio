@@ -27,7 +27,32 @@
                 "name": "Video 1",
                 "source_range": null,
                 "effects": [],
-                "markers": [],
+                "markers": [
+                    {
+                        "OTIO_SCHEMA": "Marker.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "marker-v1-track"
+                            }
+                        },
+                        "name": "Track Marker",
+                        "color": "BLUE",
+                        "marked_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 100.0
+                            }
+                        },
+                        "comment": "Point in track time"
+                    }
+                ],
                 "enabled": true,
                 "color": null,
                 "children": [
@@ -77,6 +102,30 @@
                                     }
                                 },
                                 "comment": "Clipping in highlights around actor edge"
+                            },
+                            {
+                                "OTIO_SCHEMA": "Marker.2",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "marker-v1-c1-in-trim"
+                                    }
+                                },
+                                "name": "In Trim Note",
+                                "color": "GREEN",
+                                "marked_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 0.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 84.0
+                                    }
+                                },
+                                "comment": "Inside the trimmed source range"
                             }
                         ],
                         "enabled": true,
@@ -185,7 +234,7 @@
                                     "duration": {
                                         "OTIO_SCHEMA": "RationalTime.1",
                                         "rate": 24.0,
-                                        "value": 144.0
+                                        "value": 24.0
                                     },
                                     "start_time": {
                                         "OTIO_SCHEMA": "RationalTime.1",
@@ -241,7 +290,32 @@
                             }
                         },
                         "effects": [],
-                        "markers": [],
+                        "markers": [
+                            {
+                                "OTIO_SCHEMA": "Marker.2",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "marker-gap-v1"
+                                    }
+                                },
+                                "name": "Gap Marker",
+                                "color": "YELLOW",
+                                "marked_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 0.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 6.0
+                                    }
+                                },
+                                "comment": "Point inside the gap"
+                            }
+                        ],
                         "enabled": true,
                         "color": null
                     },
@@ -267,7 +341,32 @@
                             }
                         },
                         "effects": [],
-                        "markers": [],
+                        "markers": [
+                            {
+                                "OTIO_SCHEMA": "Marker.2",
+                                "metadata": {
+                                    "relic": {
+                                        "id": "marker-stack-local"
+                                    }
+                                },
+                                "name": "Stack Marker",
+                                "color": "BLUE",
+                                "marked_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 0.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 8.0
+                                    }
+                                },
+                                "comment": "Point inside the stack source range"
+                            }
+                        ],
                         "enabled": true,
                         "color": null,
                         "children": [
@@ -315,9 +414,21 @@
                                                 "OTIO_SCHEMA": "ImageSequenceReference.1",
                                                 "metadata": {},
                                                 "name": "",
-                                                "available_range": null,
+                                                "available_range": {
+                                                    "OTIO_SCHEMA": "TimeRange.1",
+                                                    "duration": {
+                                                        "OTIO_SCHEMA": "RationalTime.1",
+                                                        "rate": 24.0,
+                                                        "value": 48.0
+                                                    },
+                                                    "start_time": {
+                                                        "OTIO_SCHEMA": "RationalTime.1",
+                                                        "rate": 24.0,
+                                                        "value": 0.0
+                                                    }
+                                                },
                                                 "available_image_bounds": null,
-                                                "target_url_base": "media/vfx_plates/",
+                                                "target_url_base": "media/",
                                                 "name_prefix": "plate_",
                                                 "name_suffix": ".png",
                                                 "start_frame": 1001,
@@ -671,15 +782,69 @@
                 "color": null,
                 "children": [
                     {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "metadata": {
+                            "relic": {
+                                "id": "clip-v2-duplicate-disabled",
+                                "status": "disabled"
+                            }
+                        },
+                        "name": "Disabled Duplicate Picture",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 48.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "rate": 24.0,
+                                "value": 0.0
+                            }
+                        },
+                        "effects": [],
+                        "markers": [],
+                        "enabled": false,
+                        "color": null,
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "metadata": {},
+                                "name": "",
+                                "available_range": {
+                                    "OTIO_SCHEMA": "TimeRange.1",
+                                    "duration": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 144.0
+                                    },
+                                    "start_time": {
+                                        "OTIO_SCHEMA": "RationalTime.1",
+                                        "rate": 24.0,
+                                        "value": 24.0
+                                    }
+                                },
+                                "available_image_bounds": null,
+                                "target_url": "media/primary_a.mp4"
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
                         "OTIO_SCHEMA": "Gap.1",
-                        "metadata": {},
+                        "metadata": {
+                            "relic": {
+                                "id": "gap-v2-duplicate-rest"
+                            }
+                        },
                         "name": "",
                         "source_range": {
                             "OTIO_SCHEMA": "TimeRange.1",
                             "duration": {
                                 "OTIO_SCHEMA": "RationalTime.1",
                                 "rate": 24.0,
-                                "value": 240.0
+                                "value": 192.0
                             },
                             "start_time": {
                                 "OTIO_SCHEMA": "RationalTime.1",
