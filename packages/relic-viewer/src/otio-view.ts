@@ -157,6 +157,7 @@ export interface MountOtioViewOptions {
 
 /** Called only by the shell's dynamic import after the OTIO route is chosen. */
 export async function mountOtioView(root: HTMLElement, options: MountOtioViewOptions): Promise<void> {
+  if (root.dataset['disposed'] === 'true') return;
   root.classList.add('otio-view'); root.dataset['ready'] = 'false'; root.dataset['version'] = String(options.revision);
   const loading = element('p', 'otio-loading', 'Loading OTIO'); root.replaceChildren(loading);
   let parsed: ParsedOtioContent;
@@ -332,7 +333,11 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
       const text = element('div', 'otio-track-name'); text.append(element('strong', '', node?.name || (node ? node.schema : 'Composition')));
       if (node) text.append(element('small', '', node.json_pointer)); label.append(text);
       if (lane && lanes.some(child => child.ancestors.includes(lane.node.id))) {
-        const disclosure = button('▾', 'otio-disclosure', () => { if (collapsed.has(lane.node.id)) collapsed.delete(lane.node.id); else collapsed.add(lane.node.id); applyDisclosure(); });
+        const disclosure = button('', 'otio-disclosure', () => { if (collapsed.has(lane.node.id)) collapsed.delete(lane.node.id); else collapsed.add(lane.node.id); applyDisclosure(); });
+        const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        chevron.setAttribute('viewBox', '0 0 16 16'); chevron.setAttribute('aria-hidden', 'true');
+        const path = document.createElementNS(chevron.namespaceURI, 'path');
+        path.setAttribute('d', 'M3 5l5 5 5-5'); chevron.append(path); disclosure.append(chevron);
         disclosure.dataset['disclose'] = node?.id; disclosure.setAttribute('aria-label', `Nested tracks in ${node?.name}`); disclosure.setAttribute('aria-expanded', String(!collapsed.has(lane.node.id))); label.append(disclosure);
       }
       if (node) {
@@ -420,9 +425,30 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
     }
     const node = inspected ?? timeline ?? Object.values(doc.nodes)[0]; if (!node) return;
     context.append(element('h3', '', node.name || node.schema), element('p', 'otio-schema', node.schema));
-    const list = element('dl', ''); detail('Identity', node.id, list); detail('Origin', node.identity_origin, list); detail('JSON pointer', node.json_pointer, list); detail('Enabled', String(node.enabled), list);
-    for (const [label, range] of [['Timeline', node.timeline_range], ['Source', node.source_range], ['Available', node.available_range]] as const) if (range) detail(label, rangeLabel(range), list);
+    const list = element('dl', '');
+    detail('Identity', node.id, list); detail('Origin', node.identity_origin, list);
+    detail('JSON pointer', node.json_pointer, list); detail('Enabled', String(node.enabled), list);
+    const ancestry: string[] = [];
+    let parent: OtioNode | undefined = node;
+    while (parent) {
+      ancestry.unshift(parent.name || parent.schema);
+      parent = parent.parent_id ? doc.nodes[parent.parent_id] : undefined;
+    }
+    detail('Path', ancestry.join(' > '), list);
+    const reference = node.active_media_reference_key ? node.media_references?.[node.active_media_reference_key] : undefined;
+    for (const [label, range] of [
+      ['Timeline', node.timeline_range], ['Source', node.source_range],
+      ['Available', node.available_range ?? reference?.available_range],
+    ] as const) if (range) detail(label, rangeLabel(range), list);
     if (node.active_media_reference_key) detail('Active reference', node.active_media_reference_key, list);
+    if (reference?.target_url) detail('Bundle media', reference.target_url, list);
+    if (reference?.missing_frame_policy) detail('Missing frame policy', reference.missing_frame_policy, list);
+    if (selected && timelineId) {
+      const spans = sourceSpansForOtioRange(doc, timelineId, selected.track_id, selected.range);
+      for (const span of spans) {
+        if (span.file_relative_source_range) detail(`File source · ${span.name}`, rangeLabel(span.file_relative_source_range), list);
+      }
+    }
     context.append(list);
     if (node.effects?.length) { context.append(element('h4', '', 'Effects')); for (const effect of node.effects) context.append(element('p', 'otio-effect', `${effect.name || effect.effect_name || effect.schema} · ${effect.enabled ? 'enabled' : 'disabled'}${effect.time_scalar !== undefined ? ` · time_scalar ${effect.time_scalar}` : ''}`)); }
     if (node.transition_type) context.append(element('p', 'otio-effect', `${node.transition_type} · in ${node.in_offset?.value ?? 0} @ ${node.in_offset?.rate ?? rate} · out ${node.out_offset?.value ?? 0} @ ${node.out_offset?.rate ?? rate}`));
@@ -451,7 +477,7 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
     }
   }
   function initializeTimeline(): void {
-    unsubscribe?.(); playback?.dispose(); selected = null; marks.clear(); projections.clear(); collapsed.clear();
+    unsubscribe?.(); playback?.dispose(); selected = null; marks.clear(); collapsed.clear();
     timeline = timelineId ? doc.nodes[timelineId] : undefined; inspected = timeline;
     name.textContent = timeline?.name || 'OTIO'; root.dataset['timelineId'] = timelineId ?? '';
     if (!timeline || !timelineId) {
@@ -506,5 +532,10 @@ export async function mountOtioView(root: HTMLElement, options: MountOtioViewOpt
   };
   attachOtioController(root, controller);
   const pagehide = (): void => controller.dispose(); window.addEventListener('pagehide', pagehide); cleanup.push(() => window.removeEventListener('pagehide', pagehide));
+  if (typeof MutationObserver !== 'undefined') {
+    const observer = new MutationObserver(() => { if (!root.isConnected) controller.dispose(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+    cleanup.push(() => observer.disconnect());
+  }
   initializeTimeline();
 }
