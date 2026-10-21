@@ -277,7 +277,7 @@ async function buildTarget(target, options) {
   const artifact = artifactPath(target);
   await mkdir(dirname(artifact), { recursive: true });
   const compiler = options.cc;
-  const arguments = [
+  const compilerArgs = [
     '-std=c11',
     '-O2',
     '-fPIC',
@@ -291,7 +291,7 @@ async function buildTarget(target, options) {
   ];
 
   if (target.platform === 'darwin') {
-    arguments.push(
+    compilerArgs.push(
       '-mmacosx-version-min=15.0',
       '-arch',
       target.architecture,
@@ -300,11 +300,11 @@ async function buildTarget(target, options) {
       'dynamic_lookup',
     );
   } else {
-    arguments.push('-D_GNU_SOURCE', '-shared', '-Wl,-z,relro,-z,now');
+    compilerArgs.push('-D_GNU_SOURCE', '-shared', '-Wl,-z,relro,-z,now');
   }
-  arguments.push('-o', artifact);
+  compilerArgs.push('-o', artifact);
 
-  run(compiler, arguments);
+  run(compiler, compilerArgs);
   const audit = auditArtifact(target, artifact);
   const info = {
     artifact: artifactName,
