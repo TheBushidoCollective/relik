@@ -1,0 +1,2132 @@
+{
+  "package": "mediabunny@1.62.0",
+  "license": "MPL-2.0",
+  "chrome": "Chrome/156.0.8078.47",
+  "cases": [
+    {
+      "path": "/media/fr24.mp4",
+      "blobBytes": 2720,
+      "format": "MP4",
+      "resolution": 12288,
+      "packetCount": 48,
+      "readCalls": 6,
+      "readBytes": 2720,
+      "largestRead": 1686,
+      "sourceDisposed": true,
+      "videoDuration": 2,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 618,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.041666666666666664,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 13,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 15,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 12,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16666666666666666,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 55,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.20833333333333334,
+          "duration": 0.041666666666666664,
+          "sequence": 5,
+          "byteLength": 12,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.9583333333333333,
+        "duration": 0.041666666666666664,
+        "sequence": 47,
+        "byteLength": 13,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.041666666666666664,
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.20833333333333334,
+        0.25,
+        0.2916666666666667
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.041666666666666664,
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.20833333333333334,
+        0.25,
+        0.2916666666666667
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.041666666666666664
+          ],
+          "target": 0.020833333333333332,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.020833,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0.041666666666666664,
+            0.08333333333333333
+          ],
+          "target": 0.0625,
+          "presentedIndex": 1,
+          "actualCurrentTime": 0.0625,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.16666666666666666,
+          "window": [
+            0.16666666666666666,
+            0.20833333333333334
+          ],
+          "target": 0.1875,
+          "presentedIndex": 4,
+          "actualCurrentTime": 0.1875,
+          "packetOrdinal": 4
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.2916666666666667,
+            0.3333333333333333
+          ],
+          "target": 0.3125,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.3125,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0416666666666667
+          ],
+          "target": 1.0208333333333335,
+          "presentedIndex": 24,
+          "actualCurrentTime": 1.020833,
+          "packetOrdinal": 24
+        },
+        {
+          "time": 1.9583333333333333,
+          "window": [
+            1.9583333333333333,
+            2
+          ],
+          "target": 1.9791666666666665,
+          "presentedIndex": 47,
+          "actualCurrentTime": 1.979166,
+          "packetOrdinal": 47
+        }
+      ]
+    },
+    {
+      "path": "/media/fr24b.mp4",
+      "blobBytes": 3122,
+      "format": "MP4",
+      "resolution": 12288,
+      "packetCount": 48,
+      "readCalls": 6,
+      "readBytes": 3122,
+      "largestRead": 1685,
+      "sourceDisposed": true,
+      "videoDuration": 2,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 710,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.041666666666666664,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 23,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16666666666666666,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.20833333333333334,
+          "duration": 0.041666666666666664,
+          "sequence": 6,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.9583333333333333,
+        "duration": 0.041666666666666664,
+        "sequence": 47,
+        "byteLength": 26,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.08333333333333333,
+        0.041666666666666664,
+        0.16666666666666666,
+        0.125,
+        0.25,
+        0.20833333333333334,
+        0.3333333333333333
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.041666666666666664,
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.20833333333333334,
+        0.25,
+        0.2916666666666667
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.041666666666666664
+          ],
+          "target": 0.020833333333333332,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.020833,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0.041666666666666664,
+            0.08333333333333333
+          ],
+          "target": 0.0625,
+          "presentedIndex": 1,
+          "actualCurrentTime": 0.0625,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.16666666666666666,
+          "window": [
+            0.16666666666666666,
+            0.20833333333333334
+          ],
+          "target": 0.1875,
+          "presentedIndex": 4,
+          "actualCurrentTime": 0.1875,
+          "packetOrdinal": 4
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.2916666666666667,
+            0.3333333333333333
+          ],
+          "target": 0.3125,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.3125,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0416666666666667
+          ],
+          "target": 1.0208333333333335,
+          "presentedIndex": 24,
+          "actualCurrentTime": 1.020833,
+          "packetOrdinal": 24
+        },
+        {
+          "time": 1.9583333333333333,
+          "window": [
+            1.9583333333333333,
+            2
+          ],
+          "target": 1.9791666666666665,
+          "presentedIndex": 47,
+          "actualCurrentTime": 1.979166,
+          "packetOrdinal": 47
+        }
+      ]
+    },
+    {
+      "path": "/media/fr60.mp4",
+      "blobBytes": 4636,
+      "format": "MP4",
+      "resolution": 15360,
+      "packetCount": 120,
+      "readCalls": 6,
+      "readBytes": 4636,
+      "largestRead": 3314,
+      "sourceDisposed": true,
+      "videoDuration": 2,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.016666666666666666,
+          "sequence": 0,
+          "byteLength": 618,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.016666666666666666,
+          "duration": 0.016666666666666666,
+          "sequence": 1,
+          "byteLength": 13,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.03333333333333333,
+          "duration": 0.016666666666666666,
+          "sequence": 2,
+          "byteLength": 14,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.05,
+          "duration": 0.016666666666666666,
+          "sequence": 3,
+          "byteLength": 11,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.06666666666666667,
+          "duration": 0.016666666666666666,
+          "sequence": 4,
+          "byteLength": 55,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.016666666666666666,
+          "sequence": 5,
+          "byteLength": 11,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.9833333333333334,
+        "duration": 0.016666666666666666,
+        "sequence": 119,
+        "byteLength": 12,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.016666666666666666,
+        0.03333333333333333,
+        0.05,
+        0.06666666666666667,
+        0.08333333333333333,
+        0.1,
+        0.11666666666666667
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.016666666666666666,
+        0.03333333333333333,
+        0.05,
+        0.06666666666666667,
+        0.08333333333333333,
+        0.1,
+        0.11666666666666667
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.016666666666666666
+          ],
+          "target": 0.008333333333333333,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.008333,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0.03333333333333333,
+            0.05
+          ],
+          "target": 0.04166666666666667,
+          "presentedIndex": 2,
+          "actualCurrentTime": 0.041666,
+          "packetOrdinal": 2
+        },
+        {
+          "time": 0.08333333333333333,
+          "window": [
+            0.08333333333333333,
+            0.1
+          ],
+          "target": 0.09166666666666667,
+          "presentedIndex": 5,
+          "actualCurrentTime": 0.091666,
+          "packetOrdinal": 5
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0166666666666666
+          ],
+          "target": 1.0083333333333333,
+          "presentedIndex": 60,
+          "actualCurrentTime": 1.008332,
+          "packetOrdinal": 60
+        },
+        {
+          "time": 1.9583333333333333,
+          "window": [
+            1.95,
+            1.9666666666666666
+          ],
+          "target": 1.9583333333333333,
+          "presentedIndex": 117,
+          "actualCurrentTime": 1.958333,
+          "packetOrdinal": 117
+        }
+      ]
+    },
+    {
+      "path": "/media/fr2997.mp4",
+      "blobBytes": 3923,
+      "format": "MP4",
+      "resolution": 30000,
+      "packetCount": 90,
+      "readCalls": 6,
+      "readBytes": 3923,
+      "largestRead": 2722,
+      "sourceDisposed": true,
+      "videoDuration": 3.003,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.03336666666666667,
+          "sequence": 0,
+          "byteLength": 618,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.03336666666666667,
+          "duration": 0.03336666666666667,
+          "sequence": 1,
+          "byteLength": 13,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.06673333333333334,
+          "duration": 0.03336666666666667,
+          "sequence": 2,
+          "byteLength": 15,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.1001,
+          "duration": 0.03336666666666667,
+          "sequence": 3,
+          "byteLength": 12,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.13346666666666668,
+          "duration": 0.03336666666666667,
+          "sequence": 4,
+          "byteLength": 55,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16683333333333333,
+          "duration": 0.03336666666666667,
+          "sequence": 5,
+          "byteLength": 12,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 2.9696333333333333,
+        "duration": 0.03336666666666667,
+        "sequence": 89,
+        "byteLength": 12,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.03336666666666667,
+        0.06673333333333334,
+        0.1001,
+        0.13346666666666668,
+        0.16683333333333333,
+        0.2002,
+        0.23356666666666667
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.03336666666666667,
+        0.06673333333333334,
+        0.1001,
+        0.13346666666666668,
+        0.16683333333333333,
+        0.2002,
+        0.23356666666666667
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.03336666666666667
+          ],
+          "target": 0.016683333333333335,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.016683,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.03336666666666667,
+          "window": [
+            0.03336666666666667,
+            0.06673333333333334
+          ],
+          "target": 0.050050000000000004,
+          "presentedIndex": 1,
+          "actualCurrentTime": 0.05005,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.23356666666666667,
+          "window": [
+            0.23356666666666667,
+            0.26693333333333336
+          ],
+          "target": 0.25025000000000003,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.250249,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 1,
+          "window": [
+            0.9676333333333333,
+            1.001
+          ],
+          "target": 0.9843166666666666,
+          "presentedIndex": 29,
+          "actualCurrentTime": 0.984316,
+          "packetOrdinal": 29
+        }
+      ]
+    },
+    {
+      "path": "/media/fr30.webm",
+      "blobBytes": 2680,
+      "format": "WebM",
+      "resolution": 1000,
+      "packetCount": 90,
+      "readCalls": 16,
+      "readBytes": 2680,
+      "largestRead": 2183,
+      "sourceDisposed": true,
+      "videoDuration": 3,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.033,
+          "sequence": 481,
+          "byteLength": 37,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.033,
+          "duration": 0.034,
+          "sequence": 482,
+          "byteLength": 17,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.067,
+          "duration": 0.033,
+          "sequence": 483,
+          "byteLength": 17,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.1,
+          "duration": 0.033,
+          "sequence": 484,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.133,
+          "duration": 0.034,
+          "sequence": 485,
+          "byteLength": 19,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.167,
+          "duration": 0.033,
+          "sequence": 486,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 2.967,
+        "duration": 0.03333333300000001,
+        "sequence": 570,
+        "byteLength": 17,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.033,
+        0.067,
+        0.1,
+        0.133,
+        0.167,
+        0.2,
+        0.233
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.033,
+        0.067,
+        0.1,
+        0.133,
+        0.167,
+        0.2,
+        0.233
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.033
+          ],
+          "target": 0.0165,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.0165,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.03333333333333333,
+          "window": [
+            0.033,
+            0.067
+          ],
+          "target": 0.05,
+          "presentedIndex": 1,
+          "actualCurrentTime": 0.05,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.06666666666666667,
+          "window": [
+            0.033,
+            0.067
+          ],
+          "target": 0.05,
+          "presentedIndex": 1,
+          "actualCurrentTime": 0.05,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.23333333333333334,
+          "window": [
+            0.233,
+            0.267
+          ],
+          "target": 0.25,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.25,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.033
+          ],
+          "target": 1.0165,
+          "presentedIndex": 30,
+          "actualCurrentTime": 1.0165,
+          "packetOrdinal": 30
+        },
+        {
+          "time": 2.5,
+          "window": [
+            2.5,
+            2.533
+          ],
+          "target": 2.5164999999999997,
+          "presentedIndex": 75,
+          "actualCurrentTime": 2.516499,
+          "packetOrdinal": 75
+        }
+      ]
+    },
+    {
+      "path": "/media/fr24.webm",
+      "blobBytes": 1694,
+      "format": "WebM",
+      "resolution": 1000,
+      "packetCount": 48,
+      "readCalls": 16,
+      "readBytes": 1694,
+      "largestRead": 1197,
+      "sourceDisposed": true,
+      "videoDuration": 2,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.042,
+          "sequence": 481,
+          "byteLength": 37,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.042,
+          "duration": 0.041,
+          "sequence": 482,
+          "byteLength": 17,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.083,
+          "duration": 0.042,
+          "sequence": 483,
+          "byteLength": 17,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.042,
+          "sequence": 484,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.167,
+          "duration": 0.041,
+          "sequence": 485,
+          "byteLength": 19,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.208,
+          "duration": 0.042,
+          "sequence": 486,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.958,
+        "duration": 0.041666666,
+        "sequence": 528,
+        "byteLength": 19,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.042,
+        0.083,
+        0.125,
+        0.167,
+        0.208,
+        0.25,
+        0.292
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.042,
+        0.083,
+        0.125,
+        0.167,
+        0.208,
+        0.25,
+        0.292
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.042
+          ],
+          "target": 0.021,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.021,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0,
+            0.042
+          ],
+          "target": 0.021,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.021,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.08333333333333333,
+          "window": [
+            0.083,
+            0.125
+          ],
+          "target": 0.10400000000000001,
+          "presentedIndex": 2,
+          "actualCurrentTime": 0.104,
+          "packetOrdinal": 2
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.25,
+            0.292
+          ],
+          "target": 0.271,
+          "presentedIndex": 6,
+          "actualCurrentTime": 0.271,
+          "packetOrdinal": 6
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.042
+          ],
+          "target": 1.021,
+          "presentedIndex": 24,
+          "actualCurrentTime": 1.020999,
+          "packetOrdinal": 24
+        },
+        {
+          "time": 1.9583333333333333,
+          "window": [
+            1.958,
+            1.999666666
+          ],
+          "target": 1.9788333329999999,
+          "presentedIndex": 47,
+          "actualCurrentTime": 1.978833,
+          "packetOrdinal": 47
+        }
+      ]
+    },
+    {
+      "path": "/media/fr24b.mov",
+      "blobBytes": 3069,
+      "format": "QuickTime File Format",
+      "resolution": 12288,
+      "packetCount": 48,
+      "readCalls": 6,
+      "readBytes": 3069,
+      "largestRead": 1685,
+      "sourceDisposed": true,
+      "videoDuration": 2,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 710,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.041666666666666664,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 23,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16666666666666666,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.20833333333333334,
+          "duration": 0.041666666666666664,
+          "sequence": 6,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.9583333333333333,
+        "duration": 0.041666666666666664,
+        "sequence": 47,
+        "byteLength": 26,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.08333333333333333,
+        0.041666666666666664,
+        0.16666666666666666,
+        0.125,
+        0.25,
+        0.20833333333333334,
+        0.3333333333333333
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.041666666666666664,
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.20833333333333334,
+        0.25,
+        0.2916666666666667
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.041666666666666664
+          ],
+          "target": 0.020833333333333332,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.020833,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0.041666666666666664,
+            0.08333333333333333
+          ],
+          "target": 0.0625,
+          "presentedIndex": 1,
+          "actualCurrentTime": 0.0625,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.2916666666666667,
+            0.3333333333333333
+          ],
+          "target": 0.3125,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.3125,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0416666666666667
+          ],
+          "target": 1.0208333333333335,
+          "presentedIndex": 24,
+          "actualCurrentTime": 1.020833,
+          "packetOrdinal": 24
+        }
+      ]
+    },
+    {
+      "path": "/media/fr24b-offset.mov",
+      "blobBytes": 3081,
+      "format": "QuickTime File Format",
+      "resolution": 12288,
+      "packetCount": 48,
+      "readCalls": 6,
+      "readBytes": 3081,
+      "largestRead": 1685,
+      "sourceDisposed": true,
+      "videoDuration": 2.208333,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0.25,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 710,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.2916666666666667,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.3333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 23,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.375,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.4166666666666667,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.4583333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 6,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 2.2083333333333335,
+        "duration": 0.041666666666666664,
+        "sequence": 47,
+        "byteLength": 26,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0.25,
+        0.3333333333333333,
+        0.2916666666666667,
+        0.4166666666666667,
+        0.375,
+        0.5,
+        0.4583333333333333,
+        0.5833333333333334
+      ],
+      "presentationOrderFirst": [
+        0.25,
+        0.2916666666666667,
+        0.3333333333333333,
+        0.375,
+        0.4166666666666667,
+        0.4583333333333333,
+        0.5,
+        0.5416666666666666
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": null
+        },
+        {
+          "time": 0.25,
+          "window": [
+            0.25,
+            0.2916666666666667
+          ],
+          "target": 0.27083333333333337,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.270833,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.2916666666666667,
+            0.3333333333333333
+          ],
+          "target": 0.3125,
+          "presentedIndex": 1,
+          "actualCurrentTime": 0.3125,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.5416666666666667,
+          "window": [
+            0.5416666666666666,
+            0.5833333333333334
+          ],
+          "target": 0.5625,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.5625,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0416666666666667
+          ],
+          "target": 1.0208333333333335,
+          "presentedIndex": 18,
+          "actualCurrentTime": 1.020833,
+          "packetOrdinal": 18
+        }
+      ]
+    },
+    {
+      "path": "/media/fr24b-trimmed.mov",
+      "blobBytes": 2548,
+      "format": "QuickTime File Format",
+      "resolution": 12288,
+      "packetCount": 32,
+      "readCalls": 6,
+      "readBytes": 2548,
+      "largestRead": 1352,
+      "sourceDisposed": true,
+      "videoDuration": 1.083008,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": -0.25,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 710,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": -0.20833333333333334,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": -0.16666666666666666,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 23,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": -0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": -0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": -0.041666666666666664,
+          "duration": 0.041666666666666664,
+          "sequence": 6,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.0416666666666667,
+        "duration": 0.041666666666666664,
+        "sequence": 31,
+        "byteLength": 22,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        -0.25,
+        -0.16666666666666666,
+        -0.20833333333333334,
+        -0.08333333333333333,
+        -0.125,
+        0,
+        -0.041666666666666664,
+        0.08333333333333333
+      ],
+      "presentationOrderFirst": [
+        -0.25,
+        -0.20833333333333334,
+        -0.16666666666666666,
+        -0.125,
+        -0.08333333333333333,
+        -0.041666666666666664,
+        0,
+        0.041666666666666664
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.041666666666666664
+          ],
+          "target": 0.020833333333333332,
+          "presentedIndex": 6,
+          "actualCurrentTime": 0.020833,
+          "packetOrdinal": 6
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0.041666666666666664,
+            0.08333333333333333
+          ],
+          "target": 0.0625,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.0625,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.2916666666666667,
+            0.3333333333333333
+          ],
+          "target": 0.3125,
+          "presentedIndex": 13,
+          "actualCurrentTime": 0.3125,
+          "packetOrdinal": 13
+        },
+        {
+          "time": 0.5,
+          "window": [
+            0.5,
+            0.5416666666666666
+          ],
+          "target": 0.5208333333333333,
+          "presentedIndex": 18,
+          "actualCurrentTime": 0.520833,
+          "packetOrdinal": 18
+        }
+      ]
+    },
+    {
+      "path": "/media/short-edit.mp4",
+      "blobBytes": 3122,
+      "format": "MP4",
+      "resolution": 12288,
+      "packetCount": 48,
+      "readCalls": 6,
+      "readBytes": 3122,
+      "largestRead": 1685,
+      "sourceDisposed": true,
+      "videoDuration": 1.958333,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 710,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.041666666666666664,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 23,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16666666666666666,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.20833333333333334,
+          "duration": 0.041666666666666664,
+          "sequence": 6,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.9583333333333333,
+        "duration": 0.041666666666666664,
+        "sequence": 47,
+        "byteLength": 26,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.08333333333333333,
+        0.041666666666666664,
+        0.16666666666666666,
+        0.125,
+        0.25,
+        0.20833333333333334,
+        0.3333333333333333
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.041666666666666664,
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.20833333333333334,
+        0.25,
+        0.2916666666666667
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.041666666666666664
+          ],
+          "target": 0.020833333333333332,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.020833,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.2916666666666667,
+            0.3333333333333333
+          ],
+          "target": 0.3125,
+          "presentedIndex": 7,
+          "actualCurrentTime": 0.3125,
+          "packetOrdinal": 7
+        },
+        {
+          "time": 0.9,
+          "window": [
+            0.875,
+            0.9166666666666666
+          ],
+          "target": 0.8958333333333333,
+          "presentedIndex": 21,
+          "actualCurrentTime": 0.895833,
+          "packetOrdinal": 21
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0416666666666667
+          ],
+          "target": 1.0208333333333335,
+          "presentedIndex": 23,
+          "actualCurrentTime": 1.020833,
+          "packetOrdinal": 24
+        },
+        {
+          "time": 1.25,
+          "window": [
+            1.25,
+            1.2916666666666667
+          ],
+          "target": 1.2708333333333335,
+          "presentedIndex": 23,
+          "actualCurrentTime": 1.270833,
+          "packetOrdinal": 30
+        },
+        {
+          "time": 1.5,
+          "window": [
+            1.5,
+            1.5416666666666667
+          ],
+          "target": 1.5208333333333335,
+          "presentedIndex": 23,
+          "actualCurrentTime": 1.520833,
+          "packetOrdinal": 36
+        }
+      ]
+    },
+    {
+      "path": "/media/rate-edit.mp4",
+      "blobBytes": 3122,
+      "format": "MP4",
+      "resolution": 12288,
+      "packetCount": 48,
+      "readCalls": 6,
+      "readBytes": 3122,
+      "largestRead": 1685,
+      "sourceDisposed": true,
+      "videoDuration": 2,
+      "warnings": [
+        [
+          "Unsupported edit list entry: media rate must be 1."
+        ]
+      ],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 710,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16666666666666666,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 23,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.20833333333333334,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.25,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.2916666666666667,
+          "duration": 0.041666666666666664,
+          "sequence": 6,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 2.0416666666666665,
+        "duration": 0.041666666666666664,
+        "sequence": 47,
+        "byteLength": 26,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0.08333333333333333,
+        0.16666666666666666,
+        0.125,
+        0.25,
+        0.20833333333333334,
+        0.3333333333333333,
+        0.2916666666666667,
+        0.4166666666666667
+      ],
+      "presentationOrderFirst": [
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.20833333333333334,
+        0.25,
+        0.2916666666666667,
+        0.3333333333333333,
+        0.375
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": null
+        },
+        {
+          "time": 0.5,
+          "window": [
+            0.5,
+            0.5416666666666666
+          ],
+          "target": 0.5208333333333333,
+          "presentedIndex": 12,
+          "actualCurrentTime": 0.520833,
+          "packetOrdinal": 10
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0416666666666667
+          ],
+          "target": 1.0208333333333335,
+          "presentedIndex": 24,
+          "actualCurrentTime": 1.020833,
+          "packetOrdinal": 22
+        }
+      ]
+    },
+    {
+      "path": "/media/loop-edit.mp4",
+      "blobBytes": 3134,
+      "format": "MP4",
+      "resolution": 12288,
+      "packetCount": 48,
+      "readCalls": 6,
+      "readBytes": 3134,
+      "largestRead": 1685,
+      "sourceDisposed": true,
+      "videoDuration": 2.958333,
+      "warnings": [
+        [
+          "Unsupported edit list: multiple edits are not currently supported. Only using first edit."
+        ]
+      ],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.041666666666666664,
+          "sequence": 0,
+          "byteLength": 710,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.041666666666666664,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 1,
+          "byteLength": 23,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 4,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16666666666666666,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.20833333333333334,
+          "duration": 0.041666666666666664,
+          "sequence": 6,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.9583333333333333,
+        "duration": 0.041666666666666664,
+        "sequence": 47,
+        "byteLength": 26,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.08333333333333333,
+        0.041666666666666664,
+        0.16666666666666666,
+        0.125,
+        0.25,
+        0.20833333333333334,
+        0.3333333333333333
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.041666666666666664,
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.20833333333333334,
+        0.25,
+        0.2916666666666667
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.041666666666666664
+          ],
+          "target": 0.020833333333333332,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.020833,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.5,
+          "window": [
+            0.5,
+            0.5416666666666666
+          ],
+          "target": 0.5208333333333333,
+          "presentedIndex": 12,
+          "actualCurrentTime": 0.520833,
+          "packetOrdinal": 12
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0416666666666667
+          ],
+          "target": 1.0208333333333335,
+          "presentedIndex": 0,
+          "actualCurrentTime": 1.020833,
+          "packetOrdinal": 24
+        },
+        {
+          "time": 1.25,
+          "window": [
+            1.25,
+            1.2916666666666667
+          ],
+          "target": 1.2708333333333335,
+          "presentedIndex": 6,
+          "actualCurrentTime": 1.270833,
+          "packetOrdinal": 30
+        },
+        {
+          "time": 1.5,
+          "window": [
+            1.5,
+            1.5416666666666667
+          ],
+          "target": 1.5208333333333335,
+          "presentedIndex": 12,
+          "actualCurrentTime": 1.520833,
+          "packetOrdinal": 36
+        }
+      ]
+    },
+    {
+      "path": "/media/vfr.mp4",
+      "blobBytes": 2481,
+      "format": "MP4",
+      "resolution": 12288,
+      "packetCount": 28,
+      "readCalls": 6,
+      "readBytes": 2481,
+      "largestRead": 1240,
+      "sourceDisposed": true,
+      "videoDuration": 1.958008,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.08333333333333333,
+          "sequence": 0,
+          "byteLength": 711,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.08333333333333333,
+          "duration": 0.041666666666666664,
+          "sequence": 2,
+          "byteLength": 14,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.041666666666666664,
+          "sequence": 3,
+          "byteLength": 22,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.16666666666666666,
+          "duration": 0.08333333333333333,
+          "sequence": 1,
+          "byteLength": 20,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.25,
+          "duration": 0.08333333333333333,
+          "sequence": 4,
+          "byteLength": 32,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.3333333333333333,
+          "duration": 0.08333333333333333,
+          "sequence": 5,
+          "byteLength": 21,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.9166666666666667,
+        "duration": 0.08333333333333333,
+        "sequence": 25,
+        "byteLength": 18,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.16666666666666666,
+        0.08333333333333333,
+        0.125,
+        0.25,
+        0.3333333333333333,
+        0.4166666666666667,
+        0.5833333333333334
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.08333333333333333,
+        0.125,
+        0.16666666666666666,
+        0.25,
+        0.3333333333333333,
+        0.4166666666666667,
+        0.5
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.08333333333333333
+          ],
+          "target": 0.041666666666666664,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.041666,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0,
+            0.08333333333333333
+          ],
+          "target": 0.041666666666666664,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.041666,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.08333333333333333,
+          "window": [
+            0.08333333333333333,
+            0.125
+          ],
+          "target": 0.10416666666666666,
+          "presentedIndex": 2,
+          "actualCurrentTime": 0.104166,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.125,
+          "window": [
+            0.125,
+            0.16666666666666666
+          ],
+          "target": 0.14583333333333331,
+          "presentedIndex": 3,
+          "actualCurrentTime": 0.145833,
+          "packetOrdinal": 2
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.25,
+            0.3333333333333333
+          ],
+          "target": 0.29166666666666663,
+          "presentedIndex": 6,
+          "actualCurrentTime": 0.291666,
+          "packetOrdinal": 4
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.0833333333333333
+          ],
+          "target": 1.0416666666666665,
+          "presentedIndex": 24,
+          "actualCurrentTime": 1.041666,
+          "packetOrdinal": 14
+        },
+        {
+          "time": 1.9583333333333333,
+          "window": [
+            1.9166666666666667,
+            2
+          ],
+          "target": 1.9583333333333335,
+          "presentedIndex": 46,
+          "actualCurrentTime": 1.958008,
+          "packetOrdinal": 27
+        }
+      ]
+    },
+    {
+      "path": "/media/vfr.webm",
+      "blobBytes": 1214,
+      "format": "WebM",
+      "resolution": 1000,
+      "packetCount": 28,
+      "readCalls": 16,
+      "readBytes": 1214,
+      "largestRead": 717,
+      "sourceDisposed": true,
+      "videoDuration": 1.959,
+      "warnings": [],
+      "allMetadataOnly": true,
+      "firstPackets": [
+        {
+          "timestamp": 0,
+          "duration": 0.083,
+          "sequence": 481,
+          "byteLength": 37,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.083,
+          "duration": 0.042,
+          "sequence": 482,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.125,
+          "duration": 0.042,
+          "sequence": 483,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.167,
+          "duration": 0.083,
+          "sequence": 484,
+          "byteLength": 19,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.25,
+          "duration": 0.083,
+          "sequence": 485,
+          "byteLength": 19,
+          "dataBytes": 0,
+          "metadataOnly": true
+        },
+        {
+          "timestamp": 0.333,
+          "duration": 0.084,
+          "sequence": 486,
+          "byteLength": 18,
+          "dataBytes": 0,
+          "metadataOnly": true
+        }
+      ],
+      "lastPacket": {
+        "timestamp": 1.917,
+        "duration": 0.041666666,
+        "sequence": 508,
+        "byteLength": 18,
+        "dataBytes": 0,
+        "metadataOnly": true
+      },
+      "decodeOrderFirst": [
+        0,
+        0.083,
+        0.125,
+        0.167,
+        0.25,
+        0.333,
+        0.417,
+        0.5
+      ],
+      "presentationOrderFirst": [
+        0,
+        0.083,
+        0.125,
+        0.167,
+        0.25,
+        0.333,
+        0.417,
+        0.5
+      ],
+      "rows": [
+        {
+          "time": 0,
+          "window": [
+            0,
+            0.083
+          ],
+          "target": 0.0415,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.0415,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.041666666666666664,
+          "window": [
+            0,
+            0.083
+          ],
+          "target": 0.0415,
+          "presentedIndex": 0,
+          "actualCurrentTime": 0.0415,
+          "packetOrdinal": 0
+        },
+        {
+          "time": 0.08333333333333333,
+          "window": [
+            0.083,
+            0.125
+          ],
+          "target": 0.10400000000000001,
+          "presentedIndex": 2,
+          "actualCurrentTime": 0.104,
+          "packetOrdinal": 1
+        },
+        {
+          "time": 0.125,
+          "window": [
+            0.125,
+            0.167
+          ],
+          "target": 0.14600000000000002,
+          "presentedIndex": 3,
+          "actualCurrentTime": 0.146,
+          "packetOrdinal": 2
+        },
+        {
+          "time": 0.2916666666666667,
+          "window": [
+            0.25,
+            0.333
+          ],
+          "target": 0.2915,
+          "presentedIndex": 6,
+          "actualCurrentTime": 0.2915,
+          "packetOrdinal": 4
+        },
+        {
+          "time": 1,
+          "window": [
+            1,
+            1.083
+          ],
+          "target": 1.0415,
+          "presentedIndex": 24,
+          "actualCurrentTime": 1.0415,
+          "packetOrdinal": 14
+        },
+        {
+          "time": 1.9583333333333333,
+          "window": [
+            1.917,
+            1.958666666
+          ],
+          "target": 1.937833333,
+          "presentedIndex": 46,
+          "actualCurrentTime": 1.937833,
+          "packetOrdinal": 27
+        }
+      ]
+    }
+  ],
+  "probeBundleBytes": 433901
+}
