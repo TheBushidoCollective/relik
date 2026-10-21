@@ -20,7 +20,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <uchar.h>
 #include <unistd.h>
 
 #ifndef PATH_MAX
