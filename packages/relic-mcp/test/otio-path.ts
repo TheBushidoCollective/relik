@@ -318,8 +318,267 @@ async function officialArchiveCheck(archive: Uint8Array): Promise<void> {
   const parsed = JSON.parse(stdout) as { name: string; tracks: number };
   assert.equal(parsed.name, 'Relik Feature Editorial');
   assert.ok(parsed.tracks >= 2, `expected multiple tracks, got ${parsed.tracks}`);
-}
+ }
 
+ interface OfficialHit {
+   readonly track_id: string | null;
+   readonly item_id: string | null;
+   readonly schema: string;
+   readonly media: string | null;
+   readonly source: { readonly value: number; readonly rate: number } | null;
+   readonly file: { readonly value: number; readonly rate: number } | null;
+   readonly frame: number | null;
+   readonly timeline_start: number | null;
+   readonly timeline_end: number | null;
+ }
+
+ interface OfficialOracle {
+   readonly at_200: readonly OfficialHit[];
+   readonly v1_60_90: readonly OfficialHit[];
+   readonly duplicates: readonly { readonly name: string; readonly ids: readonly string[] }[];
+   readonly nested_dissolves: readonly {
+     readonly item_id: string | null;
+     readonly track_id: string | null;
+     readonly timeline_start: number;
+     readonly timeline_end: number;
+     readonly rate: number;
+   }[];
+   readonly spill_time: { readonly value: number; readonly rate: number } | null;
+   readonly spill_hits: readonly OfficialHit[];
+   readonly black_time: { readonly value: number; readonly rate: number } | null;
+   readonly hold: {
+     readonly track_id: string | null;
+     readonly time: { readonly value: number; readonly rate: number };
+     readonly frame: number;
+   } | null;
+ }
+
+ async function officialTimingOracle(content: Uint8Array): Promise<OfficialOracle> {
+   const otioPath = join(scratch, 'content.otio');
+   await writeFile(otioPath, content);
+   const script = `
+ import json, sys
+ import opentimelineio as otio
+ assert otio.__version__ == "0.18.1", otio.__version__
+ tl = otio.adapters.read_from_file(sys.argv[1])
+ stack = tl.tracks
+
+ def rid(item):
+     relic = (item.metadata or {}).get("relic") or {}
+     return relic.get("id")
+
+ def rat(value):
+     return {"value": value.value, "rate": value.rate}
+
+ def later(a, b):
+     return a if a > b else b
+
+ def earlier(a, b):
+     return a if a < b else b
+
+ def file_time(clip, source):
+     ref = clip.media_reference
+     origin = 0.0
+     if ref is not None and getattr(ref, "available_range", None) is not None:
+         origin = ref.available_range.start_time.rescaled_to(source.rate).value
+     return {"value": source.value - origin, "rate": source.rate}
+
+ def media_of(clip, source):
+     ref = clip.media_reference
+     if isinstance(ref, otio.schema.ImageSequenceReference):
+         local = source.rescaled_to(ref.rate)
+         frame = int(ref.start_frame + local.value * ref.frame_step)
+         padded = str(frame).zfill(ref.frame_zero_padding)
+         return f"{ref.target_url_base}{ref.name_prefix}{padded}{ref.name_suffix}", frame
+     if ref is not None:
+         return getattr(ref, "target_url", None), None
+     return None, None
+
+ def hit(item, source, timeline_start, timeline_end):
+     media, frame = (None, None)
+     file_at = None
+     if isinstance(item, otio.schema.Clip) and source is not None:
+         media, frame = media_of(item, source)
+         file_at = file_time(item, source)
+     parent = item.parent()
+     return {
+         "track_id": rid(parent) if parent is not None else None,
+         "item_id": rid(item),
+         "schema": item.schema_name(),
+         "media": media,
+         "source": None if source is None else rat(source),
+         "file": file_at,
+         "frame": frame,
+         "timeline_start": None if timeline_start is None else timeline_start.value,
+         "timeline_end": None if timeline_end is None else timeline_end.value,
+     }
+
+ def active_at(item, when):
+     found = []
+     if isinstance(item, otio.schema.Clip):
+         try:
+             local = stack.transformed_time(when, item)
+             trimmed = item.trimmed_range()
+             if trimmed.start_time <= local < trimmed.end_time_exclusive():
+                 parent = item.parent()
+                 placed = item.range_in_parent()
+                 start = parent.transformed_time(placed.start_time, stack)
+                 end = parent.transformed_time(placed.end_time_exclusive(), stack)
+                 found.append(hit(item, local, start, end))
+         except Exception:
+             pass
+     if isinstance(item, (otio.schema.Stack, otio.schema.Track)):
+         for child in item:
+             found.extend(active_at(child, when))
+     return found
+
+ def overlapping(item, start, end, into):
+     if isinstance(item, otio.schema.Transition):
+         parent = item.parent()
+         placed = item.range_in_parent()
+         try:
+             a = parent.transformed_time(placed.start_time, stack)
+             b = parent.transformed_time(placed.end_time_exclusive(), stack)
+         except Exception:
+             return
+         if b <= start or a >= end:
+             return
+         into.append(hit(item, None, later(a, start), earlier(b, end)))
+         return
+     if isinstance(item, otio.schema.Clip):
+         parent = item.parent()
+         placed = item.range_in_parent()
+         try:
+             a = parent.transformed_time(placed.start_time, stack)
+             b = parent.transformed_time(placed.end_time_exclusive(), stack)
+         except Exception:
+             return
+         if b <= start or a >= end:
+             return
+         left = later(a, start)
+         right = earlier(b, end)
+         into.append(hit(item, stack.transformed_time(left, item), left, right))
+         return
+     if isinstance(item, (otio.schema.Stack, otio.schema.Track)):
+         for child in item:
+             overlapping(child, start, end, into)
+
+ names = {}
+ def collect_tracks(item):
+     if isinstance(item, otio.schema.Track):
+         names.setdefault(item.name, []).append(rid(item))
+         for child in item:
+             collect_tracks(child)
+     elif isinstance(item, otio.schema.Stack):
+         for child in item:
+             collect_tracks(child)
+ collect_tracks(stack)
+ v1 = None
+ for child in stack:
+     if rid(child) == "track-v1-main":
+         v1 = child
+ if v1 is None:
+     raise SystemExit("official reader found no track-v1-main")
+ query_start = otio.opentime.RationalTime(60, 24)
+ query_end = otio.opentime.RationalTime(90, 24)
+ spans = []
+ overlapping(v1, query_start, query_end, spans)
+
+ def walk_transitions(item):
+     found = []
+     if isinstance(item, otio.schema.Transition):
+         parent = item.parent()
+         placed = item.range_in_parent()
+         start = parent.transformed_time(placed.start_time, stack)
+         end = parent.transformed_time(placed.end_time_exclusive(), stack)
+         found.append({
+             "item_id": rid(item),
+             "track_id": rid(parent),
+             "nested": parent is not None and parent.parent() is not stack,
+             "timeline_start": start.value,
+             "timeline_end": end.value,
+             "rate": start.rate,
+         })
+         return found
+     if isinstance(item, (otio.schema.Stack, otio.schema.Track)):
+         for child in item:
+             found.extend(walk_transitions(child))
+     return found
+
+ nested_dissolves = [item for item in walk_transitions(stack) if item["nested"]]
+
+ def find_named(item, wanted):
+     if rid(item) == wanted:
+         return item
+     if isinstance(item, (otio.schema.Stack, otio.schema.Track)):
+         for child in item:
+             found = find_named(child, wanted)
+             if found is not None:
+                 return found
+     return None
+
+ spill_time = None
+ submaster = find_named(stack, "stack-vfx-submaster")
+ if submaster is not None:
+     parent = submaster.parent()
+     placed = submaster.range_in_parent()
+     start = parent.transformed_time(placed.start_time, stack)
+     if start.value > 0:
+         spill_time = otio.opentime.RationalTime(start.value - 1, start.rate)
+
+ black_time = None
+ limit = int(stack.trimmed_range().duration.rescaled_to(24).value)
+ for frame in range(limit):
+     when = otio.opentime.RationalTime(frame, 24)
+     if not active_at(stack, when):
+         black_time = rat(when)
+         break
+
+ hold = None
+ def find_sequences(item):
+     found = []
+     if isinstance(item, otio.schema.Clip) and isinstance(item.media_reference, otio.schema.ImageSequenceReference):
+         found.append(item)
+     if isinstance(item, (otio.schema.Stack, otio.schema.Track)):
+         for child in item:
+             found.extend(find_sequences(child))
+     return found
+ sequences = find_sequences(stack)
+ if sequences:
+     clip = next((item for item in sequences if rid(item.parent()) == "track-nested-plate-base"), sequences[0])
+     ref = clip.media_reference
+     trimmed = clip.trimmed_range()
+     last_source = trimmed.end_time_exclusive() - otio.opentime.RationalTime(1, trimmed.duration.rate)
+     when = clip.transformed_time(last_source, stack)
+     local = last_source.rescaled_to(ref.rate)
+     last = int(ref.start_frame + local.value * ref.frame_step)
+     hold = {"track_id": rid(clip.parent()), "time": rat(when), "frame": last}
+
+ print(json.dumps({
+     "at_200": active_at(stack, otio.opentime.RationalTime(200, 24)),
+     "v1_60_90": spans,
+     "duplicates": [{"name": name, "ids": ids} for name, ids in names.items() if len([i for i in ids if i]) > 1],
+     "nested_dissolves": nested_dissolves,
+     "spill_time": None if spill_time is None else rat(spill_time),
+     "spill_hits": [] if spill_time is None else active_at(stack, spill_time),
+     "black_time": black_time,
+     "hold": hold,
+ }))
+ `;
+   const scriptPath = join(scratch, 'official-timing.py');
+   await writeFile(scriptPath, script);
+   const child = Bun.spawn(
+     ['uv', 'run', '--with', 'opentimelineio==0.18.1', 'python3', scriptPath, otioPath],
+     { stdout: 'pipe', stderr: 'pipe', env: { ...process.env } }
+   );
+   const [stdout, stderr, exit] = await Promise.all([
+     new Response(child.stdout).text(),
+     new Response(child.stderr).text(),
+     child.exited,
+   ]);
+   assert.equal(exit, 0, `official timing oracle failed: ${stderr}`);
+   return JSON.parse(stdout) as OfficialOracle;
+ }
 const POINT_FRAME = 36;
 const POINT_RATE = 24;
 const RANGE_START_FRAME = 36;
@@ -359,10 +618,15 @@ try {
   // 3. The official reader accepts the archive we stored.
   await officialArchiveCheck(archive);
   console.log('OFFICIAL_READER ok');
+  const oracle = await officialTimingOracle(index.contentOtioBytes);
+  console.log(`OFFICIAL_ORACLE t200=${oracle.at_200.length} v1=${oracle.v1_60_90.length}`);
 
   // 4. Open the link and measure decoded playback.
   const browser = await openBrowser(shareUrl);
   let selectedTrackId = '';
+  let duplicateTrackId = '';
+  let nestedPointTrack = '';
+  let nestedRangeTrack = '';
   try {
     const ready = await browser.evaluate<boolean>(
       `(() => {
@@ -467,6 +731,49 @@ try {
       'range duration does not match the frames selected'
     );
     console.log(`SELECTED track=${selectedTrackId} range=${RANGE_START_FRAME}-${RANGE_END_FRAME}`);
+    const picked = await browser.evaluate<{
+      duplicate: string;
+      nestedPoint: string;
+      nestedRange: string;
+      nestedStart: string;
+      nestedDuration: string;
+    }>(
+      `(() => {
+        const select = document.querySelector('select.otio-track-select');
+        const pick = (id, mode, start, end) => {
+          select.value = id;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          document.querySelector('button[data-otio-mode="' + mode + '"]').click();
+          const inn = document.querySelector('.otio-selection-in');
+          const out = document.querySelector('.otio-selection-out');
+          inn.value = String(start);
+          out.value = String(end);
+          inn.dispatchEvent(new Event('change', { bubbles: true }));
+          out.dispatchEvent(new Event('change', { bubbles: true }));
+          const mark = document.querySelector('.otio-selection');
+          return mark ? mark.dataset.trackId + '|' + mark.dataset.start + '|' + mark.dataset.duration : '';
+        };
+        const duplicate = pick('track-v2-duplicate', 'point', 0, 0);
+        const point = pick('track-nested-plate-base', 'point', 200, 200);
+        const range = pick('track-nested-fx-glow', 'range', 200, 208);
+        const [nestedRange, nestedStart, nestedDuration] = range.split('|');
+        return {
+          duplicate: duplicate.split('|')[0],
+          nestedPoint: point.split('|')[0],
+          nestedRange,
+          nestedStart,
+          nestedDuration,
+        };
+      })()`
+    );
+    duplicateTrackId = picked.duplicate;
+    nestedPointTrack = picked.nestedPoint;
+    nestedRangeTrack = picked.nestedRange;
+    assert.equal(duplicateTrackId, 'track-v2-duplicate', 'duplicate name resolved to the wrong track id');
+    assert.equal(nestedPointTrack, 'track-nested-plate-base');
+    assert.equal(nestedRangeTrack, 'track-nested-fx-glow');
+    assert.equal(picked.nestedStart, '200');
+    assert.equal(picked.nestedDuration, '8');
     const audioReady = await browser.evaluate<number>(
       `(() => {
         const { promise, resolve } = Promise.withResolvers();
@@ -567,6 +874,47 @@ try {
   assert.equal(posted.status, 201, 'posting the OTIO comment failed');
   const postedBody = (await posted.json()) as { comment_id: string };
   console.log(`COMMENTED comment_id=${postedBody.comment_id}`);
+  const nestedPosts: { id: string; track: string; start: number; duration: number }[] = [];
+  for (const item of [
+    { track: nestedPointTrack, start: 200, duration: 0, body: 'Plate point at 200' },
+    { track: nestedRangeTrack, start: 200, duration: 8, body: 'Flare range at 200' },
+  ]) {
+    const nestedAnchor: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: document.document_sha256,
+      timeline_id: document.timeline_ids[0] ?? '',
+      track_id: item.track,
+      range: {
+        start_time: { value: item.start, rate: POINT_RATE },
+        duration: { value: item.duration, rate: POINT_RATE },
+      },
+      snapshot: { timeline: 'Relik Feature Editorial', track: item.track, item: null },
+    };
+    const nestedCiphertext = await encryptComment(commentKey, {
+      body: item.body,
+      display_name: null,
+      anchor: nestedAnchor,
+    });
+    const nestedPosted = await fetch(`${origin}/api/relics/${relicId}/comments`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+        'x-forwarded-for': '198.51.100.21',
+      },
+      body: JSON.stringify({ ciphertext: nestedCiphertext }),
+    });
+    assert.equal(nestedPosted.status, 201, `nested comment on ${item.track} failed`);
+    const nestedBody = (await nestedPosted.json()) as { comment_id: string };
+    nestedPosts.push({
+      id: nestedBody.comment_id,
+      track: item.track,
+      start: item.start,
+      duration: item.duration,
+    });
+  }
 
   // 7. The stored row is ciphertext. No anchor label or source path leaks.
   const listed = (await (
@@ -599,33 +947,87 @@ try {
     RANGE_END_FRAME - RANGE_START_FRAME
   );
 
-  const spans = sourceSpansForOtioRange(
-    document,
-    anchor.timeline_id,
-    anchor.track_id,
-    anchor.range
-  );
-  assert.ok(spans.length > 0, 'the selected range intersects nothing');
-  const primary = spans.find((span) => span.bundle_path === 'media/primary_a.mp4');
-  assert.ok(primary, 'range did not resolve to the primary source');
-  assert.equal(
-    primary.file_relative_source_range?.start_time.value,
-    60,
-    'source offset is wrong: expected file-relative frame 60'
-  );
-  console.log(
-    `RESOLVED source=${primary.bundle_path} offset=${primary.file_relative_source_range?.start_time.value}`
-  );
 
-  const evaluation = evaluateOtioAt(document, anchor.timeline_id, {
-    value: RANGE_START_FRAME,
-    rate: POINT_RATE,
-  });
-  const contributing = evaluation.video_contributions.find(
-    (layer) => layer.bundle_path === 'media/primary_a.mp4'
+  for (const item of nestedPosts) {
+    const echoedNested = comments.find((entry) => entry['comment_id'] === item.id);
+    assert.ok(echoedNested, `fresh MCP process missed nested comment ${item.id}`);
+    const nestedEcho = echoedNested['anchor'] as OtioAnchorV1;
+    assert.equal(nestedEcho.track_id, item.track);
+    assert.equal(nestedEcho.range.start_time.value, item.start);
+    assert.equal(nestedEcho.range.duration.value, item.duration);
+  }
+  console.log(`NESTED_READBACK count=${nestedPosts.length}`);
+
+  const plate = oracle.at_200.find((hit) => hit.media?.endsWith('plate_1009.png'));
+  const flare = oracle.at_200.find(
+    (hit) => hit.media === 'media/fx_flare.webm' && hit.source?.value === 8 && hit.source.rate === 24
   );
-  assert.ok(contributing, 'evaluator missed the primary track at the marked frame');
-  assert.equal(contributing.source_time.value, 84);
+  assert.ok(plate, `official t200 missed plate 1009: ${JSON.stringify(oracle.at_200)}`);
+  assert.ok(flare, `official t200 missed flare source 8: ${JSON.stringify(oracle.at_200)}`);
+  const handleA = oracle.v1_60_90.find((hit) => hit.media === 'media/primary_a.mp4');
+  const handleB = oracle.v1_60_90.find((hit) => hit.media === 'media/secondary_b.mp4');
+  const dissolve = oracle.v1_60_90.find((hit) => hit.schema.startsWith('Transition'));
+  assert.equal(handleA?.file?.value, 84);
+  assert.equal(handleA?.timeline_start, 60);
+  assert.equal(handleA?.timeline_end, 84);
+  assert.equal(handleB?.file?.value, 12);
+  assert.equal(handleB?.timeline_start, 60);
+  assert.equal(handleB?.timeline_end, 90);
+  assert.equal(dissolve?.timeline_start, 60);
+  assert.equal(dissolve?.timeline_end, 84);
+  const videoTwo = oracle.duplicates.find((row) => row.name === 'Video 2');
+  assert.deepEqual([...(videoTwo?.ids ?? [])].sort(), ['track-v2-duplicate', 'track-v2-main']);
+  assert.ok(oracle.nested_dissolves.length > 0, 'official archive has no hierarchical nested dissolve');
+  assert.ok(oracle.spill_time, 'official archive has no time just outside the nested stack');
+  assert.equal(
+    oracle.spill_hits.some((hit) => hit.media?.includes('plate_') || hit.media === 'media/fx_flare.webm'),
+    false,
+    'nested media spilled outside the stack'
+  );
+  assert.ok(oracle.black_time, 'official archive has no opaque-black sample');
+  assert.ok(oracle.hold, 'official archive has no image-sequence hold sample');
+  assert.equal(oracle.hold?.frame, 1048);
+
+  const timelineId = document.timeline_ids[0] ?? '';
+  const at200 = evaluateOtioAt(document, timelineId, { value: 200, rate: 24 });
+  const again = evaluateOtioAt(document, timelineId, { value: 200, rate: 24 });
+  const ourPlate = at200.video_contributions.find((layer) => layer.track_id === plate?.track_id);
+  const ourFlare = at200.video_contributions.find((layer) => layer.track_id === flare?.track_id);
+  assert.equal(ourPlate?.source_frame, 1009);
+  assert.equal(ourFlare?.source_time.value, 8);
+  assert.equal(ourFlare?.source_time.rate, 24);
+  assert.equal(
+    again.video_contributions.find((layer) => layer.track_id === plate?.track_id)?.source_frame,
+    ourPlate?.source_frame,
+    'hold frame changed between evaluations'
+  );
+  const v1Spans = sourceSpansForOtioRange(document, timelineId, 'track-v1-main', {
+    start_time: { value: 60, rate: 24 },
+    duration: { value: 30, rate: 24 },
+  });
+  const ourA = v1Spans.find((span) => span.bundle_path === 'media/primary_a.mp4');
+  const ourB = v1Spans.find((span) => span.bundle_path === 'media/secondary_b.mp4');
+  const ourDissolve = v1Spans.find((span) => span.schema.startsWith('Transition'));
+  assert.equal(ourA?.file_relative_source_range?.start_time.value, handleA?.file?.value);
+  assert.equal(ourB?.file_relative_source_range?.start_time.value, handleB?.file?.value);
+  assert.equal(ourDissolve?.timeline_range.start_time.value, dissolve?.timeline_start);
+  const spill = evaluateOtioAt(document, timelineId, oracle.spill_time ?? { value: 0, rate: 24 });
+  assert.equal(
+    spill.video_contributions.some(
+      (layer) => layer.bundle_path?.includes('plate_') || layer.bundle_path === 'media/fx_flare.webm'
+    ),
+    false,
+    'evaluator spilled nested media outside the stack'
+  );
+  const black = evaluateOtioAt(document, timelineId, oracle.black_time ?? { value: 0, rate: 24 });
+  assert.equal(black.video_contributions.length, 0, 'opaque-black sample still had a video contribution');
+  const held = evaluateOtioAt(document, timelineId, oracle.hold?.time ?? { value: 0, rate: 24 });
+  assert.equal(
+    held.video_contributions.find((layer) => layer.track_id === oracle.hold?.track_id)?.source_frame,
+    oracle.hold?.frame
+  );
+  console.log('OFFICIAL_MATCH t200=plate_1009 flare=8 v1=[60,90)');
+
 
   // 9. Republish a revision through the acknowledgement gate.
   const revised = await callMcp('relic_republish', {
