@@ -86,6 +86,9 @@ const clearedRuntimeEnvironment = new Set([
   'PYTHONPATH',
   'RANLIB',
   'RELIC_MCP_PROVE_HIDE_SOURCE',
+  'RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER',
+  'RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER_PATH',
+  'RELIC_MCP_PROVE_INSTALLED_NATIVE_RUNTIME',
   'RELIC_MCP_PROVE_SOURCE_ROOT',
   'RUSTC',
   'STRIP',
@@ -272,6 +275,7 @@ async function assertPackagedNativeFiles(packageRoot) {
     join(packageRoot, 'native', 'secure-open.c'),
     join(packageRoot, 'native', 'secure-open.d.ts'),
     join(packageRoot, 'native', 'build.mjs'),
+    join(packageRoot, 'scripts', 'prove-packed-native.mjs'),
   ]) {
     await access(required);
   }
@@ -755,7 +759,18 @@ async function main() {
     const packageRoot = join(install, 'node_modules', 'relic-mcp');
     await assertPackagedLaunchContract(packageRoot);
     const { nativeBinary, nativeLoader } = await assertPackagedNativeFiles(packageRoot);
-    await proveInstalledNativeLoader(nativeLoader, runtime);
+    await run(
+      process.execPath,
+      [join(packageRoot, 'scripts', 'prove-packed-native.mjs'), copiedTarball],
+      {
+        cwd: runtime,
+        env: {
+          RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER: '1',
+          RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER_PATH: nativeLoader,
+          RELIC_MCP_PROVE_INSTALLED_NATIVE_RUNTIME: runtime,
+        },
+      }
+    );
 
     const fixtures = await createMcpFixtures(runtime);
     const uploaded = [];
@@ -867,5 +882,22 @@ async function main() {
   }
 }
 
-await main();
-console.log('packed native Node proof passed');
+const installedNativeLoaderMode =
+  process.env['RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER'];
+if (installedNativeLoaderMode === undefined) {
+  await main();
+  console.log('packed native Node proof passed');
+} else {
+  if (installedNativeLoaderMode !== '1') {
+    throw new Error('RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER must be exactly 1 when set');
+  }
+  const loaderPath = process.env['RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER_PATH'];
+  const runtime = process.env['RELIC_MCP_PROVE_INSTALLED_NATIVE_RUNTIME'];
+  if (loaderPath === undefined || runtime === undefined) {
+    throw new Error(
+      'installed native loader proof requires RELIC_MCP_PROVE_INSTALLED_NATIVE_LOADER_PATH and RELIC_MCP_PROVE_INSTALLED_NATIVE_RUNTIME'
+    );
+  }
+  await proveInstalledNativeLoader(loaderPath, runtime);
+  console.log('packed installed native loader proof passed');
+}
