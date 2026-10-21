@@ -468,11 +468,25 @@ try {
     );
     console.log(`SELECTED track=${selectedTrackId} range=${RANGE_START_FRAME}-${RANGE_END_FRAME}`);
     const audioReady = await browser.evaluate<number>(
-      `[...document.querySelectorAll('audio')].filter((node) => node.readyState >= 2).length`
+      `(() => {
+        const { promise, resolve } = Promise.withResolvers();
+        const seek = document.querySelector('input.otio-seek');
+        seek.value = '${RANGE_START_FRAME}';
+        seek.dispatchEvent(new Event('input', { bubbles: true }));
+        seek.dispatchEvent(new Event('change', { bubbles: true }));
+        const start = Date.now();
+        const tick = () => {
+          const ready = [...document.querySelectorAll('audio')].filter((node) => node.readyState >= 2).length;
+          if (ready >= 2 || Date.now() - start > 10000) resolve(ready);
+          else setTimeout(tick, 100);
+        };
+        tick();
+        return promise;
+      })()`
     );
     assert.ok(
       audioReady >= 2,
-      'decoded playback did not expose two ready audio elements'
+      'decoded playback did not expose two ready audio elements after seek'
     );
     console.log(`AUDIO ready=${audioReady}`);
     for (const [width, scheme] of [
