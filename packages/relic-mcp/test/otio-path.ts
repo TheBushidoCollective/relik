@@ -75,6 +75,7 @@ const REQUIRED = [
   'decrypted',
   'official-archive',
   'pixels-offset',
+  'default-view-negative-head',
   'nested-200',
   'nested-no-spill',
   'dissolve-pixels',
@@ -181,6 +182,20 @@ interface SpanExpect {
   readonly file_frame: number | null;
   readonly source_seconds: number | null;
 }
+interface SourcePixelProbe {
+  readonly timeline_frame: number;
+  readonly media: string;
+  readonly file_frame: number;
+  readonly wrong_file_frame: number;
+}
+interface DefaultViewNegativeHead {
+  readonly timeline_frame: number;
+  readonly timewarp_track_id: string;
+  readonly timewarp_file_frame: number;
+  readonly underlying_media: string;
+  readonly underlying_file_frame: number;
+  readonly clamped_file_frame: number;
+}
 interface Plan {
   readonly timeline_name: string;
   readonly timeline_rate: number;
@@ -199,6 +214,8 @@ interface Plan {
   readonly primary_file_frame: number;
   readonly primary_wrong_file_frame: number;
   readonly primary_media: string;
+  readonly source_pixel_probes: readonly SourcePixelProbe[];
+  readonly default_view_negative_head: DefaultViewNegativeHead;
   readonly dissolve_frame: number;
   readonly dissolve_query: TimeRange;
   readonly dissolve_spans: readonly SpanExpect[];
@@ -486,6 +503,32 @@ def file_frame_of(clip, source):
     if abs(scaled.value - round(scaled.value)) > 1e-3:
         return None
     return int(round(scaled.value))
+def retimed_file_frame(clip, t):
+    parent = clip.trimmed_range_in_parent()
+    source = clip.source_range
+    ref = clip.media_reference
+    available = getattr(ref, "available_range", None) if ref is not None else None
+    if parent is None or source is None or available is None:
+        raise SystemExit("timewarp clip needs parent, source, and available ranges")
+    if not overlaps(parent, t):
+        raise SystemExit("timewarp sample is outside its editorial range")
+    warps = [effect for effect in clip.effects
+             if isinstance(effect, otio.schema.LinearTimeWarp) and effect.enabled]
+    if len(warps) != 1:
+        raise SystemExit("timewarp clip needs exactly one enabled LinearTimeWarp")
+    scalar = float(warps[0].time_scalar)
+    if scalar == 0:
+        raise SystemExit("timewarp scalar must not be zero")
+    rate = source.start_time.rate
+    offset = t.rescaled_to(parent.start_time.rate) - parent.start_time
+    authored = otio.opentime.RationalTime(
+        source.start_time.rescaled_to(rate).value
+        + offset.rescaled_to(rate).value * scalar,
+        rate,
+    )
+    relative = authored - available.start_time.rescaled_to(rate)
+    return frame_number(relative, available.start_time.rate)
+
 
 def span_for(timeline, clip, t):
     source = source_at(timeline, clip, t)
@@ -612,7 +655,13 @@ def derive(archive, out_dir):
 
     primary = next(item for item in walk(timeline) if relic_id(item) == "clip-v1-primary-a")
     primary_range = primary.trimmed_range_in_parent()
-    primary_frame = frame_number(primary_range.start_time, rate) + 8
+    if primary_range is None:
+        raise SystemExit("primary clip has no editorial range")
+    primary_start = frame_number(primary_range.start_time, rate)
+    primary_end = frame_number(primary_range.end_time_exclusive(), rate)
+    primary_frame = primary_start + 8
+    if primary_frame - 1 < primary_start or primary_frame + 1 >= primary_end:
+        raise SystemExit("primary clip cannot supply three consecutive source-pixel probes")
     primary_t = otio.opentime.RationalTime(primary_frame, rate)
     primary_span = span_for(timeline, primary, primary_t)
     if primary_span["file_frame"] is None:
@@ -620,8 +669,71 @@ def derive(archive, out_dir):
     primary_media = primary_span["bundle_path"]
     if primary_media not in zf.namelist():
         raise SystemExit("bundle is missing %s" % primary_media)
+    source_pixel_probes = []
+    for frame in range(primary_frame - 1, primary_frame + 2):
+        span = span_for(timeline, primary, otio.opentime.RationalTime(frame, rate))
+        if span["file_frame"] is None:
+            raise SystemExit("source-pixel probe has no integer file frame at %s" % frame)
+        if span["bundle_path"] != primary_media:
+            raise SystemExit("source-pixel probes do not share one media bundle")
+        source_pixel_probes.append({
+            "timeline_frame": frame,
+            "media": span["bundle_path"],
+            "file_frame": span["file_frame"],
+            "wrong_file_frame": span["file_frame"] + 2,
+        })
+    if (len(source_pixel_probes) != 3
+            or any(source_pixel_probes[index]["file_frame"] != source_pixel_probes[0]["file_frame"] + index
+                   for index in range(len(source_pixel_probes)))):
+        raise SystemExit("source-pixel probes are not consecutive official file samples")
     (Path(out_dir) / primary_media).parent.mkdir(parents=True, exist_ok=True)
     (Path(out_dir) / primary_media).write_bytes(zf.read(primary_media))
+
+    timewarp = next(item for item in walk(other) if relic_id(item) == "clip-v2-timewarp")
+    if timewarp.parent() is not other:
+        raise SystemExit("timewarp clip is not an immediate child of track-v2-main")
+    timewarp_track_id = relic_id(other)
+    if timewarp_track_id is None:
+        raise SystemExit("timewarp track needs a relic id")
+    timewarp_range = timewarp.trimmed_range_in_parent()
+    if timewarp_range is None:
+        raise SystemExit("timewarp clip has no editorial range")
+    timewarp_start = frame_number(timewarp_range.start_time, rate)
+    timewarp_end = frame_number(timewarp_range.end_time_exclusive(), rate)
+    negative_head_frame = None
+    negative_timewarp_file_frame = None
+    for frame in range(timewarp_start, timewarp_end):
+        candidate = otio.opentime.RationalTime(frame, rate)
+        authored_file_frame = retimed_file_frame(timewarp, candidate)
+        if authored_file_frame < 0:
+            negative_head_frame = frame
+            negative_timewarp_file_frame = authored_file_frame
+            break
+    if negative_head_frame is None or negative_timewarp_file_frame is None:
+        raise SystemExit("timewarp has no authored retimed sample before available media")
+    negative_t = otio.opentime.RationalTime(negative_head_frame, rate)
+    if covering_clip(other, negative_t) is not timewarp:
+        raise SystemExit("negative-head sample is not covered by the timewarp clip")
+    negative_underlying = span_for(timeline, primary, negative_t)
+    if negative_underlying["file_frame"] is None:
+        raise SystemExit("negative-head underlying V1 sample is not an integer file frame")
+    if negative_underlying["bundle_path"] != primary_media:
+        raise SystemExit("negative-head underlying V1 sample changed media bundle")
+    primary_ref = primary.media_reference
+    primary_available = getattr(primary_ref, "available_range", None)
+    if primary_available is None:
+        raise SystemExit("primary clip has no available range for clamp control")
+    clamped_file_frame = file_frame_of(primary, primary_available.start_time)
+    if clamped_file_frame is None:
+        raise SystemExit("primary clamp control is not an integer file frame")
+    primary_file_count = frame_number(
+        primary_available.duration,
+        primary_available.start_time.rate,
+    )
+    if not 0 <= negative_underlying["file_frame"] < primary_file_count:
+        raise SystemExit("negative-head underlying V1 sample is outside available media")
+    if negative_underlying["file_frame"] == clamped_file_frame:
+        raise SystemExit("negative-head underlying V1 sample cannot distinguish a clamped substitute")
 
     transition = next(item for item in walk(timeline) if isinstance(item, otio.schema.Transition))
     trans_range = transition.trimmed_range_in_parent()
@@ -782,6 +894,15 @@ def derive(archive, out_dir):
         "primary_file_frame": primary_span["file_frame"],
         "primary_wrong_file_frame": primary_span["file_frame"] + 2,
         "primary_media": primary_media,
+        "source_pixel_probes": source_pixel_probes,
+        "default_view_negative_head": {
+            "timeline_frame": negative_head_frame,
+            "timewarp_track_id": timewarp_track_id,
+            "timewarp_file_frame": negative_timewarp_file_frame,
+            "underlying_media": negative_underlying["bundle_path"],
+            "underlying_file_frame": negative_underlying["file_frame"],
+            "clamped_file_frame": clamped_file_frame,
+        },
         "dissolve_frame": mid,
         "dissolve_query": range_json(query),
         "dissolve_spans": window_spans,
@@ -1485,6 +1606,21 @@ async function setTracksHidden(
     );
   }
 }
+async function assertTrackVisible(
+  browser: ChromeSession,
+  trackId: string
+): Promise<void> {
+  const pressed = await browser.evaluate<string | null>(`(() => {
+    const toggle = document.querySelector(${JSON.stringify(`button[data-track-toggle="${trackId}"]`)});
+    return toggle?.getAttribute('aria-pressed') ?? null;
+  })()`);
+  assert.equal(
+    pressed,
+    'false',
+    `default view hid track ${trackId} before the negative-head probe`
+  );
+}
+
 
 async function selectTrack(
   browser: ChromeSession,
@@ -1701,45 +1837,107 @@ try {
     );
     pass('network-block');
 
-    await seekTo(browser, plan.primary_frame);
-    const primaryRight = await extractFrame(
-      join(mediaDir, plan.primary_media),
-      plan.primary_file_frame,
-      width,
-      height
+    assert.equal(
+      plan.source_pixel_probes.length,
+      3,
+      'official reader did not derive three source-pixel probes'
     );
-    const primaryWrong = await extractFrame(
-      join(mediaDir, plan.primary_media),
-      plan.primary_wrong_file_frame,
-      width,
-      height
-    );
-    const rightBar = barColumn(primaryRight, width, height);
-    const wrongBar = barColumn(primaryWrong, width, height);
+    for (const [index, sourceProbe] of plan.source_pixel_probes.entries()) {
+      assert.equal(
+        sourceProbe.timeline_frame,
+        plan.primary_frame + index - 1,
+        'official source-pixel probes are not consecutive timeline frames'
+      );
+      await seekTo(browser, sourceProbe.timeline_frame);
+      const sourceRight = await extractFrame(
+        join(mediaDir, sourceProbe.media),
+        sourceProbe.file_frame,
+        width,
+        height
+      );
+      const sourceWrong = await extractFrame(
+        join(mediaDir, sourceProbe.media),
+        sourceProbe.wrong_file_frame,
+        width,
+        height
+      );
+      const rightBar = barColumn(sourceRight, width, height);
+      const wrongBar = barColumn(sourceWrong, width, height);
+      assert.ok(
+        Math.abs(rightBar - wrongBar) >= 4,
+        `fixture frames are not distinct enough to prove source offset at timeline frame ${sourceProbe.timeline_frame}`
+      );
+      const rightRow = await frameRowCenter(
+        join(mediaDir, sourceProbe.media),
+        sourceProbe.file_frame
+      );
+      const wrongRow = await frameRowCenter(
+        join(mediaDir, sourceProbe.media),
+        sourceProbe.wrong_file_frame
+      );
+      const canvasCenter = await canvasRowCenter(browser);
+      const toRightPx =
+        Math.abs(canvasCenter - rightRow.center) * rightRow.width;
+      const toWrongPx =
+        Math.abs(canvasCenter - wrongRow.center) * wrongRow.width;
+      assert.ok(
+        toRightPx <= 3,
+        `canvas bar is ${toRightPx.toFixed(2)} source px from file frame ${sourceProbe.file_frame} at timeline frame ${sourceProbe.timeline_frame}`
+      );
+      assert.ok(
+        toWrongPx >= 12,
+        `canvas bar is ${toWrongPx.toFixed(2)} source px from wrong file frame ${sourceProbe.wrong_file_frame} at timeline frame ${sourceProbe.timeline_frame}`
+      );
+    }
+    pass('pixels-offset');
+
+    const negativeHead = plan.default_view_negative_head;
     assert.ok(
-      Math.abs(rightBar - wrongBar) >= 4,
-      'fixture frames are not distinct enough to prove a source offset'
+      negativeHead.timewarp_file_frame < 0,
+      'official reader did not derive a negative authored timewarp file sample'
     );
-    const rightRow = await frameRowCenter(
-      join(mediaDir, plan.primary_media),
-      plan.primary_file_frame
+    await assertTrackVisible(browser, negativeHead.timewarp_track_id);
+    await seekTo(browser, negativeHead.timeline_frame);
+    const negativeExpected = await extractFrame(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.underlying_file_frame,
+      width,
+      height
     );
-    const wrongRow = await frameRowCenter(
-      join(mediaDir, plan.primary_media),
-      plan.primary_wrong_file_frame
+    const negativeClamped = await extractFrame(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.clamped_file_frame,
+      width,
+      height
+    );
+    const expectedBar = barColumn(negativeExpected, width, height);
+    const clampedBar = barColumn(negativeClamped, width, height);
+    assert.ok(
+      Math.abs(expectedBar - clampedBar) >= 48,
+      'negative-head fixture frames cannot distinguish the V2 clamp substitute'
+    );
+    const expectedRow = await frameRowCenter(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.underlying_file_frame
+    );
+    const clampedRow = await frameRowCenter(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.clamped_file_frame
     );
     const canvasCenter = await canvasRowCenter(browser);
-    const toRightPx = Math.abs(canvasCenter - rightRow.center) * rightRow.width;
-    const toWrongPx = Math.abs(canvasCenter - wrongRow.center) * rightRow.width;
+    const toExpectedPx =
+      Math.abs(canvasCenter - expectedRow.center) * expectedRow.width;
+    const toClampedPx =
+      Math.abs(canvasCenter - clampedRow.center) * clampedRow.width;
     assert.ok(
-      toRightPx <= 3,
-      `canvas bar is ${toRightPx.toFixed(2)} source px from file frame ${plan.primary_file_frame}`
+      toExpectedPx <= 3,
+      `default canvas bar is ${toExpectedPx.toFixed(2)} source px from underlying V1 file frame ${negativeHead.underlying_file_frame}`
     );
     assert.ok(
-      toWrongPx >= 12,
-      `canvas bar is ${toWrongPx.toFixed(2)} source px from the wrong file frame ${plan.primary_wrong_file_frame}`
+      toClampedPx >= 48,
+      `default canvas bar is ${toClampedPx.toFixed(2)} source px from clamped V2 substitute file frame ${negativeHead.clamped_file_frame}`
     );
-    pass('pixels-offset');
+    pass('default-view-negative-head');
 
     await setTracksHidden(browser, plan.nested_occluders, true);
     await seekTo(browser, plan.nested_frame);
