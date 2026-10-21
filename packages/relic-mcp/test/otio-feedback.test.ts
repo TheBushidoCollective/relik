@@ -5,15 +5,21 @@ import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import {
   crc32,
+  decodeKey,
+  deriveCommentKey,
+  encryptComment,
   indexOtioZip,
   type OtioAnchorV1,
   type OtioDocumentV1,
   type OtioTimeRange,
   otioBundleMediaIndex,
+  otioSequenceFrameEntries,
   readOtioDocument,
+  readOtioImageSequence,
   sourceSpansForOtioRange,
 } from '@relic/format';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
+import type { OutboundMail } from '@relic/server/src/mail.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import type { CommentRecord } from '../src/comments.ts';
@@ -32,6 +38,7 @@ import {
 import { republish } from '../src/republish.ts';
 import { resolveAnchors } from '../src/resolve-anchor.ts';
 import { handleMessage, READ_COMMENTS_TOOL_NAME } from '../src/server.ts';
+import { loadPublishState } from '../src/state.ts';
 
 const SERVICE = 'https://relic.example';
 
@@ -41,7 +48,8 @@ let store: MemoryStore;
 let app: RelicApp;
 let deps: PublishDeps;
 let mintBodies: unknown[];
-
+let mintRequests: number;
+let sentMails: { to: string; mail: OutboundMail }[];
 type OtioFixtureItem = Record<string, unknown>;
 
 function clip(
@@ -290,8 +298,17 @@ function imageSequenceTimeline(): string {
               name: 'Three-frame sequence',
               metadata: { relic: { id: 'sequence-clip' } },
               source_range: {
-                start_time: { value: 0, rate: 24 },
-                duration: { value: 3, rate: 24 },
+                OTIO_SCHEMA: 'TimeRange.1',
+                start_time: {
+                  OTIO_SCHEMA: 'RationalTime.1',
+                  value: 0,
+                  rate: 24,
+                },
+                duration: {
+                  OTIO_SCHEMA: 'RationalTime.1',
+                  value: 3,
+                  rate: 24,
+                },
               },
               media_reference: {
                 OTIO_SCHEMA: 'ImageSequenceReference.1',
@@ -304,8 +321,17 @@ function imageSequenceTimeline(): string {
                 frame_zero_padding: 4,
                 missing_frame_policy: 'error',
                 available_range: {
-                  start_time: { value: 0, rate: 24 },
-                  duration: { value: 3, rate: 24 },
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: {
+                    OTIO_SCHEMA: 'RationalTime.1',
+                    value: 0,
+                    rate: 24,
+                  },
+                  duration: {
+                    OTIO_SCHEMA: 'RationalTime.1',
+                    value: 3,
+                    rate: 24,
+                  },
                 },
               },
             },
@@ -332,8 +358,11 @@ function shimFetch(): typeof globalThis.fetch {
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(typeof input === 'string' ? input : String(input));
       if (url.origin === SERVICE) {
-        if (url.pathname.endsWith('/mint') && init?.body) {
-          mintBodies.push(JSON.parse(String(init.body)));
+        if (url.pathname.endsWith('/mint')) {
+          mintRequests++;
+          if (init?.body) {
+            mintBodies.push(JSON.parse(String(init.body)));
+          }
         }
         const headers = new Headers(init?.headers);
         headers.set('x-forwarded-for', '198.51.100.10');
@@ -359,8 +388,19 @@ beforeEach(async () => {
   process.env['RELIC_PUBLISH_STATE'] = join(scratch, 'publish-state.json');
   storage = new MemoryStorage();
   store = new MemoryStore();
-  app = createApp({ storage, store });
+  sentMails = [];
+  app = createApp({
+    storage,
+    store,
+    mailer: {
+      send: async () => {},
+      sendMail: async (to, mail) => {
+        sentMails.push({ to, mail });
+      },
+    },
+  });
   mintBodies = [];
+  mintRequests = 0;
   deps = {
     serviceOrigin: SERVICE,
     relicOrigin: SERVICE,
@@ -684,21 +724,77 @@ describe('OTIO comment anchors', () => {
     expect(resolved.current_projection.status).toBe('same');
   });
 
-  test('marks a sequence range changed when one referenced frame changes', async () => {
+  test('preserves sequence frame continuity across equal, changed, and missing frame revisions', async () => {
     const text = imageSequenceTimeline();
-    const frames = [
-      new TextEncoder().encode('frame one'),
-      new TextEncoder().encode('frame two'),
-      new TextEncoder().encode('frame three'),
-    ];
-    const originalArchive = otioArchive(
-      text,
-      frames.map((bytes, index) => ({
-        name: `media/frame_${String(index + 1).padStart(4, '0')}.png`,
-        bytes,
-      }))
-    );
+    const originalEntries = [
+      {
+        name: 'media/frame_0001.png',
+        bytes: new TextEncoder().encode('frame one'),
+      },
+      {
+        name: 'media/frame_0002.png',
+        bytes: new TextEncoder().encode('frame two'),
+      },
+      {
+        name: 'media/frame_0003.png',
+        bytes: new TextEncoder().encode('frame three'),
+      },
+    ] as const;
+    const originalArchive = otioArchive(text, originalEntries);
     const browserDocument = await browserOtioDocument(originalArchive);
+    const sequenceReference =
+      browserDocument.nodes['sequence-clip']?.media_references?.[
+        'DEFAULT_MEDIA'
+      ];
+    if (!sequenceReference) {
+      throw new Error('expected the sequence media reference');
+    }
+    const sequence = readOtioImageSequence(
+      sequenceReference.raw ?? sequenceReference
+    );
+    if (!sequence.ok) {
+      throw new Error(sequence.reason);
+    }
+    expect(sequence.sequence.count).toBe(3);
+    expect(
+      otioSequenceFrameEntries(
+        sequenceReference.raw ?? sequenceReference,
+        browserDocument.media
+      )
+    ).toEqual([
+      'media/frame_0001.png',
+      'media/frame_0002.png',
+      'media/frame_0003.png',
+    ]);
+
+    const changedFrame2 = new TextEncoder().encode('frame two changed');
+    expect(await sha256Hex(changedFrame2)).not.toBe(
+      await sha256Hex(originalEntries[1].bytes)
+    );
+    const revisions = [
+      {
+        name: 'equal-bytes',
+        status: 'same' as const,
+        entries: originalEntries,
+      },
+      {
+        name: 'changed-frame2',
+        status: 'changed' as const,
+        entries: originalEntries.map((entry) =>
+          entry.name === 'media/frame_0002.png'
+            ? { ...entry, bytes: changedFrame2 }
+            : entry
+        ),
+      },
+      {
+        name: 'missing-frame2',
+        status: 'changed' as const,
+        entries: originalEntries.filter(
+          (entry) => entry.name !== 'media/frame_0002.png'
+        ),
+      },
+    ] as const;
+
     const anchor = otioAnchor(
       browserDocument,
       'sequence-track',
@@ -713,50 +809,55 @@ describe('OTIO comment anchors', () => {
         item: 'Three-frame sequence',
       }
     );
-    const v1Path = join(scratch, 'sequence-v1.otioz');
-    await writeFile(v1Path, originalArchive);
-    const published = await publish({ path: v1Path, cover: false }, deps);
-    const body = 'Check all sequence frames.';
-    const posted = await postComment(
-      { relic_id: published.relic_id, body, anchor },
-      deps
-    );
-    await resolveComment(
-      {
-        relic_id: published.relic_id,
-        comment_id: posted.comment_id,
-        resolved: true,
-      },
-      deps
-    );
 
-    const v2Frames = [
-      frames[0] as Uint8Array,
-      new TextEncoder().encode('frame two changed'),
-      frames[2] as Uint8Array,
-    ];
-    const v2Path = join(scratch, 'sequence-v2.otioz');
-    await writeFile(
-      v2Path,
-      otioArchive(
-        text,
-        v2Frames.map((bytes, index) => ({
-          name: `media/frame_${String(index + 1).padStart(4, '0')}.png`,
-          bytes,
-        }))
-      )
-    );
-    await republish(
-      { relic_id: published.relic_id, path: v2Path, cover: false },
-      deps
-    );
+    for (const revision of revisions) {
+      const v1Path = join(scratch, `sequence-${revision.name}-v1.otioz`);
+      await writeFile(v1Path, originalArchive);
+      const published = await publish({ path: v1Path, cover: false }, deps);
+      const body = `Check all sequence frames (${revision.name}).`;
+      const posted = await postComment(
+        { relic_id: published.relic_id, body, anchor },
+        deps
+      );
+      await resolveComment(
+        {
+          relic_id: published.relic_id,
+          comment_id: posted.comment_id,
+          resolved: true,
+        },
+        deps
+      );
 
-    const resolved = await resolvedOtioComment(published.relic_id, body);
-    expect(resolved.status).toBe('resolved');
-    expect(resolved.intersections[0]?.bundle_path).toBeNull();
-    expect(resolved.intersections[0]?.media_digest).toBeNull();
-    expect(resolved.current_projection.status).toBe('changed');
-    expect(resolved.current_projection).not.toHaveProperty('mapped_range');
+      const v2Path = join(scratch, `sequence-${revision.name}-v2.otioz`);
+      await writeFile(v2Path, otioArchive(text, revision.entries));
+      const republished = await republish(
+        { relic_id: published.relic_id, path: v2Path, cover: false },
+        deps
+      );
+      expect(republished.version).toBe(2);
+
+      const read = await readComments(published.relic_id, deps, {
+        version: '*',
+        resolve_anchors: true,
+      });
+      const comment = read.comments.find(
+        (entry) => entry.comment_id === posted.comment_id
+      );
+      expect(comment?.readable).toBe(true);
+      expect(comment?.resolved?.kind).toBe('otio');
+      if (comment?.resolved?.kind !== 'otio') {
+        throw new Error('expected a sequence OTIO resolution');
+      }
+      expect(comment.resolved.status).toBe('resolved');
+      expect(comment.resolved.intersections[0]?.bundle_path).toBeNull();
+      expect(comment.resolved.intersections[0]?.media_digest).toBeNull();
+      expect(comment.resolved.current_projection.status).toBe(revision.status);
+      if (revision.status === 'changed') {
+        expect(comment.resolved.current_projection).not.toHaveProperty(
+          'mapped_range'
+        );
+      }
+    }
   });
 
   test('version 1 source intervals survive after version 2, and the projection is separate', async () => {
@@ -855,10 +956,119 @@ describe('OTIO comment anchors', () => {
     ).toBe(true);
   });
 
+  test('keeps a late version 1 OTIO comment on its original source revision', async () => {
+    const v1Text = timeline('clip-v1', 'Version one');
+    const original = readOtioDocument(v1Text);
+    const savedV1Anchor = otioAnchor(
+      original,
+      'track-v1',
+      'clip-v1',
+      {
+        start_time: { value: 12, rate: 24 },
+        duration: { value: 6, rate: 24 },
+      },
+      { timeline: 'Cut', track: 'V1', item: 'Version one' }
+    );
+    const v1Path = join(scratch, 'late-v1.otio');
+    await writeFile(v1Path, v1Text);
+    const published = await publish({ path: v1Path, cover: false }, deps);
+
+    const v2Path = join(scratch, 'late-v2.otio');
+    await writeFile(v2Path, timeline('clip-v2', 'Version two'));
+    const republished = await republish(
+      { relic_id: published.relic_id, path: v2Path, cover: false },
+      deps
+    );
+    expect(republished.version).toBe(2);
+    expect((await store.getRelic(published.relic_id))?.version).toBe(2);
+
+    const body = 'Keep this note on the original version.';
+    const posted = await postComment(
+      {
+        relic_id: published.relic_id,
+        body,
+        anchor: savedV1Anchor,
+      },
+      deps
+    );
+    expect(
+      (await store.getComment(published.relic_id, posted.comment_id))?.version
+    ).toBe(1);
+    expect((await store.getRelic(published.relic_id))?.version).toBe(2);
+
+    mintBodies = [];
+    mintRequests = 0;
+    const read = await readComments(published.relic_id, deps, {
+      version: '*',
+      resolve_anchors: true,
+    });
+    const comment = read.comments.find(
+      (entry) => entry.comment_id === posted.comment_id
+    );
+    expect(comment?.readable).toBe(true);
+    expect(comment?.version).toBe(1);
+    expect(comment?.body).toBe(body);
+    expect(comment?.anchor?.kind).toBe('otio');
+    if (comment?.anchor?.kind !== 'otio') {
+      throw new Error('expected the saved OTIO anchor');
+    }
+    expect(comment.anchor.relic_version).toBe(1);
+    expect(comment.anchor.document_sha256).toBe(original.document_sha256);
+    expect(comment?.resolved?.kind).toBe('otio');
+    if (comment?.resolved?.kind !== 'otio') {
+      throw new Error('expected the late OTIO comment to resolve');
+    }
+    expect(comment.resolved.status).toBe('resolved');
+    expect(comment.resolved.relic_version).toBe(1);
+    expect(comment.resolved.document_sha256).toBe(original.document_sha256);
+    expect(comment.resolved.range).toEqual({
+      start_time: { value: 12, rate: 24 },
+      duration: { value: 6, rate: 24 },
+    });
+    expect(comment.resolved.start_seconds).toBe(0.5);
+    expect(comment.resolved.duration_seconds).toBe(0.25);
+    const originalShot = comment.resolved.intersections.find(
+      (span) => span.node_id === 'clip-v1'
+    );
+    expect(originalShot).toBeDefined();
+    expect(
+      comment.resolved.intersections.some((span) => span.node_id === 'clip-v2')
+    ).toBe(false);
+    const expectedSourceSpan = sourceSpansForOtioRange(
+      original,
+      savedV1Anchor.timeline_id,
+      savedV1Anchor.track_id,
+      savedV1Anchor.range
+    ).find((span) => span.node_id === savedV1Anchor.item_id);
+    expect(originalShot?.source_mapping).toEqual(
+      expectedSourceSpan?.source_mapping
+    );
+    expect(comment.resolved.current_projection.current_version).toBe(2);
+    expect(comment.resolved.current_projection.status).not.toBe('same');
+    expect(mintBodies[0]).toEqual({ version: 1 });
+    expect(
+      mintBodies.findIndex((request) => {
+        if (typeof request !== 'object' || request === null) return false;
+        const body = request as { version?: unknown };
+        return !Object.hasOwn(body, 'version') || body.version === 2;
+      })
+    ).toBeGreaterThan(0);
+  });
+
   test('does not mint a sealed anchor for a different service-stamped comment version', async () => {
     const v1Path = join(scratch, 'version-one.otio');
     const v1Text = timeline('clip-v1', 'Version one');
     const v1 = readOtioDocument(v1Text);
+    const savedV1Anchor = otioAnchor(
+      v1,
+      'track-v1',
+      'clip-v1',
+      {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: 0, rate: 24 },
+      },
+      { timeline: 'Cut', track: 'V1', item: 'Version one' }
+    );
     await writeFile(v1Path, v1Text);
     const published = await publish({ path: v1Path, cover: false }, deps);
 
@@ -869,35 +1079,56 @@ describe('OTIO comment anchors', () => {
       deps
     );
 
-    mintBodies = [];
-    const posted = await postComment(
-      {
-        relic_id: published.relic_id,
-        body: 'This seal claims the wrong version.',
-        anchor: {
-          kind: 'otio',
-          v: 1,
-          relic_version: 1,
-          document_sha256: v1.document_sha256,
-          timeline_id: 'tl1',
-          track_id: 'track-v1',
-          range: {
-            start_time: { value: 0, rate: 24 },
-            duration: { value: 0, rate: 24 },
-          },
-          snapshot: { timeline: 'Cut', track: 'V1', item: null },
+    const state = await loadPublishState(published.relic_id);
+    if (!state) throw new Error('expected local publish state');
+    const commentKey = await deriveCommentKey(decodeKey(state.key));
+    const ciphertext = await encryptComment(commentKey, {
+      body: 'This seal claims the wrong version.',
+      display_name: null,
+      anchor: savedV1Anchor,
+    });
+    const response = await app.fetch(
+      new Request(`${SERVICE}/api/relics/${published.relic_id}/comments`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': '198.51.100.10',
         },
-      },
-      deps
+        body: JSON.stringify({
+          publish_token: state.publish_token,
+          ciphertext,
+          version: 2,
+        }),
+      })
     );
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { comment_id?: unknown };
+    expect(typeof created.comment_id).toBe('string');
+    if (typeof created.comment_id !== 'string') {
+      throw new Error('expected a string comment id from the local server');
+    }
+    expect(
+      (await store.getComment(published.relic_id, created.comment_id))?.version
+    ).toBe(2);
+    expect(sentMails).toEqual([]);
+
+    mintRequests = 0;
+    mintBodies = [];
     const read = await readComments(published.relic_id, deps, {
       version: '*',
       resolve_anchors: true,
     });
     const comment = read.comments.find(
-      (entry) => entry.comment_id === posted.comment_id
+      (entry) => entry.comment_id === created.comment_id
     );
+    expect(comment?.readable).toBe(true);
     expect(comment?.version).toBe(2);
+    expect(comment?.anchor?.kind).toBe('otio');
+    if (comment?.anchor?.kind !== 'otio') {
+      throw new Error('expected the mismatched OTIO anchor');
+    }
+    expect(comment.anchor.relic_version).toBe(1);
+    expect(comment.anchor.document_sha256).toBe(v1.document_sha256);
     expect(comment?.resolved?.kind).toBe('otio');
     if (comment?.resolved?.kind !== 'otio') {
       throw new Error('expected an OTIO resolution');
@@ -909,6 +1140,7 @@ describe('OTIO comment anchors', () => {
     expect(comment.resolved.timeline_path).toEqual([]);
     expect(comment.resolved.intersections).toEqual([]);
     expect(comment.resolved.current_projection.status).toBe('unresolvable');
+    expect(mintRequests).toBe(0);
     expect(mintBodies).toEqual([]);
   });
 
