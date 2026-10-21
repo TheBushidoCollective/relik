@@ -168,6 +168,26 @@ static int relic_probe_uncached(struct relic_open_error *error) {
   return 0;
 }
 
+static int relic_cache_probe_failure(int error_number) {
+  switch (error_number) {
+    case ENOSYS:
+    case EINVAL:
+    case EACCES:
+    case EPERM:
+    case ENOTCAPABLE:
+    case EOPNOTSUPP:
+      return 1;
+#ifdef ENOTSUP
+#if ENOTSUP != EOPNOTSUPP
+    case ENOTSUP:
+      return 1;
+#endif
+#endif
+    default:
+      return 0;
+  }
+}
+
 int relic_probe_confined_open(struct relic_open_error *error) {
   static int probe_state = 0;
   static int probe_errno = 0;
@@ -189,9 +209,11 @@ int relic_probe_confined_open(struct relic_open_error *error) {
     return 0;
   }
 
-  probe_errno = error->errno_value;
-  probe_syscall = error->syscall_name;
-  probe_state = -1;
+  if (relic_cache_probe_failure(error->errno_value)) {
+    probe_errno = error->errno_value;
+    probe_syscall = error->syscall_name;
+    probe_state = -1;
+  }
   return -1;
 }
 
