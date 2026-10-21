@@ -76,6 +76,7 @@ export type RenderRoute =
   | 'sandboxed-html'
   | 'sandboxed-jsx'
   | 'media'
+  | 'otio'
   | 'pdf'
   | 'download';
 
@@ -739,6 +740,8 @@ export function routeForClass(cls: RendererClass): RenderRoute {
       return 'image';
     case 'media':
       return 'media';
+    case 'otio':
+      return 'otio';
     case 'html':
       return 'sandboxed-html';
     case 'jsx':
@@ -765,6 +768,8 @@ function classFromMimetype(mimetype: string, filename: string): RendererClass {
   if (type.startsWith('image/')) return 'image';
   if (type.startsWith('video/') || type.startsWith('audio/')) return 'media';
   if (type === 'application/pdf') return 'pdf';
+  if (type === 'application/x-otio' || type === 'application/x-otioz')
+    return 'otio';
   if (
     type === 'application/zip' ||
     type === 'application/gzip' ||
@@ -797,6 +802,8 @@ function describe(cls: RendererClass): string {
       return 'an image';
     case 'media':
       return 'audio or video';
+    case 'otio':
+      return 'an OpenTimelineIO timeline';
     case 'archive':
       return 'an archive';
     default:
