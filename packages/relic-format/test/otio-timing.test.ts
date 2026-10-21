@@ -201,7 +201,7 @@ describe('otio-timing evaluator and source spans', () => {
     const contrib = evalResult.video_contributions[0];
     expect(contrib?.node_id).toBe('clip_a');
     expect(contrib?.source_time.value).toBeCloseTo(60, 5);
-    expect(contrib?.bundle_path).toBe('media/primary_a.mp4');
+    expect<string | null | undefined>(contrib?.bundle_path).toBe('media/primary_a.mp4');
   });
 
   test('evaluateOtioAt computes transition weights during SMPTE_Dissolve', () => {
@@ -1452,7 +1452,7 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
         value: 0,
         rate: 24,
       });
-      expect(evaluated.video_contributions[0]?.bundle_path).toBe(entry);
+      expect<string | null | undefined>(evaluated.video_contributions[0]?.bundle_path).toBe(entry);
       expect(
         sourceSpansForOtioRange(doc, 'timeline-sequence', 'track-sequence', {
           start_time: { value: 0, rate: 24 },
@@ -1465,7 +1465,7 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
       imageReference({ target_url_base: 'media/', rate: 30 }),
       media('media/plate_1051.png')
     );
-    expect(
+    expect<string | null | undefined>(
       evaluateOtioAt(rateThirty, 'timeline-sequence', { value: 40, rate: 24 })
         .video_contributions[0]?.bundle_path
     ).toBe('media/plate_1051.png');
@@ -1515,13 +1515,13 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
       },
     };
     const externalVideo = document(external);
-    expect(
+    expect<string | null | undefined>(
       evaluateOtioAt(externalVideo, 'timeline-sequence', {
         value: 0,
         rate: 24,
       }).video_contributions[0]?.bundle_path
     ).toBe('media/a%20b.mp4');
-    expect(
+    expect<string | null | undefined>(
       sourceSpansForOtioRange(
         externalVideo,
         'timeline-sequence',
@@ -1533,7 +1533,7 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
       )[0]?.bundle_path
     ).toBe('media/a%20b.mp4');
     const externalAudio = document(external, Object.create(null), 'Audio');
-    expect(
+    expect<string | null | undefined>(
       evaluateOtioAt(externalAudio, 'timeline-sequence', {
         value: 0,
         rate: 24,
@@ -1546,13 +1546,13 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
       ['media/a%20b.png', 'media/a b.png'],
     ] as const) {
       const canonical = document({ ...external, target_url: targetUrl });
-      expect(
+      expect<string | null | undefined>(
         evaluateOtioAt(canonical, 'timeline-sequence', {
           value: 0,
           rate: 24,
         }).video_contributions[0]?.bundle_path
       ).toBe(entry);
-      expect(
+      expect<string | null | undefined>(
         sourceSpansForOtioRange(
           canonical,
           'timeline-sequence',
