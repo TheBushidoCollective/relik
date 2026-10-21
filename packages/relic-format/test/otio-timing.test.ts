@@ -1514,6 +1514,35 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
       }
     }
 
+    const preStartHold = document(
+      imageReference({
+        missing_frame_policy: 'hold',
+        available_range: {
+          OTIO_SCHEMA: 'TimeRange.1',
+          start_time: {
+            OTIO_SCHEMA: 'RationalTime.1',
+            value: 24,
+            rate: 24,
+          },
+          duration: {
+            OTIO_SCHEMA: 'RationalTime.1',
+            value: 4,
+            rate: 24,
+          },
+        },
+      }),
+      {
+        ...media('media/frames/plate_1002.png'),
+        ...media('media/frames/plate_1004.png'),
+      }
+    );
+    const heldPreStart = evaluateOtioAt(preStartHold, 'timeline-sequence', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    expect(heldPreStart?.bundle_path).toBe('media/frames/plate_1002.png');
+    expect(heldPreStart?.source_frame).toBe(1002);
+
     const invalid = document(imageReference({ frame_zero_padding: 33 }));
     const invalidContribution = evaluateOtioAt(invalid, 'timeline-sequence', {
       value: 0,
