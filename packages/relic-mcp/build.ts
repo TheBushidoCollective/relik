@@ -57,6 +57,26 @@ if (!built.success) {
   process.exit(1);
 }
 
+const nativeLoader = await Bun.build({
+  entrypoints: ['./src/native-secure-open.ts'],
+  outdir: out,
+  target: 'node',
+  format: 'esm',
+  minify: false,
+  splitting: false,
+  naming: 'native-secure-open.js',
+});
+
+if (!nativeLoader.success) {
+  for (const log of nativeLoader.logs) console.error(log);
+  process.exit(1);
+}
+
+await Bun.write(
+  `${out}native-secure-open.d.ts`,
+  await Bun.file('./native/secure-open.d.ts').text()
+);
+
 const bundle = `${out}relic-mcp.js`;
 const text = await Bun.file(bundle).text();
 
