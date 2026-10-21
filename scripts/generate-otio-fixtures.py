@@ -94,6 +94,16 @@ def build_standard_sample_timeline() -> Timeline:
     )
     m1.metadata["relic"] = {"id": "marker-v1-c1-red"}
     c1.markers.append(m1)
+    # Source 36 is before source_range start 48. Official transformed_time_range
+    # maps it to parent -12. The in-trim marker below is the one active at playback 36.
+    m_in = Marker(
+        name="In Trim Note",
+        marked_range=TimeRange(RationalTime(84, 24), RationalTime(0, 24)),
+        color=MarkerColor.GREEN,
+        comment="Inside the trimmed source range",
+    )
+    m_in.metadata["relic"] = {"id": "marker-v1-c1-in-trim"}
+    c1.markers.append(m_in)
 
     # Transition 1: SMPTE Dissolve (in 12, out 12, cut at 72)
     tr1 = Transition(
@@ -114,7 +124,7 @@ def build_standard_sample_timeline() -> Timeline:
     )
     ref_orig = ExternalReference(
         target_url="media/secondary_b_prores.mov",
-        available_range=TimeRange(RationalTime(0, 24), RationalTime(144, 24)),
+        available_range=TimeRange(RationalTime(0, 24), RationalTime(24, 24)),
     )
     c2.set_media_references({"proxy": ref_proxy, "original": ref_orig}, "proxy")
     m2 = Marker(
@@ -132,11 +142,27 @@ def build_standard_sample_timeline() -> Timeline:
         source_range=TimeRange(RationalTime(0, 24), RationalTime(24, 24)),
     )
     gap1.metadata["relic"] = {"id": "gap-v1-slug"}
+    m_gap = Marker(
+        name="Gap Marker",
+        marked_range=TimeRange(RationalTime(6, 24), RationalTime(0, 24)),
+        color=MarkerColor.YELLOW,
+        comment="Point inside the gap",
+    )
+    m_gap.metadata["relic"] = {"id": "marker-gap-v1"}
+    gap1.markers.append(m_gap)
 
     # Clip 3: Nested Submaster Compound Clip wrapping a Stack (frames 192 to 240)
     nested_stack = Stack(name="VFX Submaster Stack")
     nested_stack.metadata["relic"] = {"id": "stack-vfx-submaster"}
     nested_stack.source_range = TimeRange(RationalTime(0, 24), RationalTime(48, 24))
+    m_stack = Marker(
+        name="Stack Marker",
+        marked_range=TimeRange(RationalTime(8, 24), RationalTime(0, 24)),
+        color=MarkerColor.BLUE,
+        comment="Point inside the stack source range",
+    )
+    m_stack.metadata["relic"] = {"id": "marker-stack-local"}
+    nested_stack.markers.append(m_stack)
 
     nested_v1 = Track(name="Plate Base", kind=TrackKind.Video)
     nested_v1.metadata["relic"] = {"id": "track-nested-plate-base"}
@@ -144,7 +170,7 @@ def build_standard_sample_timeline() -> Timeline:
     nested_c1.metadata["relic"] = {"id": "clip-nested-plate"}
     nested_c1.source_range = TimeRange(RationalTime(0, 24), RationalTime(48, 24))
     nested_c1.media_reference = ImageSequenceReference(
-        target_url_base="media/vfx_plates/",
+        target_url_base="media/",
         name_prefix="plate_",
         name_suffix=".png",
         start_frame=1001,
@@ -152,6 +178,7 @@ def build_standard_sample_timeline() -> Timeline:
         rate=24.0,
         frame_zero_padding=4,
         missing_frame_policy=ImageSequenceReference.MissingFramePolicy.hold,
+        available_range=TimeRange(RationalTime(0, 24), RationalTime(48, 24)),
     )
     nested_v1.append(nested_c1)
 
@@ -165,6 +192,14 @@ def build_standard_sample_timeline() -> Timeline:
 
     nested_stack.extend([nested_v1, nested_v2])
 
+    m_track = Marker(
+        name="Track Marker",
+        marked_range=TimeRange(RationalTime(100, 24), RationalTime(0, 24)),
+        color=MarkerColor.BLUE,
+        comment="Point in track time",
+    )
+    m_track.metadata["relic"] = {"id": "marker-v1-track"}
+    v1.markers.append(m_track)
     v1.extend([c1, tr1, c2, gap1, nested_stack])
 
     # Video 2: Secondary / effects track
@@ -218,7 +253,19 @@ def build_standard_sample_timeline() -> Timeline:
     # Video 3: Duplicate track name "Video 2"
     v3 = Track(name="Video 2", kind=TrackKind.Video)
     v3.metadata["relic"] = {"id": "track-v2-duplicate"}
-    v3.append(Gap(source_range=TimeRange(RationalTime(0, 24), RationalTime(240, 24))))
+    disabled = Clip(
+        name="Disabled Duplicate Picture",
+        source_range=TimeRange(RationalTime(0, 24), RationalTime(48, 24)),
+    )
+    disabled.enabled = False
+    disabled.metadata["relic"] = {"id": "clip-v2-duplicate-disabled", "status": "disabled"}
+    disabled.media_reference = ExternalReference(
+        target_url="media/primary_a.mp4",
+        available_range=TimeRange(RationalTime(24, 24), RationalTime(144, 24)),
+    )
+    gap_disabled = Gap(source_range=TimeRange(RationalTime(0, 24), RationalTime(192, 24)))
+    gap_disabled.metadata["relic"] = {"id": "gap-v2-duplicate-rest"}
+    v3.extend([disabled, gap_disabled])
 
     # Audio 1: Dialogue DX (48000Hz)
     a1 = Track(name="Dialogue DX", kind=TrackKind.Audio)
@@ -407,48 +454,73 @@ def build_timewarp_freeze_timeline() -> Timeline:
 # -----------------------------------------------------------------------------
 # Fixture 6: Image Sequence Reference & Policies
 # -----------------------------------------------------------------------------
+def _seq(name, prefix, start_frame, step, policy, frames, base, rate=24.0):
+    clip = Clip(name=name, source_range=TimeRange(RationalTime(0, rate), RationalTime(frames, rate)))
+    clip.metadata["relic"] = {"id": "clip-" + name.lower().replace(" ", "-")}
+    clip.media_reference = ImageSequenceReference(
+        target_url_base=base,
+        name_prefix=prefix,
+        name_suffix=".png",
+        start_frame=start_frame,
+        frame_step=step,
+        rate=rate,
+        frame_zero_padding=4,
+        missing_frame_policy=policy,
+        available_range=TimeRange(RationalTime(0, rate), RationalTime(frames, rate)),
+    )
+    return clip
+
+
 def build_image_sequence_timeline() -> Timeline:
     tl = Timeline(name="Image Sequence Conformance")
-    v = Track(name="Image Sequence Track", kind=TrackKind.Video)
+    policies = Track(name="Policies", kind=TrackKind.Video)
+    policies.metadata["relic"] = {"id": "track-image-policies"}
+    # Source is longer than available media so a later sample is outside available_range.
+    # The library does not apply hold/black/error; it reports the time invalid. Relik policy is separate.
+    for name, policy in (
+        ("Sequence Hold Missing", ImageSequenceReference.MissingFramePolicy.hold),
+        ("Sequence Black Missing", ImageSequenceReference.MissingFramePolicy.black),
+        ("Sequence Error Missing", ImageSequenceReference.MissingFramePolicy.error),
+    ):
+        clip = Clip(name=name, source_range=TimeRange(RationalTime(0, 24), RationalTime(8, 24)))
+        clip.metadata["relic"] = {"id": "clip-" + name.lower().replace(" ", "-")}
+        clip.media_reference = ImageSequenceReference(
+            target_url_base="media/",
+            name_prefix="plate_",
+            name_suffix=".png",
+            start_frame=1001,
+            frame_step=1,
+            rate=24.0,
+            frame_zero_padding=4,
+            missing_frame_policy=policy,
+            available_range=TimeRange(RationalTime(0, 24), RationalTime(4, 24)),
+        )
+        policies.append(clip)
 
-    c_hold = Clip(name="Sequence Hold Missing", source_range=TimeRange(RationalTime(0, 24), RationalTime(24, 24)))
-    c_hold.media_reference = ImageSequenceReference(
-        target_url_base="media/vfx_plates/",
-        name_prefix="plate_",
-        name_suffix=".png",
-        start_frame=1001,
-        frame_step=1,
-        rate=24.0,
-        frame_zero_padding=4,
-        missing_frame_policy=ImageSequenceReference.MissingFramePolicy.hold,
-    )
+    step = Track(name="Step Two", kind=TrackKind.Video)
+    step.metadata["relic"] = {"id": "track-image-step"}
+    step.append(_seq(
+        "Sequence Step Two",
+        "step_",
+        0,
+        2,
+        ImageSequenceReference.MissingFramePolicy.error,
+        8,
+        "media",
+    ))
 
-    c_black = Clip(name="Sequence Black Missing", source_range=TimeRange(RationalTime(0, 24), RationalTime(24, 24)))
-    c_black.media_reference = ImageSequenceReference(
-        target_url_base="media/vfx_plates/",
-        name_prefix="plate_",
-        name_suffix=".png",
-        start_frame=1001,
-        frame_step=1,
-        rate=24.0,
-        frame_zero_padding=4,
-        missing_frame_policy=ImageSequenceReference.MissingFramePolicy.black,
-    )
-
-    c_err = Clip(name="Sequence Error Missing", source_range=TimeRange(RationalTime(0, 24), RationalTime(24, 24)))
-    c_err.media_reference = ImageSequenceReference(
-        target_url_base="media/vfx_plates/",
-        name_prefix="plate_",
-        name_suffix=".png",
-        start_frame=1001,
-        frame_step=1,
-        rate=24.0,
-        frame_zero_padding=4,
-        missing_frame_policy=ImageSequenceReference.MissingFramePolicy.error,
-    )
-
-    v.extend([c_hold, c_black, c_err])
-    tl.tracks.append(v)
+    signed = Track(name="Signed Start", kind=TrackKind.Video)
+    signed.metadata["relic"] = {"id": "track-image-signed"}
+    signed.append(_seq(
+        "Sequence Signed Start",
+        "signed_",
+        -3,
+        1,
+        ImageSequenceReference.MissingFramePolicy.error,
+        4,
+        "media/",
+    ))
+    tl.tracks.extend([policies, step, signed])
     return tl
 
 
@@ -476,8 +548,12 @@ def build_missing_unsupported_timeline() -> Timeline:
     c_missing.metadata["relic"] = {"status": "missing-media"}
 
     c_codec = Clip(name="Unsupported Codec Clip", source_range=TimeRange(RationalTime(0, 24), RationalTime(48, 24)))
-    c_codec.media_reference = ExternalReference(target_url="media/prores_4444_xq.mov")
-    c_codec.metadata["relic"] = {"status": "unsupported-codec", "codec": "ProRes 4444 XQ"}
+    c_codec.media_reference = ExternalReference(target_url="media/unsupported_prores.mov")
+    c_codec.metadata["relic"] = {
+        "status": "unsupported-codec",
+        "codec": "prores",
+        "note": "Profile is whatever ffprobe records in media-measured.json. The filename is not a profile claim.",
+    }
 
     c_effect = Clip(name="Unsupported Effect Clip", source_range=TimeRange(RationalTime(0, 24), RationalTime(48, 24)))
     c_effect.media_reference = ExternalReference(target_url="media/primary_a.mp4")
@@ -514,308 +590,867 @@ def build_duplicate_tracks_timeline() -> Timeline:
     return tl
 
 
+
 # -----------------------------------------------------------------------------
-# Expected Oracle Evaluations Generation
+# Oracle: official library ranges, plus a labeled Relik rendering contract
 # -----------------------------------------------------------------------------
-def generate_expected_oracle_data() -> dict:
-    """Generate expected evaluations and source spans for standard-sample and edge cases."""
-    oracle = {
-        "version": 1,
-        "generator": {
-            "recipe": "uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py",
-            "otio_version": f"opentimelineio=={otio.__version__}",
-        },
-        "fixtures": {},
+REQUIRED_OTIO_VERSION = "0.18.1"
+
+# Sample times and queries are inputs, not answers. Answers come from the library.
+STANDARD_TIMES = (0, 36, 60, 66, 72, 78, 84, 100, 160, 174, 180, 192, 200)
+STANDARD_QUERIES = (
+    ("track-v1-main", 20, 30),
+    ("track-v1-main", 60, 30),
+    ("track-v2-main", 48, 48),
+    ("track-a1-main", 0, 24),
+)
+NESTED_TIMES = (0, 12, 24, 36, 71, 72)
+NESTED_QUERIES = (("track-nested-master", 24, 48), ("track-nested-master", 12, 72))
+MIXED_TIMES = (0, 24)
+ASYM_TIMES = (0, 6, 11, 54, 72, 132, 144, 156, 167)
+ASYM_QUERIES = (("track-asymmetric", 0, 12), ("track-asymmetric", 54, 24), ("track-asymmetric", 156, 12))
+WARP_TIMES = (0, 1, 47, 48, 72, 96)
+IMAGE_TIMES = (0, 1, 2, 5)
+MISSING_TIMES = (0, 48, 96)
+DUP_TIMES = (0,)
+
+
+def assert_library_version() -> str:
+    version = getattr(otio, "__version__", None)
+    if version != REQUIRED_OTIO_VERSION:
+        raise SystemExit(
+            f"opentimelineio {version!r} != required {REQUIRED_OTIO_VERSION}. "
+            "Run: uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py"
+        )
+    return version
+
+
+def rt_dict(value):
+    if value is None:
+        return None
+    return {"value": value.value, "rate": value.rate}
+
+
+def tr_dict(value):
+    if value is None:
+        return None
+    return {
+        "start_time": rt_dict(value.start_time),
+        "duration": rt_dict(value.duration),
+        "end_time_exclusive": rt_dict(value.end_time_exclusive()),
     }
 
-    # Standard sample timeline expectations
-    tl = build_standard_sample_timeline()
-    standard_expected = {
-        "timeline_name": tl.name,
-        "global_start_time": rt_to_dict(tl.global_start_time),
-        "duration": rt_to_dict(tl.duration()),
+
+def call(fn):
+    try:
+        return fn(), None
+    except Exception as exc:
+        return None, {"error": type(exc).__name__, "message": str(exc)}
+
+
+def read_range(obj, name):
+    attr = getattr(obj, name, None)
+    if attr is None:
+        return None, {"error": "missing", "message": name}
+    if callable(attr):
+        return call(attr)
+    return attr, None
+
+
+def relic_id(item, fallback):
+    # OTIO metadata values are AnyDictionary, not dict. Do not isinstance-check them.
+    try:
+        meta = item.metadata["relic"]
+        value = meta["id"]
+    except Exception:
+        return fallback
+    return value or fallback
+
+
+def kind_name(track):
+    if track.kind == TrackKind.Video:
+        return "Video"
+    if track.kind == TrackKind.Audio:
+        return "Audio"
+    return str(track.kind)
+
+
+def library_ranges(item, parent):
+    record = {}
+    for name in ("trimmed_range", "visible_range", "available_range", "range_in_parent", "trimmed_range_in_parent"):
+        fn = getattr(item, name, None)
+        if fn is None:
+            record[name] = None
+            record[name + "_error"] = "not_on_this_schema"
+            continue
+        value, err = call(fn)
+        record[name] = tr_dict(value)
+        if err:
+            record[name + "_error"] = err
+    if parent is not None and hasattr(parent, "handles_of_child") and not isinstance(item, otio.schema.Transition):
+        handles, err = call(lambda: parent.handles_of_child(item))
+        if err:
+            record["handles_of_child"] = None
+            record["handles_of_child_error"] = err
+        else:
+            record["handles_of_child"] = [rt_dict(part) for part in handles]
+        for name in ("range_of_child", "trimmed_range_of_child"):
+            value, err = call(lambda name=name: getattr(parent, name)(item))
+            record[name] = tr_dict(value)
+            if err:
+                record[name + "_error"] = err
+    if isinstance(item, otio.schema.Transition):
+        record["in_offset"] = rt_dict(item.in_offset)
+        record["out_offset"] = rt_dict(item.out_offset)
+        record["transition_type"] = item.transition_type
+        value, err = call(item.range_in_parent)
+        record["range_in_parent"] = tr_dict(value)
+        if err:
+            record["range_in_parent_error"] = err
+    return record
+
+
+def visible_parent_range(parent, child):
+    """range_of_child extended by handles_of_child. Not a second timing model."""
+    if isinstance(child, otio.schema.Transition):
+        return child.range_in_parent()
+    base = parent.range_of_child(child)
+    pre, post = parent.handles_of_child(child)
+    start = base.start_time
+    end = base.end_time_exclusive()
+    if pre is not None:
+        start = start - pre.rescaled_to(start.rate)
+    if post is not None:
+        end = end + post.rescaled_to(end.rate)
+    if not (end > start):
+        return base
+    return TimeRange.range_from_start_end_time(start, end)
+
+
+def intersect_ranges(left, right):
+    if left is None or right is None or not left.intersects(right):
+        return None
+    start = left.start_time if left.start_time >= right.start_time else right.start_time
+    left_end = left.end_time_exclusive()
+    right_end = right.end_time_exclusive()
+    end = left_end if left_end <= right_end else right_end
+    if not (end > start):
+        return None
+    return TimeRange.range_from_start_end_time(start, end)
+
+
+def active_reference(item):
+    key = getattr(item, "active_media_reference_key", None)
+    refs = {}
+    if hasattr(item, "media_references"):
+        try:
+            refs = dict(item.media_references())
+        except Exception:
+            refs = {}
+    if key and key in refs:
+        return key, refs[key], refs
+    ref = getattr(item, "media_reference", None)
+    return key, ref, refs
+
+
+def reference_record(ref):
+    if ref is None:
+        return None
+    record = {"schema": f"{ref.schema_name()}.{ref.schema_version()}"}
+    if isinstance(ref, ImageSequenceReference):
+        record["target_url_base"] = ref.target_url_base
+        record["name_prefix"] = ref.name_prefix
+        record["name_suffix"] = ref.name_suffix
+        record["start_frame"] = ref.start_frame
+        record["frame_step"] = ref.frame_step
+        record["rate"] = ref.rate
+        record["frame_zero_padding"] = ref.frame_zero_padding
+        record["missing_frame_policy"] = str(ref.missing_frame_policy).split(".")[-1]
+        avail, err = read_range(ref, "available_range")
+        record["available_range"] = tr_dict(avail)
+        if err:
+            record["available_range_error"] = err
+        count, err = call(ref.number_of_images_in_sequence)
+        record["number_of_images_in_sequence"] = count
+        if err:
+            record["number_of_images_error"] = err
+        urls = []
+        if count:
+            for index in range(count):
+                url, url_err = call(lambda index=index: ref.target_url_for_image_number(index))
+                presented, pres_err = call(lambda index=index: ref.presentation_time_for_image_number(index))
+                urls.append({
+                    "image_index": index,
+                    "target_url": url,
+                    "presentation_time": rt_dict(presented),
+                    "target_url_error": url_err,
+                    "presentation_error": pres_err,
+                })
+        record["images"] = urls
+        return record
+    record["target_url"] = getattr(ref, "target_url", None)
+    avail, err = read_range(ref, "available_range")
+    record["available_range"] = tr_dict(avail)
+    if err:
+        record["available_range_error"] = err
+    return record
+
+
+def effects_record(item):
+    out = []
+    for effect in getattr(item, "effects", []) or []:
+        out.append({
+            "schema": f"{effect.schema_name()}.{effect.schema_version()}",
+            "name": effect.name,
+            "effect_name": getattr(effect, "effect_name", None),
+            "time_scalar": getattr(effect, "time_scalar", None),
+            "enabled": getattr(effect, "enabled", True),
+        })
+    return out
+
+
+def markers_record(item, ancestor):
+    out = []
+    for marker in getattr(item, "markers", []) or []:
+        projected, err = call(lambda marker=marker: item.transformed_time_range(marker.marked_range, ancestor))
+        out.append({
+            "name": marker.name,
+            "schema": f"{marker.schema_name()}.{marker.schema_version()}",
+            "color": str(marker.color),
+            "marked_range": tr_dict(marker.marked_range),
+            "projected_range": tr_dict(projected),
+            "projected_error": err,
+            "comment": marker.comment,
+        })
+    return out
+
+
+def item_record(item, parent, fallback_id):
+    key, ref, refs = active_reference(item)
+    return {
+        "id": relic_id(item, fallback_id),
+        "name": item.name,
+        "schema": f"{item.schema_name()}.{item.schema_version()}",
+        "enabled": getattr(item, "enabled", None),
+        "library": library_ranges(item, parent),
+        "active_media_reference_key": key,
+        "active_reference": reference_record(ref),
+        "media_references": {name: reference_record(value) for name, value in refs.items()},
+        "effects": effects_record(item),
+        "markers": markers_record(item, parent) if parent is not None else [],
+    }
+
+
+def walk_items(comp, acc, prefix):
+    for index, child in enumerate(comp):
+        fallback = f"{prefix}[{index}]"
+        acc.append(item_record(child, comp, fallback))
+        if isinstance(child, (Stack, Track)):
+            walk_items(child, acc, relic_id(child, fallback))
+    return acc
+
+
+def file_relative(sample, item):
+    if sample is None:
+        return None, "no_sample"
+    avail, err = call(item.available_range)
+    if err or avail is None:
+        return None, err or {"error": "no_available_range"}
+    start = avail.start_time.rescaled_to(sample.rate)
+    return sample - start, None
+
+
+def relik_retime(item, structural):
+    """Labeled Relik sampler. Official transformed_time ignores effects."""
+    if structural is None or not hasattr(item, "trimmed_range"):
+        return None, "none"
+    trimmed, err = call(item.trimmed_range)
+    if err or trimmed is None:
+        return None, "none"
+    source = structural.rescaled_to(trimmed.start_time.rate)
+    offset = source - trimmed.start_time
+    contract = "none"
+    sample = source
+    for effect in getattr(item, "effects", []) or []:
+        if not getattr(effect, "enabled", True):
+            continue
+        if isinstance(effect, FreezeFrame):
+            sample = trimmed.start_time
+            contract = "freeze-frame"
+        elif isinstance(effect, LinearTimeWarp):
+            scalar = effect.time_scalar
+            if scalar > 0:
+                sample = trimmed.start_time + RationalTime(offset.value * scalar, offset.rate)
+                contract = "linear-time-warp"
+            elif scalar < 0:
+                one = RationalTime(1, trimmed.start_time.rate)
+                last = trimmed.end_time_exclusive() - one
+                sample = last + RationalTime(offset.value * scalar, offset.rate)
+                contract = "linear-time-warp-reverse"
+            else:
+                sample = trimmed.start_time
+                contract = "linear-time-warp-zero"
+    return sample, contract
+
+
+def adjacent_transition(parent, child, local_time):
+    index = None
+    for i, candidate in enumerate(parent):
+        if candidate is child:
+            index = i
+            break
+    if index is None:
+        return None, None
+    for offset, role in ((-1, "incoming"), (1, "outgoing")):
+        j = index + offset
+        if j < 0 or j >= len(parent):
+            continue
+        sibling = parent[j]
+        if not isinstance(sibling, otio.schema.Transition):
+            continue
+        span, err = call(sibling.range_in_parent)
+        if err or span is None or not span.contains(local_time):
+            continue
+        return sibling, role
+    return None, None
+
+
+def dissolve_weight(transition, local_time, role):
+    span = transition.range_in_parent()
+    start = span.start_time
+    local = local_time.rescaled_to(start.rate)
+    offset = local - start
+    duration = span.duration.rescaled_to(start.rate)
+    if duration.value == 0:
+        u = 1.0
+    else:
+        u = offset.value / duration.value
+    weight = (1.0 - u) if role == "outgoing" else u
+    return {
+        "contract": "relik-smpte-dissolve",
+        "not_library_output": True,
+        "library_range_in_parent": tr_dict(span),
+        "in_offset": rt_dict(transition.in_offset),
+        "out_offset": rt_dict(transition.out_offset),
+        "u": u,
+        "role": role,
+        "weight": weight,
+    }
+
+
+def image_sample(ref, sample):
+    if not isinstance(ref, ImageSequenceReference) or sample is None:
+        return None
+    count, err = call(ref.number_of_images_in_sequence)
+    frame, frame_err = call(lambda: ref.frame_for_time(sample))
+    record = {
+        "frame_for_time": frame,
+        "frame_for_time_error": frame_err,
+        "frame_for_time_ignores_step": True,
+        "number_of_images_in_sequence": count,
+        "number_of_images_error": err,
+        "missing_frame_policy": str(ref.missing_frame_policy).split(".")[-1],
+    }
+    chosen = None
+    if count:
+        for index in range(count):
+            start, start_err = call(lambda index=index: ref.presentation_time_for_image_number(index))
+            if start_err or start is None:
+                continue
+            if index + 1 < count:
+                end, _end_err = call(lambda index=index: ref.presentation_time_for_image_number(index + 1))
+            else:
+                avail, _avail_err = read_range(ref, "available_range")
+                end = None if avail is None else avail.end_time_exclusive()
+            if end is None:
+                continue
+            window = TimeRange.range_from_start_end_time(start, end)
+            probe = sample.rescaled_to(start.rate)
+            if window.contains(probe):
+                chosen = index
+                break
+    if chosen is None:
+        record["image_index"] = None
+        record["target_url"] = None
+        record["relik_policy"] = record["missing_frame_policy"]
+        record["relik_policy_note"] = "Outside presentation windows. Library frame_for_time does not apply hold/black/error."
+        return record
+    url, url_err = call(lambda chosen=chosen: ref.target_url_for_image_number(chosen))
+    record["image_index"] = chosen
+    record["target_url"] = url
+    record["target_url_error"] = url_err
+    record["relik_policy"] = None
+    return record
+
+
+def contribution(parent, child, local_time, timeline_time, track_id, kind):
+    structural, struct_err = call(lambda: parent.transformed_time(local_time, child))
+    sample, contract = relik_retime(child, structural)
+    relative, rel_err = file_relative(sample if sample is not None else structural, child)
+    structural_relative, structural_rel_err = file_relative(structural, child)
+    transition, role = adjacent_transition(parent, child, local_time)
+    weight = 1.0
+    transition_record = None
+    if transition is not None:
+        transition_record = dissolve_weight(transition, local_time, role)
+        weight = transition_record["weight"]
+    key, ref, _refs = active_reference(child)
+    enabled = getattr(child, "enabled", True)
+    status = "supported"
+    try:
+        authored = child.metadata["relic"]["status"]
+    except Exception:
+        authored = None
+    if authored:
+        status = authored
+    if isinstance(child, Gap):
+        status = "gap"
+    if not enabled:
+        status = "disabled"
+    if isinstance(ref, MissingReference):
+        status = "missing-media"
+    effects = effects_record(child)
+    if any(effect["enabled"] and effect["schema"].split(".")[0] not in ("FreezeFrame", "LinearTimeWarp") for effect in effects):
+        if status == "supported":
+            status = "unsupported-effect"
+    image = image_sample(ref, sample if sample is not None else structural)
+    bundle = None
+    if image and image.get("image_index") is None and image.get("relik_policy") and status == "supported":
+        status = "missing-frame-" + image["relik_policy"]
+    if image and image.get("target_url"):
+        bundle = image["target_url"]
+    elif ref is not None and not isinstance(ref, ImageSequenceReference):
+        bundle = getattr(ref, "target_url", None)
+    return {
+        "track_id": track_id,
+        "node_id": relic_id(child, child.name or child.schema_name()),
+        "name": child.name,
+        "schema": f"{child.schema_name()}.{child.schema_version()}",
+        "kind": kind,
+        "enabled": enabled,
+        "contributes": bool(enabled) and status != "disabled",
+        "status": status,
+        "bundle_path": bundle,
+        "active_media_reference_key": key,
+        "library_source_time": rt_dict(structural),
+        "library_source_time_error": struct_err,
+        "library_file_relative_time": rt_dict(structural_relative),
+        "library_file_relative_error": structural_rel_err,
+        "retime_contract": contract,
+        "retime_sample_time": rt_dict(sample),
+        "file_relative_time": rt_dict(relative),
+        "file_relative_error": rel_err,
+        "transition_weight": weight,
+        "transition": transition_record,
+        "image_sequence": image,
+        "effects": effects,
+        "timeline_time": rt_dict(timeline_time),
+        "local_time": rt_dict(local_time),
+    }
+
+
+def evaluate_composition(comp, local_time, timeline_time, track_id, kind, out):
+    for child in comp:
+        if isinstance(child, otio.schema.Transition):
+            continue
+        visible, err = call(lambda child=child: visible_parent_range(comp, child))
+        if err or visible is None or not visible.contains(local_time):
+            continue
+        if isinstance(child, (Stack, Track)):
+            child_local, map_err = call(lambda child=child: comp.transformed_time(local_time, child))
+            if map_err or child_local is None:
+                out.append({
+                    "track_id": track_id,
+                    "node_id": relic_id(child, child.name),
+                    "status": "unplaced",
+                    "map_error": map_err,
+                })
+                continue
+            if not getattr(child, "enabled", True):
+                out.append(contribution(comp, child, local_time, timeline_time, track_id, kind))
+                continue
+            evaluate_composition(child, child_local, timeline_time, relic_id(child, track_id), kind, out)
+            continue
+        out.append(contribution(comp, child, local_time, timeline_time, track_id, kind))
+    return out
+
+
+def evaluate_timeline(timeline, time):
+    out = []
+    stack = timeline.tracks
+    for track in stack:
+        track_time, err = call(lambda track=track: stack.transformed_time(time, track))
+        if err or track_time is None:
+            out.append({"track_id": relic_id(track, track.name), "status": "unplaced", "map_error": err})
+            continue
+        evaluate_composition(track, track_time, time, relic_id(track, track.name), kind_name(track), out)
+    return out
+
+
+def source_spans(timeline, track_id, query):
+    stack = timeline.tracks
+    track = None
+    for candidate in stack.find_children(Track):
+        if relic_id(candidate, candidate.name) == track_id or candidate.name == track_id:
+            track = candidate
+            break
+    if track is None:
+        return {"track_id": track_id, "error": "track_not_found", "spans": []}
+    start, start_err = call(lambda: stack.transformed_time(query.start_time, track))
+    end, end_err = call(lambda: stack.transformed_time(query.end_time_exclusive(), track))
+    if start_err or end_err or start is None or end is None:
+        return {"track_id": track_id, "error": start_err or end_err, "spans": []}
+    local_query = TimeRange.range_from_start_end_time(start, end)
+    spans = []
+    for child in track:
+        if isinstance(child, otio.schema.Transition):
+            span = child.range_in_parent()
+            hit = intersect_ranges(span, local_query)
+            if hit is None:
+                continue
+            spans.append({
+                "node_id": relic_id(child, child.name),
+                "schema": f"{child.schema_name()}.{child.schema_version()}",
+                "library_range_in_parent": tr_dict(span),
+                "intersected_parent_range": tr_dict(hit),
+                "includes_transition_handle": False,
+                "library_source_range": None,
+                "note": "Transition has no transformed_time. Range is range_in_parent.",
+            })
+            continue
+        visible = visible_parent_range(track, child)
+        hit = intersect_ranges(visible, local_query)
+        if hit is None:
+            continue
+        src_start, src_start_err = call(lambda hit=hit, child=child: track.transformed_time(hit.start_time, child))
+        src_end, src_end_err = call(lambda hit=hit, child=child: track.transformed_time(hit.end_time_exclusive(), child))
+        source_range = None
+        if src_start is not None and src_end is not None and src_end > src_start:
+            source_range = TimeRange.range_from_start_end_time(src_start, src_end)
+        trimmed = track.trimmed_range_of_child(child)
+        handle = hit.start_time < trimmed.start_time or hit.end_time_exclusive() > trimmed.end_time_exclusive()
+        rel_start, _ = file_relative(src_start, child)
+        rel_end, _ = file_relative(src_end, child)
+        file_range = None
+        if rel_start is not None and rel_end is not None and rel_end > rel_start:
+            file_range = TimeRange.range_from_start_end_time(rel_start, rel_end)
+        _key, ref, _refs = active_reference(child)
+        spans.append({
+            "node_id": relic_id(child, child.name or child.schema_name()),
+            "name": child.name,
+            "schema": f"{child.schema_name()}.{child.schema_version()}",
+            "enabled": getattr(child, "enabled", None),
+            "visible_parent_range": tr_dict(visible),
+            "library_range_of_child": tr_dict(track.range_of_child(child)),
+            "library_trimmed_range_of_child": tr_dict(trimmed),
+            "intersected_parent_range": tr_dict(hit),
+            "includes_transition_handle": bool(handle),
+            "library_source_range": tr_dict(source_range),
+            "library_source_endpoint_error": src_start_err or src_end_err,
+            "file_relative_source_range": tr_dict(file_range),
+            "bundle_path": None if isinstance(ref, ImageSequenceReference) else getattr(ref, "target_url", None),
+        })
+    return {
+        "track_id": track_id,
+        "query_range": tr_dict(query),
+        "query_in_track": tr_dict(local_query),
+        "spans": spans,
+    }
+
+
+def untrimmed_projection(timeline, item_name):
+    stack = timeline.tracks
+    found = None
+    for item in stack.find_children():
+        if item.name == item_name:
+            found = item
+            break
+    if found is None or not hasattr(found, "trimmed_range"):
+        return None
+    trimmed, err = call(found.trimmed_range)
+    if err or trimmed is None:
+        return {"error": err}
+    start, start_err = call(lambda: found.transformed_time(trimmed.start_time, stack))
+    end, end_err = call(lambda: found.transformed_time(trimmed.end_time_exclusive(), stack))
+    return {
+        "name": item_name,
+        "local_trimmed_range": tr_dict(trimmed),
+        "projected_to_timeline_stack": tr_dict(
+            None if start is None or end is None or not (end > start)
+            else TimeRange.range_from_start_end_time(start, end)
+        ),
+        "error": start_err or end_err,
+        "note": "transformed_time of the item's own trimmed_range into the timeline stack. Not range_in_parent.",
+    }
+
+
+def fixture_oracle(name, timeline, times, queries, extra=None):
+    rate = timeline.duration().rate
+    evaluations = []
+    for value in times:
+        moment = RationalTime(value, rate)
+        evaluations.append({
+            "time": rt_dict(moment),
+            "contributions": evaluate_timeline(timeline, moment),
+        })
+    span_queries = []
+    for track_id, start, duration in queries:
+        query = TimeRange(RationalTime(start, rate), RationalTime(duration, rate))
+        span_queries.append(source_spans(timeline, track_id, query))
+    record = {
+        "timeline_name": timeline.name,
+        "global_start_time": rt_dict(timeline.global_start_time) if timeline.global_start_time else None,
+        "duration": rt_dict(timeline.duration()),
+        "duration_note": "library Timeline.duration(). global_start_time does not shift this.",
         "tracks": [
             {
-                "id": t.metadata.get("relic", {}).get("id", f"track-{i}"),
-                "name": t.name,
-                "kind": "Video" if t.kind == TrackKind.Video else "Audio",
-                "child_count": len(t),
-                "duration": rt_to_dict(t.duration()),
+                "id": relic_id(track, f"track-{index}"),
+                "name": track.name,
+                "kind": kind_name(track),
+                "child_count": len(track),
+                "duration": rt_dict(track.duration()),
             }
-            for i, t in enumerate(tl.tracks)
+            for index, track in enumerate(timeline.tracks)
         ],
-        "evaluations_at_time": [
-            # t = 0 (Start of timeline)
-            {
-                "time": {"value": 0.0, "rate": 24.0},
-                "video_layers": [
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-primary-a",
-                        "media_url": "media/primary_a.mp4",
-                        "source_time": {"value": 48.0, "rate": 24.0},
-                        "file_relative_time": {"value": 24.0, "rate": 24.0},  # 48 - available_start(24) = 24
-                        "weight": 1.0,
-                    },
-                    {
-                        "track_id": "track-v2-main",
-                        "clip_id": "clip-v2-pip-alpha",
-                        "media_url": "media/overlay_alpha.webm",
-                        "source_time": {"value": 0.0, "rate": 30.0},
-                        "file_relative_time": {"value": 0.0, "rate": 30.0},
-                        "weight": 1.0,
-                    },
-                ],
-                "audio_layers": [
-                    {
-                        "track_id": "track-a1-main",
-                        "clip_id": "clip-a1-interview",
-                        "media_url": "media/dx_mic1.wav",
-                        "source_time": {"value": 0.0, "rate": 48000.0},
-                    }
-                ],
-            },
-            # t = 36 (Inside Clip 1, marker 1 location)
-            {
-                "time": {"value": 36.0, "rate": 24.0},
-                "video_layers": [
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-primary-a",
-                        "media_url": "media/primary_a.mp4",
-                        "source_time": {"value": 84.0, "rate": 24.0},  # 48 + 36 = 84
-                        "file_relative_time": {"value": 60.0, "rate": 24.0},  # 84 - 24 = 60
-                        "weight": 1.0,
-                    },
-                    {
-                        "track_id": "track-v2-main",
-                        "clip_id": "clip-v2-pip-alpha",
-                        "media_url": "media/overlay_alpha.webm",
-                        "source_time": {"value": 45.0, "rate": 30.0},  # 36 / 24 * 30 = 45
-                        "file_relative_time": {"value": 45.0, "rate": 30.0},
-                        "weight": 1.0,
-                    },
-                ],
-                "audio_layers": [
-                    {
-                        "track_id": "track-a1-main",
-                        "clip_id": "clip-a1-interview",
-                        "media_url": "media/dx_mic1.wav",
-                        "source_time": {"value": 72000.0, "rate": 48000.0},  # 36 / 24 * 48000 = 72000
-                    }
-                ],
-            },
-            # t = 66 (Inside SMPTE_Dissolve, in-offset region: cut=72, in=12 -> [60, 84))
-            # progress u = (66 - 60) / 24 = 6 / 24 = 0.25
-            # weight C1 = 0.75, weight C2 = 0.25
-            {
-                "time": {"value": 66.0, "rate": 24.0},
-                "video_layers": [
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-primary-a",
-                        "media_url": "media/primary_a.mp4",
-                        "source_time": {"value": 114.0, "rate": 24.0},  # 48 + 66 = 114
-                        "file_relative_time": {"value": 90.0, "rate": 24.0},
-                        "weight": 0.75,
-                    },
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-secondary-b",
-                        "media_url": "media/secondary_b.mp4",
-                        "source_time": {"value": 18.0, "rate": 24.0},  # cut at 72 has source 24; at 66 source is 24 - 6 = 18
-                        "file_relative_time": {"value": 18.0, "rate": 24.0},
-                        "weight": 0.25,
-                    },
-                    {
-                        "track_id": "track-v2-main",
-                        "clip_id": "clip-v2-timewarp",
-                        "media_url": "media/primary_a.mp4",
-                        "source_time": {"value": 36.0, "rate": 24.0},  # (66 - 48) * 2.0 = 36
-                        "file_relative_time": {"value": 12.0, "rate": 24.0},  # 36 - 24 = 12
-                        "weight": 1.0,
-                    },
-                ],
-            },
-            # t = 72 (Exact cut point of dissolve, progress u = 12 / 24 = 0.5)
-            {
-                "time": {"value": 72.0, "rate": 24.0},
-                "video_layers": [
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-primary-a",
-                        "media_url": "media/primary_a.mp4",
-                        "source_time": {"value": 120.0, "rate": 24.0},  # 48 + 72 = 120
-                        "file_relative_time": {"value": 96.0, "rate": 24.0},
-                        "weight": 0.5,
-                    },
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-secondary-b",
-                        "media_url": "media/secondary_b.mp4",
-                        "source_time": {"value": 24.0, "rate": 24.0},  # start of clip source_range
-                        "file_relative_time": {"value": 24.0, "rate": 24.0},
-                        "weight": 0.5,
-                    },
-                ],
-            },
-            # t = 78 (Out-offset region of dissolve, progress u = (78 - 60) / 24 = 18 / 24 = 0.75)
-            # weight C1 = 0.25, weight C2 = 0.75
-            {
-                "time": {"value": 78.0, "rate": 24.0},
-                "video_layers": [
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-primary-a",
-                        "media_url": "media/primary_a.mp4",
-                        "source_time": {"value": 126.0, "rate": 24.0},  # 48 + 78 = 126 (in tail handle)
-                        "file_relative_time": {"value": 102.0, "rate": 24.0},
-                        "weight": 0.25,
-                    },
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-secondary-b",
-                        "media_url": "media/secondary_b.mp4",
-                        "source_time": {"value": 30.0, "rate": 24.0},  # 24 + 6 = 30
-                        "file_relative_time": {"value": 30.0, "rate": 24.0},
-                        "weight": 0.75,
-                    },
-                ],
-            },
-            # t = 100 (Secondary Grade B active, Hero Freeze Frame on V2)
-            {
-                "time": {"value": 100.0, "rate": 24.0},
-                "video_layers": [
-                    {
-                        "track_id": "track-v1-main",
-                        "clip_id": "clip-v1-secondary-b",
-                        "media_url": "media/secondary_b.mp4",
-                        "source_time": {"value": 52.0, "rate": 24.0},  # 24 + (100 - 72) = 52
-                        "file_relative_time": {"value": 52.0, "rate": 24.0},
-                        "weight": 1.0,
-                    },
-                    {
-                        "track_id": "track-v2-main",
-                        "clip_id": "clip-v2-freeze",
-                        "media_url": "media/secondary_b.mp4",
-                        "source_time": {"value": 0.0, "rate": 24.0},  # Frozen at start frame
-                        "file_relative_time": {"value": 0.0, "rate": 24.0},
-                        "weight": 1.0,
-                    },
-                ],
-            },
-            # t = 180 (Slug Gap on V1, Dialogue and Music on audio)
-            {
-                "time": {"value": 180.0, "rate": 24.0},
-                "video_layers": [],  # Gap on V1, Gap on V2
-                "audio_layers": [
-                    {
-                        "track_id": "track-a1-main",
-                        "clip_id": "clip-a1-interview",
-                        "media_url": "media/dx_mic1.wav",
-                        "source_time": {"value": 360000.0, "rate": 48000.0},
-                    },
-                    {
-                        "track_id": "track-a2-main",
-                        "clip_id": "clip-a2-bed",
-                        "media_url": "media/mx_bed.wav",
-                        "source_time": {"value": 264000.0, "rate": 48000.0},  # (180 - 48) / 24 * 48000 = 132/24 * 48000 = 264000
-                    },
-                ],
-            },
-            # t = 200 (Inside Nested Submaster Stack: Image sequence plate + FX glow)
-            {
-                "time": {"value": 200.0, "rate": 24.0},
-                "video_layers": [
-                    {
-                        "track_id": "track-nested-plate-base",
-                        "clip_id": "clip-nested-plate",
-                        "media_url": "media/vfx_plates/plate_1009.png",  # start_frame 1001 + (200 - 192) = 1009
-                        "source_time": {"value": 8.0, "rate": 24.0},
-                        "weight": 1.0,
-                    },
-                    {
-                        "track_id": "track-nested-fx-glow",
-                        "clip_id": "clip-nested-flare",
-                        "media_url": "media/fx_flare.webm",
-                        "source_time": {"value": 8.0, "rate": 24.0},
-                        "weight": 1.0,
-                    },
-                ],
-            },
-        ],
-        "source_spans_queries": [
-            {
-                "track_id": "track-v1-main",
-                "query_range": {"start_time": {"value": 20.0, "rate": 24.0}, "duration": {"value": 30.0, "rate": 24.0}},
-                "expected_spans": [
-                    {
-                        "clip_id": "clip-v1-primary-a",
-                        "media_url": "media/primary_a.mp4",
-                        "source_range": {"start_time": {"value": 68.0, "rate": 24.0}, "duration": {"value": 30.0, "rate": 24.0}},
-                        "file_relative_range": {"start_time": {"value": 44.0, "rate": 24.0}, "duration": {"value": 30.0, "rate": 24.0}},
-                    }
-                ],
-            },
-            {
-                "track_id": "track-v1-main",
-                "query_range": {"start_time": {"value": 60.0, "rate": 24.0}, "duration": {"value": 30.0, "rate": 24.0}},
-                "expected_spans": [
-                    {
-                        "clip_id": "clip-v1-primary-a",
-                        "media_url": "media/primary_a.mp4",
-                        "source_range": {"start_time": {"value": 108.0, "rate": 24.0}, "duration": {"value": 12.0, "rate": 24.0}},
-                        "file_relative_range": {"start_time": {"value": 84.0, "rate": 24.0}, "duration": {"value": 12.0, "rate": 24.0}},
-                    },
-                    {
-                        "clip_id": "clip-v1-secondary-b",
-                        "media_url": "media/secondary_b.mp4",
-                        "source_range": {"start_time": {"value": 24.0, "rate": 24.0}, "duration": {"value": 18.0, "rate": 24.0}},
-                        "file_relative_range": {"start_time": {"value": 24.0, "rate": 24.0}, "duration": {"value": 18.0, "rate": 24.0}},
-                    },
-                ],
-            },
-        ],
+        "items": walk_items(timeline.tracks, [], "root"),
+        "evaluations_at_time": evaluations,
+        "source_span_queries": span_queries,
     }
-    oracle["fixtures"]["standard-sample"] = standard_expected
+    if extra:
+        record.update(extra)
+    return record
 
-    return oracle
+
+def collect_media_urls(node):
+    found = []
+    if isinstance(node, dict):
+        url = node.get("target_url")
+        if isinstance(url, str) and url.startswith("media/"):
+            found.append(url)
+        for value in node.values():
+            found.extend(collect_media_urls(value))
+    elif isinstance(node, list):
+        for value in node:
+            found.extend(collect_media_urls(value))
+    return found
 
 
-def main():
-    root = Path(__file__).resolve().parent.parent
-    fixtures_dir = root / "packages" / "relic-format" / "test" / "fixtures" / "otio"
-    fixtures_dir.mkdir(parents=True, exist_ok=True)
-    edge_cases_dir = fixtures_dir / "edge-cases"
-    edge_cases_dir.mkdir(parents=True, exist_ok=True)
-    standard_otiod = fixtures_dir / "standard-sample.otiod"
-    standard_otiod.mkdir(parents=True, exist_ok=True)
+def build_oracle():
+    version = assert_library_version()
+    standard = build_standard_sample_timeline()
+    nested = build_nested_trims_timeline()
+    mixed = build_mixed_rates_timeline()
+    asymmetric = build_asymmetric_dissolves_timeline()
+    # Give the asymmetric track an id the queries use.
+    asymmetric.tracks[0].metadata["relic"] = {"id": "track-asymmetric"}
+    warp = build_timewarp_freeze_timeline()
+    images = build_image_sequence_timeline()
+    missing = build_missing_unsupported_timeline()
+    duplicate = build_duplicate_tracks_timeline()
+    oracle = {
+        "version": 1,
+        "provenance": {
+            "otio_version": version,
+            "version_asserted": True,
+            "recipe": "uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py",
+            "check": "uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py --check",
+            "library_calls": [
+                "duration",
+                "trimmed_range",
+                "visible_range",
+                "available_range",
+                "range_in_parent",
+                "trimmed_range_in_parent",
+                "range_of_child",
+                "trimmed_range_of_child",
+                "handles_of_child",
+                "transformed_time",
+                "transformed_time_range",
+                "frame_for_time",
+                "target_url_for_image_number",
+                "presentation_time_for_image_number",
+                "number_of_images_in_sequence",
+            ],
+            "not_library": {
+                "smpte_dissolve_weight": "u = (t - library range_in_parent.start) / duration. outgoing weight = 1-u, incoming weight = u. Missing neighbor is reported, not replaced with black.",
+                "retime_sample_time": "transformed_time ignores effects. Positive scalar: source_start + offset * scalar. Negative scalar: last included frame (end_exclusive minus one source frame) + offset * scalar. Freeze and scalar 0: source_range.start.",
+                "file_relative_time": "sample minus available_range.start_time via RationalTime subtraction. Null when available_range cannot be computed.",
+                "disabled": "Placement is unchanged. contributes is false.",
+                "missing_frame_policy": "The library stores the policy and does not apply it in frame_for_time.",
+            },
+            "otiod_adapter_note": "opentimelineio 0.18.1 otiod.write_to_file does not write version.txt. otioz writes BUNDLE_VERSION '1.0.0' with no trailing newline. This fixture writes version.txt as 1.0.0 plus a newline because the Relik bundle contract requires that exact text.",
+        },
+        "fixtures": {
+            "standard-sample": fixture_oracle("standard-sample", standard, STANDARD_TIMES, STANDARD_QUERIES),
+            "nested-trims": fixture_oracle(
+                "nested-trims",
+                nested,
+                NESTED_TIMES,
+                NESTED_QUERIES,
+                {"untrimmed_projection": untrimmed_projection(nested, "Inner Clip 1")},
+            ),
+            "mixed-rates": fixture_oracle("mixed-rates", mixed, MIXED_TIMES, ()),
+            "asymmetric-dissolves": fixture_oracle("asymmetric-dissolves", asymmetric, ASYM_TIMES, ASYM_QUERIES),
+            "timewarp-freeze": fixture_oracle("timewarp-freeze", warp, WARP_TIMES, ()),
+            "image-sequence": fixture_oracle("image-sequence", images, IMAGE_TIMES, ()),
+            "missing-unsupported": fixture_oracle("missing-unsupported", missing, MISSING_TIMES, ()),
+            "duplicate-tracks": fixture_oracle("duplicate-tracks", duplicate, DUP_TIMES, ()),
+        },
+    }
+    urls = sorted(set(collect_media_urls(oracle)))
+    oracle["required_media"] = urls
+    return oracle, {
+        "standard-sample": standard,
+        "nested-trims": nested,
+        "mixed-rates": mixed,
+        "asymmetric-dissolves": asymmetric,
+        "timewarp-freeze": warp,
+        "image-sequence": images,
+        "missing-unsupported": missing,
+        "duplicate-tracks": duplicate,
+    }
 
-    print("Generating standard-sample.otiod/content.otio...")
-    tl_std = build_standard_sample_timeline()
-    otio.adapters.write_to_file(tl_std, str(standard_otiod / "content.otio"), "otio_json")
 
-    version_file = standard_otiod / "version.txt"
-    version_file.write_text("1.0.0\n")
+def oracle_text(oracle) -> str:
+    return json.dumps(oracle, indent=2, allow_nan=False) + "\n"
 
-    print("Generating edge cases...")
-    otio.adapters.write_to_file(build_nested_trims_timeline(), str(edge_cases_dir / "nested-trims.otio"), "otio_json")
-    otio.adapters.write_to_file(build_mixed_rates_timeline(), str(edge_cases_dir / "mixed-rates.otio"), "otio_json")
-    otio.adapters.write_to_file(build_asymmetric_dissolves_timeline(), str(edge_cases_dir / "asymmetric-dissolves.otio"), "otio_json")
-    otio.adapters.write_to_file(build_timewarp_freeze_timeline(), str(edge_cases_dir / "timewarp-freeze.otio"), "otio_json")
-    otio.adapters.write_to_file(build_image_sequence_timeline(), str(edge_cases_dir / "image-sequence.otio"), "otio_json")
-    otio.adapters.write_to_file(build_missing_unsupported_timeline(), str(edge_cases_dir / "missing-unsupported.otio"), "otio_json")
-    otio.adapters.write_to_file(build_duplicate_tracks_timeline(), str(edge_cases_dir / "duplicate-tracks.otio"), "otio_json")
 
-    print("Generating expected-oracle.json...")
-    oracle_data = generate_expected_oracle_data()
-    oracle_file = fixtures_dir / "expected-oracle.json"
-    with open(oracle_file, "w") as f:
-        json.dump(oracle_data, f, indent=2)
-        f.write("\n")
+def serialize_timeline(timeline) -> str:
+    text = otio.adapters.write_to_string(timeline, "otio_json")
+    if not text.endswith("\n"):
+        text += "\n"
+    return text
 
-    print("Fixture generation complete.")
+
+def faithful_tokens(text: str) -> str:
+    """Keep int64 and non-finite tokens if the writer already emitted them.
+    Inject a Marker.1 and an unknown schema object, and record that injection in a sidecar comment line? No:
+    the injection is recorded in the oracle by the caller comparing before/after. Here we only ensure the
+    raw tokens the writer emitted for Python int / inf survive. Unknown schema is inserted as raw JSON
+    and the oracle provenance names the insertion.
+    """
+    return text
+
+
+def inject_faithful_tokens(text: str) -> tuple[str, list]:
+    patches = []
+    # The builder stores Infinity and NaN as strings so the official writer cannot turn them into
+    # non-standard JSON by itself. Replace those quoted placeholders with bare tokens, and record it.
+    replacements = (
+        ('"non_finite_infinity": "Infinity"', '"non_finite_infinity": Infinity'),
+        ('"non_finite_nan": "NaN"', '"non_finite_nan": NaN'),
+    )
+    for old, new in replacements:
+        if old in text:
+            text = text.replace(old, new, 1)
+            patches.append({"replaced": old, "with": new, "reason": "faithful non-finite token"})
+        elif new in text:
+            patches.append({"already_present": new})
+        else:
+            patches.append({"missing": old, "reason": "writer did not emit the placeholder"})
+    for token in ("9223372036854775807", "-9223372036854775808"):
+        patches.append({"int64_token_present": token, "present": token in text})
+    unknown = (
+        '{"OTIO_SCHEMA": "UnknownVendorEntity.99", "name": "Injected Unknown", '
+        '"vendor": "AcmePost", "token": "preserved-exact-value"}'
+    )
+    needle = '"children": ['
+    # Insert only into the missing-unsupported document, which is serialized alone.
+    if '"OTIO_SCHEMA": "UnknownVendorEntity.99"' not in text.split('"tracks"')[0]:
+        pass
+    if unknown not in text and '"children": [' in text:
+        text = text.replace('"children": [', '"children": [' + unknown + ", ", 1)
+        patches.append({
+            "injected": "UnknownVendorEntity.99",
+            "where": "first children array",
+            "reason": "Official writer cannot construct an unknown schema. Token is injected and labeled.",
+        })
+    marker1 = (
+        '{"OTIO_SCHEMA": "Marker.1", "name": "Legacy Marker", "time": {"OTIO_SCHEMA": "RationalTime.1", '
+        '"rate": 24.0, "value": 12.0}, "color": "RED", "metadata": {}}'
+    )
+    if "Marker.1" not in text and '"markers": [' in text:
+        text = text.replace('"markers": [', '"markers": [' + marker1 + ", ", 1)
+        patches.append({
+            "injected": "Marker.1",
+            "where": "first markers array",
+            "reason": "0.18.1 constructs Marker.2. Marker.1 time field is injected and labeled.",
+        })
+    return text, patches
+
+
+def write_outputs(root: Path, oracle, timelines, check: bool) -> int:
+    fixtures = root / "packages" / "relic-format" / "test" / "fixtures" / "otio"
+    edge = fixtures / "edge-cases"
+    standard_dir = fixtures / "standard-sample.otiod"
+    expected_oracle = oracle_text(oracle)
+    files = {
+        fixtures / "expected-oracle.json": expected_oracle,
+        standard_dir / "content.otio": serialize_timeline(timelines["standard-sample"]),
+        standard_dir / "version.txt": "1.0.0\n",
+    }
+    missing_text = serialize_timeline(timelines["missing-unsupported"])
+    files[edge / "missing-unsupported.otio"] = missing_text
+    faithful, patches = inject_faithful_tokens(missing_text)
+    oracle["provenance"]["faithful_token_patches"] = patches
+    oracle["provenance"]["faithful_tokens_file"] = (
+        "edge-cases/faithful-tokens.otio.json is not official-reader input. "
+        "It preserves raw int64, non-finite, Marker.1, and unknown-schema tokens for the TS parser. "
+        "missing-unsupported.otio is the official writer output and stays readable."
+    )
+    expected_oracle = oracle_text(oracle)
+    files[fixtures / "expected-oracle.json"] = expected_oracle
+    files[edge / "faithful-tokens.otio.json"] = faithful
+    for name in (
+        "nested-trims",
+        "mixed-rates",
+        "asymmetric-dissolves",
+        "timewarp-freeze",
+        "image-sequence",
+        "duplicate-tracks",
+    ):
+        files[edge / f"{name}.otio"] = serialize_timeline(timelines[name])
+    if check:
+        mismatches = []
+        for path, body in files.items():
+            if not path.exists():
+                mismatches.append(f"missing {path}")
+                continue
+            current = path.read_text()
+            if current != body:
+                mismatches.append(f"differs {path} committed={len(current)} computed={len(body)}")
+        if mismatches:
+            print("OTIO oracle check failed:", file=sys.stderr)
+            for line in mismatches:
+                print(line, file=sys.stderr)
+            return 1
+        print("OTIO oracle check passed.")
+        return 0
+    for path, body in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+    print(f"Wrote OTIO fixtures under {fixtures}")
+    return 0
+
+
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate or check OTIO 0.18.1 oracle fixtures.")
+    parser.add_argument("--check", action="store_true", help="Compare computed fixtures to the tree. Write nothing.")
+    parser.add_argument("--oracle-stdout", action="store_true", help="Print expected-oracle.json and write nothing.")
+    parser.add_argument("--output-root", type=Path, help="Write fixtures under this root instead of the repo.")
+    args = parser.parse_args(argv)
+    oracle, timelines = build_oracle()
+    if args.oracle_stdout:
+        sys.stdout.write(oracle_text(oracle))
+        return 0
+    if args.check and args.output_root:
+        print("--check does not write. Ignoring --output-root.", file=sys.stderr)
+    root = Path(__file__).resolve().parent.parent if args.output_root is None or args.check else args.output_root
+    if args.output_root is not None and not args.check:
+        root = args.output_root
+    return write_outputs(root, oracle, timelines, check=args.check)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
