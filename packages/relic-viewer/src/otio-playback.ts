@@ -16,11 +16,8 @@
  */
 
 import type {
-  OtioAudioContribution,
   OtioDiagnostic,
   OtioDocumentV1,
-  OtioEffect,
-  OtioMediaReference,
   OtioNode,
   OtioRationalTime,
   OtioVideoContribution,
@@ -31,7 +28,6 @@ import {
   evaluateOtioAt,
   rangeEndTime,
   rescaleTime,
-  secondsToTime,
   timeToSeconds,
 } from '@relic/format';
 import {
@@ -39,6 +35,27 @@ import {
   type OtioMediaResolver,
   resolveImageSequenceFramePath,
 } from './otio-media.ts';
+
+/** Decoder-boundary seconds. Invalid rates stay explicit instead of throwing out of the frame loop. */
+function sourceSeconds(time: OtioRationalTime): number | null {
+  try {
+    return timeToSeconds(time);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One blend weight. The evaluator copies a dissolve into both alpha and
+ * transition_weight; multiplying those squares the mix. A distinct alpha
+ * (coverage 1, or black policy 0) still combines with the transition weight.
+ */
+function contributionOpacity(alpha: number, transitionWeight: number): number {
+  if (alpha <= 0 || transitionWeight <= 0) return 0;
+  const opacity =
+    alpha === transitionWeight ? transitionWeight : alpha * transitionWeight;
+  return Math.max(0, Math.min(1, opacity));
+}
 
 export interface OtioTrackState {
   readonly id: string;
@@ -498,7 +515,20 @@ export function createOtioPlayback(
     if (isDisposed) return;
 
     customDiagnostics.length = 0;
-    const evalResult = evaluateOtioAt(doc, timelineId, time);
+    let evalResult;
+    try {
+      evalResult = evaluateOtioAt(doc, timelineId, time);
+    } catch (error) {
+      customDiagnostics.push({
+        severity: 'error',
+        code: 'invalid-timing',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Evaluator rejected this timeline time',
+      });
+      return;
+    }
 
     // Group video contributions by track
     const videoTracksMap = new Map<string, OtioVideoContribution[]>();
@@ -552,18 +582,20 @@ export function createOtioPlayback(
       }
 
       for (let cIdx = 0; cIdx < contribs.length; cIdx++) {
-        const contrib = contribs[cIdx] as OtioVideoContribution;
+        const contrib = contribs[cIdx];
+        if (!contrib) continue;
         const clipNode = doc.nodes[contrib.node_id];
+        let reverseRefused = false;
 
-        // Validate effects
         for (const eff of contrib.active_effects) {
           if (!eff.enabled) continue;
           if (eff.schema.startsWith('LinearTimeWarp')) {
             if (eff.time_scalar !== undefined && eff.time_scalar < 0) {
+              reverseRefused = true;
               customDiagnostics.push({
                 severity: 'error',
                 code: 'unsupported-browser',
-                message: `Reverse playback (time_scalar: ${eff.time_scalar}) is not supported by browser video decoder`,
+                message: `Reverse playback (time_scalar: ${eff.time_scalar}) is not supported by the browser decode backend`,
                 target: { node_id: contrib.node_id },
               });
             }
@@ -577,21 +609,21 @@ export function createOtioPlayback(
           }
         }
 
-        // Determine media reference
+        if (reverseRefused) continue;
+
         const activeKey = clipNode?.active_media_reference_key;
-        const activeMedia = activeKey && clipNode?.media_references
-          ? clipNode.media_references[activeKey]
-          : null;
+        const activeMedia =
+          activeKey && clipNode?.media_references
+            ? clipNode.media_references[activeKey]
+            : null;
 
         let drawableElement: CanvasImageSource | null = null;
-        let isImageSeq = false;
+        const isImageSeq = activeMedia?.schema.startsWith('ImageSequenceReference') === true;
 
-        if (activeMedia?.schema.startsWith('ImageSequenceReference')) {
-          isImageSeq = true;
-          const framePath = resolveImageSequenceFramePath(
-            activeMedia,
-            contrib.source_time
-          );
+        if (isImageSeq && activeMedia) {
+          const framePath =
+            contrib.bundle_path ??
+            resolveImageSequenceFramePath(activeMedia, contrib.source_time);
 
           if (!framePath) {
             customDiagnostics.push({
@@ -615,15 +647,11 @@ export function createOtioPlayback(
                 drawableElement = loaded.element;
                 lastValidImageSequenceFrames.set(contrib.node_id, loaded.element);
               } else {
-                // Apply missing frame policy
                 const policy = activeMedia.missing_frame_policy ?? 'error';
                 if (policy === 'hold') {
                   const held = lastValidImageSequenceFrames.get(contrib.node_id);
-                  if (held) {
-                    drawableElement = held;
-                  }
+                  if (held) drawableElement = held;
                 } else if (policy === 'black') {
-                  // Transparent on track surface, black background
                   drawableElement = null;
                 } else {
                   customDiagnostics.push({
@@ -648,13 +676,23 @@ export function createOtioPlayback(
                 target: { node_id: contrib.node_id },
               });
             } else {
-              const targetSec = Math.max(0, timeToSeconds(contrib.source_time));
-              if (awaitDecodedFrames) {
-                await seekMediaElement(videoLoaded.element, targetSec);
-              } else if (Math.abs(videoLoaded.element.currentTime - targetSec) > 0.05) {
-                videoLoaded.element.currentTime = targetSec;
+              const targetSec = sourceSeconds(contrib.source_time);
+              if (targetSec === null) {
+                customDiagnostics.push({
+                  severity: 'error',
+                  code: 'invalid-timing',
+                  message: `Cannot seek ${contrib.bundle_path}: source rate must be positive`,
+                  target: { node_id: contrib.node_id },
+                });
+              } else if (awaitDecodedFrames) {
+                await seekMediaElement(videoLoaded.element, Math.max(0, targetSec));
+                drawableElement = videoLoaded.element;
+              } else {
+                if (Math.abs(videoLoaded.element.currentTime - targetSec) > 0.05) {
+                  videoLoaded.element.currentTime = Math.max(0, targetSec);
+                }
+                drawableElement = videoLoaded.element;
               }
-              drawableElement = videoLoaded.element;
             }
           } else if (mime.startsWith('image/')) {
             const imgLoaded = await acquireImage(contrib.bundle_path);
@@ -685,23 +723,11 @@ export function createOtioPlayback(
           });
         }
 
-        // Draw onto intermediate track surface
         if (drawableElement && intermediate) {
-          const weight = Math.max(
-            0,
-            Math.min(1, contrib.transition_weight * contrib.alpha)
-          );
-
-          if (cIdx === 0) {
-            intermediate.ctx.globalCompositeOperation = 'source-over';
-            intermediate.ctx.globalAlpha = weight;
-            intermediate.ctx.drawImage(drawableElement, 0, 0, width, height);
-          } else {
-            // Premultiplied weighted blend for transitions
-            intermediate.ctx.globalCompositeOperation = 'lighter';
-            intermediate.ctx.globalAlpha = weight;
-            intermediate.ctx.drawImage(drawableElement, 0, 0, width, height);
-          }
+          const weight = contributionOpacity(contrib.alpha, contrib.transition_weight);
+          intermediate.ctx.globalCompositeOperation = cIdx === 0 ? 'source-over' : 'lighter';
+          intermediate.ctx.globalAlpha = weight;
+          intermediate.ctx.drawImage(drawableElement, 0, 0, width, height);
         }
       }
 
@@ -723,12 +749,24 @@ export function createOtioPlayback(
       const loaded = await acquireAudio(audioContrib.track_id, audioContrib.bundle_path);
       if (!loaded) continue;
 
-      const targetSec = Math.max(0, timeToSeconds(audioContrib.source_time));
+      const targetSec = sourceSeconds(audioContrib.source_time);
+      if (targetSec === null) {
+        customDiagnostics.push({
+          severity: 'error',
+          code: 'invalid-timing',
+          message: `Cannot seek audio ${audioContrib.bundle_path}: source rate must be positive`,
+          target: { node_id: audioContrib.node_id },
+        });
+        continue;
+      }
       if (Math.abs(loaded.element.currentTime - targetSec) > 0.15) {
-        loaded.element.currentTime = targetSec;
+        loaded.element.currentTime = Math.max(0, targetSec);
       }
 
-      const effectiveVolume = audioContrib.volume * audioContrib.transition_weight;
+      const effectiveVolume = contributionOpacity(
+        audioContrib.volume,
+        audioContrib.transition_weight
+      );
       if (loaded.gainNode) {
         loaded.gainNode.gain.value = effectiveVolume;
       } else {
@@ -803,11 +841,22 @@ export function createOtioPlayback(
   }
 
   function getState(): OtioPlaybackState {
-    const evalRes = evaluateOtioAt(doc, timelineId, currentTime);
-    const allDiagnostics = [
-      ...evalRes.diagnostics,
-      ...customDiagnostics,
-    ];
+    let evalDiagnostics: readonly OtioDiagnostic[] = [];
+    try {
+      evalDiagnostics = evaluateOtioAt(doc, timelineId, currentTime).diagnostics;
+    } catch (error) {
+      evalDiagnostics = [
+        {
+          severity: 'error',
+          code: 'invalid-timing',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Evaluator rejected this timeline time',
+        },
+      ];
+    }
+    const allDiagnostics = [...evalDiagnostics, ...customDiagnostics];
 
     // Deduplicate diagnostics
     const seen = new Set<string>();
