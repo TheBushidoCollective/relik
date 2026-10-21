@@ -230,6 +230,7 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   code: 'Rendered as text, no author code',
   image: 'Shown as an image, no author code',
   media: 'Plays in your browser, no author code',
+  otio: 'Plays its timeline in your browser, no author code',
   pdf: 'Rendered as a document, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
@@ -4537,7 +4538,14 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           'video.relic-media, audio.relic-media, video, audio'
         ) as HTMLMediaElement | null;
 
-        if (isFramed) {
+        if (next.querySelector('.otio-view') !== null) {
+          mode = undefined;
+          timeMode = undefined;
+          const hint = document.createElement('span');
+          hint.className = 'thread-hint';
+          hint.textContent = 'Point or range on a named track';
+          tools.replaceChildren(hint);
+        } else if (isFramed) {
           const toggle = document.createElement('button');
           toggle.type = 'button';
           toggle.className = 'mark-mode';
@@ -4666,6 +4674,7 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           'canvas.relic-page',
           'video.relic-media',
           'audio.relic-media',
+          '.otio-view',
         ]
           .filter((selector) => next.querySelector(selector) !== null)
           .join(',');
