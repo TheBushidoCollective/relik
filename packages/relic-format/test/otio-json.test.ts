@@ -72,4 +72,21 @@ describe('otio-json token-preserving parser and serializer', () => {
     const parsed = parseOtioJson(input) as Record<string, string>;
     expect(parsed['escaped']).toBe('Line 1\nLine 2\t"quotes" and unicode: A');
   });
+
+  test('rejects invalid UTF-8 instead of replacing bytes', () => {
+    const bytes = new Uint8Array([0x7b, 0xff, 0x7d]);
+    expect(() => parseOtioJson(bytes)).toThrow(TypeError);
+  });
+
+  test('rejects JSON nested past the depth bound', () => {
+    const bomb = `${'['.repeat(80)}${']'.repeat(80)}`;
+    expect(() => parseOtioJson(bomb)).toThrow(SyntaxError);
+  });
+
+  test('keeps __proto__ as an own key', () => {
+    const parsed = parseOtioJson('{"__proto__": {"admin": true}, "constructor": 1}') as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(parsed, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(parsed)).toBeNull();
+    expect(parsed['constructor']).toBe(1);
+  });
 });

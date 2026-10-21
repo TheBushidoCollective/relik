@@ -56,14 +56,20 @@ export function isOtioRawNumber(value: unknown): value is OtioRawNumber {
   );
 }
 
-const STRICT_NUMBER_REGEX = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+function decodeOtioJsonText(input: string | Uint8Array): string {
+  if (typeof input === 'string') return input;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'invalid UTF-8';
+    throw new TypeError(`OTIO JSON is not valid UTF-8: ${message}`);
+  }
+}
+
+const MAX_JSON_DEPTH = 64;
 
 export function parseOtioJson(input: string | Uint8Array): unknown {
-  const text =
-    typeof input === 'string'
-      ? input
-      : new TextDecoder('utf-8', { fatal: false }).decode(input);
-
+  const text = decodeOtioJsonText(input);
   let index = 0;
   const length = text.length;
 
@@ -78,7 +84,12 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
     }
   }
 
-  function parseValue(): unknown {
+  function parseValue(depth: number): unknown {
+    if (depth > MAX_JSON_DEPTH) {
+      throw new SyntaxError(
+        `OTIO JSON exceeds the nesting limit of ${MAX_JSON_DEPTH}`
+      );
+    }
     skipWhitespace();
     if (index >= length) {
       throw new SyntaxError('Unexpected end of JSON input');
@@ -86,10 +97,10 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
 
     const char = text[index];
     if (char === '{') {
-      return parseObject();
+      return parseObject(depth + 1);
     }
     if (char === '[') {
-      return parseArray();
+      return parseArray(depth + 1);
     }
     if (char === '"') {
       return parseString();
@@ -276,7 +287,7 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
     throw new SyntaxError(`Unexpected token at position ${index}`);
   }
 
-  function parseArray(): unknown[] {
+  function parseArray(depth: number): unknown[] {
     index++; // skip '['
     const array: unknown[] = [];
     skipWhitespace();
@@ -286,7 +297,7 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
     }
 
     while (index < length) {
-      const val = parseValue();
+      const val = parseValue(depth);
       array.push(val);
       skipWhitespace();
       if (index >= length) {
@@ -308,7 +319,7 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
     throw new SyntaxError('Unterminated array in JSON');
   }
 
-  function parseObject(): Record<string, unknown> {
+  function parseObject(depth: number): Record<string, unknown> {
     index++; // skip '{'
     // Create null-prototype object to prevent prototype pollution (__proto__)
     const obj: Record<string, unknown> = Object.create(null);
@@ -333,7 +344,7 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
         );
       }
       index++; // skip ':'
-      const val = parseValue();
+      const val = parseValue(depth);
 
       // Safely assign property without prototype pollution
       Object.defineProperty(obj, key, {
@@ -363,7 +374,7 @@ export function parseOtioJson(input: string | Uint8Array): unknown {
     throw new SyntaxError('Unterminated object in JSON');
   }
 
-  const root = parseValue();
+  const root = parseValue(0);
   skipWhitespace();
   if (index < length) {
     throw new SyntaxError(

@@ -204,7 +204,7 @@ describe('otio-timing evaluator and source spans', () => {
     expect(outClip?.transition_type).toBe('SMPTE_Dissolve');
   });
 
-  test('sourceSpansForOtioRange returns exact source intervals intersecting range', () => {
+  test('sourceSpansForOtioRange returns clips, the transition, and handles', () => {
     const doc = readOtioDocument(timelineJson);
     const timelineId = doc.timeline_ids[0] as string;
 
@@ -213,25 +213,28 @@ describe('otio-timing evaluator and source spans', () => {
       duration: { value: 30, rate: 24 },
     });
 
-    expect(spans.length).toBe(2);
-    const clipA = spans.find((s) => s.node_id === 'clip_a');
-    const clipB = spans.find((s) => s.node_id === 'clip_b');
+    expect(spans.map((span) => span.node_id).sort()).toEqual([
+      'clip_a',
+      'clip_b',
+      spans.find((span) => span.schema === 'Transition.1')?.node_id,
+    ].sort());
 
-    expect(clipA).toBeDefined();
-    expect(clipB).toBeDefined();
+    const clipA = spans.find((span) => span.node_id === 'clip_a');
+    const clipB = spans.find((span) => span.node_id === 'clip_b');
+    const transition = spans.find((span) => span.schema === 'Transition.1');
 
-    // Clip A intersects [60, 72)
-    expect(clipA?.intersected_timeline_range.start_time.value).toBeCloseTo(
-      60,
-      5
-    );
-    expect(clipA?.intersected_timeline_range.duration.value).toBeCloseTo(12, 5);
+    expect(clipA?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
+    expect(clipA?.intersected_timeline_range.duration.value).toBeCloseTo(24, 5);
+    expect(clipA?.file_relative_source_range?.start_time.value).toBeCloseTo(84, 5);
+    expect(clipA?.file_relative_source_range?.duration.value).toBeCloseTo(24, 5);
+    expect(clipA?.source_mapping?.scalar).toBe(1);
 
-    // Clip B intersects [72, 90)
-    expect(clipB?.intersected_timeline_range.start_time.value).toBeCloseTo(
-      72,
-      5
-    );
-    expect(clipB?.intersected_timeline_range.duration.value).toBeCloseTo(18, 5);
+    expect(clipB?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
+    expect(clipB?.intersected_timeline_range.duration.value).toBeCloseTo(30, 5);
+    expect(clipB?.source_range?.start_time.value).toBeCloseTo(-12, 5);
+    expect(clipB?.diagnostics.some((item) => item.code === 'missing-handles')).toBe(true);
+
+    expect(transition?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
+    expect(transition?.intersected_timeline_range.duration.value).toBeCloseTo(24, 5);
   });
 });
