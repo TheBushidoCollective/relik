@@ -5,8 +5,13 @@ import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import {
   crc32,
+  indexOtioZip,
+  otioBundleMediaIndex,
   readOtioDocument,
   sourceSpansForOtioRange,
+  type OtioAnchorV1,
+  type OtioDocumentV1,
+  type OtioTimeRange,
 } from '@relic/format';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -165,6 +170,148 @@ function createOtioz(entries: readonly OtiozFixtureEntry[]): Uint8Array {
   return archive;
 }
 
+function otioArchive(
+  text: string,
+  media: readonly OtiozFixtureEntry[]
+): Uint8Array {
+  return createOtioz([
+    {
+      name: 'version.txt',
+      bytes: new TextEncoder().encode('1.0.0\n'),
+    },
+    {
+      name: 'content.otio',
+      bytes: new TextEncoder().encode(text),
+    },
+    ...media,
+  ]);
+}
+
+async function browserOtioDocument(
+  archive: Uint8Array
+): Promise<OtioDocumentV1> {
+  const zip = await indexOtioZip(archive);
+  return readOtioDocument(zip.contentOtioBytes, {
+    mediaIndex: await otioBundleMediaIndex(zip),
+  });
+}
+
+function otioAnchor(
+  document: OtioDocumentV1,
+  trackId: string,
+  itemId: string,
+  range: OtioTimeRange,
+  snapshot: OtioAnchorV1['snapshot']
+): OtioAnchorV1 {
+  const timelineId = document.timeline_ids[0];
+  if (!timelineId) throw new Error('expected an OTIO timeline');
+  return {
+    kind: 'otio',
+    v: 1,
+    relic_version: 1,
+    document_sha256: document.document_sha256,
+    timeline_id: timelineId,
+    track_id: trackId,
+    item_id: itemId,
+    range,
+    snapshot,
+  };
+}
+
+async function resolvedOtioComment(
+  relicId: string,
+  body: string
+): Promise<Extract<NonNullable<CommentRecord['resolved']>, { kind: 'otio' }>> {
+  const read = await readComments(relicId, deps, {
+    version: '*',
+    resolve_anchors: true,
+  });
+  const comment = read.comments.find((entry) => entry.body === body);
+  if (comment?.resolved?.kind !== 'otio') {
+    throw new Error(`expected OTIO resolution for ${body}`);
+  }
+  return comment.resolved;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function derivedTimelineWithDuplicateTrackNames(): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    name: 'Derived root timeline',
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      name: 'tracks',
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          name: 'V1',
+          kind: 'Video',
+          metadata: { relic: { id: 'track-a' } },
+          children: [clip('clip-a', 'First V1 clip', 'shot.mov')],
+        },
+        {
+          OTIO_SCHEMA: 'Track.1',
+          name: 'V1',
+          kind: 'Video',
+          metadata: { relic: { id: 'track-b' } },
+          children: [clip('clip-b', 'Second V1 clip', 'shot.mov')],
+        },
+      ],
+    },
+  });
+}
+
+function imageSequenceTimeline(): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    name: 'Sequence continuity',
+    metadata: { relic: { id: 'sequence-timeline' } },
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          name: 'V1',
+          kind: 'Video',
+          metadata: { relic: { id: 'sequence-track' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Clip.1',
+              name: 'Three-frame sequence',
+              metadata: { relic: { id: 'sequence-clip' } },
+              source_range: {
+                start_time: { value: 0, rate: 24 },
+                duration: { value: 3, rate: 24 },
+              },
+              media_reference: {
+                OTIO_SCHEMA: 'ImageSequenceReference.1',
+                target_url_base: 'media/',
+                name_prefix: 'frame_',
+                name_suffix: '.png',
+                start_frame: 1,
+                frame_step: 1,
+                rate: 24,
+                frame_zero_padding: 4,
+                missing_frame_policy: 'error',
+                available_range: {
+                  start_time: { value: 0, rate: 24 },
+                  duration: { value: 3, rate: 24 },
+                },
+              },
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
 function completeFetchDouble(
   implementation: (
     input: RequestInfo | URL,
@@ -288,6 +435,255 @@ describe('OTIO comment anchors', () => {
       );
       expect(resolved.comments[0].resolved.declared).toBe('otio-v9');
     }
+  });
+
+  test('resolves a browser-created OTIOZ anchor without changing its derived timeline identity', async () => {
+    const text = derivedTimelineWithDuplicateTrackNames();
+    const media = new TextEncoder().encode('actual media/shot.mov bytes');
+    const archive = otioArchive(text, [
+      { name: 'media/shot.mov', bytes: media },
+    ]);
+    const browserDocument = await browserOtioDocument(archive);
+    expect(browserDocument.media['media/shot.mov']?.sha256).toBeUndefined();
+    const anchor = otioAnchor(
+      browserDocument,
+      'track-a',
+      'clip-a',
+      {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: 12, rate: 24 },
+      },
+      {
+        timeline: 'Derived root timeline',
+        track: 'V1',
+        item: 'First V1 clip',
+      }
+    );
+    expect(browserDocument.nodes[anchor.timeline_id]?.identity_origin).toBe(
+      'derived-unique'
+    );
+
+    const path = join(scratch, 'browser-anchor.otioz');
+    await writeFile(path, archive);
+    const published = await publish({ path, cover: false }, deps);
+    const body = 'Anchor this V1 track only.';
+    await postComment(
+      {
+        relic_id: published.relic_id,
+        body,
+        anchor,
+      },
+      deps
+    );
+
+    const resolved = await resolvedOtioComment(published.relic_id, body);
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.timeline_path[0]?.id).toBe(anchor.timeline_id);
+    expect(resolved.intersections.map((span) => span.node_id)).toEqual([
+      'clip-a',
+    ]);
+    expect(
+      resolved.intersections.every((span) =>
+        span.ancestry.some((node) => node.id === 'track-a')
+      )
+    ).toBe(true);
+    expect(
+      resolved.intersections.some((span) =>
+        span.ancestry.some((node) => node.id === 'track-b')
+      )
+    ).toBe(false);
+    expect(resolved.intersections[0]?.media_digest).toBe(
+      await sha256Hex(media)
+    );
+    expect(resolved.current_projection.status).toBe('same');
+  });
+
+  test('marks a source range changed when its referenced archive media changes', async () => {
+    const text = timelineWithItems([
+      clip('clip-media', 'Referenced archive media', 'shot.mov'),
+    ]);
+    const originalMedia = new TextEncoder().encode('source media bytes');
+    const originalArchive = otioArchive(text, [
+      { name: 'media/shot.mov', bytes: originalMedia },
+    ]);
+    const browserDocument = await browserOtioDocument(originalArchive);
+    const anchor = otioAnchor(
+      browserDocument,
+      'track-v1',
+      'clip-media',
+      {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: 12, rate: 24 },
+      },
+      { timeline: 'Cut', track: 'V1', item: 'Referenced archive media' }
+    );
+    const v1Path = join(scratch, 'media-v1.otioz');
+    await writeFile(v1Path, originalArchive);
+    const published = await publish({ path: v1Path, cover: false }, deps);
+    const body = 'Media continuity must not guess.';
+    const posted = await postComment(
+      { relic_id: published.relic_id, body, anchor },
+      deps
+    );
+    await resolveComment(
+      {
+        relic_id: published.relic_id,
+        comment_id: posted.comment_id,
+        resolved: true,
+      },
+      deps
+    );
+
+    const v2Path = join(scratch, 'media-v2.otioz');
+    await writeFile(
+      v2Path,
+      otioArchive(text, [
+        {
+          name: 'media/shot.mov',
+          bytes: new TextEncoder().encode('changed source media bytes'),
+        },
+      ])
+    );
+    await republish(
+      { relic_id: published.relic_id, path: v2Path, cover: false },
+      deps
+    );
+
+    const resolved = await resolvedOtioComment(published.relic_id, body);
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.current_projection.status).toBe('changed');
+    expect(resolved.current_projection).not.toHaveProperty('mapped_range');
+  });
+
+  test('keeps a source range same when only an unreferenced archive entry is added', async () => {
+    const text = timelineWithItems([
+      clip('clip-unchanged', 'Referenced media survives', 'shot.mov'),
+    ]);
+    const media = new TextEncoder().encode('unchanged source media');
+    const originalArchive = otioArchive(text, [
+      { name: 'media/shot.mov', bytes: media },
+    ]);
+    const browserDocument = await browserOtioDocument(originalArchive);
+    const anchor = otioAnchor(
+      browserDocument,
+      'track-v1',
+      'clip-unchanged',
+      {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: 12, rate: 24 },
+      },
+      { timeline: 'Cut', track: 'V1', item: 'Referenced media survives' }
+    );
+    const v1Path = join(scratch, 'unreferenced-v1.otioz');
+    await writeFile(v1Path, originalArchive);
+    const published = await publish({ path: v1Path, cover: false }, deps);
+    const body = 'Ignore the unrelated bundle member.';
+    const posted = await postComment(
+      { relic_id: published.relic_id, body, anchor },
+      deps
+    );
+    await resolveComment(
+      {
+        relic_id: published.relic_id,
+        comment_id: posted.comment_id,
+        resolved: true,
+      },
+      deps
+    );
+
+    const v2Path = join(scratch, 'unreferenced-v2.otioz');
+    await writeFile(
+      v2Path,
+      otioArchive(text, [
+        { name: 'media/shot.mov', bytes: media },
+        {
+          name: 'media/unreferenced.mov',
+          bytes: new TextEncoder().encode('not referenced by this timeline'),
+        },
+      ])
+    );
+    await republish(
+      { relic_id: published.relic_id, path: v2Path, cover: false },
+      deps
+    );
+
+    const resolved = await resolvedOtioComment(published.relic_id, body);
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.current_projection.status).toBe('same');
+  });
+
+  test('marks a sequence range changed when one referenced frame changes', async () => {
+    const text = imageSequenceTimeline();
+    const frames = [
+      new TextEncoder().encode('frame one'),
+      new TextEncoder().encode('frame two'),
+      new TextEncoder().encode('frame three'),
+    ];
+    const originalArchive = otioArchive(
+      text,
+      frames.map((bytes, index) => ({
+        name: `media/frame_${String(index + 1).padStart(4, '0')}.png`,
+        bytes,
+      }))
+    );
+    const browserDocument = await browserOtioDocument(originalArchive);
+    const anchor = otioAnchor(
+      browserDocument,
+      'sequence-track',
+      'sequence-clip',
+      {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: 3, rate: 24 },
+      },
+      {
+        timeline: 'Sequence continuity',
+        track: 'V1',
+        item: 'Three-frame sequence',
+      }
+    );
+    const v1Path = join(scratch, 'sequence-v1.otioz');
+    await writeFile(v1Path, originalArchive);
+    const published = await publish({ path: v1Path, cover: false }, deps);
+    const body = 'Check all sequence frames.';
+    const posted = await postComment(
+      { relic_id: published.relic_id, body, anchor },
+      deps
+    );
+    await resolveComment(
+      {
+        relic_id: published.relic_id,
+        comment_id: posted.comment_id,
+        resolved: true,
+      },
+      deps
+    );
+
+    const v2Frames = [
+      frames[0] as Uint8Array,
+      new TextEncoder().encode('frame two changed'),
+      frames[2] as Uint8Array,
+    ];
+    const v2Path = join(scratch, 'sequence-v2.otioz');
+    await writeFile(
+      v2Path,
+      otioArchive(
+        text,
+        v2Frames.map((bytes, index) => ({
+          name: `media/frame_${String(index + 1).padStart(4, '0')}.png`,
+          bytes,
+        }))
+      )
+    );
+    await republish(
+      { relic_id: published.relic_id, path: v2Path, cover: false },
+      deps
+    );
+
+    const resolved = await resolvedOtioComment(published.relic_id, body);
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.intersections[0]?.media_digest).toBeNull();
+    expect(resolved.current_projection.status).toBe('changed');
+    expect(resolved.current_projection).not.toHaveProperty('mapped_range');
   });
 
   test('version 1 source intervals survive after version 2, and the projection is separate', async () => {

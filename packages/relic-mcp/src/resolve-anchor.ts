@@ -35,11 +35,11 @@ import {
   indexOtioZip,
   isOtioz,
   isRawOtio,
-  type OpenedRelic,
-  type OtioAnchorResolution,
-  type OtioAnchorV1,
-  type OtioDocumentV1,
+  otioBundleEntryFor,
+  otioBundleMediaIndex,
+  type OtioMediaEntry,
   type OtioNode,
+  type OtioDocumentV1,
   type OtioRationalTime,
   type OtioSourceSpan,
   type OtioTimeRange,
@@ -904,17 +904,23 @@ const nodeInflater: InflaterFn = (compressed, uncompressedSize, maxBytes) => {
   const { promise, resolve, reject } = defer<Uint8Array>();
   try {
     // zlib requires a positive cap; an empty entry still has a zero-byte result budget.
-    inflateRaw(compressed, { maxOutputLength: Math.max(1, maxBytes) }, (error, result) => {
-      if (error) {
-        reject(error);
-        return;
+    inflateRaw(
+      compressed,
+      { maxOutputLength: Math.max(1, maxBytes) },
+      (error, result) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (result.length > maxBytes) {
+          reject(
+            new Error(`inflated size ${result.length} exceeds ${maxBytes}`)
+          );
+          return;
+        }
+        resolve(result);
       }
-      if (result.length > maxBytes) {
-        reject(new Error(`inflated size ${result.length} exceeds ${maxBytes}`));
-        return;
-      }
-      resolve(result);
-    });
+    );
   } catch (error) {
     reject(error);
   }
@@ -925,37 +931,17 @@ type OtioParse =
   | { readonly ok: true; readonly document: OtioDocumentV1 }
   | { readonly ok: false; readonly error: string };
 
-async function digestHex(bytes: Uint8Array): Promise<string> {
-  const copy = new Uint8Array(bytes);
-  const digest = await crypto.subtle.digest('SHA-256', copy);
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
 async function parseOpenedOtio(opened: OpenedRelic): Promise<OtioParse> {
   try {
     const filename = opened.envelope.entries[0]?.filename ?? '';
     let source = opened.content;
-    const mediaIndex: Record<
-      string,
-      { key: string; bundle_path: string; size: number; sha256?: string }
-    > = {};
+    let mediaIndex: Record<string, OtioMediaEntry> = Object.create(null);
     if (isOtioz(opened.content) || filename.toLowerCase().endsWith('.otioz')) {
       const index = await indexOtioZip(opened.content, {
         inflater: nodeInflater,
       });
       source = index.contentOtioBytes;
-      for (const [name, entry] of index.entries) {
-        if (!name.startsWith('media/') || entry.isDirectory) continue;
-        const bytes = await index.readEntry(name);
-        mediaIndex[name] = {
-          key: name,
-          bundle_path: name,
-          size: bytes.length,
-          sha256: await digestHex(bytes),
-        };
-      }
+      mediaIndex = await otioBundleMediaIndex(index, { digests: true });
     } else if (
       !isRawOtio(opened.content) &&
       !filename.toLowerCase().endsWith('.otio')
@@ -1038,15 +1024,10 @@ function mediaDigest(
   bundlePath: string | null
 ): string | null {
   if (!bundlePath) return null;
-  const normalized = bundlePath.replace(/^\.\//, '');
-  const direct = document.media[normalized] ?? document.media[bundlePath];
-  if (direct?.sha256) return direct.sha256;
-  for (const entry of Object.values(document.media)) {
-    if (entry.bundle_path === normalized || entry.key === normalized) {
-      return entry.sha256 ?? null;
-    }
-  }
-  return null;
+  const entry = otioBundleEntryFor(bundlePath, (name) =>
+    Object.hasOwn(document.media, name)
+  );
+  return entry === null ? null : (document.media[entry]?.sha256 ?? null);
 }
 
 function intersectionsFor(
