@@ -3,71 +3,9 @@ import type { OtioZipEntryInfo, OtioZipIndex } from '@relic/format';
 import {
   createOtioMediaResolver,
   inferMediaMimeType,
-  sanitizeBundlePath,
 } from '../src/otio-media.ts';
 
 describe('otio-media', () => {
-  describe('sanitizeBundlePath', () => {
-    test('normalizes clean relative paths', () => {
-      expect(sanitizeBundlePath('media/video.mp4')).toBe('media/video.mp4');
-      expect(sanitizeBundlePath('clips/scene_01.webm')).toBe('clips/scene_01.webm');
-      expect(sanitizeBundlePath('./media/sub/../clip.mov')).toBe('media/clip.mov');
-    });
-
-    test('performs single-pass percent-decoding safely', () => {
-      expect(sanitizeBundlePath('media/my%20video.mp4')).toBe('media/my video.mp4');
-      expect(sanitizeBundlePath('media%2Fclip%2Epng')).toBe('media/clip.png');
-    });
-
-    test('strips relative file: prefix', () => {
-      expect(sanitizeBundlePath('file:media/audio.wav')).toBe('media/audio.wav');
-      expect(sanitizeBundlePath('file:clip.mp4')).toBe('clip.mp4');
-    });
-
-    test('strips query strings and fragments', () => {
-      expect(sanitizeBundlePath('media/clip.mp4?v=123#t=10')).toBe('media/clip.mp4');
-    });
-
-    test('rejects remote URL schemes', () => {
-      expect(() => sanitizeBundlePath('http://evil.com/video.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('https://evil.com/video.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('ftp://host/file.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('data:text/plain;base64,abc')).toThrow();
-      expect(() => sanitizeBundlePath('blob:https://example.com/uuid')).toThrow();
-      expect(() => sanitizeBundlePath('javascript:alert(1)')).toThrow();
-    });
-
-    test('rejects absolute or authority file URIs', () => {
-      expect(() => sanitizeBundlePath('file:///etc/passwd')).toThrow();
-      expect(() => sanitizeBundlePath('file://localhost/clip.mp4')).toThrow();
-    });
-
-    test('rejects absolute paths and drive letters', () => {
-      expect(() => sanitizeBundlePath('/var/media/video.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('\\Windows\\Media\\clip.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('C:/media/clip.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('D:\\clips\\video.mov')).toThrow();
-    });
-
-    test('rejects path traversal escaping bundle root', () => {
-      expect(() => sanitizeBundlePath('../outside.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('media/../../outside.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('media/sub/../../../etc')).toThrow();
-    });
-
-    test('rejects control characters and NUL bytes', () => {
-      expect(() => sanitizeBundlePath('media/\0clip.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('media/\x1Fclip.mp4')).toThrow();
-      expect(() => sanitizeBundlePath('media/%00clip.mp4')).toThrow();
-    });
-
-    test('rejects empty paths', () => {
-      expect(() => sanitizeBundlePath('')).toThrow();
-      expect(() => sanitizeBundlePath('   ')).toThrow();
-      expect(() => sanitizeBundlePath('.')).toThrow();
-    });
-  });
-
   describe('inferMediaMimeType', () => {
     test('identifies video formats', () => {
       expect(inferMediaMimeType('video.mp4')).toBe('video/mp4');
@@ -93,13 +31,16 @@ describe('otio-media', () => {
       expect(inferMediaMimeType('vector.svg')).toBe('image/svg+xml');
       expect(inferMediaMimeType('plate.exr')).toBe('image/x-exr');
       expect(inferMediaMimeType('scan.dpx')).toBe('image/x-dpx');
-      expect(inferMediaMimeType('unknown.xyz')).toBe('application/octet-stream');
+      expect(inferMediaMimeType('unknown.xyz')).toBe(
+        'application/octet-stream'
+      );
     });
   });
 
-
   describe('createOtioMediaResolver', () => {
-    function makeMockZipIndex(entriesMap: Record<string, { size: number; bytes: Uint8Array }>): OtioZipIndex {
+    function makeMockZipIndex(
+      entriesMap: Record<string, { size: number; bytes: Uint8Array }>
+    ): OtioZipIndex {
       const entries = new Map<string, OtioZipEntryInfo>();
       for (const [name, info] of Object.entries(entriesMap)) {
         entries.set(name, {
@@ -159,10 +100,7 @@ describe('otio-media', () => {
       const blob = await resolver.resolveBlob('media/shared.mp4');
       if (blob === null) throw new Error('expected shared media Blob');
       expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([
-        1,
-        2,
-        3,
-        4,
+        1, 2, 3, 4,
       ]);
       resolver.dispose();
     });
@@ -174,7 +112,9 @@ describe('otio-media', () => {
       });
 
       // Limit to 1000 bytes
-      const resolver = createOtioMediaResolver(zip, { maxDecompressedBytes: 1000 });
+      const resolver = createOtioMediaResolver(zip, {
+        maxDecompressedBytes: 1000,
+      });
       expect(resolver.resolveBlob('media/large.mp4')).rejects.toThrow();
       resolver.dispose();
     });
@@ -194,7 +134,7 @@ describe('otio-media', () => {
       expect(await resolver.resolveBlob('media/img.png')).toBeNull();
     });
 
-    test('shares one inflation across aliases and concurrent callers', async () => {
+    test('shares one inflation across canonical media aliases', async () => {
       let reads = 0;
       const bytes = new Uint8Array([1, 2, 3, 4]);
       const indexed = makeMockZipIndex({
@@ -209,14 +149,28 @@ describe('otio-media', () => {
         },
       };
       const resolver = createOtioMediaResolver(zip);
-      const [first, second] = await Promise.all([
-        resolver.resolveBlob('media/clip.mp4'),
+      const [bare, dotted, file, encoded] = await Promise.all([
         resolver.resolveBlob('clip.mp4'),
         resolver.resolveBlob('media/./clip.mp4'),
+        resolver.resolveBlob('file:media/clip.mp4'),
+        resolver.resolveBlob('media/clip%2Emp4'),
       ]);
       expect(reads).toBe(1);
-      expect(first).toBe(second);
+      expect(dotted).toBe(bare);
+      expect(file).toBe(bare);
+      expect(encoded).toBe(bare);
       expect(resolver.getDecompressedBytes()).toBe(bytes.length);
+      resolver.dispose();
+    });
+    test('does not resolve root archive entries outside media', async () => {
+      const resolver = createOtioMediaResolver(
+        makeMockZipIndex({
+          'clip.mp4': { size: 4, bytes: new Uint8Array([1, 2, 3, 4]) },
+        })
+      );
+
+      expect(resolver.hasEntry('clip.mp4')).toBe(false);
+      expect(await resolver.resolveBlob('clip.mp4')).toBeNull();
       resolver.dispose();
     });
 
@@ -262,7 +216,9 @@ describe('otio-media', () => {
         resolver.resolveBlob('media/a.mp4'),
         resolver.resolveBlob('media/b.mp4'),
       ]);
-      const fulfilled = results.filter((result) => result.status === 'fulfilled');
+      const fulfilled = results.filter(
+        (result) => result.status === 'fulfilled'
+      );
       expect(fulfilled).toHaveLength(1);
       expect(reads).toBe(1);
       expect(resolver.getDecompressedBytes()).toBe(800);

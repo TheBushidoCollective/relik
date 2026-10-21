@@ -8,8 +8,12 @@
  * bad entry every frame.
  */
 
-import type { OtioZipEntryInfo, OtioZipIndex } from '@relic/format';
-import { MAX_EXPANDED_ZIP_BYTES } from '@relic/format';
+import {
+  MAX_EXPANDED_ZIP_BYTES,
+  otioBundleEntryFor,
+  type OtioZipEntryInfo,
+  type OtioZipIndex,
+} from '@relic/format';
 
 export const DEFAULT_MAX_DECOMPRESSED_BYTES = MAX_EXPANDED_ZIP_BYTES;
 
@@ -87,106 +91,6 @@ export function inferMediaMimeType(filename: string): string {
 }
 
 /**
- * Validate and normalize a bundle-relative media path.
- *
- * Rules:
- * 1. Must not be empty.
- * 2. Must not contain control characters or NUL bytes.
- * 3. Must not specify an external scheme (http, https, blob, data, etc.).
- * 4. Tolerates relative `file:` prefix by stripping it.
- * 5. Rejects absolute paths (/ or \ or C:).
- * 6. Single-pass percent-decoding.
- * 7. Rejects path traversal escapes (.. above root).
- */
-export function sanitizeBundlePath(rawPath: string): string {
-  if (!rawPath || typeof rawPath !== 'string') {
-    throw new Error('Bundle media path must be a non-empty string');
-  }
-
-  for (let i = 0; i < rawPath.length; i++) {
-    const code = rawPath.charCodeAt(i);
-    if (code < 32 || code === 127) {
-      throw new Error(
-        `Bundle media path contains control character at index ${i}`
-      );
-    }
-  }
-
-  let path = rawPath.trim();
-
-  const qIdx = path.indexOf('?');
-  if (qIdx !== -1) path = path.slice(0, qIdx);
-  const fIdx = path.indexOf('#');
-  if (fIdx !== -1) path = path.slice(0, fIdx);
-
-  const schemeMatch = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.exec(path);
-  if (schemeMatch) {
-    const scheme = schemeMatch[0].toLowerCase();
-    if (scheme === 'file:') {
-      const after = path.slice(5);
-      if (
-        after.startsWith('//') ||
-        after.startsWith('/') ||
-        after.startsWith('\\')
-      ) {
-        throw new Error(`Forbidden absolute or remote file URI: ${rawPath}`);
-      }
-      path = after;
-    } else {
-      throw new Error(
-        `Forbidden remote media URL scheme: ${scheme} in ${rawPath}`
-      );
-    }
-  }
-
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    throw new Error(`Malformed percent-encoding in bundle path: ${rawPath}`);
-  }
-
-  for (let i = 0; i < path.length; i++) {
-    const code = path.charCodeAt(i);
-    if (code < 32 || code === 127) {
-      throw new Error(
-        `Bundle media path contains control character after decoding: ${rawPath}`
-      );
-    }
-  }
-
-  if (/^[a-zA-Z]:[/\\]/.test(path)) {
-    throw new Error(`Forbidden absolute Windows drive path: ${rawPath}`);
-  }
-
-  if (path.startsWith('/') || path.startsWith('\\')) {
-    throw new Error(`Forbidden absolute path: ${rawPath}`);
-  }
-
-  const rawSegments = path.split(/[/\\]+/);
-  const segments: string[] = [];
-
-  for (const seg of rawSegments) {
-    if (seg === '' || seg === '.') {
-      continue;
-    }
-    if (seg === '..') {
-      if (segments.length === 0) {
-        throw new Error(`Path traversal escape in bundle path: ${rawPath}`);
-      }
-      segments.pop();
-    } else {
-      segments.push(seg);
-    }
-  }
-
-  if (segments.length === 0) {
-    throw new Error(`Empty normalized bundle path from: ${rawPath}`);
-  }
-
-  return segments.join('/');
-}
-
-/**
  * Create a native bundle media resolver backed by an OtioZipIndex.
  *
  * The caller owns this object. Playback must not dispose a resolver it was
@@ -209,31 +113,11 @@ export function createOtioMediaResolver(
   const failures = new Map<string, Error>();
   const allocatedUrls = new Set<string>();
 
-  function findZipEntryName(normalizedPath: string): string | null {
-    if (zipIndex.entries.has(normalizedPath)) {
-      return normalizedPath;
-    }
-    if (!normalizedPath.startsWith('media/')) {
-      const withMedia = `media/${normalizedPath}`;
-      if (zipIndex.entries.has(withMedia)) {
-        return withMedia;
-      }
-    }
-    if (normalizedPath.startsWith('media/')) {
-      const stripped = normalizedPath.slice('media/'.length);
-      if (zipIndex.entries.has(stripped)) {
-        return stripped;
-      }
-    }
-    return null;
-  }
-
   function canonicalName(bundlePath: string): string | null {
-    try {
-      return findZipEntryName(sanitizeBundlePath(bundlePath));
-    } catch {
-      return null;
-    }
+    return otioBundleEntryFor(bundlePath, (name) => {
+      const entry = zipIndex.entries.get(name);
+      return entry !== undefined && !entry.isDirectory;
+    });
   }
 
   function limitError(entryName: string, size: number): Error {
@@ -294,8 +178,7 @@ export function createOtioMediaResolver(
         return blob;
       } catch (error) {
         if (!adjusted) chargedBytes -= declared;
-        const err =
-          error instanceof Error ? error : new Error(String(error));
+        const err = error instanceof Error ? error : new Error(String(error));
         if (err.message !== 'resolver disposed') {
           failures.set(entryName, err);
         }
