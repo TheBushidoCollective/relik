@@ -1,0 +1,3154 @@
+{
+  "base": "ebcd799418a2626bf496667cd92b3b9a276fe163",
+  "browser": "HeadlessChrome/149.0.7827.55",
+  "initialDesktop": {
+    "ready": "true",
+    "previewState": "decoded",
+    "htmlWidth": 1440,
+    "viewport": 1440,
+    "viewportHeight": 900,
+    "stage": {
+      "x": 0,
+      "y": 54.0625,
+      "width": 1425,
+      "height": 1071.46875,
+      "top": 54.0625,
+      "right": 1425,
+      "bottom": 1125.53125,
+      "left": 0
+    },
+    "root": {
+      "x": 0,
+      "y": 54.0625,
+      "width": 1425,
+      "height": 1039.46875,
+      "top": 54.0625,
+      "right": 1425,
+      "bottom": 1093.53125,
+      "left": 0
+    },
+    "textSizes": [
+      "9.6px",
+      "11.2px",
+      "10.4px",
+      "8.48px",
+      "9.92px",
+      "0px",
+      "13.3333px"
+    ],
+    "scrolls": [
+      {
+        "class": "stage-wrap",
+        "client": 846,
+        "scroll": 1071
+      },
+      {
+        "class": "otio-context",
+        "client": 340,
+        "scroll": 446
+      }
+    ]
+  },
+  "interactions": [
+    {
+      "transport": {
+        "before": {
+          "frame": "0",
+          "playing": "false"
+        },
+        "playing": {
+          "frame": "3.396",
+          "playing": "true",
+          "button": "Pause"
+        },
+        "paused": {
+          "frame": "3.998399999999965",
+          "playing": "false",
+          "button": "Play"
+        },
+        "scrubbed": {
+          "frame": "1",
+          "ready": "true",
+          "clock": "01:00:00:01"
+        },
+        "frameStepFinal": "1"
+      }
+    },
+    {
+      "trackToggles": [
+        {
+          "before": {
+            "label": "Mute A1 Dialogue DX",
+            "pressed": "false"
+          },
+          "after": "true",
+          "restored": "false"
+        },
+        {
+          "before": {
+            "label": "Solo A1 Dialogue DX",
+            "pressed": "false"
+          },
+          "after": "true",
+          "restored": "false"
+        },
+        {
+          "before": {
+            "label": "Hide V4 Video 2",
+            "pressed": "false"
+          },
+          "after": "true",
+          "restored": "false"
+        }
+      ]
+    },
+    {
+      "marker": {
+        "track": "track-v1-main",
+        "start": "36",
+        "duration": "0",
+        "clock": "01:00:01:12",
+        "label": "v1 · Relik Feature Editorial · Video 1 · point 36 @ 24",
+        "mode": "point"
+      }
+    },
+    {
+      "pointPost": {
+        "marks": [
+          {
+            "commentId": "97KlVlNWlJf4R19xH0Z5KA",
+            "rangeIndex": "0",
+            "trackId": "track-v1-main",
+            "start": "36",
+            "duration": "0",
+            "rate": "24",
+            "durationRate": "24",
+            "projection": "same"
+          }
+        ],
+        "composerOpen": false
+      }
+    },
+    {
+      "duplicateChoices": {
+        "label": "v1 · Relik Feature Editorial · Video 2 · 36 @ 24, duration 1 @ 24",
+        "selection": {
+          "start": "36",
+          "duration": "1",
+          "rate": "24",
+          "durationRate": "24",
+          "trackId": "track-v2-duplicate",
+          "rangeIndex": "0"
+        },
+        "trackChoices": [
+          {
+            "label": "V4 · Video 2 · /tracks/children/1",
+            "id": "track-v2-main"
+          },
+          {
+            "label": "V5 · Video 2 · /tracks/children/2",
+            "id": "track-v2-duplicate"
+          }
+        ]
+      },
+      "rangePost": [
+        {
+          "commentId": "97KlVlNWlJf4R19xH0Z5KA",
+          "rangeIndex": "0",
+          "trackId": "track-v1-main",
+          "start": "36",
+          "duration": "0",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        },
+        {
+          "commentId": "Gt0jkIZCs3f9FYLOqf1qYQ",
+          "rangeIndex": "0",
+          "trackId": "track-v2-duplicate",
+          "start": "12",
+          "duration": "12",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        }
+      ]
+    },
+    {
+      "wholeTrackPost": [
+        {
+          "commentId": "97KlVlNWlJf4R19xH0Z5KA",
+          "rangeIndex": "0",
+          "trackId": "track-v1-main",
+          "start": "36",
+          "duration": "0",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        },
+        {
+          "commentId": "Gt0jkIZCs3f9FYLOqf1qYQ",
+          "rangeIndex": "0",
+          "trackId": "track-v2-duplicate",
+          "start": "12",
+          "duration": "12",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        },
+        {
+          "commentId": "Km5zh30ykkw8I1pA8dL4Pw",
+          "rangeIndex": "0",
+          "trackId": "track-v2-duplicate",
+          "start": "0",
+          "duration": "240",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        }
+      ]
+    },
+    {
+      "narrowInspector": {
+        "expanded": "true",
+        "monitor": {
+          "x": 0,
+          "y": 54.0625,
+          "width": 375,
+          "height": 508.125,
+          "top": 54.0625,
+          "right": 375,
+          "bottom": 562.1875,
+          "left": 0
+        },
+        "inspector": {
+          "x": 0,
+          "y": 265,
+          "width": 375,
+          "height": 296.1875,
+          "top": 265,
+          "right": 375,
+          "bottom": 561.1875,
+          "left": 0
+        },
+        "toggle": {
+          "x": 8,
+          "y": 600.171875,
+          "width": 63.578125,
+          "height": 23.59375,
+          "top": 600.171875,
+          "right": 71.578125,
+          "bottom": 623.765625,
+          "left": 8
+        },
+        "viewport": 844,
+        "htmlWidth": 390
+      }
+    },
+    {
+      "narrowPointPost": [
+        {
+          "commentId": "97KlVlNWlJf4R19xH0Z5KA",
+          "rangeIndex": "0",
+          "trackId": "track-v1-main",
+          "start": "36",
+          "duration": "0",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        },
+        {
+          "commentId": "rfwyzZezSz5u5byG-S9k-A",
+          "rangeIndex": "0",
+          "trackId": "track-v2-main",
+          "start": "72",
+          "duration": "0",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        },
+        {
+          "commentId": "Gt0jkIZCs3f9FYLOqf1qYQ",
+          "rangeIndex": "0",
+          "trackId": "track-v2-duplicate",
+          "start": "12",
+          "duration": "12",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        },
+        {
+          "commentId": "Km5zh30ykkw8I1pA8dL4Pw",
+          "rangeIndex": "0",
+          "trackId": "track-v2-duplicate",
+          "start": "0",
+          "duration": "240",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "The fixture root is Timeline.1 with one timeline. Collection switching was not exercised.",
+    "Frame-zero media decoding was observed at all four render states. Full official-OTIO timing, transition pixel, audio signal, revision projection and codec or effect acceptance remain with the parent path oracle.",
+    "Fresh Node 18.20.8 MCP read_comments(resolve_anchors:true) decrypted all four posted comments but returned resolved.status=unresolvable and empty intersections for every row. Original artifact-derived context was withheld. The captured client result is retained below; this visual proof does not claim that source-context path passes.",
+    "The parent owns the integrated full verification suite. This branch ran viewer builds and the assigned browser and design-gate proof only."
+  ],
+  "feedbackDefect": {
+    "before": [
+      {
+        "hasBody": true,
+        "hasTarget": false,
+        "text": "reader@example.test\nOct 21, 2026, 11:13 AM\n\nClipping in highlights around actor eye"
+      },
+      {
+        "hasBody": true,
+        "hasTarget": false,
+        "text": "reader@example.test\nOct 21, 2026, 11:13 AM\n\nReplace with final 4K composite plate"
+      },
+      {
+        "hasBody": true,
+        "hasTarget": false,
+        "text": "reader@example.test\nOct 21, 2026, 11:13 AM\n\nDisabled Duplicate Picture"
+      },
+      {
+        "hasBody": true,
+        "hasTarget": false,
+        "text": "reader@example.test\nOct 21, 2026, 11:14 AM\n\nPicture-in-Picture Alpha"
+      }
+    ],
+    "fix": "Each valid OTIO feedback row now shows its sealed target label and stable track ID before the body; revision binding remains required.",
+    "afterInteraction": {
+      "popover": {
+        "x": 8,
+        "y": 601.0625,
+        "width": 352,
+        "height": 219.734375,
+        "top": 601.0625,
+        "right": 360,
+        "bottom": 820.796875,
+        "left": 8
+      },
+      "text": "reader@example.test\nOct 21, 2026, 11:13 AM\n\nv1 · Relik Feature Editorial · Video 2 · 12 @ 24, duration 12 @ 24\ntrack-v2-duplicate\n\nReplace with final 4K composite plate\n\nReply\nEdit\nResolve\nOpen in thread",
+      "selection": {
+        "start": "12",
+        "duration": "12",
+        "rate": "24",
+        "durationRate": "24",
+        "trackId": "track-v2-duplicate",
+        "rangeIndex": "0"
+      },
+      "markActive": [
+        {
+          "commentId": "Gt0jkIZCs3f9FYLOqf1qYQ",
+          "rangeIndex": "0",
+          "trackId": "track-v2-duplicate",
+          "start": "12",
+          "duration": "12",
+          "rate": "24",
+          "durationRate": "24",
+          "projection": "same"
+        }
+      ]
+    }
+  },
+  "feedbackReadback": {
+    "relic_id": "y8tvcrkaqtgfn07dchdcyr9b7c",
+    "count": 4,
+    "unreadable_count": 0,
+    "summary": {
+      "total": 4,
+      "addressed": 0,
+      "open": 4,
+      "resolved": 0,
+      "unreadable": 0
+    },
+    "comments": [
+      {
+        "comment_id": "97KlVlNWlJf4R19xH0Z5KA",
+        "author": "reader@example.test",
+        "created_at": "2026-10-21T17:13:10.085Z",
+        "display_name": null,
+        "body": "Clipping in highlights around actor eye",
+        "anchor": {
+          "kind": "otio",
+          "v": 1,
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v1-main",
+          "item_id": "clip-v1-primary-a",
+          "range": {
+            "start_time": {
+              "value": 36,
+              "rate": 24
+            },
+            "duration": {
+              "value": 0,
+              "rate": 24
+            }
+          },
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 1",
+            "item": "Primary Grade A"
+          }
+        },
+        "addresses": null,
+        "readable": true,
+        "unreadable_reason": null,
+        "addressed": false,
+        "addressed_by": null,
+        "addressed_by_comment_id": null,
+        "addressed_by_version": null,
+        "version": 1,
+        "edited_at": null,
+        "resolution": null,
+        "resolved": {
+          "kind": "otio",
+          "status": "unresolvable",
+          "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld.",
+          "timeline_path": [],
+          "intersections": [],
+          "current_projection": {
+            "status": "unresolvable",
+            "current_version": null,
+            "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld."
+          },
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 1",
+            "item": "Primary Grade A"
+          },
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v1-main",
+          "item_id": "clip-v1-primary-a",
+          "range": {
+            "start_time": {
+              "value": 36,
+              "rate": 24
+            },
+            "duration": {
+              "value": 0,
+              "rate": 24
+            }
+          },
+          "point": true,
+          "start_seconds": 1.5,
+          "duration_seconds": 0,
+          "end_seconds": 1.5,
+          "start_timecode": "00:00:01:12",
+          "end_timecode": "00:00:01:12"
+        }
+      },
+      {
+        "comment_id": "Gt0jkIZCs3f9FYLOqf1qYQ",
+        "author": "reader@example.test",
+        "created_at": "2026-10-21T17:13:20.359Z",
+        "display_name": null,
+        "body": "Replace with final 4K composite plate",
+        "anchor": {
+          "kind": "otio",
+          "v": 1,
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v2-duplicate",
+          "item_id": "clip-v2-duplicate-disabled",
+          "range": {
+            "start_time": {
+              "value": 12,
+              "rate": 24
+            },
+            "duration": {
+              "value": 12,
+              "rate": 24
+            }
+          },
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 2",
+            "item": "Disabled Duplicate Picture"
+          }
+        },
+        "addresses": null,
+        "readable": true,
+        "unreadable_reason": null,
+        "addressed": false,
+        "addressed_by": null,
+        "addressed_by_comment_id": null,
+        "addressed_by_version": null,
+        "version": 1,
+        "edited_at": null,
+        "resolution": null,
+        "resolved": {
+          "kind": "otio",
+          "status": "unresolvable",
+          "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld.",
+          "timeline_path": [],
+          "intersections": [],
+          "current_projection": {
+            "status": "unresolvable",
+            "current_version": null,
+            "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld."
+          },
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 2",
+            "item": "Disabled Duplicate Picture"
+          },
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v2-duplicate",
+          "item_id": "clip-v2-duplicate-disabled",
+          "range": {
+            "start_time": {
+              "value": 12,
+              "rate": 24
+            },
+            "duration": {
+              "value": 12,
+              "rate": 24
+            }
+          },
+          "point": false,
+          "start_seconds": 0.5,
+          "duration_seconds": 0.5,
+          "end_seconds": 1,
+          "start_timecode": "00:00:00:12",
+          "end_timecode": "00:00:01:00"
+        }
+      },
+      {
+        "comment_id": "Km5zh30ykkw8I1pA8dL4Pw",
+        "author": "reader@example.test",
+        "created_at": "2026-10-21T17:13:20.545Z",
+        "display_name": null,
+        "body": "Disabled Duplicate Picture",
+        "anchor": {
+          "kind": "otio",
+          "v": 1,
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v2-duplicate",
+          "range": {
+            "start_time": {
+              "value": 0,
+              "rate": 24
+            },
+            "duration": {
+              "value": 240,
+              "rate": 24
+            }
+          },
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 2",
+            "item": null
+          }
+        },
+        "addresses": null,
+        "readable": true,
+        "unreadable_reason": null,
+        "addressed": false,
+        "addressed_by": null,
+        "addressed_by_comment_id": null,
+        "addressed_by_version": null,
+        "version": 1,
+        "edited_at": null,
+        "resolution": null,
+        "resolved": {
+          "kind": "otio",
+          "status": "unresolvable",
+          "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld.",
+          "timeline_path": [],
+          "intersections": [],
+          "current_projection": {
+            "status": "unresolvable",
+            "current_version": null,
+            "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld."
+          },
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 2",
+            "item": null
+          },
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v2-duplicate",
+          "range": {
+            "start_time": {
+              "value": 0,
+              "rate": 24
+            },
+            "duration": {
+              "value": 240,
+              "rate": 24
+            }
+          },
+          "point": false,
+          "start_seconds": 0,
+          "duration_seconds": 10,
+          "end_seconds": 10,
+          "start_timecode": "00:00:00:00",
+          "end_timecode": "00:00:10:00"
+        }
+      },
+      {
+        "comment_id": "rfwyzZezSz5u5byG-S9k-A",
+        "author": "reader@example.test",
+        "created_at": "2026-10-21T17:14:28.604Z",
+        "display_name": null,
+        "body": "Picture-in-Picture Alpha",
+        "anchor": {
+          "kind": "otio",
+          "v": 1,
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v2-main",
+          "item_id": "clip-v2-timewarp",
+          "range": {
+            "start_time": {
+              "value": 72,
+              "rate": 24
+            },
+            "duration": {
+              "value": 0,
+              "rate": 24
+            }
+          },
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 2",
+            "item": "Speed Ramp Action"
+          }
+        },
+        "addresses": null,
+        "readable": true,
+        "unreadable_reason": null,
+        "addressed": false,
+        "addressed_by": null,
+        "addressed_by_comment_id": null,
+        "addressed_by_version": null,
+        "version": 1,
+        "edited_at": null,
+        "resolution": null,
+        "resolved": {
+          "kind": "otio",
+          "status": "unresolvable",
+          "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld.",
+          "timeline_path": [],
+          "intersections": [],
+          "current_projection": {
+            "status": "unresolvable",
+            "current_version": null,
+            "explanation": "The sealed OTIO anchor does not identify a valid source location in its revision, so artifact-derived context was withheld."
+          },
+          "relic_version": 1,
+          "document_sha256": "83f09be0de7ee34f7eb48d601dbd11452a89e94f5dc43ff850c22469716c6c07",
+          "snapshot": {
+            "timeline": "Relik Feature Editorial",
+            "track": "Video 2",
+            "item": "Speed Ramp Action"
+          },
+          "timeline_id": "otio_23b6c6417f784b9e571a735f28b41f267aff4730c5032ddc11bfe0b89a14a754",
+          "track_id": "track-v2-main",
+          "item_id": "clip-v2-timewarp",
+          "range": {
+            "start_time": {
+              "value": 72,
+              "rate": 24
+            },
+            "duration": {
+              "value": 0,
+              "rate": 24
+            }
+          },
+          "point": true,
+          "start_seconds": 3,
+          "duration_seconds": 0,
+          "end_seconds": 3,
+          "start_timecode": "00:00:03:00",
+          "end_timecode": "00:00:03:00"
+        }
+      }
+    ],
+    "version_scope": 1,
+    "current_version": 1,
+    "hidden_by_scope": 0,
+    "content_blocks": []
+  },
+  "safety": {
+    "host": "127.0.0.1",
+    "store": "MemoryStore",
+    "storage": "MemoryStorage",
+    "mailAdapter": "captured only",
+    "mailCount": 0,
+    "storedCommentCount": 4,
+    "storedRowKeys": [
+      "id",
+      "relicId",
+      "author",
+      "createdAt",
+      "ciphertext",
+      "version"
+    ],
+    "requestHosts": [
+      "127.0.0.1"
+    ],
+    "publisher": "fresh Node 18.20.8 built MCP process; cover:false",
+    "requestLog": [
+      {
+        "method": "POST",
+        "path": "/api/challenge",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/grant",
+        "status": 200
+      },
+      {
+        "method": "PUT",
+        "path": "/__storage/upload/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/complete",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/register-sw.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/styles.css",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/viewer.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-dpvff2qs.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-d4ete68c.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-ar93jt1k.js",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/mint",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/__storage/o/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/sw.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/viewer.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/styles.css",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/manifest.webmanifest",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-5x9h9gbf.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 201
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/mint",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 201
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 201
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/mint",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 201
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/register-sw.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/styles.css",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/viewer.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-ht87wxr9.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-d4ete68c.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-ar93jt1k.js",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/mint",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/__storage/o/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-cby5tmcz.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/mint",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/mint",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/__storage/o/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/register-sw.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/styles.css",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/viewer.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-ht87wxr9.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-d4ete68c.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-ar93jt1k.js",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/mint",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/__storage/o/y8tvcrkaqtgfn07dchdcyr9b7c",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/assets/chunk-cby5tmcz.js",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/relics/y8tvcrkaqtgfn07dchdcyr9b7c/comments",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/session",
+        "status": 200
+      }
+    ]
+  },
+  "renderedStates": [
+    {
+      "id": "dark-desktop",
+      "width": 1440,
+      "height": 900,
+      "scheme": "dark",
+      "comments": true,
+      "screenshot": "native-dark-desktop.png",
+      "measurement": "native-dark-desktop-measurement.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "document": {
+        "width": 1440,
+        "height": 900
+      },
+      "ready": "true",
+      "preview": "decoded",
+      "root": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 1153,
+        "height": 1039.46875,
+        "top": 54.0625,
+        "right": 1153,
+        "bottom": 1093.53125,
+        "left": 0
+      },
+      "canvas": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 909,
+        "height": 380,
+        "top": 54.0625,
+        "right": 909,
+        "bottom": 434.0625,
+        "left": 0
+      },
+      "trackScroll": {
+        "client": 1153,
+        "scroll": 1153
+      },
+      "trackCount": 8,
+      "ruler": {
+        "width": 979,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 174,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 229.90625,
+              "bottom": 546.375,
+              "left": 174
+            }
+          },
+          {
+            "text": "00:00:01:00",
+            "box": {
+              "x": 243.9375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 299.84375,
+              "bottom": 546.375,
+              "left": 243.9375
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 341.84375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 397.75,
+              "bottom": 546.375,
+              "left": 341.84375
+            }
+          },
+          {
+            "text": "00:00:03:00",
+            "box": {
+              "x": 439.734375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 495.640625,
+              "bottom": 546.375,
+              "left": 439.734375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 537.640625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 593.546875,
+              "bottom": 546.375,
+              "left": 537.640625
+            }
+          },
+          {
+            "text": "00:00:05:00",
+            "box": {
+              "x": 635.546875,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 691.453125,
+              "bottom": 546.375,
+              "left": 635.546875
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 733.4375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 789.34375,
+              "bottom": 546.375,
+              "left": 733.4375
+            }
+          },
+          {
+            "text": "00:00:07:00",
+            "box": {
+              "x": 831.34375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 887.25,
+              "bottom": 546.375,
+              "left": 831.34375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 929.234375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 985.140625,
+              "bottom": 546.375,
+              "left": 929.234375
+            }
+          },
+          {
+            "text": "00:00:09:00",
+            "box": {
+              "x": 1027.140625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1083.046875,
+              "bottom": 546.375,
+              "left": 1027.140625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 1097.09375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1153,
+              "bottom": 546.375,
+              "left": 1097.09375
+            }
+          }
+        ],
+        "collisions": []
+      },
+      "feedbackTargets": [
+        {
+          "text": "v1 · Relik Feature Editorial · Video 1 · point 36 @ 24\ntrack-v1-main",
+          "box": {
+            "x": 1189,
+            "y": 217.859375,
+            "width": 216,
+            "height": 62.703125,
+            "top": 217.859375,
+            "right": 1405,
+            "bottom": 280.5625,
+            "left": 1189
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 12 @ 24, duration 12 @ 24\ntrack-v2-duplicate",
+          "box": {
+            "x": 1189,
+            "y": 422.5625,
+            "width": 216,
+            "height": 79.59375,
+            "top": 422.5625,
+            "right": 1405,
+            "bottom": 502.15625,
+            "left": 1189
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 0 @ 24, duration 240 @ 24\ntrack-v2-duplicate",
+          "box": {
+            "x": 1189,
+            "y": 644.15625,
+            "width": 216,
+            "height": 79.59375,
+            "top": 644.15625,
+            "right": 1405,
+            "bottom": 723.75,
+            "left": 1189
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · point 72 @ 24\ntrack-v2-main",
+          "box": {
+            "x": 1189,
+            "y": 842.4375,
+            "width": 216,
+            "height": 62.703125,
+            "top": 842.4375,
+            "right": 1405,
+            "bottom": 905.140625,
+            "left": 1189
+          },
+          "font": "10.56px"
+        }
+      ],
+      "resourceHosts": [
+        "127.0.0.1"
+      ]
+    },
+    {
+      "id": "light-desktop",
+      "width": 1440,
+      "height": 900,
+      "scheme": "light",
+      "comments": true,
+      "screenshot": "native-light-desktop.png",
+      "measurement": "native-light-desktop-measurement.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "document": {
+        "width": 1440,
+        "height": 900
+      },
+      "ready": "true",
+      "preview": "decoded",
+      "root": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 1153,
+        "height": 1039.46875,
+        "top": 54.0625,
+        "right": 1153,
+        "bottom": 1093.53125,
+        "left": 0
+      },
+      "canvas": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 909,
+        "height": 380,
+        "top": 54.0625,
+        "right": 909,
+        "bottom": 434.0625,
+        "left": 0
+      },
+      "trackScroll": {
+        "client": 1153,
+        "scroll": 1153
+      },
+      "trackCount": 8,
+      "ruler": {
+        "width": 979,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 174,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 229.90625,
+              "bottom": 546.375,
+              "left": 174
+            }
+          },
+          {
+            "text": "00:00:01:00",
+            "box": {
+              "x": 243.9375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 299.84375,
+              "bottom": 546.375,
+              "left": 243.9375
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 341.84375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 397.75,
+              "bottom": 546.375,
+              "left": 341.84375
+            }
+          },
+          {
+            "text": "00:00:03:00",
+            "box": {
+              "x": 439.734375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 495.640625,
+              "bottom": 546.375,
+              "left": 439.734375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 537.640625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 593.546875,
+              "bottom": 546.375,
+              "left": 537.640625
+            }
+          },
+          {
+            "text": "00:00:05:00",
+            "box": {
+              "x": 635.546875,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 691.453125,
+              "bottom": 546.375,
+              "left": 635.546875
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 733.4375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 789.34375,
+              "bottom": 546.375,
+              "left": 733.4375
+            }
+          },
+          {
+            "text": "00:00:07:00",
+            "box": {
+              "x": 831.34375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 887.25,
+              "bottom": 546.375,
+              "left": 831.34375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 929.234375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 985.140625,
+              "bottom": 546.375,
+              "left": 929.234375
+            }
+          },
+          {
+            "text": "00:00:09:00",
+            "box": {
+              "x": 1027.140625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1083.046875,
+              "bottom": 546.375,
+              "left": 1027.140625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 1097.09375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1153,
+              "bottom": 546.375,
+              "left": 1097.09375
+            }
+          }
+        ],
+        "collisions": []
+      },
+      "feedbackTargets": [
+        {
+          "text": "v1 · Relik Feature Editorial · Video 1 · point 36 @ 24\ntrack-v1-main",
+          "box": {
+            "x": 1189,
+            "y": 217.859375,
+            "width": 216,
+            "height": 62.703125,
+            "top": 217.859375,
+            "right": 1405,
+            "bottom": 280.5625,
+            "left": 1189
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 12 @ 24, duration 12 @ 24\ntrack-v2-duplicate",
+          "box": {
+            "x": 1189,
+            "y": 422.5625,
+            "width": 216,
+            "height": 79.59375,
+            "top": 422.5625,
+            "right": 1405,
+            "bottom": 502.15625,
+            "left": 1189
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 0 @ 24, duration 240 @ 24\ntrack-v2-duplicate",
+          "box": {
+            "x": 1189,
+            "y": 644.15625,
+            "width": 216,
+            "height": 79.59375,
+            "top": 644.15625,
+            "right": 1405,
+            "bottom": 723.75,
+            "left": 1189
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · point 72 @ 24\ntrack-v2-main",
+          "box": {
+            "x": 1189,
+            "y": 842.4375,
+            "width": 216,
+            "height": 62.703125,
+            "top": 842.4375,
+            "right": 1405,
+            "bottom": 905.140625,
+            "left": 1189
+          },
+          "font": "10.56px"
+        }
+      ],
+      "resourceHosts": [
+        "127.0.0.1"
+      ]
+    },
+    {
+      "id": "dark-narrow",
+      "width": 390,
+      "height": 844,
+      "scheme": "dark",
+      "comments": false,
+      "screenshot": "native-dark-narrow.png",
+      "measurement": "native-dark-narrow-measurement.json",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "document": {
+        "width": 390,
+        "height": 844
+      },
+      "ready": "true",
+      "preview": "decoded",
+      "root": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 375,
+        "height": 966.703125,
+        "top": 54.0625,
+        "right": 375,
+        "bottom": 1020.765625,
+        "left": 0
+      },
+      "canvas": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 375,
+        "height": 210.9375,
+        "top": 54.0625,
+        "right": 375,
+        "bottom": 265,
+        "left": 0
+      },
+      "trackScroll": {
+        "client": 375,
+        "scroll": 760
+      },
+      "trackCount": 8,
+      "ruler": {
+        "width": 612,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 148,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 203.90625,
+              "bottom": 453.078125,
+              "left": 148
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 242.4375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 298.34375,
+              "bottom": 453.078125,
+              "left": 242.4375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 364.84375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 420.75,
+              "bottom": 453.078125,
+              "left": 364.84375
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 487.234375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 543.140625,
+              "bottom": 453.078125,
+              "left": 487.234375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 609.640625,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 665.546875,
+              "bottom": 453.078125,
+              "left": 609.640625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 704.09375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 760,
+              "bottom": 453.078125,
+              "left": 704.09375
+            }
+          }
+        ],
+        "collisions": []
+      },
+      "feedbackTargets": [
+        {
+          "text": "v1 · Relik Feature Editorial · Video 1 · point 36 @ 24track-v1-main",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 12 @ 24, duration 12 @ 24track-v2-duplicate",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 0 @ 24, duration 240 @ 24track-v2-duplicate",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · point 72 @ 24track-v2-main",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        }
+      ],
+      "resourceHosts": [
+        "127.0.0.1"
+      ]
+    },
+    {
+      "id": "light-narrow",
+      "width": 390,
+      "height": 844,
+      "scheme": "light",
+      "comments": false,
+      "screenshot": "native-light-narrow.png",
+      "measurement": "native-light-narrow-measurement.json",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "document": {
+        "width": 390,
+        "height": 844
+      },
+      "ready": "true",
+      "preview": "decoded",
+      "root": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 375,
+        "height": 966.703125,
+        "top": 54.0625,
+        "right": 375,
+        "bottom": 1020.765625,
+        "left": 0
+      },
+      "canvas": {
+        "x": 0,
+        "y": 54.0625,
+        "width": 375,
+        "height": 210.9375,
+        "top": 54.0625,
+        "right": 375,
+        "bottom": 265,
+        "left": 0
+      },
+      "trackScroll": {
+        "client": 375,
+        "scroll": 760
+      },
+      "trackCount": 8,
+      "ruler": {
+        "width": 612,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 148,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 203.90625,
+              "bottom": 453.078125,
+              "left": 148
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 242.4375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 298.34375,
+              "bottom": 453.078125,
+              "left": 242.4375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 364.84375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 420.75,
+              "bottom": 453.078125,
+              "left": 364.84375
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 487.234375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 543.140625,
+              "bottom": 453.078125,
+              "left": 487.234375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 609.640625,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 665.546875,
+              "bottom": 453.078125,
+              "left": 609.640625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 704.09375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 760,
+              "bottom": 453.078125,
+              "left": 704.09375
+            }
+          }
+        ],
+        "collisions": []
+      },
+      "feedbackTargets": [
+        {
+          "text": "v1 · Relik Feature Editorial · Video 1 · point 36 @ 24track-v1-main",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 12 @ 24, duration 12 @ 24track-v2-duplicate",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · 0 @ 24, duration 240 @ 24track-v2-duplicate",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        },
+        {
+          "text": "v1 · Relik Feature Editorial · Video 2 · point 72 @ 24track-v2-main",
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "font": "10.56px"
+        }
+      ],
+      "resourceHosts": [
+        "127.0.0.1"
+      ]
+    }
+  ],
+  "afterBuiltInteractions": {
+    "paused": {
+      "playing": "false",
+      "frame": 3.6000000000000005
+    },
+    "seek": {
+      "frame": "1",
+      "clock": "01:00:00:01",
+      "ready": "true"
+    },
+    "toggles": [
+      {
+        "selector": "[data-track-toggle=\"track-a1-main\"]",
+        "pressed": "true",
+        "restored": "false"
+      },
+      {
+        "selector": "[data-track-solo=\"track-a1-main\"]",
+        "pressed": "true",
+        "restored": "false"
+      },
+      {
+        "selector": "[data-track-toggle=\"track-v2-main\"]",
+        "pressed": "true",
+        "restored": "false"
+      }
+    ],
+    "range": {
+      "start": "12",
+      "duration": "12",
+      "rate": "24",
+      "durationRate": "24",
+      "trackId": "track-v2-duplicate",
+      "rangeIndex": "0"
+    },
+    "point": {
+      "start": "12",
+      "duration": "0",
+      "rate": "24",
+      "durationRate": "24",
+      "trackId": "track-v2-duplicate",
+      "rangeIndex": "0"
+    },
+    "track": {
+      "start": "0",
+      "duration": "240",
+      "rate": "24",
+      "durationRate": "24",
+      "trackId": "track-v2-duplicate",
+      "rangeIndex": "0"
+    },
+    "collapsed": [
+      "track-nested-plate-base",
+      "track-nested-fx-glow"
+    ],
+    "marker": {
+      "start": "100",
+      "duration": "0",
+      "rate": "24",
+      "durationRate": "24",
+      "trackId": "track-v1-main",
+      "rangeIndex": "0"
+    }
+  },
+  "rulerDefect": {
+    "before": [
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "railWidth": 979,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 174,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 229.90625,
+              "bottom": 321.375,
+              "left": 174
+            }
+          },
+          {
+            "text": "00:00:01:00",
+            "box": {
+              "x": 271.890625,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 327.796875,
+              "bottom": 321.375,
+              "left": 271.890625
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 369.796875,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 425.703125,
+              "bottom": 321.375,
+              "left": 369.796875
+            }
+          },
+          {
+            "text": "00:00:03:00",
+            "box": {
+              "x": 467.6875,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 523.59375,
+              "bottom": 321.375,
+              "left": 467.6875
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 565.59375,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 621.5,
+              "bottom": 321.375,
+              "left": 565.59375
+            }
+          },
+          {
+            "text": "00:00:05:00",
+            "box": {
+              "x": 663.5,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 719.40625,
+              "bottom": 321.375,
+              "left": 663.5
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 761.390625,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 817.296875,
+              "bottom": 321.375,
+              "left": 761.390625
+            }
+          },
+          {
+            "text": "00:00:07:00",
+            "box": {
+              "x": 859.296875,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 915.203125,
+              "bottom": 321.375,
+              "left": 859.296875
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 957.1875,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 1013.09375,
+              "bottom": 321.375,
+              "left": 957.1875
+            }
+          },
+          {
+            "text": "00:00:09:00",
+            "box": {
+              "x": 1055.09375,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 1111,
+              "bottom": 321.375,
+              "left": 1055.09375
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 1097.09375,
+              "y": 309.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 309.375,
+              "right": 1153,
+              "bottom": 321.375,
+              "left": 1097.09375
+            }
+          }
+        ],
+        "collisions": [
+          {
+            "left": "00:00:09:00",
+            "right": "00:00:10:00",
+            "overlap": 13.90625
+          }
+        ]
+      },
+      {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "railWidth": 612,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 148,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 203.90625,
+              "bottom": 672.28125,
+              "left": 148
+            }
+          },
+          {
+            "text": "00:00:01:00",
+            "box": {
+              "x": 209.1875,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 265.09375,
+              "bottom": 672.28125,
+              "left": 209.1875
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 270.390625,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 326.296875,
+              "bottom": 672.28125,
+              "left": 270.390625
+            }
+          },
+          {
+            "text": "00:00:03:00",
+            "box": {
+              "x": 331.59375,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 387.5,
+              "bottom": 672.28125,
+              "left": 331.59375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 392.796875,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 448.703125,
+              "bottom": 672.28125,
+              "left": 392.796875
+            }
+          },
+          {
+            "text": "00:00:05:00",
+            "box": {
+              "x": 454,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 509.90625,
+              "bottom": 672.28125,
+              "left": 454
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 515.1875,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 571.09375,
+              "bottom": 672.28125,
+              "left": 515.1875
+            }
+          },
+          {
+            "text": "00:00:07:00",
+            "box": {
+              "x": 576.390625,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 632.296875,
+              "bottom": 672.28125,
+              "left": 576.390625
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 637.59375,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 693.5,
+              "bottom": 672.28125,
+              "left": 637.59375
+            }
+          },
+          {
+            "text": "00:00:09:00",
+            "box": {
+              "x": 698.796875,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 754.703125,
+              "bottom": 672.28125,
+              "left": 698.796875
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 704.09375,
+              "y": 660.28125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 660.28125,
+              "right": 760,
+              "bottom": 672.28125,
+              "left": 704.09375
+            }
+          }
+        ],
+        "collisions": [
+          {
+            "left": "00:00:09:00",
+            "right": "00:00:10:00",
+            "overlap": 50.609375
+          }
+        ]
+      }
+    ],
+    "after": [
+      {
+        "id": "dark-desktop",
+        "width": 979,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 174,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 229.90625,
+              "bottom": 546.375,
+              "left": 174
+            }
+          },
+          {
+            "text": "00:00:01:00",
+            "box": {
+              "x": 243.9375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 299.84375,
+              "bottom": 546.375,
+              "left": 243.9375
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 341.84375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 397.75,
+              "bottom": 546.375,
+              "left": 341.84375
+            }
+          },
+          {
+            "text": "00:00:03:00",
+            "box": {
+              "x": 439.734375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 495.640625,
+              "bottom": 546.375,
+              "left": 439.734375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 537.640625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 593.546875,
+              "bottom": 546.375,
+              "left": 537.640625
+            }
+          },
+          {
+            "text": "00:00:05:00",
+            "box": {
+              "x": 635.546875,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 691.453125,
+              "bottom": 546.375,
+              "left": 635.546875
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 733.4375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 789.34375,
+              "bottom": 546.375,
+              "left": 733.4375
+            }
+          },
+          {
+            "text": "00:00:07:00",
+            "box": {
+              "x": 831.34375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 887.25,
+              "bottom": 546.375,
+              "left": 831.34375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 929.234375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 985.140625,
+              "bottom": 546.375,
+              "left": 929.234375
+            }
+          },
+          {
+            "text": "00:00:09:00",
+            "box": {
+              "x": 1027.140625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1083.046875,
+              "bottom": 546.375,
+              "left": 1027.140625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 1097.09375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1153,
+              "bottom": 546.375,
+              "left": 1097.09375
+            }
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "id": "light-desktop",
+        "width": 979,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 174,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 229.90625,
+              "bottom": 546.375,
+              "left": 174
+            }
+          },
+          {
+            "text": "00:00:01:00",
+            "box": {
+              "x": 243.9375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 299.84375,
+              "bottom": 546.375,
+              "left": 243.9375
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 341.84375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 397.75,
+              "bottom": 546.375,
+              "left": 341.84375
+            }
+          },
+          {
+            "text": "00:00:03:00",
+            "box": {
+              "x": 439.734375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 495.640625,
+              "bottom": 546.375,
+              "left": 439.734375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 537.640625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 593.546875,
+              "bottom": 546.375,
+              "left": 537.640625
+            }
+          },
+          {
+            "text": "00:00:05:00",
+            "box": {
+              "x": 635.546875,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 691.453125,
+              "bottom": 546.375,
+              "left": 635.546875
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 733.4375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 789.34375,
+              "bottom": 546.375,
+              "left": 733.4375
+            }
+          },
+          {
+            "text": "00:00:07:00",
+            "box": {
+              "x": 831.34375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 887.25,
+              "bottom": 546.375,
+              "left": 831.34375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 929.234375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 985.140625,
+              "bottom": 546.375,
+              "left": 929.234375
+            }
+          },
+          {
+            "text": "00:00:09:00",
+            "box": {
+              "x": 1027.140625,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1083.046875,
+              "bottom": 546.375,
+              "left": 1027.140625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 1097.09375,
+              "y": 534.375,
+              "width": 55.90625,
+              "height": 12,
+              "top": 534.375,
+              "right": 1153,
+              "bottom": 546.375,
+              "left": 1097.09375
+            }
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "id": "dark-narrow",
+        "width": 612,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 148,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 203.90625,
+              "bottom": 453.078125,
+              "left": 148
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 242.4375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 298.34375,
+              "bottom": 453.078125,
+              "left": 242.4375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 364.84375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 420.75,
+              "bottom": 453.078125,
+              "left": 364.84375
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 487.234375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 543.140625,
+              "bottom": 453.078125,
+              "left": 487.234375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 609.640625,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 665.546875,
+              "bottom": 453.078125,
+              "left": 609.640625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 704.09375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 760,
+              "bottom": 453.078125,
+              "left": 704.09375
+            }
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "id": "light-narrow",
+        "width": 612,
+        "labels": [
+          {
+            "text": "00:00:00:00",
+            "box": {
+              "x": 148,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 203.90625,
+              "bottom": 453.078125,
+              "left": 148
+            }
+          },
+          {
+            "text": "00:00:02:00",
+            "box": {
+              "x": 242.4375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 298.34375,
+              "bottom": 453.078125,
+              "left": 242.4375
+            }
+          },
+          {
+            "text": "00:00:04:00",
+            "box": {
+              "x": 364.84375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 420.75,
+              "bottom": 453.078125,
+              "left": 364.84375
+            }
+          },
+          {
+            "text": "00:00:06:00",
+            "box": {
+              "x": 487.234375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 543.140625,
+              "bottom": 453.078125,
+              "left": 487.234375
+            }
+          },
+          {
+            "text": "00:00:08:00",
+            "box": {
+              "x": 609.640625,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 665.546875,
+              "bottom": 453.078125,
+              "left": 609.640625
+            }
+          },
+          {
+            "text": "00:00:10:00",
+            "box": {
+              "x": 704.09375,
+              "y": 441.078125,
+              "width": 55.90625,
+              "height": 12,
+              "top": 441.078125,
+              "right": 760,
+              "bottom": 453.078125,
+              "left": 704.09375
+            }
+          }
+        ],
+        "collisions": []
+      }
+    ]
+  },
+  "supplemental": {
+    "allTracks": [
+      {
+        "id": "",
+        "box": {
+          "x": 0,
+          "y": 331.375,
+          "width": 1153,
+          "height": 27,
+          "top": 331.375,
+          "right": 1153,
+          "bottom": 358.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-v1-main",
+        "box": {
+          "x": 0,
+          "y": 358.375,
+          "width": 1153,
+          "height": 55,
+          "top": 358.375,
+          "right": 1153,
+          "bottom": 413.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-nested-plate-base",
+        "box": {
+          "x": 0,
+          "y": 413.375,
+          "width": 1153,
+          "height": 55,
+          "top": 413.375,
+          "right": 1153,
+          "bottom": 468.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-nested-fx-glow",
+        "box": {
+          "x": 0,
+          "y": 468.375,
+          "width": 1153,
+          "height": 55,
+          "top": 468.375,
+          "right": 1153,
+          "bottom": 523.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-v2-main",
+        "box": {
+          "x": 0,
+          "y": 523.375,
+          "width": 1153,
+          "height": 55,
+          "top": 523.375,
+          "right": 1153,
+          "bottom": 578.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-v2-duplicate",
+        "box": {
+          "x": 0,
+          "y": 578.375,
+          "width": 1153,
+          "height": 55,
+          "top": 578.375,
+          "right": 1153,
+          "bottom": 633.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-a1-main",
+        "box": {
+          "x": 0,
+          "y": 633.375,
+          "width": 1153,
+          "height": 55,
+          "top": 633.375,
+          "right": 1153,
+          "bottom": 688.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-a2-main",
+        "box": {
+          "x": 0,
+          "y": 688.375,
+          "width": 1153,
+          "height": 55,
+          "top": 688.375,
+          "right": 1153,
+          "bottom": 743.375,
+          "left": 0
+        },
+        "hidden": false
+      },
+      {
+        "id": "track-a3-duplicate",
+        "box": {
+          "x": 0,
+          "y": 743.375,
+          "width": 1153,
+          "height": 55,
+          "top": 743.375,
+          "right": 1153,
+          "bottom": 798.375,
+          "left": 0
+        },
+        "hidden": false
+      }
+    ],
+    "feedback": [
+      {
+        "text": "v1 · Relik Feature Editorial · Video 1 · point 36 @ 24\ntrack-v1-main",
+        "box": {
+          "x": 15.390625,
+          "y": 225.015625,
+          "width": 345.21875,
+          "height": 62.703125,
+          "top": 225.015625,
+          "right": 360.609375,
+          "bottom": 287.71875,
+          "left": 15.390625
+        }
+      },
+      {
+        "text": "v1 · Relik Feature Editorial · Video 2 · 12 @ 24, duration 12 @ 24\ntrack-v2-duplicate",
+        "box": {
+          "x": 15.390625,
+          "y": 381.5625,
+          "width": 345.21875,
+          "height": 62.703125,
+          "top": 381.5625,
+          "right": 360.609375,
+          "bottom": 444.265625,
+          "left": 15.390625
+        }
+      },
+      {
+        "text": "v1 · Relik Feature Editorial · Video 2 · 0 @ 24, duration 240 @ 24\ntrack-v2-duplicate",
+        "box": {
+          "x": 15.390625,
+          "y": 538.109375,
+          "width": 345.21875,
+          "height": 62.703125,
+          "top": 538.109375,
+          "right": 360.609375,
+          "bottom": 600.8125,
+          "left": 15.390625
+        }
+      },
+      {
+        "text": "v1 · Relik Feature Editorial · Video 2 · point 72 @ 24\ntrack-v2-main",
+        "box": {
+          "x": 15.390625,
+          "y": 694.65625,
+          "width": 345.21875,
+          "height": 62.703125,
+          "top": 694.65625,
+          "right": 360.609375,
+          "bottom": 757.359375,
+          "left": 15.390625
+        }
+      }
+    ],
+    "composer": {
+      "text": "v1 · Relik Feature Editorial · Video 2 · 12 @ 24, duration 12 @ 24\n\nPost\nCancel\n\nYour address is shown with your comment and in emails to people following the relic, and Relic sees who commented on what. When someone comments or a new version is published, Relic emails you, with a link to stop.",
+      "box": {
+        "x": 15,
+        "y": 213.640625,
+        "width": 352,
+        "height": 266.4375,
+        "top": 213.640625,
+        "right": 367,
+        "bottom": 480.078125,
+        "left": 15
+      },
+      "textarea": {
+        "x": 27.1875,
+        "y": 270.125,
+        "width": 327.625,
+        "height": 72,
+        "top": 270.125,
+        "right": 354.8125,
+        "bottom": 342.125,
+        "left": 27.1875
+      }
+    }
+  },
+  "gates": [
+    {
+      "id": "dark-desktop",
+      "exit": 0,
+      "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:60688/y8tvcrkaqtgfn07dchdcyr9b7c\nMeasured at: 2026-10-21T17:21:53.315Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.486 (skel: 0.333, shape: 0.500, pal: 0.829, type: 0.200, img: 0.500)\n  [ok] han (https://han.guru/): 0.415 (skel: 0.417, shape: 0.275, pal: 0.688, type: 0.200, img: 0.500)\n  [ok] ompctl (https://ompctl.ai/): 0.396 (skel: 0.167, shape: 0.500, pal: 0.880, type: 0.200, img: 0.000)\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.378 (skel: 0.350, shape: 0.500, pal: 0.515, type: 0.200, img: 0.000)\n  [ok] thebushidoco (https://thebushido.co/): 0.366 (skel: 0.183, shape: 0.500, pal: 0.704, type: 0.200, img: 0.000)\n\nOVERALL VERDICT: PASSED\n",
+      "stderr": ""
+    },
+    {
+      "id": "light-desktop",
+      "exit": 0,
+      "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:60688/y8tvcrkaqtgfn07dchdcyr9b7c\nMeasured at: 2026-10-21T17:21:53.375Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.453 (skel: 0.350, shape: 0.500, pal: 0.888, type: 0.200, img: 0.000)\n  [ok] endmetaltheft-demo (https://endmetaltheft-demo-tbc.web.app/): 0.413 (skel: 0.300, shape: 0.500, pal: 0.863, type: 0.000, img: 0.000)\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.409 (skel: 0.333, shape: 0.500, pal: 0.444, type: 0.200, img: 0.500)\n  [ok] baseplot (https://baseplot.app/): 0.398 (skel: 0.450, shape: 0.350, pal: 0.788, type: 0.000, img: 0.000)\n  [ok] han (https://han.guru/): 0.345 (skel: 0.417, shape: 0.275, pal: 0.336, type: 0.200, img: 0.500)\n\nOVERALL VERDICT: PASSED\n",
+      "stderr": ""
+    },
+    {
+      "id": "dark-narrow",
+      "exit": 0,
+      "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:60688/y8tvcrkaqtgfn07dchdcyr9b7c\nMeasured at: 2026-10-21T17:21:53.429Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.486 (skel: 0.333, shape: 0.500, pal: 0.829, type: 0.200, img: 0.500)\n  [ok] han (https://han.guru/): 0.415 (skel: 0.417, shape: 0.275, pal: 0.688, type: 0.200, img: 0.500)\n  [ok] ompctl (https://ompctl.ai/): 0.396 (skel: 0.167, shape: 0.500, pal: 0.880, type: 0.200, img: 0.000)\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.378 (skel: 0.350, shape: 0.500, pal: 0.515, type: 0.200, img: 0.000)\n  [ok] thebushidoco (https://thebushido.co/): 0.366 (skel: 0.183, shape: 0.500, pal: 0.704, type: 0.200, img: 0.000)\n\nOVERALL VERDICT: PASSED\n",
+      "stderr": ""
+    },
+    {
+      "id": "light-narrow",
+      "exit": 0,
+      "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:60688/y8tvcrkaqtgfn07dchdcyr9b7c\nMeasured at: 2026-10-21T17:21:53.474Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.453 (skel: 0.350, shape: 0.500, pal: 0.888, type: 0.200, img: 0.000)\n  [ok] endmetaltheft-demo (https://endmetaltheft-demo-tbc.web.app/): 0.413 (skel: 0.300, shape: 0.500, pal: 0.863, type: 0.000, img: 0.000)\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.409 (skel: 0.333, shape: 0.500, pal: 0.444, type: 0.200, img: 0.500)\n  [ok] baseplot (https://baseplot.app/): 0.398 (skel: 0.450, shape: 0.350, pal: 0.788, type: 0.000, img: 0.000)\n  [ok] han (https://han.guru/): 0.345 (skel: 0.417, shape: 0.275, pal: 0.336, type: 0.200, img: 0.500)\n\nOVERALL VERDICT: PASSED\n",
+      "stderr": ""
+    }
+  ],
+  "build": {
+    "base": "ebcd799418a2626bf496667cd92b3b9a276fe163",
+    "shellHash": "39dc88c7f45899a2",
+    "command": "mise exec -- bun run --filter '@relic/viewer' build",
+    "exit": 0,
+    "assets": {
+      "viewer.js": {
+        "sha256": "213ece9134216afa097b47dd2f93508542b2ac2ac1e9a24bcc0106ea2c295f52",
+        "bytes": 414452,
+        "servedMatches": true
+      },
+      "styles.css": {
+        "sha256": "ac28eed7ad2a65ac3aeaf3ffbc037b32e7c627bbc0c7065fbbf5c5b473f50311",
+        "bytes": 99820,
+        "servedMatches": true
+      }
+    }
+  },
+  "artDirection": {
+    "retained": "Committed OTIO mock direction: square accession chrome, Relic patina, Charter feedback body and monospace coordinates. Real decoded fixture pixels remain the monitor material.",
+    "rejected": [
+      "A new editor palette or neon track colors would replace the approved Relic identity.",
+      "Rounded feature cards or marketing copy would obscure editorial scope.",
+      "Changing core timing or widening media support would exceed this rendering assignment."
+    ]
+  },
+  "visualReview": {
+    "fourScreensLookedAt": true,
+    "feedbackTargetFontPx": 10.56,
+    "stableTrackIdFontPx": 9.6,
+    "documentOverflowPx": 0,
+    "rulerCollisionsAfter": 0,
+    "rulerBeforeOverlapPx": {
+      "desktop": 13.90625,
+      "narrow": 50.609375
+    },
+    "responsiveTimeline": "760px grid scrolls inside the 375px narrow stage; the document remains 390px wide.",
+    "feedback": "Four sealed targets show revision, rational coordinates and stable track ID; same-named Video 2 rows distinguish track-v2-main from track-v2-duplicate.",
+    "composer": "Narrow range composer is 352px wide inside 390px viewport, with 327.625px textarea and visible Post and Cancel controls."
+  },
+  "integrity": {
+    "native-dark-desktop.png": {
+      "bytes": 174458,
+      "sha256": "276c9a89c331c7e04f1caa1d81d185cf7a0551382b741f585070b48db33a4530"
+    },
+    "native-light-desktop.png": {
+      "bytes": 174497,
+      "sha256": "4fc4731b0660a2ecefc15b1067b145ab95864f66c5344b5b89159dd7586a426a"
+    },
+    "native-dark-narrow.png": {
+      "bytes": 55298,
+      "sha256": "fb2bd64d089364e79366483c594f4f0e1669fd61c9add3b5a5b5409ac5264971"
+    },
+    "native-light-narrow.png": {
+      "bytes": 55164,
+      "sha256": "9f99975d62ce0a8abbaf9a57218106dd356d98830e0d70c836a46353346ff4b0"
+    },
+    "native-before-feedback-light-narrow.png": {
+      "bytes": 64094,
+      "sha256": "ce2f880e50ab4a0a6d9c79c5258a2df1024310075aeb460e0daf3c2f41124fba"
+    },
+    "native-feedback-light-narrow.png": {
+      "bytes": 61399,
+      "sha256": "96f7a77aae860df8cdf4193fddc74a4bef65c2893dc6670f2484ac43f3e02393"
+    },
+    "native-dark-desktop-all-tracks.png": {
+      "bytes": 169357,
+      "sha256": "334496f910c2f29f0c64249905909568c833ce6faf4c66ad141447d3255c5e0a"
+    },
+    "native-range-composer-light-narrow.png": {
+      "bytes": 75609,
+      "sha256": "f7c489a78ced9876acae027b6aa072ba500b88f1f3fd7bdef38191e83815fef1"
+    }
+  }
+}

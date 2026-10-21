@@ -5189,6 +5189,15 @@ export function buildThread(
       row.appendChild(context);
       return;
     }
+    const target = document.createElement('p');
+    target.className = 'otio-feedback-target';
+    target.textContent = markTargetLabel(anchor);
+    if (anchor.track_id !== null) {
+      const track = document.createElement('span');
+      track.textContent = anchor.track_id;
+      target.appendChild(track);
+    }
+    row.querySelector('.comment-body')?.before(target);
     if (anchor.relic_version === view.version) return;
     const projection =
       host === undefined
