@@ -3,8 +3,8 @@
  * Entry point for the local MCP server.
  *
  * Plain Node, no Bun APIs, because this ships to npm and runs under whatever
- * runtime `npx` happens to have. Everything it needs (`fetch`, `crypto.subtle`,
- * `TextEncoder`, web streams) is standard from Node 18 on.
+ * runtime `npx` happens to have. Fetch, TextEncoder, and web streams are
+ * standard from Node 18 on; Web Crypto is initialized below for that release.
  *
  * stdio by default, which is what every agent runner expects. Set
  * `RELIC_MCP_HTTP=1` to serve the Streamable HTTP transport instead.
@@ -13,6 +13,7 @@
  * because a stray stdout write corrupts the protocol stream.
  */
 
+import { webcrypto } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { coverAssetDir } from './cover/assets.ts';
@@ -23,6 +24,14 @@ import { runInstall, USAGE } from './installer.ts';
 import { requiredOrigin, resolveOrigin } from './origin.ts';
 import type { PublishDeps } from './publish.ts';
 import { serveStdio } from './server.ts';
+
+// Node 18 exposes Web Crypto through node:crypto without a global binding.
+if (typeof globalThis.crypto === 'undefined') {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+    configurable: true,
+  });
+}
 
 // Subcommands are handled before anything that needs configuration, so
 // `--help` works on a machine that has never set an origin.
