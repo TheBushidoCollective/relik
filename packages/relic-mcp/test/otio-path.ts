@@ -871,7 +871,15 @@ else:
 
 async function oracle(args: string[], input?: string): Promise<string> {
   const script = join(scratch, 'official-otio.py');
-  await writeFile(emptyManifest, '{}\n');
+  await writeFile(emptyManifest, JSON.stringify({
+    OTIO_SCHEMA: 'PluginManifest.1',
+    adapters: [],
+    hook_scripts: [],
+    hooks: {},
+    media_linkers: [],
+    schemadefs: [],
+    version_manifests: {},
+  }));
   await writeFile(script, ORACLE);
   const result = await runChild(
     [
