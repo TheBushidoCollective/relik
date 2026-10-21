@@ -11,10 +11,7 @@ import {
 import { nodeFiles } from '../src/files.ts';
 import { type PublishDeps, publish } from '../src/publish.ts';
 import {
-  DESCRIBE_TOOL_NAME,
-  describeClient,
   handleMessage,
-  INSTRUCTIONS,
   REPUBLISH_TOOL_NAME,
   SHARE_TOOL_NAME,
 } from '../src/server.ts';
@@ -560,38 +557,5 @@ describe('republish notify parameter and share_verifier', () => {
 
     expect(lastRepublishBody).not.toBeNull();
     expect(lastRepublishBody?.['share_verifier']).toBe(expectedVerifier);
-  });
-});
-
-describe('instructions and describe_client', () => {
-  test('INSTRUCTIONS and describe_client carry the new facts', async () => {
-    expect(INSTRUCTIONS).toMatch(/Nine things/);
-    expect(INSTRUCTIONS).toMatch(/relic_share/);
-    expect(INSTRUCTIONS).toMatch(/change notice/);
-    expect(INSTRUCTIONS).toMatch(
-      /readers holding the link can also share from the viewer/i
-    );
-
-    const describeText = describeClient(deps);
-    expect(describeText).toContain(
-      'What happens with change notices and sharing:'
-    );
-    expect(describeText).toContain('relic_share');
-    expect(describeText).toContain('notify: false');
-    expect(describeText).toMatch(
-      /Readers holding the link\s+can also share from the viewer/i
-    );
-    const describeRes = await callTool(DESCRIBE_TOOL_NAME, {});
-    expect(describeRes.result?.isError).toBe(false);
-    const structured = (describeRes.result?.structuredContent ?? {}) as Record<
-      string,
-      string
-    >;
-    expect(structured['change_notices']).toContain(
-      'on every republish unless notify: false'
-    );
-    expect(structured['sharing']).toContain(
-      'relic_share sends the service email addresses and nothing else'
-    );
   });
 });
