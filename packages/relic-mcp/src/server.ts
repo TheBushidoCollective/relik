@@ -1640,39 +1640,33 @@ only ciphertext. The key lives in the URL fragment, which browsers never send \
 to a server.
 
 Nine things that change how you should act:
-1. The link is the credential: anyone holding it, fragment included, can read \
-the file. Never paste it into a tracker, log, or channel.
+1. The full link is the credential: anyone holding it can read the file. Never \
+paste it into a tracker, log, or channel.
 2. A relic carries a plaintext title, defaulting to the filename: the service \
-stores it and every link preview shows it. Pass \
-title: "" when the name is sensitive.
-3. Publishing puts the key in this transcript: say so plainly when handing \
-the link over.
-4. Check sources with relic_lookup_source; relic_republish keeps the URL \
-where relic_publish costs a second URL. \
-${VERSION_HISTORY_DISCLOSURE}
-5. A relic can be republished only from the machine that published it: the key \
-and publish token live nowhere else.
-6. HTML and JSX render in an isolated frame with no network access, so inline \
+stores it and every link preview shows it. Pass title: "" when it is sensitive.
+3. Publishing puts the key in this transcript. Say so when handing over the link.
+4. Check sources with relic_lookup_source. relic_publish costs a second URL; \
+relic_republish keeps the first. ${VERSION_HISTORY_DISCLOSURE}
+5. Only the publishing machine can republish: its key and publish token live there.
+6. HTML and JSX render in an isolated frame with no network access. Inline \
 styles, scripts, fonts, and images: a CDN reference renders as nothing.
-7. People can comment on a relic. Read with relic_read_comments before \
-changing reviewed content, answer with relic_comment. relic_edit_comment \
-rewrites one, relic_resolve_comment settles one, and settled counts as \
-handled. All take the relic id and attribute you as publisher. A new \
-comment emails everyone on the relic's list except the author (naming \
-the address, or "The publisher" for relic_comment; at most once per 10 \
-minutes). One stop link stops every email about that relic.
-8. By default relic_publish and relic_republish upload a picture of the file's \
-first screen, unencrypted, for link previews: the service and anyone holding \
-the link without the key can see it. Pass cover: false for anything you would \
-not show in a chat preview. Automatic .otiod packaging needs a packaged native \
-helper on macOS 15+ arm64 or x64, or Linux glibc 2.28+ kernel 5.6+ arm64 or x64. \
-Otherwise it refuses rather than using pathname checks.
-9. relic_republish emails a change notice, naming the title and version but \
-never the key, to everyone following the relic; pass notify: false to skip \
-it. relic_share hands back a share email with the full link for you to draft \
-in the sharer's own mailbox: Relic never sends it, so the key never reaches \
-the service. Readers holding the link can also share from the viewer once this \
-client version has published or republished the relic.`;
+7. Read reviewed-relic comments with relic_read_comments before changes. Answer \
+with relic_comment, rewrite yours with relic_edit_comment, or settle one with \
+relic_resolve_comment; settled counts as handled. New-comment mail excludes its \
+author, is capped once per 10 minutes, and one stop link stops every email \
+about that relic.
+8. Previews are unencrypted: publish and republish upload the first screen by \
+default. Pass cover: false for anything not public. OTIO previews are a generic \
+card with only the public title and format, never media frames or track metadata. \
+Ordinary file publishing needs Node 18+. An .otiod directory uses the \
+source-included prebuilt Node-API helper only on macOS 15+ arm64 or x64, or \
+Linux glibc 2.28+ kernel 5.6+ arm64 or x64. It is never downloaded or compiled \
+at runtime; other targets refuse the directory instead of using pathname checks.
+9. relic_republish emails followers a change notice naming the title and version, \
+never the key; pass notify: false to skip it. relic_share returns a share email \
+with the full link to draft in the sharer's mailbox but never sends it. Readers \
+holding the link can also share from the viewer once this client version has \
+published or republished the relic.`;
 
 /**
  * Handle one JSON-RPC message.
