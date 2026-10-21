@@ -985,7 +985,9 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'crops and annotated views for image regions, extracted video frames, and ' +
     'for OTIO the original revision\u2019s source intervals plus a separate ' +
     'current-revision projection). Historical OTIO comments are fetched by ' +
-    'their sealed revision, not against the latest bytes. ' +
+    'their service-stamped revision only after it matches the sealed anchor, ' +
+    'and the decrypted original must match the sealed document digest. A ' +
+    'mismatch is unresolvable and carries no artifact-derived context. ' +
     'This defaults to false because content resolution spends a signed download ' +
     'URL mint and download quota. ' +
     COMMENT_MACHINE_BOUNDARY +
@@ -1014,6 +1016,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
         description:
           'Whether to fetch and decrypt the relic to resolve anchors against the actual content ' +
           '(e.g. text quotes with surrounding source context, image region crops and annotated views, video frames). ' +
+          'OTIO source context is returned only after its service-stamped comment revision and sealed document digest validate. ' +
           'Defaults to false because resolving content mints a signed download URL and fetches the ciphertext, ' +
           'which consumes download quota and bandwidth.',
       },
@@ -1185,7 +1188,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
             resolved: {
               type: ['object', 'null'],
               description:
-                'The resolved content and status for this anchor, when resolve_anchors is enabled.',
+                'The resolved content and status for this anchor, when resolve_anchors is enabled. OTIO digest or revision mismatches are unresolvable and contain no artifact-derived context.',
             },
           },
           required: [
@@ -1363,7 +1366,8 @@ export const COMMENT_TOOL_DEFINITION = {
           },
           document_sha256: {
             type: 'string',
-            description: 'OTIO: 64 hex characters of the original content.otio digest.',
+            description:
+              'OTIO: 64 hex characters of the original content.otio digest.',
           },
           timeline_id: {
             type: 'string',
