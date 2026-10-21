@@ -191,6 +191,8 @@ interface Plan {
   readonly nested_image_url: string;
   readonly nested_image_file: string;
   readonly nested_predecessor_file: string;
+  readonly nested_successor_file: string;
+  readonly nested_occluders: readonly string[];
   readonly outside_frame: number;
   readonly outside_kind: string;
   readonly primary_frame: number;
@@ -205,6 +207,7 @@ interface Plan {
     readonly file_frame: number;
     readonly weight: number;
   }[];
+  readonly dissolve_occluders: readonly string[];
   readonly duplicate_track_id: string;
   readonly duplicate_other_track_id: string;
   readonly duplicate_name: string;
@@ -479,7 +482,7 @@ def file_frame_of(clip, source):
     available = getattr(ref, "available_range", None) if ref is not None else None
     origin = available.start_time if available is not None else otio.opentime.RationalTime(0, source.rate)
     relative = source - origin.rescaled_to(source.rate)
-    scaled = relative.rescaled_to(source.rate)
+    scaled = relative.rescaled_to(origin.rate)
     if abs(scaled.value - round(scaled.value)) > 1e-3:
         return None
     return int(round(scaled.value))
@@ -538,13 +541,18 @@ def derive(archive, out_dir):
     by_name = {}
     for track in tracks:
         by_name.setdefault(track.name, []).append(track)
-    duplicates = {name: rows for name, rows in by_name.items() if len(rows) > 1}
-    if not duplicates:
-        raise SystemExit("fixture has no duplicate track name")
-    dup_name = sorted(duplicates)[0]
-    dup_tracks = duplicates[dup_name]
-    dup = dup_tracks[-1]
-    other = dup_tracks[0]
+    def top_track(wanted):
+        rows = [track for track in tracks if relic_id(track) == wanted]
+        if len(rows) != 1:
+            raise SystemExit("fixture needs exactly one top-level track %s, found %d" % (wanted, len(rows)))
+        return rows[0]
+    dup = top_track("track-v2-duplicate")
+    other = top_track("track-v2-main")
+    dup_name = dup.name
+    if other.name != dup_name:
+        raise SystemExit("duplicate proof needs one display name on both tracks, got %r and %r" % (dup_name, other.name))
+    if [relic_id(track) for track in by_name.get(dup_name, [])] != ["track-v2-main", "track-v2-duplicate"]:
+        raise SystemExit("display name %r is not shared by exactly track-v2-main then track-v2-duplicate" % dup_name)
     if relic_id(dup) == relic_id(other):
         raise SystemExit("duplicate tracks are not distinguishable by id")
 
@@ -567,8 +575,25 @@ def derive(archive, out_dir):
         raise SystemExit("nested sample has no predecessor for hold proof")
     url = image_url(ref, image_index)
     predecessor = image_url(ref, image_index - 1)
+    if image_index + 1 >= ref.number_of_images_in_sequence():
+        raise SystemExit("nested sample has no successor for the frame proof")
+    successor = image_url(ref, image_index + 1)
+    def covering_clip(track, at):
+        item = track.child_at_time(timeline.tracks.transformed_time(at, track), True)
+        if item is None or isinstance(item, otio.schema.Gap):
+            return None
+        if isinstance(item, otio.schema.Clip):
+            return item if item.enabled else None
+        raise SystemExit("cannot classify %s over %s" % (type(item).__name__, relic_id(track)))
+    def occluders_above(owner, at):
+        rows = list(owner.parent())
+        index = next(i for i, row in enumerate(rows) if row is owner)
+        return [relic_id(row) for row in rows[index + 1:]
+                if isinstance(row, otio.schema.Track) and row.kind == otio.schema.TrackKind.Video
+                and row.enabled and covering_clip(row, at) is not None]
+    nested_occluders = occluders_above(plate_track, sample) + occluders_above(nested.parent(), sample)
     zf = zipfile.ZipFile(archive)
-    for needed in (url, predecessor):
+    for needed in (url, predecessor, successor):
         if needed not in zf.namelist():
             raise SystemExit("bundle is missing %s" % needed)
         target = Path(out_dir) / needed
@@ -577,8 +602,13 @@ def derive(archive, out_dir):
 
     outside = exposure_start - 1
     outside_t = otio.opentime.RationalTime(outside, rate)
-    outside_hits = [item for item in walk(timeline) if isinstance(item, otio.schema.Clip) and overlaps(item.trimmed_range_in_parent(), outside_t)]
-    outside_kind = "gap" if not any(isinstance(item, otio.schema.Clip) and relic_id(item) == "clip-nested-plate" and overlaps(item.trimmed_range_in_parent(), outside_t) for item in walk(timeline)) else "plate"
+    outside_item = nested.parent().child_at_time(timeline.tracks.transformed_time(outside_t, nested.parent()), True)
+    if outside_item is nested:
+        outside_kind = "plate"
+    elif isinstance(outside_item, otio.schema.Gap):
+        outside_kind = "gap"
+    else:
+        outside_kind = type(outside_item).__name__.lower()
 
     primary = next(item for item in walk(timeline) if relic_id(item) == "clip-v1-primary-a")
     primary_range = primary.trimmed_range_in_parent()
@@ -608,6 +638,7 @@ def derive(archive, out_dir):
     dissolve_spans = []
     weights = []
     frac = (mid - dissolve_start) / max(1, dissolve_end - dissolve_start)
+    dissolve_occluders = occluders_above(v1, mid_t)
     incoming = next(item for item in v1 if relic_id(item) == "clip-v1-primary-a")
     outgoing = next(item for item in v1 if relic_id(item) == "clip-v1-secondary-b")
     for clip, weight in ((incoming, 1 - frac), (outgoing, frac)):
@@ -671,7 +702,14 @@ def derive(archive, out_dir):
             "source_seconds": float(source_start.rescaled_to(1).value),
         })
 
-    dup_clip = next(item for item in walk(dup) if isinstance(item, otio.schema.Clip))
+    dup_clips = [item for item in walk(dup) if isinstance(item, otio.schema.Clip)]
+    if [relic_id(item) for item in dup_clips] != ["clip-v2-duplicate-disabled"]:
+        raise SystemExit("track-v2-duplicate must hold exactly clip-v2-duplicate-disabled, found %s" % [relic_id(item) or item.name for item in dup_clips])
+    dup_clip = dup_clips[0]
+    if dup_clip.parent() is not dup:
+        raise SystemExit("clip-v2-duplicate-disabled is not an immediate child of track-v2-duplicate")
+    if dup_clip.enabled:
+        raise SystemExit("duplicate proof requires the authored disabled clip; clip-v2-duplicate-disabled is enabled")
     dup_range = dup_clip.trimmed_range_in_parent()
     dup_frame = frame_number(dup_range.start_time, rate)
     dup_end = min(frame_number(dup_range.end_time_exclusive(), rate), dup_frame + 4)
@@ -708,7 +746,17 @@ def derive(archive, out_dir):
     gap_range = gap.trimmed_range_in_parent()
     effect = next(item for item in walk(timeline) if relic_id(item) == "clip-v2-unsupported")
     effect_range = effect.trimmed_range_in_parent()
-    effect_frame = frame_number(effect_range.start_time, rate)
+    effect_available = getattr(effect.media_reference, "available_range", None)
+    if effect_available is None:
+        raise SystemExit("unsupported-effect clip has no available range, so its base frame cannot be named")
+    effect_count = frame_number(effect_available.duration, effect_available.start_time.rate)
+    def effect_base_frame(frame):
+        found = file_frame_of(effect, source_at(timeline, effect, otio.opentime.RationalTime(frame, rate)))
+        return found if found is not None and 0 <= found < effect_count else None
+    effect_frame = next((frame for frame in range(frame_number(effect_range.start_time, rate), frame_number(effect_range.end_time_exclusive(), rate))
+                         if effect_base_frame(frame) is not None), None)
+    if effect_frame is None:
+        raise SystemExit("unsupported-effect clip never exposes base media inside its available range")
     effect_span = span_for(timeline, effect, otio.opentime.RationalTime(effect_frame, rate))
     if effect_span["bundle_path"] in zf.namelist():
         dest = Path(out_dir) / effect_span["bundle_path"]
@@ -726,6 +774,8 @@ def derive(archive, out_dir):
         "nested_image_url": url,
         "nested_image_file": url,
         "nested_predecessor_file": predecessor,
+        "nested_successor_file": successor,
+        "nested_occluders": nested_occluders,
         "outside_frame": outside,
         "outside_kind": outside_kind,
         "primary_frame": primary_frame,
@@ -736,6 +786,7 @@ def derive(archive, out_dir):
         "dissolve_query": range_json(query),
         "dissolve_spans": window_spans,
         "dissolve_weights": weights,
+        "dissolve_occluders": dissolve_occluders,
         "duplicate_track_id": relic_id(dup),
         "duplicate_other_track_id": relic_id(other),
         "duplicate_name": dup_name,
@@ -787,11 +838,15 @@ def project(path, relic, source_range):
     start = otio.opentime.RationalTime(source_range["start_time"]["value"], source_range["start_time"]["rate"])
     duration = otio.opentime.RationalTime(source_range["duration"]["value"], source_range["duration"]["rate"])
     wanted = otio.opentime.TimeRange(start, duration)
-    have = clip.source_range
-    if have is None:
-        return {"status": "missing", "mapped_range": None}
-    overlap_start = max(wanted.start_time, have.start_time)
-    overlap_end = min(wanted.end_time_exclusive(), have.end_time_exclusive())
+    parent = clip.parent()
+    base = parent.range_of_child(clip)
+    pre, post = parent.handles_of_child(clip)
+    visible_start = base.start_time - (pre.rescaled_to(base.start_time.rate) if pre is not None else otio.opentime.RationalTime(0, base.start_time.rate))
+    visible_end = base.end_time_exclusive() + (post.rescaled_to(base.start_time.rate) if post is not None else otio.opentime.RationalTime(0, base.start_time.rate))
+    have_start = parent.transformed_time(visible_start, clip)
+    have_end = parent.transformed_time(visible_end, clip)
+    overlap_start = max(wanted.start_time, have_start)
+    overlap_end = min(wanted.end_time_exclusive(), have_end)
     if overlap_end <= overlap_start:
         return {"status": "missing", "mapped_range": None}
     surviving = otio.opentime.TimeRange(overlap_start, overlap_end - overlap_start)
@@ -821,8 +876,12 @@ def mutate(op, src, dest, extra):
         start = otio.opentime.RationalTime(source["start_time"]["value"], source["start_time"]["rate"])
         duration = otio.opentime.RationalTime(source["duration"]["value"], source["duration"]["rate"])
         midpoint = start + otio.opentime.RationalTime(duration.value / 2, duration.rate)
-        clip_start = clip.source_range.start_time
-        clip.source_range = otio.opentime.TimeRange(clip_start, midpoint - clip_start.rescaled_to(midpoint.rate))
+        parent = clip.parent()
+        index = next(i for i, item in enumerate(parent) if item is clip)
+        if index > 0 and isinstance(parent[index - 1], otio.schema.Transition):
+            raise SystemExit("head trim needs no transition before the clip")
+        clip_end = clip.source_range.end_time_exclusive()
+        clip.source_range = otio.opentime.TimeRange(midpoint, clip_end.rescaled_to(midpoint.rate) - midpoint)
         write_dir(timeline, dest)
         print(json.dumps(project(dest, "clip-v1-primary-a", source)))
         return
@@ -833,7 +892,7 @@ def mutate(op, src, dest, extra):
         copy = otio.adapters.read_from_string(otio.adapters.write_to_string(clip))
         track.insert(children.index(clip) + 1, copy)
         write_dir(timeline, dest)
-        print(json.dumps({"status": "ambiguous", "mapped_range": None}))
+        print(json.dumps(project(dest, "clip-v1-primary-a", json.loads(extra))))
         return
     if op == "states":
         plate = next(item for item in walk(timeline) if relic_id(item) == "clip-nested-plate")
@@ -856,29 +915,41 @@ def mutate(op, src, dest, extra):
             rate=24,
             frame_zero_padding=4,
         )
-        black_ref.missing_frame_policy = "black"
+        black_ref.missing_frame_policy = otio.schema.ImageSequenceReference.MissingFramePolicy.black
+        one = otio.opentime.RationalTime(1, 24)
         black = otio.schema.Clip(name="Black Policy Probe", media_reference=black_ref, source_range=otio.opentime.TimeRange(
-            otio.opentime.RationalTime(0, 24), otio.opentime.RationalTime(1, 24)))
+            otio.opentime.RationalTime(0, 24), one))
         black.metadata["relic"] = {"id": "clip-black-policy-probe"}
-        duration = timeline.duration()
-        track = otio.schema.Track(name="Black Policy", kind=otio.schema.TrackKind.Video)
-        track.metadata["relic"] = {"id": "track-black-policy-probe"}
-        track.append(otio.schema.Gap(source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, duration.rate), duration)))
-        track.append(black)
-        timeline.tracks.append(track)
-        codec = next(item for item in walk(timeline) if relic_id(item) == "clip-v2-freeze")
+        under = next(item for item in walk(timeline) if relic_id(item) == "clip-v1-primary-a")
+        if not under.enabled or under.parent().parent() is not timeline.tracks:
+            raise SystemExit("black probe needs an enabled top-level clip beneath it")
+        black_at = under.trimmed_range_in_parent().start_time.rescaled_to(24)
+        if file_frame_of(under, source_at(timeline, under, black_at)) is None or file_frame_of(under, source_at(timeline, under, black_at)) < 0:
+            raise SystemExit("clip beneath the black probe has no in-range media at %s" % black_at)
         prores = "media/unsupported_prores.mov"
         if not (Path(dest) / prores).exists():
-            prores = "media/secondary_b_prores.mov"
-        codec.media_reference = otio.schema.ExternalReference(target_url=prores)
-        codec.active_media_reference_key = "DEFAULT_MEDIA"
+            raise SystemExit("bundle is missing %s" % prores)
+        codec = otio.schema.Clip(name="Codec Probe", media_reference=otio.schema.ExternalReference(
+            target_url=prores,
+            available_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), otio.opentime.RationalTime(24, 24))),
+            source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), one))
+        codec.metadata["relic"] = {"id": "clip-codec-probe"}
+        duration = timeline.duration().rescaled_to(24)
+        track = otio.schema.Track(name="State Probes", kind=otio.schema.TrackKind.Video)
+        track.metadata["relic"] = {"id": "track-state-probes"}
+        if black_at.value > 0:
+            track.append(otio.schema.Gap(source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), black_at)))
+        track.append(black)
+        track.append(otio.schema.Gap(source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), duration - black_at - one)))
+        track.append(codec)
+        timeline.tracks.append(track)
         write_dir(timeline, dest)
-        black_range = black.trimmed_range_in_parent()
-        codec_range = codec.trimmed_range_in_parent()
         print(json.dumps({
             "missing_file": missing,
-            "black_frame": frame_number(black_range.start_time, 24),
-            "codec_frame": frame_number(codec_range.start_time, 24),
+            "black_frame": frame_number(black.trimmed_range_in_parent().start_time, 24),
+            "black_under": relic_id(under),
+            "probe_track": relic_id(track),
+            "codec_frame": frame_number(codec.trimmed_range_in_parent().start_time, 24),
             "codec_media": prores,
         }))
         return
@@ -1018,6 +1089,64 @@ function isOpaqueBlack(rgb: Uint8Array): boolean {
   let peak = 0;
   for (const value of rgb) peak = Math.max(peak, value);
   return peak <= 8;
+}
+
+/** Luminance-weighted centre of the above-half-peak run, as a fraction of row width. */
+function rowCenter(rgb: Uint8Array, rowWidth: number): number {
+  const lum: number[] = [];
+  for (let x = 0; x < rowWidth; x++) {
+    const i = x * 3;
+    lum.push((rgb[i] ?? 0) + (rgb[i + 1] ?? 0) + (rgb[i + 2] ?? 0));
+  }
+  const half = (Math.min(...lum) + Math.max(...lum)) / 2;
+  let sum = 0;
+  let weight = 0;
+  for (let x = 0; x < rowWidth; x++) {
+    const w = Math.max(0, (lum[x] ?? 0) - half);
+    sum += (x + 0.5) * w;
+    weight += w;
+  }
+  assert.ok(weight > 0, 'row has no bar brighter than its background');
+  return sum / weight / rowWidth;
+}
+
+async function frameRowCenter(
+  file: string,
+  frame: number
+): Promise<{ center: number; width: number }> {
+  const result = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      file,
+      '-vf',
+      `select=eq(n\\,${frame}),format=rgb24,crop=iw:1:0:trunc(ih/2)`,
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(
+    result.exit,
+    0,
+    `ffmpeg could not read ${file} frame ${frame}: ${result.stderr}`
+  );
+  assert.ok(
+    result.stdout.length > 0 && result.stdout.length % 3 === 0,
+    `middle row of ${file} frame ${frame} is ${result.stdout.length} bytes`
+  );
+  const rowWidth = result.stdout.length / 3;
+  return {
+    center: rowCenter(new Uint8Array(result.stdout), rowWidth),
+    width: rowWidth,
+  };
 }
 
 interface ChromeSession {
@@ -1281,6 +1410,39 @@ async function sampleCanvas(
   return Uint8Array.from(values);
 }
 
+async function canvasRowCenter(browser: ChromeSession): Promise<number> {
+  const row = await browser.evaluate<number[] | null>(`(() => {
+    const canvas = document.querySelector('canvas.otio-canvas');
+    if (!canvas) return null;
+    const data = canvas.getContext('2d').getImageData(0, Math.floor(canvas.height / 2), canvas.width, 1).data;
+    const out = [];
+    for (let x = 0; x < canvas.width; x++) out.push(data[x * 4], data[x * 4 + 1], data[x * 4 + 2]);
+    return out;
+  })()`);
+  assert.ok(row && row.length > 0 && row.length % 3 === 0, 'canvas row missing');
+  return rowCenter(Uint8Array.from(row), row.length / 3);
+}
+
+async function setTracksHidden(
+  browser: ChromeSession,
+  trackIds: readonly string[],
+  hidden: boolean
+): Promise<void> {
+  for (const trackId of trackIds) {
+    const pressed = await browser.evaluate<string | null>(`(() => {
+      const toggle = document.querySelector(${JSON.stringify(`button[data-track-toggle="${trackId}"]`)});
+      if (!toggle) return null;
+      if (toggle.getAttribute('aria-pressed') !== ${JSON.stringify(String(hidden))}) toggle.click();
+      return toggle.getAttribute('aria-pressed');
+    })()`);
+    assert.equal(
+      pressed,
+      String(hidden),
+      `Hide toggle for ${trackId} did not reach aria-pressed=${hidden}`
+    );
+  }
+}
+
 async function selectTrack(
   browser: ChromeSession,
   trackId: string,
@@ -1497,7 +1659,6 @@ try {
     pass('network-block');
 
     await seekTo(browser, plan.primary_frame);
-    const primaryCanvas = await sampleCanvas(browser, width, height);
     const primaryRight = await extractFrame(
       join(mediaDir, plan.primary_media),
       plan.primary_file_frame,
@@ -1512,25 +1673,49 @@ try {
     );
     const rightBar = barColumn(primaryRight, width, height);
     const wrongBar = barColumn(primaryWrong, width, height);
-    const canvasBar = barColumn(primaryCanvas, width, height);
     assert.ok(
       Math.abs(rightBar - wrongBar) >= 4,
       'fixture frames are not distinct enough to prove a source offset'
     );
+    const rightRow = await frameRowCenter(
+      join(mediaDir, plan.primary_media),
+      plan.primary_file_frame
+    );
+    const wrongRow = await frameRowCenter(
+      join(mediaDir, plan.primary_media),
+      plan.primary_wrong_file_frame
+    );
+    const canvasCenter = await canvasRowCenter(browser);
+    const toRightPx = Math.abs(canvasCenter - rightRow.center) * rightRow.width;
+    const toWrongPx = Math.abs(canvasCenter - wrongRow.center) * rightRow.width;
     assert.ok(
-      Math.abs(canvasBar - rightBar) <= 3,
-      `canvas bar ${canvasBar} does not match source frame ${plan.primary_file_frame} bar ${rightBar}`
+      toRightPx <= 3,
+      `canvas bar is ${toRightPx.toFixed(2)} source px from file frame ${plan.primary_file_frame}`
     );
     assert.ok(
-      Math.abs(canvasBar - wrongBar) >= 4,
-      `canvas matches the wrong source frame ${plan.primary_wrong_file_frame}`
+      toWrongPx >= 12,
+      `canvas bar is ${toWrongPx.toFixed(2)} source px from the wrong file frame ${plan.primary_wrong_file_frame}`
     );
     pass('pixels-offset');
 
+    await setTracksHidden(browser, plan.nested_occluders, true);
     await seekTo(browser, plan.nested_frame);
     const nestedCanvas = await sampleCanvas(browser, width, height);
+    await setTracksHidden(browser, plan.nested_occluders, false);
     const plate = await extractFrame(
       join(mediaDir, plan.nested_image_file),
+      0,
+      width,
+      height
+    );
+    const platePredecessor = await extractFrame(
+      join(mediaDir, plan.nested_predecessor_file),
+      0,
+      width,
+      height
+    );
+    const plateSuccessor = await extractFrame(
+      join(mediaDir, plan.nested_successor_file),
       0,
       width,
       height
@@ -1540,6 +1725,13 @@ try {
     assert.ok(
       Math.abs(nestedBar - plateBar) <= 3,
       `nested frame 200 bar ${nestedBar} does not match ${plan.nested_image_url} bar ${plateBar}`
+    );
+    const toPlate = rmse(nestedCanvas, plate);
+    const toPredecessor = rmse(nestedCanvas, platePredecessor);
+    const toSuccessor = rmse(nestedCanvas, plateSuccessor);
+    assert.ok(
+      toPlate + 2 < toPredecessor && toPlate + 2 < toSuccessor,
+      `nested frame ${plan.nested_frame} is not ${plan.nested_image_file} (plate ${toPlate}, before ${toPredecessor}, after ${toSuccessor})`
     );
     pass('nested-200');
 
@@ -1562,8 +1754,10 @@ try {
     );
     pass('nested-no-spill');
 
+    await setTracksHidden(browser, plan.dissolve_occluders, true);
     await seekTo(browser, plan.dissolve_frame);
     const dissolveCanvas = await sampleCanvas(browser, width, height);
+    await setTracksHidden(browser, plan.dissolve_occluders, false);
     assert.ok(
       plan.dissolve_weights.length >= 2,
       'dissolve has fewer than two weighted sources'
@@ -1620,6 +1814,7 @@ try {
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 2048;
         source.connect(analyser);
+        const seekedAt = node.currentTime;
         await node.play();
         await new Promise((done) => setTimeout(done, 300));
         const time = new Uint8Array(analyser.fftSize);
@@ -1640,7 +1835,7 @@ try {
           path: node.dataset.bundlePath,
           rms: Math.sqrt(acc / time.length),
           bin,
-          currentTime: node.currentTime,
+          currentTime: seekedAt,
           active: node.dataset.active === 'true',
         };
       })).then((rows) => resolve({ missing: false, rows }), () => resolve({ missing: true, rows: [] }));
@@ -2127,6 +2322,7 @@ try {
     'ambiguous',
     ambiguousDir,
     ambiguousDir,
+    JSON.stringify(plan.comment_source.source_range),
   ]);
   const ambiguousExpect = JSON.parse(ambiguousJson) as {
     status: string;
@@ -2176,6 +2372,8 @@ try {
   const statePlan = JSON.parse(stateJson) as {
     missing_file: string;
     black_frame: number;
+    black_under: string;
+    probe_track: string;
     codec_frame: number;
     codec_media: string;
   };
@@ -2191,6 +2389,7 @@ try {
   const stateBrowser = await openBrowser(stateUrl, sessionToken);
   try {
     await waitReady(stateBrowser);
+    await setTracksHidden(stateBrowser, plan.nested_occluders, true);
     await seekTo(stateBrowser, plan.nested_frame);
     const held = await sampleCanvas(stateBrowser, width, height);
     const predecessor = await extractFrame(
@@ -2216,8 +2415,18 @@ try {
       rmse(heldAgain, predecessor) + 2 < rmse(heldAgain, missingPlate),
       'hold changed with seek order'
     );
+    await setTracksHidden(stateBrowser, plan.nested_occluders, false);
     pass('state-hold');
 
+    await setTracksHidden(stateBrowser, [statePlan.probe_track], true);
+    await seekTo(stateBrowser, statePlan.black_frame);
+    const beneath = await sampleCanvas(stateBrowser, width, height);
+    assert.equal(
+      isOpaqueBlack(beneath),
+      false,
+      `${statePlan.black_under} paints nothing under the black probe, so the policy check cannot fail`
+    );
+    await setTracksHidden(stateBrowser, [statePlan.probe_track], false);
     await seekTo(stateBrowser, statePlan.black_frame);
     const black = await sampleCanvas(stateBrowser, width, height);
     assert.equal(
