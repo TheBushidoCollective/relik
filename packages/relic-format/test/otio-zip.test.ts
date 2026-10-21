@@ -157,6 +157,19 @@ function findZipHeader(
   throw new Error(`header not found for ${name}`);
 }
 
+function localDataOffset(view: DataView, localHeader: number): number {
+  return (
+    localHeader +
+    30 +
+    view.getUint16(localHeader + 26, true) +
+    view.getUint16(localHeader + 28, true)
+  );
+}
+
+function localEntryEnd(view: DataView, localHeader: number): number {
+  return localDataOffset(view, localHeader) + view.getUint32(localHeader + 18, true);
+}
+
 function withEocdComment(zip: Uint8Array, comment: Uint8Array): Uint8Array {
   const out = new Uint8Array(zip.length + comment.length);
   out.set(zip, 0);
@@ -382,7 +395,7 @@ describe('otio-zip security indexing and subtype detection', () => {
     await expectZipFailure(zip, 'unsupported-zip');
   });
 
-  test('rejects overlapping entry extents', async () => {
+  test('rejects crossing entry extents', async () => {
     const zip = createZipBuffer([
       { name: 'version.txt', data: validVersionTxt },
       { name: 'content.otio', data: validContentOtio },
@@ -396,11 +409,76 @@ describe('otio-zip security indexing and subtype detection', () => {
       { name: 'media/b.bin', data: new Uint8Array([5, 6, 7, 8]) },
     ]);
     const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
-    const local = findZipHeader(zip, 'media/a.bin', 0x04034b50, 30);
-    const cd = findZipHeader(zip, 'media/a.bin', 0x02014b50, 46);
-    view.setUint32(local + 18, 40, true);
-    view.setUint32(cd + 20, 40, true);
+    const aLocal = findZipHeader(zip, 'media/a.bin', 0x04034b50, 30);
+    const aCd = findZipHeader(zip, 'media/a.bin', 0x02014b50, 46);
+    const bLocal = findZipHeader(zip, 'media/b.bin', 0x04034b50, 30);
+    const crossingSize = bLocal - localDataOffset(view, aLocal) + 1;
+    const bEnd = localEntryEnd(view, bLocal);
+
+    view.setUint32(aLocal + 18, crossingSize, true);
+    view.setUint32(aCd + 20, crossingSize, true);
+
+    expect(localEntryEnd(view, aLocal)).toBeGreaterThan(bLocal);
+    expect(localEntryEnd(view, aLocal)).toBeLessThan(bEnd);
     await expectZipFailure(zip, 'corrupt-archive');
+  });
+
+  test('rejects a nested entry extent', async () => {
+    const zip = createZipBuffer([
+      { name: 'version.txt', data: validVersionTxt },
+      { name: 'content.otio', data: validContentOtio },
+      { name: 'media/outer.bin', data: new Uint8Array([1]) },
+      { name: 'media/inner.bin', data: new Uint8Array([2]) },
+    ]);
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const outerLocal = findZipHeader(zip, 'media/outer.bin', 0x04034b50, 30);
+    const outerCd = findZipHeader(zip, 'media/outer.bin', 0x02014b50, 46);
+    const innerLocal = findZipHeader(zip, 'media/inner.bin', 0x04034b50, 30);
+    const nestedSize = localEntryEnd(view, innerLocal) - localDataOffset(view, outerLocal);
+
+    view.setUint32(outerLocal + 18, nestedSize, true);
+    view.setUint32(outerLocal + 22, nestedSize, true);
+    view.setUint32(outerCd + 20, nestedSize, true);
+    view.setUint32(outerCd + 24, nestedSize, true);
+
+    expect(localEntryEnd(view, outerLocal)).toBe(localEntryEnd(view, innerLocal));
+    await expectZipFailure(zip, 'corrupt-archive');
+  });
+
+  test('allows local entry extents that touch at a boundary', async () => {
+    const zip = createZipBuffer([
+      { name: 'version.txt', data: validVersionTxt },
+      { name: 'content.otio', data: validContentOtio },
+      { name: 'media/a.bin', data: new Uint8Array([1, 2, 3]) },
+      { name: 'media/b.bin', data: new Uint8Array([4, 5, 6]) },
+    ]);
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const aLocal = findZipHeader(zip, 'media/a.bin', 0x04034b50, 30);
+    const bLocal = findZipHeader(zip, 'media/b.bin', 0x04034b50, 30);
+
+    expect(localEntryEnd(view, aLocal)).toBe(bLocal);
+    const index = await indexOtioZip(zip);
+    expect(index.entries.has('media/b.bin')).toBe(true);
+  });
+
+  test('indexes the largest accepted non-overlapping entry census', async () => {
+    const maxEntryCount = 0xffff - 1;
+    const empty = new Uint8Array();
+    const files: ZipFileDef[] = [
+      { name: 'version.txt', data: validVersionTxt },
+      { name: 'content.otio', data: validContentOtio },
+    ];
+    for (let i = files.length; i < maxEntryCount; i++) {
+      files.push({ name: `media/${i.toString(36)}.bin`, data: empty });
+    }
+
+    const zip = createZipBuffer(files);
+    expect(zip.byteLength).toBeLessThan(MAX_EXPANDED_ZIP_BYTES);
+
+    const index = await indexOtioZip(zip);
+    const lastName = `media/${(maxEntryCount - 1).toString(36)}.bin`;
+    expect(index.entries.size).toBe(maxEntryCount);
+    expect(index.entries.has(lastName)).toBe(true);
   });
 
   test('rejects an EOCD whose comment length ignores trailing bytes', async () => {

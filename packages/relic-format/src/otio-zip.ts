@@ -457,7 +457,7 @@ export async function indexOtioZip(
 
   const entries = new Map<string, OtioZipEntryInfo>();
   const normalizedNames = new Set<string>();
-  const occupied: Array<{ start: number; end: number }> = [];
+  const extents: Array<{ start: number; end: number; name: string }> = [];
   let aggregateUncompressed = 0;
   let cursor = cdOffset;
   const cdEnd = cdOffset + cdSize;
@@ -653,15 +653,7 @@ export async function indexOtioZip(
         `File data overlaps central directory: ${rawName}`
       );
     }
-    for (const prev of occupied) {
-      if (localHeaderOffset < prev.end && prev.start < dataEnd) {
-        throw new OtioZipError(
-          'corrupt-archive',
-          `ZIP entries overlap: ${rawName}`
-        );
-      }
-    }
-    occupied.push({ start: localHeaderOffset, end: dataEnd });
+    extents.push({ start: localHeaderOffset, end: dataEnd, name: rawName });
 
     const isDir = rawName.endsWith('/') || rawName.endsWith('\\');
 
@@ -687,6 +679,20 @@ export async function indexOtioZip(
       'corrupt-archive',
       'Central directory census did not consume the declared extent'
     );
+  }
+
+  // A single sort keeps extent validation bounded for every accepted
+  // non-ZIP64 entry count, including a 65,534-entry archive.
+  extents.sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < extents.length; i++) {
+    const previous = extents[i - 1]!;
+    const current = extents[i]!;
+    if (current.start < previous.end) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `ZIP entries overlap: ${current.name}`
+      );
+    }
   }
 
   const successByEntry = new Map<string, Uint8Array>();
