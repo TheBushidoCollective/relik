@@ -1,10 +1,12 @@
 /**
  * Bundle the client into one readable Node ESM file.
  *
- * Deliberately NOT minified. The whole point of shipping source rather than a
- * compiled binary is that an agent, or a person, can read what the encryption
- * path actually does before trusting it. A minified bundle would be a black
- * box wearing a `.js` extension.
+ * Deliberately NOT minified. The JavaScript encryption path stays readable so
+ * an agent or person can inspect what happens before trusting it. The
+ * source-included Node-API confined opener for .otiod is the narrow compiled
+ * exception; it ships as audited source and target-specific prebuilts. A
+ * minified JavaScript bundle would still be a black box wearing a `.js`
+ * extension.
  *
  * One file rather than a tree, because the alternative is publishing
  * `@relic/format` separately and asking a reader to follow imports across

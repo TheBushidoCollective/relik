@@ -684,6 +684,13 @@ export async function readSource(
     );
   }
 
+  if (bytes.length > PLAINTEXT_CAP_BYTES) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${resolvedPath} changed beyond the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap while being read`
+    );
+  }
+
   const base = files.basename(resolvedPath).toLowerCase();
   if (base.endsWith('.otioz')) {
     // Validate existing .otioz archive structurally before grant/upload.

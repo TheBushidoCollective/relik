@@ -774,8 +774,6 @@ export async function bundleOtiod(
         `Invalid OTIO JSON in content.otio: ${(error as Error).message}`
       );
     }
-    if (!isRecord(otioJson))
-      bundleRefusal('content.otio root must be an object');
 
     const mediaRefMap = new Map<string, string>();
     collectReferencedMedia(otioJson, mediaRefMap, {

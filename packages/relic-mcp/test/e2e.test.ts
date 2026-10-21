@@ -15,6 +15,7 @@ import {
   openRelic,
   parseFragment,
   parseRelicId,
+  PLAINTEXT_CAP_BYTES,
 } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -67,6 +68,36 @@ function fakeFiles(): FileReader {
       const bytes = disk.get(path);
       if (bytes === undefined) throw new Error('ENOENT');
       return bytes;
+    },
+    async openBundleRoot(rootPath) {
+      let rootClosed = false;
+      return {
+        async openRegular(relativePath) {
+          if (rootClosed) throw new Error('bundle root is closed');
+          const bytes = disk.get(`${rootPath}/${relativePath}`);
+          if (bytes === undefined) {
+            const error = Object.assign(new Error('ENOENT'), {
+              code: 'ENOENT',
+            });
+            throw error;
+          }
+          let fileClosed = false;
+          return {
+            size: bytes.length,
+            async readBounded(maxBytes) {
+              if (fileClosed) throw new Error('bundle file is closed');
+              if (bytes.length > maxBytes) throw new Error('EFBIG');
+              return bytes;
+            },
+            async close() {
+              fileClosed = true;
+            },
+          };
+        },
+        async close() {
+          rootClosed = true;
+        },
+      };
     },
   };
 }
@@ -419,6 +450,25 @@ describe('local refusals, before any HTTP', () => {
       expect(failure.details['size_limit_bytes']).toBe(512);
       expect(failure.details['size_basis']).toBe('plaintext');
     }
+  });
+
+  test('refuses an oversized raw .otioz before asking its reader for bytes', async () => {
+    let reads = 0;
+    const oversized: FileReader = {
+      ...fakeFiles(),
+      async stat() {
+        return { kind: 'file', size: PLAINTEXT_CAP_BYTES + 1 };
+      },
+      async read() {
+        reads += 1;
+        return new Uint8Array();
+      },
+    };
+
+    await expect(
+      publish({ path: 'oversized.otioz' }, { ...deps, files: oversized })
+    ).rejects.toMatchObject({ code: 'local_size_precheck_failed' });
+    expect(reads).toBe(0);
   });
 
   test('a local refusal costs no grant', async () => {
