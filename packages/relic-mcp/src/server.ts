@@ -268,14 +268,19 @@ export const TOOL_DEFINITION = {
     'it. Pass an empty string to publish without one. ' +
     'By default a picture of the first screen is rendered locally and ' +
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
-    'it. Takes a filesystem path, never ' +
+    'it. An .otiod directory is packaged into a standard .otioz archive ' +
+    '(content.otio, version.txt 1.0.0, and only referenced media under media/). ' +
+    'A raw .otio file or an existing .otioz archive is published as given. ' +
+    'OTIO covers use only the public title and format label; media frames stay ' +
+    'out of the unencrypted preview. Takes a filesystem path, never ' +
     'inline content.',
   inputSchema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Filesystem path to the file to publish.',
+        description:
+          'Filesystem path to the file or .otiod bundle directory to publish.',
       },
       filename: {
         type: 'string',
@@ -381,7 +386,11 @@ export const REPUBLISH_TOOL_DEFINITION = {
     'token; a relic that was taken down can never be revived. ' +
     'By default a picture of the first screen is rendered locally and ' +
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
-    'it.' +
+    'it. An .otiod directory is packaged into a standard .otioz archive ' +
+    '(content.otio, version.txt 1.0.0, and only referenced media under media/). ' +
+    'A raw .otio file or an existing .otioz archive is republished as given. ' +
+    'OTIO covers use only the public title and format label; media frames stay ' +
+    'out of the unencrypted preview.' +
     REPUBLISH_DISCIPLINE_DISCLOSURE +
     ' Each new version emails a change notice, naming the title and version and never the key, to each verified commenter and each address added with relic_share, minus any that stopped emails; pass notify: false to skip it. At most one email per person per relic per 10 minutes, and one stop link stops every email about that relic.',
   inputSchema: {
@@ -394,7 +403,7 @@ export const REPUBLISH_TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to the file that becomes the new version.',
+          'Filesystem path to the file or .otiod bundle directory that becomes the new version.',
       },
       filename: {
         type: 'string',
@@ -592,15 +601,17 @@ export const LOOKUP_TOOL_DEFINITION = {
   name: LOOKUP_TOOL_NAME,
   title: 'Look up a published source',
   description:
-    'Look up whether this machine already published a file and return the ' +
-    'relic id needed by relic_republish. Reads local publish state only and ' +
-    'never calls the service.',
+    'Look up whether this machine already published a file or .otiod bundle ' +
+    'directory and return the relic id needed by relic_republish. An .otiod ' +
+    'directory is identified by its original path even after it was packaged ' +
+    'as .otioz. Reads local publish state only and never calls the service.',
   inputSchema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Filesystem path to the source to look up.',
+        description:
+          'Filesystem path to the file or .otiod bundle directory to look up.',
       },
     },
     required: ['path'],
@@ -959,7 +970,8 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'resolved before a new version can land. ' +
     'Each comment can be a remark on the relic as a whole or an exact mark: ' +
     'a text quote with surrounding context, a stage pin, an artifact region, ' +
-    'a timestamp or span in audio or video, or a page in a document. ' +
+    'a timestamp or span in audio or video, a page in a document, or an OTIO ' +
+    'timeline point or range. ' +
     'Pass `version` to scope the thread: a version number returns the comments ' +
     'made on that version, `"*"` returns every comment on every version, and ' +
     'omitting it returns the comments on the relic\u2019s current version only. ' +
@@ -970,7 +982,10 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'whole one. ' +
     'Pass `resolve_anchors: true` to fetch and decrypt the relic content and ' +
     'resolve anchors against the actual content (source context runs for quotes, ' +
-    'crops and annotated views for image regions, and extracted video frames). ' +
+    'crops and annotated views for image regions, extracted video frames, and ' +
+    'for OTIO the original revision\u2019s source intervals plus a separate ' +
+    'current-revision projection). Historical OTIO comments are fetched by ' +
+    'their sealed revision, not against the latest bytes. ' +
     'This defaults to false because content resolution spends a signed download ' +
     'URL mint and download quota. ' +
     COMMENT_MACHINE_BOUNDARY +
@@ -1090,6 +1105,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
                 'artifact region ({kind: "region", rect: {x, y, w, h}}), ' +
                 'media timestamp or span ({kind: "time", t, t_end?, rect?}), ' +
                 'paged document page ({kind: "page", page, rect?, exact?}), ' +
+                'OTIO point or range ({kind: "otio", v: 1, relic_version, document_sha256, timeline_id, track_id, range, snapshot}), ' +
                 'or unsupported ({kind: "unsupported", declared}).',
               properties: {
                 kind: {
@@ -1101,6 +1117,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
                     'region',
                     'time',
                     'page',
+                    'otio',
                     'unsupported',
                   ],
                 },
@@ -1221,8 +1238,8 @@ export const COMMENT_TOOL_DEFINITION = {
     'every email about that relic. That is attribution and not ' +
     'authorization. ' +
     'Comments can be anchored to an exact location: a text quote, a stage ' +
-    'pin, an artifact region, a moment or span in audio or video, or a page ' +
-    'in a document. Passing an anchor attaches your reply at that location, ' +
+    'pin, an artifact region, a moment or span in audio or video, a page ' +
+    'in a document, or an OTIO timeline point or range. Passing an anchor attaches your reply at that location, ' +
     'so the reader sees what you are answering; omitting it leaves a remark ' +
     'about the whole relic. ' +
     COMMENT_MACHINE_BOUNDARY +
@@ -1264,12 +1281,14 @@ export const COMMENT_TOOL_DEFINITION = {
           'a box on the artifact ({kind: "region", rect: {x, y, w, h}}), ' +
           'a moment or span in audio/video ({kind: "time", t, t_end?, rect?}, with t ' +
           'given as seconds or as a timecode like "1:23"), ' +
-          'or a page in a paged document ({kind: "page", page, rect?, exact?}). ' +
+          'a page in a paged document ({kind: "page", page, rect?, exact?}), ' +
+          'or an OTIO point or range ({kind: "otio", v: 1, relic_version, document_sha256, timeline_id, track_id, item_id?, range: {start_time, duration}, snapshot}). ' +
+          'track_id null marks the whole composition. Zero duration is a point. ' +
           'Omit for a remark about the whole relic.',
         properties: {
           kind: {
             type: 'string',
-            enum: ['quote', 'text', 'pin', 'region', 'time', 'page'],
+            enum: ['quote', 'text', 'pin', 'region', 'time', 'page', 'otio'],
             description: 'The kind of anchor mark.',
           },
           exact: {
@@ -1330,6 +1349,72 @@ export const COMMENT_TOOL_DEFINITION = {
             minimum: 1,
             maximum: 10000,
             description: 'For page anchors: 1-based page number (1 to 10000).',
+          },
+          v: {
+            type: 'integer',
+            const: 1,
+            description: 'OTIO anchor version. Only 1 can be written.',
+          },
+          relic_version: {
+            type: 'integer',
+            minimum: 1,
+            description:
+              'OTIO: the relic revision this mark was made on. Sealed, not the format version.',
+          },
+          document_sha256: {
+            type: 'string',
+            description: 'OTIO: 64 hex characters of the original content.otio digest.',
+          },
+          timeline_id: {
+            type: 'string',
+            description: 'OTIO: timeline node id.',
+          },
+          track_id: {
+            type: ['string', 'null'],
+            description:
+              'OTIO: track node id, or null for the whole composition.',
+          },
+          item_id: {
+            type: 'string',
+            description: 'OTIO: optional item id inside the track.',
+          },
+          range: {
+            type: 'object',
+            description:
+              'OTIO: half-open timeline range. Zero duration is a point.',
+            properties: {
+              start_time: {
+                type: 'object',
+                properties: {
+                  value: { type: 'number' },
+                  rate: { type: 'number' },
+                },
+                required: ['value', 'rate'],
+                additionalProperties: false,
+              },
+              duration: {
+                type: 'object',
+                properties: {
+                  value: { type: 'number' },
+                  rate: { type: 'number' },
+                },
+                required: ['value', 'rate'],
+                additionalProperties: false,
+              },
+            },
+            required: ['start_time', 'duration'],
+            additionalProperties: false,
+          },
+          snapshot: {
+            type: 'object',
+            description: 'OTIO: bounded labels for timeline, track, and item.',
+            properties: {
+              timeline: { type: 'string' },
+              track: { type: ['string', 'null'] },
+              item: { type: ['string', 'null'] },
+            },
+            required: ['timeline', 'track', 'item'],
+            additionalProperties: false,
           },
         },
         required: ['kind'],
@@ -2764,6 +2849,18 @@ function resolutionLine(resolved: CommentRecord['resolved']): string {
 
     case 'unsupported':
       return `[Resolution note: ${resolved.explanation}]\n`;
+    case 'otio':
+      if (resolved.status === 'unresolvable') {
+        return `[Resolution note: ${resolved.explanation} Snapshot: ${resolved.snapshot.timeline}${resolved.snapshot.track ? ` / ${resolved.snapshot.track}` : ''}]\n`;
+      }
+      return (
+        `[OTIO revision ${resolved.relic_version} ${resolved.start_timecode}` +
+        `${resolved.point ? '' : ` to ${resolved.end_timecode}`}, ` +
+        `${resolved.intersections.length} intersection(s). ` +
+        `Current projection: ${resolved.current_projection.status}` +
+        `${resolved.current_projection.current_version === null ? '' : ` on version ${resolved.current_projection.current_version}`}. ` +
+        `${resolved.current_projection.explanation}]\n`
+      );
   }
 }
 
