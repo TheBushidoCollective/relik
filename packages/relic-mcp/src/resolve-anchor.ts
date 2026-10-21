@@ -39,6 +39,7 @@ import {
   type OtioAnchorResolution,
   type OtioAnchorV1,
   type OtioDocumentV1,
+  type OtioNode,
   type OtioRationalTime,
   type OtioSourceSpan,
   type OtioTimeRange,
@@ -1018,7 +1019,7 @@ function ancestry(
   let cursor: string | null = nodeId;
   while (cursor && !seen.has(cursor)) {
     seen.add(cursor);
-    const node = document.nodes[cursor];
+    const node: OtioNode | undefined = document.nodes[cursor];
     if (!node) break;
     chain.unshift({
       id: node.id,
@@ -1203,34 +1204,44 @@ async function resolveOtioComment(
     currentVersion: number,
     currentDocument: OtioDocumentV1
   ): OtioCurrentProjection => {
-    const copied = {
+    const copied: {
+      status: OtioCurrentProjection['status'];
+      current_version: number;
+      explanation: string;
+      mapped_ranges?: readonly OtioTimeRange[];
+      mapped_timeline_id?: string;
+      mapped_track_id?: string | null;
+      mapped_item_id?: string;
+    } = {
       status: projected.status,
       current_version: currentVersion,
       explanation: projectionExplanation(projected.status),
-      ...(projected.mapped_ranges === undefined
-        ? {}
-        : { mapped_ranges: projected.mapped_ranges }),
-      ...(projected.mapped_timeline_id === undefined
-        ? {}
-        : { mapped_timeline_id: projected.mapped_timeline_id }),
-      ...(projected.mapped_track_id === undefined
-        ? {}
-        : { mapped_track_id: projected.mapped_track_id }),
-      ...(projected.mapped_item_id === undefined
-        ? {}
-        : { mapped_item_id: projected.mapped_item_id }),
     };
-    if (projected.mapped_range === undefined) return copied;
+    if (projected.mapped_ranges !== undefined) {
+      copied.mapped_ranges = projected.mapped_ranges;
+    }
+    if (projected.mapped_timeline_id !== undefined) {
+      copied.mapped_timeline_id = projected.mapped_timeline_id;
+    }
+    if (projected.mapped_track_id !== undefined) {
+      copied.mapped_track_id = projected.mapped_track_id;
+    }
+    if (projected.mapped_item_id !== undefined) {
+      copied.mapped_item_id = projected.mapped_item_id;
+    }
+
+    const mappedRange = projected.mapped_range;
+    if (mappedRange === undefined) return copied;
 
     const mappedClock = rangeClock(
-      projected.mapped_range,
+      mappedRange,
       projected.mapped_timeline_id === undefined
         ? undefined
         : currentDocument.global_start_times?.[projected.mapped_timeline_id]
     );
     return {
       ...copied,
-      mapped_range: projected.mapped_range,
+      mapped_range: mappedRange,
       mapped_start_seconds: mappedClock.start_seconds,
       mapped_start_timecode: mappedClock.start_timecode,
     };
@@ -1896,19 +1907,6 @@ export async function resolveAnchors(
             x: anchor.x,
             y: anchor.y,
             explanation: `Stage-relative pin at (${Math.round(anchor.x * 100)}%, ${Math.round(anchor.y * 100)}%). Pins are placed relative to the viewer stage rather than the content itself, so they cannot be resolved against artifact content with fidelity.`,
-          },
-        });
-        break;
-      }
-
-      case 'unsupported': {
-        updatedComments.push({
-          ...comment,
-          resolved: {
-            kind: 'unsupported',
-            status: 'unresolvable',
-            declared: anchor.declared,
-            explanation: `Unsupported anchor kind "${anchor.declared}".`,
           },
         });
         break;
