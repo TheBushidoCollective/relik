@@ -901,9 +901,10 @@ const nodeInflater: InflaterFn = (compressed, uncompressedSize, maxBytes) => {
     );
   }
 
-  const { promise, resolve, reject } = Promise.withResolvers<Uint8Array>();
+  const { promise, resolve, reject } = defer<Uint8Array>();
   try {
-    inflateRaw(compressed, { maxOutputLength: maxBytes }, (error, result) => {
+    // zlib requires a positive cap; an empty entry still has a zero-byte result budget.
+    inflateRaw(compressed, { maxOutputLength: Math.max(1, maxBytes) }, (error, result) => {
       if (error) {
         reject(error);
         return;
