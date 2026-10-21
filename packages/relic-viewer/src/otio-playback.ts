@@ -278,14 +278,7 @@ function paintNode(
   if (node.kind === 'stack') {
     ctx.globalCompositeOperation = 'source-over';
     for (const child of node.children) {
-      const painted = paintNode(
-        child,
-        width,
-        height,
-        leaves,
-        checkout,
-        hidden
-      );
+      const painted = paintNode(child, width, height, leaves, checkout, hidden);
       if (!painted) continue;
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
@@ -646,7 +639,9 @@ export function createOtioPlayback(
   }
 
   function anySolo(kind: 'Video' | 'Audio'): boolean {
-    return Object.values(tracks).some((track) => track.kind === kind && track.solo);
+    return Object.values(tracks).some(
+      (track) => track.kind === kind && track.solo
+    );
   }
 
   function trackAudible(trackId: string): boolean {
@@ -706,9 +701,7 @@ export function createOtioPlayback(
     );
   }
 
-  function contributionIssues(
-    result: OtioEvaluationResult
-  ): OtioDiagnostic[] {
+  function contributionIssues(result: OtioEvaluationResult): OtioDiagnostic[] {
     const issues: OtioDiagnostic[] = [];
     const seen = new Set<string>();
     const push = (issue: OtioDiagnostic | null): void => {
@@ -757,14 +750,16 @@ export function createOtioPlayback(
 
   function previewBlocked(result?: OtioEvaluationResult): boolean {
     if (baseMediaPreviewAllowed) return false;
-    const evaluation =
-      result ?? evaluateOtioAt(doc, timelineId, currentTime);
+    const evaluation = result ?? evaluateOtioAt(doc, timelineId, currentTime);
     return contributionIssues(evaluation).length > 0;
   }
 
   function revokeOwned(url: string): void {
     ownedUrls.delete(url);
-    if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+    if (
+      typeof URL !== 'undefined' &&
+      typeof URL.revokeObjectURL === 'function'
+    ) {
       try {
         URL.revokeObjectURL(url);
       } catch {
@@ -791,7 +786,10 @@ export function createOtioPlayback(
       return isAssignableUrl(resolved) ? resolved : null;
     }
     if (!(resolved instanceof Blob)) return null;
-    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    if (
+      typeof URL === 'undefined' ||
+      typeof URL.createObjectURL !== 'function'
+    ) {
       return null;
     }
     if (isDisposed) return null;
@@ -826,7 +824,10 @@ export function createOtioPlayback(
     gen: number
   ): Promise<boolean> {
     if (stale(gen)) return Promise.resolve(false);
-    if (decodedAt.get(media) === target && media.readyState >= HAVE_CURRENT_DATA) {
+    if (
+      decodedAt.get(media) === target &&
+      media.readyState >= HAVE_CURRENT_DATA
+    ) {
       return Promise.resolve(true);
     }
     const { promise, resolve } = Promise.withResolvers<boolean>();
@@ -848,7 +849,10 @@ export function createOtioPlayback(
       if (media.readyState >= HAVE_CURRENT_DATA) finish(true);
     };
     const onReady = (): void => {
-      if (media.readyState >= HAVE_CURRENT_DATA && media.currentTime === target) {
+      if (
+        media.readyState >= HAVE_CURRENT_DATA &&
+        media.currentTime === target
+      ) {
         finish(true);
       }
     };
@@ -878,7 +882,8 @@ export function createOtioPlayback(
     const pending = (async () => {
       const url = await sharedUrl(path);
       if (!url || isDisposed) return null;
-      if (typeof document === 'undefined' || !document.createElement) return null;
+      if (typeof document === 'undefined' || !document.createElement)
+        return null;
       const element = document.createElement('video');
       if (isDisposed) return null;
       element.preload = 'auto';
@@ -1100,7 +1105,11 @@ export function createOtioPlayback(
     }
   }
 
-  function applyAudioGain(entry: LoadedAudio, gain: number, audible: boolean): void {
+  function applyAudioGain(
+    entry: LoadedAudio,
+    gain: number,
+    audible: boolean
+  ): void {
     const trackScale = audible ? 1 : 0;
     const node = trackGain(entry.trackId);
     if (node) node.gain.value = trackScale;
@@ -1389,8 +1398,7 @@ export function createOtioPlayback(
         surface.height = height;
         return surface;
       },
-      (nodeId, ancestry) =>
-        videoHidden(nodeId, ancestry) || blocked.has(nodeId)
+      (nodeId, ancestry) => videoHidden(nodeId, ancestry) || blocked.has(nodeId)
     );
   }
 
@@ -1514,7 +1522,8 @@ export function createOtioPlayback(
       diagnostics,
       tracks: { ...tracks },
       baseMediaPreviewAllowed,
-      previewBlocked: !baseMediaPreviewAllowed && contributionIssues(evaluation).length > 0,
+      previewBlocked:
+        !baseMediaPreviewAllowed && contributionIssues(evaluation).length > 0,
     };
   }
 
@@ -1601,7 +1610,11 @@ export function createOtioPlayback(
       tracks[trackId] = { ...track, muted };
       for (const entry of audios.values()) {
         if (entry.trackId !== trackId) continue;
-        applyAudioGain(entry, entry.gainNode?.gain.value ?? entry.element.volume, trackAudible(trackId));
+        applyAudioGain(
+          entry,
+          entry.gainNode?.gain.value ?? entry.element.volume,
+          trackAudible(trackId)
+        );
         if (!trackAudible(trackId)) {
           entry.element.pause();
           entry.element.setAttribute('data-active', 'false');

@@ -13,9 +13,9 @@ import {
   encodeKey,
   MAX_TITLE_CHARS,
   openRelic,
+  PLAINTEXT_CAP_BYTES,
   parseFragment,
   parseRelicId,
-  PLAINTEXT_CAP_BYTES,
 } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';

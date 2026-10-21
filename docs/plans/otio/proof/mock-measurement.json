@@ -20,11 +20,7 @@
       "groundWarmth": -0.02,
       "ink": "rgb(230, 233, 231)",
       "inkLightness": 0.91,
-      "accentHues": [
-        165,
-        300,
-        0
-      ],
+      "accentHues": [165, 300, 0],
       "darkBandCount": 1
     },
     "shape": {
@@ -33,11 +29,7 @@
       "shadowUsage": 0
     },
     "skeleton": {
-      "sections": [
-        "hero",
-        "list-grid",
-        "hero"
-      ],
+      "sections": ["hero", "list-grid", "hero"],
       "eyebrowRatio": 0,
       "twoToneHeadline": false,
       "heroAlignment": "left"

@@ -61,7 +61,8 @@ export async function planCover(
       outcome: {
         status: 'skipped',
         reason: 'no_cover_for_class',
-        detail: 'Generic cover used for OTIO (public title and format label only)',
+        detail:
+          'Generic cover used for OTIO (public title and format label only)',
       },
     };
   }

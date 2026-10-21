@@ -38,7 +38,11 @@ import { isImageElement } from './annotate-region.ts';
 import { formatTimecode, formatTimecodeTenths } from './annotate-time.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import { createMediaPlayer, type TimeAimDetail } from './media-player.ts';
-import { disposeOtioViews, otioControllerFor, type OtioAimDetail } from './otio-bridge.ts';
+import {
+  disposeOtioViews,
+  type OtioAimDetail,
+  otioControllerFor,
+} from './otio-bridge.ts';
 import {
   landmarkScrollDelta,
   nearestScrollLandmark,
@@ -5224,39 +5228,54 @@ export function buildThread(
     row.appendChild(context);
   };
 
-  const projectEarlierOtioFeedback = async (entries: readonly CommentEntry[]): Promise<void> => {
+  const projectEarlierOtioFeedback = async (
+    entries: readonly CommentEntry[]
+  ): Promise<void> => {
     if (host === undefined) return;
     const controller = otioControllerFor(host);
     if (controller === undefined) return;
     let changed = false;
-    await Promise.all(entries.map(async (entry) => {
-      if (
-        entry.kind !== 'open' ||
-        entry.anchor?.kind !== 'otio' ||
-        !sealedOtioAnchorMatchesEntryVersion(entry) ||
-        entry.anchor.relic_version === view.version ||
-        projectionAttempts.has(entry.id)
-      ) {
-        return;
-      }
-      projectionAttempts.add(entry.id);
-      const anchor = entry.anchor;
-      try {
-        let original = originalViews.get(anchor.relic_version);
-        if (original === undefined) {
-          original = loadHistoricalVersion(relicId, anchor.relic_version, view, deps)
-            .then((result) => result.kind === 'ready' ? result.view : undefined);
-          originalViews.set(anchor.relic_version, original);
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (
+          entry.kind !== 'open' ||
+          entry.anchor?.kind !== 'otio' ||
+          !sealedOtioAnchorMatchesEntryVersion(entry) ||
+          entry.anchor.relic_version === view.version ||
+          projectionAttempts.has(entry.id)
+        ) {
+          return;
         }
-        const originalView = await original;
-        if (originalView === undefined) throw new Error('Original context unavailable');
-        await controller.project(anchor, originalView.content);
-      } catch {
-        projectionFailures.add(entry.id);
-      }
-      changed = true;
-    }));
-    if (changed && host !== undefined && otioControllerFor(host) === controller) {
+        projectionAttempts.add(entry.id);
+        const anchor = entry.anchor;
+        try {
+          let original = originalViews.get(anchor.relic_version);
+          if (original === undefined) {
+            original = loadHistoricalVersion(
+              relicId,
+              anchor.relic_version,
+              view,
+              deps
+            ).then((result) =>
+              result.kind === 'ready' ? result.view : undefined
+            );
+            originalViews.set(anchor.relic_version, original);
+          }
+          const originalView = await original;
+          if (originalView === undefined)
+            throw new Error('Original context unavailable');
+          await controller.project(anchor, originalView.content);
+        } catch {
+          projectionFailures.add(entry.id);
+        }
+        changed = true;
+      })
+    );
+    if (
+      changed &&
+      host !== undefined &&
+      otioControllerFor(host) === controller
+    ) {
       paintMarks(lastEntries);
       rerenderRows?.();
     }
@@ -5635,7 +5654,13 @@ export function buildThread(
     );
     const rows = document.createElement('ol');
     rows.className = 'popover-thread';
-    const row = commentRow(entry, unplaceable.has(entry.id), undefined, replies, false);
+    const row = commentRow(
+      entry,
+      unplaceable.has(entry.id),
+      undefined,
+      replies,
+      false
+    );
     addOtioFeedbackContext(row, entry);
     rows.appendChild(row);
 
@@ -5963,7 +5988,7 @@ export function buildThread(
       held !== undefined &&
       layer.current() === held.panel &&
       ((held.anchor.kind === 'time' && anchor.kind === 'time') ||
-       (held.anchor.kind === 'otio' && anchor.kind === 'otio'))
+        (held.anchor.kind === 'otio' && anchor.kind === 'otio'))
     ) {
       held.anchor = anchor;
       held.target.textContent = markTargetLabel(anchor);
@@ -6317,7 +6342,13 @@ export function buildThread(
         node.entry.id !== null && unplaceable.has(node.entry.id);
       const addressed =
         node.entry.id !== null ? addressedMap.get(node.entry.id) : null;
-      const row = commentRow(node.entry, isUnplaceable, addressed, replies, isReply);
+      const row = commentRow(
+        node.entry,
+        isUnplaceable,
+        addressed,
+        replies,
+        isReply
+      );
       addOtioFeedbackContext(row, node.entry);
       return row;
     };
@@ -7116,13 +7147,21 @@ export function renderReady(
     activeView = viewToShow;
     bar = barFor(false);
     if (viewToShow.route !== 'download') {
-      thread = buildThread(viewToShow, relicId, deps, (count) => {
-        commentCount = count;
-        if (bar === undefined) return;
-        const replacement = barFor(false);
-        bar.replaceWith(replacement);
-        bar = replacement;
-      }, (version) => { void showVersion(version); });
+      thread = buildThread(
+        viewToShow,
+        relicId,
+        deps,
+        (count) => {
+          commentCount = count;
+          if (bar === undefined) return;
+          const replacement = barFor(false);
+          bar.replaceWith(replacement);
+          bar = replacement;
+        },
+        (version) => {
+          void showVersion(version);
+        }
+      );
     } else {
       thread = undefined;
     }
@@ -7168,13 +7207,21 @@ export function renderReady(
   // item 13 gives it no comparison control: nothing rendered, so there is
   // nothing on the page to comment about.
   if (view.route !== 'download') {
-    thread = buildThread(view, relicId, deps, (count) => {
-      commentCount = count;
-      if (bar === undefined) return;
-      const replacement = barFor(false);
-      bar.replaceWith(replacement);
-      bar = replacement;
-    }, (version) => { void showVersion(version); });
+    thread = buildThread(
+      view,
+      relicId,
+      deps,
+      (count) => {
+        commentCount = count;
+        if (bar === undefined) return;
+        const replacement = barFor(false);
+        bar.replaceWith(replacement);
+        bar = replacement;
+      },
+      (version) => {
+        void showVersion(version);
+      }
+    );
   }
 
   showSingle(activeView);

@@ -8,7 +8,6 @@
  */
 
 import { readOtioImageSequence } from './otio-sequence.ts';
-import { otioBundleEntry } from './otio-zip.ts';
 import type {
   OtioAudioContribution,
   OtioBundleEntryName,
@@ -21,11 +20,12 @@ import type {
   OtioRationalTime,
   OtioSourceMapping,
   OtioSourceSpan,
-  OtioTimeRange,
   OtioTimelineMarker,
+  OtioTimeRange,
   OtioVideoComposition,
   OtioVideoContribution,
 } from './otio-types.ts';
+import { otioBundleEntry } from './otio-zip.ts';
 
 const EPSILON_SECONDS = 1e-7;
 
@@ -187,7 +187,7 @@ function ownNode(
   nodes: Readonly<Record<string, OtioNode>>,
   id: string
 ): OtioNode | undefined {
-  return Object.prototype.hasOwnProperty.call(nodes, id) ? nodes[id] : undefined;
+  return Object.hasOwn(nodes, id) ? nodes[id] : undefined;
 }
 
 function isTimeline(schema: string): boolean {
@@ -293,7 +293,7 @@ function activeReference(node: OtioNode): OtioMediaReference | null {
   const refs = node.media_references;
   const key = node.active_media_reference_key;
   if (!refs || !key) return null;
-  if (!Object.prototype.hasOwnProperty.call(refs, key)) return null;
+  if (!Object.hasOwn(refs, key)) return null;
   return refs[key] ?? null;
 }
 
@@ -364,8 +364,7 @@ function chooseSequenceFrame(
     }
   };
   const inIndex = (path: string): boolean =>
-    !indexHasEntries ||
-    Object.prototype.hasOwnProperty.call(document.media, path);
+    !indexHasEntries || Object.hasOwn(document.media, path);
 
   if (!outside) {
     const built = resolve(imageIndex);
@@ -732,8 +731,11 @@ function emitTrackItems(
   kind: 'audio'
 ): void {
   const active = transitionAt(document, track, time);
-  const candidates: { node: OtioNode; weight: number; transition: OtioNode | null }[] =
-    [];
+  const candidates: {
+    node: OtioNode;
+    weight: number;
+    transition: OtioNode | null;
+  }[] = [];
   if (active) {
     const outgoing = neighborItem(document, track, active.transition.id, -1);
     const incoming = neighborItem(document, track, active.transition.id, 1);
@@ -801,14 +803,18 @@ function buildVideoContribution(
   const visible = node.visible_timeline_range;
   if (!visible || !rangeContainsTime(visible, time)) return null;
   const map = boundMaps.get(node);
-  const media = map ? sampleOtioMedia(map, time) : { value: 0, rate: time.rate };
+  const media = map
+    ? sampleOtioMedia(map, time)
+    : { value: 0, rate: time.rate };
   const relative = map ? fileRelative(map, media) : null;
   const ref = activeReference(node);
   const localDiagnostics = [
     ...unknownEffectDiagnostics(node),
-    ...(map ? [missingHandleDiagnostic(node, media, node.available_range)].filter(
-      (item): item is OtioDiagnostic => item !== null
-    ) : []),
+    ...(map
+      ? [missingHandleDiagnostic(node, media, node.available_range)].filter(
+          (item): item is OtioDiagnostic => item !== null
+        )
+      : []),
   ];
   if (!relative && map && !map.available_start && !isSequence(ref)) {
     localDiagnostics.push({
@@ -866,7 +872,9 @@ function buildAudioContribution(
   const visible = node.visible_timeline_range ?? node.timeline_range;
   if (!visible || !rangeContainsTime(visible, time)) return null;
   const map = boundMaps.get(node);
-  const media = map ? sampleOtioMedia(map, time) : { value: 0, rate: time.rate };
+  const media = map
+    ? sampleOtioMedia(map, time)
+    : { value: 0, rate: time.rate };
   const relative = map ? fileRelative(map, media) : null;
   const ref = activeReference(node);
   const localDiagnostics = unknownEffectDiagnostics(node);
@@ -940,8 +948,8 @@ export function evaluateOtioAt(
     audio,
     diagnostics
   );
-  const markers = markersForOtioTimeline(document, timelineId).filter((marker) =>
-    rangeContainsTime(marker.timeline_range, time)
+  const markers = markersForOtioTimeline(document, timelineId).filter(
+    (marker) => rangeContainsTime(marker.timeline_range, time)
   );
   return {
     timeline_id: timelineId,
@@ -978,7 +986,10 @@ export function markersForOtioTimeline(
   if (!timeline) return [];
   const found: OtioTimelineMarker[] = [];
   const visit = (node: OtioNode): void => {
-    if (!withinTimeline(document, timelineId, node.id) && node.id !== timelineId) {
+    if (
+      !withinTimeline(document, timelineId, node.id) &&
+      node.id !== timelineId
+    ) {
       return;
     }
     const map = boundMaps.get(node);
@@ -1033,7 +1044,10 @@ function ancestryOf(
   return chain.reverse();
 }
 
-function trackPathOf(document: OtioDocumentV1, ancestry: readonly string[]): string[] {
+function trackPathOf(
+  document: OtioDocumentV1,
+  ancestry: readonly string[]
+): string[] {
   return ancestry.filter((id) => {
     const node = ownNode(document.nodes, id);
     return node ? isTrack(node.schema) : false;
@@ -1153,8 +1167,7 @@ export function sourceSpansForOtioRange(
 ): OtioSourceSpan[] {
   const timeline = ownNode(document.nodes, timelineId);
   if (!timeline || !document.timeline_ids.includes(timelineId)) return [];
-  const root =
-    trackId === null ? timeline : ownNode(document.nodes, trackId);
+  const root = trackId === null ? timeline : ownNode(document.nodes, trackId);
   if (!root || !withinTimeline(document, timelineId, root.id)) return [];
   const spans: OtioSourceSpan[] = [];
   const visit = (node: OtioNode): void => {
@@ -1178,4 +1191,3 @@ export function sourceSpansForOtioRange(
 export function effectScalarOf(node: OtioNode): number {
   return effectScalar(node);
 }
-

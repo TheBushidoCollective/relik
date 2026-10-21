@@ -411,8 +411,16 @@ describe('otio composition tree', () => {
       ],
     };
     const pixel = paintTree(tree, [
-      { kind: 'image', source: white as unknown as CanvasImageSource, alpha: 1 },
-      { kind: 'image', source: white as unknown as CanvasImageSource, alpha: 1 },
+      {
+        kind: 'image',
+        source: white as unknown as CanvasImageSource,
+        alpha: 1,
+      },
+      {
+        kind: 'image',
+        source: white as unknown as CanvasImageSource,
+        alpha: 1,
+      },
     ]);
     expect(pixel.r).toBeCloseTo(1, 5);
     expect(pixel.g).toBeCloseTo(1, 5);
@@ -711,7 +719,10 @@ describe('otio playback controller', () => {
     const playback = createOtioPlayback({
       document: {
         ...doc,
-        nodes: { ...doc.nodes, timeline_1: { ...timeline, timeline_range: null } },
+        nodes: {
+          ...doc.nodes,
+          timeline_1: { ...timeline, timeline_range: null },
+        },
       },
       timelineId: 'timeline_1',
       canvas: canvas(),
@@ -720,9 +731,9 @@ describe('otio playback controller', () => {
     const state = playback.getState();
     expect(state.duration.value).toBe(0);
     expect(state.rate).toBe(30);
-    expect(state.diagnostics.some((issue) => issue.code === 'invalid-timing')).toBe(
-      true
-    );
+    expect(
+      state.diagnostics.some((issue) => issue.code === 'invalid-timing')
+    ).toBe(true);
     playback.dispose();
   });
 
@@ -803,14 +814,16 @@ describe('otio playback controller', () => {
     const time: OtioRationalTime = { value: 24, rate: 24 };
     await playback.seek(time);
     const evaluation = evaluateOtioAt(doc, 'timeline_1', time);
-    const audio = created.filter((element) => element.attrs.has('data-bundle-path'));
+    const audio = created.filter((element) =>
+      element.attrs.has('data-bundle-path')
+    );
     expect(evaluation.audio_contributions.length).toBeGreaterThan(1);
     expect(audio.length).toBe(evaluation.audio_contributions.length);
     for (const contrib of evaluation.audio_contributions) {
       const product = contrib.volume * contrib.transition_weight;
-      expect(audioContext.gains.some((gain) => gain.gain.value === product)).toBe(
-        true
-      );
+      expect(
+        audioContext.gains.some((gain) => gain.gain.value === product)
+      ).toBe(true);
     }
     playback.dispose();
   });
@@ -827,7 +840,9 @@ describe('otio playback controller', () => {
     await playback.play();
     raf?.(0);
     await playback.seek({ value: 0, rate: 24 });
-    const voice = created.find((element) => element.attrs.get('data-active') === 'true');
+    const voice = created.find(
+      (element) => element.attrs.get('data-active') === 'true'
+    );
     expect(voice).toBeDefined();
     playback.setTrackMute('track_a', true);
     expect(voice?.volume).toBe(0);

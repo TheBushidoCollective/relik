@@ -1410,9 +1410,7 @@ export function threadEntries(entries: readonly CommentEntry[]): CommentNode[] {
     const parent = parentOf.get(entry.id);
     if (cycles.has(entry.id)) {
       const addresses =
-        typeof parent === 'string'
-          ? parent
-          : sealedTarget(entry) ?? entry.id;
+        typeof parent === 'string' ? parent : (sealedTarget(entry) ?? entry.id);
       node.recovery = recovery('cycle', addresses);
       roots.push(node);
       continue;
@@ -1423,8 +1421,7 @@ export function threadEntries(entries: readonly CommentEntry[]): CommentNode[] {
       continue;
     }
     const parentNode = nodesById.get(parent);
-    const parentOmitted =
-      parentOf.get(parent) === null && !cycles.has(parent);
+    const parentOmitted = parentOf.get(parent) === null && !cycles.has(parent);
     if (parentNode === undefined || parentOmitted) {
       node.recovery = recovery('orphan', parent);
       roots.push(node);

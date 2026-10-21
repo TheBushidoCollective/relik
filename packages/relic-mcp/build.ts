@@ -126,7 +126,6 @@ await Bun.write(
   `${JSON.stringify(pluginMcpServers, null, 2)}\n`
 );
 
-
 await mkdir('./.claude-plugin', { recursive: true });
 
 await Bun.write(
@@ -185,4 +184,6 @@ await Bun.write(
   )}\n`
 );
 
-console.log(`wrote plugin manifests and launch config at version ${pkg.version}`);
+console.log(
+  `wrote plugin manifests and launch config at version ${pkg.version}`
+);

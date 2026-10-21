@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   isOtioRawNumber,
-  OtioRawNumber,
+  type OtioRawNumber,
   parseOtioJson,
   stringifyOtioJson,
 } from '../src/otio-json.ts';
@@ -27,7 +27,8 @@ describe('otio-json token-preserving parser and serializer', () => {
   });
 
   test('parses and preserves non-finite float tokens emitted by Python OTIO (NaN, Infinity, -Infinity)', () => {
-    const raw = '{"nan": NaN, "inf": Infinity, "pinf": +Infinity, "ninf": -Infinity}';
+    const raw =
+      '{"nan": NaN, "inf": Infinity, "pinf": +Infinity, "ninf": -Infinity}';
     const parsed = parseOtioJson(raw) as Record<string, unknown>;
 
     expect(isOtioRawNumber(parsed['nan'])).toBe(true);
@@ -70,7 +71,17 @@ describe('otio-json token-preserving parser and serializer', () => {
     expect(parsed['positiveExponent']).toBe(100);
     expect(parsed['negativeExponent']).toBe(-0.002);
 
-    for (const token of ['01', '+1', '.1', '1.', '1e', '1e+', '1e-', 'NaN123', 'InfinityFoo']) {
+    for (const token of [
+      '01',
+      '+1',
+      '.1',
+      '1.',
+      '1e',
+      '1e+',
+      '1e-',
+      'NaN123',
+      'InfinityFoo',
+    ]) {
       expect(() => parseOtioJson(`{"value":${token}}`)).toThrow(SyntaxError);
     }
   });
@@ -106,8 +117,10 @@ describe('otio-json token-preserving parser and serializer', () => {
   });
 
   test('keeps __proto__ as an own key', () => {
-    const parsed = parseOtioJson('{"__proto__": {"admin": true}, "constructor": 1}') as Record<string, unknown>;
-    expect(Object.prototype.hasOwnProperty.call(parsed, '__proto__')).toBe(true);
+    const parsed = parseOtioJson(
+      '{"__proto__": {"admin": true}, "constructor": 1}'
+    ) as Record<string, unknown>;
+    expect(Object.hasOwn(parsed, '__proto__')).toBe(true);
     expect(Object.getPrototypeOf(parsed)).toBeNull();
     expect(parsed['constructor']).toBe(1);
   });

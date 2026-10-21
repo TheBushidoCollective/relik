@@ -29,11 +29,11 @@
  */
 
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { Readable, Writable } from 'node:stream';
 import { join } from 'node:path';
+import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { decodeKey, openRelic } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
@@ -41,7 +41,7 @@ import { diskAssets } from '@relic/server/src/assets.ts';
 import type { OutboundMail } from '@relic/server/src/mail.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
-import { connectPipe, type CdpConnection } from '../src/cover/cdp.ts';
+import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { loadPublishState } from '../src/state.ts';
 
@@ -105,7 +105,7 @@ function pass(stage: (typeof REQUIRED)[number]): void {
   console.log(`STAGE ${stage}`);
 }
 
-let fakeNow = Date.now();
+const fakeNow = Date.now();
 const store = new MemoryStore();
 const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 const mails: { to: string; mail: OutboundMail }[] = [];

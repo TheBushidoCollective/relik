@@ -701,9 +701,7 @@
       "ciphertext",
       "version"
     ],
-    "requestHosts": [
-      "127.0.0.1"
-    ],
+    "requestHosts": ["127.0.0.1"],
     "publisher": "fresh Node 18.20.8 built MCP process; cover:false",
     "requestLog": [
       {
@@ -1349,9 +1347,7 @@
           "font": "10.56px"
         }
       ],
-      "resourceHosts": [
-        "127.0.0.1"
-      ]
+      "resourceHosts": ["127.0.0.1"]
     },
     {
       "id": "light-desktop",
@@ -1603,9 +1599,7 @@
           "font": "10.56px"
         }
       ],
-      "resourceHosts": [
-        "127.0.0.1"
-      ]
+      "resourceHosts": ["127.0.0.1"]
     },
     {
       "id": "dark-narrow",
@@ -1792,9 +1786,7 @@
           "font": "10.56px"
         }
       ],
-      "resourceHosts": [
-        "127.0.0.1"
-      ]
+      "resourceHosts": ["127.0.0.1"]
     },
     {
       "id": "light-narrow",
@@ -1981,9 +1973,7 @@
           "font": "10.56px"
         }
       ],
-      "resourceHosts": [
-        "127.0.0.1"
-      ]
+      "resourceHosts": ["127.0.0.1"]
     }
   ],
   "afterBuiltInteractions": {
@@ -2037,10 +2027,7 @@
       "trackId": "track-v2-duplicate",
       "rangeIndex": "0"
     },
-    "collapsed": [
-      "track-nested-plate-base",
-      "track-nested-fx-glow"
-    ],
+    "collapsed": ["track-nested-plate-base", "track-nested-fx-glow"],
     "marker": {
       "start": "100",
       "duration": "0",

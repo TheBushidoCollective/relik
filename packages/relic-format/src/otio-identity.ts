@@ -15,10 +15,6 @@ import {
   readOtioImageSequence,
 } from './otio-sequence.ts';
 import {
-  MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
-  otioBundleEntryFor,
-} from './otio-zip.ts';
-import {
   addRationalTimes,
   bindOtioSamplingMap,
   compareRationalTimes,
@@ -26,13 +22,13 @@ import {
   intersectRanges,
   invertOtioIntervalEdge,
   invertOtioSample,
+  type OtioBoundMap,
   otioIntervalEdge,
   otioSamplingMap,
   rangeEndTime,
   sampleOtioMedia,
   sourceSpansForOtioRange,
   subtractRationalTimes,
-  type OtioBoundMap,
 } from './otio-timing.ts';
 import type {
   OtioAnchorResolution,
@@ -50,6 +46,10 @@ import type {
   OtioSourceSpan,
   OtioTimeRange,
 } from './otio-types.ts';
+import {
+  MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
+  otioBundleEntryFor,
+} from './otio-zip.ts';
 
 const KNOWN_SCHEMAS: Record<string, true> = {
   'Timeline.1': true,
@@ -135,45 +135,80 @@ function syncSha256(bytes: Uint8Array): string {
   let h7 = 0x5be0cd19;
   const bitLen = BigInt(bytes.length) * 8n;
   const withOne = bytes.length + 1;
-  const padLen = withOne % 64 <= 56 ? 56 - (withOne % 64) : 120 - (withOne % 64);
+  const padLen =
+    withOne % 64 <= 56 ? 56 - (withOne % 64) : 120 - (withOne % 64);
   const buf = new Uint8Array(withOne + padLen + 8);
   buf.set(bytes);
   buf[bytes.length] = 0x80;
   new DataView(buf.buffer).setBigUint64(buf.length - 8, bitLen, false);
   const w = new Uint32Array(64);
-  const rotr = (x: number, n: number): number => ((x >>> n) | (x << (32 - n))) >>> 0;
+  const rotr = (x: number, n: number): number =>
+    ((x >>> n) | (x << (32 - n))) >>> 0;
   for (let i = 0; i < buf.length; i += 64) {
     const view = new DataView(buf.buffer, i, 64);
     for (let t = 0; t < 16; t += 1) w[t] = view.getUint32(t * 4, false);
     for (let t = 16; t < 64; t += 1) {
-      const s0 = (rotr(w[t - 15] as number, 7) ^ rotr(w[t - 15] as number, 18) ^ ((w[t - 15] as number) >>> 3)) >>> 0;
-      const s1 = (rotr(w[t - 2] as number, 17) ^ rotr(w[t - 2] as number, 19) ^ ((w[t - 2] as number) >>> 10)) >>> 0;
-      w[t] = (((w[t - 16] as number) + s0 + (w[t - 7] as number) + s1) >>> 0);
+      const s0 =
+        (rotr(w[t - 15] as number, 7) ^
+          rotr(w[t - 15] as number, 18) ^
+          ((w[t - 15] as number) >>> 3)) >>>
+        0;
+      const s1 =
+        (rotr(w[t - 2] as number, 17) ^
+          rotr(w[t - 2] as number, 19) ^
+          ((w[t - 2] as number) >>> 10)) >>>
+        0;
+      w[t] = ((w[t - 16] as number) + s0 + (w[t - 7] as number) + s1) >>> 0;
     }
-    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+    let a = h0,
+      b = h1,
+      c = h2,
+      d = h3,
+      e = h4,
+      f = h5,
+      g = h6,
+      h = h7;
     for (let t = 0; t < 64; t += 1) {
       const s1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0;
       const ch = ((e & f) ^ (~e & g)) >>> 0;
       const temp1 = (h + s1 + ch + (k[t] as number) + (w[t] as number)) >>> 0;
       const s0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0;
       const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
-      h = g; g = f; f = e; e = (d + temp1) >>> 0; d = c; c = b; b = a;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
       a = (temp1 + ((s0 + maj) >>> 0)) >>> 0;
     }
-    h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
-    h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+    h5 = (h5 + f) >>> 0;
+    h6 = (h6 + g) >>> 0;
+    h7 = (h7 + h) >>> 0;
   }
-  return [h0, h1, h2, h3, h4, h5, h6, h7].map((v) => v.toString(16).padStart(8, '0')).join('');
+  return [h0, h1, h2, h3, h4, h5, h6, h7]
+    .map((v) => v.toString(16).padStart(8, '0'))
+    .join('');
 }
 
 function hasOwn(record: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, key);
+  return Object.hasOwn(record, key);
 }
 
 function finiteNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (isOtioRawNumber(value) && Number.isFinite(value.numericValue)) {
-    if (!value.raw.includes('.') && !value.raw.includes('e') && !value.raw.includes('E')) {
+    if (
+      !value.raw.includes('.') &&
+      !value.raw.includes('e') &&
+      !value.raw.includes('E')
+    ) {
       if (!Number.isSafeInteger(value.numericValue)) return undefined;
     }
     return value.numericValue;
@@ -203,7 +238,8 @@ function readOptionalRange(
   raw: Record<string, unknown>,
   key: string
 ): { range: OtioTimeRange | null; invalid: boolean } {
-  if (!hasOwn(raw, key) || raw[key] == null) return { range: null, invalid: false };
+  if (!hasOwn(raw, key) || raw[key] == null)
+    return { range: null, invalid: false };
   const range = parseRange(raw[key]);
   return range ? { range, invalid: false } : { range: null, invalid: true };
 }
@@ -228,13 +264,18 @@ function put<T>(record: Record<string, T>, key: string, value: T): void {
   });
 }
 
-function childList(raw: Record<string, unknown>): { key: string; items: Record<string, unknown>[] } | null {
+function childList(
+  raw: Record<string, unknown>
+): { key: string; items: Record<string, unknown>[] } | null {
   if (hasOwn(raw, 'tracks') && raw['tracks'] != null) {
     const tracks = raw['tracks'];
     if (Array.isArray(tracks)) {
       return {
         key: 'tracks',
-        items: tracks.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null),
+        items: tracks.filter(
+          (item): item is Record<string, unknown> =>
+            typeof item === 'object' && item !== null
+        ),
       };
     }
     if (typeof tracks === 'object') {
@@ -244,7 +285,10 @@ function childList(raw: Record<string, unknown>): { key: string; items: Record<s
   if (Array.isArray(raw['children'])) {
     return {
       key: 'children',
-      items: raw['children'].filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null),
+      items: raw['children'].filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === 'object' && item !== null
+      ),
     };
   }
   return null;
@@ -266,15 +310,27 @@ function stripIdentity(value: unknown): unknown {
 }
 
 function stripRelicId(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return stripIdentity(value);
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return stripIdentity(value);
   const source = value as Record<string, unknown>;
   const out = blank() as Record<string, unknown>;
   for (const key of Object.keys(source).sort()) {
-    if (key === 'relic' && source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+    if (
+      key === 'relic' &&
+      source[key] &&
+      typeof source[key] === 'object' &&
+      !Array.isArray(source[key])
+    ) {
       const relic = blank() as Record<string, unknown>;
-      for (const relicKey of Object.keys(source[key] as Record<string, unknown>).sort()) {
+      for (const relicKey of Object.keys(
+        source[key] as Record<string, unknown>
+      ).sort()) {
         if (relicKey === 'id') continue;
-        put(relic, relicKey, stripIdentity((source[key] as Record<string, unknown>)[relicKey]));
+        put(
+          relic,
+          relicKey,
+          stripIdentity((source[key] as Record<string, unknown>)[relicKey])
+        );
       }
       if (Object.keys(relic).length > 0) put(out, key, relic);
       continue;
@@ -291,7 +347,10 @@ function fingerprintOf(raw: Record<string, unknown>): string {
 }
 
 function parseMedia(raw: Record<string, unknown>): OtioMediaReference {
-  const schema = typeof raw['OTIO_SCHEMA'] === 'string' ? raw['OTIO_SCHEMA'] : 'MissingReference.1';
+  const schema =
+    typeof raw['OTIO_SCHEMA'] === 'string'
+      ? raw['OTIO_SCHEMA']
+      : 'MissingReference.1';
   const available = readOptionalRange(raw, 'available_range');
   const step = finiteNumber(raw['frame_step']);
   const start = finiteNumber(raw['start_frame']);
@@ -305,7 +364,8 @@ function parseMedia(raw: Record<string, unknown>): OtioMediaReference {
   return {
     schema,
     ...(typeof raw['name'] === 'string' ? { name: raw['name'] } : {}),
-    target_url: typeof raw['target_url'] === 'string' ? raw['target_url'] : null,
+    target_url:
+      typeof raw['target_url'] === 'string' ? raw['target_url'] : null,
     available_range: available.invalid ? null : available.range,
     ...(typeof raw['target_url_base'] === 'string'
       ? { target_url_base: raw['target_url_base'] }
@@ -332,12 +392,19 @@ function parseMedia(raw: Record<string, unknown>): OtioMediaReference {
   };
 }
 
-function parseEffects(raw: Record<string, unknown>, diagnostics: OtioDiagnostic[], pointer: string): OtioEffect[] {
+function parseEffects(
+  raw: Record<string, unknown>,
+  diagnostics: OtioDiagnostic[],
+  pointer: string
+): OtioEffect[] {
   if (!Array.isArray(raw['effects'])) return [];
   return raw['effects'].flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
     const effect = item as Record<string, unknown>;
-    const schema = typeof effect['OTIO_SCHEMA'] === 'string' ? effect['OTIO_SCHEMA'] : 'Effect.1';
+    const schema =
+      typeof effect['OTIO_SCHEMA'] === 'string'
+        ? effect['OTIO_SCHEMA']
+        : 'Effect.1';
     if (!KNOWN_SCHEMAS[schema]) {
       diagnostics.push({
         severity: 'warning',
@@ -351,28 +418,38 @@ function parseEffects(raw: Record<string, unknown>, diagnostics: OtioDiagnostic[
       effect['metadata'] && typeof effect['metadata'] === 'object'
         ? (effect['metadata'] as Record<string, unknown>)
         : undefined;
-    return [{
-      schema,
-      ...(typeof effect['name'] === 'string' ? { name: effect['name'] } : {}),
-      ...(typeof effect['effect_name'] === 'string'
-        ? { effect_name: effect['effect_name'] }
-        : {}),
-      enabled: effect['enabled'] !== false,
-      ...(scalar === undefined ? {} : { time_scalar: scalar }),
-      ...(metadata === undefined ? {} : { metadata }),
-      raw: effect,
-    }];
+    return [
+      {
+        schema,
+        ...(typeof effect['name'] === 'string' ? { name: effect['name'] } : {}),
+        ...(typeof effect['effect_name'] === 'string'
+          ? { effect_name: effect['effect_name'] }
+          : {}),
+        enabled: effect['enabled'] !== false,
+        ...(scalar === undefined ? {} : { time_scalar: scalar }),
+        ...(metadata === undefined ? {} : { metadata }),
+        raw: effect,
+      },
+    ];
   });
 }
 
-function parseMarkers(raw: Record<string, unknown>, diagnostics: OtioDiagnostic[], pointer: string): OtioMarker[] {
+function parseMarkers(
+  raw: Record<string, unknown>,
+  diagnostics: OtioDiagnostic[],
+  pointer: string
+): OtioMarker[] {
   if (!Array.isArray(raw['markers'])) return [];
   return raw['markers'].flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
     const marker = item as Record<string, unknown>;
-    const schema = typeof marker['OTIO_SCHEMA'] === 'string' ? marker['OTIO_SCHEMA'] : 'Marker.1';
+    const schema =
+      typeof marker['OTIO_SCHEMA'] === 'string'
+        ? marker['OTIO_SCHEMA']
+        : 'Marker.1';
     const canonical = readOptionalRange(marker, 'marked_range');
-    const canonicalSupplied = hasOwn(marker, 'marked_range') && marker['marked_range'] !== null;
+    const canonicalSupplied =
+      hasOwn(marker, 'marked_range') && marker['marked_range'] !== null;
     let markedRange = canonical.invalid ? null : canonical.range;
     let timingInvalid = canonical.invalid;
     if (!canonicalSupplied && schema === 'Marker.1' && hasOwn(marker, 'time')) {
@@ -398,15 +475,21 @@ function parseMarkers(raw: Record<string, unknown>, diagnostics: OtioDiagnostic[
       marker['metadata'] && typeof marker['metadata'] === 'object'
         ? (marker['metadata'] as Record<string, unknown>)
         : undefined;
-    return [{
-      schema,
-      ...(typeof marker['name'] === 'string' ? { name: marker['name'] } : {}),
-      ...(typeof marker['color'] === 'string' ? { color: marker['color'] } : {}),
-      marked_range: markedRange,
-      ...(typeof marker['comment'] === 'string' ? { comment: marker['comment'] } : {}),
-      ...(metadata === undefined ? {} : { metadata }),
-      raw: marker,
-    }];
+    return [
+      {
+        schema,
+        ...(typeof marker['name'] === 'string' ? { name: marker['name'] } : {}),
+        ...(typeof marker['color'] === 'string'
+          ? { color: marker['color'] }
+          : {}),
+        marked_range: markedRange,
+        ...(typeof marker['comment'] === 'string'
+          ? { comment: marker['comment'] }
+          : {}),
+        ...(metadata === undefined ? {} : { metadata }),
+        raw: marker,
+      },
+    ];
   });
 }
 
@@ -424,14 +507,21 @@ interface Draft {
 }
 
 function isItemSchema(schema: string): boolean {
-  return schema === 'Clip.1' || schema === 'Clip.2' || schema === 'Gap.1' || schema === 'Stack.1' || schema === 'Track.1';
+  return (
+    schema === 'Clip.1' ||
+    schema === 'Clip.2' ||
+    schema === 'Gap.1' ||
+    schema === 'Stack.1' ||
+    schema === 'Track.1'
+  );
 }
 
 export function readOtioDocument(
   source: string | Uint8Array,
   options?: { readonly mediaIndex?: Readonly<Record<string, OtioMediaEntry>> }
 ): OtioDocumentV1 {
-  const bytes = typeof source === 'string' ? new TextEncoder().encode(source) : source;
+  const bytes =
+    typeof source === 'string' ? new TextEncoder().encode(source) : source;
   const documentSha = syncSha256(bytes);
   const parsed = parseOtioJson(bytes);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -446,8 +536,13 @@ export function readOtioDocument(
   const authoredCounts = new Map<string, number>();
   const fingerprintCounts = new Map<string, number>();
 
-  const visit = (raw: Record<string, unknown>, pointer: string, parentPointer: string | null): void => {
-    const schema = typeof raw['OTIO_SCHEMA'] === 'string' ? raw['OTIO_SCHEMA'] : 'Unknown.1';
+  const visit = (
+    raw: Record<string, unknown>,
+    pointer: string,
+    parentPointer: string | null
+  ): void => {
+    const schema =
+      typeof raw['OTIO_SCHEMA'] === 'string' ? raw['OTIO_SCHEMA'] : 'Unknown.1';
     const diagnostics: OtioDiagnostic[] = [];
     if (!KNOWN_SCHEMAS[schema]) {
       diagnostics.push({
@@ -457,9 +552,12 @@ export function readOtioDocument(
         target: { json_pointer: pointer },
       });
     }
-    const metadata = raw['metadata'] && typeof raw['metadata'] === 'object' && !Array.isArray(raw['metadata'])
-      ? (raw['metadata'] as Record<string, unknown>)
-      : {};
+    const metadata =
+      raw['metadata'] &&
+      typeof raw['metadata'] === 'object' &&
+      !Array.isArray(raw['metadata'])
+        ? (raw['metadata'] as Record<string, unknown>)
+        : {};
     let authoredId: string | null = null;
     const relic = metadata['relic'];
     if (relic && typeof relic === 'object' && !Array.isArray(relic)) {
@@ -474,28 +572,51 @@ export function readOtioDocument(
     const refs = blank() as Record<string, OtioMediaReference>;
     let activeKey: string | null = null;
     if (schema === 'Clip.1' || schema === 'Clip.2') {
-      if (raw['media_references'] && typeof raw['media_references'] === 'object' && !Array.isArray(raw['media_references'])) {
+      if (
+        raw['media_references'] &&
+        typeof raw['media_references'] === 'object' &&
+        !Array.isArray(raw['media_references'])
+      ) {
         const table = raw['media_references'] as Record<string, unknown>;
         for (const key of Object.keys(table)) {
           const ref = table[key];
-          if (ref && typeof ref === 'object') put(refs, key, parseMedia(ref as Record<string, unknown>));
+          if (ref && typeof ref === 'object')
+            put(refs, key, parseMedia(ref as Record<string, unknown>));
         }
-        activeKey = typeof raw['active_media_reference_key'] === 'string' ? raw['active_media_reference_key'] : null;
-      } else if (raw['media_reference'] && typeof raw['media_reference'] === 'object') {
-        put(refs, 'DEFAULT_MEDIA', parseMedia(raw['media_reference'] as Record<string, unknown>));
+        activeKey =
+          typeof raw['active_media_reference_key'] === 'string'
+            ? raw['active_media_reference_key']
+            : null;
+      } else if (
+        raw['media_reference'] &&
+        typeof raw['media_reference'] === 'object'
+      ) {
+        put(
+          refs,
+          'DEFAULT_MEDIA',
+          parseMedia(raw['media_reference'] as Record<string, unknown>)
+        );
         activeKey = 'DEFAULT_MEDIA';
       }
     }
-    const active = activeKey && hasOwn(refs, activeKey) ? refs[activeKey] : undefined;
+    const active =
+      activeKey && hasOwn(refs, activeKey) ? refs[activeKey] : undefined;
     const available = ownAvailable.range ?? active?.available_range ?? null;
-    const inOffset = schema === 'Transition.1' ? parseRational(raw['in_offset']) : undefined;
-    const outOffset = schema === 'Transition.1' ? parseRational(raw['out_offset']) : undefined;
-    const timingInvalid = sourceRange.invalid || ownAvailable.invalid || (schema === 'Transition.1' && raw['in_offset'] != null && !inOffset) || (schema === 'Transition.1' && raw['out_offset'] != null && !outOffset);
+    const inOffset =
+      schema === 'Transition.1' ? parseRational(raw['in_offset']) : undefined;
+    const outOffset =
+      schema === 'Transition.1' ? parseRational(raw['out_offset']) : undefined;
+    const timingInvalid =
+      sourceRange.invalid ||
+      ownAvailable.invalid ||
+      (schema === 'Transition.1' && raw['in_offset'] != null && !inOffset) ||
+      (schema === 'Transition.1' && raw['out_offset'] != null && !outOffset);
     if (timingInvalid) {
       diagnostics.push({
         severity: 'error',
         code: 'invalid-timing',
-        message: 'Supplied timing is invalid and was not replaced with another range',
+        message:
+          'Supplied timing is invalid and was not replaced with another range',
         target: { json_pointer: pointer },
       });
     }
@@ -503,9 +624,10 @@ export function readOtioDocument(
     const children = childList(raw);
     if (children) {
       children.items.forEach((child, index) => {
-        const childPointer = children.key === 'tracks' && !Array.isArray(raw['tracks'])
-          ? `${pointer}/tracks`
-          : `${pointer}/${children.key}/${index}`;
+        const childPointer =
+          children.key === 'tracks' && !Array.isArray(raw['tracks'])
+            ? `${pointer}/tracks`
+            : `${pointer}/${children.key}/${index}`;
         childPointers.push(childPointer);
         visit(child, childPointer, pointer);
       });
@@ -607,7 +729,11 @@ export function readOtioDocument(
       const occ = (fingerprintSeen.get(draft.fingerprint) ?? 0) + 1;
       fingerprintSeen.set(draft.fingerprint, occ);
       origin = total === 1 ? 'derived-unique' : 'derived-duplicate';
-      id = claim(total === 1 ? `otio_${draft.fingerprint}` : `otio_${draft.fingerprint}#occ_${occ}`);
+      id = claim(
+        total === 1
+          ? `otio_${draft.fingerprint}`
+          : `otio_${draft.fingerprint}#occ_${occ}`
+      );
     }
     draft.node.id = id;
     draft.node.identity_origin = origin;
@@ -618,8 +744,13 @@ export function readOtioDocument(
   const timelineIds: string[] = [];
   const globalStarts = blank() as Record<string, OtioRationalTime>;
   for (const draft of drafts.values()) {
-    draft.node.parent_id = draft.parentPointer === null ? null : pointerToId.get(draft.parentPointer) ?? null;
-    draft.node.children_ids = draft.childPointers.map((pointer) => pointerToId.get(pointer) as string);
+    draft.node.parent_id =
+      draft.parentPointer === null
+        ? null
+        : (pointerToId.get(draft.parentPointer) ?? null);
+    draft.node.children_ids = draft.childPointers.map(
+      (pointer) => pointerToId.get(pointer) as string
+    );
     put(nodes, draft.node.id, draft.node);
     if (draft.schema === 'Timeline.1') {
       timelineIds.push(draft.node.id);
@@ -631,7 +762,11 @@ export function readOtioDocument(
   const root = drafts.get('');
   if (root?.schema === 'SerializableCollection.1') {
     // Selectable timelines, never concatenation.
-  } else if (root && root.schema !== 'Timeline.1' && isItemSchema(root.schema)) {
+  } else if (
+    root &&
+    root.schema !== 'Timeline.1' &&
+    isItemSchema(root.schema)
+  ) {
     const wrapperId = claim('otio_synthetic_timeline');
     const wrapper: MutableNode = {
       id: wrapperId,
@@ -711,7 +846,10 @@ export function readOtioDocument(
   };
 }
 
-function rateOf(time: OtioRationalTime | null | undefined, fallback: number): number {
+function rateOf(
+  time: OtioRationalTime | null | undefined,
+  fallback: number
+): number {
   if (time && Number.isFinite(time.rate) && time.rate > 0) return time.rate;
   return fallback;
 }
@@ -802,7 +940,10 @@ function measureStack(
       continue;
     }
     const start = { value: 0, rate: childPlacement.trimmed.duration.rate };
-    const parentRange = { start_time: start, duration: childPlacement.trimmed.duration };
+    const parentRange = {
+      start_time: start,
+      duration: childPlacement.trimmed.duration,
+    };
     child.parent_range = parentRange;
     childPlacement.parentRange = parentRange;
     childPlacement.visibleParent = parentRange;
@@ -810,7 +951,9 @@ function measureStack(
     if (!maxEnd || compareRationalTimes(end, maxEnd) > 0) maxEnd = end;
   }
   if (rate === 0) rate = 24;
-  const natural = maxEnd ? { start_time: { value: 0, rate: maxEnd.rate }, duration: maxEnd } : null;
+  const natural = maxEnd
+    ? { start_time: { value: 0, rate: maxEnd.rate }, duration: maxEnd }
+    : null;
   const trimmed = node.source_range ?? natural;
   const placement = {
     trimmed,
@@ -951,8 +1094,12 @@ function extendRange(
   pre: OtioRationalTime | null,
   post: OtioRationalTime | null
 ): OtioTimeRange {
-  const start = pre ? subtractRationalTimes(range.start_time, pre) : range.start_time;
-  const end = post ? addRationalTimes(rangeEndTime(range), post) : rangeEndTime(range);
+  const start = pre
+    ? subtractRationalTimes(range.start_time, pre)
+    : range.start_time;
+  const end = post
+    ? addRationalTimes(rangeEndTime(range), post)
+    : rangeEndTime(range);
   return { start_time: start, duration: subtractRationalTimes(end, start) };
 }
 
@@ -1049,8 +1196,14 @@ function projectNode(
 }
 
 function mapThrough(map: OtioBoundMap, range: OtioTimeRange): OtioTimeRange {
-  const start = addRationalTimes(map.timeline_origin, subtractRationalTimes(range.start_time, map.local_origin));
-  const end = addRationalTimes(map.timeline_origin, subtractRationalTimes(rangeEndTime(range), map.local_origin));
+  const start = addRationalTimes(
+    map.timeline_origin,
+    subtractRationalTimes(range.start_time, map.local_origin)
+  );
+  const end = addRationalTimes(
+    map.timeline_origin,
+    subtractRationalTimes(rangeEndTime(range), map.local_origin)
+  );
   return { start_time: start, duration: subtractRationalTimes(end, start) };
 }
 
@@ -1058,7 +1211,11 @@ function nodeOf(document: OtioDocumentV1, id: string): OtioNode | undefined {
   return hasOwn(document.nodes, id) ? document.nodes[id] : undefined;
 }
 
-function inTimeline(document: OtioDocumentV1, timelineId: string, nodeId: string | null | undefined): boolean {
+function inTimeline(
+  document: OtioDocumentV1,
+  timelineId: string,
+  nodeId: string | null | undefined
+): boolean {
   if (!nodeId) return false;
   let cursor: string | null = nodeId;
   const seen = new Set<string>();
@@ -1215,13 +1372,10 @@ function findCurrentNode(
   if (source.identity_origin === 'authored') {
     const matches = Object.keys(current.nodes)
       .map((id) => nodeOf(current, id))
-      .filter(
-        (node): node is OtioNode =>
-          Boolean(
-            node &&
-              node.id === source.id &&
-              node.identity_origin === 'authored'
-          )
+      .filter((node): node is OtioNode =>
+        Boolean(
+          node && node.id === source.id && node.identity_origin === 'authored'
+        )
       );
     if (matches.length > 1) return { status: 'ambiguous' };
     const match = matches[0];
@@ -1230,14 +1384,13 @@ function findCurrentNode(
   }
   const matches = Object.keys(current.nodes)
     .map((id) => nodeOf(current, id))
-    .filter(
-      (node): node is OtioNode =>
-        Boolean(
-          node &&
-            node.identity_origin !== 'derived-duplicate' &&
-            node.fingerprint &&
-            node.fingerprint === source.fingerprint
-        )
+    .filter((node): node is OtioNode =>
+      Boolean(
+        node &&
+          node.identity_origin !== 'derived-duplicate' &&
+          node.fingerprint &&
+          node.fingerprint === source.fingerprint
+      )
     );
   if (matches.length > 1) return { status: 'ambiguous' };
   const match = matches[0];
@@ -1369,7 +1522,9 @@ function projectPiece(
 }
 
 function mergeRanges(ranges: OtioTimeRange[]): OtioTimeRange[] {
-  const sorted = [...ranges].sort((a, b) => compareRationalTimes(a.start_time, b.start_time) || 0);
+  const sorted = [...ranges].sort(
+    (a, b) => compareRationalTimes(a.start_time, b.start_time) || 0
+  );
   const merged: OtioTimeRange[] = [];
   for (const range of sorted) {
     const last = merged[merged.length - 1];
@@ -1382,7 +1537,10 @@ function mergeRanges(ranges: OtioTimeRange[]): OtioTimeRange[] {
       merged.push(range);
       continue;
     }
-    const end = compareRationalTimes(rangeEndTime(range), lastEnd) > 0 ? rangeEndTime(range) : lastEnd;
+    const end =
+      compareRationalTimes(rangeEndTime(range), lastEnd) > 0
+        ? rangeEndTime(range)
+        : lastEnd;
     merged[merged.length - 1] = {
       start_time: last.start_time,
       duration: subtractRationalTimes(end, last.start_time),
@@ -1391,7 +1549,10 @@ function mergeRanges(ranges: OtioTimeRange[]): OtioTimeRange[] {
   return merged;
 }
 
-function timelineOf(document: OtioDocumentV1, nodeId: string): string | undefined {
+function timelineOf(
+  document: OtioDocumentV1,
+  nodeId: string
+): string | undefined {
   let cursor: string | null = nodeId;
   const seen = new Set<string>();
   while (cursor) {

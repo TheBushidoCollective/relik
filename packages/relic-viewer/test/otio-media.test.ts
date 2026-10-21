@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  otioBundleEntryName,
   type OtioBundleEntryName,
   type OtioZipEntryInfo,
   type OtioZipIndex,
+  otioBundleEntryName,
 } from '@relic/format';
 import {
   createOtioMediaResolver,

@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { evaluateOtioAt, markersForOtioTimeline, sourceSpansForOtioRange } from '../src/otio-timing.ts';
 import { readOtioDocument } from '../src/otio-identity.ts';
+import {
+  evaluateOtioAt,
+  markersForOtioTimeline,
+  sourceSpansForOtioRange,
+} from '../src/otio-timing.ts';
 import type { OtioDocumentV1, OtioNode } from '../src/otio-types.ts';
+
 const root = new URL('./fixtures/otio/', import.meta.url);
 function load(name: string) {
   return readOtioDocument(readFileSync(new URL(name, root)));
@@ -45,8 +50,16 @@ describe('official OTIO placement and Relik sampling', () => {
     expect(timewarp.parent_range?.duration.rate).toBeCloseTo(24, 5);
 
     const at84 = evaluateOtioAt(doc, timelineId, { value: 84, rate: 24 });
-    expect(at84.video_contributions.some((item) => item.node_id === 'trans-v1-dissolve-1')).toBe(false);
-    expect(at84.video_contributions.some((item) => item.node_id === 'clip-v1-primary-a')).toBe(false);
+    expect(
+      at84.video_contributions.some(
+        (item) => item.node_id === 'trans-v1-dissolve-1'
+      )
+    ).toBe(false);
+    expect(
+      at84.video_contributions.some(
+        (item) => item.node_id === 'clip-v1-primary-a'
+      )
+    ).toBe(false);
 
     const query = sourceSpansForOtioRange(doc, timelineId, 'track-v1-main', {
       start_time: { value: 60, rate: 24 },
@@ -57,34 +70,72 @@ describe('official OTIO placement and Relik sampling', () => {
     const spanT = query.find((span) => span.node_id === 'trans-v1-dissolve-1');
     expect(spanA?.source_range?.start_time.value).toBeCloseTo(108, 5);
     expect(spanA?.source_range?.duration.value).toBeCloseTo(24, 5);
-    expect(spanA?.file_relative_source_range?.start_time.value).toBeCloseTo(84, 5);
-    expect(spanA?.file_relative_source_range?.duration.value).toBeCloseTo(24, 5);
+    expect(spanA?.file_relative_source_range?.start_time.value).toBeCloseTo(
+      84,
+      5
+    );
+    expect(spanA?.file_relative_source_range?.duration.value).toBeCloseTo(
+      24,
+      5
+    );
     expect(spanB?.source_range?.start_time.value).toBeCloseTo(12, 5);
     expect(spanB?.source_range?.duration.value).toBeCloseTo(30, 5);
-    expect(spanB?.file_relative_source_range?.start_time.value).toBeCloseTo(12, 5);
-    expect(spanT?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
+    expect(spanB?.file_relative_source_range?.start_time.value).toBeCloseTo(
+      12,
+      5
+    );
+    expect(spanT?.intersected_timeline_range.start_time.value).toBeCloseTo(
+      60,
+      5
+    );
     expect(spanT?.intersected_timeline_range.duration.value).toBeCloseTo(24, 5);
 
     const at200 = evaluateOtioAt(doc, timelineId, { value: 200, rate: 24 });
-    const plate = at200.video_contributions.find((item) => item.node_id === 'clip-nested-plate');
-    const flare = at200.video_contributions.find((item) => item.node_id === 'clip-nested-flare');
+    const plate = at200.video_contributions.find(
+      (item) => item.node_id === 'clip-nested-plate'
+    );
+    const flare = at200.video_contributions.find(
+      (item) => item.node_id === 'clip-nested-flare'
+    );
     expect(plate?.source_frame).toBe(1009);
-    expect<string | null | undefined>(plate?.bundle_path).toBe('media/plate_1009.png');
+    expect<string | null | undefined>(plate?.bundle_path).toBe(
+      'media/plate_1009.png'
+    );
     expect(flare).toBeDefined();
     expect(node(doc, 'track-nested-plate-base').timeline_range).not.toBeNull();
     expect(node(doc, 'track-nested-fx-glow').timeline_range).not.toBeNull();
-    expect(node(doc, 'stack-vfx-submaster').parent_range?.start_time.value).toBeCloseTo(192, 5);
+    expect(
+      node(doc, 'stack-vfx-submaster').parent_range?.start_time.value
+    ).toBeCloseTo(192, 5);
 
     const at72 = evaluateOtioAt(doc, timelineId, { value: 72, rate: 24 });
-    expect(at72.video_contributions.map((item) => item.node_id)).toContain('clip-v2-timewarp');
+    expect(at72.video_contributions.map((item) => item.node_id)).toContain(
+      'clip-v2-timewarp'
+    );
     const at180 = evaluateOtioAt(doc, timelineId, { value: 180, rate: 24 });
-    const unsupported = at180.video_contributions.find((item) => item.node_id === 'clip-v2-unsupported');
-    expect(unsupported?.diagnostics.some((item) => item.code === 'unsupported-effect')).toBe(true);
+    const unsupported = at180.video_contributions.find(
+      (item) => item.node_id === 'clip-v2-unsupported'
+    );
+    expect(
+      unsupported?.diagnostics.some(
+        (item) => item.code === 'unsupported-effect'
+      )
+    ).toBe(true);
 
     const markers = markersForOtioTimeline(doc, timelineId);
-    expect(markers.some((item) => item.owner_node_id === 'clip-v1-primary-a' && item.marker.name === 'Grade Correction Required')).toBe(false);
+    expect(
+      markers.some(
+        (item) =>
+          item.owner_node_id === 'clip-v1-primary-a' &&
+          item.marker.name === 'Grade Correction Required'
+      )
+    ).toBe(false);
     const at36 = evaluateOtioAt(doc, timelineId, { value: 36, rate: 24 });
-    expect(at36.active_markers.some((item) => item.marker.name === 'Grade Correction Required')).toBe(false);
+    expect(
+      at36.active_markers.some(
+        (item) => item.marker.name === 'Grade Correction Required'
+      )
+    ).toBe(false);
   });
 
   test('nested trim samples from the stack source, not zero', () => {
@@ -174,11 +225,23 @@ describe('official OTIO placement and Relik sampling', () => {
     const timelineId = doc.timeline_ids[0] as string;
     const one = evaluateOtioAt(doc, timelineId, { value: 1, rate: 24 });
     const two = evaluateOtioAt(doc, timelineId, { value: 2, rate: 24 });
-    const stepOne = one.video_contributions.find((item) => item.node_id === 'clip-sequence-step-two');
-    const stepTwo = two.video_contributions.find((item) => item.node_id === 'clip-sequence-step-two');
-    expect<string | null | undefined>(stepOne?.bundle_path).toBe('media/step_0000.png');
-    expect<string | null | undefined>(stepTwo?.bundle_path).toBe('media/step_0002.png');
-    const signed = one.video_contributions.find((item) => item.node_id === 'clip-sequence-signed-start');
-    expect<string | null | undefined>(signed?.bundle_path).toBe('media/signed_-0002.png');
+    const stepOne = one.video_contributions.find(
+      (item) => item.node_id === 'clip-sequence-step-two'
+    );
+    const stepTwo = two.video_contributions.find(
+      (item) => item.node_id === 'clip-sequence-step-two'
+    );
+    expect<string | null | undefined>(stepOne?.bundle_path).toBe(
+      'media/step_0000.png'
+    );
+    expect<string | null | undefined>(stepTwo?.bundle_path).toBe(
+      'media/step_0002.png'
+    );
+    const signed = one.video_contributions.find(
+      (item) => item.node_id === 'clip-sequence-signed-start'
+    );
+    expect<string | null | undefined>(signed?.bundle_path).toBe(
+      'media/signed_-0002.png'
+    );
   });
 });

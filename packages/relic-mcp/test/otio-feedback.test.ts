@@ -6,16 +6,17 @@ import { deflateRawSync } from 'node:zlib';
 import {
   crc32,
   indexOtioZip,
-  otioBundleMediaIndex,
-  readOtioDocument,
-  sourceSpansForOtioRange,
   type OtioAnchorV1,
   type OtioDocumentV1,
   type OtioTimeRange,
+  otioBundleMediaIndex,
+  readOtioDocument,
+  sourceSpansForOtioRange,
 } from '@relic/format';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import type { CommentRecord } from '../src/comments.ts';
 import {
   postComment,
   readComments,
@@ -23,11 +24,14 @@ import {
   validateAndNormalizeAnchor,
 } from '../src/comments.ts';
 import { nodeFiles } from '../src/files.ts';
-import { type PublishDeps, PublishError, publish } from '../src/publish.ts';
+import {
+  type PublishDeps,
+  type PublishError,
+  publish,
+} from '../src/publish.ts';
 import { republish } from '../src/republish.ts';
 import { resolveAnchors } from '../src/resolve-anchor.ts';
 import { handleMessage, READ_COMMENTS_TOOL_NAME } from '../src/server.ts';
-import type { CommentRecord } from '../src/comments.ts';
 
 const SERVICE = 'https://relic.example';
 

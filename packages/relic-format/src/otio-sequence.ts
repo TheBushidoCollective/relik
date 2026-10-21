@@ -4,8 +4,8 @@
  */
 
 import { isOtioRawNumber } from './otio-json.ts';
-import { MAX_OTIO_BUNDLE_MEDIA_ENTRIES, otioBundleEntry } from './otio-zip.ts';
 import type { OtioBundleEntryName, OtioMediaEntry } from './otio-types.ts';
+import { MAX_OTIO_BUNDLE_MEDIA_ENTRIES, otioBundleEntry } from './otio-zip.ts';
 
 const MAX_FRAME_PAD = 32;
 const MAX_SEQUENCE_PATH = 1024;
@@ -24,7 +24,7 @@ export type OtioImageSequenceRead =
   | { readonly ok: false; readonly reason: string };
 
 function hasOwn(record: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, key);
+  return Object.hasOwn(record, key);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

@@ -1334,14 +1334,20 @@ function normalizeOtioAnchor(
     );
   }
   const trackId = obj['track_id'];
-  if (trackId !== null && (typeof trackId !== 'string' || trackId.length === 0)) {
+  if (
+    trackId !== null &&
+    (typeof trackId !== 'string' || trackId.length === 0)
+  ) {
     throw new PublishError(
       'local_comment_anchor_otio_invalid',
       'otio track_id must be null for the whole composition or a non-empty track id.'
     );
   }
   const itemId = obj['item_id'];
-  if (itemId !== undefined && (typeof itemId !== 'string' || itemId.length === 0)) {
+  if (
+    itemId !== undefined &&
+    (typeof itemId !== 'string' || itemId.length === 0)
+  ) {
     throw new PublishError(
       'local_comment_anchor_otio_invalid',
       'otio item_id, when present, must be a non-empty string.'
@@ -1357,7 +1363,11 @@ function normalizeOtioAnchor(
   const start = requireRational(range['start_time'], 'range start_time', false);
   const duration = requireRational(range['duration'], 'range duration', true);
   const snapshot = obj['snapshot'];
-  if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
+  if (
+    typeof snapshot !== 'object' ||
+    snapshot === null ||
+    Array.isArray(snapshot)
+  ) {
     throw new PublishError(
       'local_comment_anchor_otio_invalid',
       'an otio anchor requires a snapshot with timeline, track, and item labels.'
@@ -1410,7 +1420,6 @@ function normalizeOtioAnchor(
   }
   return anchor;
 }
-
 
 /**
  * Validate and canonicalize an anchor input at the tool boundary.

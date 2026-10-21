@@ -3,9 +3,9 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { basename as pathBasename, resolve as pathResolve } from 'node:path';
 import {
-  openNativeBundleRoot,
   type NativeBundleRoot,
   type NativeOpenedRegularFile,
+  openNativeBundleRoot,
 } from './native-secure-open.ts';
 import type {
   ConfinedBundleDirectory,

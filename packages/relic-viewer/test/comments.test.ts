@@ -1635,9 +1635,7 @@ describe('OTIO comment safety', () => {
         .map((entry) => entry.id)
         .sort()
     ).toEqual(['A', 'B', 'C']);
-    expect(triple.every((node) => node.recovery?.kind === 'cycle')).toBe(
-      true
-    );
+    expect(triple.every((node) => node.recovery?.kind === 'cycle')).toBe(true);
     expect(triple.every((node) => node.replies.length === 0)).toBe(true);
   });
 

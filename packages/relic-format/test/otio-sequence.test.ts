@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import type { OtioImageSequence } from '../src/otio-sequence.ts';
 import {
   otioSequenceFrameEntries,
   readOtioImageSequence,
 } from '../src/otio-sequence.ts';
-import type { OtioImageSequence } from '../src/otio-sequence.ts';
 import type { OtioMediaEntry } from '../src/otio-types.ts';
 
 function timeRange(value = 48, rate = 24): Record<string, unknown> {
@@ -179,7 +179,9 @@ describe('OTIO image-sequence semantics', () => {
     const frameBase = requiredSequence(
       imageSequence({ target_url_base: 'frames' })
     );
-    expect<string | null>(frameBase.entry(0)).toBe('media/frames/plate_1001.png');
+    expect<string | null>(frameBase.entry(0)).toBe(
+      'media/frames/plate_1001.png'
+    );
 
     const traversingBase = requiredSequence(
       imageSequence({ target_url_base: 'media/sub/../' })
@@ -234,7 +236,9 @@ describe('OTIO image-sequence semantics', () => {
       (_, index) => `media/plate_${String(index + 1001).padStart(4, '0')}.png`
     );
     const media = mediaIndex(names);
-    expect<readonly string[]>(otioSequenceFrameEntries(record, media)).toEqual(names);
+    expect<readonly string[]>(otioSequenceFrameEntries(record, media)).toEqual(
+      names
+    );
     expect(
       otioSequenceFrameEntries(
         imageSequence({ target_url_base: 'media/sub/../' }),

@@ -18,8 +18,8 @@ import {
   MalformedCommentError,
 } from '../src/errors.ts';
 import { generateKey, KEY_BYTES } from '../src/fragment.ts';
-import { deriveKeys } from '../src/rfc8188.ts';
 import type { OtioAnchorV1 } from '../src/otio-types.ts';
+import { deriveKeys } from '../src/rfc8188.ts';
 
 /**
  * HKDF-SHA256 over the fragment key, run here rather than through the module,

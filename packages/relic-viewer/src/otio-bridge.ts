@@ -11,7 +11,10 @@ export interface OtioUiController {
   paint(anchor: OtioAnchorV1, commentId: string): boolean;
   reveal(anchor: OtioAnchorV1): void;
   clearMarks(): void;
-  project(anchor: OtioAnchorV1, originalContent: Uint8Array): Promise<OtioAnchorResolution>;
+  project(
+    anchor: OtioAnchorV1,
+    originalContent: Uint8Array
+  ): Promise<OtioAnchorResolution>;
   projection(anchor: OtioAnchorV1): OtioAnchorResolution | undefined;
   dispose(): void;
 }
@@ -24,12 +27,19 @@ export interface OtioAimDetail {
 
 const controllers = new WeakMap<HTMLElement, OtioUiController>();
 
-export function attachOtioController(root: HTMLElement, controller: OtioUiController): void {
+export function attachOtioController(
+  root: HTMLElement,
+  controller: OtioUiController
+): void {
   controllers.set(root, controller);
 }
 
-export function otioControllerFor(host: HTMLElement): OtioUiController | undefined {
-  const root = host.matches?.('.otio-view') ? host : host.querySelector?.<HTMLElement>('.otio-view');
+export function otioControllerFor(
+  host: HTMLElement
+): OtioUiController | undefined {
+  const root = host.matches?.('.otio-view')
+    ? host
+    : host.querySelector?.<HTMLElement>('.otio-view');
   return root == null ? undefined : controllers.get(root);
 }
 

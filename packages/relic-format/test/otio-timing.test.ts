@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readOtioDocument } from '../src/otio-identity.ts';
 import {
   addRationalTimes,
   compareRationalTimes,
@@ -14,7 +15,6 @@ import {
   subtractRationalTimes,
   timeToSeconds,
 } from '../src/otio-timing.ts';
-import { readOtioDocument } from '../src/otio-identity.ts';
 import type {
   OtioDocumentV1,
   OtioMediaEntry,
@@ -102,55 +102,55 @@ describe('otio-timing rational arithmetic and mixed rates', () => {
 describe('otio-timing evaluator and source spans', () => {
   function timingJson(clipBAvailable = true): string {
     return JSON.stringify({
-    OTIO_SCHEMA: 'Timeline.1',
-    name: 'Test Timeline',
-    metadata: { relic: { id: 'timeline_1' } },
-    global_start_time: { value: 86400, rate: 24 },
-    tracks: {
-      OTIO_SCHEMA: 'Stack.1',
-      name: 'tracks',
-      children: [
-        {
-          OTIO_SCHEMA: 'Track.1',
-          name: 'Video 1',
-          kind: 'Video',
-          metadata: { relic: { id: 'track_v1' } },
-          children: [
-            {
-              OTIO_SCHEMA: 'Clip.1',
-              name: 'Clip A',
-              metadata: { relic: { id: 'clip_a' } },
-              source_range: {
-                start_time: { value: 48, rate: 24 },
-                duration: { value: 72, rate: 24 },
-              },
-              media_reference: {
-                OTIO_SCHEMA: 'ExternalReference.1',
-                target_url: 'media/primary_a.mp4',
-                available_range: {
-                  start_time: { value: 24, rate: 24 },
-                  duration: { value: 240, rate: 24 },
+      OTIO_SCHEMA: 'Timeline.1',
+      name: 'Test Timeline',
+      metadata: { relic: { id: 'timeline_1' } },
+      global_start_time: { value: 86400, rate: 24 },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        name: 'tracks',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Video 1',
+            kind: 'Video',
+            metadata: { relic: { id: 'track_v1' } },
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'Clip A',
+                metadata: { relic: { id: 'clip_a' } },
+                source_range: {
+                  start_time: { value: 48, rate: 24 },
+                  duration: { value: 72, rate: 24 },
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: 'media/primary_a.mp4',
+                  available_range: {
+                    start_time: { value: 24, rate: 24 },
+                    duration: { value: 240, rate: 24 },
+                  },
                 },
               },
-            },
-            {
-              OTIO_SCHEMA: 'Transition.1',
-              name: 'Dissolve',
-              transition_type: 'SMPTE_Dissolve',
-              in_offset: { value: 12, rate: 24 },
-              out_offset: { value: 12, rate: 24 },
-            },
-            {
-              OTIO_SCHEMA: 'Clip.1',
-              name: 'Clip B',
-              metadata: { relic: { id: 'clip_b' } },
-              source_range: {
-                start_time: { value: 0, rate: 24 },
-                duration: { value: 96, rate: 24 },
+              {
+                OTIO_SCHEMA: 'Transition.1',
+                name: 'Dissolve',
+                transition_type: 'SMPTE_Dissolve',
+                in_offset: { value: 12, rate: 24 },
+                out_offset: { value: 12, rate: 24 },
               },
-              media_reference: {
-                OTIO_SCHEMA: 'ExternalReference.1',
-                target_url: 'media/secondary_b.mp4',
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'Clip B',
+                metadata: { relic: { id: 'clip_b' } },
+                source_range: {
+                  start_time: { value: 0, rate: 24 },
+                  duration: { value: 96, rate: 24 },
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: 'media/secondary_b.mp4',
                   ...(clipBAvailable
                     ? {
                         available_range: {
@@ -159,13 +159,13 @@ describe('otio-timing evaluator and source spans', () => {
                         },
                       }
                     : {}),
+                },
               },
-            },
-          ],
-        },
-      ],
-    },
-  });
+            ],
+          },
+        ],
+      },
+    });
   }
 
   const timelineJson = timingJson();
@@ -201,7 +201,9 @@ describe('otio-timing evaluator and source spans', () => {
     const contrib = evalResult.video_contributions[0];
     expect(contrib?.node_id).toBe('clip_a');
     expect(contrib?.source_time.value).toBeCloseTo(60, 5);
-    expect<string | null | undefined>(contrib?.bundle_path).toBe('media/primary_a.mp4');
+    expect<string | null | undefined>(contrib?.bundle_path).toBe(
+      'media/primary_a.mp4'
+    );
   });
 
   test('evaluateOtioAt computes transition weights during SMPTE_Dissolve', () => {
@@ -302,75 +304,88 @@ describe('otio-timing evaluator and source spans', () => {
   });
 
   test('projects legacy Marker.1 time only when canonical timing is absent or null', () => {
-    const doc = readOtioDocument(JSON.stringify({
-      OTIO_SCHEMA: 'Timeline.1',
-      metadata: { relic: { id: 'timeline' } },
-      tracks: {
-        OTIO_SCHEMA: 'Stack.1',
-        children: [{
-          OTIO_SCHEMA: 'Track.1',
-          kind: 'Video',
-          metadata: { relic: { id: 'track' } },
-          children: [{
-            OTIO_SCHEMA: 'Clip.1',
-            metadata: { relic: { id: 'clip' } },
-            source_range: {
-              start_time: { value: 10, rate: 24 },
-              duration: { value: 24, rate: 24 },
-            },
-            media_reference: {
-              OTIO_SCHEMA: 'ExternalReference.1',
-              target_url: 'media/clip.mov',
-              available_range: {
-                start_time: { value: 0, rate: 24 },
-                duration: { value: 48, rate: 24 },
-              },
-            },
-            markers: [
-              {
-                OTIO_SCHEMA: 'Marker.1',
-                name: 'legacy point',
-                time: { value: 12, rate: 24 },
-              },
-              {
-                OTIO_SCHEMA: 'Marker.1',
-                name: 'null canonical',
-                marked_range: null,
-                time: { value: 13, rate: 24 },
-              },
-              {
-                OTIO_SCHEMA: 'Marker.1',
-                name: 'canonical wins',
-                marked_range: {
-                  start_time: { value: 14, rate: 24 },
-                  duration: { value: 2, rate: 24 },
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip' } },
+                  source_range: {
+                    start_time: { value: 10, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clip.mov',
+                    available_range: {
+                      start_time: { value: 0, rate: 24 },
+                      duration: { value: 48, rate: 24 },
+                    },
+                  },
+                  markers: [
+                    {
+                      OTIO_SCHEMA: 'Marker.1',
+                      name: 'legacy point',
+                      time: { value: 12, rate: 24 },
+                    },
+                    {
+                      OTIO_SCHEMA: 'Marker.1',
+                      name: 'null canonical',
+                      marked_range: null,
+                      time: { value: 13, rate: 24 },
+                    },
+                    {
+                      OTIO_SCHEMA: 'Marker.1',
+                      name: 'canonical wins',
+                      marked_range: {
+                        start_time: { value: 14, rate: 24 },
+                        duration: { value: 2, rate: 24 },
+                      },
+                      time: { value: 12, rate: 24 },
+                    },
+                    {
+                      OTIO_SCHEMA: 'Marker.1',
+                      name: 'invalid canonical',
+                      marked_range: {
+                        start_time: { value: 'invalid', rate: 24 },
+                        duration: { value: 0, rate: 24 },
+                      },
+                      time: { value: 12, rate: 24 },
+                    },
+                    {
+                      OTIO_SCHEMA: 'Marker.2',
+                      name: 'not a legacy fallback',
+                      time: { value: 12, rate: 24 },
+                    },
+                  ],
                 },
-                time: { value: 12, rate: 24 },
-              },
-              {
-                OTIO_SCHEMA: 'Marker.1',
-                name: 'invalid canonical',
-                marked_range: {
-                  start_time: { value: 'invalid', rate: 24 },
-                  duration: { value: 0, rate: 24 },
-                },
-                time: { value: 12, rate: 24 },
-              },
-              {
-                OTIO_SCHEMA: 'Marker.2',
-                name: 'not a legacy fallback',
-                time: { value: 12, rate: 24 },
-              },
-            ],
-          }],
-        }],
-      },
-    }));
+              ],
+            },
+          ],
+        },
+      })
+    );
     const timelineId = doc.timeline_ids[0];
     const clipNode = doc.nodes['clip'];
     if (!timelineId || !clipNode) throw new Error('expected timeline and clip');
-    const [legacy, nullCanonical, canonical, invalidCanonical, markerTwo] = clipNode.markers ?? [];
-    if (!legacy || !nullCanonical || !canonical || !invalidCanonical || !markerTwo) {
+    const [legacy, nullCanonical, canonical, invalidCanonical, markerTwo] =
+      clipNode.markers ?? [];
+    if (
+      !legacy ||
+      !nullCanonical ||
+      !canonical ||
+      !invalidCanonical ||
+      !markerTwo
+    ) {
       throw new Error('expected all parsed markers');
     }
 
@@ -387,11 +402,15 @@ describe('otio-timing evaluator and source spans', () => {
       duration: { value: 2, rate: 24 },
     });
     expect(invalidCanonical.marked_range).toBeNull();
-    expect(invalidCanonical.raw).toEqual(expect.objectContaining({
-      time: { value: 12, rate: 24 },
-    }));
+    expect(invalidCanonical.raw).toEqual(
+      expect.objectContaining({
+        time: { value: 12, rate: 24 },
+      })
+    );
     expect(markerTwo.marked_range).toBeNull();
-    expect(clipNode.diagnostics?.some((item) => item.code === 'invalid-timing')).toBe(true);
+    expect(
+      clipNode.diagnostics?.some((item) => item.code === 'invalid-timing')
+    ).toBe(true);
 
     const projected = markersForOtioTimeline(doc, timelineId);
     expect(projected.map((item) => item.marker.name)).toEqual([
@@ -434,7 +453,7 @@ describe('otio-timing evaluator and source spans', () => {
     expect(
       clipB?.diagnostics.some((item) => item.code === 'missing-handles')
     ).toBe(false);
-});
+  });
 
   test('treats a span ending at availability end as available', () => {
     const makeDocument = (availableEnd: number) =>
@@ -1452,7 +1471,9 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
         value: 0,
         rate: 24,
       });
-      expect<string | null | undefined>(evaluated.video_contributions[0]?.bundle_path).toBe(entry);
+      expect<string | null | undefined>(
+        evaluated.video_contributions[0]?.bundle_path
+      ).toBe(entry);
       expect(
         sourceSpansForOtioRange(doc, 'timeline-sequence', 'track-sequence', {
           start_time: { value: 0, rate: 24 },

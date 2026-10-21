@@ -83,7 +83,11 @@ function requireGlibc228(): void {
   try {
     const report = process.report?.getReport();
     const header = report && 'header' in report ? report.header : undefined;
-    if (typeof header === 'object' && header !== null && 'glibcVersionRuntime' in header) {
+    if (
+      typeof header === 'object' &&
+      header !== null &&
+      'glibcVersionRuntime' in header
+    ) {
       glibcVersion = header.glibcVersionRuntime;
     }
   } catch (cause) {

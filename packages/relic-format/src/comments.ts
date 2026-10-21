@@ -34,12 +34,12 @@
  * the drift this package exists to prevent.
  */
 
-import type { OtioAnchorV1, OtioRationalTime } from './otio-types.ts';
 import {
   CommentDecryptFailedError,
   CommentTooLargeError,
   MalformedCommentError,
 } from './errors.ts';
+import type { OtioAnchorV1, OtioRationalTime } from './otio-types.ts';
 
 /**
  * The third label. Distinct from RFC 8188's two by construction, and namespaced
