@@ -299,7 +299,11 @@ async function assertPackagedNativeFiles(packageRoot) {
       `installed package.json.relicNativeSecureOpen.prebuilds.${target}`
     );
     const expectedFloor = packagedFloors[target];
-    if (JSON.stringify(declaredFloor) !== JSON.stringify(expectedFloor)) {
+    const expectedPackageFloor =
+      'macOS' in expectedFloor
+        ? { macOSBinaryDeploymentFloor: expectedFloor.macOS }
+        : { minimumGlibc: expectedFloor.glibc };
+    if (JSON.stringify(declaredFloor) !== JSON.stringify(expectedPackageFloor)) {
       throw new Error(`${target} package metadata has the wrong platform floor`);
     }
     const targetDirectory = join(packageRoot, 'prebuilds', target);
