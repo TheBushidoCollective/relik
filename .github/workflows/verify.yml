@@ -20,7 +20,7 @@ env:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     steps:
@@ -32,6 +32,17 @@ jobs:
           install: true
           cache: true
 
+
+      - name: Require Linux native build prerequisites
+        run: |
+          set -euo pipefail
+          command -v docker
+          docker version --format '{{.Server.Version}}'
+          if ! command -v readelf >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends binutils
+          fi
+          echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}

@@ -815,14 +815,17 @@ Authorised by Jason Waldrip on 2026-10-20.
 **Native confined-open exception, 2026-10-21.** The earlier client-distribution
 rule, that the npm client contains readable JavaScript only, is reversed for
 one operation: automatic `.otiod` packaging. Jason Waldrip authorized a small,
-source-included, ABI-stable Node-API helper with four prebuilt targets:
-macOS 15+ arm64, macOS 15+ x64, Linux glibc 2.28+ kernel 5.6+ arm64, and Linux
-glibc 2.28+ kernel 5.6+ x64. It pins the selected bundle root and opens
-descendants using kernel confinement, so a pathname replacement cannot redirect
-a media read outside that root. The helper is audited from source in the
-tarball. It is never downloaded, built with Python, or compiled on an installed
-machine. Linux requires `openat2`; macOS requires `O_RESOLVE_BENEATH` and
-`O_NOFOLLOW_ANY`. An unsupported platform, architecture, libc, or primitive
+source-included, ABI-stable Node-API helper with four prebuilt targets: macOS
+arm64 and x64 with a 15.0 binary deployment floor, Linux glibc 2.28+ kernel
+5.6+ arm64, and Linux glibc 2.28+ kernel 5.6+ x64. It pins the selected bundle
+root and opens descendants using kernel confinement, so a pathname replacement
+cannot redirect a media read outside that root. The helper is audited from
+source in the tarball. It is never downloaded, built with Python, or compiled
+on an installed machine. Linux requires `openat2`; macOS requires
+`O_RESOLVE_BENEATH` and `O_NOFOLLOW_ANY`. On macOS, `.otiod` conversion starts
+only after a strict confinement self-test passes on the running kernel. The
+15.0 deployment floor permits the binary to load; each kernel still proves the
+primitive for itself. An unsupported platform, architecture, libc, or primitive
 refuses `.otiod` packaging. It never falls back to JavaScript path checks.
 Ordinary single-file publishing remains plain Node 18 or newer.
 

@@ -37,8 +37,8 @@ description = "Type check every package"
 run = "bun run --filter '*' typecheck"
 
 [tasks.test]
-description = "Run the full test suite"
-run = "bun test"
+description = "Run the full test suite after build preparation"
+run = "bun run test"
 
 [tasks.verify]
 description = "The full verification suite: lint, typecheck, test"

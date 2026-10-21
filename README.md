@@ -335,11 +335,12 @@ What is chosen is that its JavaScript arrives as readable source.
 `dist/relic-mcp.js` is a single unminified file and the TypeScript it was built
 from ships in the same package. The deliberate exception is automatic `.otiod`
 directory packaging: a source-included Node-API helper, prebuilt in the npm
-tarball for macOS 15+ arm64 and x64 plus Linux glibc 2.28+ kernel 5.6+ arm64
-and x64, opens bundle descendants under kernel-enforced confinement. It never
-downloads a helper, invokes Python, or compiles on an installed machine. An
-unsupported platform, architecture, libc, or kernel refuses that directory
-feature rather than reopening paths in JavaScript. The cover
+tarball for macOS arm64 and x64 with a 15.0 binary deployment floor, plus Linux
+glibc 2.28+ kernel 5.6+ arm64 and x64. On macOS, `.otiod` conversion runs only
+after the helper's strict confinement self-test passes on the current kernel. A
+kernel that lacks the primitive refuses the directory feature rather than
+reopening paths in JavaScript. The helper never downloads, invokes Python, or
+compiles on an installed machine. The cover
 rendering page assets in `dist/cover/` contain the unminified cover bundle built
 from `@relic/viewer`, with vendored React, pdfjs, and sucrase for local document
 rendering in headless Chrome. Releases carry [npm provenance][provenance], which

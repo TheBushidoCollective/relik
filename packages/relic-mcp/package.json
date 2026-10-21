@@ -43,10 +43,10 @@
     "napiVersion": 8,
     "prebuilds": {
       "darwin-arm64": {
-        "minimumMacOS": "15.0"
+        "macOSBinaryDeploymentFloor": "15.0"
       },
       "darwin-x64": {
-        "minimumMacOS": "15.0"
+        "macOSBinaryDeploymentFloor": "15.0"
       },
       "linux-arm64-gnu": {
         "minimumGlibc": "2.28"
@@ -62,7 +62,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "node native/local-build.mjs && bun run build.ts",
+    "build": "node native/local-build.mjs && bun run build:bundle",
+    "build:bundle": "bun run build.ts",
     "native:build": "node native/build.mjs",
     "native:check": "node native/build.mjs --check",
     "native:local": "node native/local-build.mjs",

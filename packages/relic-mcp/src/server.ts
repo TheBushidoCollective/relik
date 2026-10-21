@@ -270,8 +270,10 @@ export const TOOL_DEFINITION = {
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
     'it. An .otiod directory is packaged into a standard .otioz archive ' +
     '(content.otio, version.txt 1.0.0, and only referenced media under media/) ' +
-    'only on macOS 15+ arm64 or x64, or Linux glibc 2.28+ kernel 5.6+ arm64 ' +
-    'or x64. Unsupported targets refuse it rather than using a pathname ' +
+    'on packaged targets: macOS arm64 or x64 with a 15.0 binary deployment ' +
+    'floor and a passing strict confinement self-test on the running kernel, ' +
+    'or Linux glibc 2.28+ kernel 5.6+ arm64 or x64. A target that cannot ' +
+    'satisfy that requirement refuses it rather than using a pathname ' +
     'fallback. A raw .otio file or an existing .otioz archive is published ' +
     'as given. OTIO covers use only the public title and format label; media ' +
     'frames stay out of the unencrypted preview. Takes a filesystem path, never ' +
@@ -390,8 +392,10 @@ export const REPUBLISH_TOOL_DEFINITION = {
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
     'it. An .otiod directory is packaged into a standard .otioz archive ' +
     '(content.otio, version.txt 1.0.0, and only referenced media under media/) ' +
-    'only on macOS 15+ arm64 or x64, or Linux glibc 2.28+ kernel 5.6+ arm64 ' +
-    'or x64. Unsupported targets refuse it rather than using a pathname ' +
+    'on packaged targets: macOS arm64 or x64 with a 15.0 binary deployment ' +
+    'floor and a passing strict confinement self-test on the running kernel, ' +
+    'or Linux glibc 2.28+ kernel 5.6+ arm64 or x64. A target that cannot ' +
+    'satisfy that requirement refuses it rather than using a pathname ' +
     'fallback. A raw .otio file or an existing .otioz archive is republished ' +
     'as given. OTIO covers use only the public title and format label; media ' +
     'frames stay out of the unencrypted preview.' +
@@ -1659,9 +1663,11 @@ about that relic.
 default. Pass cover: false for anything not public. OTIO previews are a generic \
 card with only the public title and format, never media frames or track metadata. \
 Ordinary file publishing needs Node 18+. An .otiod directory uses the \
-source-included prebuilt Node-API helper only on macOS 15+ arm64 or x64, or \
-Linux glibc 2.28+ kernel 5.6+ arm64 or x64. It is never downloaded or compiled \
-at runtime; other targets refuse the directory instead of using pathname checks.
+source-included prebuilt Node-API helper on macOS arm64 or x64 with a 15.0 \
+binary deployment floor and a passing strict confinement self-test on the \
+running kernel, or Linux glibc 2.28+ kernel 5.6+ arm64 or x64. It is never \
+downloaded or compiled at runtime; targets that cannot satisfy those \
+requirements refuse the directory instead of using pathname checks.
 9. relic_republish emails followers a change notice naming the title and version, \
 never the key; pass notify: false to skip it. relic_share returns a share email \
 with the full link to draft in the sharer's mailbox but never sends it. Readers \
@@ -3128,10 +3134,12 @@ relic.
 
 The code doing all of this is on disk in this package and can be read. The only
 compiled component is the source-included Node-API secure-open helper used for
-automatic .otiod directory packaging. It ships for macOS 15+ arm64 and x64,
-plus Linux glibc 2.28+ kernel 5.6+ arm64 and x64. It is never downloaded or
-compiled at runtime, and an unsupported platform, architecture, libc, or kernel
-refuses .otiod packaging rather than using a pathname fallback. Nothing is
+automatic .otiod directory packaging. It ships for macOS arm64 and x64 with a
+15.0 binary deployment floor, plus Linux glibc 2.28+ kernel 5.6+ arm64 and x64.
+On macOS, `.otiod` conversion requires a passing strict confinement self-test
+on the running kernel. The helper is never downloaded or compiled at runtime,
+and an unsupported platform, architecture, libc, or kernel configuration
+refuses `.otiod` packaging rather than using a pathname fallback. Nothing is
 fetched from the network and executed.`;
 }
 
