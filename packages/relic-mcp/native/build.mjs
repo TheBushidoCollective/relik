@@ -16,12 +16,17 @@ import { fileURLToPath } from 'node:url';
 const nativeDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = dirname(nativeDirectory);
 const artifactName = 'secure_open.node';
-const buildMetadataSchemaVersion = 2;
+const buildMetadataSchemaVersion = 3;
 const nodeApiVersion = 8;
+const darwinReleaseToolchainPath = join(
+  nativeDirectory,
+  'darwin-release-toolchain.json'
+);
 const linuxToolchainPath = join(nativeDirectory, 'linux-toolchain.json');
 const sourceFiles = [
   'native/build.mjs',
   'native/darwin-confinement-probe.c',
+  'native/darwin-release-toolchain.json',
   'native/linux-toolchain.json',
   'native/local-build.mjs',
   'native/platform-darwin.c',
@@ -72,6 +77,18 @@ function fail(message) {
   throw new Error(`native secure-open: ${message}`);
 }
 
+function hasExactKeys(value, expectedKeys) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+  return (
+    actualKeys.length === sortedExpectedKeys.length &&
+    actualKeys.every((key, index) => key === sortedExpectedKeys[index])
+  );
+}
+
 async function loadLinuxToolchain() {
   let parsed;
   try {
@@ -95,14 +112,48 @@ async function loadLinuxToolchain() {
   return parsed;
 }
 
+async function loadDarwinReleaseToolchain() {
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(darwinReleaseToolchainPath, 'utf8'));
+  } catch (cause) {
+    fail(`could not read ${darwinReleaseToolchainPath}: ${String(cause)}`);
+  }
+
+  if (
+    !hasExactKeys(parsed, [
+      'schemaVersion',
+      'xcodeVersion',
+      'developerDir',
+      'sdkVersion',
+    ]) ||
+    parsed.schemaVersion !== 1 ||
+    typeof parsed.xcodeVersion !== 'string' ||
+    !/^\d+\.\d+\.\d+$/.test(parsed.xcodeVersion) ||
+    typeof parsed.developerDir !== 'string' ||
+    !isAbsolute(parsed.developerDir) ||
+    /\s/.test(parsed.developerDir) ||
+    parsed.developerDir.endsWith('/') ||
+    typeof parsed.sdkVersion !== 'string' ||
+    !/^\d+\.\d+$/.test(parsed.sdkVersion)
+  ) {
+    fail(
+      `${darwinReleaseToolchainPath} is not a valid pinned Darwin release toolchain manifest`
+    );
+  }
+  return parsed;
+}
+
+const darwinReleaseToolchain = await loadDarwinReleaseToolchain();
+
 const linuxToolchain = await loadLinuxToolchain();
 
 function usage() {
   return [
     'usage:',
-    '  node native/build.mjs --target <tuple> --node-include <node-header-directory> [--output-dir <private-directory>] [--cc <compiler>]',
+    '  node native/build.mjs --target <tuple> --node-include <node-header-directory> [--output-dir <private-directory>] [--cc <compiler>] [--release]',
     '  node native/build.mjs --probe --target <darwin-tuple> --cc <compiler> --output-dir <private-directory>',
-    '  node native/build.mjs --check [--target <tuple>] [--metadata-only]',
+    '  node native/build.mjs --check [--target <tuple>] [--metadata-only] [--release]',
     `tuples: ${Object.keys(targets).join(', ')}`,
     'Linux compilation always runs inside the pinned manylinux container; --cc and CC are Darwin-only.',
   ].join('\n');
@@ -124,6 +175,7 @@ function parseArguments(argumentsToParse) {
     nodeInclude: undefined,
     outputDir: undefined,
     probe: false,
+    release: false,
     target: undefined,
   };
 
@@ -139,6 +191,10 @@ function parseArguments(argumentsToParse) {
     }
     if (argument === '--probe') {
       options.probe = true;
+      continue;
+    }
+    if (argument === '--release') {
+      options.release = true;
       continue;
     }
     if (
@@ -167,6 +223,7 @@ function parseArguments(argumentsToParse) {
   }
   if (options.metadataOnly && !options.check) fail(usage());
   if (options.check && options.probe) fail(usage());
+  if (options.probe && options.release) fail(usage());
   if (
     options.check &&
     (options.nodeInclude !== undefined ||
@@ -399,83 +456,121 @@ function compareVersions(left, right) {
 function parseVersion(value) {
   const match = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(value);
   if (match?.[1] === undefined) return undefined;
-  return [Number(match[1]), Number(match[2] ?? '0'), Number(match[3] ?? '0')];
+  const version = [
+    Number(match[1]),
+    Number(match[2] ?? '0'),
+    Number(match[3] ?? '0'),
+  ];
+  return version.every((part) => Number.isSafeInteger(part)) ? version : undefined;
+}
+
+function parseGlibcSymbol(value) {
+  const match = /^GLIBC_(\d+)\.(\d+)$/.exec(value);
+  if (match?.[1] === undefined || match[2] === undefined) return undefined;
+  const version = [Number(match[1]), Number(match[2])];
+  return version.every((part) => Number.isSafeInteger(part)) ? version : undefined;
+}
+
+function validateAudit(target, audit) {
+  if (target.platform === 'linux') {
+    const ceiling =
+      typeof audit?.glibcSymbolCeiling === 'string'
+        ? parseGlibcSymbol(audit.glibcSymbolCeiling)
+        : undefined;
+    const floor = parseVersion(target.minimumGlibc);
+    if (
+      !hasExactKeys(audit, [
+        'architecture',
+        'dependencies',
+        'glibcSymbolCeiling',
+        'rpath',
+      ]) ||
+      audit.architecture !== target.architecture ||
+      JSON.stringify(audit.dependencies) !== JSON.stringify(['libc.so.6']) ||
+      audit.rpath !== false ||
+      ceiling === undefined ||
+      floor === undefined ||
+      compareVersions(ceiling, [0, 0]) <= 0 ||
+      compareVersions(ceiling, floor) > 0
+    ) {
+      fail(`${target.id} dependency-floor audit does not match its Linux policy`);
+    }
+    return;
+  }
+
+  if (
+    !hasExactKeys(audit, [
+      'architecture',
+      'dependencies',
+      'macOSDeploymentTarget',
+    ]) ||
+    audit.architecture !== target.architecture ||
+    JSON.stringify(audit.dependencies) !==
+      JSON.stringify(['/usr/lib/libSystem.B.dylib']) ||
+    audit.macOSDeploymentTarget !== target.minimumMacOS
+  ) {
+    fail(`${target.id} dependency-floor audit does not match its Darwin policy`);
+  }
 }
 
 function auditLinux(target, path) {
   const readelf = findAuditTool('RELIC_READELF', ['llvm-readelf', 'readelf']);
   const header = run(readelf, ['-h', path]);
-  if (!/Class:\s+ELF64\b/.test(header) || !new RegExp(`Machine:\\s+${target.architecture}`).test(header)) {
-    fail(`${target.id} artifact has the wrong ELF architecture`);
+  if (!/Class:\s+ELF64\b/.test(header)) {
+    fail(`${target.id} artifact is not ELF64`);
   }
+  const machine = /Machine:\s*(.+?)\s*$/m.exec(header)?.[1] ?? '';
 
   const dynamic = run(readelf, ['-d', path]);
-  if (/\((?:RPATH|RUNPATH)\)/.test(dynamic)) {
-    fail(`${target.id} artifact contains an RPATH or RUNPATH`);
-  }
   const dependencies = [...dynamic.matchAll(/\(NEEDED\).*?\[([^\]]+)\]/g)].map(
     (match) => match[1]
   );
-  if (dependencies.some((dependency) => dependency !== 'libc.so.6')) {
-    fail(`${target.id} artifact links an unsupported library (${dependencies.join(', ')})`);
-  }
-
   const versions = parseGlibcVersions(run(readelf, ['--version-info', path]));
+  if (versions.length === 0) {
+    fail(`${target.id} artifact has no parsed GLIBC symbol versions`);
+  }
   const maximum = versions.reduce(
-    (current, version) => (compareVersions(version, current) > 0 ? version : current),
+    (current, version) =>
+      compareVersions(version, current) > 0 ? version : current,
     [0, 0]
   );
-  const floor = parseVersion(target.minimumGlibc);
-  if (floor === undefined || compareVersions(maximum, floor) > 0) {
-    fail(`${target.id} artifact requires GLIBC_${maximum[0]}.${maximum[1]}, above ${target.minimumGlibc}`);
-  }
-
-  return {
-    architecture: target.architecture,
+  const audit = {
+    architecture: machine,
     dependencies,
     glibcSymbolCeiling: `GLIBC_${maximum[0]}.${maximum[1]}`,
-    rpath: false,
+    rpath: /\((?:RPATH|RUNPATH)\)/.test(dynamic),
   };
+  validateAudit(target, audit);
+  return audit;
 }
 
 function auditDarwin(target, path) {
   const lipo = findAuditTool('RELIC_LIPO', ['lipo']);
   const otool = findAuditTool('RELIC_OTOOL', ['otool']);
-  const architectures = run(lipo, ['-archs', path]).match(/\b(?:arm64|x86_64)\b/g) ?? [];
-  if (architectures.length !== 1 || architectures[0] !== target.architecture) {
-    fail(`${target.id} artifact has the wrong Mach-O architecture`);
-  }
-
+  const architectures =
+    run(lipo, ['-archs', path]).match(/\b(?:arm64|x86_64)\b/g) ?? [];
   const linked = run(otool, ['-L', path])
     .split('\n')
     .slice(1)
     .map((line) => line.trim().split(' ')[0])
     .filter((value) => value !== '');
-  if (linked.some((dependency) => dependency !== '/usr/lib/libSystem.B.dylib')) {
-    fail(`${target.id} artifact links an unsupported library (${linked.join(', ')})`);
-  }
-
   const loadCommands = run(otool, ['-l', path]);
-  const versionMatch = /cmd LC_BUILD_VERSION[\s\S]*?minos ([0-9.]+)/.exec(loadCommands);
-  const deployment = versionMatch?.[1] === undefined ? undefined : parseVersion(versionMatch[1]);
-  const requiredDeployment = parseVersion(target.minimumMacOS);
-  if (
-    deployment === undefined ||
-    requiredDeployment === undefined ||
-    deployment.some((part, index) => part !== requiredDeployment[index])
-  ) {
-    fail(`${target.id} artifact does not declare exactly macOS ${target.minimumMacOS} as its binary deployment target`);
-  }
-
-  return {
-    architecture: target.architecture,
+  const versionMatch = /cmd LC_BUILD_VERSION[\s\S]*?minos ([0-9.]+)/.exec(
+    loadCommands
+  );
+  const audit = {
+    architecture: architectures.length === 1 ? architectures[0] : '',
     dependencies: linked,
-    macOSDeploymentTarget: target.minimumMacOS,
+    macOSDeploymentTarget: versionMatch?.[1] ?? '',
   };
+  validateAudit(target, audit);
+  return audit;
 }
 
 function auditArtifact(target, path) {
-  return target.platform === 'linux' ? auditLinux(target, path) : auditDarwin(target, path);
+  return target.platform === 'linux'
+    ? auditLinux(target, path)
+    : auditDarwin(target, path);
 }
 
 function firstOutputLine(output) {
@@ -495,12 +590,40 @@ function compilerIdentity(command, output) {
   };
 }
 
-function darwinToolchainContext(target, compiler) {
+function isPathUnder(path, directory) {
+  return path.startsWith(`${directory}/`);
+}
+
+function darwinToolchainContext(target, compiler, release = false) {
   const sdkPath = run('xcrun', ['--sdk', 'macosx', '--show-sdk-path']).trim();
   const sdkVersion = run('xcrun', ['--sdk', 'macosx', '--show-sdk-version']).trim();
   if (sdkPath === '' || sdkVersion === '') fail('xcrun did not identify the selected macOS SDK');
 
-  return {
+  if (release) {
+    const xcodeVersion = firstOutputLine(run('xcodebuild', ['-version']));
+    if (xcodeVersion !== `Xcode ${darwinReleaseToolchain.xcodeVersion}`) {
+      fail(
+        `release Darwin build requires Xcode ${darwinReleaseToolchain.xcodeVersion}, found ${xcodeVersion}`
+      );
+    }
+    if (sdkVersion !== darwinReleaseToolchain.sdkVersion) {
+      fail(
+        `release Darwin build requires SDK ${darwinReleaseToolchain.sdkVersion}, found ${sdkVersion}`
+      );
+    }
+    if (!isPathUnder(sdkPath, darwinReleaseToolchain.developerDir)) {
+      fail(
+        `release Darwin build requires an SDK under ${darwinReleaseToolchain.developerDir}, found ${sdkPath}`
+      );
+    }
+    if (!isPathUnder(compiler, darwinReleaseToolchain.developerDir)) {
+      fail(
+        `release Darwin build requires a compiler under ${darwinReleaseToolchain.developerDir}, found ${compiler}`
+      );
+    }
+  }
+
+  const context = {
     compiler: compilerIdentity(compiler, run(compiler, ['--version'])),
     toolchain: {
       binaryDeploymentTarget: target.minimumMacOS,
@@ -509,6 +632,10 @@ function darwinToolchainContext(target, compiler) {
       sdkVersion,
     },
   };
+  if (release) {
+    context.toolchain.xcodeVersion = darwinReleaseToolchain.xcodeVersion;
+  }
+  return context;
 }
 
 function linuxToolchainContext(target) {
@@ -612,7 +739,7 @@ async function buildTarget(target, options) {
       nativeAddonLinuxCompilerArguments(target)
     );
   } else {
-    buildContext = darwinToolchainContext(target, options.cc);
+    buildContext = darwinToolchainContext(target, options.cc, options.release);
     run(
       options.cc,
       nativeAddonCompilerArguments(target, options.nodeInclude, output.artifact, buildContext.toolchain)
@@ -624,6 +751,7 @@ async function buildTarget(target, options) {
     artifact: artifactName,
     audit,
     binarySha256: await sha256(output.artifact),
+    buildKind: options.release ? 'release' : 'local',
     compiler: buildContext.compiler,
     minimumPlatform:
       target.platform === 'darwin'
@@ -693,7 +821,29 @@ function validateToolchainMetadata(target, toolchain) {
   }
 }
 
-async function checkTarget(target, metadataOnly) {
+function validateBuildKind(target, buildKind, release) {
+  if (buildKind !== 'local' && buildKind !== 'release') {
+    fail(`${target.id} build-info.json has an invalid buildKind`);
+  }
+  if (release && buildKind !== 'release') {
+    fail(`${target.id} build-info.json buildKind must be release for --release checks`);
+  }
+}
+
+function validateReleaseMetadata(target, compiler, toolchain) {
+  if (target.platform !== 'darwin') return;
+
+  if (
+    toolchain.xcodeVersion !== darwinReleaseToolchain.xcodeVersion ||
+    toolchain.sdkVersion !== darwinReleaseToolchain.sdkVersion ||
+    !isPathUnder(toolchain.sdkPath, darwinReleaseToolchain.developerDir) ||
+    !isPathUnder(compiler.command, darwinReleaseToolchain.developerDir)
+  ) {
+    fail(`${target.id} build-info.json does not identify the pinned Darwin release toolchain`);
+  }
+}
+
+async function checkTarget(target, metadataOnly, release) {
   const output = outputPaths(target, undefined);
   if (!existsSync(output.artifact) || !existsSync(output.buildInfo)) {
     fail(`${target.id} is missing ${artifactName} or build-info.json`);
@@ -717,9 +867,11 @@ async function checkTarget(target, metadataOnly) {
     fail(`${target.id} build-info.json does not match its source or binary`);
   }
 
+  validateBuildKind(target, info.buildKind, release);
   validateCompilerMetadata(target, info.compiler);
   validateToolchainMetadata(target, info.toolchain);
-
+  if (release) validateReleaseMetadata(target, info.compiler, info.toolchain);
+  validateAudit(target, info.audit);
   if (!metadataOnly) {
     const audit = auditArtifact(target, output.artifact);
     if (JSON.stringify(info.audit) !== JSON.stringify(audit)) {
@@ -785,7 +937,9 @@ async function buildDarwinProbe(target, options) {
 const options = parseArguments(process.argv.slice(2));
 if (options.check) {
   const selected = options.target === undefined ? Object.values(targets) : [targets[options.target]];
-  for (const target of selected) await checkTarget(target, options.metadataOnly);
+  for (const target of selected) {
+    await checkTarget(target, options.metadataOnly, options.release);
+  }
 } else if (options.probe) {
   await buildDarwinProbe(targets[options.target], options);
 } else {
