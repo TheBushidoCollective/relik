@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter '@relic/viewer' build",
+    "build": "bun run --filter 'relic-mcp' native:local && bun run --filter '@relic/viewer' build",
     "lint": "biome check .",
     "format": "biome format --write .",
     "typecheck": "bun run --filter '*' typecheck",

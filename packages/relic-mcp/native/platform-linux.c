@@ -182,9 +182,9 @@ int relic_probe_confined_open(struct relic_open_error *error) {
 }
 
 int relic_open_root(const char *path, struct relic_open_error *error) {
-  const int flags =
+  const unsigned long long flags =
     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY;
-  const int fd = open(path, flags);
+  const int fd = relic_openat2(AT_FDCWD, path, flags, RESOLVE_NO_SYMLINKS);
 
   if (fd < 0) {
     relic_set_error(error, errno, "open bundle root", RELIC_OPEN_REASON_NONE);

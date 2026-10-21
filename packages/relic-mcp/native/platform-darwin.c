@@ -6,7 +6,7 @@
 #error "platform-darwin.c may only be compiled for Darwin"
 #endif
 
-#if !defined(__x86_64__) && !defined(__aarch64__)
+#if !defined(__x86_64__) && !defined(__aarch64__) && !defined(__arm64__)
 #error "secure_open supports only macOS x86-64 and arm64"
 #endif
 
@@ -197,7 +197,8 @@ int relic_probe_confined_open(struct relic_open_error *error) {
 
 int relic_open_root(const char *path, struct relic_open_error *error) {
   const int flags =
-    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY;
+    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NOFOLLOW_ANY | O_CLOEXEC |
+    O_NONBLOCK | O_NOCTTY;
   const int fd = open(path, flags);
 
   if (fd < 0) {

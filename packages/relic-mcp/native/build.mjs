@@ -56,7 +56,7 @@ function usage() {
   return [
     'usage:',
     '  node native/build.mjs --target <tuple> --node-include <node-header-directory> [--cc <compiler>]',
-    '  node native/build.mjs --check [--target <tuple>]',
+    '  node native/build.mjs --check [--target <tuple>] [--metadata-only]',
     `tuples: ${Object.keys(targets).join(', ')}`,
   ].join('\n');
 }
@@ -65,6 +65,7 @@ function parseArguments(argumentsToParse) {
   const options = {
     check: false,
     cc: process.env.CC,
+    metadataOnly: false,
     nodeInclude: undefined,
     target: undefined,
   };
@@ -73,6 +74,10 @@ function parseArguments(argumentsToParse) {
     const argument = argumentsToParse[index];
     if (argument === '--check') {
       options.check = true;
+      continue;
+    }
+    if (argument === '--metadata-only') {
+      options.metadataOnly = true;
       continue;
     }
     if (argument === '--target' || argument === '--node-include' || argument === '--cc') {
@@ -89,6 +94,7 @@ function parseArguments(argumentsToParse) {
 
   if (options.target !== undefined && !(options.target in targets)) fail(usage());
   if (options.check && options.nodeInclude !== undefined) fail(usage());
+  if (options.metadataOnly && !options.check) fail(usage());
   if (!options.check && (options.target === undefined || options.nodeInclude === undefined)) {
     fail(usage());
   }
@@ -119,7 +125,10 @@ function findAuditTool(environmentName, candidates) {
   const tried = configured === undefined ? candidates : [configured];
 
   for (const candidate of tried) {
-    const result = spawnSync(candidate, ['--version'], {
+    // cctools programs such as lipo and otool do not share a --version
+    // convention. Spawning without arguments is an availability probe only;
+    // the audit below still runs each tool with a checked command.
+    const result = spawnSync(candidate, [], {
       cwd: packageDirectory,
       encoding: 'utf8',
       env: process.env,
@@ -315,7 +324,7 @@ async function buildTarget(target, options) {
   console.log(`built ${target.id}: ${artifact}`);
 }
 
-async function checkTarget(target) {
+async function checkTarget(target, metadataOnly) {
   const artifact = artifactPath(target);
   const infoPath = buildInfoPath(target);
   if (!existsSync(artifact) || !existsSync(infoPath)) {
@@ -340,9 +349,11 @@ async function checkTarget(target) {
     fail(`${target.id} build-info.json does not match its source or binary`);
   }
 
-  const audit = auditArtifact(target, artifact);
-  if (JSON.stringify(info.audit) !== JSON.stringify(audit)) {
-    fail(`${target.id} build-info.json does not match the dependency-floor audit`);
+  if (!metadataOnly) {
+    const audit = auditArtifact(target, artifact);
+    if (JSON.stringify(info.audit) !== JSON.stringify(audit)) {
+      fail(`${target.id} build-info.json does not match the dependency-floor audit`);
+    }
   }
 
   const minimumPlatform =
@@ -353,13 +364,15 @@ async function checkTarget(target) {
     fail(`${target.id} build-info.json has the wrong platform floor`);
   }
 
-  console.log(`checked ${target.id}: ${artifact}`);
+  console.log(
+    `checked ${target.id}: ${artifact}${metadataOnly ? ' (metadata only)' : ''}`
+  );
 }
 
 const options = parseArguments(process.argv.slice(2));
 if (options.check) {
   const selected = options.target === undefined ? Object.values(targets) : [targets[options.target]];
-  for (const target of selected) await checkTarget(target);
+  for (const target of selected) await checkTarget(target, options.metadataOnly);
 } else {
   await buildTarget(targets[options.target], options);
 }

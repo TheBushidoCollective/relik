@@ -475,17 +475,31 @@ describe('OTIO bundling', () => {
 
   test('refuses symlink roots, content, and a linked media directory before a grant or upload', async () => {
     const outside = join(scratch, 'outside');
+    const minimalBundle = JSON.stringify({
+      OTIO_SCHEMA: 'Clip.1',
+      media_reference: { OTIO_SCHEMA: 'MissingReference.1' },
+    });
     await mkdir(outside, { recursive: true });
-    await writeFile(join(outside, 'content.otio'), '{}');
+    await writeFile(join(outside, 'content.otio'), minimalBundle);
 
     const root = join(scratch, 'root.otiod');
     await mkdir(root);
-    await writeFile(join(root, 'content.otio'), '{}');
+    await writeFile(join(root, 'content.otio'), minimalBundle);
     const linkedRoot = join(scratch, 'linked-root.otiod');
     await symlink(root, linkedRoot, 'dir');
     await expect(bundleOtiod(linkedRoot, nodeFiles)).rejects.toThrow(
       PublishError
     );
+
+    const realParent = join(scratch, 'real-parent');
+    const bundleInsideParent = join(realParent, 'nested.otiod');
+    await mkdir(bundleInsideParent, { recursive: true });
+    await writeFile(join(bundleInsideParent, 'content.otio'), minimalBundle);
+    const linkedParent = join(scratch, 'linked-parent');
+    await symlink(realParent, linkedParent, 'dir');
+    await expect(
+      bundleOtiod(join(linkedParent, 'nested.otiod'), nodeFiles)
+    ).rejects.toThrow(PublishError);
 
     const contentLink = join(scratch, 'content-link.otiod');
     await mkdir(contentLink);
