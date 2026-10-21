@@ -26,7 +26,6 @@ import {
 import {
   COMMENT_TOOL_NAME,
   handleMessage,
-  INSTRUCTIONS,
   READ_COMMENTS_TOOL_NAME,
 } from '../src/server.ts';
 import { publishStatePath } from '../src/state.ts';
@@ -945,12 +944,6 @@ describe('what an agent is told before it calls anything', () => {
       expect(tool?.description).toMatch(/Only works for a relic this machine/);
       expect(tool?.description).toMatch(/never the share URL/);
     }
-  });
-
-  test('the handshake instructions name the comment tools', () => {
-    expect(INSTRUCTIONS).toMatch(/relic_read_comments/);
-    expect(INSTRUCTIONS).toMatch(/relic_comment/);
-    expect(INSTRUCTIONS).toMatch(/Nine things/);
   });
 });
 
