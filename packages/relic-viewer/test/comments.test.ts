@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  COMMENT_NONCE_BYTES,
   CommentDecryptFailedError,
   deriveCommentKey,
   encodeKey,
@@ -9,16 +10,22 @@ import {
   authRequestBody,
   type CommentEntry,
   type CommentRecord,
+  collectDisplayedEntries,
   commentCipher,
   commentRefusal,
+  editComment,
   keySurvivesNavigation,
   loadThread,
   MAX_BODY_BYTES,
+  openEntry,
   PUBLISHER_AUTHOR,
   plainLabel,
   postComment,
   requestMagicLink,
+  THREAD_CYCLE_RECOVERY,
+  THREAD_ORPHAN_RECOVERY,
   threadCountLabel,
+  threadEntries,
 } from '../src/comments.ts';
 import {
   buildBar,
@@ -1407,5 +1414,348 @@ describe('addressed badges and authority', () => {
 
     // And cB must not be threaded under cA because its sealed copy did not address cA
     expect(withClass(cARow, 'comment-replies')).toHaveLength(0);
+  });
+});
+
+function remark(
+  id: string,
+  addresses: string | null,
+  body = id,
+  clearAddresses: string | null = 'forged-clear'
+): CommentEntry {
+  return {
+    kind: 'open',
+    id,
+    author: 'ada@example.com',
+    createdAt: '2026-08-20T09:00:00.000Z',
+    body,
+    displayName: null,
+    anchor: null,
+    addresses,
+    clearAddresses,
+  };
+}
+
+function shown(entries: readonly CommentEntry[]): string[] {
+  return collectDisplayedEntries(threadEntries(entries)).flatMap((entry) =>
+    entry.id === null ? [] : [entry.id]
+  );
+}
+
+describe('OTIO comment safety', () => {
+  async function sealRaw(key: CryptoKey, json: string): Promise<string> {
+    const nonce = crypto.getRandomValues(new Uint8Array(COMMENT_NONCE_BYTES));
+    const sealed = new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce.slice().buffer as ArrayBuffer },
+        key,
+        new TextEncoder().encode(json).slice().buffer as ArrayBuffer
+      )
+    );
+    const framed = new Uint8Array(nonce.length + sealed.length);
+    framed.set(nonce, 0);
+    framed.set(sealed, nonce.length);
+    return Buffer.from(framed).toString('base64url');
+  }
+
+  test('one malformed encrypted anchor does not hide the rest of the thread', async () => {
+    const key = await deriveCommentKey(KEY_BYTES);
+    const cipher = commentCipher(key);
+    const hostile = { toString: null, valueOf: null };
+    const bad = await sealRaw(
+      key,
+      JSON.stringify({
+        body: 'should not hide the thread',
+        display_name: null,
+        anchor: {
+          kind: 'otio',
+          v: hostile,
+          relic_version: 1,
+          document_sha256: 'ab'.repeat(32),
+          timeline_id: 'timeline-1',
+          track_id: null,
+          range: {
+            start_time: { value: 0, rate: 24 },
+            duration: { value: 1, rate: 24 },
+          },
+          snapshot: { timeline: 'Main', track: null, item: null },
+        },
+      })
+    );
+    const later = await sealRaw(
+      key,
+      JSON.stringify({
+        body: 'a future mark',
+        display_name: null,
+        anchor: { kind: 'otio', v: 4 },
+      })
+    );
+    const good = await cipher.seal({
+      body: 'still here',
+      display_name: null,
+    });
+    const deps = stubDeps(() =>
+      json([
+        {
+          comment_id: 'bad',
+          author: 'attacker@example.com',
+          created_at: '2026-08-20T09:00:00.000Z',
+          ciphertext: bad,
+          addresses: 'good',
+        },
+        {
+          comment_id: 'later',
+          author: 'writer@example.com',
+          created_at: '2026-08-20T09:01:00.000Z',
+          ciphertext: later,
+        },
+        {
+          comment_id: 'good',
+          author: 'ada@example.com',
+          created_at: '2026-08-20T09:02:00.000Z',
+          ciphertext: good,
+        },
+      ])
+    );
+    const state = await loadThread(RELIC_ID, deps, cipher);
+    if (state.kind !== 'ready') throw new Error('the thread was refused');
+    expect(state.entries.map((entry) => entry.id)).toEqual([
+      'bad',
+      'later',
+      'good',
+    ]);
+    expect(state.entries[0]?.kind).toBe('sealed');
+    expect(state.entries[1]?.kind).toBe('open');
+    if (state.entries[1]?.kind !== 'open') throw new Error('future row sealed');
+    expect(state.entries[1].body).toBe('a future mark');
+    expect(state.entries[1].anchor).toEqual({
+      kind: 'unsupported',
+      declared: 'otio-v4',
+    });
+    expect(state.entries[2]?.kind).toBe('open');
+    if (state.entries[2]?.kind !== 'open') throw new Error('good row lost');
+    expect(state.entries[2].body).toBe('still here');
+  });
+
+  test('a throw while opening one row does not refuse the thread', async () => {
+    const cipher = commentCipher(await deriveCommentKey(KEY_BYTES));
+    const good = await cipher.seal({ body: 'kept', display_name: null });
+    const throwing = {
+      seal: cipher.seal,
+      open: async (ciphertext: string) => {
+        if (ciphertext === 'boom') throw new TypeError('String');
+        return cipher.open(ciphertext);
+      },
+    };
+    const state = await loadThread(
+      RELIC_ID,
+      stubDeps(() =>
+        json([
+          {
+            comment_id: 'boom',
+            author: 'a@b.c',
+            created_at: '2026-08-20T09:00:00.000Z',
+            ciphertext: 'boom',
+          },
+          {
+            comment_id: 'good',
+            author: 'ada@example.com',
+            created_at: '2026-08-20T09:01:00.000Z',
+            ciphertext: good,
+          },
+        ])
+      ),
+      throwing
+    );
+    if (state.kind !== 'ready') throw new Error('the thread was refused');
+    expect(state.entries.map((entry) => [entry.id, entry.kind])).toEqual([
+      ['boom', 'sealed'],
+      ['good', 'open'],
+    ]);
+    const opened = await openEntry(
+      {
+        comment_id: 'good',
+        author: 'ada@example.com',
+        created_at: '2026-08-20T09:01:00.000Z',
+        ciphertext: good,
+      },
+      cipher
+    );
+    expect(opened.kind).toBe('open');
+  });
+
+  test('a sealed reply loop is shown once, including after an edit', () => {
+    const before = threadEntries([
+      remark('A', null, 'The root'),
+      remark('B', 'A', 'The reply'),
+    ]);
+    expect(before.map((node) => node.entry.id)).toEqual(['A']);
+    expect(before[0]?.replies.map((node) => node.entry.id)).toEqual(['B']);
+    expect(before[0]?.recovery).toBeUndefined();
+
+    const edited = threadEntries([
+      remark('A', 'B', 'The root, edited'),
+      remark('B', 'A', 'The reply'),
+    ]);
+    expect(
+      collectDisplayedEntries(edited)
+        .map((entry) => entry.id)
+        .sort()
+    ).toEqual(['A', 'B']);
+    expect(edited).toHaveLength(2);
+    for (const node of edited) {
+      expect(node.recovery?.kind).toBe('cycle');
+      expect(node.recovery?.detail).toBe(THREAD_CYCLE_RECOVERY);
+      expect(node.replies).toHaveLength(0);
+    }
+    expect(
+      edited.find((node) => node.entry.id === 'A')?.recovery?.addresses
+    ).toBe('B');
+    expect(
+      edited.find((node) => node.entry.id === 'B')?.recovery?.addresses
+    ).toBe('A');
+    expect(collectDisplayedEntries(edited)).toHaveLength(2);
+  });
+
+  test('a self-cycle and a three-cycle do not recurse or drop a row', () => {
+    const self = threadEntries([remark('A', 'A', 'loop')]);
+    expect(collectDisplayedEntries(self).map((entry) => entry.id)).toEqual([
+      'A',
+    ]);
+    expect(self[0]?.recovery?.kind).toBe('cycle');
+    expect(self[0]?.replies).toHaveLength(0);
+
+    const triple = threadEntries([
+      remark('A', 'B', 'one'),
+      remark('B', 'C', 'two'),
+      remark('C', 'A', 'three'),
+    ]);
+    expect(
+      collectDisplayedEntries(triple)
+        .map((entry) => entry.id)
+        .sort()
+    ).toEqual(['A', 'B', 'C']);
+    expect(triple.every((node) => node.recovery?.kind === 'cycle')).toBe(
+      true
+    );
+    expect(triple.every((node) => node.replies.length === 0)).toBe(true);
+  });
+
+  test('a reply to a hidden row is shown once, and a missing target stays omitted', () => {
+    const tree = threadEntries([
+      remark('A', null, 'kept'),
+      remark('B', 'missing', 'hidden reply'),
+      remark('C', 'B', 'grandchild'),
+    ]);
+    expect(
+      collectDisplayedEntries(tree)
+        .map((entry) => entry.id)
+        .sort()
+    ).toEqual(['A', 'C']);
+    const orphan = tree.find((node) => node.entry.id === 'C');
+    expect(orphan?.recovery).toEqual({
+      kind: 'orphan',
+      detail: THREAD_ORPHAN_RECOVERY,
+      addresses: 'B',
+    });
+    expect(tree.some((node) => node.entry.id === 'B')).toBe(false);
+    expect(tree.find((node) => node.entry.id === 'A')?.replies).toEqual([]);
+  });
+
+  test('a clear address hint cannot thread a remark or invent a loop', () => {
+    const tree = threadEntries([
+      remark('A', null, 'root', 'B'),
+      remark('B', null, 'other', 'A'),
+    ]);
+    expect(tree.map((node) => node.entry.id)).toEqual(['A', 'B']);
+    expect(tree.every((node) => node.replies.length === 0)).toBe(true);
+    expect(tree.every((node) => node.recovery === undefined)).toBe(true);
+  });
+
+  test('an ordinary branch still nests each reply once', () => {
+    const tree = threadEntries([
+      remark('A', null, 'root'),
+      remark('B', 'A', 'left'),
+      remark('C', 'A', 'right'),
+      remark('D', 'B', 'nested'),
+    ]);
+    expect(tree.map((node) => node.entry.id)).toEqual(['A']);
+    expect(tree[0]?.recovery).toBeUndefined();
+    expect(tree[0]?.replies.map((node) => node.entry.id)).toEqual(['B', 'C']);
+    expect(tree[0]?.replies[0]?.replies.map((node) => node.entry.id)).toEqual([
+      'D',
+    ]);
+    expect(collectDisplayedEntries(tree).map((entry) => entry.id)).toEqual([
+      'A',
+      'B',
+      'D',
+      'C',
+    ]);
+  });
+
+  test('editing a root to address its reply leaves both visible', async () => {
+    const cipher = commentCipher(await deriveCommentKey(KEY_BYTES));
+    let rootCiphertext = await cipher.seal({
+      body: 'The root',
+      display_name: null,
+      addresses: null,
+    });
+    const replyCiphertext = await cipher.seal({
+      body: 'The reply',
+      display_name: null,
+      addresses: 'A',
+    });
+    const deps = stubDeps((call) => {
+      if (call.method === 'PATCH') return json({ ok: true });
+      return json([
+        {
+          comment_id: 'A',
+          author: 'attacker@example.com',
+          created_at: '2026-08-20T09:00:00.000Z',
+          ciphertext: rootCiphertext,
+          addresses: 'not-the-sealed-pointer',
+        },
+        {
+          comment_id: 'B',
+          author: 'victim@example.com',
+          created_at: '2026-08-20T09:05:00.000Z',
+          ciphertext: replyCiphertext,
+          addresses: 'A',
+        },
+      ]);
+    });
+    const first = await loadThread(RELIC_ID, deps, cipher);
+    if (first.kind !== 'ready') throw new Error('thread refused');
+    expect(shown(first.entries)).toEqual(['A', 'B']);
+
+    const edited = await editComment(
+      RELIC_ID,
+      'A',
+      {
+        body: 'The root, edited',
+        display_name: null,
+        addresses: 'B',
+      },
+      deps,
+      cipher
+    );
+    expect(edited.kind).toBe('edited');
+    rootCiphertext = await cipher.seal({
+      body: 'The root, edited',
+      display_name: null,
+      addresses: 'B',
+    });
+    const second = await loadThread(RELIC_ID, deps, cipher);
+    if (second.kind !== 'ready') throw new Error('reload refused');
+    const tree = threadEntries(second.entries);
+    expect(shown(second.entries).sort()).toEqual(['A', 'B']);
+    expect(tree.every((node) => node.recovery?.kind === 'cycle')).toBe(true);
+    expect(
+      tree.find((node) => node.entry.id === 'A')?.recovery?.addresses
+    ).toBe('B');
+    const openedA = second.entries.find((entry) => entry.id === 'A');
+    if (openedA?.kind !== 'open') throw new Error('edited root did not open');
+    expect(openedA.addresses).toBe('B');
+    expect(openedA.clearAddresses).toBe('not-the-sealed-pointer');
   });
 });

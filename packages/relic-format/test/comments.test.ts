@@ -671,3 +671,169 @@ describe('the precise anchor kinds', () => {
     expect(await roundTrip(pin)).toEqual(pin);
   });
 });
+
+describe('OTIO anchors', () => {
+  async function sealRaw(key: CryptoKey, json: string): Promise<string> {
+    const nonce = crypto.getRandomValues(new Uint8Array(COMMENT_NONCE_BYTES));
+    const sealed = new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce.slice().buffer as ArrayBuffer },
+        key,
+        new TextEncoder().encode(json).slice().buffer as ArrayBuffer
+      )
+    );
+    const framed = new Uint8Array(nonce.length + sealed.length);
+    framed.set(nonce, 0);
+    framed.set(sealed, nonce.length);
+    return Buffer.from(framed).toString('base64url');
+  }
+
+  function anchor(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      kind: 'otio',
+      v: 1,
+      relic_version: 2,
+      document_sha256: 'ab'.repeat(32),
+      timeline_id: 'timeline-1',
+      track_id: 'video-1',
+      item_id: 'clip-a',
+      range: {
+        start_time: { value: 12, rate: 24 },
+        duration: { value: 0, rate: 24 },
+      },
+      snapshot: { timeline: 'Main', track: 'Video', item: 'Clip A' },
+      ...overrides,
+    };
+  }
+
+  test('a version 1 anchor round trips with its bounds intact', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const sealed = await encryptComment(key, {
+      body: 'hold this frame',
+      display_name: null,
+      anchor: anchor() as never,
+    });
+    const opened = await decryptComment(key, sealed);
+    expect(opened.body).toBe('hold this frame');
+    expect(opened.anchor).toEqual(anchor());
+  });
+
+  test('a future primitive version stays unsupported and keeps the body', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const sealed = await sealRaw(
+      key,
+      JSON.stringify({
+        body: 'later writer',
+        display_name: null,
+        anchor: anchor({ v: 2 }),
+      })
+    );
+    const opened = await decryptComment(key, sealed);
+    expect(opened.body).toBe('later writer');
+    expect(opened.anchor).toEqual({ kind: 'unsupported', declared: 'otio-v2' });
+  });
+
+  test('a string version is not widened into version 1', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const sealed = await sealRaw(
+      key,
+      JSON.stringify({
+        body: 'string version',
+        display_name: null,
+        anchor: anchor({ v: '9' }),
+      })
+    );
+    const opened = await decryptComment(key, sealed);
+    expect(opened.anchor).toEqual({ kind: 'unsupported', declared: 'otio-v9' });
+  });
+
+  test('an otio-looking kind is not parsed as an otio anchor', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const sealed = await sealRaw(
+      key,
+      JSON.stringify({
+        body: 'not this kind',
+        display_name: null,
+        anchor: { kind: 'otio-v2', v: 1 },
+      })
+    );
+    const opened = await decryptComment(key, sealed);
+    expect(opened.body).toBe('not this kind');
+    expect(opened.anchor).toEqual({
+      kind: 'unsupported',
+      declared: 'otio-v2',
+    });
+  });
+
+  test('a hostile version object is malformed and does not throw TypeError', async () => {
+    const hostile = { toString: null, valueOf: null };
+    expect(() => String(hostile)).toThrow(TypeError);
+    const key = await deriveCommentKey(generateKey());
+    const sealed = await sealRaw(
+      key,
+      JSON.stringify({
+        body: 'bad version',
+        display_name: null,
+        anchor: anchor({ v: hostile }),
+      })
+    );
+    await expect(decryptComment(key, sealed)).rejects.toBeInstanceOf(
+      MalformedCommentError
+    );
+    await expect(decryptComment(key, sealed)).rejects.not.toBeInstanceOf(
+      TypeError
+    );
+  });
+
+  test('an array version is not formatted as a future version', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const sealed = await sealRaw(
+      key,
+      JSON.stringify({
+        body: 'array version',
+        display_name: null,
+        anchor: anchor({ v: [2] }),
+      })
+    );
+    await expect(decryptComment(key, sealed)).rejects.toBeInstanceOf(
+      MalformedCommentError
+    );
+  });
+
+  test('revision, digest, identifiers, and ranges stay inside the contract', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const cases = [
+      anchor({ relic_version: 1e21 }),
+      anchor({ relic_version: 1.5 }),
+      anchor({ document_sha256: 'abc' }),
+      anchor({ timeline_id: '' }),
+      anchor({ timeline_id: 'bad\u0000id' }),
+      anchor({ timeline_id: 'x'.repeat(1600) }),
+      anchor({ track_id: '' }),
+      anchor({ item_id: '' }),
+      anchor({
+        range: {
+          start_time: { value: Number.POSITIVE_INFINITY, rate: 24 },
+          duration: { value: 1, rate: 24 },
+        },
+      }),
+      anchor({
+        range: {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: -1, rate: 24 },
+        },
+      }),
+      anchor({ snapshot: { timeline: 'Main\u0000', track: null, item: null } }),
+      anchor({ extra: true }),
+    ];
+    for (const bad of cases) {
+      const sealed = await sealRaw(
+        key,
+        JSON.stringify({ body: 'no', display_name: null, anchor: bad })
+      );
+      await expect(decryptComment(key, sealed)).rejects.toBeInstanceOf(
+        MalformedCommentError
+      );
+    }
+  });
+});
