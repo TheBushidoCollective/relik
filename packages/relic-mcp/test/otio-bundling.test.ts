@@ -205,8 +205,7 @@ describe('OTIO bundling', () => {
     const archivePath = join(scratch, 'unicode-names.otioz');
     await writeFile(archivePath, archive);
 
-    // Raw fields prove both ZIP header records carry bit 11. The unzip calls
-    // below are independent reader checks, not a second implementation parser.
+    // Check the wire flags and Python's independent Unicode-aware ZIP reader.
     const view = new DataView(
       archive.buffer,
       archive.byteOffset,
@@ -227,11 +226,15 @@ describe('OTIO bundling', () => {
       )
     ).toEqual(nameBytes);
 
-    const listed = await runFile('unzip', ['-Z1', archivePath]);
-    expect(String(listed.stdout).trim().split(/\r?\n/)).toContain(entryName);
-
-    const extracted = await runFile('unzip', ['-p', archivePath, entryName]);
-    expect(String(extracted.stdout)).toBe('unicode media bytes');
+    const decoded = await runFile('python3', [
+      '-c',
+      'import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(json.dumps({"names":z.namelist(),"content":z.read(sys.argv[2]).decode("utf-8")}))',
+      archivePath,
+      entryName,
+    ]);
+    const result = JSON.parse(String(decoded.stdout));
+    expect(result.names).toContain(entryName);
+    expect(result.content).toBe('unicode media bytes');
   });
 
   test('rejects path traversal and out-of-root reads', async () => {
