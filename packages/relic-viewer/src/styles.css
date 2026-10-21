@@ -3995,7 +3995,8 @@ canvas.relic-page {
 .otio-preview-status { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .65rem; padding: 1.25rem; overflow-y: auto; background: #080a0bf0; color: #e6e9e7; text-align: center; }
 .otio-preview-status p { max-width: 38rem; margin: 0; font: .75rem/1.6 var(--mono); color: #d2b49f; overflow-wrap: anywhere; }
 .otio-preview-status .otio-buffering { color: #e6e9e7; }
-.otio-preview-base { max-width: 30rem; padding: .5rem .7rem; color: #fff; background: var(--patina); border: 1px solid var(--patina); font-size: .75rem; cursor: pointer; }
+/* OTIO accent controls use --surface on --patina: 6.06:1 light, 6.89:1 dark. */
+.otio-preview-base { max-width: 30rem; padding: .5rem .7rem; color: var(--surface); background: var(--patina); border: 1px solid var(--patina); font-size: .75rem; cursor: pointer; }
 .otio-preview-scope { z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .5rem; }
 .otio-preview-block { padding: .15rem .3rem; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .otio-raw { margin-top: .6rem; min-width: 0; }
@@ -4019,7 +4020,7 @@ canvas.relic-page {
 .otio-inspector-marker button { border: 1px solid var(--rule-strong); background: var(--ground); color: var(--patina-ink); font: .62rem var(--mono); cursor: pointer; }
 .otio-transport { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; min-height: 46px; padding: .55rem .75rem; border-bottom: 1px solid var(--rule-strong); background: var(--surface); }
 .otio-transport button { padding: .3rem .45rem; border: 1px solid var(--rule-strong); background: transparent; color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
-.otio-transport .otio-play { background: var(--patina); border-color: var(--patina); color: #fff; min-width: 44px; }
+.otio-transport .otio-play { background: var(--patina); border-color: var(--patina); color: var(--surface); min-width: 44px; }
 .otio-time { font: .7rem var(--mono); font-variant-numeric: tabular-nums; }
 .otio-seek { min-width: 65px; width: 100px; flex: 1; accent-color: var(--patina); cursor: pointer; }
 .otio-transport .otio-inspector-toggle { display: none; }
@@ -4028,7 +4029,7 @@ canvas.relic-page {
 .otio-selection-tools { display: flex; gap: .25rem; align-items: center; flex-wrap: wrap; }
 .otio-mode { border: 1px solid var(--rule-strong); border-radius: 0; padding: .3rem .5rem; background: var(--surface); color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-mode[aria-pressed="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
-.otio-track-select, .otio-timeline-select { max-width: 190px; min-width: 0; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .28rem; font: .62rem var(--sans); }
+.otio-track-select, .otio-timeline-select { max-width: 190px; min-width: 0; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .28rem; padding-inline-end: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .62rem var(--sans); }
 .otio-timeline-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
 .otio-track-grid { position: relative; min-width: 760px; }
 .otio-ruler, .otio-track-row { display: grid; grid-template-columns: var(--otio-label-width) minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
@@ -4079,7 +4080,7 @@ canvas.relic-page {
 .otio-selection-readout label { font: .62rem var(--sans); }
 .otio-selection-readout input { width: 70px; border: 1px solid var(--rule-strong); background: var(--ground); color: var(--ink); padding: .25rem; font: .65rem var(--mono); }
 .otio-selection-readout button { border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .3rem .6rem; font: .65rem var(--sans); cursor: pointer; }
-.otio-selection-readout .otio-comment-selection { background: var(--patina); color: #fff; border-color: var(--patina); }
+.otio-selection-readout .otio-comment-selection { background: var(--patina); color: var(--surface); border-color: var(--patina); }
 .otio-diagnostics { padding: .5rem .75rem; }
 .otio-diagnostics:empty { display: none; }
 .otio-diagnostic { margin: .35rem 0; color: var(--oxide); font: .68rem/1.6 var(--mono); overflow-wrap: anywhere; }

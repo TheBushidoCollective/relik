@@ -65,7 +65,8 @@ button svg, .icon { width: 16px; height: 16px; fill: none; stroke: currentColor;
 button svg { vertical-align: middle; }
 select { border: 1px solid var(--rule-strong); background: var(--surface); padding: .32rem 1.5rem .32rem .45rem; min-width: 0; }
 textarea { background: var(--ground); border: 1px solid var(--rule-strong); padding: .65rem; width: 100%; resize: vertical; font: 15px/1.55 var(--serif); }
-button.primary { background: var(--patina); border-color: var(--patina); color: #fff; }
+/* Match native OTIO: --surface on --patina is 6.06:1 light, 6.89:1 dark. */
+button.primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
 button.quiet { border-color: transparent; background: transparent; }
 button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--patina); color: var(--patina-ink); background: var(--diff-added); }
 .mono, time, output { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -178,7 +179,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .editorial-marker.point { width: 5px; transform: translateX(-50%) rotate(45deg); }
 .otio-comment-mark { position: absolute; height: 14px; bottom: 2px; z-index: 4; padding: 0; border: 1px solid var(--patina); border-left-width: 2px; border-right-width: 2px; background: color-mix(in srgb, var(--patina) 28%, var(--surface)); min-width: 5px; }
 .otio-comment-mark.point { width: 5px; transform: translateX(-50%); background: var(--ink); border-color: var(--surface); }
-.otio-comment-mark span { position: absolute; left: 0; top: -12px; background: var(--patina); color: #fff; padding: 1px 3px; font: 8px var(--mono); }
+.otio-comment-mark span { position: absolute; left: 0; top: -12px; background: var(--patina); color: var(--surface); padding: 1px 3px; font: 8px var(--mono); }
 .otio-comment-mark.is-active { outline: 2px solid var(--patina); outline-offset: 2px; z-index: 8; }
 .otio-comment-mark.is-resolved { filter: grayscale(.7); opacity: .55; border-style: dotted; }
 .otio-comment-mark[data-projection="partial"] { border-style: dashed; }
