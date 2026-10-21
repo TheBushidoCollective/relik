@@ -23,6 +23,7 @@ import {
   indexOtioZip,
   normalizeTitle,
   parseOtioJson,
+  PLAINTEXT_CAP_BYTES,
   type RendererClass,
   relicUrl,
   shareVerifierFor,
@@ -136,16 +137,38 @@ export interface SourceFile {
   readonly resolvedPath: string;
 }
 
+export interface ConfinedBundleFile {
+  /** Size returned by fstat on the held native descriptor. */
+  readonly size: number;
+  /** Reads from that descriptor only, refusing more than maxBytes. */
+  readBounded(maxBytes: number): Promise<Uint8Array>;
+  close(): Promise<void>;
+}
+
+export interface ConfinedBundleDirectory {
+  /**
+   * Opens a bundle-relative regular file under the pinned root descriptor.
+   * The implementation must not reopen or resolve a string pathname in JS.
+   */
+  openRegular(relativePath: string): Promise<ConfinedBundleFile>;
+  close(): Promise<void>;
+}
+
 /** Filesystem access, injected so the flow is testable without a disk. */
 export interface FileReader {
   stat(
     path: string
   ): Promise<
-    { kind: 'file'; size: number } | { kind: 'directory' } | { kind: 'symlink' } | { kind: 'other' }
+    | { kind: 'file'; size: number }
+    | { kind: 'directory' }
+    | { kind: 'symlink' }
+    | { kind: 'other' }
   >;
   read(path: string): Promise<Uint8Array>;
   resolve(path: string): string;
   basename(path: string): string;
+  /** Required for .otiod. It is the only authority for bundle descendants. */
+  openBundleRoot(path: string): Promise<ConfinedBundleDirectory>;
 }
 
 export interface PublishInput {
@@ -640,6 +663,17 @@ export async function readSource(
     );
   }
 
+  if (
+    !Number.isSafeInteger(stat.size) ||
+    stat.size < 0 ||
+    stat.size > PLAINTEXT_CAP_BYTES
+  ) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${resolvedPath} size (${stat.size} bytes) exceeds the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap`
+    );
+  }
+
   let bytes: Uint8Array;
   try {
     bytes = await files.read(resolvedPath);
@@ -655,9 +689,11 @@ export async function readSource(
     // Validate existing .otioz archive structurally before grant/upload.
     try {
       await indexOtioZip(bytes, {
-        inflater: async (compressed) => {
-          return new Uint8Array(inflateRawSync(compressed));
-        },
+        maxExpandedBytes: PLAINTEXT_CAP_BYTES,
+        inflater: async (compressed, _uncompressedSize, maxBytes) =>
+          new Uint8Array(
+            inflateRawSync(compressed, { maxOutputLength: maxBytes })
+          ),
       });
     } catch (err) {
       throw new PublishError(
