@@ -10,11 +10,17 @@ import type {
   OtioTimeRange,
 } from '../src/otio-types.ts';
 
-function clip(id: string, start: number, duration: number, scalar?: number) {
+function clip(
+  id: string,
+  start: number,
+  duration: number,
+  scalar?: number,
+  authored = true
+) {
   return {
     OTIO_SCHEMA: 'Clip.1',
     name: id,
-    metadata: { relic: { id } },
+    ...(authored ? { metadata: { relic: { id } } } : {}),
     source_range: {
       start_time: { value: start, rate: 24 },
       duration: { value: duration, rate: 24 },
@@ -342,6 +348,39 @@ describe('OTIO identity and projection', () => {
     expect(resolved.status).toBe('ambiguous');
     expect(resolved.original_anchor).toEqual(saved);
     expect(resolved.source_spans).toHaveLength(1);
+    expectNoMappedIdentityFields(resolved);
+  });
+
+  test('a current authored duplicate is ambiguous rather than guessed', () => {
+    const original = readOtioDocument(timeline([clip('clip', 0, 48)]));
+    const current = readOtioDocument(
+      timeline([clip('clip', 0, 48), clip('clip', 0, 48)])
+    );
+    const saved = anchor(12, 12, original.document_sha256);
+    const resolved = resolveOtioAnchor(saved, original, current);
+
+    expect(resolved.status).toBe('ambiguous');
+    expectNoMappedIdentityFields(resolved);
+  });
+
+  test('a current unauthored fingerprint duplicate is ambiguous rather than guessed', () => {
+    const original = readOtioDocument(
+      timeline([clip('clip', 0, 48, undefined, false)])
+    );
+    const current = readOtioDocument(
+      timeline([
+        clip('clip', 0, 48, undefined, false),
+        clip('clip', 0, 48, undefined, false),
+      ])
+    );
+    const originalClip = Object.values(original.nodes).find(
+      (node) => node.schema === 'Clip.1'
+    );
+    if (!originalClip) throw new Error('expected clip');
+    const saved = anchor(12, 12, original.document_sha256, originalClip.id);
+    const resolved = resolveOtioAnchor(saved, original, current);
+
+    expect(resolved.status).toBe('ambiguous');
     expectNoMappedIdentityFields(resolved);
   });
 
