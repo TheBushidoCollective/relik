@@ -307,27 +307,39 @@ function parseMedia(raw: Record<string, unknown>): OtioMediaReference {
   const available = readOptionalRange(raw, 'available_range');
   const step = finiteNumber(raw['frame_step']);
   const start = finiteNumber(raw['start_frame']);
+  const rate = finiteNumber(raw['rate']);
   const pad = finiteNumber(raw['frame_zero_padding']);
   const policy = raw['missing_frame_policy'];
+  const metadata =
+    raw['metadata'] && typeof raw['metadata'] === 'object'
+      ? (raw['metadata'] as Record<string, unknown>)
+      : undefined;
   return {
     schema,
-    name: typeof raw['name'] === 'string' ? raw['name'] : undefined,
+    ...(typeof raw['name'] === 'string' ? { name: raw['name'] } : {}),
     target_url: typeof raw['target_url'] === 'string' ? raw['target_url'] : null,
     available_range: available.invalid ? null : available.range,
-    target_url_base: typeof raw['target_url_base'] === 'string' ? raw['target_url_base'] : undefined,
-    name_prefix: typeof raw['name_prefix'] === 'string' ? raw['name_prefix'] : undefined,
-    name_suffix: typeof raw['name_suffix'] === 'string' ? raw['name_suffix'] : undefined,
-    start_frame: start !== undefined && Number.isSafeInteger(start) ? start : undefined,
-    frame_step: step !== undefined && step > 0 ? step : undefined,
-    rate: finiteNumber(raw['rate']),
-    frame_zero_padding:
-      pad !== undefined && Number.isInteger(pad) && pad >= 0 && pad <= 32 ? pad : undefined,
-    missing_frame_policy:
-      policy === 'error' || policy === 'hold' || policy === 'black' ? policy : undefined,
-    metadata:
-      raw['metadata'] && typeof raw['metadata'] === 'object'
-        ? (raw['metadata'] as Record<string, unknown>)
-        : undefined,
+    ...(typeof raw['target_url_base'] === 'string'
+      ? { target_url_base: raw['target_url_base'] }
+      : {}),
+    ...(typeof raw['name_prefix'] === 'string'
+      ? { name_prefix: raw['name_prefix'] }
+      : {}),
+    ...(typeof raw['name_suffix'] === 'string'
+      ? { name_suffix: raw['name_suffix'] }
+      : {}),
+    ...(start !== undefined && Number.isSafeInteger(start)
+      ? { start_frame: start }
+      : {}),
+    ...(step !== undefined && step > 0 ? { frame_step: step } : {}),
+    ...(rate !== undefined ? { rate } : {}),
+    ...(pad !== undefined && Number.isInteger(pad) && pad >= 0 && pad <= 32
+      ? { frame_zero_padding: pad }
+      : {}),
+    ...(policy === 'error' || policy === 'hold' || policy === 'black'
+      ? { missing_frame_policy: policy }
+      : {}),
+    ...(metadata === undefined ? {} : { metadata }),
     raw,
   };
 }
@@ -347,16 +359,19 @@ function parseEffects(raw: Record<string, unknown>, diagnostics: OtioDiagnostic[
       });
     }
     const scalar = finiteNumber(effect['time_scalar']);
+    const metadata =
+      effect['metadata'] && typeof effect['metadata'] === 'object'
+        ? (effect['metadata'] as Record<string, unknown>)
+        : undefined;
     return [{
       schema,
-      name: typeof effect['name'] === 'string' ? effect['name'] : undefined,
-      effect_name: typeof effect['effect_name'] === 'string' ? effect['effect_name'] : undefined,
+      ...(typeof effect['name'] === 'string' ? { name: effect['name'] } : {}),
+      ...(typeof effect['effect_name'] === 'string'
+        ? { effect_name: effect['effect_name'] }
+        : {}),
       enabled: effect['enabled'] !== false,
-      time_scalar: scalar,
-      metadata:
-        effect['metadata'] && typeof effect['metadata'] === 'object'
-          ? (effect['metadata'] as Record<string, unknown>)
-          : undefined,
+      ...(scalar === undefined ? {} : { time_scalar: scalar }),
+      ...(metadata === undefined ? {} : { metadata }),
       raw: effect,
     }];
   });
@@ -368,8 +383,22 @@ function parseMarkers(raw: Record<string, unknown>, diagnostics: OtioDiagnostic[
     if (!item || typeof item !== 'object') return [];
     const marker = item as Record<string, unknown>;
     const schema = typeof marker['OTIO_SCHEMA'] === 'string' ? marker['OTIO_SCHEMA'] : 'Marker.1';
-    const marked = readOptionalRange(marker, 'marked_range');
-    if (marked.invalid) {
+    const canonical = readOptionalRange(marker, 'marked_range');
+    const canonicalSupplied = hasOwn(marker, 'marked_range') && marker['marked_range'] !== null;
+    let markedRange = canonical.invalid ? null : canonical.range;
+    let timingInvalid = canonical.invalid;
+    if (!canonicalSupplied && schema === 'Marker.1' && hasOwn(marker, 'time')) {
+      const time = parseRational(marker['time']);
+      if (time) {
+        markedRange = {
+          start_time: time,
+          duration: { value: 0, rate: time.rate },
+        };
+      } else {
+        timingInvalid = true;
+      }
+    }
+    if (timingInvalid) {
       diagnostics.push({
         severity: 'warning',
         code: 'invalid-timing',
@@ -377,16 +406,17 @@ function parseMarkers(raw: Record<string, unknown>, diagnostics: OtioDiagnostic[
         target: { json_pointer: pointer },
       });
     }
+    const metadata =
+      marker['metadata'] && typeof marker['metadata'] === 'object'
+        ? (marker['metadata'] as Record<string, unknown>)
+        : undefined;
     return [{
       schema,
-      name: typeof marker['name'] === 'string' ? marker['name'] : undefined,
-      color: typeof marker['color'] === 'string' ? marker['color'] : undefined,
-      marked_range: marked.invalid ? null : marked.range,
-      comment: typeof marker['comment'] === 'string' ? marker['comment'] : undefined,
-      metadata:
-        marker['metadata'] && typeof marker['metadata'] === 'object'
-          ? (marker['metadata'] as Record<string, unknown>)
-          : undefined,
+      ...(typeof marker['name'] === 'string' ? { name: marker['name'] } : {}),
+      ...(typeof marker['color'] === 'string' ? { color: marker['color'] } : {}),
+      marked_range: markedRange,
+      ...(typeof marker['comment'] === 'string' ? { comment: marker['comment'] } : {}),
+      ...(metadata === undefined ? {} : { metadata }),
       raw: marker,
     }];
   });
@@ -494,26 +524,39 @@ export function readOtioDocument(
     }
     const hash = fingerprintOf(raw, media);
     fingerprintCounts.set(hash, (fingerprintCounts.get(hash) ?? 0) + 1);
+    const parsedSchemaVersion = schemaVersion(schema);
+    const trackKind =
+      schema === 'Track.1' && typeof raw['kind'] === 'string'
+        ? raw['kind']
+        : undefined;
+    const transitionType =
+      schema === 'Transition.1' && typeof raw['transition_type'] === 'string'
+        ? raw['transition_type']
+        : undefined;
     const node: MutableNode = {
       id: '',
       identity_origin: 'derived-unique',
       json_pointer: pointer,
       schema,
-      schema_version: schemaVersion(schema),
+      ...(parsedSchemaVersion === undefined
+        ? {}
+        : { schema_version: parsedSchemaVersion }),
       name: typeof raw['name'] === 'string' ? raw['name'] : '',
       enabled: raw['enabled'] !== false,
       parent_id: null,
       children_ids: [],
-      track_kind: schema === 'Track.1' && typeof raw['kind'] === 'string' ? raw['kind'] : undefined,
+      ...(trackKind === undefined ? {} : { track_kind: trackKind }),
       source_range: sourceRange.invalid ? null : sourceRange.range,
       available_range: schema === 'Gap.1' ? null : available,
       media_references: refs,
       active_media_reference_key: activeKey,
       effects: parseEffects(raw, diagnostics, pointer),
       markers: parseMarkers(raw, diagnostics, pointer),
-      transition_type: schema === 'Transition.1' && typeof raw['transition_type'] === 'string' ? raw['transition_type'] : undefined,
-      in_offset: inOffset,
-      out_offset: outOffset,
+      ...(transitionType === undefined
+        ? {}
+        : { transition_type: transitionType }),
+      ...(inOffset === undefined ? {} : { in_offset: inOffset }),
+      ...(outOffset === undefined ? {} : { out_offset: outOffset }),
       metadata,
       diagnostics,
       raw,
@@ -767,7 +810,7 @@ function measureTrack(
     for (const childId of node.children_ids) {
       const child = nodes[childId];
       const childPlacement = child ? placements.get(child.id) : undefined;
-      if (childPlacement && childPlacement.rate > 0 && child.schema !== 'Transition.1') {
+      if (child && childPlacement && childPlacement.rate > 0 && child.schema !== 'Transition.1') {
         rate = childPlacement.rate;
         break;
       }
@@ -1073,7 +1116,9 @@ export function resolveOtioAnchor(
       mapped_ranges: [anchor.range],
       mapped_timeline_id: anchor.timeline_id,
       mapped_track_id: anchor.track_id,
-      mapped_item_id: anchor.item_id,
+      ...(anchor.item_id === undefined
+        ? {}
+        : { mapped_item_id: anchor.item_id }),
       source_spans: sourceSpans,
       diagnostics: [],
     };
@@ -1146,16 +1191,43 @@ export function resolveOtioAnchor(
     };
   }
   const status: OtioProjectionStatus = partial || missing ? 'partial' : 'mapped';
-  const timelines = [...matchedIds].map((id) => timelineOf(currentDocument, id)).filter((id): id is string => Boolean(id));
-  const uniqueTimeline = new Set(timelines).size === 1 ? timelines[0] : undefined;
+  const mappedIds = [...matchedIds];
+  const [candidateMappedItemId] = mappedIds;
+  const mappedItemId =
+    mappedIds.length === 1 && candidateMappedItemId !== undefined
+      ? candidateMappedItemId
+      : undefined;
+  const mappedNode =
+    mappedItemId === undefined
+      ? undefined
+      : nodeOf(currentDocument, mappedItemId);
+  const timelines = mappedIds
+    .map((id) => timelineOf(currentDocument, id))
+    .filter((id): id is string => Boolean(id));
+  const [candidateMappedTimelineId] = timelines;
+  const uniqueTimeline =
+    new Set(timelines).size === 1 && candidateMappedTimelineId !== undefined
+      ? candidateMappedTimelineId
+      : undefined;
+  const [candidateMappedRange] = mappedRanges;
+  const mappedRange =
+    mappedRanges.length === 1 && candidateMappedRange !== undefined
+      ? candidateMappedRange
+      : undefined;
   return {
     status,
     original_anchor: anchor,
     mapped_ranges: mappedRanges,
-    mapped_range: mappedRanges.length === 1 ? mappedRanges[0] : undefined,
-    mapped_timeline_id: uniqueTimeline,
-    mapped_item_id: matchedIds.size === 1 ? [...matchedIds][0] : undefined,
-    mapped_track_id: matchedIds.size === 1 ? nodeOf(currentDocument, [...matchedIds][0] as string)?.parent_id ?? null : undefined,
+    ...(mappedRange === undefined ? {} : { mapped_range: mappedRange }),
+    ...(uniqueTimeline === undefined
+      ? {}
+      : { mapped_timeline_id: uniqueTimeline }),
+    ...(mappedItemId === undefined
+      ? {}
+      : {
+          mapped_item_id: mappedItemId,
+          mapped_track_id: mappedNode?.parent_id ?? null,
+        }),
     source_spans: sourceSpans,
     diagnostics: [],
   };

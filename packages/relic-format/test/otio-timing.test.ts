@@ -4,6 +4,7 @@ import {
   compareRationalTimes,
   evaluateOtioAt,
   intersectRanges,
+  markersForOtioTimeline,
   rangeContainsTime,
   rescaleTime,
   secondsToTime,
@@ -213,15 +214,17 @@ describe('otio-timing evaluator and source spans', () => {
       duration: { value: 30, rate: 24 },
     });
 
+    const transition = spans.find((span) => span.schema === 'Transition.1');
+    expect(transition).toBeDefined();
+    if (!transition) throw new Error('expected transition source span');
     expect(spans.map((span) => span.node_id).sort()).toEqual([
       'clip_a',
       'clip_b',
-      spans.find((span) => span.schema === 'Transition.1')?.node_id,
+      transition.node_id,
     ].sort());
 
     const clipA = spans.find((span) => span.node_id === 'clip_a');
     const clipB = spans.find((span) => span.node_id === 'clip_b');
-    const transition = spans.find((span) => span.schema === 'Transition.1');
 
     expect(clipA?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
     expect(clipA?.intersected_timeline_range.duration.value).toBeCloseTo(24, 5);
@@ -236,5 +239,123 @@ describe('otio-timing evaluator and source spans', () => {
 
     expect(transition?.intersected_timeline_range.start_time.value).toBeCloseTo(60, 5);
     expect(transition?.intersected_timeline_range.duration.value).toBeCloseTo(24, 5);
+  });
+
+  test('projects legacy Marker.1 time only when canonical timing is absent or null', () => {
+    const doc = readOtioDocument(JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [{
+          OTIO_SCHEMA: 'Track.1',
+          kind: 'Video',
+          metadata: { relic: { id: 'track' } },
+          children: [{
+            OTIO_SCHEMA: 'Clip.1',
+            metadata: { relic: { id: 'clip' } },
+            source_range: {
+              start_time: { value: 10, rate: 24 },
+              duration: { value: 24, rate: 24 },
+            },
+            media_reference: {
+              OTIO_SCHEMA: 'ExternalReference.1',
+              target_url: 'media/clip.mov',
+              available_range: {
+                start_time: { value: 0, rate: 24 },
+                duration: { value: 48, rate: 24 },
+              },
+            },
+            markers: [
+              {
+                OTIO_SCHEMA: 'Marker.1',
+                name: 'legacy point',
+                time: { value: 12, rate: 24 },
+              },
+              {
+                OTIO_SCHEMA: 'Marker.1',
+                name: 'null canonical',
+                marked_range: null,
+                time: { value: 13, rate: 24 },
+              },
+              {
+                OTIO_SCHEMA: 'Marker.1',
+                name: 'canonical wins',
+                marked_range: {
+                  start_time: { value: 14, rate: 24 },
+                  duration: { value: 2, rate: 24 },
+                },
+                time: { value: 12, rate: 24 },
+              },
+              {
+                OTIO_SCHEMA: 'Marker.1',
+                name: 'invalid canonical',
+                marked_range: {
+                  start_time: { value: 'invalid', rate: 24 },
+                  duration: { value: 0, rate: 24 },
+                },
+                time: { value: 12, rate: 24 },
+              },
+              {
+                OTIO_SCHEMA: 'Marker.2',
+                name: 'not a legacy fallback',
+                time: { value: 12, rate: 24 },
+              },
+            ],
+          }],
+        }],
+      },
+    }));
+    const timelineId = doc.timeline_ids[0];
+    const clipNode = doc.nodes['clip'];
+    if (!timelineId || !clipNode) throw new Error('expected timeline and clip');
+    const [legacy, nullCanonical, canonical, invalidCanonical, markerTwo] = clipNode.markers ?? [];
+    if (!legacy || !nullCanonical || !canonical || !invalidCanonical || !markerTwo) {
+      throw new Error('expected all parsed markers');
+    }
+
+    expect(legacy.marked_range).toEqual({
+      start_time: { value: 12, rate: 24 },
+      duration: { value: 0, rate: 24 },
+    });
+    expect(nullCanonical.marked_range).toEqual({
+      start_time: { value: 13, rate: 24 },
+      duration: { value: 0, rate: 24 },
+    });
+    expect(canonical.marked_range).toEqual({
+      start_time: { value: 14, rate: 24 },
+      duration: { value: 2, rate: 24 },
+    });
+    expect(invalidCanonical.marked_range).toBeNull();
+    expect(invalidCanonical.raw).toEqual(expect.objectContaining({
+      time: { value: 12, rate: 24 },
+    }));
+    expect(markerTwo.marked_range).toBeNull();
+    expect(clipNode.diagnostics?.some((item) => item.code === 'invalid-timing')).toBe(true);
+
+    const projected = markersForOtioTimeline(doc, timelineId);
+    expect(projected.map((item) => item.marker.name)).toEqual([
+      'legacy point',
+      'null canonical',
+      'canonical wins',
+    ]);
+    const legacyProjection = projected[0];
+    const nullCanonicalProjection = projected[1];
+    const canonicalProjection = projected[2];
+    if (!legacyProjection || !nullCanonicalProjection || !canonicalProjection) {
+      throw new Error('expected projected legacy and canonical markers');
+    }
+    expect(legacyProjection.timeline_range).toEqual({
+      start_time: { value: 2, rate: 24 },
+      duration: { value: 0, rate: 24 },
+    });
+    expect(nullCanonicalProjection.timeline_range).toEqual({
+      start_time: { value: 3, rate: 24 },
+      duration: { value: 0, rate: 24 },
+    });
+    expect(canonicalProjection.timeline_range).toEqual({
+      start_time: { value: 4, rate: 24 },
+      duration: { value: 2, rate: 24 },
+    });
   });
 });

@@ -68,6 +68,8 @@ function decodeOtioJsonText(input: string | Uint8Array): string {
 
 const MAX_JSON_DEPTH = 64;
 
+const STRICT_NUMBER_REGEX = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
 export function parseOtioJson(input: string | Uint8Array): unknown {
   const text = decodeOtioJsonText(input);
   let index = 0;

@@ -27,15 +27,17 @@ describe('otio-json token-preserving parser and serializer', () => {
   });
 
   test('parses and preserves non-finite float tokens emitted by Python OTIO (NaN, Infinity, -Infinity)', () => {
-    const raw = '{"nan": NaN, "inf": Infinity, "ninf": -Infinity}';
+    const raw = '{"nan": NaN, "inf": Infinity, "pinf": +Infinity, "ninf": -Infinity}';
     const parsed = parseOtioJson(raw) as Record<string, unknown>;
 
     expect(isOtioRawNumber(parsed['nan'])).toBe(true);
     expect(isOtioRawNumber(parsed['inf'])).toBe(true);
+    expect(isOtioRawNumber(parsed['pinf'])).toBe(true);
     expect(isOtioRawNumber(parsed['ninf'])).toBe(true);
 
     const nanVal = parsed['nan'] as OtioRawNumber;
     const infVal = parsed['inf'] as OtioRawNumber;
+    const pinfVal = parsed['pinf'] as OtioRawNumber;
     const ninfVal = parsed['ninf'] as OtioRawNumber;
 
     expect(nanVal.raw).toBe('NaN');
@@ -44,13 +46,33 @@ describe('otio-json token-preserving parser and serializer', () => {
     expect(infVal.raw).toBe('Infinity');
     expect(infVal.numericValue).toBe(Infinity);
 
+    expect(pinfVal.raw).toBe('+Infinity');
+    expect(pinfVal.numericValue).toBe(Infinity);
+
     expect(ninfVal.raw).toBe('-Infinity');
     expect(ninfVal.numericValue).toBe(-Infinity);
 
     const reserialized = stringifyOtioJson(parsed);
     expect(reserialized).toContain('NaN');
     expect(reserialized).toContain('Infinity');
+    expect(reserialized).toContain('+Infinity');
     expect(reserialized).toContain('-Infinity');
+  });
+
+  test('accepts finite JSON grammar and rejects malformed tokens', () => {
+    const parsed = parseOtioJson(
+      '{"zero":0,"negative":-1,"fraction":1.5,"positiveExponent":1e2,"negativeExponent":-2E-3}'
+    ) as Record<string, unknown>;
+
+    expect(parsed['zero']).toBe(0);
+    expect(parsed['negative']).toBe(-1);
+    expect(parsed['fraction']).toBe(1.5);
+    expect(parsed['positiveExponent']).toBe(100);
+    expect(parsed['negativeExponent']).toBe(-0.002);
+
+    for (const token of ['01', '+1', '.1', '1.', '1e', '1e+', '1e-', 'NaN123', 'InfinityFoo']) {
+      expect(() => parseOtioJson(`{"value":${token}}`)).toThrow(SyntaxError);
+    }
   });
 
   test('parses standard JSON structures losslessly', () => {
