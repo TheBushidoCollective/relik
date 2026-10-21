@@ -21,7 +21,7 @@
         "name": "tracks",
         "source_range": null,
         "effects": [],
-        "markers": [{"OTIO_SCHEMA": "Marker.1", "name": "Legacy Marker", "time": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 12.0}, "color": "RED", "metadata": {}}, ],
+        "markers": [{"OTIO_SCHEMA": "Marker.1", "name": "Legacy Marker", "time": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 12.0}, "color": "RED", "metadata": {}}],
         "enabled": true,
         "color": null,
         "children": [{"OTIO_SCHEMA": "UnknownVendorEntity.99", "name": "Injected Unknown", "vendor": "AcmePost", "token": "preserved-exact-value"}, 

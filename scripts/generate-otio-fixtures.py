@@ -1332,6 +1332,24 @@ def faithful_tokens(text: str) -> str:
     return text
 
 
+def prepend_to_first_array(text: str, key: str, item: str) -> str:
+    """Add one raw item without serializing or introducing a trailing comma."""
+    needle = f'"{key}": ['
+    start = text.find(needle)
+    if start < 0:
+        raise ValueError(f'missing "{key}" array')
+
+    content_start = start + len(needle)
+    next_token = content_start
+    while next_token < len(text) and text[next_token].isspace():
+        next_token += 1
+    if next_token >= len(text):
+        raise ValueError(f'unterminated "{key}" array')
+
+    separator = "" if text[next_token] == "]" else ", "
+    return text[:content_start] + item + separator + text[content_start:]
+
+
 def inject_faithful_tokens(text: str) -> tuple[str, list]:
     patches = []
     # The builder stores Infinity and NaN as strings so the official writer cannot turn them into
@@ -1354,12 +1372,9 @@ def inject_faithful_tokens(text: str) -> tuple[str, list]:
         '{"OTIO_SCHEMA": "UnknownVendorEntity.99", "name": "Injected Unknown", '
         '"vendor": "AcmePost", "token": "preserved-exact-value"}'
     )
-    needle = '"children": ['
     # Insert only into the missing-unsupported document, which is serialized alone.
-    if '"OTIO_SCHEMA": "UnknownVendorEntity.99"' not in text.split('"tracks"')[0]:
-        pass
     if unknown not in text and '"children": [' in text:
-        text = text.replace('"children": [', '"children": [' + unknown + ", ", 1)
+        text = prepend_to_first_array(text, "children", unknown)
         patches.append({
             "injected": "UnknownVendorEntity.99",
             "where": "first children array",
@@ -1370,7 +1385,7 @@ def inject_faithful_tokens(text: str) -> tuple[str, list]:
         '"rate": 24.0, "value": 12.0}, "color": "RED", "metadata": {}}'
     )
     if "Marker.1" not in text and '"markers": [' in text:
-        text = text.replace('"markers": [', '"markers": [' + marker1 + ", ", 1)
+        text = prepend_to_first_array(text, "markers", marker1)
         patches.append({
             "injected": "Marker.1",
             "where": "first markers array",
