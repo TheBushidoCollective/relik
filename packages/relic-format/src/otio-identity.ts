@@ -5,14 +5,20 @@
  * otio-timing.ts is the only affine map consumer.
  */
 
-import { isOtioRawNumber, parseOtioJson, stringifyOtioJson } from './otio-json.ts';
+import {
+  isOtioRawNumber,
+  parseOtioJson,
+  stringifyOtioJson,
+} from './otio-json.ts';
 import {
   addRationalTimes,
   bindOtioSamplingMap,
   compareRationalTimes,
   effectScalarOf,
   intersectRanges,
+  invertOtioIntervalEdge,
   invertOtioSample,
+  otioIntervalEdge,
   otioSamplingMap,
   rangeEndTime,
   sampleOtioMedia,
@@ -33,6 +39,7 @@ import type {
   OtioNode,
   OtioProjectionStatus,
   OtioRationalTime,
+  OtioSourceSpan,
   OtioTimeRange,
 } from './otio-types.ts';
 
@@ -90,7 +97,6 @@ interface MutableNode {
 
 interface Placement {
   trimmed: OtioTimeRange | null;
-  natural: OtioTimeRange | null;
   known: boolean;
   parentRange: OtioTimeRange | null;
   visibleParent: OtioTimeRange | null;
@@ -674,21 +680,40 @@ export function readOtioDocument(
     const placement = placements.get(id);
     const rate = placement?.rate ?? 24;
     const duration = placement?.trimmed?.duration ?? { value: 0, rate };
-    timeline.timeline_range = { start_time: { value: 0, rate: duration.rate }, duration };
-    timeline.visible_timeline_range = timeline.timeline_range;
-    const localOrigin = timeline.source_range?.start_time ?? { value: 0, rate: duration.rate };
-    bindMap(timeline, { value: 0, rate: duration.rate }, localOrigin);
-    const exposed = timeline.source_range ?? placement?.natural ?? timeline.timeline_range;
+    const timelineRange: OtioTimeRange = {
+      start_time: { value: 0, rate: duration.rate },
+      duration,
+    };
+    timeline.timeline_range = timelineRange;
+    timeline.visible_timeline_range = timelineRange;
+    const localOrigin = timeline.source_range?.start_time ?? {
+      value: 0,
+      rate: duration.rate,
+    };
+    const rootMap: OtioBoundMap = {
+      timeline_origin: { value: 0, rate: duration.rate },
+      local_origin: localOrigin,
+      sample_origin: localOrigin,
+      scalar: 1,
+      available_start: null,
+    };
+    bindMap(
+      timeline,
+      rootMap.timeline_origin,
+      localOrigin,
+      placement?.trimmed ?? timelineRange
+    );
     for (const childId of timeline.children_ids) {
       const child = nodes[childId];
       if (child) {
-        projectNode(nodes, child, placements, {
-          timeline_origin: { value: 0, rate: duration.rate },
-          local_origin: localOrigin,
-          sample_origin: localOrigin,
-          scalar: 1,
-          available_start: null,
-        }, exposed);
+        projectNode(
+          nodes,
+          child,
+          placements,
+          rootMap,
+          timelineRange,
+          timelineRange
+        );
       }
     }
   }
@@ -721,22 +746,41 @@ function measureNode(
     if (child) measureNode(nodes, child, placements);
   }
   if (node.timing_invalid) {
-    const placement = { trimmed: null, natural: null, known: false, parentRange: null, visibleParent: null, rate: 24 };
+    const placement = {
+      trimmed: null,
+      known: false,
+      parentRange: null,
+      visibleParent: null,
+      rate: 24,
+    };
     placements.set(node.id, placement);
     return placement;
   }
   if (node.schema === 'Track.1') return measureTrack(nodes, node, placements);
-  if (node.schema === 'Stack.1' || node.schema === 'Timeline.1') return measureStack(nodes, node, placements);
+  if (node.schema === 'Stack.1' || node.schema === 'Timeline.1')
+    return measureStack(nodes, node, placements);
   if (node.schema === 'Transition.1') {
     const rate = rateOf(node.in_offset, rateOf(node.out_offset, 24));
-    const placement = { trimmed: null, natural: null, known: Boolean(node.in_offset && node.out_offset), parentRange: null, visibleParent: null, rate };
+    const placement = {
+      trimmed: null,
+      known: Boolean(node.in_offset && node.out_offset),
+      parentRange: null,
+      visibleParent: null,
+      rate,
+    };
     placements.set(node.id, placement);
     return placement;
   }
-  const trimmed = node.source_range ?? (node.schema === 'Gap.1' ? null : node.available_range ? {
-    start_time: node.available_range.start_time,
-    duration: node.available_range.duration,
-  } : null);
+  const trimmed =
+    node.source_range ??
+    (node.schema === 'Gap.1'
+      ? null
+      : node.available_range
+        ? {
+            start_time: node.available_range.start_time,
+            duration: node.available_range.duration,
+          }
+        : null);
   const known = Boolean(trimmed);
   if (!known && isItemSchema(node.schema)) {
     node.diagnostics.push({
@@ -748,7 +792,6 @@ function measureNode(
   }
   const placement = {
     trimmed,
-    natural: node.available_range ?? trimmed,
     known,
     parentRange: null,
     visibleParent: null,
@@ -789,7 +832,6 @@ function measureStack(
   const trimmed = node.source_range ?? natural;
   const placement = {
     trimmed,
-    natural,
     known: Boolean(trimmed),
     parentRange: null,
     visibleParent: null,
@@ -810,7 +852,12 @@ function measureTrack(
     for (const childId of node.children_ids) {
       const child = nodes[childId];
       const childPlacement = child ? placements.get(child.id) : undefined;
-      if (child && childPlacement && childPlacement.rate > 0 && child.schema !== 'Transition.1') {
+      if (
+        child &&
+        childPlacement &&
+        childPlacement.rate > 0 &&
+        child.schema !== 'Transition.1'
+      ) {
         rate = childPlacement.rate;
         break;
       }
@@ -819,11 +866,22 @@ function measureTrack(
   if (rate === 0) rate = 24;
   let cursor: OtioRationalTime = { value: 0, rate };
   let poisoned = false;
-  const children = node.children_ids.map((id) => nodes[id]).filter((child): child is MutableNode => Boolean(child));
+  const children = node.children_ids
+    .map((id) => nodes[id])
+    .filter((child): child is MutableNode => Boolean(child));
   for (const child of children) {
     const childPlacement = placements.get(child.id);
     if (child.schema === 'Transition.1') {
       if (poisoned || !child.in_offset || !child.out_offset) {
+        if (!poisoned && (!child.in_offset || !child.out_offset)) {
+          child.diagnostics.push({
+            severity: 'warning',
+            code: 'unplaced-item',
+            message: `Transition ${child.name || child.id} has unknown duration`,
+            target: { node_id: child.id, json_pointer: child.json_pointer },
+          });
+        }
+        poisoned = true;
         child.parent_range = null;
         if (childPlacement) {
           childPlacement.parentRange = null;
@@ -856,7 +914,10 @@ function measureTrack(
       });
       continue;
     }
-    const range = { start_time: cursor, duration: childPlacement.trimmed.duration };
+    const range = {
+      start_time: cursor,
+      duration: childPlacement.trimmed.duration,
+    };
     child.parent_range = range;
     childPlacement.parentRange = range;
     childPlacement.visibleParent = range;
@@ -867,28 +928,39 @@ function measureTrack(
     if (child.schema === 'Transition.1' || !child.parent_range) continue;
     const previous = children[index - 1];
     const next = children[index + 1];
-    const pre = previous?.schema === 'Transition.1' ? previous.in_offset ?? null : null;
-    const post = next?.schema === 'Transition.1' ? next.out_offset ?? null : null;
+    const pre =
+      previous?.schema === 'Transition.1' ? (previous.in_offset ?? null) : null;
+    const post =
+      next?.schema === 'Transition.1' ? (next.out_offset ?? null) : null;
     const visible = extendRange(child.parent_range, pre, post);
     const childPlacement = placements.get(child.id);
     if (childPlacement) childPlacement.visibleParent = visible;
-    if (childPlacement?.trimmed) {
-      childPlacement.natural = extendRange(childPlacement.trimmed, pre, post);
-    }
   }
+  const first = children[0];
   const last = children[children.length - 1];
-  const end = last?.schema === 'Transition.1' && last.out_offset ? addRationalTimes(cursor, last.out_offset) : cursor;
-  const natural = { start_time: { value: 0, rate }, duration: subtractRationalTimes(end, { value: 0, rate }) };
-  const trimmed = node.source_range ?? natural;
+  const leading =
+    first?.schema === 'Transition.1' ? (first.in_offset ?? null) : null;
+  const trailing =
+    last?.schema === 'Transition.1' ? (last.out_offset ?? null) : null;
+  const natural = poisoned
+    ? null
+    : {
+        start_time: { value: 0, rate },
+        duration: addRationalTimes(
+          addRationalTimes(cursor, leading ?? { value: 0, rate }),
+          trailing ?? { value: 0, rate }
+        ),
+      };
+  const trimmed = natural ? (node.source_range ?? natural) : null;
   const placement = {
     trimmed,
-    natural,
-    known: !poisoned || Boolean(node.source_range),
+    known: Boolean(trimmed),
     parentRange: null,
     visibleParent: null,
     rate,
   };
   placements.set(node.id, placement);
+  if (natural && !node.available_range) node.available_range = natural;
   return placement;
 }
 
@@ -902,11 +974,21 @@ function extendRange(
   return { start_time: start, duration: subtractRationalTimes(end, start) };
 }
 
-function bindMap(node: MutableNode, timelineOrigin: OtioRationalTime, localOrigin: OtioRationalTime): void {
+function bindMap(
+  node: MutableNode,
+  timelineOrigin: OtioRationalTime,
+  localOrigin: OtioRationalTime,
+  effectiveSelection: OtioTimeRange | null
+): void {
   const scalar = effectScalarOf(node);
-  const sourceStart = node.source_range?.start_time ?? localOrigin;
-  const last = node.source_range
-    ? subtractRationalTimes(rangeEndTime(node.source_range), { value: 1, rate: node.source_range.duration.rate })
+  const selection =
+    effectiveSelection ?? node.source_range ?? node.available_range ?? null;
+  const sourceStart = selection?.start_time ?? localOrigin;
+  const last = selection
+    ? subtractRationalTimes(rangeEndTime(selection), {
+        value: 1,
+        rate: selection.start_time.rate,
+      })
     : sourceStart;
   bindOtioSamplingMap(node, {
     timeline_origin: timelineOrigin,
@@ -917,32 +999,51 @@ function bindMap(node: MutableNode, timelineOrigin: OtioRationalTime, localOrigi
   });
 }
 
+function clearProjectedSubtree(
+  nodes: Record<string, MutableNode>,
+  node: MutableNode
+): void {
+  node.timeline_range = null;
+  node.visible_timeline_range = null;
+  for (const childId of node.children_ids) {
+    const child = nodes[childId];
+    if (child) clearProjectedSubtree(nodes, child);
+  }
+}
+
 function projectNode(
   nodes: Record<string, MutableNode>,
   node: MutableNode,
   placements: Map<string, Placement>,
   parentMap: OtioBoundMap,
-  parentExposed: OtioTimeRange | null
+  parentEditorial: OtioTimeRange | null,
+  parentVisible: OtioTimeRange | null
 ): void {
   const placement = placements.get(node.id);
   const parentRange = node.parent_range ?? placement?.parentRange ?? null;
   if (!parentRange) {
-    node.timeline_range = null;
-    node.visible_timeline_range = null;
+    clearProjectedSubtree(nodes, node);
     return;
   }
   const rootStart = addRationalTimes(
     parentMap.timeline_origin,
     subtractRationalTimes(parentRange.start_time, parentMap.local_origin)
   );
-  const localOrigin = placement?.trimmed?.start_time ?? node.source_range?.start_time ?? { value: 0, rate: parentRange.start_time.rate };
-  bindMap(node, rootStart, localOrigin);
+  const localOrigin = placement?.trimmed?.start_time ??
+    node.source_range?.start_time ?? {
+      value: 0,
+      rate: parentRange.start_time.rate,
+    };
+  bindMap(node, rootStart, localOrigin, placement?.trimmed ?? null);
   const visibleParent = placement?.visibleParent ?? parentRange;
-  const editorial = parentExposed ? intersectRanges(parentRange, parentExposed) : parentRange;
-  const visible = parentExposed ? intersectRanges(visibleParent, parentExposed) : visibleParent;
-  node.timeline_range = editorial ? mapThrough(parentMap, editorial) : null;
-  node.visible_timeline_range = visible ? mapThrough(parentMap, visible) : null;
-  const childExposed = node.source_range ?? placement?.natural ?? null;
+  const mappedParent = mapThrough(parentMap, parentRange);
+  const mappedVisible = mapThrough(parentMap, visibleParent);
+  node.timeline_range = parentEditorial
+    ? intersectRanges(mappedParent, parentEditorial)
+    : null;
+  node.visible_timeline_range = parentVisible
+    ? intersectRanges(mappedVisible, parentVisible)
+    : null;
   const childMap: OtioBoundMap = {
     timeline_origin: rootStart,
     local_origin: localOrigin,
@@ -952,7 +1053,16 @@ function projectNode(
   };
   for (const childId of node.children_ids) {
     const child = nodes[childId];
-    if (child) projectNode(nodes, child, placements, childMap, childExposed);
+    if (child) {
+      projectNode(
+        nodes,
+        child,
+        placements,
+        childMap,
+        node.timeline_range,
+        node.visible_timeline_range
+      );
+    }
   }
 }
 
@@ -1019,6 +1129,85 @@ function matchNode(
   return { status: 'unique', node: match };
 }
 
+interface OriginalAnchorSelection {
+  readonly spans: readonly OtioSourceSpan[];
+  readonly partial: boolean;
+  readonly containerId: string | null;
+}
+
+function isLeafAnchorTarget(node: OtioNode): boolean {
+  return (
+    node.schema === 'Clip.1' ||
+    node.schema === 'Clip.2' ||
+    node.schema === 'Gap.1' ||
+    node.schema === 'Transition.1'
+  );
+}
+
+function prepareOriginalAnchorSelection(
+  anchor: OtioAnchorV1,
+  document: OtioDocumentV1,
+  sourceSpans: readonly OtioSourceSpan[]
+): OriginalAnchorSelection | null {
+  if (anchor.item_id === undefined) {
+    return { spans: sourceSpans, partial: false, containerId: null };
+  }
+  const item = nodeOf(document, anchor.item_id);
+  const exposed = item?.visible_timeline_range ?? item?.timeline_range ?? null;
+  const intersection = exposed ? intersectRanges(exposed, anchor.range) : null;
+  if (!item || !intersection) return null;
+  const partial =
+    compareRationalTimes(intersection.duration, anchor.range.duration) !== 0;
+  if (isLeafAnchorTarget(item)) {
+    const spans = sourceSpans.filter((span) => span.node_id === item.id);
+    return spans.length === 0 ? null : { spans, partial, containerId: null };
+  }
+  return {
+    spans: sourceSpans.filter((span) =>
+      inTimeline(document, item.id, span.node_id)
+    ),
+    partial,
+    containerId: item.id,
+  };
+}
+
+function sameTargets(
+  original: OtioDocumentV1,
+  current: OtioDocumentV1,
+  targets: readonly string[]
+): boolean {
+  return targets.every((id) => {
+    const originalNode = nodeOf(original, id);
+    const currentNode = nodeOf(current, id);
+    return Boolean(
+      originalNode &&
+        currentNode &&
+        !digestMismatch(original, current, originalNode, currentNode)
+    );
+  });
+}
+
+function invalidAnchorResolution(
+  anchor: OtioAnchorV1,
+  sourceSpans: readonly OtioSourceSpan[],
+  message: string
+): OtioAnchorResolution {
+  return {
+    status: 'changed',
+    original_anchor: anchor,
+    source_spans: sourceSpans,
+    diagnostics: [
+      {
+        severity: 'error',
+        code: 'invalid-timing',
+        message,
+        target: {
+          node_id: anchor.item_id ?? anchor.track_id ?? anchor.timeline_id,
+        },
+      },
+    ],
+  };
+}
 function projectPiece(
   spanStart: OtioRationalTime,
   spanEnd: OtioRationalTime,
@@ -1026,11 +1215,17 @@ function projectPiece(
   currentMap: OtioBoundMap,
   exposed: OtioTimeRange | null
 ): { range?: OtioTimeRange; ambiguous?: boolean; partial?: boolean } {
-  if (originalMap.scalar === 0 || currentMap.scalar === 0) return { ambiguous: true };
-  const startMedia = sampleOtioMedia(originalMap, spanStart);
-  const endMedia = sampleOtioMedia(originalMap, spanEnd);
-  const start = invertOtioSample(currentMap, startMedia);
-  const end = invertOtioSample(currentMap, endMedia);
+  if (originalMap.scalar === 0 || currentMap.scalar === 0)
+    return { ambiguous: true };
+  const point = compareRationalTimes(spanStart, spanEnd) === 0;
+  const startMedia = point
+    ? sampleOtioMedia(originalMap, spanStart)
+    : otioIntervalEdge(originalMap, spanStart);
+  const endMedia = point ? startMedia : otioIntervalEdge(originalMap, spanEnd);
+  const start = point
+    ? invertOtioSample(currentMap, startMedia)
+    : invertOtioIntervalEdge(currentMap, startMedia);
+  const end = point ? start : invertOtioIntervalEdge(currentMap, endMedia);
   if (!start || !end) return { ambiguous: true };
   const forward = compareRationalTimes(end, start) >= 0;
   const projected: OtioTimeRange = forward
@@ -1039,7 +1234,8 @@ function projectPiece(
   if (!exposed) return {};
   const clipped = intersectRanges(projected, exposed);
   if (!clipped) return {};
-  const partial = compareRationalTimes(clipped.duration, projected.duration) !== 0;
+  const partial =
+    compareRationalTimes(clipped.duration, projected.duration) !== 0;
   return { range: clipped, partial };
 }
 
@@ -1091,24 +1287,45 @@ export function resolveOtioAnchor(
   );
   const membership =
     originalDocument.timeline_ids.includes(anchor.timeline_id) &&
-    (anchor.track_id === null || inTimeline(originalDocument, anchor.timeline_id, anchor.track_id)) &&
-    (anchor.item_id === undefined || inTimeline(originalDocument, anchor.timeline_id, anchor.item_id));
-  if (anchor.document_sha256 !== originalDocument.document_sha256 || !membership) {
-    return {
-      status: 'changed',
-      original_anchor: anchor,
-      source_spans: sourceSpans,
-      diagnostics: [{
-        severity: 'error',
-        code: 'invalid-timing',
-        message: membership
-          ? 'Anchor document digest does not match the original document'
-          : 'Anchor timeline, track, or item is not in the selected timeline',
-        target: { node_id: anchor.item_id ?? anchor.track_id ?? anchor.timeline_id },
-      }],
-    };
+    (anchor.track_id === null ||
+      inTimeline(originalDocument, anchor.timeline_id, anchor.track_id)) &&
+    (anchor.item_id === undefined ||
+      inTimeline(originalDocument, anchor.timeline_id, anchor.item_id)) &&
+    (anchor.item_id === undefined ||
+      anchor.track_id === null ||
+      inTimeline(originalDocument, anchor.track_id, anchor.item_id));
+  if (
+    anchor.document_sha256 !== originalDocument.document_sha256 ||
+    !membership
+  ) {
+    return invalidAnchorResolution(
+      anchor,
+      sourceSpans,
+      membership
+        ? 'Anchor document digest does not match the original document'
+        : 'Anchor timeline, track, or item is not in the selected timeline'
+    );
   }
-  if (!currentDocument || currentDocument.document_sha256 === originalDocument.document_sha256) {
+  const selection = prepareOriginalAnchorSelection(
+    anchor,
+    originalDocument,
+    sourceSpans
+  );
+  if (!selection) {
+    return invalidAnchorResolution(
+      anchor,
+      sourceSpans,
+      'Anchor item does not contribute to the selected range'
+    );
+  }
+  const targets = [
+    ...new Set(
+      anchor.item_id === undefined
+        ? sourceSpans.map((span) => span.node_id)
+        : [anchor.item_id]
+    ),
+  ];
+  if (!currentDocument) {
     return {
       status: 'same',
       original_anchor: anchor,
@@ -1123,33 +1340,89 @@ export function resolveOtioAnchor(
       diagnostics: [],
     };
   }
+  if (
+    currentDocument.document_sha256 === originalDocument.document_sha256 &&
+    sameTargets(originalDocument, currentDocument, targets)
+  ) {
+    return {
+      status: 'same',
+      original_anchor: anchor,
+      mapped_range: anchor.range,
+      mapped_ranges: [anchor.range],
+      mapped_timeline_id: anchor.timeline_id,
+      mapped_track_id: anchor.track_id,
+      ...(anchor.item_id === undefined
+        ? {}
+        : { mapped_item_id: anchor.item_id }),
+      source_spans: sourceSpans,
+      diagnostics: [],
+    };
+  }
+
   let ambiguous = false;
   let changed = false;
   let missing = false;
-  let partial = false;
+  let partial = selection.partial;
   const pieces: OtioTimeRange[] = [];
   const matchedIds = new Set<string>();
-  const targets = anchor.item_id ? [anchor.item_id] : sourceSpans.map((span) => span.node_id);
-  const uniqueTargets = [...new Set(targets)];
-  if (uniqueTargets.length === 0) missing = true;
-  for (const targetId of uniqueTargets) {
-    const match = matchNode(originalDocument, currentDocument, targetId);
+  let currentContainer: OtioNode | undefined;
+  let containerUnresolved = false;
+  if (selection.containerId) {
+    const match = matchNode(
+      originalDocument,
+      currentDocument,
+      selection.containerId
+    );
     if (match.status === 'ambiguous') ambiguous = true;
     if (match.status === 'changed') changed = true;
     if (match.status === 'missing') missing = true;
+    if (match.status === 'unique') currentContainer = match.node;
+    else containerUnresolved = true;
+  }
+  const projectionTargets = containerUnresolved
+    ? []
+    : [...new Set(selection.spans.map((span) => span.node_id))];
+  if (projectionTargets.length === 0) missing = true;
+  for (const targetId of projectionTargets) {
+    const match = matchNode(originalDocument, currentDocument, targetId);
+    if (match.status === 'ambiguous') ambiguous = true;
+    if (match.status === 'changed') {
+      if (selection.containerId) missing = true;
+      else changed = true;
+    }
+    if (match.status === 'missing') missing = true;
     if (match.status !== 'unique' || !match.node) continue;
-    matchedIds.add(match.node.id);
-    const originalMap = otioSamplingMap(nodeOf(originalDocument, targetId) as OtioNode);
-    const currentMap = otioSamplingMap(match.node);
-    const exposed = match.node.visible_timeline_range ?? match.node.timeline_range ?? null;
-    if (!originalMap || !currentMap) {
-      changed = true;
+    if (
+      currentContainer &&
+      !inTimeline(currentDocument, currentContainer.id, match.node.id)
+    ) {
+      missing = true;
       continue;
     }
-    const related = sourceSpans.filter((span) => span.node_id === targetId);
-    const intervals = related.length > 0 ? related.map((span) => span.intersected_timeline_range) : [anchor.range];
+    matchedIds.add(match.node.id);
+    const originalNode = nodeOf(originalDocument, targetId);
+    const originalMap = originalNode
+      ? otioSamplingMap(originalNode)
+      : undefined;
+    const currentMap = otioSamplingMap(match.node);
+    const exposed =
+      match.node.visible_timeline_range ?? match.node.timeline_range ?? null;
+    if (!originalMap || !currentMap) {
+      if (selection.containerId) missing = true;
+      else changed = true;
+      continue;
+    }
+    const intervals = selection.spans
+      .filter((span) => span.node_id === targetId)
+      .map((span) => span.intersected_timeline_range);
     for (const interval of intervals) {
-      const projected = projectPiece(interval.start_time, rangeEndTime(interval), originalMap, currentMap, exposed);
+      const projected = projectPiece(
+        interval.start_time,
+        rangeEndTime(interval),
+        originalMap,
+        currentMap,
+        exposed
+      );
       if (projected.ambiguous) ambiguous = true;
       if (projected.partial) partial = true;
       if (!projected.range) missing = true;
@@ -1161,11 +1434,14 @@ export function resolveOtioAnchor(
       status: 'ambiguous',
       original_anchor: anchor,
       source_spans: sourceSpans,
-      diagnostics: [{
-        severity: 'warning',
-        code: 'ambiguous-identity',
-        message: 'Projection is ambiguous between occurrences or a non-invertible sample',
-      }],
+      diagnostics: [
+        {
+          severity: 'warning',
+          code: 'ambiguous-identity',
+          message:
+            'Projection is ambiguous between occurrences or a non-invertible sample',
+        },
+      ],
     };
   }
   if (changed && pieces.length === 0) {
@@ -1173,11 +1449,13 @@ export function resolveOtioAnchor(
       status: 'changed',
       original_anchor: anchor,
       source_spans: sourceSpans,
-      diagnostics: [{
-        severity: 'warning',
-        code: 'unsupported-effect',
-        message: 'Media digest or structure no longer establishes continuity',
-      }],
+      diagnostics: [
+        {
+          severity: 'warning',
+          code: 'unsupported-effect',
+          message: 'Media digest or structure no longer establishes continuity',
+        },
+      ],
     };
   }
   const mappedRanges = mergeRanges(pieces);
@@ -1190,8 +1468,9 @@ export function resolveOtioAnchor(
       diagnostics: [],
     };
   }
-  const status: OtioProjectionStatus = partial || missing ? 'partial' : 'mapped';
-  const mappedIds = [...matchedIds];
+  const status: OtioProjectionStatus =
+    partial || missing ? 'partial' : 'mapped';
+  const mappedIds = currentContainer ? [currentContainer.id] : [...matchedIds];
   const [candidateMappedItemId] = mappedIds;
   const mappedItemId =
     mappedIds.length === 1 && candidateMappedItemId !== undefined

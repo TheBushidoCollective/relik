@@ -208,13 +208,26 @@ function isTransition(schema: string): boolean {
   return schema === 'Transition.1';
 }
 
-export function sampleOtioMedia(map: OtioBoundMap, time: OtioRationalTime): OtioRationalTime {
+export function sampleOtioMedia(
+  map: OtioBoundMap,
+  time: OtioRationalTime
+): OtioRationalTime {
   const delta = subtractRationalTimes(time, map.timeline_origin);
   const scaled = rescaleTime(delta, map.sample_origin.rate);
   return {
     value: map.sample_origin.value + scaled.value * map.scalar,
     rate: map.sample_origin.rate,
   };
+}
+
+export function otioIntervalEdge(
+  map: OtioBoundMap,
+  time: OtioRationalTime
+): OtioRationalTime {
+  const sample = sampleOtioMedia(map, time);
+  return map.scalar < 0
+    ? addRationalTimes(sample, { value: 1, rate: map.sample_origin.rate })
+    : sample;
 }
 
 function fileRelative(
@@ -244,6 +257,17 @@ export function invertOtioSample(
     rate: delta.rate,
   };
   return addRationalTimes(map.timeline_origin, unscaled);
+}
+
+export function invertOtioIntervalEdge(
+  map: OtioBoundMap,
+  edge: OtioRationalTime
+): OtioRationalTime | null {
+  const sample =
+    map.scalar < 0
+      ? subtractRationalTimes(edge, { value: 1, rate: map.sample_origin.rate })
+      : edge;
+  return invertOtioSample(map, sample);
 }
 
 function effectScalar(node: OtioNode): number {
@@ -457,8 +481,7 @@ function missingHandleDiagnostic(
   media: OtioRationalTime,
   available: OtioTimeRange | null | undefined
 ): OtioDiagnostic | null {
-  if (!available) return null;
-  if (rangeContainsTime(available, media)) return null;
+  if (!available || rangeContainsTime(available, media)) return null;
   return {
     severity: 'warning',
     code: 'missing-handles',
@@ -467,6 +490,29 @@ function missingHandleDiagnostic(
   };
 }
 
+function missingHandleRangeDiagnostic(
+  node: OtioNode,
+  sourceRange: OtioTimeRange,
+  available: OtioTimeRange | null | undefined
+): OtioDiagnostic | null {
+  if (!available) return null;
+  const outside =
+    sourceRange.duration.value === 0
+      ? !rangeContainsTime(available, sourceRange.start_time)
+      : compareRationalTimes(sourceRange.start_time, available.start_time) <
+          0 ||
+        compareRationalTimes(
+          rangeEndTime(sourceRange),
+          rangeEndTime(available)
+        ) > 0;
+  if (!outside) return null;
+  return {
+    severity: 'warning',
+    code: 'missing-handles',
+    message: `Requested source for ${node.name || node.id} is outside available media`,
+    target: { node_id: node.id, json_pointer: node.json_pointer },
+  };
+}
 
 function transitionAt(
   document: OtioDocumentV1,
@@ -475,11 +521,21 @@ function transitionAt(
 ): { transition: OtioNode; progress: number } | null {
   for (const childId of track.children_ids) {
     const child = ownNode(document.nodes, childId);
-    if (!child || !isTransition(child.schema) || !child.timeline_range) continue;
-    if (!rangeContainsTime(child.timeline_range, time)) continue;
-    const duration = timeToSeconds(child.timeline_range.duration);
+    if (!child || !isTransition(child.schema)) continue;
+    const visible = child.visible_timeline_range ?? child.timeline_range;
+    if (!visible || !rangeContainsTime(visible, time)) continue;
+    const map = boundMaps.get(child);
+    const untrimmed =
+      map && child.parent_range
+        ? {
+            start_time: map.timeline_origin,
+            duration: child.parent_range.duration,
+          }
+        : child.timeline_range;
+    if (!untrimmed) continue;
+    const duration = timeToSeconds(untrimmed.duration);
     const into = timeToSeconds(
-      subtractRationalTimes(time, child.timeline_range.start_time)
+      subtractRationalTimes(time, untrimmed.start_time)
     );
     const progress = duration === 0 ? 0 : into / duration;
     return { transition: child, progress };
@@ -622,7 +678,7 @@ function composeChild(
         ],
       };
     }
-    const item = itemAt(document, node, time, false);
+    const item = itemAt(document, node, time);
     if (!item) return null;
     return {
       kind: 'track',
@@ -672,15 +728,12 @@ function composeChild(
 function itemAt(
   document: OtioDocumentV1,
   track: OtioNode,
-  time: OtioRationalTime,
-  includeHandles: boolean
+  time: OtioRationalTime
 ): OtioNode | null {
   for (const childId of track.children_ids) {
     const child = ownNode(document.nodes, childId);
     if (!child || isTransition(child.schema)) continue;
-    const range = includeHandles
-      ? child.visible_timeline_range
-      : child.timeline_range;
+    const range = child.visible_timeline_range ?? child.timeline_range;
     if (range && rangeContainsTime(range, time)) return child;
   }
   return null;
@@ -719,7 +772,7 @@ function emitTrackItems(
       });
     }
   } else {
-    const item = itemAt(document, track, time, false);
+    const item = itemAt(document, track, time);
     if (item) candidates.push({ node: item, weight, transition: null });
   }
   for (const candidate of candidates) {
@@ -1013,7 +1066,7 @@ function spanFor(
 ): OtioSourceSpan | null {
   const visible = isTransition(node.schema)
     ? node.timeline_range
-    : node.visible_timeline_range ?? node.timeline_range;
+    : (node.visible_timeline_range ?? node.timeline_range);
   if (!visible) return null;
   const overlap = intersectRanges(visible, query);
   if (!overlap) return null;
@@ -1027,26 +1080,31 @@ function spanFor(
   const diagnostics = [...(node.diagnostics ?? [])];
   if (map && !isTransition(node.schema) && !isGap(node.schema)) {
     const startMedia = sampleOtioMedia(map, overlap.start_time);
-    const endMedia = sampleOtioMedia(map, rangeEndTime(overlap));
-    sourceRange = directedExtent(startMedia, endMedia, map.scalar);
+    sourceRange = sourceExtentForInterval(map, overlap);
     const startFile = fileRelative(map, startMedia);
-    const endFile = fileRelative(map, endMedia);
-    if (startFile && endFile) {
-      fileRange = directedExtent(startFile, endFile, map.scalar);
+    if (sourceRange && map.available_start) {
+      const fileStart = fileRelative(map, sourceRange.start_time);
+      const fileEnd = fileRelative(map, rangeEndTime(sourceRange));
+      if (fileStart && fileEnd) {
+        fileRange = {
+          start_time: fileStart,
+          duration: subtractRationalTimes(fileEnd, fileStart),
+        };
+      }
+    }
+    if (startFile) {
       mapping = {
         timeline_origin: overlap.start_time,
         source_origin: startFile,
         scalar: map.scalar,
       };
     }
-    const handle = missingHandleDiagnostic(
+    const handle = missingHandleRangeDiagnostic(
       node,
-      startMedia,
+      sourceRange,
       node.available_range
     );
-    const handleEnd = missingHandleDiagnostic(node, endMedia, node.available_range);
     if (handle) diagnostics.push(handle);
-    else if (handleEnd) diagnostics.push(handleEnd);
   }
   const ref = activeReference(node);
   return {
@@ -1074,17 +1132,21 @@ function spanFor(
   };
 }
 
-function directedExtent(
-  start: OtioRationalTime,
-  end: OtioRationalTime,
-  scalar: number
+function sourceExtentForInterval(
+  map: OtioBoundMap,
+  range: OtioTimeRange
 ): OtioTimeRange {
-  if (scalar < 0 && compareRationalTimes(start, end) > 0) {
+  const point = range.duration.value === 0 || map.scalar === 0;
+  const start = point
+    ? sampleOtioMedia(map, range.start_time)
+    : otioIntervalEdge(map, range.start_time);
+  if (point) {
     return {
-      start_time: end,
-      duration: subtractRationalTimes(start, end),
+      start_time: start,
+      duration: { value: 0, rate: start.rate },
     };
   }
+  const end = otioIntervalEdge(map, rangeEndTime(range));
   if (compareRationalTimes(end, start) < 0) {
     return {
       start_time: end,
