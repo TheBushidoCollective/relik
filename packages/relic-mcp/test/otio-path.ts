@@ -32,6 +32,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { Readable, Writable } from 'node:stream';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeKey, openRelic } from '@relic/format';
@@ -66,6 +67,8 @@ const statePath = join(scratch, 'state.json');
 const shotDir = join(scratch, 'shots');
 const mediaDir = join(scratch, 'media');
 const emptyManifest = join(scratch, 'empty.otio-manifest.json');
+const width = 160;
+const height = 90;
 
 const REQUIRED = [
   'published',
@@ -602,10 +605,48 @@ def derive(archive, out_dir):
     for clip in walk(v1):
         if not isinstance(clip, otio.schema.Clip):
             continue
-        parent = clip.trimmed_range_in_parent()
-        if parent is None or parent.end_time_exclusive() <= query.start_time or parent.start_time >= query.end_time_exclusive():
+        base = v1.range_of_child(clip)
+        if base is None:
+            raise SystemExit("official range_of_child returned no range for %s" % (relic_id(clip) or clip.name))
+        pre, post = v1.handles_of_child(clip)
+        start = base.start_time
+        end = base.end_time_exclusive()
+        if pre is not None:
+            start = start - pre.rescaled_to(start.rate)
+        if post is not None:
+            end = end + post.rescaled_to(end.rate)
+        visible = base if not (end > start) else otio.opentime.TimeRange.range_from_start_end_time(start, end)
+        if not visible.intersects(query):
             continue
-        window_spans.append(span_for(timeline, clip, max(parent.start_time, query.start_time)))
+        hit_start = visible.start_time if visible.start_time >= query.start_time else query.start_time
+        hit_end = visible.end_time_exclusive() if visible.end_time_exclusive() <= query.end_time_exclusive() else query.end_time_exclusive()
+        if not (hit_end > hit_start):
+            continue
+        hit = otio.opentime.TimeRange.range_from_start_end_time(hit_start, hit_end)
+        source_start = v1.transformed_time(hit.start_time, clip)
+        source_end = v1.transformed_time(hit.end_time_exclusive(), clip)
+        if source_start is None or source_end is None or not (source_end > source_start):
+            raise SystemExit("official transform did not produce a source interval for %s" % (relic_id(clip) or clip.name))
+        source_range = otio.opentime.TimeRange.range_from_start_end_time(source_start, source_end)
+        ref = clip.media_reference
+        available = getattr(ref, "available_range", None) if ref is not None else None
+        file_range = None
+        if available is not None and available.start_time is not None:
+            origin = available.start_time
+            file_start = source_start - origin.rescaled_to(source_start.rate)
+            file_end = source_end - origin.rescaled_to(source_end.rate)
+            if not (file_end > file_start):
+                raise SystemExit("official transform did not produce a file interval for %s" % (relic_id(clip) or clip.name))
+            file_range = otio.opentime.TimeRange.range_from_start_end_time(file_start, file_end)
+        window_spans.append({
+            "relic_id": relic_id(clip),
+            "name": clip.name,
+            "bundle_path": bundle_of(clip),
+            "source_range": range_json(source_range),
+            "file_relative_source_range": range_json(file_range),
+            "file_frame": file_frame_of(clip, source_start) if file_range is not None else None,
+            "source_seconds": float(source_start.rescaled_to(1).value),
+        })
 
     dup_clip = next(item for item in walk(dup) if isinstance(item, otio.schema.Clip))
     dup_range = dup_clip.trimmed_range_in_parent()
@@ -995,7 +1036,14 @@ async function openBrowser(
   children.add(child);
   const toChrome = child.stdio[3];
   const fromChrome = child.stdio[4];
-  assert.ok(toChrome && fromChrome, 'Chrome did not expose the debug pipe');
+  assert.ok(
+    toChrome instanceof Writable,
+    'Chrome fd 3 did not expose a writable debug pipe'
+  );
+  assert.ok(
+    fromChrome instanceof Readable,
+    'Chrome fd 4 did not expose a readable debug pipe'
+  );
   const cdp = connectPipe(toChrome, fromChrome);
   const blocked: string[] = [];
   const continuedNonLoopback: string[] = [];
@@ -1411,8 +1459,6 @@ try {
     );
     pass('network-block');
 
-    const width = 160;
-    const height = 90;
     await seekTo(browser, plan.primary_frame);
     const primaryCanvas = await sampleCanvas(browser, width, height);
     const primaryRight = await extractFrame(
@@ -1801,22 +1847,42 @@ try {
     'MCP did not return dissolve intersections'
   );
   for (const expected of plan.dissolve_spans) {
-    const hit = (intersections as Array<Record<string, unknown>>).find(
+    const hit: Record<string, unknown> | undefined = (
+      intersections as Array<Record<string, unknown>>
+    ).find(
       (row) =>
         row['bundle_path'] === expected.bundle_path ||
         row['name'] === expected.name
     );
-    assert.ok(
-      hit,
-      `MCP dissolve context missed ${expected.bundle_path ?? expected.name}`
+    if (!hit) {
+      assert.fail(
+        `MCP dissolve context missed ${expected.bundle_path ?? expected.name}`
+      );
+    }
+    const sourceRange = asRange(hit['source_range']);
+    assert.equal(
+      sourceRange === null,
+      expected.source_range === null,
+      `MCP source range nullness for ${expected.name} does not match the official reader`
     );
-    assert.ok(
-      rangeClose(
-        asRange(hit['file_relative_source_range']),
-        expected.file_relative_source_range
-      ) || rangeClose(asRange(hit['source_range']), expected.source_range),
-      `MCP source context for ${expected.name} does not match the official reader`
+    if (expected.source_range !== null) {
+      assert.ok(
+        rangeClose(sourceRange, expected.source_range),
+        `MCP source range for ${expected.name} does not match the official reader`
+      );
+    }
+    const fileRelativeRange = asRange(hit['file_relative_source_range']);
+    assert.equal(
+      fileRelativeRange === null,
+      expected.file_relative_source_range === null,
+      `MCP file-relative range nullness for ${expected.name} does not match the official reader`
     );
+    if (expected.file_relative_source_range !== null) {
+      assert.ok(
+        rangeClose(fileRelativeRange, expected.file_relative_source_range),
+        `MCP file-relative range for ${expected.name} does not match the official reader`
+      );
+    }
   }
   const dup = commentByBody(
     original,
