@@ -2409,11 +2409,22 @@ interface CommentMarkPointerPosition {
   readonly exposedRight: number | null;
 }
 
+interface CommentMarkPointerExposureAttempt {
+  readonly beforeScrollTop: number;
+  readonly requestedScrollTop: number;
+  readonly appliedScrollTop: number;
+}
+
 interface CommentMarkPointerExposure {
   readonly missing: readonly string[];
   readonly blocker: string | null;
   readonly before: CommentMarkPointerPosition;
   readonly after: CommentMarkPointerPosition;
+  readonly stageClientBounds: DomRectProbe | null;
+  readonly stageScrollHeight: number | null;
+  readonly stageClientHeight: number | null;
+  readonly maxScrollTop: number | null;
+  readonly attempts: readonly CommentMarkPointerExposureAttempt[];
 }
 
 interface CommentMarkPointerClickCapture {
@@ -3518,6 +3529,11 @@ async function exposeCommentMarkForPointer(
         blocker: 'pointer exposure is missing ' + missing.join(', '),
         before: empty,
         after: empty,
+        stageClientBounds: null,
+        stageScrollHeight: null,
+        stageClientHeight: null,
+        maxScrollTop: null,
+        attempts: [],
       };
     }
     const rect = (node) => {
@@ -3538,6 +3554,8 @@ async function exposeCommentMarkForPointer(
         top: value.top + node.clientTop,
         right: value.left + node.clientLeft + node.clientWidth,
         bottom: value.top + node.clientTop + node.clientHeight,
+        width: node.clientWidth,
+        height: node.clientHeight,
       };
     };
     const position = () => {
@@ -3601,6 +3619,10 @@ async function exposeCommentMarkForPointer(
       requestAnimationFrame(() => requestAnimationFrame(resolve));
       return promise;
     };
+    const stageScrollHeight = stage.scrollHeight;
+    const stageClientHeight = stage.clientHeight;
+    const maxScrollTop = Math.max(0, stageScrollHeight - stageClientHeight);
+    const attempts = [];
     let blocker = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const current = position();
@@ -3611,30 +3633,37 @@ async function exposeCommentMarkForPointer(
           JSON.stringify(current);
         break;
       }
-      let nextStage = stage.scrollTop;
+      const beforeScrollTop = stage.scrollTop;
+      let requestedScrollTop = beforeScrollTop;
       if (current.rect.top < stageBounds.top)
-        nextStage += current.rect.top - stageBounds.top;
+        requestedScrollTop += Math.floor(
+          current.rect.top - stageBounds.top
+        );
       else if (current.rect.bottom > stageBounds.bottom)
-        nextStage += current.rect.bottom - stageBounds.bottom;
-      nextStage = clamp(
-        nextStage,
-        0,
-        Math.max(0, stage.scrollHeight - stage.clientHeight)
-      );
+        requestedScrollTop += Math.ceil(
+          current.rect.bottom - stageBounds.bottom
+        );
+      const nextStage = clamp(requestedScrollTop, 0, maxScrollTop);
       const targetCenter =
         (current.exposedLeft + current.exposedRight) / 2;
+      const beforeTimelineLeft = timeline.scrollLeft;
       const nextTimeline = clamp(
         timeline.scrollLeft + current.center.x - targetCenter,
         0,
         Math.max(0, timeline.scrollWidth - timeline.clientWidth)
       );
-      const changed =
-        Math.abs(nextStage - stage.scrollTop) > 0.01 ||
-        Math.abs(nextTimeline - timeline.scrollLeft) > 0.01;
       stage.scrollTop = nextStage;
       timeline.scrollLeft = nextTimeline;
-      if (!changed) break;
       await frames();
+      attempts.push({
+        beforeScrollTop,
+        requestedScrollTop,
+        appliedScrollTop: stage.scrollTop,
+      });
+      const changed =
+        Math.abs(stage.scrollTop - beforeScrollTop) > 0.01 ||
+        Math.abs(timeline.scrollLeft - beforeTimelineLeft) > 0.01;
+      if (!changed) break;
     }
     await frames();
     const after = position();
@@ -3654,7 +3683,17 @@ async function exposeCommentMarkForPointer(
         JSON.stringify(after.hitId) +
         ', not ' +
         JSON.stringify(${JSON.stringify(expectedId)});
-    return { missing, blocker, before, after };
+    return {
+      missing,
+      blocker,
+      before,
+      after,
+      stageClientBounds: clientBounds(stage),
+      stageScrollHeight,
+      stageClientHeight,
+      maxScrollTop,
+      attempts,
+    };
   })()`);
 }
 
