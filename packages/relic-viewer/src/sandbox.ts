@@ -1413,9 +1413,9 @@ export function sanitizeFrameHtml(rawHtml: string): string {
  *
  * Chrome ignores CSP webrtc 'block', allowing sandboxed frames to gather ICE
  * candidates and transmit STUN packets over UDP. This containment:
- * 1. Neutralizes WebRTC constructors and prototype methods on window,
- *    Window.prototype, and globalThis.
- * 2. Neutralizes Worker and SharedWorker constructors.
+ * 1. Neutralizes WebRTC constructors and prototype methods on the frame's
+ *    global and on whichever objects in its Window chain own them.
+ * 2. Neutralizes Worker and SharedWorker constructors the same way.
  * 3. Overrides contentWindow and contentDocument on frame/object element prototypes.
  * 4. Prevents programmatic creation and DOM insertion of nested frame/object elements.
  */
@@ -1499,37 +1499,38 @@ export function installSandboxContainment(win: Window, _doc?: Document): void {
     | { prototype?: Record<string, unknown> }
     | undefined;
 
+  // `win` is the frame's own global (both callers pass `window`, which is
+  // globalThis there), so its chain plus Window.prototype's covers the realm.
+  // Walking the caller's globalThis separately added nothing in the frame and
+  // only contained the wrong realm when a caller passed another window.
   const targets: unknown[] = [
     ...collectChain(win),
     ...collectChain(winWindow?.prototype),
-    ...collectChain(globalThis),
   ];
 
+  // Lock each name on the global (the shadow every identifier lookup hits
+  // first) and on any chain object that actually owns it. Prototypes that
+  // merely inherit the name, such as Object.prototype or EventTarget.prototype,
+  // are left alone: a non-writable value there makes every strict-mode
+  // assignment of that property name on an ordinary object or DOM node throw.
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const lockName = (record: Record<string, unknown>, prop: string) => {
+    try {
+      delete record[prop];
+    } catch {}
+    try {
+      Object.defineProperty(record, prop, {
+        value: undefined,
+        writable: false,
+        configurable: false,
+      });
+    } catch {}
+  };
   for (const target of targets) {
     const record = target as Record<string, unknown>;
-    for (const prop of rtcProps) {
-      try {
-        delete record[prop];
-      } catch {}
-      try {
-        Object.defineProperty(record, prop, {
-          value: undefined,
-          writable: false,
-          configurable: false,
-        });
-      } catch {}
-    }
-    for (const prop of ['Worker', 'SharedWorker'] as const) {
-      try {
-        delete record[prop];
-      } catch {}
-      try {
-        Object.defineProperty(record, prop, {
-          value: undefined,
-          writable: false,
-          configurable: false,
-        });
-      } catch {}
+    const isGlobal = target === win;
+    for (const prop of [...rtcProps, 'Worker', 'SharedWorker']) {
+      if (isGlobal || hasOwn.call(record, prop)) lockName(record, prop);
     }
   }
 

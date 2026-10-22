@@ -408,10 +408,13 @@ async function defaultInflater(
   };
 
   try {
-    const writeDone = writer.write(toDomWritableChunk(compressedData)).then(
-      () => writer.close(),
-      () => undefined
-    );
+    // Never rejects: the bound or corruption error raised below is the one
+    // that must surface, and close() rejects once cancelStream has aborted
+    // the writer. Left unhandled, that rejection would terminate a Node host.
+    const writeDone = writer
+      .write(toDomWritableChunk(compressedData))
+      .then(() => writer.close())
+      .catch(() => undefined);
     const chunks: Uint8Array[] = [];
     let total = 0;
 

@@ -594,11 +594,28 @@ describe('otio-zip security indexing and subtype detection', () => {
     ]);
     const index = await indexOtioZip(zip);
     expect(index.entries.get('media/bomb.bin')?.uncompressedSize).toBe(1);
-    const first = await index.readEntry('media/bomb.bin').catch((err) => err);
-    const second = await index.readEntry('media/bomb.bin').catch((err) => err);
-    expect(first).toBeInstanceOf(OtioZipError);
-    expect((first as OtioZipError).code).toBe('decompression-limit');
-    expect(second).toBe(first);
+    // The overflow aborts the stream mid-write; nothing it leaves behind may
+    // reject unhandled, because that terminates a Node host.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const first = await index.readEntry('media/bomb.bin').catch((err) => err);
+      const second = await index
+        .readEntry('media/bomb.bin')
+        .catch((err) => err);
+      expect(first).toBeInstanceOf(OtioZipError);
+      expect((first as OtioZipError).code).toBe('decompression-limit');
+      expect(second).toBe(first);
+      // Proving an absence has no signal to await; one real event-loop turn
+      // lets the runtime report any rejection the overflow left unhandled.
+      const turn = Promise.withResolvers<void>();
+      setImmediate(turn.resolve);
+      await turn.promise;
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   test('does not reinflate a permanent corrupt entry', async () => {

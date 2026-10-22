@@ -15,7 +15,12 @@ use_file_shell_for_executable_tasks = true
 # in CI, which is how a 430 KB renderer got into the shell on the runner while
 # every local build split it out correctly. biome is already pinned for the
 # same reason and its output only affects review.
-bun = "1.3.14"
+# 1.4.3, not 1.3.x: Bun <= 1.3.14 double-closes extra stdio pipes (index 3
+# and up) from a dead subprocess's finalizer after the numbers are reused,
+# which wedged the Bun-hosted test harnesses (oven-sh/bun#30443, fixed in
+# 1.4.0 by #32520). Evidence: docs/plans/otio/proof/bun-extra-stdio-double-close
+# and stdio-mcp-boundary-gcprobe-67d3c4c.
+bun = "1.4.3"
 biome = "2.2.2"
 node = "lts"
 markdownlint-cli2 = "latest"

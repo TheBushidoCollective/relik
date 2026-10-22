@@ -244,10 +244,7 @@
       "syscall_line": 304458,
       "syscall": "close(219<UNIX-STREAM:[28784->28785]>) = 0",
       "pid": "3697",
-      "frame_lines": [
-        304459,
-        304492
-      ]
+      "frame_lines": [304459, 304492]
     },
     {
       "id": "B",
@@ -255,10 +252,7 @@
       "syscall_line": 304720,
       "syscall": "epoll_ctl(13<anon_inode:[eventpoll]>, EPOLL_CTL_ADD, 219, {events=EPOLLIN|EPOLLHUP|EPOLLONESHOT, data={u32=2333540432, u",
       "pid": "3697",
-      "frame_lines": [
-        304721,
-        304751
-      ]
+      "frame_lines": [304721, 304751]
     },
     {
       "id": "C",
@@ -266,10 +260,7 @@
       "syscall_line": 304796,
       "syscall": "<... close resumed>) = -1 EBADF (Bad file descriptor)",
       "pid": "3717",
-      "frame_lines": [
-        304797,
-        304798
-      ]
+      "frame_lines": [304797, 304798]
     }
   ],
   "frames": [
@@ -285,18 +276,14 @@
       "label_offset": "0x78377",
       "dynsym_nearest_preceding": {
         "value": "0x357f9f0",
-        "names": [
-          "napi_internal_suppress_crash_on_abort_if_desired"
-        ]
+        "names": ["napi_internal_suppress_crash_on_abort_if_desired"]
       },
       "anchor": {
         "symbol": "napi_internal_suppress_crash_on_abort_if_desired",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x357f9f0",
         "std_dynsym_size": 134,
-        "prof_symtab_values": [
-          "0x357f9f0"
-        ],
+        "prof_symtab_values": ["0x357f9f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x78377",
         "prof_value_plus_offset": "0x35f7d67",
@@ -333,18 +320,14 @@
       "label_offset": "0x44636b",
       "dynsym_nearest_preceding": {
         "value": "0x3d406f0",
-        "names": [
-          "napi_remove_async_cleanup_hook"
-        ]
+        "names": ["napi_remove_async_cleanup_hook"]
       },
       "anchor": {
         "symbol": "napi_remove_async_cleanup_hook",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x3d406f0",
         "std_dynsym_size": 429,
-        "prof_symtab_values": [
-          "0x3d406f0"
-        ],
+        "prof_symtab_values": ["0x3d406f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x44636b",
         "prof_value_plus_offset": "0x4186a5b",
@@ -385,18 +368,14 @@
       "label_offset": "0xe658af",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xe658af",
         "prof_value_plus_offset": "0x54f61ef",
@@ -433,18 +412,14 @@
       "label_offset": "0xa3e245",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xa3e245",
         "prof_value_plus_offset": "0x50ceb85",
@@ -477,18 +452,14 @@
       "label_offset": "0xa3c73f",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xa3c73f",
         "prof_value_plus_offset": "0x50cd07f",
@@ -521,18 +492,14 @@
       "label_offset": "0x11d0ed",
       "dynsym_nearest_preceding": {
         "value": "0x39617e0",
-        "names": [
-          "napi_internal_enqueue_finalizer"
-        ]
+        "names": ["napi_internal_enqueue_finalizer"]
       },
       "anchor": {
         "symbol": "napi_internal_enqueue_finalizer",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x39617e0",
         "std_dynsym_size": 51,
-        "prof_symtab_values": [
-          "0x39617e0"
-        ],
+        "prof_symtab_values": ["0x39617e0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x11d0ed",
         "prof_value_plus_offset": "0x3a7e8cd",
@@ -569,18 +536,14 @@
       "label_offset": "0x44844b",
       "dynsym_nearest_preceding": {
         "value": "0x3d406f0",
-        "names": [
-          "napi_remove_async_cleanup_hook"
-        ]
+        "names": ["napi_remove_async_cleanup_hook"]
       },
       "anchor": {
         "symbol": "napi_remove_async_cleanup_hook",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x3d406f0",
         "std_dynsym_size": 429,
-        "prof_symtab_values": [
-          "0x3d406f0"
-        ],
+        "prof_symtab_values": ["0x3d406f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x44844b",
         "prof_value_plus_offset": "0x4188b3b",
@@ -633,18 +596,14 @@
       "label_offset": "0x250ac4",
       "dynsym_nearest_preceding": {
         "value": "0x357f9f0",
-        "names": [
-          "napi_internal_suppress_crash_on_abort_if_desired"
-        ]
+        "names": ["napi_internal_suppress_crash_on_abort_if_desired"]
       },
       "anchor": {
         "symbol": "napi_internal_suppress_crash_on_abort_if_desired",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x357f9f0",
         "std_dynsym_size": 134,
-        "prof_symtab_values": [
-          "0x357f9f0"
-        ],
+        "prof_symtab_values": ["0x357f9f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x250ac4",
         "prof_value_plus_offset": "0x37d04b4",
@@ -677,18 +636,14 @@
       "label_offset": "0x24acfb",
       "dynsym_nearest_preceding": {
         "value": "0x357f9f0",
-        "names": [
-          "napi_internal_suppress_crash_on_abort_if_desired"
-        ]
+        "names": ["napi_internal_suppress_crash_on_abort_if_desired"]
       },
       "anchor": {
         "symbol": "napi_internal_suppress_crash_on_abort_if_desired",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x357f9f0",
         "std_dynsym_size": 134,
-        "prof_symtab_values": [
-          "0x357f9f0"
-        ],
+        "prof_symtab_values": ["0x357f9f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x24acfb",
         "prof_value_plus_offset": "0x37ca6eb",
@@ -924,18 +879,14 @@
       "label_offset": "0xeff742",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xeff742",
         "prof_value_plus_offset": "0x5590082",
@@ -964,18 +915,14 @@
       "label_offset": "0xefdc7f",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xefdc7f",
         "prof_value_plus_offset": "0x558e5bf",
@@ -1008,18 +955,14 @@
       "label_offset": "0x11678f3",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x11678f3",
         "prof_value_plus_offset": "0x57f8233",
@@ -1076,18 +1019,14 @@
       "label_offset": "0x3c6bfd",
       "dynsym_nearest_preceding": {
         "value": "0x39617e0",
-        "names": [
-          "napi_internal_enqueue_finalizer"
-        ]
+        "names": ["napi_internal_enqueue_finalizer"]
       },
       "anchor": {
         "symbol": "napi_internal_enqueue_finalizer",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x39617e0",
         "std_dynsym_size": 51,
-        "prof_symtab_values": [
-          "0x39617e0"
-        ],
+        "prof_symtab_values": ["0x39617e0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x3c6bfd",
         "prof_value_plus_offset": "0x3d283dd",
@@ -1169,18 +1108,14 @@
       "label_offset": "0xac3779",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xac3779",
         "prof_value_plus_offset": "0x51540b9",
@@ -1209,18 +1144,14 @@
       "label_offset": "0xd4c360",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xd4c360",
         "prof_value_plus_offset": "0x53dcca0",
@@ -1249,18 +1180,14 @@
       "label_offset": "0x38dd23",
       "dynsym_nearest_preceding": {
         "value": "0x39617e0",
-        "names": [
-          "napi_internal_enqueue_finalizer"
-        ]
+        "names": ["napi_internal_enqueue_finalizer"]
       },
       "anchor": {
         "symbol": "napi_internal_enqueue_finalizer",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x39617e0",
         "std_dynsym_size": 51,
-        "prof_symtab_values": [
-          "0x39617e0"
-        ],
+        "prof_symtab_values": ["0x39617e0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x38dd23",
         "prof_value_plus_offset": "0x3cef503",
@@ -1421,18 +1348,14 @@
       "label_offset": "0x259553",
       "dynsym_nearest_preceding": {
         "value": "0x357f9f0",
-        "names": [
-          "napi_internal_suppress_crash_on_abort_if_desired"
-        ]
+        "names": ["napi_internal_suppress_crash_on_abort_if_desired"]
       },
       "anchor": {
         "symbol": "napi_internal_suppress_crash_on_abort_if_desired",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x357f9f0",
         "std_dynsym_size": 134,
-        "prof_symtab_values": [
-          "0x357f9f0"
-        ],
+        "prof_symtab_values": ["0x357f9f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x259553",
         "prof_value_plus_offset": "0x37d8f43",
@@ -1461,18 +1384,14 @@
       "label_offset": "0x250c3c",
       "dynsym_nearest_preceding": {
         "value": "0x357f9f0",
-        "names": [
-          "napi_internal_suppress_crash_on_abort_if_desired"
-        ]
+        "names": ["napi_internal_suppress_crash_on_abort_if_desired"]
       },
       "anchor": {
         "symbol": "napi_internal_suppress_crash_on_abort_if_desired",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x357f9f0",
         "std_dynsym_size": 134,
-        "prof_symtab_values": [
-          "0x357f9f0"
-        ],
+        "prof_symtab_values": ["0x357f9f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x250c3c",
         "prof_value_plus_offset": "0x37d062c",
@@ -1505,18 +1424,14 @@
       "label_offset": "0x24acfb",
       "dynsym_nearest_preceding": {
         "value": "0x357f9f0",
-        "names": [
-          "napi_internal_suppress_crash_on_abort_if_desired"
-        ]
+        "names": ["napi_internal_suppress_crash_on_abort_if_desired"]
       },
       "anchor": {
         "symbol": "napi_internal_suppress_crash_on_abort_if_desired",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x357f9f0",
         "std_dynsym_size": 134,
-        "prof_symtab_values": [
-          "0x357f9f0"
-        ],
+        "prof_symtab_values": ["0x357f9f0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x24acfb",
         "prof_value_plus_offset": "0x37ca6eb",
@@ -1752,18 +1667,14 @@
       "label_offset": "0xeff742",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xeff742",
         "prof_value_plus_offset": "0x5590082",
@@ -1792,18 +1703,14 @@
       "label_offset": "0xefdc7f",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xefdc7f",
         "prof_value_plus_offset": "0x558e5bf",
@@ -1836,18 +1743,14 @@
       "label_offset": "0x11678f3",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x11678f3",
         "prof_value_plus_offset": "0x57f8233",
@@ -1904,18 +1807,14 @@
       "label_offset": "0x3c6bfd",
       "dynsym_nearest_preceding": {
         "value": "0x39617e0",
-        "names": [
-          "napi_internal_enqueue_finalizer"
-        ]
+        "names": ["napi_internal_enqueue_finalizer"]
       },
       "anchor": {
         "symbol": "napi_internal_enqueue_finalizer",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x39617e0",
         "std_dynsym_size": 51,
-        "prof_symtab_values": [
-          "0x39617e0"
-        ],
+        "prof_symtab_values": ["0x39617e0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x3c6bfd",
         "prof_value_plus_offset": "0x3d283dd",
@@ -1997,18 +1896,14 @@
       "label_offset": "0xac3779",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xac3779",
         "prof_value_plus_offset": "0x51540b9",
@@ -2037,18 +1932,14 @@
       "label_offset": "0xd4c360",
       "dynsym_nearest_preceding": {
         "value": "0x4690940",
-        "names": [
-          "uv_wtf8_to_utf16"
-        ]
+        "names": ["uv_wtf8_to_utf16"]
       },
       "anchor": {
         "symbol": "uv_wtf8_to_utf16",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x4690940",
         "std_dynsym_size": 14,
-        "prof_symtab_values": [
-          "0x4690940"
-        ],
+        "prof_symtab_values": ["0x4690940"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0xd4c360",
         "prof_value_plus_offset": "0x53dcca0",
@@ -2077,18 +1968,14 @@
       "label_offset": "0x38dd23",
       "dynsym_nearest_preceding": {
         "value": "0x39617e0",
-        "names": [
-          "napi_internal_enqueue_finalizer"
-        ]
+        "names": ["napi_internal_enqueue_finalizer"]
       },
       "anchor": {
         "symbol": "napi_internal_enqueue_finalizer",
         "in_std_dynsym": true,
         "std_dynsym_value": "0x39617e0",
         "std_dynsym_size": 51,
-        "prof_symtab_values": [
-          "0x39617e0"
-        ],
+        "prof_symtab_values": ["0x39617e0"],
         "values_agree_std_vs_prof": true,
         "label_offset": "0x38dd23",
         "prof_value_plus_offset": "0x3cef503",
@@ -2716,10 +2603,7 @@
         "fd": 220,
         "syscall": "close(220<UNIX-STREAM:[28785->28784]>)",
         "result": "0",
-        "frame_lines": [
-          303861,
-          303890
-        ],
+        "frame_lines": [303861, 303890],
         "bun_frames": 15,
         "non_bun_frames": 15,
         "finalizeStreams_in_chain": false,
@@ -3001,10 +2885,7 @@
         "fd": 222,
         "syscall": "close(222<UNIX-STREAM:[28787->28786]>)",
         "result": "0",
-        "frame_lines": [
-          303923,
-          303952
-        ],
+        "frame_lines": [303923, 303952],
         "bun_frames": 15,
         "non_bun_frames": 15,
         "finalizeStreams_in_chain": false,
@@ -3286,10 +3167,7 @@
         "fd": 220,
         "syscall": "close(220<UNIX-STREAM:[28785->28784]> )",
         "result": "0",
-        "frame_lines": [
-          304120,
-          304147
-        ],
+        "frame_lines": [304120, 304147],
         "bun_frames": 14,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": false,
@@ -3553,10 +3431,7 @@
         "fd": 222,
         "syscall": "close(222<UNIX-STREAM:[28787->28786]>)",
         "result": "0",
-        "frame_lines": [
-          304149,
-          304176
-        ],
+        "frame_lines": [304149, 304176],
         "bun_frames": 14,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": false,
@@ -3820,10 +3695,7 @@
         "fd": 221,
         "syscall": "close(221<UNIX-STREAM:[28786->28787]>)",
         "result": "0",
-        "frame_lines": [
-          304494,
-          304527
-        ],
+        "frame_lines": [304494, 304527],
         "bun_frames": 20,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": true,
@@ -4154,10 +4026,7 @@
         "fd": 219,
         "syscall": "close(219 )",
         "result": "-1 EBADF (Bad file descriptor)",
-        "frame_lines": [
-          304531,
-          304564
-        ],
+        "frame_lines": [304531, 304564],
         "bun_frames": 20,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": true,
@@ -4488,10 +4357,7 @@
         "fd": 221,
         "syscall": "close(221 )",
         "result": "-1 EBADF (Bad file descriptor)",
-        "frame_lines": [
-          304577,
-          304610
-        ],
+        "frame_lines": [304577, 304610],
         "bun_frames": 20,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": true,
@@ -4822,10 +4688,7 @@
         "fd": 219,
         "syscall": "close(219)",
         "result": "-1 EBADF (Bad file descriptor)",
-        "frame_lines": [
-          304619,
-          304652
-        ],
+        "frame_lines": [304619, 304652],
         "bun_frames": 20,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": true,
@@ -5156,10 +5019,7 @@
         "fd": 221,
         "syscall": "close(221)",
         "result": "-1 EBADF (Bad file descriptor)",
-        "frame_lines": [
-          304654,
-          304687
-        ],
+        "frame_lines": [304654, 304687],
         "bun_frames": 20,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": true,
@@ -5490,10 +5350,7 @@
         "fd": 221,
         "syscall": "epoll_ctl(13<anon_inode:[eventpoll]>, EPOLL_CTL_ADD, 221, {events=EPOLLIN|EPOLLHUP|EPOLLONESHOT, data={u32=2333540464, u64=576463494826098800}})",
         "result": "-1 EBADF (Bad file descriptor)",
-        "frame_lines": [
-          304763,
-          304793
-        ],
+        "frame_lines": [304763, 304793],
         "bun_frames": 17,
         "non_bun_frames": 14,
         "finalizeStreams_in_chain": false,
@@ -6610,10 +6467,7 @@
           "index4_221_222": 228356
         },
         "vfork_completion": 228720,
-        "child_dup2_index3_index4": [
-          228604,
-          228650
-        ],
+        "child_dup2_index3_index4": [228604, 228650],
         "node_net_registration_epoll_ops": [
           {
             "op": "229016:ADD:219:0",
@@ -6716,10 +6570,7 @@
           "index4_221_222": 231661
         },
         "vfork_completion": 232025,
-        "child_dup2_index3_index4": [
-          231909,
-          231955
-        ],
+        "child_dup2_index3_index4": [231909, 231955],
         "node_net_registration_epoll_ops": [
           {
             "op": "232288:ADD:219:0",
@@ -6822,10 +6673,7 @@
           "index4_221_222": 234988
         },
         "vfork_completion": 235365,
-        "child_dup2_index3_index4": [
-          235249,
-          235295
-        ],
+        "child_dup2_index3_index4": [235249, 235295],
         "node_net_registration_epoll_ops": [
           {
             "op": "235617:ADD:219:0",
@@ -7195,58 +7043,22 @@
       "closes_total": 12004,
       "ebadf_closes": 6,
       "ebadf_list_completion_and_start": [
-        [
-          304530,
-          304528
-        ],
-        [
-          304576,
-          304574
-        ],
-        [
-          304618,
-          304618
-        ],
-        [
-          304653,
-          304653
-        ],
-        [
-          304796,
-          304794
-        ],
-        [
-          304813,
-          304811
-        ]
+        [304530, 304528],
+        [304576, 304574],
+        [304618, 304618],
+        [304653, 304653],
+        [304796, 304794],
+        [304813, 304811]
       ],
       "finalizeStreams_closes_all_lines": 6,
       "finalizeStreams_closes_at_line_781": 6,
       "finalizeStreams_line_781_list": [
-        [
-          304458,
-          "2 succeeded"
-        ],
-        [
-          304493,
-          "succeeded"
-        ],
-        [
-          304530,
-          "EBADF"
-        ],
-        [
-          304576,
-          "EBADF"
-        ],
-        [
-          304618,
-          "EBADF"
-        ],
-        [
-          304653,
-          "EBADF"
-        ]
+        [304458, "2 succeeded"],
+        [304493, "succeeded"],
+        [304530, "EBADF"],
+        [304576, "EBADF"],
+        [304618, "EBADF"],
+        [304653, "EBADF"]
       ],
       "closeIO_772_773_closes": 0
     },
