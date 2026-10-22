@@ -3013,10 +3013,19 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       const bottom = Math.min(a.bottom, b.bottom);
       return { left, right, top, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
     };
+    const samplePoint = (box) => ({
+      x: Math.max(
+        0,
+        Math.min(window.innerWidth - 1, (box.left + box.right) / 2)
+      ),
+      y: Math.max(
+        0,
+        Math.min(window.innerHeight - 1, (box.top + box.bottom) / 2)
+      ),
+    });
     const hitOwned = (node, box) => {
       if (!node || box.width <= 0 || box.height <= 0) return false;
-      const x = (box.left + box.right) / 2;
-      const y = (box.top + box.bottom) / 2;
+      const { x, y } = samplePoint(box);
       const hit = document.elementFromPoint(x, y);
       return !!hit && (hit === node || node.contains(hit));
     };
@@ -3062,8 +3071,7 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       const controlRect = rect(node);
       const exposed = intersect(intersect(controlRect, content), viewport);
       const overlap = intersect(cardRect, exposed);
-      const x = (exposed.left + exposed.right) / 2;
-      const y = (exposed.top + exposed.bottom) / 2;
+      const { x, y } = samplePoint(exposed);
       const hit = document.elementFromPoint(x, y);
       const marker = hit?.closest('.otio-timeline-marker');
       return {
