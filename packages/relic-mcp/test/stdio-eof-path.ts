@@ -63,6 +63,13 @@ interface OwnedChild {
   kill(): void;
 }
 
+interface WaitRecord {
+  readonly id: number;
+  readonly label: string;
+  callbacks: number;
+  settled: boolean;
+}
+
 type CapturedMail =
   | { readonly kind: 'link'; readonly to: string; readonly link: string }
   | { readonly kind: 'mail'; readonly to: string; readonly mail: OutboundMail };
@@ -79,6 +86,8 @@ let commentsGetAccepted = false;
 let commentsGetReleased = false;
 let acceptCommentsGet: (() => void) | undefined;
 let releaseCommentsGet: (() => void) | undefined;
+const waitRecords: WaitRecord[] = [];
+let lastTraceBytes = 0;
 
 function traceParent(
   event: string,
@@ -108,6 +117,7 @@ function traceEvents(): TraceEvent[] {
   } catch {
     return [];
   }
+  lastTraceBytes = Buffer.byteLength(text);
 
   const rows: TraceEvent[] = [];
   for (const line of text.split('\n')) {
@@ -181,7 +191,28 @@ function waitForTrace(
   childExit: Promise<number>
 ): Promise<TraceEvent> {
   const existing = traceEvents().find(predicate);
-  if (existing !== undefined) return Promise.resolve(existing);
+  const record: WaitRecord = {
+    id: waitRecords.length + 1,
+    label,
+    callbacks: 0,
+    settled: false,
+  };
+  waitRecords.push(record);
+  traceParent('trace_wait_created', {
+    wait_id: record.id,
+    label,
+    existing_found: existing !== undefined,
+    trace_bytes: lastTraceBytes,
+  });
+  if (existing !== undefined) {
+    record.settled = true;
+    traceParent('trace_wait_resolved', {
+      wait_id: record.id,
+      label,
+      via: 'existing',
+    });
+    return Promise.resolve(existing);
+  }
 
   return new Promise<TraceEvent>((resolve, reject) => {
     let settled = false;
@@ -190,35 +221,77 @@ function waitForTrace(
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
+      record.settled = true;
       clearTimeout(timer);
-      watcher?.close();
+      if (watcher !== undefined) {
+        traceParent('trace_watch_closed', { wait_id: record.id, label });
+        watcher.close();
+      }
       action();
     };
-    const inspect = (exitCode?: number): void => {
+    const logResolved = (via: string): void => {
+      traceParent('trace_wait_resolved', { wait_id: record.id, label, via });
+    };
+    const inspect = (via: string, exitCode?: number): void => {
       const found = traceEvents().find(predicate);
+      traceParent('trace_inspect', {
+        wait_id: record.id,
+        label,
+        via,
+        found: found !== undefined,
+        trace_bytes: lastTraceBytes,
+      });
       if (found !== undefined) {
-        finish(() => resolve(found));
+        finish(() => {
+          logResolved(via);
+          resolve(found);
+        });
       } else if (exitCode !== undefined) {
-        finish(() =>
+        finish(() => {
+          logResolved(via);
           reject(
             new Error(`${label} was not observed before child exit=${exitCode}`)
-          )
-        );
+          );
+        });
       }
     };
 
-    watcher = watch(tracePath, { persistent: false }, () => inspect());
-    watcher.once('error', (error) => finish(() => reject(error)));
+    watcher = watch(tracePath, { persistent: false }, (eventType, filename) => {
+      record.callbacks += 1;
+      const n = record.callbacks;
+      traceParent('trace_watch_callback', {
+        wait_id: record.id,
+        label,
+        n,
+        event_type: eventType,
+        filename,
+      });
+      inspect(`callback#${n}`);
+    });
+    traceParent('trace_watch_armed', { wait_id: record.id, label });
+    watcher.once('error', (error) =>
+      finish(() => {
+        logResolved('watch_error');
+        reject(error);
+      })
+    );
     timer = setTimeout(() => {
-      finish(() =>
-        reject(new Error(`${label} was not observed before the probe deadline`))
-      );
+      finish(() => {
+        traceParent('trace_wait_timeout', { wait_id: record.id, label });
+        reject(
+          new Error(`${label} was not observed before the probe deadline`)
+        );
+      });
     }, STAGE_TIMEOUT_MS);
     void childExit.then(
-      (code) => inspect(code),
-      (error) => finish(() => reject(error))
+      (code) => inspect('child_exit', code),
+      (error) =>
+        finish(() => {
+          logResolved('child_error');
+          reject(error);
+        })
     );
-    inspect();
+    inspect('post_watch');
   });
 }
 
@@ -422,12 +495,26 @@ handler = async (request: Request): Promise<Response> => {
     request.method === 'GET'
   ) {
     commentsGetAccepted = true;
-    const physicalEofAlreadyObserved = traceEvents().some(
+    const rows = traceEvents();
+    const physicalEofAlreadyObserved = rows.some(
       (event) => event.event === 'stdin_physical_eof'
+    );
+    const commentsGetStartedInFile = rows.some(
+      (event) =>
+        event.event === 'comments_get_started' && event['path'] === url.pathname
     );
     traceParent('comments_get_accepted', {
       path: url.pathname,
       physical_eof_already_observed: physicalEofAlreadyObserved,
+      comments_get_started_in_file: commentsGetStartedInFile,
+      trace_bytes: lastTraceBytes,
+      pending_waits: waitRecords
+        .filter((record) => !record.settled)
+        .map((record) => ({
+          wait_id: record.id,
+          label: record.label,
+          callbacks: record.callbacks,
+        })),
     });
     acceptCommentsGet?.();
     await commentsRelease;
@@ -668,6 +755,7 @@ try {
   console.log(
     `STDIO_EOF_PROBE bytes=${requestBytes.byteLength} sha256=${requestSha256} response_id=${REQUEST_ID} nonce_decrypted=true exit=${exit}`
   );
+  console.log(`STDIO_EOF_TRACE\n${formatTrace()}`);
   console.log('STDIO_EOF_PATH_OK');
 } catch (error) {
   await settleActiveChild();

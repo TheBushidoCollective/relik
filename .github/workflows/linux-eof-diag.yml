@@ -60,27 +60,33 @@ jobs:
         run: |
           set -u +e
           mkdir -p diag
-          for mode in 0 1 0 1; do
-            n=$(ls diag | wc -l)
+          bunver=$(bun --version)
+          echo "bun=$bunver" | tee -a diag/summary.txt
+          run=0
+          for mode in 0 0 0 1 1 1; do
+            run=$((run + 1))
             start=$(date +%s%N)
             RELIC_STDIO_EOF_SUPPRESS_RESPONSE=$mode timeout 60 bun packages/relic-mcp/test/stdio-eof-path.ts \
-              > "diag/eof-$n-mode$mode.stdout.txt" 2> "diag/eof-$n-mode$mode.stderr.txt"
+              > "diag/eof-run$run-mode$mode.stdout.txt" 2> "diag/eof-run$run-mode$mode.stderr.txt"
             rc=$?
             end=$(date +%s%N)
-            echo "eof run $n mode=$mode rc=$rc ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
+            echo "eof bun=$bunver run=$run mode=$mode rc=$rc ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
           done
 
-      - name: Build-stamp test repeated
+      - name: EOF probe direct runs under Bun 1.3.14
         shell: bash
         run: |
           set -u +e
-          for i in 1 2 3 4 5; do
+          mkdir -p diag
+          bunver=$(mise exec bun@1.3.14 -- bun --version)
+          echo "bun=$bunver" | tee -a diag/summary.txt
+          for run in 1 2 3; do
             start=$(date +%s%N)
-            timeout 120 bun test packages/relic-mcp/test/protocol.test.ts -t 'stamps bundle and plugin launch config' \
-              > "diag/stamp-$i.txt" 2>&1
+            RELIC_STDIO_EOF_SUPPRESS_RESPONSE=0 mise exec bun@1.3.14 -- timeout 60 bun packages/relic-mcp/test/stdio-eof-path.ts \
+              > "diag/bun-1.3.14-eof-run$run.stdout.txt" 2> "diag/bun-1.3.14-eof-run$run.stderr.txt"
             rc=$?
             end=$(date +%s%N)
-            echo "stamp run $i rc=$rc ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
+            echo "eof bun=$bunver run=$run mode=0 rc=$rc ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
           done
 
       - name: Show summary
