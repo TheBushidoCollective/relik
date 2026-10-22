@@ -41,6 +41,8 @@ type ContextName =
   | 'browser-retired'
   | 'browser-retired-then-helper';
 
+type TargetStderr = 'pipe' | 'file';
+
 type TrialStatus = 'running' | 'pass' | 'fixture_failure' | 'discrepancy';
 
 interface Options {
@@ -48,6 +50,8 @@ interface Options {
   readonly count: number;
   readonly seed: string;
   readonly corruptNonce: boolean;
+  readonly targetStderr: TargetStderr;
+  readonly calibrateStderrSink: boolean;
   readonly out?: string | undefined;
 }
 
@@ -243,11 +247,20 @@ interface ProtocolReceipt {
   readonly parse_error?: ErrorReceipt | undefined;
 }
 
+interface TargetStderrFileReceipt {
+  readonly path: string;
+  read_status: 'pending' | 'read' | 'unreadable';
+  raw?: TextReceipt | undefined;
+  error?: ErrorReceipt | undefined;
+}
+
 interface TargetReceipt {
   readonly command: readonly string[];
   readonly cwd: string;
   pid: number | null;
   readonly deadline_ms: number;
+  readonly target_stderr: TargetStderr;
+  stderr_file?: TargetStderrFileReceipt | undefined;
   packet?: BytesReceipt | undefined;
   input_outcomes?: readonly InputOutcomeReceipt[] | undefined;
   stdout?: TextReceipt | undefined;
@@ -279,13 +292,25 @@ interface NodeMetadata {
   readonly version_exit: number | null;
   readonly version_stderr: string | null;
 }
+interface StderrSinkCalibrationReceipt {
+  readonly marker: TextReceipt;
+  readonly stderr_path: string;
+  child_pid: number | null;
+  exit?: number | undefined;
+  signal_code?: unknown;
+  raw_file?: BytesReceipt | undefined;
+  exact_match: boolean | null;
+  error?: ErrorReceipt | undefined;
+}
 
 function usage(message?: string): never {
   const prefix = message === undefined ? '' : `${message}\n`;
   throw new Error(
     `${prefix}usage: mise exec -- bun packages/relic-mcp/test/stdio-mcp-boundary-path.ts ` +
       '--context=none|helper|browser-retired|browser-retired-then-helper ' +
-      '--count=1..16 --seed=otio-mcp-boundary-v1 [--corrupt-nonce] [--out=<directory>]'
+      '--count=1..16 --seed=otio-mcp-boundary-v1 ' +
+      '[--target-stderr=pipe|file] [--corrupt-nonce] [--out=<directory>]\n' +
+      '   or: --calibrate-stderr-sink [--seed=otio-mcp-boundary-v1] [--out=<directory>]'
   );
 }
 
@@ -294,12 +319,26 @@ function parseOptions(argv: readonly string[]): Options {
   let count: number | undefined;
   let seed = 'otio-mcp-boundary-v1';
   let corruptNonce = false;
+  let targetStderr: TargetStderr = 'pipe';
+  let calibrateStderrSink = false;
   let out: string | undefined;
 
   for (const arg of argv) {
+    if (arg === '--calibrate-stderr-sink') {
+      calibrateStderrSink = true;
+      continue;
+    }
     if (arg === '--corrupt-nonce') {
       corruptNonce = true;
       continue;
+    }
+    if (arg.startsWith('--target-stderr=')) {
+      const value = arg.slice('--target-stderr='.length);
+      if (value === 'pipe' || value === 'file') {
+        targetStderr = value;
+        continue;
+      }
+      usage(`unsupported target stderr mode ${JSON.stringify(value)}`);
     }
     if (arg.startsWith('--context=')) {
       const value = arg.slice('--context='.length);
@@ -341,6 +380,26 @@ function parseOptions(argv: readonly string[]): Options {
     usage(`unknown argument ${JSON.stringify(arg)}`);
   }
 
+  if (calibrateStderrSink) {
+    if (context !== undefined || count !== undefined) {
+      usage(
+        '--calibrate-stderr-sink is mutually exclusive with --context and --count'
+      );
+    }
+    if (corruptNonce) {
+      usage('--calibrate-stderr-sink cannot use --corrupt-nonce');
+    }
+    return {
+      context: 'none',
+      count: 0,
+      seed,
+      corruptNonce: false,
+      targetStderr,
+      calibrateStderrSink: true,
+      ...(out === undefined ? {} : { out }),
+    };
+  }
+
   if (context === undefined) usage('context is required');
   if (count === undefined) usage('count is required');
   if (corruptNonce && (context !== 'none' || count !== 1)) {
@@ -351,6 +410,8 @@ function parseOptions(argv: readonly string[]): Options {
     count,
     seed,
     corruptNonce,
+    targetStderr,
+    calibrateStderrSink: false,
     ...(out === undefined ? {} : { out }),
   };
 }
@@ -421,6 +482,16 @@ function bytesReceipt(value: Uint8Array): BytesReceipt {
 
 function textReceipt(value: string): TextReceipt {
   return { text: value, ...bytesReceipt(Buffer.from(value, 'utf8')) };
+}
+function textReceiptFromBytes(value: Uint8Array): TextReceipt {
+  const bytes = Buffer.from(value);
+  return { text: bytes.toString('utf8'), ...bytesReceipt(bytes) };
+}
+
+function stderrSink(mode: TargetStderr, ownedPath: string | undefined) {
+  if (mode === 'pipe') return 'pipe' as const;
+  assert.ok(ownedPath, 'file stderr mode requires an owned stderr path');
+  return Bun.file(ownedPath);
 }
 
 function nonceFor(seed: string, ordinal: number, kind: string): string {
@@ -557,15 +628,21 @@ let runtimeNode: NodeMetadata = {
   version_exit: null,
   version_stderr: null,
 };
+let stderrSinkCalibration: StderrSinkCalibrationReceipt | undefined;
 
-const service = Bun.serve({
-  hostname: '127.0.0.1',
-  port: 0,
-  fetch(request) {
-    return handleLoopback(request);
-  },
-});
-const origin = `http://127.0.0.1:${service.port}`;
+const service = options.calibrateStderrSink
+  ? undefined
+  : Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(request) {
+        return handleLoopback(request);
+      },
+    });
+const origin =
+  service === undefined
+    ? 'calibration-no-loopback'
+    : `http://127.0.0.1:${service.port}`;
 function emptyContextProcessReceipt(): ContextProcessReceipt {
   return {
     pid: null,
@@ -657,6 +734,10 @@ function witnessStatus(): 'RUNNING' | 'PASS' | 'FAIL' {
     return 'FAIL';
   }
   if (lastKnownPhase?.outcome === 'entered') return 'RUNNING';
+  if (options.calibrateStderrSink) {
+    if (stderrSinkCalibration?.exact_match === false) return 'FAIL';
+    return stderrSinkCalibration?.exact_match === true ? 'PASS' : 'RUNNING';
+  }
   if (
     inProgressTrial === undefined &&
     trials.length === options.count &&
@@ -678,6 +759,7 @@ function witnessPayload(
     record_kind: recordKind,
     status: witnessStatus(),
     options,
+    target_stderr_mode: options.targetStderr,
     started_at: startedAt,
     recorded_at: Date.now(),
     scratch,
@@ -703,8 +785,9 @@ function witnessPayload(
     },
     metadata: {
       optional: true,
-      node_status:
-        runtimeNode.version === null
+      node_status: options.calibrateStderrSink
+        ? 'skipped_for_calibration_isolation'
+        : runtimeNode.version === null
           ? recordKind === 'final'
             ? 'unavailable'
             : 'pending'
@@ -716,6 +799,7 @@ function witnessPayload(
     trials,
     in_progress_trial: inProgressTrial ?? null,
     all_loopback_receipts: mcpLoopbackReceipts,
+    calibrate_stderr_sink: stderrSinkCalibration ?? null,
     checkpoint_files: [
       ...checkpointPaths,
       ...(recordKind === 'checkpoint' ? [recordPath] : []),
@@ -1417,11 +1501,24 @@ async function callMcp(fixture: Fixture): Promise<TargetReceipt> {
   let packetForReceipt: string | undefined;
   let receiptsPersisted = false;
   let childSettled = false;
+  const targetStderrPath =
+    options.targetStderr === 'file'
+      ? join(fixture.directory, 'target-stderr.log')
+      : undefined;
   const receipt: TargetReceipt = {
     command: [NODE_COMMAND, bundlePath],
     cwd: fixture.directory,
     pid: null,
     deadline_ms: TARGET_DEADLINE_MS,
+    target_stderr: options.targetStderr,
+    ...(targetStderrPath === undefined
+      ? {}
+      : {
+          stderr_file: {
+            path: targetStderrPath,
+            read_status: 'pending',
+          },
+        }),
     loopback_receipts: [],
   };
   const child = Bun.spawn([NODE_COMMAND, bundlePath], {
@@ -1437,7 +1534,7 @@ async function callMcp(fixture: Fixture): Promise<TargetReceipt> {
     },
     stdin: 'pipe',
     stdout: 'pipe',
-    stderr: 'pipe',
+    stderr: stderrSink(options.targetStderr, targetStderrPath),
   });
   const timer = setTimeout(() => {
     child.kill();
@@ -1468,34 +1565,83 @@ async function callMcp(fixture: Fixture): Promise<TargetReceipt> {
     activeMcpCall = call;
     const writeResult = child.stdin.write(packet);
     const endResult = child.stdin.end();
-    const [stdout, stderr, exit, inputSettlements] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-      Promise.allSettled([writeResult, endResult]),
-    ]);
-    childSettled = true;
-    if (activeMcpCall === call) activeMcpCall = undefined;
+    if (options.targetStderr === 'pipe') {
+      const [stdout, stderr, exit, inputSettlements] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+        Promise.allSettled([writeResult, endResult]),
+      ]);
+      childSettled = true;
+      if (activeMcpCall === call) activeMcpCall = undefined;
 
-    const persistedReceipts = persistMcpLoopbackReceipts(call, packet);
-    receiptsPersisted = true;
-    receipt.packet = bytesReceipt(Buffer.from(packet, 'utf8'));
-    receipt.input_outcomes = [
-      describeInputOutcome(
-        'stdin.write',
-        inputSettlements[0] as PromiseSettledResult<unknown>
-      ),
-      describeInputOutcome(
-        'stdin.end',
-        inputSettlements[1] as PromiseSettledResult<unknown>
-      ),
-    ];
-    receipt.stdout = textReceipt(stdout);
-    receipt.stderr = textReceipt(stderr);
-    receipt.exit = exit;
-    receipt.signal_code = child.signalCode;
-    receipt.protocol = parseProtocol(stdout);
-    receipt.loopback_receipts = persistedReceipts;
+      const persistedReceipts = persistMcpLoopbackReceipts(call, packet);
+      receiptsPersisted = true;
+      receipt.packet = bytesReceipt(Buffer.from(packet, 'utf8'));
+      receipt.input_outcomes = [
+        describeInputOutcome(
+          'stdin.write',
+          inputSettlements[0] as PromiseSettledResult<unknown>
+        ),
+        describeInputOutcome(
+          'stdin.end',
+          inputSettlements[1] as PromiseSettledResult<unknown>
+        ),
+      ];
+      receipt.stdout = textReceipt(stdout);
+      receipt.stderr = textReceipt(stderr);
+      receipt.exit = exit;
+      receipt.signal_code = child.signalCode;
+      receipt.protocol = parseProtocol(stdout);
+      receipt.loopback_receipts = persistedReceipts;
+    } else {
+      assert.ok(
+        targetStderrPath,
+        'file stderr mode omitted its owned stderr path'
+      );
+      const [stdout, exit, inputSettlements] = await Promise.all([
+        new Response(child.stdout).text(),
+        child.exited,
+        Promise.allSettled([writeResult, endResult]),
+      ]);
+      childSettled = true;
+      if (activeMcpCall === call) activeMcpCall = undefined;
+
+      const persistedReceipts = persistMcpLoopbackReceipts(call, packet);
+      receiptsPersisted = true;
+      receipt.packet = bytesReceipt(Buffer.from(packet, 'utf8'));
+      receipt.input_outcomes = [
+        describeInputOutcome(
+          'stdin.write',
+          inputSettlements[0] as PromiseSettledResult<unknown>
+        ),
+        describeInputOutcome(
+          'stdin.end',
+          inputSettlements[1] as PromiseSettledResult<unknown>
+        ),
+      ];
+      receipt.stdout = textReceipt(stdout);
+      receipt.exit = exit;
+      receipt.signal_code = child.signalCode;
+      receipt.protocol = parseProtocol(stdout);
+      receipt.loopback_receipts = persistedReceipts;
+
+      const stderrFile = receipt.stderr_file;
+      assert.ok(stderrFile, 'file stderr mode omitted its receipt');
+      try {
+        const stderrBytes = await readFile(targetStderrPath);
+        const raw = textReceiptFromBytes(stderrBytes);
+        stderrFile.raw = raw;
+        stderrFile.read_status = 'read';
+        receipt.stderr = raw;
+      } catch (error) {
+        stderrFile.read_status = 'unreadable';
+        stderrFile.error = errorReceipt(error);
+        throw new Error(
+          `target stderr file is unreadable at ${targetStderrPath}: ${stderrFile.error.message}`
+        );
+      }
+    }
   } catch (error) {
     receipt.collection_error = errorReceipt(error);
   } finally {
@@ -1666,6 +1812,69 @@ async function runTrial(ordinal: number): Promise<TrialReceipt> {
   inProgressTrial = undefined;
   return trial;
 }
+async function calibrateStderrSink(): Promise<void> {
+  const marker = `stdio-mcp-boundary-stderr-sink-${runId}\n`;
+  const stderrPath = join(scratch, 'stderr-sink-calibration.stderr');
+  const receipt: StderrSinkCalibrationReceipt = {
+    marker: textReceipt(marker),
+    stderr_path: stderrPath,
+    child_pid: null,
+    exact_match: null,
+  };
+  stderrSinkCalibration = receipt;
+  let owner: ContextProcessOwnership | undefined;
+
+  try {
+    const child = await runNonTargetPhase(
+      'bootstrap',
+      'stderr_sink_calibration.spawn',
+      () =>
+        Bun.spawn(
+          [
+            NODE_COMMAND,
+            '-e',
+            `process.stderr.write(${JSON.stringify(marker)});`,
+          ],
+          {
+            stdin: 'ignore',
+            stdout: 'ignore',
+            stderr: stderrSink('file', stderrPath),
+          }
+        )
+    );
+    receipt.child_pid = child.pid;
+    owner = ownContextProcess(child, emptyContextProcessReceipt());
+    const exit = await runNonTargetPhase(
+      'bootstrap',
+      'stderr_sink_calibration.exit',
+      () => child.exited,
+      owner
+    );
+    receipt.exit = exit;
+    receipt.signal_code = child.signalCode;
+    const bytes = await runNonTargetPhase(
+      'bootstrap',
+      'stderr_sink_calibration.read',
+      () => readFile(stderrPath),
+      owner
+    );
+    receipt.raw_file = bytesReceipt(bytes);
+    receipt.exact_match =
+      Buffer.compare(Buffer.from(bytes), Buffer.from(marker, 'utf8')) === 0;
+    assert.equal(exit, 0, `stderr sink calibration exited ${exit}`);
+    assert.equal(
+      receipt.exact_match,
+      true,
+      'stderr sink calibration bytes did not match the marker'
+    );
+  } catch (error) {
+    receipt.exact_match = false;
+    receipt.error = errorReceipt(error);
+    throw error;
+  } finally {
+    killOwnedContextProcess(owner);
+  }
+}
 
 async function nodeMetadata(): Promise<NodeMetadata> {
   const resolvedPath = Bun.which(NODE_COMMAND) ?? NODE_COMMAND;
@@ -1715,26 +1924,30 @@ async function nodeMetadata(): Promise<NodeMetadata> {
 
 persistCheckpoint('invocation:started');
 try {
-  const bundleExists = await runNonTargetPhase(
-    'bootstrap',
-    'bundle.exists',
-    () => Bun.file(bundlePath).exists()
-  );
-  assert.ok(
-    bundleExists,
-    `built Node bundle is missing at ${bundlePath}; run bun run --cwd packages/relic-mcp build first`
-  );
-  bundle = bytesReceipt(
-    await runNonTargetPhase('bootstrap', 'bundle.read', () =>
-      readFile(bundlePath)
-    )
-  );
+  if (options.calibrateStderrSink) {
+    await calibrateStderrSink();
+  } else {
+    const bundleExists = await runNonTargetPhase(
+      'bootstrap',
+      'bundle.exists',
+      () => Bun.file(bundlePath).exists()
+    );
+    assert.ok(
+      bundleExists,
+      `built Node bundle is missing at ${bundlePath}; run bun run --cwd packages/relic-mcp build first`
+    );
+    bundle = bytesReceipt(
+      await runNonTargetPhase('bootstrap', 'bundle.read', () =>
+        readFile(bundlePath)
+      )
+    );
 
-  for (let ordinal = 1; ordinal <= options.count; ordinal += 1) {
-    const trial = await runTrial(ordinal);
-    trials.push(trial);
-    persistCheckpoint('trial:completed');
-    if (trial.status !== 'pass') break;
+    for (let ordinal = 1; ordinal <= options.count; ordinal += 1) {
+      const trial = await runTrial(ordinal);
+      trials.push(trial);
+      persistCheckpoint('trial:completed');
+      if (trial.status !== 'pass') break;
+    }
   }
 } catch (error) {
   fatal = errorReceipt(error);
@@ -1742,12 +1955,15 @@ try {
 } finally {
   for (const child of helperChildren) child.kill('SIGKILL');
   activeFixture = undefined;
-  try {
-    await runNonTargetPhase('finalization', 'service.stop', () =>
-      service.stop(true)
-    );
-  } catch {
-    // The phase checkpoint is the durable finalization failure record.
+  const activeService = service;
+  if (activeService !== undefined) {
+    try {
+      await runNonTargetPhase('finalization', 'service.stop', () =>
+        activeService.stop(true)
+      );
+    } catch {
+      // The phase checkpoint is the durable finalization failure record.
+    }
   }
   if (previousPublishState === undefined) {
     delete process.env['RELIC_PUBLISH_STATE'];
@@ -1756,15 +1972,17 @@ try {
   }
 }
 
-runtimeNode = await nodeMetadata();
+if (!options.calibrateStderrSink) runtimeNode = await nodeMetadata();
 const passed =
   fatal === undefined &&
   finalizationFailures.length === 0 &&
-  trials.length === options.count &&
-  trials.every((trial) => trial.status === 'pass');
+  (options.calibrateStderrSink
+    ? stderrSinkCalibration?.exact_match === true
+    : trials.length === options.count &&
+      trials.every((trial) => trial.status === 'pass'));
 persistFinalWitness('invocation:final');
 
 console.log(
-  `STDIO_MCP_BOUNDARY_${passed ? 'PASS' : 'FAIL'} context=${options.context} trials=${trials.length}/${options.count} witness=${witnessPath}`
+  `STDIO_MCP_BOUNDARY_${passed ? 'PASS' : 'FAIL'} mode=${options.calibrateStderrSink ? 'calibrate-stderr-sink' : 'target'} context=${options.context} trials=${trials.length}/${options.count} witness=${witnessPath}`
 );
 if (!passed) process.exitCode = 1;
