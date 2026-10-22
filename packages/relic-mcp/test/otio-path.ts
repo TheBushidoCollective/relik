@@ -3873,7 +3873,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       nearZeroReady,
       'true',
       nearZeroReady === 'true'
-        ? undefined
+        ? ''
         : JSON.stringify(
             await nearZeroBrowser.evaluate(`(() => {
               const root = document.querySelector('.otio-view');
