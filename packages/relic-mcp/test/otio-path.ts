@@ -5296,6 +5296,11 @@ try {
       await openComposer(browser);
       const normalComposer = await measureComposer(browser);
       await browser.screenshot(`${shotWidth}-${scheme}-composer-open`);
+      await logComposerHitBoundaryDiagnostic(
+        browser,
+        `${shotWidth}px ${scheme} composer`,
+        normalComposer
+      );
       assertComposerProbe(
         normalComposer,
         `${shotWidth}px ${scheme} composer`,
