@@ -16,7 +16,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { type FSWatcher, readFileSync, watch } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,7 @@ import { type PublishDeps, publish } from '../src/publish.ts';
 import { loadPublishState } from '../src/state.ts';
 
 const STAGE_TIMEOUT_MS = 15_000;
+const TRACE_POLL_MS = 10;
 const REQUEST_ID = `stdio-eof-read-${randomUUID()}`;
 const bundlePath = fileURLToPath(
   new URL('../dist/relic-mcp.js', import.meta.url)
@@ -123,8 +124,8 @@ function traceEvents(): TraceEvent[] {
         rows.push(parsed as TraceEvent);
       }
     } catch {
-      // A synchronous append may be between filesystem notifications. The next
-      // notification or final snapshot sees the completed row.
+      // A synchronous append may be between polls. The next poll or final
+      // snapshot sees the completed row.
     }
   }
   return rows;
@@ -185,13 +186,13 @@ function waitForTrace(
 
   return new Promise<TraceEvent>((resolve, reject) => {
     let settled = false;
-    let watcher: FSWatcher | undefined;
+    let poll: ReturnType<typeof setTimeout> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      watcher?.close();
+      clearTimeout(poll);
       action();
     };
     const inspect = (exitCode?: number): void => {
@@ -206,9 +207,17 @@ function waitForTrace(
         );
       }
     };
-
-    watcher = watch(tracePath, { persistent: false }, () => inspect());
-    watcher.once('error', (error) => finish(() => reject(error)));
+    // Polled, not fs.watch: on Linux, Bun drops a change event that repeats
+    // the last one emitted to a handler within 1 ms (path_watcher should_emit
+    // in bun-v1.3.14 and bun-v1.4.3), so two appends that close together lose
+    // the second wake-up and a row already on disk goes unseen until the next
+    // unrelated write. A poll always sees a row that is already in the file.
+    const schedulePoll = (): void => {
+      poll = setTimeout(() => {
+        inspect();
+        if (!settled) schedulePoll();
+      }, TRACE_POLL_MS);
+    };
     timer = setTimeout(() => {
       finish(() =>
         reject(new Error(`${label} was not observed before the probe deadline`))
@@ -219,6 +228,7 @@ function waitForTrace(
       (error) => finish(() => reject(error))
     );
     inspect();
+    if (!settled) schedulePoll();
   });
 }
 
