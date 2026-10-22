@@ -4093,6 +4093,7 @@ canvas.relic-page {
 .otio-item.is-gap { border-style: dashed; color: var(--ink-soft); background: repeating-linear-gradient(135deg, transparent 0 4px, var(--rule) 4px 5px); }
 .otio-item.is-compound { border-top-color: var(--patina); }
 .otio-item.is-transition { z-index: 2; padding: 0; font-size: 0; background: linear-gradient(135deg, transparent 48%, var(--patina) 49%, var(--patina) 51%, transparent 52%); }
+.otio-item.is-transition:not(.is-unplaced):not(.is-trimmed-out) { top: 10px; bottom: auto; height: 12px; }
 .otio-item.has-diagnostic { border-color: var(--oxide); color: var(--oxide); }
 .otio-item.is-unplaced, .otio-item.is-trimmed-out { position: relative; display: block; left: auto; top: auto; bottom: auto; width: auto; margin: .2rem; border-style: dashed; color: var(--oxide); white-space: normal; }
 .otio-item.is-trimmed-out { color: var(--ink-soft); opacity: .6; }
