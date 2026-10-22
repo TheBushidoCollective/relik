@@ -5,6 +5,7 @@ import type {
 
 const DEFAULT_DEADLINE_MS = 10_000;
 const DEFAULT_MAX_QUEUED_JOBS = 16;
+const noop = (): undefined => undefined;
 
 const TIMING_REASONS: Record<OtioVideoTimingReason, true> = {
   'file-too-large': true,
@@ -212,7 +213,7 @@ export function createOtioVideoTimingScheduler(
     if (job.state !== 'active' || active !== job) return;
     job.state = 'finished';
     job.clearDeadline();
-    job.clearDeadline = () => {};
+    job.clearDeadline = noop;
     detachWorker(job);
     removeAbortListener(job);
     active = undefined;
@@ -301,10 +302,10 @@ export function createOtioVideoTimingScheduler(
         mimeType,
         signal,
         resolve,
-        abort: () => {},
+        abort: noop,
         state: 'queued',
         worker: undefined,
-        clearDeadline: () => {},
+        clearDeadline: noop,
         onMessage: undefined,
         onError: undefined,
       };

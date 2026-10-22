@@ -157,7 +157,11 @@ async function payloadPrefix(
   box: IsoBox,
   bytes: number
 ): Promise<Uint8Array> {
-  if (!Number.isSafeInteger(bytes) || bytes < 0 || box.contentStart + bytes > box.end) {
+  if (
+    !Number.isSafeInteger(bytes) ||
+    bytes < 0 ||
+    box.contentStart + bytes > box.end
+  ) {
     return fail('unsupported-edit-list');
   }
   return exactRead(reader, box.contentStart, box.contentStart + bytes);
@@ -269,7 +273,11 @@ async function parseEditList(
 
   const leadingDuration = leading?.segmentDuration ?? 0;
   const totalDuration = leadingDuration + effective.segmentDuration;
-  if (!safeInteger(totalDuration) || !Number.isFinite(timescale) || timescale <= 0) {
+  if (
+    !safeInteger(totalDuration) ||
+    !Number.isFinite(timescale) ||
+    timescale <= 0
+  ) {
     return fail('unsupported-edit-list');
   }
 

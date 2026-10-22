@@ -68,7 +68,9 @@ interface TimingInput {
 }
 
 interface TimingPacketSink {
-  getFirstPacket(options: typeof PACKET_OPTIONS): Promise<OtioVideoTimingPacket | null>;
+  getFirstPacket(
+    options: typeof PACKET_OPTIONS
+  ): Promise<OtioVideoTimingPacket | null>;
   getNextPacket(
     packet: OtioVideoTimingPacket,
     options: typeof PACKET_OPTIONS
@@ -145,7 +147,9 @@ class BudgetedBlobReader implements OtioVideoTimingByteReader {
     this.reads += 1;
     this.bytes += length;
 
-    const bytes = new Uint8Array(await this.blob.slice(start, end).arrayBuffer());
+    const bytes = new Uint8Array(
+      await this.blob.slice(start, end).arrayBuffer()
+    );
     if (bytes.byteLength !== length) {
       throw new OtioVideoTimingScanFailure('unsupported-container');
     }
@@ -154,7 +158,8 @@ class BudgetedBlobReader implements OtioVideoTimingByteReader {
 }
 
 const productionDemuxApi: OtioVideoTimingDemuxApi = {
-  CustomSource: CustomSource as unknown as OtioVideoTimingDemuxApi['CustomSource'],
+  CustomSource:
+    CustomSource as unknown as OtioVideoTimingDemuxApi['CustomSource'],
   Input: Input as unknown as OtioVideoTimingDemuxApi['Input'],
   EncodedPacketSink:
     EncodedPacketSink as unknown as OtioVideoTimingDemuxApi['EncodedPacketSink'],
@@ -311,7 +316,9 @@ export function windowsFromOtioVideoPackets(
       ends: new Float64Array(ends),
     };
   } catch (error) {
-    if (error instanceof OtioVideoTimingScanFailure) return unknown(error.reason);
+    if (error instanceof OtioVideoTimingScanFailure) {
+      return unknown(error.reason);
+    }
     throw error;
   }
 }
