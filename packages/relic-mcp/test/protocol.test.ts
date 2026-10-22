@@ -259,6 +259,38 @@ describe('the version the server reports', () => {
       args: ['-y', `${pkg.name}@${pkg.version}`],
       env: { RELIC_CLIENT_NAME: `relic-plugin/${pkg.version}` },
     });
+    const runEofProbe = async (suppressResponse: boolean) => {
+      const probe = Bun.spawn(['bun', `${root}test/stdio-eof-path.ts`], {
+        cwd: root,
+        env: {
+          ...process.env,
+          RELIC_STDIO_EOF_SUPPRESS_RESPONSE: suppressResponse ? '1' : '0',
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const [stdout, stderr, exit] = await Promise.all([
+        new Response(probe.stdout).text(),
+        new Response(probe.stderr).text(),
+        probe.exited,
+      ]);
+      return { exit, stderr, stdout };
+    };
+
+    const probe = await runEofProbe(false);
+    expect(probe.exit).toBe(0);
+    expect(probe.stderr).toBe('');
+    expect(probe.stdout).toContain('STDIO_EOF_PATH_OK');
+
+    // The tap reads this only after the loopback comments GET is accepted and
+    // held. A zero child exit cannot stand in for the matching response.
+    const suppressed = await runEofProbe(true);
+    expect(suppressed.exit).not.toBe(0);
+    expect(`${suppressed.stdout}\n${suppressed.stderr}`).toContain(
+      'matching JSON-RPC response'
+    );
+    expect(suppressed.stderr).toContain('comments_get_accepted');
+    expect(suppressed.stderr).toContain('response_suppression_armed');
   });
 });
 

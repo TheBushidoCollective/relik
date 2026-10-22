@@ -46,6 +46,45 @@ REFUSED_URL_ARGUMENT code=no_local_publish_state
 COMMENT_PATH_OK
 ```
 
+## Built Node stdio EOF lifecycle
+
+Build the MCP bundle, then run the focused loopback probe from the repository
+root:
+
+```bash
+mise exec -- bun run --cwd packages/relic-mcp build
+mise exec -- bun packages/relic-mcp/test/stdio-eof-path.ts
+```
+
+The probe seeds an encrypted comment in `MemoryStore` with `MemoryStorage` and
+a captured mail sink, then launches a fresh Node process with
+`node --import test/fixtures/stdio-eof-tap.mjs dist/relic-mcp.js`. It uses the
+same immediate `stdin.write(requestLine); stdin.end();` sequence as the OTIO
+path. The loopback comments GET remains unresolved until both physical stdin
+EOF and the accepted GET have been observed. They may arrive in either order.
+
+The request must be delivered byte-for-byte, the held GET must release, and a
+matching JSON-RPC response must decrypt the known comment nonce before child
+exit 0 counts as success. The scratch trace records only process IDs, event
+ordering, byte lengths, and hashes. The service, state, storage, mail sink,
+and child all belong to the probe's loopback scratch state.
+
+Run the explicit loss falsifier with:
+
+```bash
+RELIC_STDIO_EOF_SUPPRESS_RESPONSE=1 mise exec -- bun packages/relic-mcp/test/stdio-eof-path.ts
+```
+
+That command must fail. It arms a scratch-only marker after the gated GET is
+accepted. Once its held response is released, the preload suppresses the
+otherwise matching stdout response. A zero child exit is not accepted without
+that response.
+
+The tap is an instrumented witness, not timing-neutral proof of an
+uninstrumented empty-output report. Its synchronous trace and stdout callback
+alter child scheduling. A passing control therefore does not identify or fix
+the original cause.
+
 ## Finding and editing a relic whose source was never recorded
 
 Run from the repository root:
