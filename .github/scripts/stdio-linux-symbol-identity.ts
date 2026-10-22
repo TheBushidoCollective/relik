@@ -36,6 +36,8 @@ const HISTORICAL_PROVENANCE_DIR =
 const READELF = process.env.STDIO_READELF ?? 'readelf';
 const ADDR2LINE = process.env.STDIO_ADDR2LINE ?? 'addr2line';
 const UNZIP = process.env.STDIO_UNZIP ?? 'unzip';
+const IDENTITY_MODE =
+  process.env.STDIO_LINUX_SYMBOL_IDENTITY_MODE ?? 'preflight';
 
 const STANDARD_ASSET_NAMES = [
   'bun-linux-x64.zip',
@@ -304,6 +306,7 @@ type RuntimeIdentity = {
     magic: string;
     sha256: string;
     bytes: number;
+    dynsym: string;
     elf_layout: {
       bits: number;
       little_endian: boolean;
@@ -321,6 +324,7 @@ type RuntimeCapture = {
   identity: RuntimeIdentity;
   runtimePath: string;
   readelf: ReadelfReceipt;
+  dynsym: string;
 };
 
 type QualifiedPair = {
@@ -328,6 +332,46 @@ type QualifiedPair = {
   profileLayout: ElfLayout;
   dynsym: string;
   profileReadelf: ReadelfReceipt;
+};
+type DynamicFunction = {
+  value: bigint;
+  name: string;
+  section_index: string;
+};
+type TestProcessIdentity = {
+  process_pid: number;
+  process_exec_realpath: string;
+  proc_self_exe_realpath: string;
+  actual_elf: {
+    artifact_filename: string;
+    sha256: string;
+    bytes: number;
+    magic: string;
+  };
+};
+type VerifiedTestProcess = {
+  pid: number;
+  binary_path: string;
+  layout: ElfLayout;
+  readelf: ReadelfReceipt;
+  identity: TestProcessIdentity;
+};
+
+type TraceNativeFrame = {
+  path: string;
+  file_offset: bigint;
+  exported_symbol?: string;
+  exported_symbol_offset?: bigint;
+};
+
+type PrematureCloseWitness = {
+  pid: number;
+  fd: number;
+  close_line: number;
+  close_text: string;
+  epoll_line: number;
+  epoll_text: string;
+  native_frames: TraceNativeFrame[];
 };
 
 class QualificationError extends Error {
@@ -363,6 +407,9 @@ function writeJson(path: string, value: unknown): void {
 function writeText(path: string, value: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, value);
+}
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, 'utf8')) as T;
 }
 
 function relativeArtifactPath(path: string): string {
@@ -576,6 +623,24 @@ function mapFileOffset(layout: ElfLayout, fileOffset: bigint, label: string) {
     segment,
     virtual_address:
       segment.virtual_address + (fileOffset - segment.file_offset),
+  };
+}
+function mapVmaToFileOffset(layout: ElfLayout, vma: bigint, label: string) {
+  const segment = layout.executable_load_segments.find((candidate) => {
+    const end = candidate.virtual_address + candidate.file_size;
+    return vma >= candidate.virtual_address && vma < end;
+  });
+  if (!segment) {
+    throw new QualificationError(
+      'vma_outside_executable_segment',
+      `An executable PT_LOAD reverse mapping for ${label} is required.`,
+      `${label} VMA ${hex(vma)} is outside every executable PT_LOAD segment`
+    );
+  }
+  return {
+    virtual_address: vma,
+    segment,
+    file_offset: segment.file_offset + (vma - segment.virtual_address),
   };
 }
 
@@ -855,15 +920,26 @@ function pairedProfileName(standardName: string): string {
   return `${standardName.slice(0, -'.zip'.length)}-profile.zip`;
 }
 
+function parseDynamicFunctions(output: string): DynamicFunction[] {
+  return output.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(
+      /^\s*\d+:\s+([0-9a-fA-F]+)\s+\d+\s+FUNC\s+\S+\s+\S+\s+(\S+)\s+(.+?)\s*$/
+    );
+    if (!match || match[2] === 'UND') return [];
+    return [
+      {
+        value: BigInt(`0x${match[1]}`),
+        section_index: match[2],
+        name: match[3],
+      },
+    ];
+  });
+}
+
 function readDynsymValue(output: string, symbol: string): bigint {
-  const candidates = output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => line.split(/\s+/, 8))
-    .filter((fields) => fields.length >= 8)
-    .filter((fields) => fields[3] === 'FUNC')
-    .filter((fields) => fields.slice(7).join(' ') === symbol);
+  const candidates = parseDynamicFunctions(output).filter(
+    (candidate) => candidate.name === symbol
+  );
   if (candidates.length !== 1) {
     throw new QualificationError(
       'dynsym_symbol_missing',
@@ -871,7 +947,7 @@ function readDynsymValue(output: string, symbol: string): bigint {
       `readelf --dyn-syms found ${candidates.length} matching FUNC symbols named ${symbol}`
     );
   }
-  return BigInt(`0x${candidates[0][1]}`);
+  return candidates[0].value;
 }
 
 function isUsableSourceInfo(output: string): boolean {
@@ -1019,6 +1095,17 @@ async function collectRuntimeIdentity(
     join(OUTPUT_ROOT, 'runtime'),
     'runtime'
   );
+  const runtimeDynsym = await captureCommand(
+    'runtime-readelf-dynsym',
+    READELF,
+    ['--dyn-syms', '--wide', '--demangle', runtimePath],
+    join(OUTPUT_ROOT, 'runtime')
+  );
+  const runtimeDynsymPath = join(
+    OUTPUT_ROOT,
+    'runtime',
+    'runtime-readelf-dynsym.stdout.txt'
+  );
   const identity: RuntimeIdentity = {
     schema: RUNTIME_IDENTITY_SCHEMA,
     subject: 'process-self',
@@ -1036,6 +1123,7 @@ async function collectRuntimeIdentity(
       magic: magic(actualBytes),
       sha256: sha256(actualBytes),
       bytes: actualBytes.length,
+      dynsym: relativeArtifactPath(runtimeDynsymPath),
       elf_layout: {
         bits: layout.bits,
         little_endian: layout.little_endian,
@@ -1070,7 +1158,14 @@ async function collectRuntimeIdentity(
       `This process reports Bun revision ${Bun.revision}`
     );
   }
-  return { bytes: actualBytes, layout, identity, runtimePath, readelf };
+  return {
+    bytes: actualBytes,
+    layout,
+    identity,
+    runtimePath,
+    readelf,
+    dynsym: decode(runtimeDynsym.stdout),
+  };
 }
 
 async function fetchReleaseMetadata(
@@ -1238,7 +1333,7 @@ async function qualifyOfficialPair(
     const dynsym = await captureCommand(
       'profile-readelf-dynsym',
       READELF,
-      ['--dyn-syms', '--wide', profilePath],
+      ['--dyn-syms', '--wide', '--demangle', profilePath],
       profileDirectory
     );
     const dynsymPath = join(
@@ -1317,6 +1412,152 @@ async function qualifyOfficialPair(
     rmSync(scratch, { recursive: true, force: true });
   }
 }
+function canonicalDynamicName(name: string): string {
+  return name.replace(/@@?[^@]+$/, '');
+}
+
+async function runPositivePreflight(
+  runtime: RuntimeCapture,
+  pair: QualifiedPair,
+  receipt: Record<string, unknown>
+): Promise<void> {
+  const preflightDirectory = join(OUTPUT_ROOT, 'preflight');
+  mkdirSync(preflightDirectory, { recursive: true });
+  const profileFunctions = parseDynamicFunctions(pair.dynsym);
+  const rejected: Array<Record<string, unknown>> = [];
+
+  for (const candidate of parseDynamicFunctions(runtime.dynsym)) {
+    const canonicalName = canonicalDynamicName(candidate.name);
+    const profileAliases = profileFunctions
+      .filter(
+        (profileFunction) =>
+          profileFunction.value === candidate.value &&
+          canonicalDynamicName(profileFunction.name) === canonicalName
+      )
+      .map((profileFunction) => profileFunction.name);
+    if (profileAliases.length === 0) continue;
+
+    let standardOffset;
+    let roundTrip;
+    try {
+      standardOffset = mapVmaToFileOffset(
+        runtime.layout,
+        candidate.value,
+        `preflight ${candidate.name}`
+      );
+      roundTrip = mapFileOffset(
+        runtime.layout,
+        standardOffset.file_offset,
+        `preflight ${candidate.name}`
+      );
+    } catch (error) {
+      rejected.push({
+        runtime_dynsym: candidate.name,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    if (roundTrip.virtual_address !== candidate.value) {
+      rejected.push({
+        runtime_dynsym: candidate.name,
+        reason: `PT_LOAD round trip returned ${hex(roundTrip.virtual_address)}, expected ${hex(candidate.value)}`,
+      });
+      continue;
+    }
+
+    const profileText = pair.profileLayout.text;
+    const profileTextEnd = profileText.virtual_address + profileText.size;
+    if (
+      candidate.value < profileText.virtual_address ||
+      candidate.value >= profileTextEnd
+    ) {
+      rejected.push({
+        runtime_dynsym: candidate.name,
+        reason: `VMA ${hex(candidate.value)} is outside profile .text`,
+      });
+      continue;
+    }
+
+    const label = `positive-demo-${rejected.length}`;
+    const result = await captureCommand(
+      label,
+      ADDR2LINE,
+      ['-e', pair.profilePath, '-f', '-C', '-i', hex(candidate.value)],
+      preflightDirectory
+    );
+    const sourceOutput = decode(result.stdout);
+    const sourceFunction = sourceOutput
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    const sourceMatchesAlias =
+      sourceFunction !== undefined &&
+      profileAliases.some((alias) => {
+        const canonicalAlias = canonicalDynamicName(alias);
+        return (
+          canonicalAlias === sourceFunction ||
+          sourceFunction.includes(canonicalAlias) ||
+          canonicalAlias.includes(sourceFunction)
+        );
+      });
+    if (!isUsableSourceInfo(sourceOutput) || !sourceMatchesAlias) {
+      rejected.push({
+        runtime_dynsym: candidate.name,
+        profile_aliases: profileAliases,
+        addr2line_function: sourceFunction ?? null,
+        reason: !isUsableSourceInfo(sourceOutput)
+          ? 'addr2line did not resolve function and file:line'
+          : 'addr2line function did not match the runtime/profile dynamic alias',
+      });
+      continue;
+    }
+
+    const positiveDemo = {
+      status: 'passed',
+      runtime_dynsym: {
+        name: candidate.name,
+        vma: hex(candidate.value),
+        section_index: candidate.section_index,
+      },
+      standard_equivalent_file_offset: {
+        file_offset: hex(standardOffset.file_offset),
+        executable_pt_load: serializeSegment(standardOffset.segment),
+      },
+      runtime_round_trip: {
+        file_offset: hex(roundTrip.file_offset),
+        vma: hex(roundTrip.virtual_address),
+        executable_pt_load: serializeSegment(roundTrip.segment),
+      },
+      profile: {
+        text: serializeSection(profileText),
+        matching_dynsym_aliases: profileAliases,
+        addr2line_function: sourceFunction,
+        addr2line_output: relativeArtifactPath(
+          join(preflightDirectory, `${label}.stdout.txt`)
+        ),
+      },
+    };
+    writeJson(join(preflightDirectory, 'positive-demo.json'), positiveDemo);
+    writeText(
+      join(OUTPUT_ROOT, 'preflight.env'),
+      [
+        `STDIO_LINUX_VERIFIED_BUN_SHA256=${runtime.identity.actual_elf.sha256}`,
+        `STDIO_LINUX_PINNED_BUN=${runtime.identity.observed_in_process.proc_self_exe_realpath}`,
+        `STDIO_LINUX_PINNED_BUN_DIR=${dirname(runtime.identity.observed_in_process.proc_self_exe_realpath)}`,
+        '',
+      ].join('\n')
+    );
+    receipt.preflight_positive_demo = positiveDemo;
+    return;
+  }
+
+  writeJson(join(preflightDirectory, 'positive-demo-rejected.json'), rejected);
+  throw new QualificationError(
+    'preflight_positive_demo_failed',
+    'A defined current-runtime dynamic FUNC must round-trip through its standard ELF PT_LOAD and resolve to a matching profile function or alias before tracing.',
+    `No usable positive demo was found; see ${relativeArtifactPath(join(preflightDirectory, 'positive-demo-rejected.json'))}`
+  );
+}
 
 async function symbolizeSavedFrames(
   runtime: RuntimeCapture,
@@ -1345,21 +1586,52 @@ async function symbolizeSavedFrames(
 
     let dynsym: Record<string, string> | null = null;
     if (frame.exported_symbol && frame.exported_symbol_offset !== undefined) {
-      const symbolVma = readDynsymValue(pair.dynsym, frame.exported_symbol);
-      const expectedVma = symbolVma + frame.exported_symbol_offset;
-      if (expectedVma !== vma) {
-        throw new QualificationError(
-          'dynsym_offset_mismatch',
-          `Dynamic-symbol arithmetic must resolve ${frame.id} to its runtime-mapped VMA.`,
-          `${frame.exported_symbol}+${hex(frame.exported_symbol_offset)} = ${hex(expectedVma)}, runtime-mapped VMA is ${hex(vma)}`
-        );
+      try {
+        const symbolVma = readDynsymValue(pair.dynsym, frame.exported_symbol);
+        const expectedVma = symbolVma + frame.exported_symbol_offset;
+        if (expectedVma !== vma) {
+          throw new QualificationError(
+            'dynsym_offset_mismatch',
+            `Dynamic-symbol arithmetic must resolve ${frame.id} to its runtime-mapped VMA.`,
+            `${frame.exported_symbol}+${hex(frame.exported_symbol_offset)} = ${hex(expectedVma)}, runtime-mapped VMA is ${hex(vma)}`
+          );
+        }
+        dynsym = {
+          name: frame.exported_symbol,
+          symbol_vma: hex(symbolVma),
+          trace_symbol_offset: hex(frame.exported_symbol_offset),
+          computed_vma: hex(expectedVma),
+        };
+      } catch (error) {
+        if (
+          error instanceof QualificationError &&
+          (error.code === 'dynsym_symbol_missing' ||
+            error.code === 'dynsym_offset_mismatch')
+        ) {
+          frames.push({
+            id: frame.id,
+            source_trace_line: frame.trace_line,
+            file_offset: hex(frame.file_offset),
+            historical_mapping_status:
+              'unverified_or_inconsistent_with_candidate',
+            historical_attribution: 'unattributed',
+            guard: {
+              code: error.code,
+              prerequisite: error.prerequisite,
+              message: error.message,
+              interpretation:
+                'The original historical Bun ELF was not retained. This cannot prove that the historical ELF differed because libunwind labels may be stale.',
+            },
+            runtime_mapping: {
+              executable_pt_load: serializeSegment(runtimeMapping.segment),
+              vma: hex(vma),
+            },
+            profile_text: serializeSection(profileText),
+          });
+          continue;
+        }
+        throw error;
       }
-      dynsym = {
-        name: frame.exported_symbol,
-        symbol_vma: hex(symbolVma),
-        trace_symbol_offset: hex(frame.exported_symbol_offset),
-        computed_vma: hex(expectedVma),
-      };
     }
 
     const vmaMinusOne = vma - 1n;
@@ -1381,11 +1653,24 @@ async function symbolizeSavedFrames(
       !isUsableSourceInfo(vmaSource) ||
       !isUsableSourceInfo(vmaMinusOneSource)
     ) {
-      throw new QualificationError(
-        'symbol_source_missing',
-        `Usable function and file:line output is required for both ${frame.id} VMA interpretations.`,
-        `${frame.id} has unresolved addr2line output; see ${frame.id}-vma.stdout.txt and ${frame.id}-vma-minus-one.stdout.txt`
-      );
+      frames.push({
+        id: frame.id,
+        source_trace_line: frame.trace_line,
+        file_offset: hex(frame.file_offset),
+        historical_mapping_status: 'unverified_or_inconsistent_with_candidate',
+        historical_attribution: 'unattributed',
+        guard: {
+          code: 'symbol_source_missing',
+          interpretation:
+            'The original historical Bun ELF was not retained, so unresolved candidate source output does not identify a historical caller.',
+        },
+        runtime_mapping: {
+          executable_pt_load: serializeSegment(runtimeMapping.segment),
+          vma: hex(vma),
+        },
+        profile_text: serializeSection(profileText),
+      });
+      continue;
     }
 
     frames.push({
@@ -1393,6 +1678,10 @@ async function symbolizeSavedFrames(
       source_trace_line: frame.trace_line,
       source_trace_kind: 'Bun native frame',
       file_offset: hex(frame.file_offset),
+      historical_mapping_status: dynsym
+        ? 'candidate_layout_checked'
+        : 'candidate_layout_without_named_dynsym',
+      historical_attribution: 'unattributed',
       runtime_mapping: {
         executable_pt_load: serializeSegment(runtimeMapping.segment),
         vma: hex(runtimeMapping.virtual_address),
@@ -1434,13 +1723,468 @@ async function symbolizeSavedFrames(
       'No historical caller is asserted. These are candidate-layout interpretations only because the original historical Bun ELF bytes were not retained.',
   };
 }
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new QualificationError(
+      'required_environment_missing',
+      `${name} must be set for the identity-coupled trace analysis.`,
+      `${name} is not set`
+    );
+  }
+  return value;
+}
+
+function parseTracePid(line: string): number | undefined {
+  const match = line.match(/^(?:\[pid\s+)?(\d+)(?:\])?\s+\d+\.\d+\s+/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function nativeFramesAfter(
+  lines: readonly string[],
+  syscallIndex: number
+): TraceNativeFrame[] {
+  const frames: TraceNativeFrame[] = [];
+  for (let index = syscallIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trimStart();
+    if (line.startsWith('> ')) {
+      const match = line.match(
+        /^>\s+(.+?\/bun)(?:\(([^()+]+)\+0x([0-9a-fA-F]+)\)|\(\))?\s+\[0x([0-9a-fA-F]+)\]$/
+      );
+      if (!match) continue;
+      frames.push({
+        path: match[1],
+        exported_symbol: match[2],
+        exported_symbol_offset:
+          match[3] === undefined ? undefined : BigInt(`0x${match[3]}`),
+        file_offset: BigInt(`0x${match[4]}`),
+      });
+      continue;
+    }
+    if (parseTracePid(lines[index]) !== undefined) break;
+  }
+  return frames;
+}
+
+function descriptorReuseResults(line: string): number[] {
+  if (
+    !/\b(?:open|dup|fcntl|accept|socket|pipe|eventfd|timerfd|signalfd|pidfd_getfd)/.test(
+      line
+    )
+  ) {
+    return [];
+  }
+  const descriptors = new Set<number>();
+  const result = line.match(/\)\s+=\s+(\d+)(?:<[^>]*>)?\s*$/);
+  if (result) descriptors.add(Number(result[1]));
+  for (const match of line.matchAll(/\[(\d+)<[^>]*>,\s*(\d+)<[^>]*>\]/g)) {
+    descriptors.add(Number(match[1]));
+    descriptors.add(Number(match[2]));
+  }
+  return [...descriptors];
+}
+
+function findPrematureCloseWitnesses(
+  trace: string,
+  testPids: ReadonlySet<number>
+): PrematureCloseWitness[] {
+  const lines = trace.split(/\r?\n/);
+  const closed = new Map<number, Map<number, { line: number; text: string }>>();
+  const witnesses: PrematureCloseWitness[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const pid = parseTracePid(line);
+    if (pid === undefined || !testPids.has(pid)) continue;
+    const closesForPid = closed.get(pid) ?? new Map();
+    closed.set(pid, closesForPid);
+
+    const close = line.match(/\bclose\((\d+)(?:<[^>]*>)?\)\s+=\s+0\b/);
+    if (close) {
+      closesForPid.set(Number(close[1]), { line: index + 1, text: line });
+      continue;
+    }
+
+    const epollAdd = line.match(
+      /\bepoll_ctl\([^,]+,\s*EPOLL_CTL_ADD,\s*(\d+)(?:<[^>]*>)?,.*\)\s+=\s+-1 EBADF\b/
+    );
+    if (epollAdd) {
+      const fd = Number(epollAdd[1]);
+      const priorClose = closesForPid.get(fd);
+      if (priorClose) {
+        witnesses.push({
+          pid,
+          fd,
+          close_line: priorClose.line,
+          close_text: priorClose.text,
+          epoll_line: index + 1,
+          epoll_text: line,
+          native_frames: nativeFramesAfter(lines, priorClose.line - 1),
+        });
+      }
+      continue;
+    }
+
+    for (const descriptor of descriptorReuseResults(line)) {
+      closesForPid.delete(descriptor);
+    }
+  }
+  return witnesses;
+}
+
+function parseExecveProvenance(trace: string) {
+  return trace.split(/\r?\n/).flatMap((line, index) => {
+    const match = line.match(
+      /^(?:\[pid\s+)?(\d+)(?:\])?\s+\d+\.\d+\s+execve(?:at)?\("([^"]+)"/
+    );
+    if (!match) return [];
+    return [
+      {
+        trace_line: index + 1,
+        pid: Number(match[1]),
+        path: match[2],
+        bun_candidate: basename(match[2]) === 'bun',
+      },
+    ];
+  });
+}
+
+function loadVerifiedTestProcesses(
+  identityDirectory: string,
+  expectedSha256: string,
+  expectedBuildId: string
+): Promise<VerifiedTestProcess[]> {
+  const identityPaths = walkFiles(identityDirectory).filter(
+    (path) => basename(path) === 'identity.json'
+  );
+  if (identityPaths.length === 0) {
+    throw new QualificationError(
+      'test_process_identity_missing',
+      'The test preload must persist at least one test-process identity before suite modules execute.',
+      `No identity.json files were found in ${identityDirectory}`
+    );
+  }
+
+  return Promise.all(
+    identityPaths.map(async (identityPath) => {
+      const identity = readJson<TestProcessIdentity>(identityPath);
+      const binaryPath = resolve(
+        dirname(identityPath),
+        identity.actual_elf.artifact_filename
+      );
+      const bytes = new Uint8Array(readFileSync(binaryPath));
+      const observedSha256 = sha256(bytes);
+      if (
+        identity.actual_elf.magic !== '7f454c46' ||
+        magic(bytes) !== '7f454c46' ||
+        observedSha256 !== expectedSha256 ||
+        identity.actual_elf.sha256 !== expectedSha256
+      ) {
+        throw new QualificationError(
+          'test_process_elf_mismatch',
+          `Test PID ${identity.process_pid} must retain the verified Bun ELF SHA-256 before suite work.`,
+          `Test PID ${identity.process_pid} recorded ${identity.actual_elf.sha256}, observed ${observedSha256}, expected ${expectedSha256}`
+        );
+      }
+      const processDirectory = join(
+        OUTPUT_ROOT,
+        'test-process-readelf',
+        `pid-${identity.process_pid}`
+      );
+      const readelf = await captureReadelf(
+        binaryPath,
+        processDirectory,
+        `pid-${identity.process_pid}`
+      );
+      if (readelf.build_id !== expectedBuildId) {
+        throw new QualificationError(
+          'test_process_build_id_mismatch',
+          `Test PID ${identity.process_pid} must retain the verified Bun GNU Build ID.`,
+          `Test PID ${identity.process_pid} Build ID ${readelf.build_id} does not match ${expectedBuildId}`
+        );
+      }
+      return {
+        pid: identity.process_pid,
+        binary_path: binaryPath,
+        layout: inspectElf(bytes, `test PID ${identity.process_pid} Bun ELF`),
+        readelf,
+        identity,
+      };
+    })
+  );
+}
+
+async function symbolizeNewWitness(
+  witness: PrematureCloseWitness,
+  testProcess: VerifiedTestProcess,
+  profilePath: string,
+  profileLayout: ElfLayout,
+  profileDynsym: string,
+  verifiedBunPath: string,
+  outputDirectory: string
+) {
+  const frames: Array<Record<string, unknown>> = [];
+  const profileTextEnd =
+    profileLayout.text.virtual_address + profileLayout.text.size;
+  for (const [index, frame] of witness.native_frames.entries()) {
+    if (frame.path !== verifiedBunPath) {
+      return {
+        status: 'unusable_caller',
+        reason: `native frame ${index} names ${frame.path}, not verified Bun ${verifiedBunPath}`,
+        frames,
+      };
+    }
+    if (
+      frame.exported_symbol === undefined ||
+      frame.exported_symbol_offset === undefined
+    ) {
+      continue;
+    }
+    let mapped;
+    let symbolVma;
+    try {
+      mapped = mapFileOffset(
+        testProcess.layout,
+        frame.file_offset,
+        `test PID ${testProcess.pid} witness frame ${index}`
+      );
+      if (
+        mapped.virtual_address < profileLayout.text.virtual_address ||
+        mapped.virtual_address >= profileTextEnd
+      ) {
+        return {
+          status: 'unusable_caller',
+          reason: `runtime VMA ${hex(mapped.virtual_address)} is outside profile .text`,
+          frames,
+        };
+      }
+      symbolVma = readDynsymValue(profileDynsym, frame.exported_symbol);
+    } catch (error) {
+      return {
+        status: 'unusable_caller',
+        reason: error instanceof Error ? error.message : String(error),
+        frames,
+      };
+    }
+    const expectedVma = symbolVma + frame.exported_symbol_offset;
+    if (expectedVma !== mapped.virtual_address) {
+      return {
+        status: 'unusable_caller',
+        reason: `${frame.exported_symbol}+${hex(frame.exported_symbol_offset)} = ${hex(expectedVma)}, runtime mapping is ${hex(mapped.virtual_address)}`,
+        frames,
+      };
+    }
+    const label = `witness-pid-${testProcess.pid}-frame-${index}`;
+    const vmaResult = await captureCommand(
+      `${label}-vma`,
+      ADDR2LINE,
+      ['-e', profilePath, '-f', '-C', '-i', hex(mapped.virtual_address)],
+      outputDirectory
+    );
+    const vmaMinusOne = mapped.virtual_address - 1n;
+    const vmaMinusOneResult = await captureCommand(
+      `${label}-vma-minus-one`,
+      ADDR2LINE,
+      ['-e', profilePath, '-f', '-C', '-i', hex(vmaMinusOne)],
+      outputDirectory
+    );
+    if (
+      !isUsableSourceInfo(decode(vmaResult.stdout)) ||
+      !isUsableSourceInfo(decode(vmaMinusOneResult.stdout))
+    ) {
+      return {
+        status: 'unusable_caller',
+        reason: `addr2line did not resolve both VMA interpretations for ${frame.exported_symbol}`,
+        frames,
+      };
+    }
+    frames.push({
+      file_offset: hex(frame.file_offset),
+      runtime_mapping: {
+        executable_pt_load: serializeSegment(mapped.segment),
+        vma: hex(mapped.virtual_address),
+      },
+      dynsym: {
+        name: frame.exported_symbol,
+        symbol_vma: hex(symbolVma),
+        trace_symbol_offset: hex(frame.exported_symbol_offset),
+      },
+      addr2line: {
+        vma: relativeArtifactPath(
+          join(outputDirectory, `${label}-vma.stdout.txt`)
+        ),
+        vma_minus_one: relativeArtifactPath(
+          join(outputDirectory, `${label}-vma-minus-one.stdout.txt`)
+        ),
+      },
+    });
+  }
+  return frames.length === 0
+    ? {
+        status: 'unusable_caller',
+        reason: 'No named native Bun frames followed the new premature close.',
+        frames,
+      }
+    : { status: 'attributed_new_witness', frames };
+}
+
+async function analyzeTraceExperiment(): Promise<void> {
+  const tracePath = requiredEnvironment('STDIO_LINUX_TRACE_FILE');
+  const identityDirectory = requiredEnvironment(
+    'STDIO_LINUX_TEST_IDENTITY_DIR'
+  );
+  const expectedSha256 = requiredEnvironment('STDIO_LINUX_VERIFIED_BUN_SHA256');
+  const traceDirectory = join(OUTPUT_ROOT, 'trace-analysis');
+  const receiptPath = join(traceDirectory, 'trace-attribution.json');
+  const traceReceipt: Record<string, unknown> = {
+    schema: 'relic-stdio-linux-identity-coupled-trace-v1',
+    status: 'running',
+    instrumentation: 'timing-changing-startup-instrumentation',
+    trace: relative(traceDirectory, tracePath),
+  };
+
+  try {
+    const runtimeIdentity = readJson<RuntimeIdentity>(
+      join(OUTPUT_ROOT, 'runtime', 'identity.json')
+    );
+    const verifiedBunPath =
+      runtimeIdentity.observed_in_process.proc_self_exe_realpath;
+    const runtimePath = join(OUTPUT_ROOT, 'runtime', 'bun.runtime.elf');
+    const runtimeBytes = new Uint8Array(readFileSync(runtimePath));
+    if (
+      sha256(runtimeBytes) !== expectedSha256 ||
+      runtimeIdentity.actual_elf.sha256 !== expectedSha256
+    ) {
+      throw new QualificationError(
+        'preflight_runtime_identity_mismatch',
+        'The trace analysis must use the SHA-256 verified by the preflight runtime identity.',
+        `Preflight runtime SHA-256 does not match ${expectedSha256}`
+      );
+    }
+    const runtimeBuildId = runtimeIdentity.actual_elf.readelf.build_id;
+    const testProcesses = await loadVerifiedTestProcesses(
+      identityDirectory,
+      expectedSha256,
+      runtimeBuildId
+    );
+    const trace = readFileSync(tracePath, 'utf8');
+    const execveRecords = parseExecveProvenance(trace);
+    const testPids = new Set(
+      testProcesses.map((testProcess) => testProcess.pid)
+    );
+    const matchedTestExecvePids = new Set(
+      execveRecords
+        .filter(
+          (record) =>
+            testPids.has(record.pid) && record.path === verifiedBunPath
+        )
+        .map((record) => record.pid)
+    );
+    const unmatchedBunImages = execveRecords.filter(
+      (record) => record.bun_candidate && record.path !== verifiedBunPath
+    );
+    traceReceipt.execve_provenance = {
+      verified_bun_path: verifiedBunPath,
+      records: execveRecords,
+      test_pid_execve_matches: [...matchedTestExecvePids],
+      unmatched_bun_images: unmatchedBunImages,
+    };
+    writeJson(
+      join(traceDirectory, 'execve-provenance.json'),
+      traceReceipt.execve_provenance
+    );
+    const missingTestPidExecve = testProcesses
+      .map((testProcess) => testProcess.pid)
+      .filter((pid) => !matchedTestExecvePids.has(pid));
+    if (unmatchedBunImages.length > 0 || missingTestPidExecve.length > 0) {
+      throw new QualificationError(
+        'trace_bun_execve_unmatched',
+        'Every traced Bun test image must have an execve path matching the verified preflight ELF.',
+        `Unmatched Bun execve images: ${unmatchedBunImages.length}; test PIDs without matching execve: ${missingTestPidExecve.join(', ') || 'none'}`
+      );
+    }
+
+    const byPid = new Map(
+      testProcesses.map((testProcess) => [testProcess.pid, testProcess])
+    );
+    const witnesses = findPrematureCloseWitnesses(trace, testPids);
+    const outputDirectory = join(traceDirectory, 'symbols');
+    const profilePath = join(OUTPUT_ROOT, 'profile', 'bun-profile.elf');
+    const profileBytes = new Uint8Array(readFileSync(profilePath));
+    const profileLayout = inspectElf(profileBytes, 'matched profile ELF');
+    const profileDynsym = readFileSync(
+      join(OUTPUT_ROOT, 'profile', 'profile-readelf-dynsym.stdout.txt'),
+      'utf8'
+    );
+    const witnessResults: Array<Record<string, unknown>> = [];
+    for (const witness of witnesses) {
+      const testProcess = byPid.get(witness.pid);
+      if (!testProcess) continue;
+      const caller = await symbolizeNewWitness(
+        witness,
+        testProcess,
+        profilePath,
+        profileLayout,
+        profileDynsym,
+        verifiedBunPath,
+        outputDirectory
+      );
+      witnessResults.push({
+        pid: witness.pid,
+        fd: witness.fd,
+        close_line: witness.close_line,
+        close_text: witness.close_text,
+        epoll_line: witness.epoll_line,
+        epoll_text: witness.epoll_text,
+        caller,
+      });
+    }
+    const attributed = witnessResults.filter(
+      (witness) =>
+        (witness.caller as { status?: string }).status ===
+        'attributed_new_witness'
+    );
+    traceReceipt.test_processes = testProcesses.map((testProcess) => ({
+      pid: testProcess.pid,
+      identity: testProcess.identity,
+      binary_path: testProcess.binary_path,
+      readelf: testProcess.readelf,
+      executable_pt_load:
+        testProcess.layout.executable_load_segments.map(serializeSegment),
+    }));
+    traceReceipt.witnesses = witnessResults;
+    traceReceipt.status =
+      attributed.length > 0 ? 'attributed_new_witness' : 'nondiscriminating';
+    traceReceipt.conclusion =
+      attributed.length > 0
+        ? 'A new premature-close witness came from a test PID whose retained ELF exactly matches the verified pair.'
+        : 'No new identity-qualified caller was usable. This experiment is nondiscriminating and asserts no runtime cause.';
+  } catch (error) {
+    traceReceipt.status = 'blocked';
+    traceReceipt.blocker =
+      error instanceof QualificationError
+        ? {
+            code: error.code,
+            prerequisite: error.prerequisite,
+            message: error.message,
+          }
+        : {
+            code: 'unexpected_error',
+            message: error instanceof Error ? error.message : String(error),
+          };
+    throw error;
+  } finally {
+    traceReceipt.completed_at = new Date().toISOString();
+    writeJson(receiptPath, traceReceipt);
+  }
+}
 
 async function main() {
   mkdirSync(OUTPUT_ROOT, { recursive: true });
   const receipt: Record<string, unknown> = {
     schema: REPORT_SCHEMA,
     status: 'running',
-    mode: 'identity-and-offline-symbolization-only',
+    mode: IDENTITY_MODE,
     started_at: new Date().toISOString(),
     saved_native_frame_inputs: SAVED_NATIVE_FRAMES.map((frame) => ({
       id: frame.id,
@@ -1453,7 +2197,6 @@ async function main() {
           : hex(frame.exported_symbol_offset),
     })),
     policy: {
-      no_new_full_trace: true,
       no_profile_execution: true,
       no_runtime_replacement: true,
       no_external_private_stack_upload: true,
@@ -1464,17 +2207,32 @@ async function main() {
   };
 
   try {
+    if (IDENTITY_MODE === 'posttrace') {
+      await analyzeTraceExperiment();
+      receipt.status = 'trace_analysis_completed';
+      receipt.completed_at = new Date().toISOString();
+      return;
+    }
+    if (IDENTITY_MODE !== 'preflight') {
+      throw new QualificationError(
+        'identity_mode_invalid',
+        'STDIO_LINUX_SYMBOL_IDENTITY_MODE must be preflight or posttrace.',
+        `Unsupported identity mode ${IDENTITY_MODE}`
+      );
+    }
+
     receipt.historical_elf_identity = copyHistoricalMetadata(
       HISTORICAL_PROVENANCE_DIR
     );
     const runtime = await collectRuntimeIdentity(receipt);
     const release = await fetchReleaseMetadata(receipt);
     const pair = await qualifyOfficialPair(release, runtime, receipt);
+    await runPositivePreflight(runtime, pair, receipt);
     await symbolizeSavedFrames(runtime, pair, receipt);
-    receipt.status = 'qualified_new_job_candidate_layout_only';
+    receipt.status = 'preflight_verified_candidate_layout_only';
     receipt.completed_at = new Date().toISOString();
     receipt.conclusion =
-      'The current job runtime is paired with an official profile for offline candidate-layout symbolization. The original historical Bun ELF was not retained, so this receipt does not identify the historical caller.';
+      'The current job runtime passed the offline positive demo and is paired with an official profile. Historical frames remain un-attributed because the original historical Bun ELF was not retained.';
   } catch (error) {
     const failure =
       error instanceof QualificationError
@@ -1495,7 +2253,15 @@ async function main() {
     console.error(`${failure.code}: ${failure.message}`);
     process.exitCode = 1;
   } finally {
-    writeJson(join(OUTPUT_ROOT, 'symbolization-receipt.json'), receipt);
+    writeJson(
+      join(
+        OUTPUT_ROOT,
+        IDENTITY_MODE === 'posttrace'
+          ? 'posttrace-receipt.json'
+          : 'symbolization-receipt.json'
+      ),
+      receipt
+    );
   }
 }
 
