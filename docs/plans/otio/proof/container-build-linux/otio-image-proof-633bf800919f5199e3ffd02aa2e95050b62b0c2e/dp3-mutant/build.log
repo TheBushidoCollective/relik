@@ -1,0 +1,71 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.35kB done
+#1 DONE 0.0s
+
+#2 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#2 DONE 0.1s
+
+#3 docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#3 CACHED
+
+#4 [internal] load metadata for docker.io/oven/bun:1.4.3-alpine
+#4 DONE 0.1s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 117B done
+#5 DONE 0.0s
+
+#6 [build  1/10] FROM docker.io/oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 8.00MB 0.1s done
+#7 DONE 0.1s
+
+#8 [build  2/10] WORKDIR /src
+#8 CACHED
+
+#9 [build  3/10] COPY package.json bun.lock ./
+#9 CACHED
+
+#10 [build  4/10] COPY packages/relic-format/package.json packages/relic-format/
+#10 CACHED
+
+#11 [build  5/10] COPY packages/relic-server/package.json packages/relic-server/
+#11 CACHED
+
+#12 [build  7/10] COPY packages/relic-viewer/package.json packages/relic-viewer/
+#12 CACHED
+
+#13 [build  6/10] COPY packages/relic-mcp/package.json packages/relic-mcp/
+#13 CACHED
+
+#14 [build  8/10] RUN bun install --frozen-lockfile
+#14 CACHED
+
+#15 [build  9/10] COPY . .
+#15 DONE 0.1s
+
+#16 [build 10/10] RUN true
+#16 DONE 0.1s
+
+#17 [runtime 2/5] WORKDIR /app
+#17 CACHED
+
+#18 [runtime 3/5] COPY --from=build /src/node_modules ./node_modules
+#18 CACHED
+
+#19 [runtime 4/5] COPY --from=build /src/package.json ./package.json
+#19 CACHED
+
+#20 [runtime 5/5] COPY --from=build /src/packages ./packages
+#20 DONE 0.1s
+
+#21 exporting to image
+#21 exporting layers
+#21 exporting layers 0.3s done
+#21 writing image sha256:cd77bf5537b6c560e404ec1b7017bfe9c31b2628dd1e5235d8ac7bf98ebb8cdd done
+#21 naming to docker.io/library/relic-otio-image-proof:dp3-mutant done
+#21 DONE 0.3s

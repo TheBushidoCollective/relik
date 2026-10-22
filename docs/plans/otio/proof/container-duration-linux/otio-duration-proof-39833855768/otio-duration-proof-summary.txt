@@ -1,0 +1,13 @@
+OTIO duration oracle proof
+workflow_sha=c5e11262d113562d6a1b04f36fca6cda78539ceb
+ffprobe_version=ffprobe version 6.1.1-3ubuntu5 Copyright (c) 2007-2023 the FFmpeg developers
+head=c5e11262d113562d6a1b04f36fca6cda78539ceb
+fixture_before_sha256=9ecdafb3644451021ab67627939a1803458180f14b8f471501f5493fb2dc9dba
+baseline=passed
+vfr_packet_25_duration=passed
+vfr_packet_3_pts=passed
+vfr_frame_2_best_effort_timestamp=passed
+fr30_webm_packet_0_duration=passed
+fixture_final_sha256=9ecdafb3644451021ab67627939a1803458180f14b8f471501f5493fb2dc9dba
+fixture_final_cmp=passed
+result=passed

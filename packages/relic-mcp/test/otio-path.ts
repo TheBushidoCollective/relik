@@ -45,8 +45,8 @@ import { fileURLToPath } from 'node:url';
 import {
   compareRationalTimes,
   decodeKey,
-  indexOtioZip,
   evaluateOtioAt,
+  indexOtioZip,
   openRelic,
   readOtioDocument,
 } from '@relic/format';

@@ -1,0 +1,126 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.18kB 0.0s done
+#1 DONE 0.0s
+
+#2 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#2 ...
+
+#3 [auth] docker/dockerfile:pull token for registry-1.docker.io
+#3 DONE 0.0s
+
+#2 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#2 DONE 0.9s
+
+#4 docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#4 resolve docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e done
+#4 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 0B / 14.28MB 0.1s
+#4 sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e 9.08kB / 9.08kB done
+#4 sha256:7b32114e84ca21aeb2d6f871a0b62b3a0762193f75d9afd048ee4cbe889f3148 1.13kB / 1.13kB done
+#4 sha256:528c92d70d7e39dbb3dd1c6681f6750c565c7e45b70527cda47c1a61495c1b6a 1.41kB / 1.41kB done
+#4 extracting sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62
+#4 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 14.28MB / 14.28MB 0.2s done
+#4 extracting sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 0.1s done
+#4 DONE 0.3s
+
+#5 [internal] load metadata for docker.io/oven/bun:1.3.14-alpine
+#5 ...
+
+#6 [auth] oven/bun:pull token for registry-1.docker.io
+#6 DONE 0.0s
+
+#5 [internal] load metadata for docker.io/oven/bun:1.3.14-alpine
+#5 DONE 1.7s
+
+#7 [internal] load .dockerignore
+#7 transferring context: 117B done
+#7 DONE 0.0s
+
+#8 [internal] load build context
+#8 transferring context: 3.47MB 0.0s done
+#8 DONE 0.0s
+
+#9 [build  1/10] FROM docker.io/oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0
+#9 resolve docker.io/oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 done
+#9 sha256:2f325d21eb3a45d41dab236a207a03a064598cf43a96271ce5306191add522f9 0B / 297B 0.1s
+#9 sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 1.61kB / 1.61kB done
+#9 sha256:c7b233855e038081984786c223bdcd7aa08ed8f974b40f8a9a444b4546e47756 4.04kB / 4.04kB done
+#9 sha256:dcf061af8c01e1f1f25f674a31deb3a3b06fba9cee22f1915d5c8696773185c8 0B / 35.39MB 0.1s
+#9 sha256:efc5e42c7bedc1661ab0b7272c74c3ebf794f054297f530a62055f2d1a0eb662 1.43kB / 1.43kB done
+#9 sha256:84f5eff04246b56d48d1ed6cbd82d6bc7e53f7e790db6a467f92571c69f3289e 0B / 3.81MB 0.1s
+#9 sha256:dcf061af8c01e1f1f25f674a31deb3a3b06fba9cee22f1915d5c8696773185c8 15.73MB / 35.39MB 0.2s
+#9 sha256:84f5eff04246b56d48d1ed6cbd82d6bc7e53f7e790db6a467f92571c69f3289e 3.81MB / 3.81MB 0.2s done
+#9 extracting sha256:84f5eff04246b56d48d1ed6cbd82d6bc7e53f7e790db6a467f92571c69f3289e
+#9 sha256:0d0b2b34a3453dedf85b39d8c100eadf6838fc467d9acafbf3ab31459ed51af6 0B / 185B 0.2s
+#9 sha256:2f325d21eb3a45d41dab236a207a03a064598cf43a96271ce5306191add522f9 297B / 297B 0.2s done
+#9 sha256:dcf061af8c01e1f1f25f674a31deb3a3b06fba9cee22f1915d5c8696773185c8 35.39MB / 35.39MB 0.3s done
+#9 extracting sha256:84f5eff04246b56d48d1ed6cbd82d6bc7e53f7e790db6a467f92571c69f3289e 0.1s done
+#9 sha256:0d0b2b34a3453dedf85b39d8c100eadf6838fc467d9acafbf3ab31459ed51af6 185B / 185B 0.2s done
+#9 sha256:cf34dbd5e0ab03f713e02ef49ab5525718e0381241fe29bae7897cd0be7081f7 0B / 3.66MB 0.3s
+#9 sha256:cce26e891611b83efb72188a1b88da1afb85f293a070b53c6259b1dbfc922cf3 0B / 140B 0.3s
+#9 extracting sha256:dcf061af8c01e1f1f25f674a31deb3a3b06fba9cee22f1915d5c8696773185c8
+#9 sha256:cf34dbd5e0ab03f713e02ef49ab5525718e0381241fe29bae7897cd0be7081f7 3.66MB / 3.66MB 0.3s done
+#9 sha256:cce26e891611b83efb72188a1b88da1afb85f293a070b53c6259b1dbfc922cf3 140B / 140B 0.3s done
+#9 extracting sha256:dcf061af8c01e1f1f25f674a31deb3a3b06fba9cee22f1915d5c8696773185c8 0.4s done
+#9 extracting sha256:2f325d21eb3a45d41dab236a207a03a064598cf43a96271ce5306191add522f9
+#9 extracting sha256:2f325d21eb3a45d41dab236a207a03a064598cf43a96271ce5306191add522f9 done
+#9 extracting sha256:0d0b2b34a3453dedf85b39d8c100eadf6838fc467d9acafbf3ab31459ed51af6 done
+#9 extracting sha256:cf34dbd5e0ab03f713e02ef49ab5525718e0381241fe29bae7897cd0be7081f7 0.0s done
+#9 extracting sha256:cce26e891611b83efb72188a1b88da1afb85f293a070b53c6259b1dbfc922cf3 done
+#9 DONE 0.8s
+
+#10 [runtime 2/5] WORKDIR /app
+#10 DONE 0.0s
+
+#11 [build  2/10] WORKDIR /src
+#11 DONE 0.0s
+
+#12 [build  3/10] COPY package.json bun.lock ./
+#12 DONE 0.0s
+
+#13 [build  4/10] COPY packages/relic-format/package.json packages/relic-format/
+#13 DONE 0.0s
+
+#14 [build  5/10] COPY packages/relic-server/package.json packages/relic-server/
+#14 DONE 0.0s
+
+#15 [build  6/10] COPY packages/relic-mcp/package.json packages/relic-mcp/
+#15 DONE 0.0s
+
+#16 [build  7/10] COPY packages/relic-viewer/package.json packages/relic-viewer/
+#16 DONE 0.0s
+
+#17 [build  8/10] RUN bun install --frozen-lockfile
+#17 0.130 bun install v1.3.14 (0d9b296a)
+#17 0.542 
+#17 0.542 + @types/bun@1.3.14
+#17 0.542 + typescript@5.9.3
+#17 0.542 
+#17 0.542 66 packages installed [417.00ms]
+#17 DONE 0.6s
+
+#18 [build  9/10] COPY . .
+#18 DONE 0.0s
+
+#19 [build 10/10] RUN bun run build
+#19 0.109 $ bun run --filter '@relic/viewer' build
+#19 0.226 @relic/viewer build: built 15 assets (shell hash: da463cde3e6df798): card.v1.png, chunk-07vfqp2w.js, chunk-3c12b0vz.js, chunk-3yt5kb2h.js, chunk-e2mtj4ar.js, home.js, icon.svg, main.js, manifest.webmanifest, pdf.worker.js, sandbox.html, sandbox.js, styles.css, sw.js, viewer.js
+#19 0.231 @relic/viewer build: Exited with code 0
+#19 DONE 0.2s
+
+#20 [runtime 3/5] COPY --from=build /src/node_modules ./node_modules
+#20 DONE 0.3s
+
+#21 [runtime 4/5] COPY --from=build /src/package.json ./package.json
+#21 DONE 0.0s
+
+#22 [runtime 5/5] COPY --from=build /src/packages ./packages
+#22 DONE 0.0s
+
+#23 exporting to image
+#23 exporting layers
+#23 exporting layers 0.5s done
+#23 writing image sha256:93c3cf549d3a4e9290a02e2b455e6403d56913f7e59fee82f3cc5cd5e28ce100 done
+#23 naming to docker.io/library/relic-otio-image-proof:dp0-main done
+#23 DONE 0.5s
