@@ -3573,6 +3573,11 @@ function assertSelectedPositiveSource(
     `${name} second source is not positive: ${sourceTime.value}@${sourceTime.rate}`
   );
   assert.equal(
+    sourceTime.rate,
+    expected.rate,
+    `${name} source rate ${sourceTime.rate} is not ${expected.rate}`
+  );
+  assert.equal(
     compareRationalTimes(sourceTime, expected),
     0,
     `${name} source does not match ${expected.value}@${expected.rate}`
@@ -3974,12 +3979,14 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     { value: 56, rate: 30 },
     'cut-c'
   );
+  // Nominal second frame: availability is exactly 56 + 2^-47 (one ulp above
+  // 56), so the unnormalized raw source at 57@30 is exactly 1 - 2^-47.
   assertSelectedPositiveSource(
     'available-origin-cut',
     availableOriginCutDocument,
     { value: 57, rate: 30 },
     'cut-c',
-    { value: 1, rate: 30 }
+    { value: 1 - 2 ** -47, rate: 30 }
   );
   const availableOriginCutUrl = await publishDecoderDocument(
     'available-origin-cut',
