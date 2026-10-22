@@ -295,13 +295,46 @@ PROBE relic_id=<id> version=2
 
 ## OpenTimelineIO end-to-end path
 
-Run from the repository root:
+Run the full source proof from the repository root with an explicit Chrome:
 
 ```bash
-bun packages/relic-mcp/test/otio-path.ts
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-path.ts
 ```
 
-The command starts a full service on loopback with `MemoryStore` and `MemoryStorage`, serving real built viewer assets. Every MCP operation runs through a fresh Node stdio process.
+At startup, the locally owned browser reports its actual command line through
+`Browser.getBrowserCommandLine`. The proof accepts only one observed approved
+headless switch matching the launched switch, the fresh `--user-data-dir`,
+`--remote-debugging-pipe`, and `--enable-automation`, with no remote-debugging
+port. Product text and the executable pathname are diagnostic information, not
+mode proof.
+
+Use the focused positive control with the same source mode and browser:
+
+```bash
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-browser-controls.ts --smoke
+```
+
+It ends with `OTIO_HEADLESS_SMOKE_OK`. On Linux, use the negative control under
+Xvfb to require both the headed and profile-mismatch rejections before a review
+target is created or navigated:
+
+```bash
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+xvfb-run -a bun packages/relic-mcp/test/otio-browser-controls.ts --negative-source
+```
+
+It ends with `OTIO_HEADED_REJECTED` and `OTIO_PROFILE_MISMATCH_REJECTED`.
+
+The full command starts a service on loopback with `MemoryStore` and
+`MemoryStorage`, serving real built viewer assets. Every MCP operation runs
+through a fresh Node stdio process.
 
 It exercises:
 1. Publishing a standard `.otiod` directory bundle through real MCP stdio, verifying automated packaging into a deterministic standard `.otioz` archive.

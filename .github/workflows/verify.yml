@@ -22,6 +22,8 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      OTIO_BROWSER_PROOF_DIR: ${{ runner.temp }}/otio-browser-proof
 
     steps:
       - uses: actions/checkout@v4
@@ -38,10 +40,11 @@ jobs:
           set -euo pipefail
           command -v docker
           docker version --format '{{.Server.Version}}'
-          if ! command -v readelf >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends binutils
-          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils xvfb xauth
+          command -v readelf
+          command -v xvfb-run
+          command -v xauth
           echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -78,11 +81,11 @@ jobs:
       - name: Test
         run: bun run test
 
-      - name: Cover path
-        run: |
-          bun run --cwd packages/relic-mcp build
-          RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/cover-path.ts
+      - name: Build MCP bundle
+        run: bun run --cwd packages/relic-mcp build
 
+      - name: Cover path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/cover-path.ts
       - name: Notify path
         run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/notify-path.ts
 
@@ -114,30 +117,119 @@ jobs:
 
       # Loopback-only path. The script prints OTIO_PATH_OK only after the
       # browser, official reader, and fresh MCP readback all pass.
-      - name: OTIO path
-        env:
-          RELIC_OTIO_CHROME_PATH: ${{ env.RELIC_OTIO_CHROME_PATH }}
+      - name: Prepare OTIO browser proof receipt
+        run: mkdir -p "$OTIO_BROWSER_PROOF_DIR"
+
+      - name: OTIO browser negative controls
         run: |
-          bun run --cwd packages/relic-mcp build
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
-            echo "ffmpeg and ffprobe are required" >&2
+          set -euo pipefail
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+            xvfb-run -a bun packages/relic-mcp/test/otio-browser-controls.ts --negative-source \
+            2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/negative-source.log"
+
+      - name: OTIO path
+        run: |
+          set -euo pipefail
+          command -v ffmpeg >/dev/null
+          command -v ffprobe >/dev/null
+          command -v uv >/dev/null
+          command -v google-chrome >/dev/null
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+            env -u DISPLAY -u WAYLAND_DISPLAY \
+              bun packages/relic-mcp/test/otio-path.ts \
+              2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-path.log"
+
+      - name: Upload OTIO browser proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otio-browser-proof-linux
+          path: |
+            ${{ env.OTIO_BROWSER_PROOF_DIR }}
+            otio-path-shots
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
+
+  otio-headless-smoke-macos:
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/relic-playwright-browsers
+      OTIO_BROWSER_PROOF_DIR: ${{ runner.temp }}/otio-browser-proof
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Require Bun 1.4.3
+        run: test "$(bun --version)" = "1.4.3"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build MCP bundle for browser controls
+        run: bun run --cwd packages/relic-mcp build
+
+      - name: Prepare OTIO browser proof receipt
+        run: mkdir -p "$OTIO_BROWSER_PROOF_DIR"
+
+      - name: Install Playwright 1.61.1 headless shell
+        run: |
+          set -euo pipefail
+          mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
+          bunx playwright@1.61.1 install chromium-headless-shell \
+            2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/playwright-install.log"
+
+      - name: Resolve Playwright headless shell
+        run: |
+          set -euo pipefail
+          shells=()
+          while IFS= read -r candidate; do
+            shells+=("$candidate")
+          done < <(find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name headless_shell -print)
+          if [ "${#shells[@]}" -ne 1 ]; then
+            printf 'expected one Playwright headless shell, found %s\n' "${#shells[@]}" >&2
+            printf '%s\n' "${shells[@]}" >&2
             exit 1
           fi
-          if ! command -v uv >/dev/null; then
-            echo "pinned uv is required" >&2
-            exit 1
-          fi
-          if [ -z "${RELIC_OTIO_CHROME_PATH:-}" ]; then
-            if command -v google-chrome >/dev/null 2>&1; then
-              export RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)"
-            elif command -v chromium >/dev/null 2>&1; then
-              export RELIC_OTIO_CHROME_PATH="$(command -v chromium)"
-            else
-              echo "No headless Chrome found. Set RELIC_OTIO_CHROME_PATH." >&2
+          test -x "${shells[0]}"
+          case "${shells[0]}" in
+            "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-1228/*) ;;
+            *)
+              printf 'headless shell is not Playwright revision 1228\n' >&2
               exit 1
-            fi
-          fi
-          bun packages/relic-mcp/test/otio-path.ts
+              ;;
+          esac
+          printf '%s\n' "${shells[0]}" > "$OTIO_BROWSER_PROOF_DIR/headless-shell-path.txt"
+          printf 'RELIC_OTIO_CHROME_PATH=%s\n' "${shells[0]}" >> "$GITHUB_ENV"
+
+      - name: OTIO headless shell smoke
+        env:
+          RELIC_OTIO_PATH_CLIENT: source
+        run: |
+          set -euo pipefail
+          : "${RELIC_OTIO_CHROME_PATH:?Playwright headless shell was not resolved}"
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$RELIC_OTIO_CHROME_PATH" \
+            bun packages/relic-mcp/test/otio-browser-controls.ts --smoke \
+            2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/smoke.log"
+
+      - name: Upload OTIO browser proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otio-browser-proof-macos
+          path: ${{ env.OTIO_BROWSER_PROOF_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
 
   # Builds exactly what deploy builds, but never pushes the local image. The
   # smoke is the image boundary that unit tests and a runner-side viewer build
