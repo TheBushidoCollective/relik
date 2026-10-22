@@ -1,0 +1,2421 @@
+{
+  "capture_height": 900,
+  "old_capture_filenames": [
+    "1440-light.png",
+    "390-light.png",
+    "1440-dark.png",
+    "390-dark.png",
+    "1440-light-composer-open.png",
+    "390-light-composer-open.png",
+    "1440-dark-composer-open.png",
+    "390-dark-composer-open.png"
+  ],
+  "measurements": [
+    {
+      "state": "closed",
+      "width": 1440,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "before": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "afterScroll": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection in frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection out frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-comment-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-clear-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 0,
+        "stageScrollRange": 225,
+        "timelineScrollRange": 0
+      }
+    },
+    {
+      "state": "composer-normal",
+      "width": 1440,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "viewportWidth": 1440,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 0,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 384.609375,
+              "top": 310.375,
+              "right": 736.609375,
+              "bottom": 576.8125,
+              "width": 352,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 320.171875,
+              "right": 724.421875,
+              "bottom": 358.859375,
+              "width": 327.625,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 366.859375,
+              "right": 724.421875,
+              "bottom": 438.859375,
+              "width": 327.625,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 461.84375,
+              "right": 442.953125,
+              "bottom": 490.046875,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 449.34375,
+              "top": 461.84375,
+              "right": 509.984375,
+              "bottom": 490.046875,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 496.4375,
+              "right": 724.421875,
+              "bottom": 567.8125,
+              "width": 327.625,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": false,
+          "foreground": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165
+        }
+      }
+    },
+    {
+      "state": "composer-hover",
+      "width": 1440,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "viewportWidth": 1440,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 0,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 384.609375,
+              "top": 310.375,
+              "right": 736.609375,
+              "bottom": 576.8125,
+              "width": 352,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 320.171875,
+              "right": 724.421875,
+              "bottom": 358.859375,
+              "width": 327.625,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 366.859375,
+              "right": 724.421875,
+              "bottom": 438.859375,
+              "width": 327.625,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 461.84375,
+              "right": 442.953125,
+              "bottom": 490.046875,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 449.34375,
+              "top": 461.84375,
+              "right": 509.984375,
+              "bottom": 490.046875,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 496.4375,
+              "right": 724.421875,
+              "bottom": 567.8125,
+              "width": 327.625,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": true,
+          "foreground": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165
+        }
+      }
+    },
+    {
+      "state": "desktop-sidebar",
+      "width": 1440,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "open": true,
+        "threadVisibleWhenOpen": true,
+        "tabVisibleWhenOpen": false,
+        "resizerVisible": true,
+        "stageToThreadGap": 0,
+        "narrowThreadOwnsRow": false,
+        "tabVisibleAfterClose": true,
+        "threadOpenAfterClose": false
+      }
+    },
+    {
+      "state": "closed",
+      "width": 390,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "before": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "afterScroll": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection in frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection out frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-comment-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-clear-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 399,
+        "stageScrollRange": 146,
+        "timelineScrollRange": 399
+      }
+    },
+    {
+      "state": "composer-normal",
+      "width": 390,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 361,
+          "bottom": 900.0625,
+          "width": 361,
+          "height": 846
+        },
+        "viewportWidth": 390,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 399,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 209.3125,
+              "right": 353.21875,
+              "bottom": 475.75,
+              "width": 345.21875,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 219.109375,
+              "right": 341.03125,
+              "bottom": 257.796875,
+              "width": 320.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 265.796875,
+              "right": 341.03125,
+              "bottom": 337.796875,
+              "width": 320.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 360.78125,
+              "right": 66.34375,
+              "bottom": 388.984375,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 360.78125,
+              "right": 133.375,
+              "bottom": 388.984375,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 395.375,
+              "right": 341.03125,
+              "bottom": 466.75,
+              "width": 320.84375,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": false,
+          "foreground": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165
+        }
+      }
+    },
+    {
+      "state": "composer-hover",
+      "width": 390,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 361,
+          "bottom": 900.0625,
+          "width": 361,
+          "height": 846
+        },
+        "viewportWidth": 390,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 399,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 209.3125,
+              "right": 353.21875,
+              "bottom": 475.75,
+              "width": 345.21875,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 219.109375,
+              "right": 341.03125,
+              "bottom": 257.796875,
+              "width": 320.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 265.796875,
+              "right": 341.03125,
+              "bottom": 337.796875,
+              "width": 320.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 360.78125,
+              "right": 66.34375,
+              "bottom": 388.984375,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 360.78125,
+              "right": 133.375,
+              "bottom": 388.984375,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 395.375,
+              "right": 341.03125,
+              "bottom": 466.75,
+              "width": 320.84375,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": true,
+          "foreground": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165
+        }
+      }
+    },
+    {
+      "state": "narrow-sidebar",
+      "width": 390,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "open": true,
+        "threadVisibleWhenOpen": true,
+        "tabVisibleWhenOpen": false,
+        "resizerVisible": false,
+        "stageToThreadGap": 0,
+        "narrowThreadOwnsRow": true,
+        "tabVisibleAfterClose": true,
+        "threadOpenAfterClose": false
+      }
+    },
+    {
+      "state": "closed",
+      "width": 1440,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "before": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "afterScroll": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection in frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection out frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-comment-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-clear-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 0,
+        "stageScrollRange": 225,
+        "timelineScrollRange": 0
+      }
+    },
+    {
+      "state": "composer-normal",
+      "width": 1440,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "viewportWidth": 1440,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 0,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 384.609375,
+              "top": 310.375,
+              "right": 736.609375,
+              "bottom": 576.8125,
+              "width": 352,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 320.171875,
+              "right": 724.421875,
+              "bottom": 358.859375,
+              "width": 327.625,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 366.859375,
+              "right": 724.421875,
+              "bottom": 438.859375,
+              "width": 327.625,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 461.84375,
+              "right": 442.953125,
+              "bottom": 490.046875,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 449.34375,
+              "top": 461.84375,
+              "right": 509.984375,
+              "bottom": 490.046875,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 496.4375,
+              "right": 724.421875,
+              "bottom": 567.8125,
+              "width": 327.625,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": false,
+          "foreground": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758
+        }
+      }
+    },
+    {
+      "state": "composer-hover",
+      "width": 1440,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "viewportWidth": 1440,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 0,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 384.609375,
+              "top": 310.375,
+              "right": 736.609375,
+              "bottom": 576.8125,
+              "width": 352,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 320.171875,
+              "right": 724.421875,
+              "bottom": 358.859375,
+              "width": 327.625,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 366.859375,
+              "right": 724.421875,
+              "bottom": 438.859375,
+              "width": 327.625,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 461.84375,
+              "right": 442.953125,
+              "bottom": 490.046875,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 449.34375,
+              "top": 461.84375,
+              "right": 509.984375,
+              "bottom": 490.046875,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 396.796875,
+              "top": 496.4375,
+              "right": 724.421875,
+              "bottom": 567.8125,
+              "width": 327.625,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": true,
+          "foreground": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758
+        }
+      }
+    },
+    {
+      "state": "desktop-sidebar",
+      "width": 1440,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "open": true,
+        "threadVisibleWhenOpen": true,
+        "tabVisibleWhenOpen": false,
+        "resizerVisible": true,
+        "stageToThreadGap": 0,
+        "narrowThreadOwnsRow": false,
+        "tabVisibleAfterClose": true,
+        "threadOpenAfterClose": false
+      }
+    },
+    {
+      "state": "closed",
+      "width": 390,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "before": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "afterScroll": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection in frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection out frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-comment-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-clear-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 399,
+        "stageScrollRange": 146,
+        "timelineScrollRange": 399
+      }
+    },
+    {
+      "state": "composer-normal",
+      "width": 390,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 361,
+          "bottom": 900.0625,
+          "width": 361,
+          "height": 846
+        },
+        "viewportWidth": 390,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 399,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 209.3125,
+              "right": 353.21875,
+              "bottom": 475.75,
+              "width": 345.21875,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 219.109375,
+              "right": 341.03125,
+              "bottom": 257.796875,
+              "width": 320.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 265.796875,
+              "right": 341.03125,
+              "bottom": 337.796875,
+              "width": 320.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 360.78125,
+              "right": 66.34375,
+              "bottom": 388.984375,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 360.78125,
+              "right": 133.375,
+              "bottom": 388.984375,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 395.375,
+              "right": 341.03125,
+              "bottom": 466.75,
+              "width": 320.84375,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": false,
+          "foreground": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758
+        }
+      }
+    },
+    {
+      "state": "composer-hover",
+      "width": 390,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 361,
+          "bottom": 900.0625,
+          "width": 361,
+          "height": 846
+        },
+        "viewportWidth": 390,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 399,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 209.3125,
+              "right": 353.21875,
+              "bottom": 475.75,
+              "width": 345.21875,
+              "height": 266.4375
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 219.109375,
+              "right": 341.03125,
+              "bottom": 257.796875,
+              "width": 320.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 265.796875,
+              "right": 341.03125,
+              "bottom": 337.796875,
+              "width": 320.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 360.78125,
+              "right": 66.34375,
+              "bottom": 388.984375,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 360.78125,
+              "right": 133.375,
+              "bottom": 388.984375,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 395.375,
+              "right": 341.03125,
+              "bottom": 466.75,
+              "width": 320.84375,
+              "height": 71.375
+            }
+          }
+        ],
+        "post": {
+          "hovered": true,
+          "foreground": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758
+        }
+      }
+    },
+    {
+      "state": "narrow-sidebar",
+      "width": 390,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "open": true,
+        "threadVisibleWhenOpen": true,
+        "tabVisibleWhenOpen": false,
+        "resizerVisible": false,
+        "stageToThreadGap": 0,
+        "narrowThreadOwnsRow": true,
+        "tabVisibleAfterClose": true,
+        "threadOpenAfterClose": false
+      }
+    },
+    {
+      "state": "supplemental-closed",
+      "width": 320,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "before": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "afterScroll": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection in frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection out frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-comment-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-clear-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 469,
+        "stageScrollRange": 182,
+        "timelineScrollRange": 469
+      }
+    },
+    {
+      "state": "supplemental-composer-normal",
+      "width": 320,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 291,
+          "bottom": 900.0625,
+          "width": 291,
+          "height": 846
+        },
+        "viewportWidth": 320,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 469,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 177.734375,
+              "right": 283.21875,
+              "bottom": 479.859375,
+              "width": 275.21875,
+              "height": 302.125
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 187.53125,
+              "right": 271.03125,
+              "bottom": 226.21875,
+              "width": 250.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 234.21875,
+              "right": 271.03125,
+              "bottom": 306.21875,
+              "width": 250.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 329.203125,
+              "right": 66.34375,
+              "bottom": 357.40625,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 329.203125,
+              "right": 133.375,
+              "bottom": 357.40625,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 363.796875,
+              "right": 271.03125,
+              "bottom": 470.859375,
+              "width": 250.84375,
+              "height": 107.0625
+            }
+          }
+        ],
+        "post": {
+          "hovered": false,
+          "foreground": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165
+        }
+      }
+    },
+    {
+      "state": "supplemental-composer-hover",
+      "width": 320,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 291,
+          "bottom": 900.0625,
+          "width": 291,
+          "height": 846
+        },
+        "viewportWidth": 320,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 469,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 177.734375,
+              "right": 283.21875,
+              "bottom": 479.859375,
+              "width": 275.21875,
+              "height": 302.125
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 187.53125,
+              "right": 271.03125,
+              "bottom": 226.21875,
+              "width": 250.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 234.21875,
+              "right": 271.03125,
+              "bottom": 306.21875,
+              "width": 250.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 329.203125,
+              "right": 66.34375,
+              "bottom": 357.40625,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 329.203125,
+              "right": 133.375,
+              "bottom": 357.40625,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 363.796875,
+              "right": 271.03125,
+              "bottom": 470.859375,
+              "width": 250.84375,
+              "height": 107.0625
+            }
+          }
+        ],
+        "post": {
+          "hovered": true,
+          "foreground": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165
+        }
+      }
+    },
+    {
+      "state": "supplemental-narrow-sidebar",
+      "width": 320,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "open": true,
+        "threadVisibleWhenOpen": true,
+        "tabVisibleWhenOpen": false,
+        "resizerVisible": false,
+        "stageToThreadGap": 0,
+        "narrowThreadOwnsRow": true,
+        "tabVisibleAfterClose": true,
+        "threadOpenAfterClose": false
+      }
+    },
+    {
+      "state": "supplemental-preview-context",
+      "width": 320,
+      "scheme": "light",
+      "prior_frame": 60,
+      "effect_frame": 168
+    },
+    {
+      "state": "supplemental-preview-base",
+      "width": 320,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "visible": true,
+        "withinStage": true,
+        "rect": {
+          "left": 20,
+          "top": 179.421875,
+          "right": 271.21875,
+          "bottom": 225.421875,
+          "width": 251.21875,
+          "height": 46
+        }
+      }
+    },
+    {
+      "state": "supplemental-selection-control",
+      "width": 320,
+      "scheme": "light",
+      "probe": {
+        "missing": [],
+        "visible": true,
+        "withinStage": true,
+        "rect": {
+          "left": 195.9375,
+          "top": 802.40625,
+          "right": 265.296875,
+          "bottom": 826,
+          "width": 69.359375,
+          "height": 23.59375
+        }
+      }
+    },
+    {
+      "state": "supplemental-closed",
+      "width": 320,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "before": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "afterScroll": {
+          "tab": {
+            "present": true,
+            "visible": true,
+            "outsideStage": true
+          },
+          "controls": [
+            {
+              "label": "otio-previous-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-play",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-next-frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Timeline frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-inspector-toggle",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-mode",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection in frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "Selection out frame",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-comment-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            },
+            {
+              "label": "otio-clear-selection",
+              "withinStage": true,
+              "coveredByTab": false
+            }
+          ],
+          "selects": [
+            {
+              "label": "Comment track",
+              "withinStage": true,
+              "coveredByTab": false,
+              "arrowOwned": true
+            }
+          ]
+        },
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 469,
+        "stageScrollRange": 182,
+        "timelineScrollRange": 469
+      }
+    },
+    {
+      "state": "supplemental-composer-normal",
+      "width": 320,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 291,
+          "bottom": 900.0625,
+          "width": 291,
+          "height": 846
+        },
+        "viewportWidth": 320,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 469,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 177.734375,
+              "right": 283.21875,
+              "bottom": 479.859375,
+              "width": 275.21875,
+              "height": 302.125
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 187.53125,
+              "right": 271.03125,
+              "bottom": 226.21875,
+              "width": 250.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 234.21875,
+              "right": 271.03125,
+              "bottom": 306.21875,
+              "width": 250.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 329.203125,
+              "right": 66.34375,
+              "bottom": 357.40625,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 329.203125,
+              "right": 133.375,
+              "bottom": 357.40625,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 363.796875,
+              "right": 271.03125,
+              "bottom": 470.859375,
+              "width": 250.84375,
+              "height": 107.0625
+            }
+          }
+        ],
+        "post": {
+          "hovered": false,
+          "foreground": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758
+        }
+      }
+    },
+    {
+      "state": "supplemental-composer-hover",
+      "width": 320,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 291,
+          "bottom": 900.0625,
+          "width": 291,
+          "height": 846
+        },
+        "viewportWidth": 320,
+        "documentOverflow": 0,
+        "bodyOverflow": 0,
+        "stageOverflow": 0,
+        "timelineOverflow": 469,
+        "components": [
+          {
+            "name": "card",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 8,
+              "top": 177.734375,
+              "right": 283.21875,
+              "bottom": 479.859375,
+              "width": 275.21875,
+              "height": 302.125
+            }
+          },
+          {
+            "name": "context",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 187.53125,
+              "right": 271.03125,
+              "bottom": 226.21875,
+              "width": 250.84375,
+              "height": 38.6875
+            }
+          },
+          {
+            "name": "textarea",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 234.21875,
+              "right": 271.03125,
+              "bottom": 306.21875,
+              "width": 250.84375,
+              "height": 72
+            }
+          },
+          {
+            "name": "Post",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 329.203125,
+              "right": 66.34375,
+              "bottom": 357.40625,
+              "width": 46.15625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "Cancel",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 72.734375,
+              "top": 329.203125,
+              "right": 133.375,
+              "bottom": 357.40625,
+              "width": 60.640625,
+              "height": 28.203125
+            }
+          },
+          {
+            "name": "disclosure",
+            "present": true,
+            "visible": true,
+            "withinStage": true,
+            "rect": {
+              "left": 20.1875,
+              "top": 363.796875,
+              "right": 271.03125,
+              "bottom": 470.859375,
+              "width": 250.84375,
+              "height": 107.0625
+            }
+          }
+        ],
+        "post": {
+          "hovered": true,
+          "foreground": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758
+        }
+      }
+    },
+    {
+      "state": "supplemental-narrow-sidebar",
+      "width": 320,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "open": true,
+        "threadVisibleWhenOpen": true,
+        "tabVisibleWhenOpen": false,
+        "resizerVisible": false,
+        "stageToThreadGap": 0,
+        "narrowThreadOwnsRow": true,
+        "tabVisibleAfterClose": true,
+        "threadOpenAfterClose": false
+      }
+    },
+    {
+      "state": "supplemental-preview-context",
+      "width": 320,
+      "scheme": "dark",
+      "prior_frame": 60,
+      "effect_frame": 168
+    },
+    {
+      "state": "supplemental-preview-base",
+      "width": 320,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "visible": true,
+        "withinStage": true,
+        "rect": {
+          "left": 20,
+          "top": 179.421875,
+          "right": 271.21875,
+          "bottom": 225.421875,
+          "width": 251.21875,
+          "height": 46
+        }
+      }
+    },
+    {
+      "state": "supplemental-selection-control",
+      "width": 320,
+      "scheme": "dark",
+      "probe": {
+        "missing": [],
+        "visible": true,
+        "withinStage": true,
+        "rect": {
+          "left": 195.9375,
+          "top": 802.40625,
+          "right": 265.296875,
+          "bottom": 826,
+          "width": 69.359375,
+          "height": 23.59375
+        }
+      }
+    }
+  ]
+}

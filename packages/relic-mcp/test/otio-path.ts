@@ -398,7 +398,10 @@ async function callMcp(
       .trim()
       .split('\n')
       .filter((line) => line.trim().length > 0);
-    assert.ok(lines.length > 0, 'no JSON-RPC response from relic-mcp');
+    assert.ok(
+      lines.length > 0,
+      `no JSON-RPC response from ${toolName}: exit=${exit}; stderr=${JSON.stringify(stderr)}`
+    );
     const response = JSON.parse(lines[lines.length - 1] ?? '{}') as Record<
       string,
       unknown
