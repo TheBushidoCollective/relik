@@ -2292,6 +2292,80 @@ async function postComposer(
     tick();
     return promise;
   })()`);
+  if (posted !== 'posted') {
+    const failure = await browser.evaluate<Record<string, unknown>>(
+      String.raw`(() => {
+        const card = document.querySelector('.popover-card');
+        const composer = document.querySelector('.popover-composer');
+        const field = composer?.querySelector('textarea.popover-field');
+        const submit = [...(composer?.querySelectorAll('button') ?? [])].find(
+          (button) => button.textContent === 'Post'
+        );
+        const note = composer?.querySelector('.popover-note');
+        const selection = document.querySelector('.otio-selection');
+        const visible = (node) => {
+          if (!(node instanceof HTMLElement)) return false;
+          const style = getComputedStyle(node);
+          const rect = node.getBoundingClientRect();
+          return (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        };
+        const rect = (node) => {
+          if (!(node instanceof Element)) return null;
+          const value = node.getBoundingClientRect();
+          return {
+            left: value.left,
+            top: value.top,
+            right: value.right,
+            bottom: value.bottom,
+            width: value.width,
+            height: value.height,
+          };
+        };
+        return {
+          posted: ${JSON.stringify(posted)},
+          payload: {
+            expectedBody: ${JSON.stringify(body)},
+            fieldValue: field instanceof HTMLTextAreaElement ? field.value : null,
+            selection: {
+              trackId: selection?.getAttribute('data-track-id') ?? null,
+              start: selection?.getAttribute('data-start') ?? null,
+              duration: selection?.getAttribute('data-duration') ?? null,
+              rate: selection?.getAttribute('data-rate') ?? null,
+              durationRate:
+                selection?.getAttribute('data-duration-rate') ?? null,
+            },
+          },
+          card: rect(card),
+          composer: {
+            present: composer !== null,
+            visible: visible(composer),
+            className: composer?.getAttribute('class') ?? null,
+            ariaBusy: composer?.getAttribute('aria-busy') ?? null,
+            text: composer?.textContent ?? '',
+          },
+          submit: {
+            present: submit !== undefined,
+            disabled: submit?.hasAttribute('disabled') ?? false,
+            ariaBusy: submit?.getAttribute('aria-busy') ?? null,
+            text: submit?.textContent ?? null,
+          },
+          note: {
+            present: note !== null,
+            visible: visible(note),
+            text: note?.textContent ?? '',
+          },
+          bodyVisible: document.body.textContent?.includes(${JSON.stringify(body)}) ?? false,
+        };
+      })()`
+    );
+    await browser.screenshot('otio-post-composer-failure');
+    console.log(`OTIO_POST_COMPOSER_FAILURE ${JSON.stringify(failure)}`);
+  }
   assert.equal(
     posted,
     'posted',
@@ -2891,6 +2965,36 @@ interface ComposerControlProbe {
     readonly markerIndex: string | null;
   };
 }
+interface ComposerContextFragmentProbe {
+  readonly name: 'target' | 'disclosure' | 'note';
+  readonly present: boolean;
+  readonly visible: boolean;
+  readonly text: string;
+  readonly paragraphRect: DomRectProbe | null;
+  readonly lineRects: readonly DomRectProbe[];
+  readonly paragraphInBody: boolean;
+  readonly paragraphInCard: boolean;
+  readonly paragraphInSafeRegion: boolean;
+  readonly linesInBody: boolean;
+  readonly linesInCard: boolean;
+  readonly linesInSafeRegion: boolean;
+}
+
+interface ComposerContextAllocationProbe {
+  readonly bodyPresent: boolean;
+  readonly bodyRect: DomRectProbe | null;
+  readonly bodyClientHeight: number | null;
+  readonly bodyScrollHeight: number | null;
+  readonly initialScrollTop: number | null;
+  readonly bodyBorderHeight: number | null;
+  readonly naturalBodyHeight: number | null;
+  readonly nonBodyHeight: number | null;
+  readonly naturalRequiredCardHeight: number | null;
+  readonly naturalFitsSafeRegion: boolean;
+  readonly cardRect: DomRectProbe | null;
+  readonly safeRegion: DomRectProbe | null;
+  readonly fragments: readonly ComposerContextFragmentProbe[];
+}
 
 interface ComposerProbe {
   readonly missing: readonly string[];
@@ -2906,6 +3010,7 @@ interface ComposerProbe {
   readonly stageOverflow: number;
   readonly timelineOverflow: number;
   readonly components: readonly ComposerElementProbe[];
+  readonly contextAllocation: ComposerContextAllocationProbe;
   readonly post: {
     readonly hovered: boolean;
     readonly foreground: string | null;
@@ -2919,6 +3024,99 @@ interface StageControlExposure {
   readonly visible: boolean;
   readonly withinStage: boolean;
   readonly rect: DomRectProbe | null;
+}
+function assertComposerContextAllocation(
+  allocation: ComposerContextAllocationProbe,
+  label: string
+): void {
+  assert.equal(
+    allocation.bodyPresent,
+    true,
+    `${label} has no bounded composer context body`
+  );
+  if (!allocation.naturalFitsSafeRegion) return;
+  assert.ok(
+    allocation.bodyRect &&
+      allocation.cardRect &&
+      allocation.safeRegion &&
+      allocation.bodyClientHeight !== null &&
+      allocation.bodyScrollHeight !== null &&
+      allocation.initialScrollTop !== null &&
+      allocation.bodyBorderHeight !== null &&
+      allocation.naturalBodyHeight !== null &&
+      allocation.nonBodyHeight !== null &&
+      allocation.naturalRequiredCardHeight !== null,
+    `${label} has incomplete natural context allocation: ${JSON.stringify(allocation)}`
+  );
+  assert.ok(
+    allocation.naturalRequiredCardHeight <= allocation.safeRegion.height + 1,
+    `${label} natural context fit predicate disagrees with measured safe region: ${JSON.stringify(allocation)}`
+  );
+  assert.ok(
+    allocation.bodyScrollHeight <= allocation.bodyClientHeight + 1,
+    `${label} naturally fitting context still overflows: ${JSON.stringify(allocation)}`
+  );
+  assert.equal(
+    allocation.initialScrollTop,
+    0,
+    `${label} naturally fitting context starts scrolled: ${JSON.stringify(allocation)}`
+  );
+  for (const fragment of allocation.fragments) {
+    if (
+      fragment.name !== 'target' &&
+      fragment.name !== 'disclosure' &&
+      !(fragment.name === 'note' && fragment.visible && fragment.text.trim())
+    )
+      continue;
+    assert.equal(
+      fragment.present,
+      true,
+      `${label} ${fragment.name} context is absent: ${JSON.stringify(allocation)}`
+    );
+    assert.equal(
+      fragment.visible,
+      true,
+      `${label} ${fragment.name} context is hidden despite a natural fit: ${JSON.stringify(allocation)}`
+    );
+    assert.ok(
+      fragment.text.trim().length > 0,
+      `${label} ${fragment.name} context is empty: ${JSON.stringify(allocation)}`
+    );
+    assert.ok(
+      fragment.paragraphRect && fragment.lineRects.length > 0,
+      `${label} ${fragment.name} has no measured full paragraph or line rects: ${JSON.stringify(allocation)}`
+    );
+    assert.equal(
+      fragment.paragraphInBody,
+      true,
+      `${label} ${fragment.name} paragraph escapes the bounded body: ${JSON.stringify(allocation)}`
+    );
+    assert.equal(
+      fragment.paragraphInCard,
+      true,
+      `${label} ${fragment.name} paragraph escapes the card: ${JSON.stringify(allocation)}`
+    );
+    assert.equal(
+      fragment.paragraphInSafeRegion,
+      true,
+      `${label} ${fragment.name} paragraph escapes the safe region: ${JSON.stringify(allocation)}`
+    );
+    assert.equal(
+      fragment.linesInBody,
+      true,
+      `${label} ${fragment.name} line rect escapes the bounded body: ${JSON.stringify(allocation)}`
+    );
+    assert.equal(
+      fragment.linesInCard,
+      true,
+      `${label} ${fragment.name} line rect escapes the card: ${JSON.stringify(allocation)}`
+    );
+    assert.equal(
+      fragment.linesInSafeRegion,
+      true,
+      `${label} ${fragment.name} line rect escapes the safe region: ${JSON.stringify(allocation)}`
+    );
+  }
 }
 
 function assertComposerProbe(
@@ -2947,6 +3145,7 @@ function assertComposerProbe(
       probe.card.bottom <= probe.safeRegion.bottom + 1,
     `${label} composer escapes preview-safe band: ${JSON.stringify({ card: probe.card, safe: probe.safeRegion, preview: probe.preview, scope: probe.scope })}`
   );
+  assertComposerContextAllocation(probe.contextAllocation, label);
   for (const control of probe.nativeControls) {
     assert.equal(
       control.hitOwned,
@@ -3047,6 +3246,21 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       stageOverflow: 0,
       timelineOverflow: 0,
       components: [],
+      contextAllocation: {
+        bodyPresent: false,
+        bodyRect: null,
+        bodyClientHeight: null,
+        bodyScrollHeight: null,
+        initialScrollTop: null,
+        bodyBorderHeight: null,
+        naturalBodyHeight: null,
+        nonBodyHeight: null,
+        naturalRequiredCardHeight: null,
+        naturalFitsSafeRegion: false,
+        cardRect: null,
+        safeRegion: null,
+        fragments: [],
+      },
       post: { hovered: false, foreground: null, background: null, contrast: null },
     };
     if (missing.length > 0) return empty;
@@ -3191,6 +3405,96 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
     const post = document.querySelector('.popover-card .popover-action.is-primary');
     const cancel = [...card.querySelectorAll('button')]
       .find((button) => button.textContent === 'Cancel') ?? null;
+    const boundedBody = card.querySelector('.popover-bounded-body');
+    const measuredSafeRegion =
+      safe && safe.width > 0 && safe.height > 0 ? safe : null;
+    const bodyRect =
+      boundedBody instanceof HTMLElement ? rect(boundedBody) : null;
+    const bodyStyle =
+      boundedBody instanceof HTMLElement ? getComputedStyle(boundedBody) : null;
+    const bodyBorderHeight =
+      bodyStyle === null
+        ? null
+        : parseFloat(bodyStyle.borderTopWidth) +
+          parseFloat(bodyStyle.borderBottomWidth);
+    const paragraphLines = (node) => {
+      if (!(node instanceof HTMLElement)) return [];
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return [...range.getClientRects()].map((value) => ({
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      }));
+    };
+    const contextFragment = (name, node) => {
+      const present = node instanceof HTMLElement;
+      const isVisible = present && visible(node);
+      const paragraphRect = isVisible ? rect(node) : null;
+      const lineRects = isVisible ? paragraphLines(node) : [];
+      const paragraphInside = (outer) =>
+        paragraphRect !== null && outer !== null && within(paragraphRect, outer);
+      const linesInside = (outer) =>
+        lineRects.length > 0 &&
+        outer !== null &&
+        lineRects.every((line) => within(line, outer));
+      return {
+        name,
+        present,
+        visible: isVisible,
+        text: node?.textContent ?? '',
+        paragraphRect,
+        lineRects,
+        paragraphInBody: paragraphInside(bodyRect),
+        paragraphInCard: paragraphInside(cardRect),
+        paragraphInSafeRegion: paragraphInside(measuredSafeRegion),
+        linesInBody: linesInside(bodyRect),
+        linesInCard: linesInside(cardRect),
+        linesInSafeRegion: linesInside(measuredSafeRegion),
+      };
+    };
+    const fragments = [
+      contextFragment('target', card.querySelector('.popover-target')),
+      contextFragment(
+        'disclosure',
+        card.querySelector('.popover-disclosure')
+      ),
+      contextFragment('note', card.querySelector('.popover-note')),
+    ];
+    const naturalBodyHeight =
+      boundedBody instanceof HTMLElement && bodyBorderHeight !== null
+        ? boundedBody.scrollHeight + bodyBorderHeight
+        : null;
+    const nonBodyHeight =
+      bodyRect === null ? null : cardRect.height - bodyRect.height;
+    const naturalRequiredCardHeight =
+      naturalBodyHeight === null || nonBodyHeight === null
+        ? null
+        : naturalBodyHeight + nonBodyHeight;
+    const contextAllocation = {
+      bodyPresent: boundedBody instanceof HTMLElement,
+      bodyRect,
+      bodyClientHeight:
+        boundedBody instanceof HTMLElement ? boundedBody.clientHeight : null,
+      bodyScrollHeight:
+        boundedBody instanceof HTMLElement ? boundedBody.scrollHeight : null,
+      initialScrollTop:
+        boundedBody instanceof HTMLElement ? boundedBody.scrollTop : null,
+      bodyBorderHeight,
+      naturalBodyHeight,
+      nonBodyHeight,
+      naturalRequiredCardHeight,
+      naturalFitsSafeRegion:
+        naturalRequiredCardHeight !== null &&
+        measuredSafeRegion !== null &&
+        naturalRequiredCardHeight <= measuredSafeRegion.height + 1,
+      cardRect,
+      safeRegion: measuredSafeRegion,
+      fragments,
+    };
     const parts = [
       ['card', card],
       ['context', card.querySelector('.popover-target')],
@@ -3249,6 +3553,7 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       stageOverflow: stage.scrollWidth - stage.clientWidth,
       timelineOverflow: timeline ? timeline.scrollWidth - timeline.clientWidth : 0,
       components,
+      contextAllocation,
       post: {
         hovered: post instanceof Element && post.matches(':hover'),
         foreground: style?.color ?? null,
