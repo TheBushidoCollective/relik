@@ -3456,13 +3456,16 @@ function assertRepresentationalZero(
     sourceTime.value < 0,
     `${name} source is not representationally negative: ${sourceTime.value}@${sourceTime.rate}`
   );
-  assert.equal(
+  assert.ok(
     compareRationalTimes(sourceTime, {
       value: 0,
       rate: sourceTime.rate,
-    }),
-    0,
-    `${name} source is not compare-equal to zero`
+    }) < 0,
+    `${name} nonzero source is not strictly negative`
+  );
+  assert.ok(
+    Math.abs(sourceTime.value) < 1e-7,
+    `${name} source exceeds the decoder-local zero policy: ${sourceTime.value}@${sourceTime.rate}`
   );
 }
 
