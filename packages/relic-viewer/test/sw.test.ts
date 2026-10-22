@@ -154,6 +154,9 @@ describe('service worker shell cache generation', () => {
       false
     );
     expect(isCacheable(origin('/assets/pdf.worker.js'), true)).toBe(false);
+    expect(
+      isCacheable(origin('/assets/otio-video-timing-worker.js'), true)
+    ).toBe(false);
     expect(isCacheable(origin('/assets/card.v1.png'), true)).toBe(false);
     expect(isCacheable(origin('/card.v1.png'), true)).toBe(false);
     expect(isCacheable(origin('/assets/chunk-12345678.js'), true)).toBe(false);

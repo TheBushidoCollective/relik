@@ -97,4 +97,71 @@ describe('the app shell', () => {
     expect(await worker.exists()).toBe(true);
     expect(worker.size).toBeGreaterThan(0);
   });
+
+  test('ships the OTIO demuxer as a licensed worker asset outside shell requests', async () => {
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+
+    const shell = Bun.file(`${pkgDir}dist/viewer.js`);
+    const timingWorker = Bun.file(
+      `${pkgDir}dist/otio-video-timing-worker.js`
+    );
+    const distributedLicense = Bun.file(
+      `${pkgDir}dist/mediabunny-license.txt`
+    );
+    const installedLicense = Bun.file(
+      `${pkgDir}node_modules/mediabunny/LICENSE`
+    );
+
+    const timingWorkerText = await timingWorker.text();
+    const shellText = await shell.text();
+    expect(await timingWorker.exists()).toBe(true);
+    expect(await distributedLicense.exists()).toBe(true);
+    expect(timingWorker.size).toBeGreaterThan(50 * 1024);
+    expect(timingWorkerText).toContain(
+      'Mediabunny 1.62.0 by Vanilagy and contributors; MPL-2.0; license: /assets/mediabunny-license.txt; source: https://registry.npmjs.org/mediabunny/-/mediabunny-1.62.0.tgz'
+    );
+    expect(timingWorkerText).toContain('metadataOnly');
+    expect(shellText).not.toContain('metadataOnly');
+    expect(await distributedLicense.text()).toBe(await installedLicense.text());
+    expect(shellText).not.toContain('Mediabunny 1.62.0 by Vanilagy');
+
+    const sw = await Bun.file(`${pkgDir}dist/sw.js`).text();
+    const listeners = new Map<string, (event: unknown) => void>();
+    const requests: string[] = [];
+    const workerScope = {
+      skipWaiting: () => undefined,
+      clients: { claim: () => undefined },
+      addEventListener(name: string, listener: (event: unknown) => void) {
+        listeners.set(name, listener);
+      },
+    };
+    const caches = {
+      open: async () => ({
+        addAll: async (assets: string[]) => {
+          requests.push(...assets);
+        },
+      }),
+      keys: async () => [],
+      delete: async () => true,
+      match: async () => undefined,
+    };
+    new Function('self', 'caches', sw)(workerScope, caches);
+    const install = listeners.get('install');
+    if (!install) throw new Error('built service worker has no install listener');
+    let installation: Promise<unknown> | undefined;
+    install({
+      waitUntil(work: Promise<unknown>) {
+        installation = work;
+      },
+    });
+    if (!installation) throw new Error('install handler did not schedule cache work');
+    await installation;
+
+    expect(requests).toContain('/assets/viewer.js');
+    expect(requests).not.toContain('/assets/otio-video-timing-worker.js');
+    expect(requests).not.toContain('/assets/mediabunny-license.txt');
+  });
 });
