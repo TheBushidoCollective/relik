@@ -2586,11 +2586,26 @@ interface ComposerElementProbe {
   readonly visible: boolean;
   readonly withinStage: boolean;
   readonly rect: DomRectProbe | null;
+  readonly hitOwned: boolean;
+  readonly text: string;
+  readonly scrollReachable: boolean;
+}
+
+interface ComposerControlProbe {
+  readonly label: string;
+  readonly rect: DomRectProbe;
+  readonly intersectionArea: number;
+  readonly hitOwned: boolean;
 }
 
 interface ComposerProbe {
   readonly missing: readonly string[];
   readonly stageContent: DomRectProbe | null;
+  readonly card: DomRectProbe | null;
+  readonly preview: DomRectProbe | null;
+  readonly scope: DomRectProbe | null;
+  readonly safeRegion: DomRectProbe | null;
+  readonly nativeControls: readonly ComposerControlProbe[];
   readonly viewportWidth: number;
   readonly documentOverflow: number;
   readonly bodyOverflow: number;
@@ -2618,6 +2633,33 @@ function assertComposerProbe(
   expectHovered: boolean
 ): void {
   assert.deepEqual(probe.missing, [], `${label} composer controls are missing`);
+  assert.ok(
+    probe.card && probe.card.width > 0 && probe.card.height > 0,
+    `${label} has no measurable composer card`
+  );
+  const intersecting = probe.nativeControls.filter(
+    (control) => control.intersectionArea > 0
+  );
+  assert.deepEqual(
+    intersecting,
+    [],
+    `${label} composer/native-control intersection: ${JSON.stringify({ card: probe.card, intersecting })}`
+  );
+  assert.ok(probe.safeRegion, `${label} has no preview-safe band`);
+  assert.ok(
+    probe.card.left >= probe.safeRegion.left - 1 &&
+      probe.card.right <= probe.safeRegion.right + 1 &&
+      probe.card.top >= probe.safeRegion.top - 1 &&
+      probe.card.bottom <= probe.safeRegion.bottom + 1,
+    `${label} composer escapes preview-safe band: ${JSON.stringify({ card: probe.card, safe: probe.safeRegion, preview: probe.preview, scope: probe.scope })}`
+  );
+  for (const control of probe.nativeControls) {
+    assert.equal(
+      control.hitOwned,
+      true,
+      `${label} native control hit is blocked: ${JSON.stringify(control)}`
+    );
+  }
   assert.ok(probe.stageContent, `${label} has no stage content bounds`);
   for (const component of probe.components) {
     assert.equal(
@@ -2630,11 +2672,38 @@ function assertComposerProbe(
       true,
       `${label} composer component is hidden: ${component.name}`
     );
-    assert.equal(
-      component.withinStage,
-      true,
-      `${label} composer component escapes its stage: ${component.name}`
-    );
+    if (['card', 'textarea', 'Post', 'Cancel'].includes(component.name)) {
+      assert.equal(
+        component.withinStage,
+        true,
+        `${label} composer component escapes its stage: ${component.name}`
+      );
+      assert.ok(
+        component.rect &&
+          probe.safeRegion &&
+          component.rect.left >= probe.safeRegion.left - 1 &&
+          component.rect.right <= probe.safeRegion.right + 1 &&
+          component.rect.top >= probe.safeRegion.top - 1 &&
+          component.rect.bottom <= probe.safeRegion.bottom + 1,
+        `${label} ${component.name} escapes preview-safe band: ${JSON.stringify(component.rect)}`
+      );
+      if (component.name !== 'card')
+        assert.equal(
+          component.hitOwned,
+          true,
+          `${label} ${component.name} does not own its hit target`
+        );
+    } else {
+      assert.ok(
+        component.text.trim().length > 0,
+        `${label} ${component.name} text is empty`
+      );
+      assert.equal(
+        component.scrollReachable,
+        true,
+        `${label} ${component.name} is not scroll-reachable`
+      );
+    }
   }
   assert.equal(
     probe.post.hovered,
@@ -2664,7 +2733,7 @@ function assertComposerProbe(
 }
 
 async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
-  return browser.evaluate<ComposerProbe>(String.raw`(() => {
+  return browser.evaluate<ComposerProbe>(String.raw`(async () => {
     const stage = document.querySelector('.stage-wrap');
     const card = document.querySelector('.popover-card');
     const missing = [];
@@ -2673,6 +2742,11 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
     const empty = {
       missing,
       stageContent: null,
+      card: null,
+      preview: null,
+      scope: null,
+      safeRegion: null,
+      nativeControls: [],
       viewportWidth: window.innerWidth,
       documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       bodyOverflow: document.body.scrollWidth - document.documentElement.clientWidth,
@@ -2716,6 +2790,70 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
     const within = (inner, outer) =>
       inner.left >= outer.left - 1 && inner.right <= outer.right + 1 &&
       inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+    const intersect = (a, b) => {
+      const left = Math.max(a.left, b.left);
+      const right = Math.min(a.right, b.right);
+      const top = Math.max(a.top, b.top);
+      const bottom = Math.min(a.bottom, b.bottom);
+      return { left, right, top, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+    };
+    const hitOwned = (node, box) => {
+      if (!node || box.width <= 0 || box.height <= 0) return false;
+      const x = (box.left + box.right) / 2;
+      const y = (box.top + box.bottom) / 2;
+      const hit = document.elementFromPoint(x, y);
+      return !!hit && (hit === node || node.contains(hit));
+    };
+    const previewNode = document.querySelector('.otio-preview');
+    const scopeNode = previewNode?.querySelector('.otio-preview-scope');
+    const previewRect = visible(previewNode) ? rect(previewNode) : null;
+    const scopeRect = visible(scopeNode) ? rect(scopeNode) : null;
+    const content = contentRect();
+    const viewport = {
+      left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+    };
+    const previewVisible = previewRect ? intersect(intersect(previewRect, content), viewport) : null;
+    const cuts = [scopeNode, ...(previewNode?.querySelectorAll('.otio-preview-block, .otio-preview-base') ?? [])]
+      .filter(visible)
+      .map(rect)
+      .filter((box) => previewVisible && intersect(box, previewVisible).height > 0)
+      .map((box) => intersect(box, previewVisible));
+    const anchors = [previewVisible?.top, previewVisible?.bottom, ...cuts.flatMap((box) => [box.top, box.bottom])]
+      .filter((value) => value !== undefined).sort((a, b) => a - b);
+    const selection = document.querySelector('.otio-selection');
+    const selectedY = selection ? (rect(selection).top + rect(selection).bottom) / 2 : (rect(card).top + rect(card).bottom) / 2;
+    const bands = anchors.slice(0, -1).map((top, index) => ({
+      top, bottom: anchors[index + 1],
+      height: anchors[index + 1] - top,
+    })).filter((band) => band.height > 0 &&
+      !cuts.some((box) => box.top < band.bottom && box.bottom > band.top));
+    bands.sort((a, b) => b.height - a.height ||
+      Math.abs((a.top + a.bottom) / 2 - selectedY) - Math.abs((b.top + b.bottom) / 2 - selectedY));
+    const band = bands[0];
+    const safe = band && previewVisible && {
+      left: previewVisible.left + 8, right: previewVisible.right - 8,
+      top: band.top + 8, bottom: band.bottom - 8,
+      width: previewVisible.width - 16, height: band.height - 16,
+    };
+    const controls = [
+      ...document.querySelectorAll(
+        '.otio-transport button, .otio-transport input, .otio-timeline-heading button, .otio-timeline-heading select, .otio-track-row button, .otio-selection-readout button, .otio-selection-readout input, .otio-inspector button, .otio-inspector input, .otio-inspector select, .otio-preview-block, .otio-preview-base, .thread-tab'
+      ),
+    ].filter((node) => visible(node) && intersect(intersect(rect(node), content), viewport).width > 0 &&
+      intersect(intersect(rect(node), content), viewport).height > 0);
+    const cardRect = rect(card);
+    const nativeControls = controls.map((node) => {
+      const controlRect = rect(node);
+      const exposed = intersect(intersect(controlRect, content), viewport);
+      const overlap = intersect(cardRect, exposed);
+      return {
+        label: node.getAttribute('aria-label') || node.getAttribute('title') ||
+          node.textContent?.trim() || node.className || node.tagName,
+        rect: controlRect,
+        intersectionArea: overlap.width * overlap.height,
+        hitOwned: hitOwned(node, exposed),
+      };
+    });
     const parseColor = (value) => {
       const parts = value.match(/[\d.]+/g)?.slice(0, 3).map(Number);
       return parts?.length === 3 && parts.every(Number.isFinite) ? parts : null;
@@ -2746,23 +2884,50 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       ['Cancel', cancel],
       ['disclosure', card.querySelector('.popover-disclosure')],
     ];
-    const content = contentRect();
-    const components = parts.map(([name, node]) => {
+    const components = [];
+    for (const [name, node] of parts) {
       const isVisible = visible(node);
       const value = isVisible ? rect(node) : null;
-      return {
+      let scrollReachable = false;
+      if (isVisible && (name === 'context' || name === 'disclosure')) {
+        let scroller = node.parentElement;
+        while (scroller && scroller !== card && scroller.scrollHeight <= scroller.clientHeight + 1)
+          scroller = scroller.parentElement;
+        scroller ??= card;
+        const prior = scroller.scrollTop;
+        scroller.scrollTop = name === 'context' ? 0 : scroller.scrollHeight;
+        const { promise: settled, resolve } = Promise.withResolvers();
+        requestAnimationFrame(resolve);
+        await settled;
+        const exposed = intersect(intersect(rect(node), rect(scroller)), intersect(content, viewport));
+        scrollReachable = hitOwned(node, exposed);
+        scroller.scrollTop = prior;
+        const { promise: restored, resolve } = Promise.withResolvers();
+        requestAnimationFrame(resolve);
+        await restored;
+      }
+      const exposed = value ? intersect(intersect(value, content), viewport) : null;
+      components.push({
         name,
         present: node !== null,
         visible: isVisible,
         withinStage: value !== null && within(value, content),
         rect: value,
-      };
-    });
+        hitOwned: exposed !== null && hitOwned(node, exposed),
+        text: node?.textContent ?? '',
+        scrollReachable,
+      });
+    }
     const style = post instanceof HTMLElement ? getComputedStyle(post) : null;
     const timeline = document.querySelector('.otio-timeline-scroll');
     return {
       missing,
       stageContent: content,
+      card: cardRect,
+      preview: previewRect,
+      scope: scopeRect,
+      safeRegion: safe && safe.width > 0 && safe.height > 0 ? safe : null,
+      nativeControls,
       viewportWidth: window.innerWidth,
       documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       bodyOverflow: document.body.scrollWidth - document.documentElement.clientWidth,
