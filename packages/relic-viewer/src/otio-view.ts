@@ -157,6 +157,10 @@ export function createOtioSelection(
       item: item ? boundedLabel(item.name) : null,
     },
   };
+  const validation = resolveOtioAnchor(anchor, document);
+  if (validation.status !== 'same') {
+    throw new Error('Selection unavailable.');
+  }
   if (
     encoder.encode(JSON.stringify(anchor)).length >
     COMMENT_ANCHOR_OTIO_LIMIT_BYTES
@@ -490,15 +494,7 @@ export async function mountOtioView(
       );
     emitAim(true);
   });
-  const clear = button('Clear', 'otio-clear-selection', () => {
-    selected = null;
-    projectedSelection = null;
-    paintSelection();
-    paintInspector();
-    root.dispatchEvent(
-      new CustomEvent('relic:otio-selection-cleared', { bubbles: true })
-    );
-  });
+  const clear = button('Clear', 'otio-clear-selection', () => clearSelection());
   selectionBar.append(selectionLabel, inLabel, outLabel, comment, clear);
   const diagnostics = element('div', 'otio-diagnostics');
   diagnostics.setAttribute('role', 'status');
@@ -549,6 +545,24 @@ export async function mountOtioView(
         String(control.dataset['otioMode'] === mode)
       );
   }
+
+  function clearSelection(): void {
+    selected = null;
+    projectedSelection = null;
+    paintSelection();
+    paintInspector();
+    root.dispatchEvent(
+      new CustomEvent('relic:otio-selection-cleared', { bubbles: true })
+    );
+  }
+
+  function selectionUnavailable(trackId: string | null, message: string): void {
+    selectedTrack = trackId;
+    inspected = trackId ? doc.nodes[trackId] : timeline;
+    clearSelection();
+    diagnostics.replaceChildren(element('p', 'otio-diagnostic', message));
+  }
+
   function projectionOf(
     anchor: OtioAnchorV1
   ): OtioProjectionTarget | undefined {
@@ -589,21 +603,8 @@ export async function mountOtioView(
             },
           };
     if (range) selectRange(trackId, range, focus);
-    else {
-      selected = null;
-      projectedSelection = null;
-      selectedTrack = trackId;
-      inspected = trackId ? doc.nodes[trackId] : timeline;
-      paintSelection();
-      paintInspector();
-      diagnostics.replaceChildren(
-        element(
-          'p',
-          'otio-diagnostic',
-          'unplaced-item · Selection unavailable.'
-        )
-      );
-    }
+    else
+      selectionUnavailable(trackId, 'unplaced-item · Selection unavailable.');
   }
   function selectRange(
     trackId: string | null,
@@ -614,8 +615,10 @@ export async function mountOtioView(
       !timelineId ||
       !timeline ||
       (trackId !== null && !lanes.some((lane) => lane.node.id === trackId))
-    )
+    ) {
+      selectionUnavailable(trackId, 'unplaced-item · Selection unavailable.');
       return;
+    }
     try {
       selected = createOtioSelection(
         doc,
@@ -625,12 +628,9 @@ export async function mountOtioView(
         range
       );
     } catch (error) {
-      diagnostics.replaceChildren(
-        element(
-          'p',
-          'otio-diagnostic',
-          error instanceof Error ? error.message : 'Selection unavailable.'
-        )
+      selectionUnavailable(
+        trackId,
+        error instanceof Error ? error.message : 'Selection unavailable.'
       );
       return;
     }
@@ -1625,6 +1625,16 @@ export async function mountOtioView(
       marks.clear();
     },
     async project(anchor, content) {
+      const projectionKey = projectionsKey(anchor);
+      const cached = projections.get(projectionKey);
+      if (
+        cached?.status === 'changed' &&
+        cached.diagnostics.some(
+          (diagnostic) => diagnostic.code === 'invalid-timing'
+        )
+      ) {
+        return cached;
+      }
       const key = `${anchor.relic_version}:${anchor.document_sha256}`;
       let original = originals.get(key);
       if (!original) {
@@ -1637,6 +1647,11 @@ export async function mountOtioView(
           'Original OTIO document digest differs from the encrypted anchor.'
         );
       }
+      const originalResolution = resolveOtioAnchor(anchor, originalDocument);
+      if (originalResolution.status !== 'same') {
+        projections.set(projectionKey, originalResolution);
+        return originalResolution;
+      }
       let current = currentProjectionDocument;
       if (!current) {
         current = readOtioForProjection(options.content);
@@ -1648,7 +1663,7 @@ export async function mountOtioView(
         originalDocument,
         currentDocument
       );
-      projections.set(projectionsKey(anchor), result);
+      projections.set(projectionKey, result);
       return result;
     },
     projection: (anchor) => projections.get(projectionsKey(anchor)),
