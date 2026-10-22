@@ -5960,7 +5960,7 @@ export function buildThread(
         // one is a choice of member, so it goes to that member's.
         const surface = host === undefined ? undefined : anchorSurfaceFor(host);
         if (surface !== undefined && anchor !== null) {
-          adapterFor(anchor, surface)?.reveal?.(surface, anchor);
+          adapterFor(anchor, surface)?.reveal?.(surface, anchor, memberId);
         }
         openCard(member, anchorBoxFor(memberId) ?? box, true);
       });
@@ -6318,7 +6318,7 @@ export function buildThread(
     const surface = anchorSurfaceFor(host);
     if (surface === undefined) return;
     const adapter = adapterFor(entry.anchor, surface);
-    adapter?.reveal?.(surface, entry.anchor);
+    adapter?.reveal?.(surface, entry.anchor, commentId);
     // Revealing answers "where", and lighting answers "which one". A reader
     // who clicked a row about one sentence in a paragraph of marked
     // sentences needs the second answer more than the first.

@@ -212,7 +212,8 @@ export interface AnchorAdapter<K extends CommentAnchor['kind']> {
    */
   reveal?(
     surface: AnchorSurface,
-    anchor: Extract<CommentAnchor, { kind: K }>
+    anchor: Extract<CommentAnchor, { kind: K }>,
+    commentId?: string
   ): void;
 
   /**

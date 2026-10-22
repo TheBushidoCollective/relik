@@ -22,6 +22,6 @@ export const otioAdapter: AnchorAdapter<'otio'> = {
   supports: (surface) => otioControllerFor(surface.content) !== undefined,
   paint: (surface, _overlay, anchor, commentId) =>
     otioControllerFor(surface.content)?.paint(anchor, commentId) ?? false,
-  reveal: (surface, anchor) =>
-    otioControllerFor(surface.content)?.reveal(anchor),
+  reveal: (surface, anchor, commentId) =>
+    otioControllerFor(surface.content)?.reveal(anchor, commentId),
 };
