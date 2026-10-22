@@ -295,6 +295,15 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .popover-card .popover-action { padding: .2rem .55rem; border: 1px solid var(--rule-strong); font-size: .8rem; }
 .popover-card .popover-action.is-primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
 .popover-card .compose-fine { font-size: 12px; line-height: 1.5; }
+.foreground-popover.popover-card { display: flex; flex-direction: column; overflow: hidden; padding: .25rem .45rem; }
+.foreground-popover .popover-composer { display: flex; flex-direction: column; min-height: 0; margin: 0; }
+.foreground-popover .bounded-body { min-height: 1.35rem; flex: 0 1 auto; overflow-y: auto; overscroll-behavior: contain; }
+.foreground-popover .compose-target { overflow-wrap: anywhere; }
+.foreground-popover .popover-composer label:has(textarea) { min-height: 0; flex: 0 1 72px; }
+.foreground-popover .popover-composer textarea { min-height: calc(1.55em + .8rem + 2px); height: 72px; resize: none; }
+.foreground-popover .popover-composer .compose-foot { flex: none; background: var(--surface); }
+.foreground-popover .bounded-body .compose-fine { display: block; margin: .2rem 0; }
+.foreground-popover .bounded-body .compose-outcome { display: block; }
 @media (prefers-reduced-motion: no-preference) { .spinner { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } }
 @media (max-width: 1160px) {
   .thread { width: 305px; }
@@ -857,6 +866,12 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   function closeForegroundComposer() {
     if (!foregroundComposer) return;
     const form = $('#comment-form');
+    const body = form.querySelector('.bounded-body');
+    if (body) {
+      form.insertBefore($('#compose-target'), form.querySelector('label'));
+      form.append($('.compose-fine'), $('#compose-outcome'));
+      body.remove();
+    }
     form.classList.remove('popover-composer');
     $('#thread').append(form);
     foregroundComposer.remove();
@@ -867,6 +882,15 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     if (!foregroundComposer) return;
     const host = $('.workbench');
     const hostRect = host.getBoundingClientRect();
+    const preview = $('#composition-preview').getBoundingClientRect();
+    const scope = $('#preview-scope');
+    const controls = [scope, ...$$('#composition-preview button')].filter(node => {
+      const rect = node.getBoundingClientRect();
+      return !node.hidden && rect.width > 0 && rect.height > 0;
+    }).map(node => node.getBoundingClientRect());
+    const edges = [preview.top, preview.bottom, ...controls.flatMap(rect =>
+      [Math.max(preview.top, rect.top), Math.min(preview.bottom, rect.bottom)]
+    )].sort((a, b) => a - b);
     const track = state.selection?.track;
     const rail = track && $('.track-rail[data-track-id="' + track + '"]');
     const railRect = rail?.getBoundingClientRect();
@@ -875,10 +899,31 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     const rect = anchor.getBoundingClientRect();
     const frame = state.selection ? (state.selection.start + state.selection.end) / 2 : state.frame;
     const point = useRail ? rect.width * frame / TOTAL : rect.width / 2;
-    const left = rect.left - hostRect.left + point - foregroundComposer.offsetWidth / 2;
-    const top = rect.top - hostRect.top - foregroundComposer.offsetHeight - 8;
-    foregroundComposer.style.left = clamp(left, 8, Math.max(8, host.clientWidth - foregroundComposer.offsetWidth - 8)) + 'px';
-    foregroundComposer.style.top = Math.max(8, top + hostRect.top < 8 ? rect.bottom - hostRect.top + 8 : top) + 'px';
+    const aimY = rect.top + rect.height / 2;
+    const bands = edges.slice(0, -1).map((top, index) => ({ top, bottom: edges[index + 1] }))
+      .filter(band => band.bottom > band.top && !controls.some(box =>
+        box.top < band.bottom && box.bottom > band.top
+      )).sort((a, b) => b.bottom - b.top - (a.bottom - a.top) ||
+        Math.abs((a.top + a.bottom) / 2 - aimY) - Math.abs((b.top + b.bottom) / 2 - aimY));
+    const band = bands[0];
+    if (!band) { foregroundComposer.style.visibility = 'hidden'; return; }
+    const leftLimit = Math.max(preview.left, hostRect.left) + 8;
+    const rightLimit = Math.min(preview.right, hostRect.right) - 8;
+    const topLimit = Math.max(band.top, hostRect.top) + 8;
+    const bottomLimit = Math.min(band.bottom, hostRect.bottom) - 8;
+    if (foregroundComposer.dataset.initialOpen === 'true' && host.scrollTop > 0 &&
+        bottomLimit - topLimit < Math.min(band.bottom - band.top, host.clientHeight) - 16) {
+      const prior = host.scrollTop;
+      host.scrollTop = Math.max(0, host.scrollTop + band.top - hostRect.top - 8);
+      if (host.scrollTop !== prior) { positionForegroundComposer(); return; }
+    }
+    foregroundComposer.style.maxWidth = Math.max(0, rightLimit - leftLimit) + 'px';
+    foregroundComposer.style.maxHeight = Math.max(0, bottomLimit - topLimit) + 'px';
+    foregroundComposer.style.visibility = bottomLimit > topLimit ? '' : 'hidden';
+    const left = rect.left + point - foregroundComposer.offsetWidth / 2;
+    const top = rect.top - foregroundComposer.offsetHeight - 8;
+    foregroundComposer.style.left = clamp(left, leftLimit, Math.max(leftLimit, rightLimit - foregroundComposer.offsetWidth)) - hostRect.left + host.scrollLeft + 'px';
+    foregroundComposer.style.top = clamp(top, topLimit, Math.max(topLimit, bottomLimit - foregroundComposer.offsetHeight)) - hostRect.top + host.scrollTop + 'px';
   }
   function openForegroundComposer() {
     closeForegroundComposer();
@@ -886,12 +931,17 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-label', 'Comment');
     const form = $('#comment-form');
+    const body = make('div', 'bounded-body');
+    body.append($('#compose-target'), $('.compose-fine'), $('#compose-outcome'));
+    form.prepend(body);
     form.classList.add('popover-composer');
     box.append(form);
     $('.workbench').append(box);
     foregroundComposer = box;
+    box.dataset.initialOpen = 'true';
     paintComposer();
     positionForegroundComposer();
+    box.dataset.initialOpen = 'false';
     $('#comment-body').focus({ preventScroll: true });
   }
   function paintComposer() {
@@ -980,6 +1030,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { closePopover(); closeForegroundComposer(); } if (e.code === 'Space' && !e.target.closest('input, textarea, select, button, [tabindex="0"]')) { e.preventDefault(); play(); } });
   document.addEventListener('pointerdown', e => { if (popover && !e.target.closest('.popover, .otio-comment-mark')) closePopover(); if (foregroundComposer && !e.target.closest('.foreground-popover, #comment-selection')) closeForegroundComposer(); });
   window.addEventListener('resize', () => { closePopover(); positionForegroundComposer(); }); window.addEventListener('pagehide', pause);
+  $('.workbench').addEventListener('scroll', positionForegroundComposer);
   function render() {
     setCommentsOpen($('#viewer').dataset.commentsOpen === 'true');
     setTheme(state.theme); renderVersion(); renderTracks(); renderThread(); renderInspector(); paintSelection(); paintByteCount(); setFrame(state.frame);

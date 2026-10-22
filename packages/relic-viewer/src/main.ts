@@ -3709,6 +3709,8 @@ export interface ComposeOptions {
    * that moved under the panel: a stage going into fullscreen or coming out.
    */
   readonly reanchor?: () => AnchorBox | undefined;
+  /** Preview-safe band measured live in the host's scrolled content coordinates. */
+  readonly bounds?: () => AnchorBox | undefined;
 }
 
 /**
@@ -4933,9 +4935,24 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           );
         };
         const box = reanchor();
+        const measureBounds =
+          'measureBounds' in detail ? detail.measureBounds : undefined;
+        const bounds = measureBounds
+          ? () => {
+              const measured = measureBounds();
+              return measured
+                ? anchorFromClientRect(
+                    measured,
+                    next.getBoundingClientRect(),
+                    next
+                  )
+                : undefined;
+            }
+          : undefined;
         if (
           box !== undefined &&
-          deps.compose?.(detail.anchor, box, { focus, reanchor }) === true
+          deps.compose?.(detail.anchor, box, { focus, reanchor, bounds }) ===
+            true
         ) {
           dismiss();
           return;
@@ -5992,7 +6009,7 @@ export function buildThread(
     ) {
       held.anchor = anchor;
       held.target.textContent = markTargetLabel(anchor);
-      layer.show(held.panel, box);
+      layer.show(held.panel, box, { bounds: options.bounds });
       reanchor = options.reanchor;
       if (focus) held.field.focus();
       return;
@@ -6047,11 +6064,36 @@ export function buildThread(
         })();
       },
     });
-    panel.appendChild(composer.element);
+    if (options.bounds) {
+      const body = document.createElement('div');
+      body.className = 'popover-bounded-body';
+      body.append(target);
+      const disclosure = composer.element.querySelector('.popover-disclosure');
+      if (disclosure) body.append(disclosure);
+      const note = composer.element.querySelector('.popover-note');
+      if (note) body.append(note);
+      panel.append(body, composer.element);
+      panel.classList.add('is-otio-composer');
+    } else panel.appendChild(composer.element);
     const state = { anchor, panel, target, field: composer.field };
-    layer.show(panel, box);
+    if (options.bounds && host) {
+      const safe = options.bounds();
+      if (safe) {
+        const visibleTop = host.scrollTop;
+        const visibleBottom = visibleTop + host.clientHeight;
+        if (
+          safe.top + safe.height <= visibleTop ||
+          safe.top >= visibleBottom ||
+          Math.min(visibleBottom, safe.top + safe.height) -
+            Math.max(visibleTop, safe.top) <
+            Math.min(safe.height, host.clientHeight)
+        ) {
+          host.scrollTop = Math.max(0, safe.top - 8);
+        }
+      }
+    }
+    layer.show(panel, options.reanchor?.() ?? box, { bounds: options.bounds });
     composing = state;
-    reanchor = options.reanchor;
     // Held open against hover, because a composer that vanished when the
     // pointer wandered would take the sentence being typed with it.
     stickyId = COMPOSING;

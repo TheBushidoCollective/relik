@@ -646,6 +646,63 @@ export async function mountOtioView(
     seekFrame(rescaleTime(range.start_time, rate).value);
     if (focus) emitAim(true);
   }
+  function previewSafeBand(): DOMRect | undefined {
+    const frame = preview.getBoundingClientRect();
+    if (frame.width <= 0 || frame.height <= 0) return undefined;
+    const exclusions = [
+      sdr,
+      ...preview.querySelectorAll<HTMLElement>(
+        '.otio-preview-block, .otio-preview-base'
+      ),
+    ]
+      .filter((node) => {
+        const box = node.getBoundingClientRect();
+        return (
+          !node.hidden &&
+          box.width > 0 &&
+          box.height > 0 &&
+          box.bottom > frame.top &&
+          box.top < frame.bottom
+        );
+      })
+      .map((node) => {
+        const box = node.getBoundingClientRect();
+        return {
+          top: Math.max(frame.top, box.top),
+          bottom: Math.min(frame.bottom, box.bottom),
+        };
+      });
+    const edges = [
+      frame.top,
+      frame.bottom,
+      ...exclusions.flatMap(({ top, bottom }) => [top, bottom]),
+    ].sort((a, b) => a - b);
+    const anchor =
+      root
+        .querySelector<HTMLElement>('.otio-selection')
+        ?.getBoundingClientRect() ?? comment.getBoundingClientRect();
+    const aimY = anchor.top + anchor.height / 2;
+    const bands = edges
+      .slice(0, -1)
+      .map((top, index) => ({ top, bottom: edges[index + 1]! }))
+      .filter(
+        ({ top, bottom }) =>
+          bottom > top &&
+          !exclusions.some((box) => box.top < bottom && box.bottom > top)
+      );
+    bands.sort(
+      (a, b) =>
+        b.bottom - b.top - (a.bottom - a.top) ||
+        Math.abs((a.top + a.bottom) / 2 - aimY) -
+          Math.abs((b.top + b.bottom) / 2 - aimY)
+    );
+    const band = bands[0];
+    return (
+      band &&
+      new DOMRect(frame.left, band.top, frame.width, band.bottom - band.top)
+    );
+  }
+
   function emitAim(focus: boolean): void {
     if (!selected) return;
     const detail: OtioAimDetail = {
@@ -655,6 +712,7 @@ export async function mountOtioView(
         root
           .querySelector<HTMLElement>('.otio-selection')
           ?.getBoundingClientRect() ?? comment.getBoundingClientRect(),
+      measureBounds: previewSafeBand,
     };
     root.dispatchEvent(
       new CustomEvent('relic:otio-aim', { detail, bubbles: true })

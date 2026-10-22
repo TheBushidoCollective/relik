@@ -4121,6 +4121,46 @@ canvas.relic-page {
 .otio-feedback-projection { display: flex; align-items: baseline; flex-wrap: wrap; gap: .5rem; padding: .5rem 0 0; font: .66rem/1.6 var(--mono); color: var(--oxide); }
 .otio-view-original { border: 1px solid var(--rule-strong); background: var(--surface); color: var(--patina-ink); padding: .2rem .4rem; font: .68rem var(--sans); cursor: pointer; }
 .otio-view button:focus-visible, .otio-view input:focus-visible, .otio-view select:focus-visible, .otio-track-rail:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+/* The OTIO composer stays on the preview surface. Its context can scroll,
+   while the editor and actions remain on the same opaque card. */
+.popover-card.is-otio-composer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  padding: 0.25rem 0.45rem;
+}
+.is-otio-composer .popover-bounded-body {
+  flex: 0 1 auto;
+  min-height: 1.35rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.is-otio-composer .popover-target {
+  margin: 0 0 0.2rem;
+  overflow-wrap: anywhere;
+}
+.is-otio-composer .popover-disclosure { margin: 0.2rem 0; }
+.is-otio-composer .popover-note { margin: 0.2rem 0; }
+.is-otio-composer .popover-composer {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0.15rem 0 0;
+}
+.is-otio-composer .popover-field {
+  flex: 0 1 4.5rem;
+  height: 4.5rem;
+  min-height: calc(1.4em + 0.8rem + 2px);
+  resize: none;
+}
+.is-otio-composer .popover-tools {
+  flex: none;
+  margin-top: 0.15rem;
+  padding-top: 0.15rem;
+  background: var(--surface);
+}
 @media (max-width: 64rem) {
   .otio-monitor-row { grid-template-columns: minmax(0, 1fr) 210px; }
   .otio-selection-tools { width: 100%; }

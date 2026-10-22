@@ -320,6 +320,7 @@ class ViewElement {
   height = 0;
   parentElement: ViewElement | null = null;
   readonly children: ViewElement[] = [];
+  layout?: DOMRect;
   readonly dataset: Record<string, string> = {};
   readonly listeners = new Map<string, Set<(event: Event) => void>>();
   readonly attributes = new Map<string, string>();
@@ -430,6 +431,7 @@ class ViewElement {
   }
 
   getBoundingClientRect(): DOMRect {
+    if (this.layout) return this.layout;
     return {
       x: 0,
       y: 0,
@@ -488,7 +490,12 @@ class ViewCanvas extends ViewElement {
 }
 
 function installProjectionDom(): () => void {
-  const globals = ['document', 'window', 'MutationObserver'] as const;
+  const globals = [
+    'document',
+    'window',
+    'MutationObserver',
+    'DOMRect',
+  ] as const;
   const previous = new Map<string, PropertyDescriptor | undefined>();
   for (const name of globals) {
     previous.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
@@ -519,6 +526,27 @@ function installProjectionDom(): () => void {
     configurable: true,
     writable: true,
     value: undefined,
+  });
+  Object.defineProperty(globalThis, 'DOMRect', {
+    configurable: true,
+    writable: true,
+    value: class {
+      readonly left: number;
+      readonly top: number;
+      readonly right: number;
+      readonly bottom: number;
+      constructor(
+        left: number,
+        top: number,
+        readonly width: number,
+        readonly height: number
+      ) {
+        this.left = left;
+        this.top = top;
+        this.right = left + width;
+        this.bottom = top + height;
+      }
+    },
   });
 
   const createObjectUrl = Object.getOwnPropertyDescriptor(
@@ -806,6 +834,79 @@ describe('OTIO archive projection reader', () => {
         comment.dispatchEvent(new Event('click'));
         expect(emitted).toHaveLength(2);
         expect(emitted[1]?.track_id).toBe('outer-track');
+      } finally {
+        controller.dispose();
+      }
+    });
+    test('aim carries live preview-safe geometry without altering track scope', async () => {
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: nestedSelectionContent(),
+        revision: 1,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      const preview = findViewElement(root, (node) =>
+        node.className.split(/\s+/).includes('otio-preview')
+      );
+      const scope = findViewElement(root, (node) =>
+        node.className.split(/\s+/).includes('otio-preview-scope')
+      );
+      const select = findViewElement(
+        root,
+        (node) => node.getAttribute('aria-label') === 'Comment track'
+      );
+      const trackMode = findViewElement(
+        root,
+        (node) => node.dataset['otioMode'] === 'track'
+      );
+      const comment = findViewElement(root, (node) =>
+        node.className.split(/\s+/).includes('otio-comment-selection')
+      );
+      if (
+        !controller ||
+        !preview ||
+        !scope ||
+        !select ||
+        !trackMode ||
+        !comment
+      )
+        throw new Error('expected native track composer controls');
+      preview.layout = new DOMRect(12, 36, 320, 180);
+      scope.layout = new DOMRect(20, 48, 160, 28);
+      const emitted: Array<{
+        readonly anchor: OtioAnchorV1;
+        readonly measureBounds?: () => DOMRect | undefined;
+      }> = [];
+      root.addEventListener('relic:otio-aim', (event) => {
+        emitted.push((event as CustomEvent<(typeof emitted)[number]>).detail);
+      });
+      try {
+        select.value = 'outer-track';
+        select.dispatchEvent(new Event('change'));
+        trackMode.dispatchEvent(new Event('click'));
+        comment.dispatchEvent(new Event('click'));
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0]?.anchor.track_id).toBe('outer-track');
+        expect(emitted[0]?.anchor.range).toEqual(
+          otioScopeRange(
+            controller.document,
+            controller.document.timeline_ids[0]!,
+            'outer-track'
+          )
+        );
+        expect(emitted[0]?.measureBounds?.()).toMatchObject({
+          left: 12,
+          top: 76,
+          width: 320,
+          height: 140,
+        });
+        scope.layout = new DOMRect(20, 48, 160, 40);
+        expect(emitted[0]?.measureBounds?.()).toMatchObject({
+          left: 12,
+          top: 88,
+          width: 320,
+          height: 128,
+        });
       } finally {
         controller.dispose();
       }

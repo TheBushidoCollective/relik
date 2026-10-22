@@ -38,6 +38,21 @@ function aimAt(
     detail: { anchor, focus, measure: () => box },
   });
 }
+function aimOtio(
+  mounted: Mounted,
+  anchor: Extract<CommentAnchor, { kind: 'otio' }>,
+  focus: boolean,
+  band: { left: number; top: number; width: number; height: number }
+): void {
+  mounted.content.dispatch('relic:otio-aim', {
+    detail: {
+      anchor,
+      focus,
+      measure: () => AT,
+      measureBounds: () => band,
+    },
+  });
+}
 
 const expanded = (mounted: Mounted): string | null =>
   only(mounted.thread, 'thread-toggle').getAttribute('aria-expanded');
@@ -182,6 +197,88 @@ describe('writing on the timeline', () => {
 
     expect(expanded(mounted)).toBe('true');
     expect(mounted.chip()).toContain('Commenting at 0:06');
+  });
+});
+
+describe('a bounded OTIO composer', () => {
+  beforeEach(installDom);
+  afterEach(clearDom);
+
+  test('re-aim retains its panel, field, draft, focus policy and most recent target', async () => {
+    const mounted = await mount();
+    const base = {
+      kind: 'otio' as const,
+      relic_version: 1,
+      document_sha256: 'a'.repeat(64),
+      timeline_id: 'timeline',
+      track_id: 'track-a',
+      item_id: null,
+      range: {
+        start_time: { value: 4, rate: 24 },
+        duration: { value: 0, rate: 24 },
+      },
+      snapshot: { timeline: 'A', track: 'A', item: null, path: [], label: 'A' },
+    } as unknown as Extract<CommentAnchor, { kind: 'otio' }>;
+    const oldBand = { left: 20, top: 30, width: 400, height: 220 };
+    aimOtio(mounted, base, true, oldBand);
+    const panel = only(mounted.stage, 'popover-card');
+    const field = only(panel, 'popover-field');
+    field.value = 'The target moves.';
+    field.focused = false;
+    const latest = {
+      ...base,
+      track_id: 'track-b',
+      range: {
+        start_time: { value: 6, rate: 24 },
+        duration: { value: 2, rate: 24 },
+      },
+    };
+    aimOtio(mounted, latest, false, { ...oldBand, top: 48 });
+    expect(only(mounted.stage, 'popover-card')).toBe(panel);
+    expect(only(panel, 'popover-field')).toBe(field);
+    expect(field.value).toBe('The target moves.');
+    expect(field.focused).toBe(false);
+    const posted = await mounted.postInPanel(field.value);
+    expect(posted.anchor).toEqual(latest);
+  });
+  test('fullscreen re-show retains the live bounds policy and a new panel clears it', async () => {
+    const mounted = await mount();
+    const base = {
+      kind: 'otio' as const,
+      relic_version: 1,
+      document_sha256: 'a'.repeat(64),
+      timeline_id: 'timeline',
+      track_id: 'track-a',
+      item_id: null,
+      range: {
+        start_time: { value: 4, rate: 24 },
+        duration: { value: 0, rate: 24 },
+      },
+      snapshot: { timeline: 'A', track: 'A' },
+    } as unknown as Extract<CommentAnchor, { kind: 'otio' }>;
+    const band = { left: 20, top: 30, width: 400, height: 220 };
+    aimOtio(mounted, base, true, band);
+    const panel = only(mounted.stage, 'popover-card');
+    const field = only(panel, 'popover-field');
+    expect(panel.style.top).toBe('214px');
+    const preview = new Node('div');
+    mounted.stage.appendChild(preview);
+    const doc = Reflect.get(globalThis, 'document') as Record<string, unknown>;
+    doc['fullscreenElement'] = preview;
+    documentNode.dispatch('fullscreenchange');
+    expect(panel.parent).toBe(preview);
+    expect(only(preview, 'popover-field')).toBe(field);
+    expect(panel.style.top).toBe('214px');
+    aimOtio(mounted, { ...base, track_id: 'track-b' }, false, {
+      ...band,
+      top: 48,
+    });
+    expect(only(preview, 'popover-card')).toBe(panel);
+    expect(panel.style.top).toBe('232px');
+    documentNode.dispatch('keydown', { key: 'Escape' });
+    doc['fullscreenElement'] = null;
+    aimAt(mounted, { kind: 'time', t: 6 });
+    expect(only(mounted.stage, 'popover-card').style.top).toBe('464px');
   });
 });
 
