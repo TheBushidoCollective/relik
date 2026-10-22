@@ -27,7 +27,58 @@ import type {
 } from './otio-types.ts';
 import { otioBundleEntry } from './otio-zip.ts';
 
-const EPSILON_SECONDS = 1e-7;
+interface Binary64Dyadic {
+  readonly significand: bigint;
+  readonly exponent: number;
+}
+
+const binary64Bits = new DataView(new ArrayBuffer(8));
+
+function binary64Dyadic(value: number): Binary64Dyadic {
+  binary64Bits.setFloat64(0, value, false);
+  const high = binary64Bits.getUint32(0, false);
+  const low = binary64Bits.getUint32(4, false);
+  const exponentBits = (high >>> 20) & 0x7ff;
+  const fraction = (BigInt(high & 0xfffff) << 32n) | BigInt(low);
+  if (exponentBits === 0) {
+    return {
+      significand:
+        fraction === 0n ? 0n : high >>> 31 === 1 ? -fraction : fraction,
+      exponent: -1074,
+    };
+  }
+  const significand = (1n << 52n) | fraction;
+  return {
+    significand: high >>> 31 === 1 ? -significand : significand,
+    exponent: exponentBits - 1075,
+  };
+}
+
+function compareExactDyadicProducts(
+  leftA: number,
+  leftB: number,
+  rightA: number,
+  rightB: number
+): number {
+  const leftValue = binary64Dyadic(leftA);
+  const leftRate = binary64Dyadic(leftB);
+  const rightValue = binary64Dyadic(rightA);
+  const rightRate = binary64Dyadic(rightB);
+  const leftSignificand = leftValue.significand * leftRate.significand;
+  const rightSignificand = rightValue.significand * rightRate.significand;
+  const sharedExponent = Math.min(
+    leftValue.exponent + leftRate.exponent,
+    rightValue.exponent + rightRate.exponent
+  );
+  const normalizedLeft =
+    leftSignificand <<
+    BigInt(leftValue.exponent + leftRate.exponent - sharedExponent);
+  const normalizedRight =
+    rightSignificand <<
+    BigInt(rightValue.exponent + rightRate.exponent - sharedExponent);
+  if (normalizedLeft === normalizedRight) return 0;
+  return normalizedLeft < normalizedRight ? -1 : 1;
+}
 
 export interface OtioBoundMap {
   /** Root time of local_origin. Independent of ancestor clipping. */
@@ -87,24 +138,37 @@ export function compareRationalTimes(
   a: OtioRationalTime,
   b: OtioRationalTime
 ): number {
-  if (!Number.isFinite(a.value) || !Number.isFinite(b.value)) return NaN;
-  if (a.rate === b.rate) {
-    const diff = a.value - b.value;
-    if (Math.abs(diff) < EPSILON_SECONDS) return 0;
-    return diff < 0 ? -1 : 1;
-  }
   if (
+    !Number.isFinite(a.value) ||
     !Number.isFinite(a.rate) ||
+    a.rate <= 0 ||
+    !Number.isFinite(b.value) ||
     !Number.isFinite(b.rate) ||
-    a.rate === 0 ||
-    b.rate === 0
+    b.rate <= 0
   ) {
     return NaN;
   }
-  const cross = a.value * b.rate - b.value * a.rate;
-  const scale = Math.max(Math.abs(a.rate), Math.abs(b.rate), 1);
-  if (Math.abs(cross) <= EPSILON_SECONDS * scale * scale) return 0;
-  return cross < 0 ? -1 : 1;
+  if (a.rate === b.rate) {
+    if (a.value === b.value) return 0;
+    return a.value < b.value ? -1 : 1;
+  }
+
+  const leftProduct = a.value * b.rate;
+  const rightProduct = b.value * a.rate;
+  if (leftProduct < rightProduct) return -1;
+  if (leftProduct > rightProduct) return 1;
+
+  if (
+    Number.isSafeInteger(a.value) &&
+    Number.isSafeInteger(a.rate) &&
+    Number.isSafeInteger(b.value) &&
+    Number.isSafeInteger(b.rate) &&
+    Number.isSafeInteger(leftProduct) &&
+    Number.isSafeInteger(rightProduct)
+  ) {
+    return 0;
+  }
+  return compareExactDyadicProducts(a.value, b.rate, b.value, a.rate);
 }
 
 export function addRationalTimes(

@@ -46,13 +46,52 @@ describe('otio-timing rational arithmetic and mixed rates', () => {
     expect(time2997.rate).toBeCloseTo(30000 / 1001, 5);
   });
 
-  test('compareRationalTimes handles mixed rates and equality within epsilon', () => {
-    const a: OtioRationalTime = { value: 24, rate: 24 };
-    const b: OtioRationalTime = { value: 30, rate: 30 };
-    expect(compareRationalTimes(a, b)).toBe(0);
+  test('compareRationalTimes orders represented binary64 rationals exactly', () => {
+    const cut: OtioRationalTime = { value: 1, rate: 24 };
+    expect(compareRationalTimes({ value: 1999, rate: 48000 }, cut)).toBe(-1);
+    expect(compareRationalTimes({ value: 2000, rate: 48000 }, cut)).toBe(0);
+    expect(compareRationalTimes({ value: 2001, rate: 48000 }, cut)).toBe(1);
+    expect(
+      compareRationalTimes(
+        { value: 40.99999999999999, rate: 30 },
+        { value: 41, rate: 30 }
+      )
+    ).toBe(-1);
+    expect(
+      compareRationalTimes({ value: 1.5, rate: 3 }, { value: 0.5, rate: 1 })
+    ).toBe(0);
+    expect(
+      compareRationalTimes({ value: 3.75, rate: 7.5 }, { value: 0.5, rate: 1 })
+    ).toBe(0);
 
-    const c: OtioRationalTime = { value: 25, rate: 24 };
-    expect(compareRationalTimes(c, a)).toBe(1);
+    const n = 2 ** 27;
+    expect(
+      compareRationalTimes(
+        { value: n, rate: n - 1 },
+        { value: n - 1, rate: n - 2 }
+      )
+    ).toBe(-1);
+    expect(
+      compareRationalTimes(
+        { value: Number.MAX_VALUE, rate: Number.MAX_VALUE },
+        { value: Number.MAX_VALUE, rate: Number.MAX_VALUE / 2 }
+      )
+    ).toBe(-1);
+    expect(
+      compareRationalTimes(
+        { value: Number.MIN_VALUE, rate: Number.MIN_VALUE },
+        { value: Number.MIN_VALUE, rate: Number.MIN_VALUE * 2 }
+      )
+    ).toBe(1);
+
+    const negativeZero: OtioRationalTime = { value: -0, rate: 24 };
+    expect(compareRationalTimes(negativeZero, { value: 0, rate: 30 })).toBe(0);
+    expect(Object.is(negativeZero.value, -0)).toBe(true);
+    expect(
+      Number.isNaN(
+        compareRationalTimes({ value: 1, rate: 0 }, { value: 1, rate: 24 })
+      )
+    ).toBe(true);
   });
 
   test('add and subtract rational times with mixed rates', () => {
@@ -187,6 +226,100 @@ describe('otio-timing evaluator and source spans', () => {
     const trackNode = doc.nodes[trackId];
     expect(trackNode?.id).toBe('track_v1');
     expect(trackNode?.children_ids.length).toBe(3);
+  });
+
+  test('keeps mixed-rate points on the strict side of a one-frame cut', () => {
+    const clip = (id: string, sourceStart: number) => ({
+      OTIO_SCHEMA: 'Clip.1',
+      metadata: { relic: { id } },
+      source_range: {
+        start_time: { value: sourceStart, rate: 24 },
+        duration: { value: 1, rate: 24 },
+      },
+      media_reference: {
+        OTIO_SCHEMA: 'ExternalReference.1',
+        target_url: `media/${id}.mov`,
+        available_range: {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: 1000, rate: 24 },
+        },
+      },
+    });
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-boundary' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-boundary' } },
+              children: [
+                clip('clip-boundary-a', 100),
+                clip('clip-boundary-b', 200),
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const before: OtioTimeRange = {
+      start_time: { value: 1999, rate: 48000 },
+      duration: { value: 0, rate: 48000 },
+    };
+    const atCut: OtioTimeRange = {
+      start_time: { value: 2000, rate: 48000 },
+      duration: { value: 0, rate: 48000 },
+    };
+    const firstFrame: OtioTimeRange = {
+      start_time: { value: 0, rate: 24 },
+      duration: { value: 1, rate: 24 },
+    };
+
+    expect(rangeContainsTime(firstFrame, before.start_time)).toBe(true);
+    expect(rangeContainsTime(firstFrame, atCut.start_time)).toBe(false);
+    expect(
+      evaluateOtioAt(
+        doc,
+        'timeline-boundary',
+        before.start_time
+      ).video_contributions.map((item) => item.node_id)
+    ).toEqual(['clip-boundary-a']);
+    expect(
+      evaluateOtioAt(
+        doc,
+        'timeline-boundary',
+        atCut.start_time
+      ).video_contributions.map((item) => item.node_id)
+    ).toEqual(['clip-boundary-b']);
+
+    const beforeSpans = sourceSpansForOtioRange(
+      doc,
+      'timeline-boundary',
+      'track-boundary',
+      before
+    );
+    const cutSpans = sourceSpansForOtioRange(
+      doc,
+      'timeline-boundary',
+      'track-boundary',
+      atCut
+    );
+    expect(beforeSpans.map((span) => span.node_id)).toEqual([
+      'clip-boundary-a',
+    ]);
+    expect(cutSpans.map((span) => span.node_id)).toEqual(['clip-boundary-b']);
+    expect(beforeSpans[0]?.source_range?.start_time.value).toBeCloseTo(
+      100.9995,
+      10
+    );
+    expect(beforeSpans[0]?.source_range?.start_time.rate).toBe(24);
+    expect(
+      evaluateOtioAt(doc, 'timeline-boundary', before.start_time)
+        .video_contributions[0]?.source_time.value
+    ).toBeCloseTo(100.9995, 10);
   });
 
   test('evaluateOtioAt computes file-relative source time subtracting available_range.start_time', () => {
