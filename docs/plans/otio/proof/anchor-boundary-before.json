@@ -1,0 +1,305 @@
+{
+  "revision": "0613bd02fa0a3760f1831e0694d457acac63b605",
+  "method": "Independent public format API calls on unmodified production code; no live service or network writes.",
+  "probeSource": "import {\n  compareRationalTimes,\n  readOtioDocument,\n  resolveOtioAnchor,\n  sourceSpansForOtioRange,\n} from './packages/relic-format/src/index.ts';\n\nconst time = (value: number, rate = 24) => ({ value, rate });\nconst range = (start: number, duration: number, rate = 24) => ({\n  start_time: time(start, rate),\n  duration: time(duration, rate),\n});\nconst authoredRange = (start: number, duration: number, rate = 24) => ({\n  OTIO_SCHEMA: 'TimeRange.1',\n  start_time: { OTIO_SCHEMA: 'RationalTime.1', ...time(start, rate) },\n  duration: { OTIO_SCHEMA: 'RationalTime.1', ...time(duration, rate) },\n});\nconst clip = (id: string, start: number) => ({\n  OTIO_SCHEMA: 'Clip.1',\n  name: id,\n  metadata: { relic: { id } },\n  source_range: authoredRange(start, 1),\n  media_reference: {\n    OTIO_SCHEMA: 'ExternalReference.1',\n    target_url: `media/${id}.mov`,\n    available_range: authoredRange(0, 1000),\n  },\n});\nconst makeDocument = (children: unknown[], duration?: number) =>\n  readOtioDocument(JSON.stringify({\n    OTIO_SCHEMA: 'Timeline.1', name: 'Boundary', metadata: { relic: { id: 'T' } },\n    ...(duration === undefined ? {} : { source_range: authoredRange(0, duration) }),\n    tracks: {\n      OTIO_SCHEMA: 'Stack.1', metadata: { relic: { id: 'S' } },\n      children: [{ OTIO_SCHEMA: 'Track.1', kind: 'Video', name: 'V',\n        metadata: { relic: { id: 'V' } }, children }],\n    },\n  }));\nconst cut = makeDocument([clip('A', 100), clip('B', 200)]);\nconst gap = { OTIO_SCHEMA: 'Gap.1', metadata: { relic: { id: 'G' } },\n  source_range: authoredRange(0, 1) };\nconst extended = makeDocument([clip('A', 100), gap, clip('B', 200)], 4);\nconst results = [];\nfor (const [label, document, selected, track, item] of [\n  ['before-cut', cut, range(1999, 0, 48000), 'V'],\n  ['at-cut', cut, range(2000, 0, 48000), 'V'],\n  ['clip-as-track', cut, range(0, 0), 'A'],\n  ['clip-as-track-with-item', cut, range(0, 0), 'A', 'A'],\n  ['track-endpoint', cut, range(2, 0), 'V'],\n  ['timeline-endpoint', cut, range(2, 0), null],\n  ['outside-track', cut, range(3, 0), 'V'],\n  ['outside-timeline', cut, range(3, 0), null],\n  ['full-track-range', cut, range(0, 2), 'V'],\n  ['explicit-gap', extended, range(1.5, 0), 'V'],\n  ['empty-timeline-tail', extended, range(3.5, 0), null],\n  ['past-shorter-track', extended, range(3.5, 0), 'V'],\n] as const) {\n  const result = resolveOtioAnchor({\n    kind: 'otio', v: 1, relic_version: 1,\n    document_sha256: document.document_sha256,\n    timeline_id: 'T', track_id: track,\n    ...(item === undefined ? {} : { item_id: item }), range: selected,\n    snapshot: { timeline: 'Boundary', track, item: item ?? null },\n  }, document);\n  results.push({ label, status: result.status,\n    spans: result.source_spans.map(span => ({ node: span.node_id, source: span.source_range })),\n    mapped_range: result.mapped_range, diagnostics: result.diagnostics });\n}\nconsole.log(JSON.stringify({\n  comparison: compareRationalTimes(time(1999, 48000), time(1, 24)),\n  directSpans: sourceSpansForOtioRange(cut, 'T', 'V', range(1999, 0, 48000))\n    .map(span => ({ node: span.node_id, source: span.source_range })),\n  results,\n}, null, 2));\n",
+  "observed": {
+    "comparison": 0,
+    "directSpans": [
+      {
+        "node": "B",
+        "source": {
+          "start_time": {
+            "value": 199.9995,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        }
+      }
+    ],
+    "results": [
+      {
+        "label": "before-cut",
+        "status": "same",
+        "spans": [
+          {
+            "node": "B",
+            "source": {
+              "start_time": {
+                "value": 199.9995,
+                "rate": 24
+              },
+              "duration": {
+                "value": 0,
+                "rate": 24
+              }
+            }
+          }
+        ],
+        "mapped_range": {
+          "start_time": {
+            "value": 1999,
+            "rate": 48000
+          },
+          "duration": {
+            "value": 0,
+            "rate": 48000
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "at-cut",
+        "status": "same",
+        "spans": [
+          {
+            "node": "B",
+            "source": {
+              "start_time": {
+                "value": 200,
+                "rate": 24
+              },
+              "duration": {
+                "value": 0,
+                "rate": 24
+              }
+            }
+          }
+        ],
+        "mapped_range": {
+          "start_time": {
+            "value": 2000,
+            "rate": 48000
+          },
+          "duration": {
+            "value": 0,
+            "rate": 48000
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "clip-as-track",
+        "status": "same",
+        "spans": [
+          {
+            "node": "A",
+            "source": {
+              "start_time": {
+                "value": 100,
+                "rate": 24
+              },
+              "duration": {
+                "value": 0,
+                "rate": 24
+              }
+            }
+          }
+        ],
+        "mapped_range": {
+          "start_time": {
+            "value": 0,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "clip-as-track-with-item",
+        "status": "same",
+        "spans": [
+          {
+            "node": "A",
+            "source": {
+              "start_time": {
+                "value": 100,
+                "rate": 24
+              },
+              "duration": {
+                "value": 0,
+                "rate": 24
+              }
+            }
+          }
+        ],
+        "mapped_range": {
+          "start_time": {
+            "value": 0,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "track-endpoint",
+        "status": "same",
+        "spans": [],
+        "mapped_range": {
+          "start_time": {
+            "value": 2,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "timeline-endpoint",
+        "status": "same",
+        "spans": [],
+        "mapped_range": {
+          "start_time": {
+            "value": 2,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "outside-track",
+        "status": "same",
+        "spans": [],
+        "mapped_range": {
+          "start_time": {
+            "value": 3,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "outside-timeline",
+        "status": "same",
+        "spans": [],
+        "mapped_range": {
+          "start_time": {
+            "value": 3,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "full-track-range",
+        "status": "same",
+        "spans": [
+          {
+            "node": "A",
+            "source": {
+              "start_time": {
+                "value": 100,
+                "rate": 24
+              },
+              "duration": {
+                "value": 1,
+                "rate": 24
+              }
+            }
+          },
+          {
+            "node": "B",
+            "source": {
+              "start_time": {
+                "value": 200,
+                "rate": 24
+              },
+              "duration": {
+                "value": 1,
+                "rate": 24
+              }
+            }
+          }
+        ],
+        "mapped_range": {
+          "start_time": {
+            "value": 0,
+            "rate": 24
+          },
+          "duration": {
+            "value": 2,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "explicit-gap",
+        "status": "same",
+        "spans": [
+          {
+            "node": "G",
+            "source": null
+          }
+        ],
+        "mapped_range": {
+          "start_time": {
+            "value": 1.5,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "empty-timeline-tail",
+        "status": "same",
+        "spans": [],
+        "mapped_range": {
+          "start_time": {
+            "value": 3.5,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      },
+      {
+        "label": "past-shorter-track",
+        "status": "same",
+        "spans": [],
+        "mapped_range": {
+          "start_time": {
+            "value": 3.5,
+            "rate": 24
+          },
+          "duration": {
+            "value": 0,
+            "rate": 24
+          }
+        },
+        "diagnostics": []
+      }
+    ]
+  }
+}
