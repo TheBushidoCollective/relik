@@ -532,6 +532,34 @@ function sampleUnavailable(
   );
 }
 
+function collectDecoderPresentationHandleDiagnostics(
+  document: OtioDocumentV1,
+  contribution: OtioVideoContribution | OtioAudioContribution,
+  suppressed: Set<OtioDiagnostic>,
+  retained: Set<OtioDiagnostic>
+): void {
+  let qualifies: boolean | undefined;
+  for (const issue of contribution.diagnostics) {
+    if (issue.code !== 'missing-handles') continue;
+    if (issue.target?.node_id !== contribution.node_id) {
+      retained.add(issue);
+      continue;
+    }
+    if (qualifies === undefined) {
+      const acceptedLocalZero = acceptsDecoderLocalZero(
+        contribution.source_time
+      );
+      qualifies = acceptsDecoderLocalZeroAtAvailableStart(
+        document,
+        contribution,
+        acceptedLocalZero
+      );
+    }
+    if (qualifies) suppressed.add(issue);
+    else retained.add(issue);
+  }
+}
+
 function decoderLocalSeconds(sourceTime: OtioRationalTime): number {
   return timeToSeconds(decoderLocalSourceTime(sourceTime));
 }
@@ -1770,9 +1798,32 @@ export function createOtioPlayback(
 
   function getState(): OtioPlaybackState {
     const evaluation = evaluateOtioAt(doc, timelineId, currentTime);
+    const suppressedPresentationDiagnostics = new Set<OtioDiagnostic>();
+    const retainedPresentationDiagnostics = new Set<OtioDiagnostic>();
+    for (const contribution of evaluation.video_contributions) {
+      collectDecoderPresentationHandleDiagnostics(
+        doc,
+        contribution,
+        suppressedPresentationDiagnostics,
+        retainedPresentationDiagnostics
+      );
+    }
+    for (const contribution of evaluation.audio_contributions) {
+      collectDecoderPresentationHandleDiagnostics(
+        doc,
+        contribution,
+        suppressedPresentationDiagnostics,
+        retainedPresentationDiagnostics
+      );
+    }
+    for (const issue of retainedPresentationDiagnostics) {
+      suppressedPresentationDiagnostics.delete(issue);
+    }
     const issues = [
       ...videoTimingFailures.values(),
-      ...evaluation.diagnostics,
+      ...evaluation.diagnostics.filter(
+        (issue) => !suppressedPresentationDiagnostics.has(issue)
+      ),
       ...contributionIssues(evaluation),
       ...mediaFailures.values(),
     ];
