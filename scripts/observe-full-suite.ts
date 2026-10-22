@@ -2,8 +2,8 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   rm,
   stat,
   writeFile,
@@ -646,7 +646,10 @@ async function runObservedCommand(
 
   if (exitCode === undefined) {
     await Promise.race([
-      child.exited.then((code) => (exitCode = code)),
+      child.exited.then((code) => {
+        exitCode = code;
+        return code;
+      }),
       sleep(10_000),
     ]);
   }
