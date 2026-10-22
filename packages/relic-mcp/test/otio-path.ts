@@ -2355,7 +2355,7 @@ async function postComposer(
             text: submit?.textContent ?? null,
           },
           note: {
-            present: note !== null,
+            present: note != null,
             visible: visible(note),
             text: note?.textContent ?? '',
           },
