@@ -1,0 +1,25 @@
+{
+  "probeSha": "2fec659 (650cd0b plus a one-line missing async mkdtemp import)",
+  "runtime": "Bun 1.3.14 (0d9b296a), Node 24.15.0 via mise, macOS arm64",
+  "regime": "Checkpointed diagnostic regime: phase-entry and per-trial checkpoint I/O changes parent FD history. Not comparable byte-for-byte to 233ba5b samples.",
+  "harnessFailureBeforeFix": "650cd0b browser-retired16 trial 1 fixture_failure 'mkdtemp is not defined' at browser.profile_create; browser never spawned, target never ran. Archived as 650cd0b-browser-retired16-mkdtemp-harness-failure.witness.json.",
+  "results": {
+    "none1": "PASS 1/1",
+    "corrupt": "FAIL as required at decrypted-nonce assertion",
+    "none16": "PASS 16/16",
+    "helper16": "PASS 16/16",
+    "browser-retired16": "PASS 16/16",
+    "browser-retired-then-helper16": "DISCREPANCY at trial 11 of 16; arm stopped"
+  },
+  "discrepancy": {
+    "context": "browser retired (close observed later with SIGKILL), then helper exit 0, then target",
+    "targetPid": 77621,
+    "inputOutcomes": "write fulfilled 178, end fulfilled 178 (clean numeric)",
+    "loopback": "GET /api/relics/<id>/comments entry, then response constructed with status 200",
+    "exit": 1,
+    "signal": null,
+    "stdoutBytes": 0,
+    "stderr": ""
+  },
+  "interpretation": "Context-sensitive discrepancy observed only in the combined arm. The child's tool dispatch reached the server and a 200 response was constructed, then the child exited 1 while the parent captured no stdout and no stderr bytes. This differs from the full-PATH signature (fulfilled EBADF end, exit 0, no HTTP). Response construction does not prove child receipt. No cause is claimed; corroboration of the failing boundary is required before any treatment. No product, producer or assertion change."
+}
