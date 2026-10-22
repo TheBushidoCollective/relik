@@ -5155,24 +5155,27 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
         await clearAuxiliarySidebarClickCapture(browser);
       }
     }
-    await writeFile(
-      join(shotDir, 'auxiliary-coincident-comment-reveal-measurements.json'),
-      `${JSON.stringify(
-        {
-          relic_id: relicId,
-          viewport: { width: 900, height: 900 },
-          clock: {
-            ...clockReceipt,
-            finalNow: loopbackNow,
-          },
-          measurements,
-        },
-        null,
-        2
-      )}\n`
-    );
   } finally {
-    await browser.close();
+    try {
+      await writeFile(
+        join(shotDir, 'auxiliary-coincident-comment-reveal-measurements.json'),
+        `${JSON.stringify(
+          {
+            relic_id: relicId,
+            viewport: { width: 900, height: 900 },
+            clock: {
+              ...clockReceipt,
+              finalNow: loopbackNow,
+            },
+            measurements,
+          },
+          null,
+          2
+        )}\n`
+      );
+    } finally {
+      await browser.close();
+    }
   }
 }
 
