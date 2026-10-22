@@ -3868,7 +3868,14 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   );
   const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken);
   try {
-    assert.equal(await waitReady(nearZeroBrowser), 'true');
+    const nearZeroReady = await waitReady(nearZeroBrowser);
+    assert.equal(
+      nearZeroReady,
+      'true',
+      nearZeroReady === 'true'
+        ? undefined
+        : await timingDiagnostics(nearZeroBrowser)
+    );
     await seekTo(nearZeroBrowser, 0);
     const first = await assertPacketCanvas(
       nearZeroBrowser,
