@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   collect:
-    if: github.repository == 'TheBushidoCollective/relic' && github.ref == 'refs/heads/agent/stdio-linux-symbol-identity'
+    if: github.repository == 'TheBushidoCollective/relik' && github.ref == 'refs/heads/agent/stdio-linux-symbol-identity'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
