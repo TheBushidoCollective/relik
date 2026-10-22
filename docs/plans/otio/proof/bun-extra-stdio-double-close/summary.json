@@ -28,6 +28,12 @@
       "outcome": "6/6 cycles clean"
     }
   ],
-  "upstream": "Matches oven-sh/bun#30443 (Playwright five-pipe Chromium crashes after 7-12 launches); fixed by oven-sh/bun#32520 (extra stdio index >= 3 mapped to socket-fd so finalize_streams never double-closes), first released in bun-v1.4.0.",
+  "upstream": "Matches oven-sh/bun#30443 (Playwright five-pipe Chromium crashes after 7-12 launches); fixed by oven-sh/bun#32520 (extra stdio index >= 3 mapped to socket-fd so finalize_streams never double-closes), first released in bun-v1.4.0. In bun-v1.4.3 subprocess.rs, finalize_streams closes only ExtraPipe::OwnedFd and get_stdio downgrades OwnedFd to UnownedFd once exposed to JS, covering direct Bun.spawn .stdio[N] users too.",
+  "stdio012Control": {
+    "script": "bun-spawn-stdio-gc-v2.mjs (sha256 5db674107a0491c3842bb81c6c9229262c89b1ca97654d53907e046afade458e)",
+    "shape": "No extra stdio. Retire a child whose stdin/stdout/stderr were fully read (via Bun.spawn, and separately via a 3-pipe node:child_process child), start a live Bun.spawn victim reusing a retired fd number, census, Bun.gc(true), census, read the victim.",
+    "results": "bun 1.3.14 and 1.4.3, both retire kinds: 6/6 cycles each ok, 0 fds closed across GC, FinalizationRegistry collected count reached 6. Outputs stdio012-*.json.",
+    "scope": "Complete-the-class evidence, not a gate: no stdio 0-2 double close for fully read pipes. A never-read stdout has a single owner (its reader), so its finalizer close is a first close."
+  },
   "scope": "Proves the Bun <= 1.3.14 extra-stdio double close in isolation. Does not by itself prove the Relic PATH or boundary failures are this mechanism; that is the job of the in-situ gc-probe run."
 }

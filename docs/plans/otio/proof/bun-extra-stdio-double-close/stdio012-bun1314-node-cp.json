@@ -1,0 +1,64 @@
+{
+  "runtime": "bun-1.3.14-0d9b296a",
+  "retireKind": "node-cp",
+  "forceGc": true,
+  "cycles": 6,
+  "retired": [
+    { "born": [5, 6, 8], "ok": true },
+    { "born": [5, 6, 8], "ok": true },
+    { "born": [5, 6, 8], "ok": true },
+    { "born": [5, 6, 8], "ok": true },
+    { "born": [5, 6, 8], "ok": true },
+    { "born": [5, 6, 8], "ok": true }
+  ],
+  "victims": [
+    {
+      "cycle": 1,
+      "born": [4, 6],
+      "gcDiff": { "closed": [], "opened": [] },
+      "outcome": { "stdout": "victim-1\n", "exit": 0 },
+      "ok": true,
+      "collectedSoFar": 0
+    },
+    {
+      "cycle": 2,
+      "born": [4, 6],
+      "gcDiff": { "closed": [], "opened": [] },
+      "outcome": { "stdout": "victim-2\n", "exit": 0 },
+      "ok": true,
+      "collectedSoFar": 1
+    },
+    {
+      "cycle": 3,
+      "born": [4, 6],
+      "gcDiff": { "closed": [], "opened": [] },
+      "outcome": { "stdout": "victim-3\n", "exit": 0 },
+      "ok": true,
+      "collectedSoFar": 3
+    },
+    {
+      "cycle": 4,
+      "born": [4, 6],
+      "gcDiff": { "closed": [], "opened": [] },
+      "outcome": { "stdout": "victim-4\n", "exit": 0 },
+      "ok": true,
+      "collectedSoFar": 4
+    },
+    {
+      "cycle": 5,
+      "born": [4, 6],
+      "gcDiff": { "closed": [], "opened": [] },
+      "outcome": { "stdout": "victim-5\n", "exit": 0 },
+      "ok": true,
+      "collectedSoFar": 5
+    },
+    {
+      "cycle": 6,
+      "born": [4, 6],
+      "gcDiff": { "closed": [], "opened": [] },
+      "outcome": { "stdout": "victim-6\n", "exit": 0 },
+      "ok": true,
+      "collectedSoFar": 6
+    }
+  ]
+}
