@@ -2527,20 +2527,20 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     decoderClip(
       'drift-a',
       'fr24.mp4',
-      decoderRange(0, 24, 24),
-      decoderRange(0, 24, 48)
+      decoderRange(0, r2398, 12),
+      decoderRange(0, r2398, 24)
     ),
     decoderClip(
       'drift-b',
       'fr24.mp4',
-      decoderRange(0, 30, 40),
-      decoderRange(0, 30, 60)
+      decoderRange(0, r2997, 55),
+      decoderRange(0, r2997, 90)
     ),
     decoderClip(
       'drift-c',
       'fr24.mp4',
-      decoderRange(0, 24, 24),
-      decoderRange(0, 24, 48)
+      decoderRange(0, r2398, 24),
+      decoderRange(0, r2398, 48)
     ),
   ]);
   const driftBrowser = await openBrowser(driftUrl, sessionToken);
@@ -2562,7 +2562,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
         driftBrowser,
         'mixed-rate drift-cut second frame',
         'fr24.mp4',
-        1 / 24
+        1 / r2398
       )).frame,
       1
     );
