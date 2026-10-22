@@ -840,9 +840,26 @@ describe('renderDead and Key Entry Form (DOM)', () => {
 
 describe('Network security: no key material sent in any request', () => {
   test('asserts against fetch stub that no request carries fragment or mnemonic', async () => {
-    const correctKey = generateKey();
+    // Established BIP-39 vector avoids accidental matches with fixed routing words.
+    const correctKey = new Uint8Array(16);
     const fragment = encodeFragment(correctKey);
     const mnemonicWords = keyToMnemonic(correctKey);
+    const expectedMnemonicWords = [
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'abandon',
+      'about',
+    ];
+
+    expect(mnemonicWords).toEqual(expectedMnemonicWords);
 
     const content = new TextEncoder().encode('# Document');
     const ciphertext = await encryptRelic({
