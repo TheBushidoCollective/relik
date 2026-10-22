@@ -1571,6 +1571,30 @@ function invalidAnchorResolution(
     ],
   };
 }
+function projectIntervalBoundary(
+  media: OtioRationalTime,
+  currentMap: OtioBoundMap,
+  exposedStart: OtioRationalTime,
+  exposedEnd: OtioRationalTime,
+  startWitness: OtioRationalTime,
+  endWitness: OtioRationalTime
+): {
+  time: OtioRationalTime | null;
+  boundary?: 'start' | 'end';
+  ambiguous?: true;
+} {
+  const matchesStart = compareRationalTimes(media, startWitness) === 0;
+  const matchesEnd = compareRationalTimes(media, endWitness) === 0;
+  if (matchesStart && matchesEnd) {
+    return compareRationalTimes(exposedStart, exposedEnd) === 0
+      ? { time: exposedStart }
+      : { time: null, ambiguous: true };
+  }
+  if (matchesStart) return { time: exposedStart, boundary: 'start' };
+  if (matchesEnd) return { time: exposedEnd, boundary: 'end' };
+  return { time: invertOtioIntervalEdge(currentMap, media) };
+}
+
 function projectPiece(
   spanStart: OtioRationalTime,
   spanEnd: OtioRationalTime,
@@ -1585,10 +1609,47 @@ function projectPiece(
     ? sampleOtioMedia(originalMap, spanStart)
     : otioIntervalEdge(originalMap, spanStart);
   const endMedia = point ? startMedia : otioIntervalEdge(originalMap, spanEnd);
-  const start = point
-    ? invertOtioSample(currentMap, startMedia)
-    : invertOtioIntervalEdge(currentMap, startMedia);
-  const end = point ? start : invertOtioIntervalEdge(currentMap, endMedia);
+  let start: OtioRationalTime | null;
+  let end: OtioRationalTime | null;
+  if (point) {
+    start = invertOtioSample(currentMap, startMedia);
+    end = start;
+  } else if (!exposed) {
+    start = invertOtioIntervalEdge(currentMap, startMedia);
+    end = invertOtioIntervalEdge(currentMap, endMedia);
+  } else {
+    const exposedStart = exposed.start_time;
+    const exposedEnd = rangeEndTime(exposed);
+    const startWitness = otioIntervalEdge(currentMap, exposedStart);
+    const endWitness = otioIntervalEdge(currentMap, exposedEnd);
+    const startProjection = projectIntervalBoundary(
+      startMedia,
+      currentMap,
+      exposedStart,
+      exposedEnd,
+      startWitness,
+      endWitness
+    );
+    const endProjection = projectIntervalBoundary(
+      endMedia,
+      currentMap,
+      exposedStart,
+      exposedEnd,
+      startWitness,
+      endWitness
+    );
+    if (startProjection.ambiguous || endProjection.ambiguous)
+      return { ambiguous: true };
+    if (
+      startProjection.boundary &&
+      endProjection.boundary &&
+      startProjection.boundary !== endProjection.boundary
+    ) {
+      return { range: exposed, partial: false };
+    }
+    start = startProjection.time;
+    end = endProjection.time;
+  }
   if (!start || !end) return { ambiguous: true };
   const forward = compareRationalTimes(end, start) >= 0;
   const projected: OtioTimeRange = forward

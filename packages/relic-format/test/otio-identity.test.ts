@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { readOtioDocument, resolveOtioAnchor } from '../src/otio-identity.ts';
-import { compareRationalTimes, rangeEndTime } from '../src/otio-timing.ts';
+import {
+  compareRationalTimes,
+  otioIntervalEdge,
+  otioSamplingMap,
+  rangeEndTime,
+} from '../src/otio-timing.ts';
 import type {
   OtioAnchorResolution,
   OtioAnchorV1,
@@ -1691,6 +1696,20 @@ describe('OTIO original selection and reverse projection edges', () => {
     const current = readOtioDocument(
       fractionalReverseTimeline(8, timelineRate)
     );
+    const currentClip = current.nodes.clip;
+    const currentExposed =
+      currentClip?.visible_timeline_range ?? currentClip?.timeline_range;
+    const currentMap = currentClip ? otioSamplingMap(currentClip) : undefined;
+    if (!currentMap || !currentExposed)
+      throw new Error('expected current fractional source witnesses');
+    expect(otioIntervalEdge(currentMap, currentExposed.start_time)).toEqual({
+      value: 110,
+      rate: sourceRate,
+    });
+    expect(otioIntervalEdge(currentMap, rangeEndTime(currentExposed))).toEqual({
+      value: 100,
+      rate: sourceRate,
+    });
     const saved = anchor(0, 8, original.document_sha256);
     const rateAware: OtioAnchorV1 = {
       ...saved,
@@ -1720,6 +1739,20 @@ describe('OTIO original selection and reverse projection edges', () => {
     const shorterCurrent = readOtioDocument(
       fractionalReverseTimeline(8, sourceRate)
     );
+    const shorterClip = shorterCurrent.nodes.clip;
+    const shorterExposed =
+      shorterClip?.visible_timeline_range ?? shorterClip?.timeline_range;
+    const shorterMap = shorterClip ? otioSamplingMap(shorterClip) : undefined;
+    if (!shorterMap || !shorterExposed)
+      throw new Error('expected shorter fractional source witnesses');
+    expect(otioIntervalEdge(shorterMap, shorterExposed.start_time)).toEqual({
+      value: 108,
+      rate: sourceRate,
+    });
+    expect(otioIntervalEdge(shorterMap, rangeEndTime(shorterExposed))).toEqual({
+      value: 100,
+      rate: sourceRate,
+    });
     const partial = resolveOtioAnchor(rateAware, original, shorterCurrent);
     expect(partial.status).toBe('partial');
     const partialRange = partial.mapped_range;
@@ -1744,5 +1777,57 @@ describe('OTIO original selection and reverse projection edges', () => {
         rate: timelineRate,
       })
     ).toBeLessThan(0);
+  });
+
+  test('keeps a tiny shifted current reverse source selection partial', () => {
+    const original = readOtioDocument(reverseTimeline(-1, 100, 10));
+    const current = readOtioDocument(
+      reverseTimeline(-1, 100 + 2 ** -30, 10, 'Current')
+    );
+    const resolved = resolveOtioAnchor(
+      anchor(0, 10, original.document_sha256),
+      original,
+      current
+    );
+    expect(resolved.status).toBe('partial');
+    const mapped = resolved.mapped_range;
+    if (!mapped) throw new Error('expected shifted partial mapped range');
+    expect(mapped.start_time).toEqual({ value: 2 ** -30, rate: 24 });
+    expect(rangeEndTime(mapped)).toEqual({ value: 10, rate: 24 });
+  });
+
+  test('does not guess between rounded forward source witnesses', () => {
+    const sourceStart = 1e21;
+    const original = readOtioDocument(
+      timeline([clip('clip', sourceStart, 1)], 'Original')
+    );
+    const current = readOtioDocument(
+      timeline([clip('clip', sourceStart, 1)], 'Current')
+    );
+    const currentClip = current.nodes.clip;
+    const currentExposed =
+      currentClip?.visible_timeline_range ?? currentClip?.timeline_range;
+    const currentMap = currentClip ? otioSamplingMap(currentClip) : undefined;
+    if (!currentMap || !currentExposed)
+      throw new Error('expected rounded current source witnesses');
+    expect(
+      compareRationalTimes(
+        currentExposed.start_time,
+        rangeEndTime(currentExposed)
+      )
+    ).not.toBe(0);
+    expect(
+      compareRationalTimes(
+        otioIntervalEdge(currentMap, currentExposed.start_time),
+        otioIntervalEdge(currentMap, rangeEndTime(currentExposed))
+      )
+    ).toBe(0);
+    const resolved = resolveOtioAnchor(
+      anchor(0, 1, original.document_sha256),
+      original,
+      current
+    );
+    expect(resolved.status).toBe('ambiguous');
+    expectNoMappedIdentityFields(resolved);
   });
 });
