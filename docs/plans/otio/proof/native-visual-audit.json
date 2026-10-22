@@ -1,185 +1,215 @@
 {
-  "baseSha": "97593f9a743b0b22330e2662eabcb19f09cd57c0",
-  "captureStatus": "All eight images in this audit were captured at baseSha before the CSS and mock repair. Their defects remain historical evidence until the integrated native viewer is rebuilt and recaptured.",
-  "scope": "Eight actual native path screenshots at 1440x900 and 390x900, light and dark, composer closed and open. Older mock screenshots excluded. No browser DOM measurement, build, test or live write was made for this review.",
-  "method": {
-    "pixels": "Opened every PNG, inspected original images and 2x crops, counted RGB pixels in control regions, and computed WCAG 2.2 relative-luminance contrast from representative opaque foreground and background pixels. Antialiased edge pixels are excluded from the representative color pairs.",
-    "geometry": "Bounding coordinates are approximate screenshot pixel bounds, not DOM getBoundingClientRect values. Observations about visibility and overlap are by eye against the captured pixels.",
-    "cssCrossReference": "packages/relic-viewer/src/styles.css:320-324, 665-676, 2484-2502, 3987-4002, 4021-4034, 4078-4083, 4096-4111"
+  "captureRevision": "505810cf4b1567e81bba64c3e25187f9d79e4452",
+  "scope": "Actual native OTIO viewer, not the clickable mock. Read all eight refreshed path PNGs and eight 320px supplemental PNGs from the pushed capture revision. Read its 30-row native-controls-measurements.json as a separate DOM receipt. No product build, test, formatter, or vendor write was run during this review.",
+  "evidencePaths": {
+    "primary": "docs/plans/otio/proof/path-{1440,390}-{light,dark}{,-composer-open}.png",
+    "supplemental": "docs/plans/otio/proof/native-controls-320-{light,dark}-{closed,composer-open,preview-base,selection-controls}.png",
+    "dom": "docs/plans/otio/proof/native-controls-measurements.json"
   },
-  "mockPreviewOnly": {
-    "provenance": "Separate local clickable mock rendered in private HeadlessChrome over 127.0.0.1; these DOM measurements are not evidence about the actual native viewer.",
-    "desktop1440Closed": "Viewport 1440px, document scrollWidth 1425px, stage right 1396.22px equals closed tab left 1396.22px; select right 1382.63px, leaving 13.59px before the tab.",
-    "mobile390Closed": "Viewport 390px, document scrollWidth 375px, stage right 346.22px equals closed tab left 346.22px; select right 336.63px; timeline scrollWidth 760px inside clientWidth 346px.",
-    "mobile320Closed": "Viewport 320px, document scrollWidth 305px, stage right 276.22px equals closed tab left 276.22px; wrapped selection tools keep select right 164.59px inside the stage; timeline scrollWidth 760px inside clientWidth 276px.",
-    "mobile320Foreground": "With Comments closed, selection Comment opens the foreground card at x8..268.22px within stage x0..276.22px and y333.41..656.61px; context, textarea, Post, Cancel and disclosure remain visible at 320x900.",
-    "mobile320Sidebar": "Opening the edge tab closes the foreground card, gives the 305px row to the thread, hides the tab, and keeps collapsed workbench ink and scrollbars out of the thread. Closing restores the stage and select.",
-    "desktop1440Sidebar": "Open thread begins where the stage ends at x1093px; the closed edge tab is absent and the main document does not overflow.",
-    "darkForegroundPost": "Mock computed Post text rgb(23,27,28) on rgb(79,179,166) gives 6.885:1. This is mock DOM and does not replace the native recapture.",
-    "localOnlyInteractions": "A new comment posted from the closed-sidebar foreground card, persisted in local mock state, and appeared when the edge tab opened. Reply, edit and historical projection remained usable after the layout change."
+  "methods": {
+    "pngByEye": "Read each original native PNG and zoomed critical controls. Screenshot observations cannot establish DOM hit testing or hidden overflow.",
+    "pngPixels": "Counted representative opaque RGB foreground and background pixels inside rendered Post, Preview base, Comment, and Play buttons, excluding antialiased edges. Ratios use WCAG relative luminance. Cropped view magnification does not change the original pixel measurements.",
+    "domReceipt": "The separate browser measurement JSON supplies geometry, page/timeline overflow, sidebar states, and hovered Post computed colors. It is browser evidence produced with these native screenshots by the parent integration run, not inferred from PNGs."
   },
-  "captures": [
+  "primaryCaptures": [
     {
       "file": "path-1440-light.png",
-      "px": [1440, 900],
-      "scheme": "light",
-      "composer": "closed",
-      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible."
+      "sizePx": [1440, 900],
+      "observation": "Closed tab outside content; long select label ellipsizes before a visible arrow. Play, preview warning and inspector visible."
     },
     {
       "file": "path-1440-dark.png",
-      "px": [1440, 900],
-      "scheme": "dark",
-      "composer": "closed",
-      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible."
+      "sizePx": [1440, 900],
+      "observation": "Same clear select and stage/tab separation in dark scheme. Play label remains legible."
     },
     {
       "file": "path-390-light.png",
-      "px": [390, 900],
-      "scheme": "light",
-      "composer": "closed",
-      "select": "Label ellipsized before visible native dropdown arrow; no collision by eye."
+      "sizePx": [390, 900],
+      "observation": "Select arrow visible after ellipsis; warning and Block affected playback legible; timeline alone continues off the right edge."
     },
     {
       "file": "path-390-dark.png",
-      "px": [390, 900],
-      "scheme": "dark",
-      "composer": "closed",
-      "select": "Label ellipsized before visible native dropdown arrow; no collision by eye."
+      "sizePx": [390, 900],
+      "observation": "Same select and warning visibility in dark scheme; no content outside the viewport is painted apart from the intentional timeline scroll region."
     },
     {
       "file": "path-1440-light-composer-open.png",
-      "px": [1440, 900],
-      "scheme": "light",
-      "composer": "open",
-      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible.",
-      "composerNote": "Context, textarea, Post, Cancel and disclosure visible without foreground clipping."
+      "sizePx": [1440, 900],
+      "observation": "Foreground card, context, textarea, Post, Cancel and disclosure complete. Tab does not cover the select. Background monitor and transport are deliberately behind the card."
     },
     {
       "file": "path-1440-dark-composer-open.png",
-      "px": [1440, 900],
-      "scheme": "dark",
-      "composer": "open",
-      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible.",
-      "composerNote": "Context, textarea, Post, Cancel and disclosure visible, but Post text has insufficient pixel contrast."
+      "sizePx": [1440, 900],
+      "observation": "Foreground card complete with dark ink on teal Post; no select/tab overlap."
     },
     {
       "file": "path-390-light-composer-open.png",
-      "px": [390, 900],
-      "scheme": "light",
-      "composer": "open",
-      "select": "Under foreground composer, not independently observable in this capture.",
-      "composerNote": "Foreground card x30..382, y195..462; context, textarea, Post, Cancel and disclosure fit inside the image without clipping. Background transport and toolbar are covered by the composer."
+      "sizePx": [390, 900],
+      "observation": "Foreground card fits within the 361px stage, including full disclosure; background controls are intentionally covered while composing."
     },
     {
       "file": "path-390-dark-composer-open.png",
-      "px": [390, 900],
-      "scheme": "dark",
-      "composer": "open",
-      "select": "Under foreground composer, not independently observable in this capture.",
-      "composerNote": "Foreground card x30..382, y195..462; context, textarea, Post, Cancel and disclosure fit inside the image without clipping. Background transport and toolbar are covered by the composer. Post text has insufficient pixel contrast."
+      "sizePx": [390, 900],
+      "observation": "Same card fit and disclosure in dark scheme; dark Post ink visibly differs from the previously failing white label."
     }
   ],
-  "pixelContrasts": [
+  "supplementalCaptures": [
+    {
+      "file": "native-controls-320-light-closed.png",
+      "observation": "Three selection modes wrap above the select; arrow visible and entirely inside 291px stage."
+    },
+    {
+      "file": "native-controls-320-dark-closed.png",
+      "observation": "Same wrapped controls, visible arrow, and closed edge tab in dark scheme."
+    },
+    {
+      "file": "native-controls-320-light-composer-open.png",
+      "observation": "Card x8..283.22, y177.73..479.86; context, textarea, Post, Cancel and entire disclosure visible."
+    },
+    {
+      "file": "native-controls-320-dark-composer-open.png",
+      "observation": "Same card bounds and complete disclosure in dark scheme; Post ink readable."
+    },
+    {
+      "file": "native-controls-320-light-preview-base.png",
+      "observation": "Teal Preview base media without unsupported effects button is legible. Separately, scope banner overlaps the first blocked-preview status lines above it."
+    },
+    {
+      "file": "native-controls-320-dark-preview-base.png",
+      "observation": "Dark-ink teal Preview base button is legible. The same two top text layers overlap as in light scheme."
+    },
+    {
+      "file": "native-controls-320-light-selection-controls.png",
+      "observation": "Selection readout, frame inputs, and teal Comment button are visible below the timeline; right edge of Comment ends at 265.30px inside the 291px stage."
+    },
+    {
+      "file": "native-controls-320-dark-selection-controls.png",
+      "observation": "Same selected range controls visible in dark scheme; teal Comment text uses dark foreground."
+    }
+  ],
+  "geometryFromNativeDom": {
+    "closedTab": "At 1440, 390, and 320px in both schemes, the DOM receipt places the closed tab outside the stage before and after stage/timeline scrolling. All enumerated transport, inspector, timeline, selection and select control boxes are within the stage and not tab-covered. All six exposed selects retain their arrow area. Zoomed 1440 PNG shows the select ending about x1398 and tab starting about x1411, a visible 13px gap.",
+    "overflow": [
+      {
+        "viewportWidth": 1440,
+        "documentPx": 0,
+        "bodyPx": 0,
+        "stagePx": 0,
+        "timelinePx": 0
+      },
+      {
+        "viewportWidth": 390,
+        "documentPx": 0,
+        "bodyPx": 0,
+        "stagePx": 0,
+        "timelinePx": 399
+      },
+      {
+        "viewportWidth": 320,
+        "documentPx": 0,
+        "bodyPx": 0,
+        "stagePx": 0,
+        "timelinePx": 469
+      }
+    ],
+    "sidebar": "In both desktop schemes, the open thread starts immediately after the stage with 0px gap, resizer visible and edge tab hidden; closing restores the tab. In both 390 and 320 schemes the open thread owns the row, resizer is hidden, gap is 0px, and closing restores the stage/tab.",
+    "composer": [
+      {
+        "viewportWidth": 1440,
+        "stageRightPx": 1411,
+        "cardLeftPx": 384.61,
+        "cardRightPx": 736.61,
+        "cardTopPx": 310.38,
+        "cardBottomPx": 576.81
+      },
+      {
+        "viewportWidth": 390,
+        "stageRightPx": 361,
+        "cardLeftPx": 8,
+        "cardRightPx": 353.22,
+        "cardTopPx": 209.31,
+        "cardBottomPx": 475.75
+      },
+      {
+        "viewportWidth": 320,
+        "stageRightPx": 291,
+        "cardLeftPx": 8,
+        "cardRightPx": 283.22,
+        "cardTopPx": 177.73,
+        "cardBottomPx": 479.86
+      }
+    ],
+    "composerComponents": "All six composer-normal and six composer-hover measurements report context, textarea, Post, Cancel and disclosure visible and within the stage. Screenshot inspection independently confirms no foreground text or control is clipped."
+  },
+  "contrastFromActualNativePixels": [
     {
       "control": "Play",
-      "light": {
-        "foreground": "#fbfbfa",
-        "background": "#1f6b64",
-        "ratio": 6.062
-      },
-      "dark": {
-        "foreground": "#171b1c",
-        "background": "#4fb3a6",
-        "ratio": 6.885
-      },
-      "basis": "Opaque colors counted in closed mobile PNG button rectangles x106..151, y282..306; also visible in desktop PNGs."
-    },
-    {
-      "control": "Preview warning and Block affected playback",
-      "light": {
-        "foreground": "#e6e9e7",
-        "background": "#0b0f12",
-        "ratio": 15.737
-      },
-      "dark": {
-        "foreground": "#e6e9e7",
-        "background": "#0b0f12",
-        "ratio": 15.737
-      },
-      "basis": "Opaque colors counted in all four mobile PNG warning rectangles x17..378, y68..119; wording and button fully visible in 2x crops."
-    },
-    {
-      "control": "Selected Range mode",
-      "light": {
-        "foreground": "#0f3b37",
-        "background": "#dfeeea",
-        "ratio": 10.32
-      },
-      "dark": {
-        "foreground": "#a7ded6",
-        "background": "#15332f",
-        "ratio": 9.093
-      },
-      "basis": "Representative CSS theme colors cross-checked against closed PNG appearance; not asserted as DOM computed colors."
-    },
-    {
-      "control": "Track select label",
-      "light": {
-        "foreground": "#16191a",
-        "background": "#fbfbfa",
-        "ratio": 17.07
-      },
-      "dark": {
-        "foreground": "#e6e9e7",
-        "background": "#171b1c",
-        "ratio": 14.194
-      },
-      "basis": "Opaque colors counted in closed select PNG rectangles: desktop x1238..1410,y494..517; mobile x158..318,y378..403. Desktop label reads before tab, but arrow is obscured."
+      "sources": ["path-390-light.png", "path-390-dark.png"],
+      "light": { "text": "#fbfbfa", "background": "#1f6b64", "ratio": 6.062 },
+      "dark": { "text": "#171b1c", "background": "#4fb3a6", "ratio": 6.885 }
     },
     {
       "control": "Composer Post",
-      "light": {
-        "foreground": "#ffffff",
-        "background": "#1f6b64",
-        "ratio": 6.277
-      },
-      "dark": {
-        "foreground": "#ffffff",
-        "background": "#4fb3a6",
-        "ratio": 2.521
-      },
-      "basis": "Opaque colors counted in mobile open composer PNG x42..88,y347..375 and dark desktop composer PNG x415..452,y461..490. The captured Post is .popover-card .popover-action.is-primary, which originally used white on patina at styles.css:320-324. The light 6.277:1 is white on patina; surface on patina is 6.062:1."
-    }
-  ],
-  "defects": [
-    {
-      "id": "desktop-select-tab-overlap",
-      "observedIn": [
-        "path-1440-light.png",
-        "path-1440-dark.png",
-        "path-1440-light-composer-open.png",
-        "path-1440-dark-composer-open.png"
+      "sources": [
+        "path-390-light-composer-open.png",
+        "path-390-dark-composer-open.png",
+        "native-controls-320-light-composer-open.png",
+        "native-controls-320-dark-composer-open.png"
       ],
-      "severity": "actionable",
-      "evidence": "By eye and pixel coordinates: select roughly x1238..1439,y493..517 while closed COMMENTS edge tab covers x1411..1439 across that y range. The final 29 px and native dropdown indicator are concealed. CSS reserves inline-end 1.5rem within the select, but does not reserve space from the overlaid tab.",
-      "capturePredatesSourceRepair": true
+      "light": { "text": "#fbfbfa", "background": "#1f6b64", "ratio": 6.062 },
+      "dark": { "text": "#171b1c", "background": "#4fb3a6", "ratio": 6.885 }
     },
     {
-      "id": "dark-post-contrast",
-      "observedIn": [
-        "path-1440-dark-composer-open.png",
-        "path-390-dark-composer-open.png"
+      "control": "Preview base media without unsupported effects",
+      "sources": [
+        "native-controls-320-light-preview-base.png",
+        "native-controls-320-dark-preview-base.png"
       ],
-      "severity": "actionable",
-      "evidence": "Rendered white Post text (#ffffff) on teal #4fb3a6 measures 2.521:1, below 4.5:1 for small text. The captured foreground composer uses .popover-card .popover-action.is-primary, which originally hardcoded white in styles.css:320-324; .action.primary is a separate shared primary control. The OTIO Play uses dark surface text and measures 6.885:1.",
-      "capturePredatesSourceRepair": true
+      "light": { "text": "#fbfbfa", "background": "#1f6b64", "ratio": 6.062 },
+      "dark": { "text": "#171b1c", "background": "#4fb3a6", "ratio": 6.885 }
+    },
+    {
+      "control": "Comment selection",
+      "sources": [
+        "native-controls-320-light-selection-controls.png",
+        "native-controls-320-dark-selection-controls.png"
+      ],
+      "light": { "text": "#fbfbfa", "background": "#1f6b64", "ratio": 6.062 },
+      "dark": { "text": "#171b1c", "background": "#4fb3a6", "ratio": 6.885 }
     }
   ],
-  "unverifiedFromTheseCaptures": [
-    "The .otio-preview-base button and .otio-comment-selection button do not appear in any of the eight PNGs. styles.css:3999 and 4083 use var(--surface) on var(--patina), with token ratios 6.062:1 light and 6.885:1 dark, but these are CSS-only predictions, not actual rendered button certifications.",
-    "The mobile image ends at x390 and shows a clipped timeline rail after sticky labels. styles.css:4033-4034 sets a max-width:100%, overflow-x:auto wrapper around a 760px-minimum track grid, which supports intentional internal horizontal timeline scrolling. PNGs cannot establish document scrollWidth or rule out invisible page-level overflow; that needs a DOM measurement on the native route.",
-    "Screenshots cannot show whether the desktop covered select indicator remains keyboard-operable or pointer-hit-testable."
+  "postHoverFromNativeDom": {
+    "lightNormalAndHover": {
+      "text": "rgb(251, 251, 250)",
+      "background": "rgb(31, 107, 100)",
+      "ratio": 6.0624709617609165
+    },
+    "darkNormalAndHover": {
+      "text": "rgb(23, 27, 28)",
+      "background": "rgb(79, 179, 166)",
+      "ratio": 6.885383352064758
+    },
+    "note": "Hover was measured in the native DOM receipt, not captured in the static PNGs."
+  },
+  "resolvedComparedWith97593f9": [
+    "Previously, the desktop Comments edge tab covered approximately 29px of the select and hid its arrow in all four 1440 captures. Final captures show a visible gap and unobstructed arrow.",
+    "Previously, white dark-mode composer Post ink on #4fb3a6 measured 2.521:1. Final actual dark ink measures 6.885:1 in 390 and 320 PNGs and in normal/hover DOM receipts. The captured Post selector is .popover-card .popover-action.is-primary, not .action.primary."
   ],
-  "designRead": "The dense editor timeline, restrained patina controls and squared typographic chrome read as an editing instrument rather than a default marketing template. I reject a redesign or smaller type as a substitute for reserving the closed comments tab footprint and correcting the dark button color. This is an observation by eye on the actual PNGs, not a site-registry or mock DOM certificate."
+  "currentDefects": [
+    {
+      "id": "blocked-preview-scope-status-collision-320",
+      "seenIn": [
+        "native-controls-320-light-preview-base.png",
+        "native-controls-320-dark-preview-base.png"
+      ],
+      "evidence": "At 320px the Incomplete preview scope text and first lines of the blocked-preview status are superimposed near the top of the dark stage, approximately x16..270, y70..110. Zoomed PNG pixels show both strings occupying the same rows, making the status opening unreadable. The teal Preview base button below is separately legible. This is a screenshot observation; the existing DOM receipt did not measure text ink overlap.",
+      "status": "Open visual defect, reported to integration owner before any additional UI edits."
+    }
+  ],
+  "limits": [
+    "The eight primary captures show the ordinary preview and composer; the separate 320px supplemental captures are required to inspect Preview base and Comment selection. Neither control was present in the older eight-image-only review.",
+    "PNG pixels establish appearance but not clickability. Native DOM receipt establishes control rectangles and page overflow, not text-ink collision, which the separate blocked-preview screenshot exposes.",
+    "This audit certifies neither the full source PATH nor external publish/deploy state. It records visual evidence only."
+  ],
+  "designRead": "The restrained square editor chrome and patina controls remain tied to the existing Relic visual system. Reject shrinking type or an unrelated new design to hide layout defects; the new scope/status overlap requires a targeted readability correction."
 }
