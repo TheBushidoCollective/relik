@@ -137,3 +137,54 @@ jobs:
           name: stdio-linux-ci-boundary-${{ github.run_id }}
           path: ${{ runner.temp }}/stdio-linux-ci-boundary
           if-no-files-found: warn
+
+  stdio-linux-full-test-trace:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/agent/stdio-linux-ci-boundary'
+    name: Stdio Linux full Test trace
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Install strace
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends strace
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Record trace environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/stdio-linux-full-test-trace"
+          bun -e 'const os = require("node:os"); console.log(JSON.stringify({ runner_os: process.env.RUNNER_OS ?? process.platform, platform: process.platform, architecture: process.arch, kernel_release: os.release(), kernel_version: os.version(), bun_version: Bun.version, bun_revision: Bun.revision ?? null, node_version: process.version }))' \
+            > "$RUNNER_TEMP/stdio-linux-full-test-trace/environment.json"
+          strace --version > "$RUNNER_TEMP/stdio-linux-full-test-trace/strace-version.txt"
+          test "$(bun --version)" = '1.3.14'
+
+      # This observes descriptor lifecycle only. A successful traced run does
+      # not identify a cause, repair protocol.test.ts, or clear any gate.
+      - name: Trace full Test command
+        run: |
+          TRACE_ROOT="$RUNNER_TEMP/stdio-linux-full-test-trace"
+          set +e
+          strace -f -ttt -yy -o "$TRACE_ROOT/bun-run-test.strace" \
+            -e trace=close,close_range,dup,dup2,dup3,fcntl,epoll_create,epoll_create1,epoll_ctl,pidfd_open,pidfd_getfd,execve,execveat,wait4,waitid,clone,clone3,fork,vfork,pipe,pipe2,socket,socketpair,open,openat,openat2,eventfd,eventfd2,timerfd_create,signalfd,signalfd4,accept,accept4 \
+            bun run test
+          status=$?
+          printf '%s\n' "$status" > "$TRACE_ROOT/test-exit-status.txt"
+          exit "$status"
+
+      - name: Upload full Test trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stdio-linux-full-test-trace-${{ github.run_id }}
+          path: ${{ runner.temp }}/stdio-linux-full-test-trace
+          if-no-files-found: warn
