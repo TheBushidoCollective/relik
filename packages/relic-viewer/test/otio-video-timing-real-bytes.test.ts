@@ -9,7 +9,7 @@ const fixtureRoot = new URL(
 
 type OraclePacket = {
   readonly pts: number | string;
-  readonly duration: number | string;
+  readonly duration?: number | string | null;
 };
 
 type OracleFile = {
@@ -19,6 +19,11 @@ type OracleFile = {
 
 type TimingOracle = {
   readonly files: Record<string, OracleFile>;
+};
+
+type PacketTiming = {
+  readonly pts: number;
+  readonly duration: number | null;
 };
 
 type Window = readonly [number, number];
@@ -37,30 +42,48 @@ function seconds(value: number | string, timeBase: string): number {
     !Number.isFinite(ticks) ||
     denominator <= 0
   ) {
-    throw new Error(`invalid ffprobe packet timing: ${String(value)}@${timeBase}`);
+    throw new Error(
+      `invalid ffprobe packet timing: ${String(value)}@${timeBase}`
+    );
   }
   return (ticks * numerator) / denominator;
 }
 
-function oracleWindows(file: OracleFile, includeTerminal: boolean): Window[] {
+function oraclePackets(file: OracleFile): PacketTiming[] {
   const packets = file.packets
     .map((packet) => ({
       pts: seconds(packet.pts, file.stream.time_base),
-      duration: seconds(packet.duration, file.stream.time_base),
+      duration:
+        packet.duration === undefined || packet.duration === null
+          ? null
+          : seconds(packet.duration, file.stream.time_base),
     }))
     .sort((left, right) => left.pts - right.pts);
-  const windows: Window[] = [];
 
-  for (let index = 0; index < packets.length; index += 1) {
+  for (let index = 1; index < packets.length; index += 1) {
+    const previous = packets[index - 1];
     const packet = packets[index];
-    if (!packet) throw new Error('missing ffprobe packet');
+    if (!previous || !packet || !(previous.pts < packet.pts)) {
+      throw new Error('ffprobe packet PTS must be strictly increasing');
+    }
+  }
+  return packets;
+}
+
+/**
+ * The independent oracle supplies actual packet PTS. For non-terminal packets
+ * their next PTS is the only portable upper boundary. ffprobe duration remains
+ * evidence for the terminal bound, never a substitute for reader timing.
+ */
+function adjacentPtsWindows(file: OracleFile): Window[] {
+  const packets = oraclePackets(file);
+  const windows: Window[] = [];
+  for (let index = 0; index + 1 < packets.length; index += 1) {
+    const packet = packets[index];
     const next = packets[index + 1];
-    if (!next && !includeTerminal) continue;
-    const end = next
-      ? Math.min(next.pts, packet.pts + packet.duration)
-      : packet.pts + packet.duration;
+    if (!packet || !next) throw new Error('missing ffprobe packet');
     const start = Math.max(0, packet.pts);
-    if (start < end) windows.push([start, end]);
+    if (start < next.pts) windows.push([start, next.pts]);
   }
   return windows;
 }
@@ -76,14 +99,46 @@ function certifiedWindows(timing: OtioVideoTiming): Window[] {
   });
 }
 
-function expectWindowsNear(actual: readonly Window[], expected: readonly Window[]): void {
+function expectWindowsNear(
+  actual: readonly Window[],
+  expected: readonly Window[]
+): void {
   expect(actual.length).toBe(expected.length);
   for (let index = 0; index < expected.length; index += 1) {
     const actualWindow = actual[index];
     const expectedWindow = expected[index];
-    if (!actualWindow || !expectedWindow) throw new Error('missing timing window');
+    if (!actualWindow || !expectedWindow) {
+      throw new Error('missing timing window');
+    }
     expect(actualWindow[0]).toBeCloseTo(expectedWindow[0], 10);
     expect(actualWindow[1]).toBeCloseTo(expectedWindow[1], 10);
+  }
+}
+
+function expectOrdinaryWindows(
+  actual: readonly Window[],
+  file: OracleFile
+): void {
+  const packets = oraclePackets(file);
+  const finalPacket = packets[packets.length - 1];
+  const finalWindow = actual[actual.length - 1];
+  if (!finalPacket || !finalWindow) {
+    throw new Error('ordinary fixture has no certified final packet window');
+  }
+
+  expectWindowsNear(actual.slice(0, -1), adjacentPtsWindows(file));
+  expect(finalWindow[0]).toBeCloseTo(finalPacket.pts, 10);
+
+  // A declared ISO edit may shorten the final interval. It cannot extend it
+  // past an independently available positive terminal duration.
+  if (
+    finalPacket.duration !== null &&
+    finalPacket.duration > 0 &&
+    Number.isFinite(finalPacket.pts + finalPacket.duration)
+  ) {
+    expect(finalWindow[1]).toBeLessThanOrEqual(
+      finalPacket.pts + finalPacket.duration + 1e-10
+    );
   }
 }
 
@@ -95,11 +150,16 @@ function mimeType(name: string): string {
 
 async function timingFor(name: string): Promise<OtioVideoTiming> {
   const bytes = await Bun.file(`${fixtureRoot}media/${name}`).arrayBuffer();
-  return scanOtioVideoTiming(new Blob([bytes], { type: mimeType(name) }), mimeType(name));
+  return scanOtioVideoTiming(
+    new Blob([bytes], { type: mimeType(name) }),
+    mimeType(name)
+  );
 }
 
 async function oracle(): Promise<TimingOracle> {
-  return Bun.file(`${fixtureRoot}timing-oracle.json`).json() as Promise<TimingOracle>;
+  return Bun.file(
+    `${fixtureRoot}media/timing-oracle.json`
+  ).json() as Promise<TimingOracle>;
 }
 
 describe('released Mediabunny scanner against independent synthetic ffprobe timing', () => {
@@ -116,10 +176,7 @@ describe('released Mediabunny scanner against independent synthetic ffprobe timi
       ]) {
         const file = timingOracle.files[name];
         if (!file) throw new Error(`missing ffprobe oracle for ${name}`);
-        expectWindowsNear(
-          certifiedWindows(await timingFor(name)),
-          oracleWindows(file, true)
-        );
+        expectOrdinaryWindows(certifiedWindows(await timingFor(name)), file);
       }
     }
   );
@@ -130,22 +187,24 @@ describe('released Mediabunny scanner against independent synthetic ffprobe timi
       const timingOracle = await oracle();
       const file = timingOracle.files['fr30.webm'];
       if (!file) throw new Error('missing ffprobe oracle for fr30.webm');
-      const ffprobePacket = file.packets.find(
-        (packet) => seconds(packet.pts, file.stream.time_base) === 0.033
+      const ffprobePacket = oraclePackets(file).find(
+        (packet) => Math.abs(packet.pts - 0.033) < 1e-10
       );
-      if (!ffprobePacket) throw new Error('missing 33ms WebM packet');
+      if (!ffprobePacket || ffprobePacket.duration === null) {
+        throw new Error('missing 33ms WebM packet');
+      }
 
       // ffprobe's coarse 33ms duration is evidence, not a replacement for the
       // released reader's measured .034. The next actual PTS still makes 2/30
       // belong to [.033, .067).
-      expect(
-        seconds(ffprobePacket.duration, file.stream.time_base)
-      ).toBeCloseTo(0.033, 10);
+      expect(ffprobePacket.duration).toBeCloseTo(0.033, 10);
       const target = 2 / 30;
       const matching = certifiedWindows(await timingFor('fr30.webm')).find(
         ([start, end]) => start <= target && target < end
       );
-      if (!matching) throw new Error('2/30 is not covered by a certified WebM window');
+      if (!matching) {
+        throw new Error('2/30 is not covered by a certified WebM window');
+      }
       expect(matching[0]).toBeCloseTo(0.033, 10);
       expect(matching[1]).toBeCloseTo(0.067, 10);
     }
@@ -178,17 +237,17 @@ describe('released Mediabunny scanner against independent synthetic ffprobe timi
       const file = timingOracle.files['no-duration.webm'];
       if (!file) throw new Error('missing ffprobe oracle for no-duration.webm');
       const actual = certifiedWindows(await timingFor('no-duration.webm'));
-      expectWindowsNear(actual, oracleWindows(file, false));
+      expectWindowsNear(actual, adjacentPtsWindows(file));
 
-      const terminal = Math.max(
-        ...file.packets.map((packet) =>
-          seconds(packet.pts, file.stream.time_base)
-        )
-      );
-      expect(terminal).toBeCloseTo(2.967, 10);
+      const packets = oraclePackets(file);
+      const terminalPacket = packets[packets.length - 1];
+      if (!terminalPacket) throw new Error('missing no-duration terminal packet');
+      expect(terminalPacket.pts).toBeCloseTo(2.967, 10);
       expect(actual.length).toBeGreaterThan(0);
       expect(
-        actual.some(([start, end]) => start <= terminal && terminal < end)
+        actual.some(
+          ([start, end]) => start <= terminalPacket.pts && terminalPacket.pts < end
+        )
       ).toBe(false);
     }
   );
