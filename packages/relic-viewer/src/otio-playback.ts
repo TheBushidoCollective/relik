@@ -21,6 +21,8 @@ import {
   addRationalTimes,
   compareRationalTimes,
   evaluateOtioAt,
+  otioSamplingMap,
+  rangeContainsTime,
   rescaleTime,
   timeToSeconds,
 } from '@relic/format';
@@ -475,14 +477,55 @@ function decoderLocalSourceTime(
     : sourceTime;
 }
 
+function acceptsDecoderLocalZeroAtAvailableStart(
+  document: OtioDocumentV1,
+  contrib: OtioVideoContribution | OtioAudioContribution,
+  acceptedLocalZero: boolean
+): boolean {
+  if (!acceptedLocalZero) return false;
+  if (!Object.hasOwn(document.nodes, contrib.node_id)) return false;
+  const node = document.nodes[contrib.node_id];
+  const available = node?.available_range;
+  if (
+    !node ||
+    !available ||
+    !Number.isFinite(available.start_time.value) ||
+    !Number.isFinite(available.start_time.rate) ||
+    available.start_time.rate <= 0 ||
+    !Number.isFinite(available.duration.value) ||
+    available.duration.value <= 0 ||
+    !Number.isFinite(available.duration.rate) ||
+    available.duration.rate <= 0
+  ) {
+    return false;
+  }
+  const map = otioSamplingMap(node);
+  if (
+    !map?.available_start ||
+    contrib.source_time.rate !== map.sample_origin.rate ||
+    map.available_start.value !== available.start_time.value ||
+    map.available_start.rate !== available.start_time.rate
+  ) {
+    return false;
+  }
+  return rangeContainsTime(available, map.available_start);
+}
+
 function sampleUnavailable(
+  document: OtioDocumentV1,
   contrib: OtioVideoContribution | OtioAudioContribution
 ): boolean {
   const acceptedLocalZero = acceptsDecoderLocalZero(contrib.source_time);
+  const acceptedAtAvailableStart = acceptsDecoderLocalZeroAtAvailableStart(
+    document,
+    contrib,
+    acceptedLocalZero
+  );
+  if (acceptedLocalZero && !acceptedAtAvailableStart) return true;
   const localSourceTime = decoderLocalSourceTime(contrib.source_time);
   return (
     localSourceTime.value < 0 ||
-    (!acceptedLocalZero &&
+    (!acceptedAtAvailableStart &&
       contrib.diagnostics.some(
         (diagnostic) => diagnostic.code === 'missing-handles'
       ))
@@ -1436,7 +1479,7 @@ export function createOtioPlayback(
       );
       return { kind: 'empty' };
     }
-    if (sampleUnavailable(contrib)) return { kind: 'empty' };
+    if (sampleUnavailable(doc, contrib)) return { kind: 'empty' };
     const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
     const dup = seen.get(dupKey) ?? 0;
     seen.set(dupKey, dup + 1);
@@ -1512,7 +1555,7 @@ export function createOtioPlayback(
         }
         continue;
       }
-      if (sampleUnavailable(contrib)) continue;
+      if (sampleUnavailable(doc, contrib)) continue;
       const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
       const dup = seen.get(dupKey) ?? 0;
       seen.set(dupKey, dup + 1);

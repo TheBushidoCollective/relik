@@ -429,6 +429,7 @@ function sampledMediaDocument(options: {
   readonly availableStart?: number;
   readonly sourceStart?: OtioRationalTime;
   readonly availableStartTime?: OtioRationalTime;
+  readonly includeAvailableRange?: boolean;
   readonly targetUrl?: string;
 }): OtioDocumentV1 {
   const {
@@ -438,6 +439,7 @@ function sampledMediaDocument(options: {
     availableStart = 0,
     sourceStart = { value: 0, rate },
     availableStartTime = { value: availableStart, rate },
+    includeAvailableRange = true,
     targetUrl: explicitTargetUrl,
   } = options;
   const trackId = kind === 'Video' ? 'track_v' : 'track_a';
@@ -477,14 +479,18 @@ function sampledMediaDocument(options: {
                 media_reference: {
                   OTIO_SCHEMA: 'ExternalReference.1',
                   target_url: targetUrl,
-                  available_range: {
-                    OTIO_SCHEMA: 'TimeRange.1',
-                    start_time: time(
-                      availableStartTime.value,
-                      availableStartTime.rate
-                    ),
-                    duration: time(duration),
-                  },
+                  ...(includeAvailableRange
+                    ? {
+                        available_range: {
+                          OTIO_SCHEMA: 'TimeRange.1',
+                          start_time: time(
+                            availableStartTime.value,
+                            availableStartTime.rate
+                          ),
+                          duration: time(duration),
+                        },
+                      }
+                    : {}),
                 },
               },
             ],
@@ -1353,6 +1359,124 @@ describe('otio playback controller', () => {
     expect(voice?.paused).toBe(false);
     expect(voice?.attrs.get('data-active')).toBe('true');
     expect(audio.getState().diagnostics).toContainEqual(audioHandle);
+    expect(
+      evaluateOtioAt(audioDocument, 'timeline_1', {
+        value: 0,
+        rate: 30,
+      }).audio_contributions[0]
+    ).toEqual(audioContribution);
+    audio.dispose();
+  });
+
+  test('withholds tiny negative samples without known media availability', async () => {
+    const videoBlob = new Blob(['unknown availability video marker'], {
+      type: 'video/mp4',
+    });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', videoBlob]]),
+      timings: new Map<Blob, OtioVideoTiming>([
+        [
+          videoBlob,
+          {
+            kind: 'windows',
+            starts: new Float64Array([0]),
+            ends: new Float64Array([1 / 60]),
+          },
+        ],
+      ]),
+    });
+    const videoDocument = sampledMediaDocument({
+      kind: 'Video',
+      rate: 24,
+      duration: 48,
+      sourceStart: { value: -5e-8, rate: 24 },
+      includeAvailableRange: false,
+    });
+    const videoContribution = evaluateOtioAt(videoDocument, 'timeline_1', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    if (!videoContribution) {
+      throw new Error('unknown-availability video sample is missing');
+    }
+    const unknownAvailability = videoContribution.diagnostics.find(
+      (issue) =>
+        issue.code === 'invalid-timing' &&
+        issue.message.includes('Available range')
+    );
+    if (!unknownAvailability) {
+      throw new Error(
+        'unknown-availability video sample is missing its diagnostic'
+      );
+    }
+    expect(
+      compareRationalTimes(videoContribution.source_time, {
+        value: 0,
+        rate: videoContribution.source_time.rate,
+      })
+    ).toBeLessThan(0);
+    const firstVideo = created.length;
+    const video = createOtioPlayback({
+      document: videoDocument,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    await video.seek({ value: 0, rate: 24 });
+
+    expect(created.slice(firstVideo).some((element) => element.muted)).toBe(
+      false
+    );
+    expect(fixture.calls).toHaveLength(0);
+    expect(video.getState().diagnostics).toContainEqual(unknownAvailability);
+    expect(
+      evaluateOtioAt(videoDocument, 'timeline_1', {
+        value: 0,
+        rate: 24,
+      }).video_contributions[0]
+    ).toEqual(videoContribution);
+    video.dispose();
+
+    const firstAudio = created.length;
+    const audioDocument = sampledMediaDocument({
+      kind: 'Audio',
+      rate: 30,
+      duration: 60,
+      sourceStart: { value: -5e-8, rate: 30 },
+      includeAvailableRange: false,
+    });
+    const audioContribution = evaluateOtioAt(audioDocument, 'timeline_1', {
+      value: 0,
+      rate: 30,
+    }).audio_contributions[0];
+    if (!audioContribution) {
+      throw new Error('unknown-availability audio sample is missing');
+    }
+    expect(
+      compareRationalTimes(audioContribution.source_time, {
+        value: 0,
+        rate: audioContribution.source_time.rate,
+      })
+    ).toBeLessThan(0);
+    const audio = createOtioPlayback({
+      document: audioDocument,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:unknown-availability-audio',
+    });
+    await audio.play();
+    await audio.seek({ value: 0, rate: 30 });
+
+    expect(
+      created
+        .slice(firstAudio)
+        .some(
+          (element) =>
+            element.attrs.get('data-bundle-path') === 'media/dialogue.wav'
+        )
+    ).toBe(false);
     expect(
       evaluateOtioAt(audioDocument, 'timeline_1', {
         value: 0,
