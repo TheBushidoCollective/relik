@@ -34,6 +34,10 @@ import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { nodeFiles } from '../src/files.ts';
 import { type PublishDeps, publish } from '../src/publish.ts';
 import { loadPublishState } from '../src/state.ts';
+import {
+  createBrowserHeadlessLaunch,
+  validateBrowserHeadlessCommandLine,
+} from './browser-headless.ts';
 
 const MAX_TRIALS = 16;
 const TARGET_DEADLINE_MS = 45_000;
@@ -1492,7 +1496,7 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
   const requested = process.env['RELIC_OTIO_CHROME_PATH'];
   assert.ok(
     requested && requested !== 'none' && requested !== 'disabled',
-    'RELIC_OTIO_CHROME_PATH must name the owned headless Chrome executable'
+    'RELIC_OTIO_CHROME_PATH must name the owned Chrome executable'
   );
   const found = await runNonTargetPhase('context', 'browser.discover', () =>
     discoverChrome(requested)
@@ -1500,7 +1504,7 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
   assert.equal(
     found.kind,
     'found',
-    `no headless Chrome: ${found.kind === 'not_found' ? found.detail : found.kind}`
+    `no Chrome: ${found.kind === 'not_found' ? found.detail : found.kind}`
   );
   if (found.kind !== 'found') throw new Error('unreachable');
 
@@ -1517,9 +1521,13 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
       () => mkdtemp(join(tmpdir(), 'relic-stdio-mcp-chrome-'))
     );
     profile = createdProfile;
+    const launch = createBrowserHeadlessLaunch(
+      chromeArgs(found.path, createdProfile),
+      createdProfile
+    );
     const child = await runNonTargetPhase('context', 'browser.spawn', () => {
       preSpawn = fdCensus();
-      return spawn(found.path, chromeArgs(found.path, createdProfile), {
+      return spawn(found.path, launch.args, {
         stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
       });
     });
@@ -1615,12 +1623,14 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
       () => connection.send('Browser.getVersion'),
       browserOwner
     );
-    const product = String(version['product'] ?? '');
-    receipt.product = product;
-    assert.ok(
-      /headless/i.test(product) || found.path.includes('headless'),
-      `browser is not headless: ${product}`
+    receipt.product = String(version['product'] ?? '');
+    const commandLine = await runNonTargetPhase(
+      'context',
+      'browser.get_command_line',
+      () => connection.send('Browser.getBrowserCommandLine'),
+      browserOwner
     );
+    validateBrowserHeadlessCommandLine(commandLine, launch);
 
     try {
       await runNonTargetPhase(

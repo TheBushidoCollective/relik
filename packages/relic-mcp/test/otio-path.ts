@@ -21,8 +21,8 @@
  *   mise exec -- bun run --cwd packages/relic-mcp build
  *   uv on PATH, able to run `uv run --with opentimelineio==0.18.1`
  *   ffmpeg and ffprobe on PATH
- *   headless Chrome in RELIC_OTIO_CHROME_PATH, or RELIC_CHROME_PATH when that
- *   names an executable. A headed browser is refused.
+ *   Chrome in RELIC_OTIO_CHROME_PATH, or RELIC_CHROME_PATH when that names an
+ *   executable. The owned browser's CDP command line must attest headless mode.
  *
  * RELIC_OTIO_PATH_CLIENT selects the MCP client: `source` (the built bundle)
  * or `npx:<version>` for a published package. Both run the full path.
@@ -58,6 +58,12 @@ import { MemoryStore } from '@relic/server/src/store.ts';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { loadPublishState } from '../src/state.ts';
+import {
+  attestBrowserHeadless,
+  type BrowserHeadlessLaunch,
+  cleanupOwnedBrowserStartup,
+  createBrowserHeadlessLaunch,
+} from './browser-headless.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
@@ -1614,7 +1620,7 @@ async function openBrowser(
   assert.equal(
     found.kind,
     'found',
-    `no headless Chrome: ${found.kind === 'not_found' ? found.detail : found.kind}`
+    `no Chrome: ${found.kind === 'not_found' ? found.detail : found.kind}`
   );
   if (found.kind !== 'found') throw new Error('unreachable');
   const profile = await mkdtemp(join(tmpdir(), 'relic-otio-chrome-'));
@@ -1631,105 +1637,110 @@ async function openBrowser(
     ],
     'shared Chrome network isolation changed; re-derive the OTIO loopback exception'
   );
-  const args = [
-    ...shared.map((arg) =>
-      arg === '--proxy-bypass-list=<-loopback>'
-        ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${service.port}`
-        : arg === '--host-resolver-rules=MAP * ~NOTFOUND'
-          ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
-          : arg
-    ),
-    '--autoplay-policy=no-user-gesture-required',
-  ];
-  const child = spawn(found.path, args, {
-    stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
-  });
+  let launch: BrowserHeadlessLaunch;
+  let child: ChildProcess;
+  try {
+    launch = createBrowserHeadlessLaunch(
+      [
+        ...shared.map((arg) =>
+          arg === '--proxy-bypass-list=<-loopback>'
+            ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${service.port}`
+            : arg === '--host-resolver-rules=MAP * ~NOTFOUND'
+              ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
+              : arg
+        ),
+        '--autoplay-policy=no-user-gesture-required',
+      ],
+      profile
+    );
+    child = spawn(found.path, launch.args, {
+      stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    await rm(profile, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
   children.add(child);
-  const toChrome = child.stdio[3];
-  const fromChrome = child.stdio[4];
-  assert.ok(
-    toChrome instanceof Writable,
-    'Chrome fd 3 did not expose a writable debug pipe'
-  );
-  assert.ok(
-    fromChrome instanceof Readable,
-    'Chrome fd 4 did not expose a readable debug pipe'
-  );
-  const cdp = connectPipe(toChrome, fromChrome);
-  const blocked: string[] = [];
-  const continuedNonLoopback: string[] = [];
-  const cspHeaders: string[] = [];
-  const workerUrls: string[] = [];
-  const workerHookErrors: Error[] = [];
-  const workerHooks = new Set<Promise<void>>();
-  let stopWorkerAttach: (() => void) | undefined;
-  const documentUrl = url.split('#')[0] ?? url;
-  const version = await cdp.send('Browser.getVersion');
-  const product = String(version['product'] ?? '');
-  assert.ok(
-    /headless/i.test(product) || found.path.includes('headless'),
-    `browser is not headless: ${product}`
-  );
-  const created = (await cdp.send('Target.createTarget', {
-    url: 'about:blank',
-  })) as { targetId: string };
-  const attached = (await cdp.send('Target.attachToTarget', {
-    targetId: created.targetId,
-    flatten: true,
-  })) as { sessionId: string };
-  const sessionId = attached.sessionId;
-  await cdp.send('Page.enable', {}, sessionId);
-  await cdp.send('Runtime.enable', {}, sessionId);
-  await cdp.send('Network.enable', {}, sessionId);
-  await cdp.send(
-    'Fetch.enable',
-    { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
-    sessionId
-  );
-  const stopResponses = cdp.onEvent((event) => {
-    if (
-      event.method !== 'Network.responseReceived' ||
-      event.sessionId !== sessionId
-    )
-      return;
-    const params = event.params as {
-      response?: {
-        url?: string;
-        headers?: Record<string, string | number | boolean>;
-      };
-    };
-    if (params.response?.url !== documentUrl) return;
-    for (const [name, value] of Object.entries(params.response.headers ?? {})) {
-      if (name.toLowerCase() === 'content-security-policy')
-        cspHeaders.push(String(value));
-    }
-  });
-  const stopEvents = cdp.onEvent((event) => {
-    if (event.method !== 'Fetch.requestPaused' || event.sessionId !== sessionId)
-      return;
-    const params = event.params as {
-      requestId?: string;
-      request?: { url?: string };
-    };
-    const requestUrl = params.request?.url ?? '';
-    const requestId = params.requestId;
-    if (!requestId) return;
-    if (loopbackUrl(requestUrl)) {
-      void cdp
-        .send('Fetch.continueRequest', { requestId }, sessionId)
-        .catch(() => {});
-      return;
-    }
-    blocked.push(requestUrl);
-    void cdp
-      .send(
-        'Fetch.failRequest',
-        { requestId, errorReason: 'BlockedByClient' },
-        sessionId
+  let startupConnection: CdpConnection | undefined;
+  try {
+    const toChrome = child.stdio[3];
+    const fromChrome = child.stdio[4];
+    assert.ok(
+      toChrome instanceof Writable,
+      'Chrome fd 3 did not expose a writable debug pipe'
+    );
+    assert.ok(
+      fromChrome instanceof Readable,
+      'Chrome fd 4 did not expose a readable debug pipe'
+    );
+    const cdp = connectPipe(toChrome, fromChrome);
+    startupConnection = cdp;
+    await attestBrowserHeadless(cdp, launch);
+    const created = (await cdp.send('Target.createTarget', {
+      url: 'about:blank',
+    })) as { targetId: string };
+    const attached = (await cdp.send('Target.attachToTarget', {
+      targetId: created.targetId,
+      flatten: true,
+    })) as { sessionId: string };
+    const sessionId = attached.sessionId;
+    await cdp.send('Page.enable', {}, sessionId);
+    await cdp.send('Runtime.enable', {}, sessionId);
+    await cdp.send('Network.enable', {}, sessionId);
+    await cdp.send(
+      'Fetch.enable',
+      { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
+      sessionId
+    );
+    const stopResponses = cdp.onEvent((event) => {
+      if (
+        event.method !== 'Network.responseReceived' ||
+        event.sessionId !== sessionId
       )
-      .catch(() => {});
-  });
-  const webCodecsTrap = String.raw`(() => {
+        return;
+      const params = event.params as {
+        response?: {
+          url?: string;
+          headers?: Record<string, string | number | boolean>;
+        };
+      };
+      if (params.response?.url !== documentUrl) return;
+      for (const [name, value] of Object.entries(
+        params.response.headers ?? {}
+      )) {
+        if (name.toLowerCase() === 'content-security-policy')
+          cspHeaders.push(String(value));
+      }
+    });
+    const stopEvents = cdp.onEvent((event) => {
+      if (
+        event.method !== 'Fetch.requestPaused' ||
+        event.sessionId !== sessionId
+      )
+        return;
+      const params = event.params as {
+        requestId?: string;
+        request?: { url?: string };
+      };
+      const requestUrl = params.request?.url ?? '';
+      const requestId = params.requestId;
+      if (!requestId) return;
+      if (loopbackUrl(requestUrl)) {
+        void cdp
+          .send('Fetch.continueRequest', { requestId }, sessionId)
+          .catch(() => {});
+        return;
+      }
+      blocked.push(requestUrl);
+      void cdp
+        .send(
+          'Fetch.failRequest',
+          { requestId, errorReason: 'BlockedByClient' },
+          sessionId
+        )
+        .catch(() => {});
+    });
+    const webCodecsTrap = String.raw`(() => {
     for (const name of ['VideoDecoder', 'AudioDecoder']) {
       const constructor = Reflect.get(globalThis, name);
       if (typeof constructor !== 'function') continue;
@@ -1741,9 +1752,9 @@ async function openBrowser(
       });
     }
   })()`;
-  const pagePrelude = [
-    options.recordMediaSeekTargets
-      ? String.raw`(() => {
+    const pagePrelude = [
+      options.recordMediaSeekTargets
+        ? String.raw`(() => {
           const key = '__relicOtioMediaSeekTargets';
           const descriptor = Object.getOwnPropertyDescriptor(
             HTMLMediaElement.prototype,
@@ -1764,175 +1775,175 @@ async function openBrowser(
             },
           });
         })()`
-      : '',
-    options.blockWebCodecs ? webCodecsTrap : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-  if (pagePrelude) {
-    await cdp.send(
-      'Page.addScriptToEvaluateOnNewDocument',
-      { source: pagePrelude },
-      sessionId
-    );
-  }
-  if (options.blockWebCodecs) {
-    stopWorkerAttach = cdp.onEvent((event) => {
-      if (event.method !== 'Target.attachedToTarget') return;
-      const params = event.params as {
-        sessionId?: string;
-        targetInfo?: { type?: string; url?: string };
-      };
-      const workerSessionId = params.sessionId;
-      if (!workerSessionId) return;
-      if (params.targetInfo?.type !== 'worker') {
-        void cdp
-          .send('Runtime.runIfWaitingForDebugger', {}, workerSessionId)
-          .catch(() => {});
-        return;
-      }
-      workerUrls.push(params.targetInfo.url ?? '');
-      const hook = (async () => {
-        try {
-          await cdp.send('Runtime.enable', {}, workerSessionId);
-          const patched = await cdp.send(
-            'Runtime.evaluate',
-            { expression: webCodecsTrap, returnByValue: true },
-            workerSessionId
-          );
-          if (patched['exceptionDetails'])
-            throw new Error(
-              `could not trap WebCodecs in worker ${params.targetInfo?.url ?? ''}`
-            );
-        } catch (error) {
-          workerHookErrors.push(
-            error instanceof Error ? error : new Error(String(error))
-          );
-        } finally {
-          await cdp
+        : '',
+      options.blockWebCodecs ? webCodecsTrap : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    if (pagePrelude) {
+      await cdp.send(
+        'Page.addScriptToEvaluateOnNewDocument',
+        { source: pagePrelude },
+        sessionId
+      );
+    }
+    if (options.blockWebCodecs) {
+      stopWorkerAttach = cdp.onEvent((event) => {
+        if (event.method !== 'Target.attachedToTarget') return;
+        const params = event.params as {
+          sessionId?: string;
+          targetInfo?: { type?: string; url?: string };
+        };
+        const workerSessionId = params.sessionId;
+        if (!workerSessionId) return;
+        if (params.targetInfo?.type !== 'worker') {
+          void cdp
             .send('Runtime.runIfWaitingForDebugger', {}, workerSessionId)
-            .catch((error) => {
-              workerHookErrors.push(
-                error instanceof Error ? error : new Error(String(error))
-              );
-            });
+            .catch(() => {});
+          return;
         }
-      })();
-      workerHooks.add(hook);
-      void hook.then(() => workerHooks.delete(hook));
-    });
+        workerUrls.push(params.targetInfo.url ?? '');
+        const hook = (async () => {
+          try {
+            await cdp.send('Runtime.enable', {}, workerSessionId);
+            const patched = await cdp.send(
+              'Runtime.evaluate',
+              { expression: webCodecsTrap, returnByValue: true },
+              workerSessionId
+            );
+            if (patched['exceptionDetails'])
+              throw new Error(
+                `could not trap WebCodecs in worker ${params.targetInfo?.url ?? ''}`
+              );
+          } catch (error) {
+            workerHookErrors.push(
+              error instanceof Error ? error : new Error(String(error))
+            );
+          } finally {
+            await cdp
+              .send('Runtime.runIfWaitingForDebugger', {}, workerSessionId)
+              .catch((error) => {
+                workerHookErrors.push(
+                  error instanceof Error ? error : new Error(String(error))
+                );
+              });
+          }
+        })();
+        workerHooks.add(hook);
+        void hook.then(() => workerHooks.delete(hook));
+      });
+      await cdp.send(
+        'Target.setAutoAttach',
+        {
+          autoAttach: true,
+          waitForDebuggerOnStart: true,
+          flatten: true,
+        },
+        sessionId
+      );
+    }
     await cdp.send(
-      'Target.setAutoAttach',
+      'Network.setCookie',
       {
-        autoAttach: true,
-        waitForDebuggerOnStart: true,
-        flatten: true,
+        name: 'relic_session',
+        value: sessionToken,
+        url: origin,
+        httpOnly: true,
+        secure: false,
+        sameSite: 'Lax',
       },
       sessionId
     );
-  }
-  await cdp.send(
-    'Network.setCookie',
-    {
-      name: 'relic_session',
-      value: sessionToken,
-      url: origin,
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-    sessionId
-  );
-  const loaded = cdp.waitForEvent('Page.loadEventFired', {
-    sessionId,
-    timeoutMs: 20000,
-  });
-  const navigated = await cdp.send('Page.navigate', { url }, sessionId);
-  if (navigated['errorText'] !== undefined) {
-    loaded.catch(() => {});
-    assert.fail(`navigation failed: ${String(navigated['errorText'])}`);
-  }
-  await loaded;
-  const landed = await cdp.send(
-    'Runtime.evaluate',
-    {
-      expression: 'location.origin',
-      returnByValue: true,
-    },
-    sessionId
-  );
-  assert.equal(
-    (landed['result'] as { value?: unknown } | undefined)?.value,
-    origin,
-    'browser did not land on the service origin'
-  );
-  return {
-    blocked,
-    continuedNonLoopback,
-    cspHeaders,
-    workerUrls,
-    send: (method, params) => cdp.send(method, params, sessionId),
-    async evaluate<T>(expression: string): Promise<T> {
-      const res = await cdp.send(
-        'Runtime.evaluate',
-        {
-          expression,
-          awaitPromise: true,
-          returnByValue: true,
-          timeout: 15000,
-        },
-        sessionId
-      );
-      const exception = res['exceptionDetails'] as
-        | { text?: string; exception?: { description?: string } }
-        | undefined;
-      assert.ok(
-        !exception,
-        `page evaluation failed: ${exception?.text ?? exception?.exception?.description ?? JSON.stringify(res)}`
-      );
-      const inner = res['result'] as { value?: T } | undefined;
-      return inner?.value as T;
-    },
-    async mediaSeekTargets(): Promise<number[]> {
-      const result = await cdp.send(
-        'Runtime.evaluate',
-        {
-          expression:
-            'Array.isArray(globalThis.__relicOtioMediaSeekTargets) ? globalThis.__relicOtioMediaSeekTargets : []',
-          returnByValue: true,
-        },
-        sessionId
-      );
-      const value = (result['result'] as { value?: unknown } | undefined)
-        ?.value;
-      return Array.isArray(value)
-        ? value.filter((entry): entry is number => typeof entry === 'number')
-        : [];
-    },
-    async waitForWorkerHooks(): Promise<void> {
-      await Promise.all([...workerHooks]);
-      assert.deepEqual(
-        workerHookErrors,
-        [],
-        `could not install the WebCodecs trap: ${workerHookErrors.map((error) => error.message).join('; ')}`
-      );
-    },
-    async screenshot(label: string): Promise<void> {
-      const shot = (await cdp.send(
-        'Page.captureScreenshot',
-        { format: 'png' },
-        sessionId
-      )) as { data: string };
-      const bytes = Buffer.from(shot.data, 'base64');
-      assert.ok(bytes.length > 1000, `screenshot ${label} is empty`);
-      await writeFile(join(shotDir, `${label}.png`), bytes);
-    },
-    async close(): Promise<void> {
-      await cdp
-        .send(
+    const loaded = cdp.waitForEvent('Page.loadEventFired', {
+      sessionId,
+      timeoutMs: 20000,
+    });
+    const navigated = await cdp.send('Page.navigate', { url }, sessionId);
+    if (navigated['errorText'] !== undefined) {
+      loaded.catch(() => {});
+      assert.fail(`navigation failed: ${String(navigated['errorText'])}`);
+    }
+    await loaded;
+    const landed = await cdp.send(
+      'Runtime.evaluate',
+      {
+        expression: 'location.origin',
+        returnByValue: true,
+      },
+      sessionId
+    );
+    assert.equal(
+      (landed['result'] as { value?: unknown } | undefined)?.value,
+      origin,
+      'browser did not land on the service origin'
+    );
+    return {
+      blocked,
+      continuedNonLoopback,
+      cspHeaders,
+      workerUrls,
+      send: (method, params) => cdp.send(method, params, sessionId),
+      async evaluate<T>(expression: string): Promise<T> {
+        const res = await cdp.send(
           'Runtime.evaluate',
           {
-            expression: `(() => {
+            expression,
+            awaitPromise: true,
+            returnByValue: true,
+            timeout: 15000,
+          },
+          sessionId
+        );
+        const exception = res['exceptionDetails'] as
+          | { text?: string; exception?: { description?: string } }
+          | undefined;
+        assert.ok(
+          !exception,
+          `page evaluation failed: ${exception?.text ?? exception?.exception?.description ?? JSON.stringify(res)}`
+        );
+        const inner = res['result'] as { value?: T } | undefined;
+        return inner?.value as T;
+      },
+      async mediaSeekTargets(): Promise<number[]> {
+        const result = await cdp.send(
+          'Runtime.evaluate',
+          {
+            expression:
+              'Array.isArray(globalThis.__relicOtioMediaSeekTargets) ? globalThis.__relicOtioMediaSeekTargets : []',
+            returnByValue: true,
+          },
+          sessionId
+        );
+        const value = (result['result'] as { value?: unknown } | undefined)
+          ?.value;
+        return Array.isArray(value)
+          ? value.filter((entry): entry is number => typeof entry === 'number')
+          : [];
+      },
+      async waitForWorkerHooks(): Promise<void> {
+        await Promise.all([...workerHooks]);
+        assert.deepEqual(
+          workerHookErrors,
+          [],
+          `could not install the WebCodecs trap: ${workerHookErrors.map((error) => error.message).join('; ')}`
+        );
+      },
+      async screenshot(label: string): Promise<void> {
+        const shot = (await cdp.send(
+          'Page.captureScreenshot',
+          { format: 'png' },
+          sessionId
+        )) as { data: string };
+        const bytes = Buffer.from(shot.data, 'base64');
+        assert.ok(bytes.length > 1000, `screenshot ${label} is empty`);
+        await writeFile(join(shotDir, `${label}.png`), bytes);
+      },
+      async close(): Promise<void> {
+        await cdp
+          .send(
+            'Runtime.evaluate',
+            {
+              expression: `(() => {
           for (const node of document.querySelectorAll('audio,video')) {
             node.pause();
             node.removeAttribute('src');
@@ -1940,32 +1951,42 @@ async function openBrowser(
           }
           document.querySelector('.otio-view')?.dispatchEvent(new Event('pagehide'));
         })()`,
-            awaitPromise: true,
-          },
-          sessionId
-        )
-        .catch(() => {});
-      stopEvents();
-      stopResponses();
-      stopWorkerAttach?.();
-      await cdp
-        .send(
-          'Target.setAutoAttach',
-          {
-            autoAttach: false,
-            waitForDebuggerOnStart: false,
-            flatten: true,
-          },
-          sessionId
-        )
-        .catch(() => {});
-      await cdp.send('Browser.close').catch(() => {});
-      child.kill('SIGKILL');
-      children.delete(child);
-      cdp.dispose();
-      await rm(profile, { recursive: true, force: true });
-    },
-  };
+              awaitPromise: true,
+            },
+            sessionId
+          )
+          .catch(() => {});
+        stopEvents();
+        stopResponses();
+        stopWorkerAttach?.();
+        await cdp
+          .send(
+            'Target.setAutoAttach',
+            {
+              autoAttach: false,
+              waitForDebuggerOnStart: false,
+              flatten: true,
+            },
+            sessionId
+          )
+          .catch(() => {});
+        await cdp.send('Browser.close').catch(() => {});
+        child.kill('SIGKILL');
+        children.delete(child);
+        cdp.dispose();
+        await rm(profile, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await cleanupOwnedBrowserStartup({
+      child,
+      connection: startupConnection,
+      forgetChild: () => children.delete(child),
+      profile,
+      removeProfile: undefined,
+    });
+    throw error;
+  }
 }
 
 async function waitReady(browser: ChromeSession): Promise<string> {
