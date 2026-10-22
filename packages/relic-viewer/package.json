@@ -16,6 +16,7 @@
     "@relic/format": "workspace:*",
     "@relic/server": "workspace:*",
     "diff": "^9.0.0",
+    "mediabunny": "1.62.0",
     "pdfjs-dist": "5.4.149",
     "react": "19.2.0",
     "react-dom": "19.2.0",

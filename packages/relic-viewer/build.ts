@@ -1,18 +1,59 @@
 /**
  * Bundles the viewer into `dist/`, which the app server serves as `/assets/`.
  *
- * Four entry points, deliberately separate bundles. `viewer.js` runs on the
+ * Five entry points, deliberately separate bundles. `viewer.js` runs on the
  * service origin and holds the key. `home.js` runs on the service origin on the
  * landing page to render the local vault relic list without key handling or
  * network requests. `sandbox.js` runs on the usercontent origin and must never
  * contain a line of key-handling code, which staying a separate entry point
  * makes true by construction rather than by review. `sw.js` is the service
- * worker and has to sit at the root scope.
+ * worker and has to sit at the root scope. `otio-video-timing-worker.js` alone
+ * carries the metadata demuxer.
  */
 
 import { copyFile, mkdir, readdir } from 'node:fs/promises';
 
 const pkgDir = new URL('.', import.meta.url).pathname;
+
+interface MediabunnyDistribution {
+  readonly version: string;
+  readonly licensePath: string;
+  readonly banner: string;
+}
+
+async function readMediabunnyDistribution(): Promise<MediabunnyDistribution> {
+  const viewerPackage = (await Bun.file(`${pkgDir}package.json`).json()) as {
+    dependencies?: Record<string, unknown>;
+  };
+  const dependency = viewerPackage.dependencies?.mediabunny;
+  const packagePath = new URL(
+    './node_modules/mediabunny/package.json',
+    import.meta.url
+  ).pathname;
+  const installed = (await Bun.file(packagePath).json()) as {
+    version?: unknown;
+  };
+  const version = installed.version;
+  if (
+    dependency !== version ||
+    typeof version !== 'string' ||
+    version !== '1.62.0'
+  ) {
+    throw new Error(
+      `Expected installed mediabunny@1.62.0, found ${String(version)}`
+    );
+  }
+
+  const source = `https://registry.npmjs.org/mediabunny/-/mediabunny-${version}.tgz`;
+  return {
+    version,
+    licensePath: new URL('./node_modules/mediabunny/LICENSE', import.meta.url)
+      .pathname,
+    banner:
+      `/*! Mediabunny ${version} by Vanilagy and contributors; MPL-2.0; ` +
+      `license: /assets/mediabunny-license.txt; source: ${source} */`,
+  };
+}
 
 /**
  * Computes a deterministic content hash over the shell assets that sw.ts precaches.
@@ -62,6 +103,7 @@ export async function buildViewer(options?: {
 }): Promise<string> {
   const out = options?.outdir ?? `${pkgDir}dist/`;
   await mkdir(out, { recursive: true });
+  const mediabunny = await readMediabunnyDistribution();
 
   // Three builds, because exactly one entrypoint wants code splitting and the
   // others must not have it. `main.ts` dynamically imports the PDF renderer,
@@ -122,6 +164,23 @@ export async function buildViewer(options?: {
     process.exit(1);
   }
 
+  // The metadata scanner has a deliberately separate entrypoint. Unlike the
+  // app shell, it may bundle the demuxer, and must never share a chunk with it.
+  const builtTimingWorker = await Bun.build({
+    entrypoints: [`${pkgDir}src/otio-video-timing-worker.ts`],
+    outdir: out,
+    target: 'browser',
+    format: 'esm',
+    minify: true,
+    splitting: false,
+    naming: '[name].js',
+    banner: mediabunny.banner,
+  });
+  if (!builtTimingWorker.success) {
+    for (const log of builtTimingWorker.logs) console.error(log);
+    process.exit(1);
+  }
+
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
   await copyFile(`${out}main.js`, `${out}viewer.js`);
@@ -136,6 +195,11 @@ export async function buildViewer(options?: {
     import.meta.url
   ).pathname;
   await copyFile(workerPath, `${out}pdf.worker.js`);
+  const timingWorkerPath = `${out}otio-video-timing-worker.js`;
+  if (!(await Bun.file(timingWorkerPath).exists())) {
+    throw new Error('Timing worker build did not emit its fixed worker asset');
+  }
+  await copyFile(mediabunny.licensePath, `${out}mediabunny-license.txt`);
 
   /**
    * Inline the sandbox bundle into its page, rather than linking it.
