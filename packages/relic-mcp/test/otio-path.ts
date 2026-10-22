@@ -2236,6 +2236,30 @@ async function aimHeldDraftWithPointer(
     };
   })()`);
 }
+async function clickWithRealPointer(
+  browser: ChromeSession,
+  x: number,
+  y: number
+): Promise<void> {
+  for (const event of [
+    { type: 'mouseMoved', x, y, button: 'none' },
+    {
+      type: 'mousePressed',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    },
+    {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    },
+  ])
+    await browser.send('Input.dispatchMouseEvent', event);
+}
 
 async function postComposer(
   browser: ChromeSession,
@@ -2357,6 +2381,50 @@ interface DomRectProbe {
   readonly bottom: number;
   readonly width: number;
   readonly height: number;
+}
+interface CommentMarkAnchor {
+  readonly trackId: string;
+  readonly start: number;
+  readonly duration: number;
+  readonly rate: number;
+  readonly durationRate: number;
+}
+
+interface CommentMarkPointerCase {
+  readonly caseName: string;
+  readonly body: string;
+  readonly expectedId: string;
+  readonly expectedAnchor: CommentMarkAnchor;
+}
+
+interface CommentMarkPointerPosition {
+  readonly rect: DomRectProbe | null;
+  readonly center: { readonly x: number; readonly y: number } | null;
+  readonly hitId: string | null;
+  readonly anchor: CommentMarkAnchor | null;
+  readonly commentLane: number | null;
+  readonly stageScrollTop: number | null;
+  readonly timelineScrollLeft: number | null;
+  readonly exposedLeft: number | null;
+  readonly exposedRight: number | null;
+}
+
+interface CommentMarkPointerExposure {
+  readonly missing: readonly string[];
+  readonly blocker: string | null;
+  readonly before: CommentMarkPointerPosition;
+  readonly after: CommentMarkPointerPosition;
+}
+
+interface CommentMarkPointerClickCapture {
+  readonly commentId: string | null;
+  readonly trusted: boolean | null;
+}
+
+interface CommentMarkPopoverProbe {
+  readonly cardId: string | null;
+  readonly visible: boolean;
+  readonly bodyPresent: boolean;
 }
 
 interface NativeControlProbe {
@@ -3104,244 +3172,6 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
     };
   })()`);
 }
-async function logComposerHitBoundaryDiagnostic(
-  browser: ChromeSession,
-  label: string,
-  probe: ComposerProbe
-): Promise<void> {
-  const failedControls = probe.nativeControls.filter(
-    (control) => !control.hitOwned
-  );
-  if (failedControls.length === 0) return;
-  const layoutMetrics = await browser.send('Page.getLayoutMetrics');
-  const receipt = await browser.evaluate<Record<string, unknown>>(
-    String.raw`(async () => {
-      const controls = ${JSON.stringify(failedControls)};
-      const stage = document.querySelector('.stage-wrap');
-      const timeline = document.querySelector('.otio-timeline-scroll');
-      const rect = (node) => {
-        if (!(node instanceof Element)) return null;
-        const value = node.getBoundingClientRect();
-        return {
-          left: value.left,
-          top: value.top,
-          right: value.right,
-          bottom: value.bottom,
-          width: value.width,
-          height: value.height,
-        };
-      };
-      const intersect = (a, b) => {
-        if (!a || !b) return null;
-        const left = Math.max(a.left, b.left);
-        const right = Math.min(a.right, b.right);
-        const top = Math.max(a.top, b.top);
-        const bottom = Math.min(a.bottom, b.bottom);
-        return {
-          left,
-          right,
-          top,
-          bottom,
-          width: Math.max(0, right - left),
-          height: Math.max(0, bottom - top),
-        };
-      };
-      const describe = (node) => {
-        if (!(node instanceof Element)) return null;
-        return {
-          tag: node.tagName,
-          id: node.id || null,
-          className: node.getAttribute('class'),
-          label:
-            node.getAttribute('aria-label') ??
-            node.closest('[aria-label]')?.getAttribute('aria-label') ??
-            null,
-          commentId: node.closest('[data-comment-id]')?.getAttribute('data-comment-id') ?? null,
-        };
-      };
-      const hitAt = (x, y) => ({
-        x,
-        y,
-        element: describe(document.elementFromPoint(x, y)),
-        stack: document.elementsFromPoint(x, y).map(describe),
-      });
-      const stageRect = rect(stage);
-      const stageContent =
-        stage instanceof HTMLElement && stageRect
-          ? {
-              left: stageRect.left + stage.clientLeft,
-              top: stageRect.top + stage.clientTop,
-              right: stageRect.left + stage.clientLeft + stage.clientWidth,
-              bottom: stageRect.top + stage.clientTop + stage.clientHeight,
-              width: stage.clientWidth,
-              height: stage.clientHeight,
-            }
-          : null;
-      const viewport = {
-        left: 0,
-        top: 0,
-        right: window.innerWidth,
-        bottom: window.innerHeight,
-        width: window.innerWidth,
-        height: window.innerHeight,
-      };
-      const nativeNodes = [
-        ...document.querySelectorAll(
-          '.otio-transport button, .otio-transport input, .otio-timeline-heading button, .otio-timeline-heading select, .otio-track-row button, .otio-selection-readout button, .otio-selection-readout input, .otio-inspector button, .otio-inspector input, .otio-inspector select, .otio-preview-block, .otio-preview-base, .thread-tab'
-        ),
-      ];
-      const original = controls.map((control) => {
-        const candidate =
-          nativeNodes.find((node) => {
-            const value = rect(node);
-            return (
-              value &&
-              Math.abs(value.left - control.rect.left) < 0.01 &&
-              Math.abs(value.top - control.rect.top) < 0.01 &&
-              Math.abs(value.right - control.rect.right) < 0.01 &&
-              Math.abs(value.bottom - control.rect.bottom) < 0.01
-            );
-          }) ?? null;
-        const recomputed = rect(candidate);
-        const inStage = intersect(recomputed, stageContent);
-        const inViewport = intersect(inStage, viewport);
-        const y = control.sample.y;
-        const samplePoints = [
-          { x: control.sample.x, y: Math.floor(y) - 1 },
-          { x: control.sample.x, y: Math.floor(y) },
-          { x: control.sample.x, y },
-          { x: control.sample.x, y: Math.ceil(y) - 0.001 },
-          { x: control.sample.x, y: Math.ceil(y) },
-        ];
-        return {
-          label: control.label,
-          existing: {
-            rect: control.rect,
-            sample: control.sample,
-          },
-          candidate: describe(candidate),
-          recomputed: {
-            rect: recomputed,
-            stageIntersection: inStage,
-            viewportIntersection: inViewport,
-          },
-          samples: samplePoints.map(({ x, y }) => hitAt(x, y)),
-        };
-      });
-      const post = document.querySelector(
-        '.popover-card .popover-action.is-primary'
-      );
-      const postRect = rect(post);
-      const postCenter =
-        postRect === null
-          ? null
-          : {
-              x: postRect.left + postRect.width / 2,
-              y: postRect.top + postRect.height / 2,
-            };
-      const postOriginal =
-        postCenter === null ? null : hitAt(postCenter.x, postCenter.y);
-      const witness = document.createElement('div');
-      witness.setAttribute('aria-hidden', 'true');
-      witness.setAttribute('data-otio-hit-boundary-witness', 'true');
-      Object.assign(witness.style, {
-        position: 'fixed',
-        inset: '0px',
-        zIndex: '2147483647',
-        pointerEvents: 'auto',
-        opacity: '0',
-        background: 'transparent',
-      });
-      let witnessReceipt = null;
-      try {
-        document.documentElement.append(witness);
-        const { promise, resolve } = Promise.withResolvers();
-        requestAnimationFrame(() => requestAnimationFrame(resolve));
-        await promise;
-        const witnessRect = rect(witness);
-        const contains = (point) =>
-          witnessRect !== null &&
-          point.x >= witnessRect.left &&
-          point.x <= witnessRect.right &&
-          point.y >= witnessRect.top &&
-          point.y <= witnessRect.bottom;
-        const witnessHit = (point) => ({
-          ...hitAt(point.x, point.y),
-          isWitness: document.elementFromPoint(point.x, point.y) === witness,
-        });
-        witnessReceipt = {
-          rect: witnessRect,
-          originalCoordinatesInside: original.map((entry) => ({
-            label: entry.label,
-            inside: contains(entry.existing.sample),
-          })),
-          samples: original.map((entry) => ({
-            label: entry.label,
-            hits: entry.samples.map((sample) => witnessHit(sample)),
-          })),
-          post:
-            postCenter === null
-              ? null
-              : {
-                  center: postCenter,
-                  original: postOriginal,
-                  witness: witnessHit(postCenter),
-                },
-        };
-      } finally {
-        witness.remove();
-      }
-      return {
-        viewport: {
-          innerWidth: window.innerWidth,
-          innerHeight: window.innerHeight,
-          documentClientWidth: document.documentElement.clientWidth,
-          documentClientHeight: document.documentElement.clientHeight,
-          devicePixelRatio: window.devicePixelRatio,
-          visualViewport: window.visualViewport
-            ? {
-                offsetLeft: window.visualViewport.offsetLeft,
-                offsetTop: window.visualViewport.offsetTop,
-                pageLeft: window.visualViewport.pageLeft,
-                pageTop: window.visualViewport.pageTop,
-                width: window.visualViewport.width,
-                height: window.visualViewport.height,
-                scale: window.visualViewport.scale,
-              }
-            : null,
-        },
-        stage:
-          stage instanceof HTMLElement
-            ? {
-                rect: stageRect,
-                clientLeft: stage.clientLeft,
-                clientTop: stage.clientTop,
-                clientWidth: stage.clientWidth,
-                clientHeight: stage.clientHeight,
-                scrollTop: stage.scrollTop,
-              }
-            : null,
-        timelineScrollLeft:
-          timeline instanceof HTMLElement ? timeline.scrollLeft : null,
-        stageContent,
-        viewportBounds: viewport,
-        controls: original,
-        post: {
-          center: postCenter,
-          original: postOriginal,
-        },
-        witness: witnessReceipt,
-      };
-    })()`
-  );
-  console.log(
-    `OTIO_COMPOSER_HIT_BOUNDARY ${JSON.stringify({
-      label,
-      layoutMetrics,
-      receipt,
-    })}`
-  );
-}
 
 async function hoverComposerPost(browser: ChromeSession): Promise<void> {
   const point = await browser.evaluate<{
@@ -3377,6 +3207,644 @@ async function clearPointerHover(browser: ChromeSession): Promise<void> {
   await browser.evaluate<void>(
     `new Promise((resolve) => requestAnimationFrame(resolve))`
   );
+}
+function pointerCommentCase(
+  comments: Array<Record<string, unknown>>,
+  caseName: string,
+  body: string,
+  expectedTrackId: string,
+  expectedRange: TimeRange
+): CommentMarkPointerCase {
+  const comment = commentByBody(comments, body);
+  const readbackBody = comment['body'];
+  assert.ok(
+    typeof readbackBody === 'string',
+    `${caseName} fresh readback has no body`
+  );
+  assert.equal(
+    readbackBody,
+    body,
+    `${caseName} fresh readback body changed before pointer proof`
+  );
+  const commentId = comment['comment_id'];
+  assert.ok(
+    typeof commentId === 'string' && commentId.length > 0,
+    `${caseName} fresh readback has no comment_id`
+  );
+  const rawAnchor = comment['anchor'];
+  assert.ok(
+    rawAnchor && typeof rawAnchor === 'object',
+    `${caseName} fresh readback has no anchor`
+  );
+  const anchor = rawAnchor as {
+    readonly track_id?: unknown;
+    readonly range?: unknown;
+  };
+  assert.equal(
+    anchor.track_id,
+    expectedTrackId,
+    `${caseName} fresh readback track changed`
+  );
+  const range = asRange(anchor.range);
+  assert.ok(range, `${caseName} fresh readback has no OTIO range`);
+  assert.ok(
+    rangeClose(range, expectedRange),
+    `${caseName} fresh readback anchor differs from the expected OTIO range`
+  );
+  assert.ok(
+    Number.isFinite(range.start_time.value) &&
+      Number.isFinite(range.start_time.rate) &&
+      Number.isFinite(range.duration.value) &&
+      Number.isFinite(range.duration.rate),
+    `${caseName} fresh readback has non-finite anchor fields`
+  );
+  return {
+    caseName,
+    body: readbackBody,
+    expectedId: commentId,
+    expectedAnchor: {
+      trackId: expectedTrackId,
+      start: range.start_time.value,
+      duration: range.duration.value,
+      rate: range.start_time.rate,
+      durationRate: range.duration.rate,
+    },
+  };
+}
+
+async function closePopoverWithEscape(browser: ChromeSession): Promise<void> {
+  for (const event of [
+    {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    },
+    {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    },
+  ])
+    await browser.send('Input.dispatchKeyEvent', event);
+  await browser.evaluate<void>(`(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    requestAnimationFrame(resolve);
+    return promise;
+  })()`);
+}
+
+async function commentMarkPointerPosition(
+  browser: ChromeSession,
+  expectedId: string
+): Promise<CommentMarkPointerPosition> {
+  return browser.evaluate<CommentMarkPointerPosition>(String.raw`(() => {
+    const empty = {
+      rect: null,
+      center: null,
+      hitId: null,
+      anchor: null,
+      commentLane: null,
+      stageScrollTop: null,
+      timelineScrollLeft: null,
+      exposedLeft: null,
+      exposedRight: null,
+    };
+    const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
+      (node) => node.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}
+    );
+    const stage = document.querySelector('.stage-wrap');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    if (
+      !(mark instanceof HTMLElement) ||
+      !(stage instanceof HTMLElement) ||
+      !(timeline instanceof HTMLElement)
+    )
+      return empty;
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const clientBounds = (node) => {
+      const value = rect(node);
+      return {
+        left: value.left + node.clientLeft,
+        top: value.top + node.clientTop,
+        right: value.left + node.clientLeft + node.clientWidth,
+        bottom: value.top + node.clientTop + node.clientHeight,
+      };
+    };
+    const markRect = rect(mark);
+    const center = {
+      x: markRect.left + markRect.width / 2,
+      y: markRect.top + markRect.height / 2,
+    };
+    const hit = document.elementFromPoint(center.x, center.y);
+    const hitId =
+      hit?.closest('.otio-comment-mark')?.getAttribute('data-comment-id') ?? null;
+    const label = mark
+      .closest('.otio-track-row')
+      ?.querySelector('.otio-track-label');
+    const timelineBounds = clientBounds(timeline);
+    const workbenchBounds = clientBounds(stage);
+    const labelRect = label instanceof HTMLElement ? rect(label) : null;
+    const exposedLeft =
+      labelRect === null
+        ? null
+        : Math.max(
+            timelineBounds.left,
+            workbenchBounds.left,
+            labelRect.right
+          );
+    const exposedRight =
+      labelRect === null
+        ? null
+        : Math.min(
+            timelineBounds.right,
+            workbenchBounds.right,
+            window.innerWidth
+          );
+    const fields = [
+      Number(mark.dataset.start),
+      Number(mark.dataset.duration),
+      Number(mark.dataset.rate),
+      Number(mark.dataset.durationRate),
+    ];
+    const anchor =
+      mark.dataset.trackId && fields.every(Number.isFinite)
+        ? {
+            trackId: mark.dataset.trackId,
+            start: fields[0],
+            duration: fields[1],
+            rate: fields[2],
+            durationRate: fields[3],
+          }
+        : null;
+    const laneValue = mark.style.getPropertyValue('--otio-comment-lane');
+    const lane = Number(laneValue);
+    const commentLane =
+      laneValue.trim().length > 0 && Number.isFinite(lane) ? lane : null;
+    return {
+      rect: markRect,
+      center,
+      hitId,
+      anchor,
+      commentLane,
+      stageScrollTop: stage.scrollTop,
+      timelineScrollLeft: timeline.scrollLeft,
+      exposedLeft,
+      exposedRight,
+    };
+  })()`);
+}
+
+async function exposeCommentMarkForPointer(
+  browser: ChromeSession,
+  expectedId: string
+): Promise<CommentMarkPointerExposure> {
+  return browser.evaluate<CommentMarkPointerExposure>(String.raw`(async () => {
+    const empty = {
+      rect: null,
+      center: null,
+      hitId: null,
+      anchor: null,
+      commentLane: null,
+      stageScrollTop: null,
+      timelineScrollLeft: null,
+      exposedLeft: null,
+      exposedRight: null,
+    };
+    const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
+      (node) => node.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}
+    );
+    const stage = document.querySelector('.stage-wrap');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    const missing = [];
+    if (!(mark instanceof HTMLElement)) missing.push('.otio-comment-mark[data-comment-id]');
+    if (!(stage instanceof HTMLElement)) missing.push('.stage-wrap');
+    if (!(timeline instanceof HTMLElement)) missing.push('.otio-timeline-scroll');
+    const label = mark
+      ?.closest('.otio-track-row')
+      ?.querySelector('.otio-track-label');
+    if (!(label instanceof HTMLElement)) missing.push('.otio-track-label');
+    if (missing.length > 0) {
+      return {
+        missing,
+        blocker: 'pointer exposure is missing ' + missing.join(', '),
+        before: empty,
+        after: empty,
+      };
+    }
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const clientBounds = (node) => {
+      const value = rect(node);
+      return {
+        left: value.left + node.clientLeft,
+        top: value.top + node.clientTop,
+        right: value.left + node.clientLeft + node.clientWidth,
+        bottom: value.top + node.clientTop + node.clientHeight,
+      };
+    };
+    const position = () => {
+      const markRect = rect(mark);
+      const center = {
+        x: markRect.left + markRect.width / 2,
+        y: markRect.top + markRect.height / 2,
+      };
+      const hit = document.elementFromPoint(center.x, center.y);
+      const hitId =
+        hit?.closest('.otio-comment-mark')?.getAttribute('data-comment-id') ?? null;
+      const timelineBounds = clientBounds(timeline);
+      const workbenchBounds = clientBounds(stage);
+      const labelRect = rect(label);
+      const exposedLeft = Math.max(
+        timelineBounds.left,
+        workbenchBounds.left,
+        labelRect.right
+      );
+      const exposedRight = Math.min(
+        timelineBounds.right,
+        workbenchBounds.right,
+        window.innerWidth
+      );
+      const fields = [
+        Number(mark.dataset.start),
+        Number(mark.dataset.duration),
+        Number(mark.dataset.rate),
+        Number(mark.dataset.durationRate),
+      ];
+      const anchor =
+        mark.dataset.trackId && fields.every(Number.isFinite)
+          ? {
+              trackId: mark.dataset.trackId,
+              start: fields[0],
+              duration: fields[1],
+              rate: fields[2],
+              durationRate: fields[3],
+            }
+          : null;
+      const laneValue = mark.style.getPropertyValue('--otio-comment-lane');
+      const lane = Number(laneValue);
+      const commentLane =
+        laneValue.trim().length > 0 && Number.isFinite(lane) ? lane : null;
+      return {
+        rect: markRect,
+        center,
+        hitId,
+        anchor,
+        commentLane,
+        stageScrollTop: stage.scrollTop,
+        timelineScrollLeft: timeline.scrollLeft,
+        exposedLeft,
+        exposedRight,
+      };
+    };
+    const before = position();
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const frames = () => {
+      const { promise, resolve } = Promise.withResolvers();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      return promise;
+    };
+    let blocker = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = position();
+      const stageBounds = clientBounds(stage);
+      if (current.exposedRight - current.exposedLeft <= 0) {
+        blocker =
+          'sticky label leaves no exposed pointer interval: ' +
+          JSON.stringify(current);
+        break;
+      }
+      let nextStage = stage.scrollTop;
+      if (current.rect.top < stageBounds.top)
+        nextStage += current.rect.top - stageBounds.top;
+      else if (current.rect.bottom > stageBounds.bottom)
+        nextStage += current.rect.bottom - stageBounds.bottom;
+      nextStage = clamp(
+        nextStage,
+        0,
+        Math.max(0, stage.scrollHeight - stage.clientHeight)
+      );
+      const targetCenter =
+        (current.exposedLeft + current.exposedRight) / 2;
+      const nextTimeline = clamp(
+        timeline.scrollLeft + current.center.x - targetCenter,
+        0,
+        Math.max(0, timeline.scrollWidth - timeline.clientWidth)
+      );
+      const changed =
+        Math.abs(nextStage - stage.scrollTop) > 0.01 ||
+        Math.abs(nextTimeline - timeline.scrollLeft) > 0.01;
+      stage.scrollTop = nextStage;
+      timeline.scrollLeft = nextTimeline;
+      if (!changed) break;
+      await frames();
+    }
+    await frames();
+    const after = position();
+    if (
+      blocker === null &&
+      (after.center.x < after.exposedLeft ||
+        after.center.x > after.exposedRight ||
+        after.rect.top < clientBounds(stage).top ||
+        after.rect.bottom > clientBounds(stage).bottom)
+    )
+      blocker =
+        'mark cannot be exposed in the stage and sticky-safe interval: ' +
+        JSON.stringify(after);
+    if (blocker === null && after.hitId !== ${JSON.stringify(expectedId)})
+      blocker =
+        'exposed mark center hit ' +
+        JSON.stringify(after.hitId) +
+        ', not ' +
+        JSON.stringify(${JSON.stringify(expectedId)});
+    return { missing, blocker, before, after };
+  })()`);
+}
+
+async function installCommentMarkClickCapture(
+  browser: ChromeSession,
+  expectedId: string
+): Promise<boolean> {
+  return browser.evaluate<boolean>(String.raw`(() => {
+    const prior = window.__otioPointerClickCapture;
+    prior?.controller?.abort();
+    const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
+      (node) => node.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}
+    );
+    if (!(mark instanceof HTMLElement)) return false;
+    const controller = new AbortController();
+    const capture = {
+      commentId: null,
+      trusted: null,
+      controller,
+    };
+    mark.addEventListener(
+      'click',
+      (event) => {
+        capture.commentId = mark.dataset.commentId ?? null;
+        capture.trusted = event.isTrusted;
+      },
+      { capture: true, once: true, signal: controller.signal }
+    );
+    window.__otioPointerClickCapture = capture;
+    return true;
+  })()`);
+}
+
+async function readCommentMarkClickCapture(
+  browser: ChromeSession
+): Promise<CommentMarkPointerClickCapture> {
+  return browser.evaluate<CommentMarkPointerClickCapture>(`(() => {
+    const capture = window.__otioPointerClickCapture;
+    return {
+      commentId: capture?.commentId ?? null,
+      trusted: capture?.trusted ?? null,
+    };
+  })()`);
+}
+
+async function clearCommentMarkClickCapture(
+  browser: ChromeSession
+): Promise<void> {
+  await browser.evaluate<void>(`(() => {
+    const capture = window.__otioPointerClickCapture;
+    capture?.controller?.abort();
+    delete window.__otioPointerClickCapture;
+  })()`);
+}
+
+async function waitForCommentMarkPopover(
+  browser: ChromeSession,
+  expectedId: string,
+  body: string
+): Promise<CommentMarkPopoverProbe> {
+  return browser.evaluate<CommentMarkPopoverProbe>(String.raw`(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    const expectedId = ${JSON.stringify(expectedId)};
+    const expectedBody = ${JSON.stringify(body)};
+    const measure = () => {
+      const card = document.querySelector('.popover-card');
+      const rect =
+        card instanceof HTMLElement ? card.getBoundingClientRect() : null;
+      const style =
+        card instanceof HTMLElement ? getComputedStyle(card) : null;
+      return {
+        cardId: card?.getAttribute('data-comment-id') ?? null,
+        visible:
+          rect !== null &&
+          style !== null &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          rect.width > 0 &&
+          rect.height > 0,
+        bodyPresent: card?.textContent?.includes(expectedBody) ?? false,
+      };
+    };
+    const started = Date.now();
+    const tick = () => {
+      const current = measure();
+      if (
+        current.cardId === expectedId &&
+        current.visible &&
+        current.bodyPresent
+      ) {
+        resolve(current);
+      } else if (Date.now() - started > 4000) {
+        resolve(current);
+      } else {
+        setTimeout(tick, 50);
+      }
+    };
+    tick();
+    return promise;
+  })()`);
+}
+
+async function assertCommentMarkPointerClick(
+  browser: ChromeSession,
+  pointerCase: CommentMarkPointerCase,
+  nativeControlMeasurements: Array<Record<string, unknown>>
+): Promise<void> {
+  let savedScroll: {
+    stageScrollTop: number;
+    timelineScrollLeft: number;
+  } | null = null;
+  const receipt: Record<string, unknown> = {
+    state: 'comment-mark-pointer-click',
+    case: pointerCase.caseName,
+    expectedId: pointerCase.expectedId,
+    expectedAnchor: pointerCase.expectedAnchor,
+  };
+  try {
+    savedScroll = await browser.evaluate<{
+      stageScrollTop: number;
+      timelineScrollLeft: number;
+    } | null>(`(() => {
+      const stage = document.querySelector('.stage-wrap');
+      const timeline = document.querySelector('.otio-timeline-scroll');
+      if (!(stage instanceof HTMLElement) || !(timeline instanceof HTMLElement))
+        return null;
+      return {
+        stageScrollTop: stage.scrollTop,
+        timelineScrollLeft: timeline.scrollLeft,
+      };
+    })()`);
+    await closePopoverWithEscape(browser);
+    await clearPointerHover(browser);
+    const exposure = await exposeCommentMarkForPointer(
+      browser,
+      pointerCase.expectedId
+    );
+    const captureInstalled = await installCommentMarkClickCapture(
+      browser,
+      pointerCase.expectedId
+    );
+    let card: CommentMarkPopoverProbe = {
+      cardId: null,
+      visible: false,
+      bodyPresent: false,
+    };
+    if (exposure.after.center !== null && captureInstalled) {
+      await clickWithRealPointer(
+        browser,
+        exposure.after.center.x,
+        exposure.after.center.y
+      );
+      card = await waitForCommentMarkPopover(
+        browser,
+        pointerCase.expectedId,
+        pointerCase.body
+      );
+    }
+    const capture = await readCommentMarkClickCapture(browser);
+    const postClick = await commentMarkPointerPosition(
+      browser,
+      pointerCase.expectedId
+    );
+    Object.assign(receipt, {
+      savedScroll,
+      exposure,
+      captureInstalled,
+      hitId: exposure.after.hitId,
+      trustedClickId: capture.commentId,
+      trusted: capture.trusted,
+      cardId: card.cardId,
+      card,
+      markRect: exposure.after.rect,
+      sample: exposure.after.center,
+      anchor: exposure.after.anchor,
+      commentLane: exposure.after.commentLane,
+      preExposure: exposure.before,
+      postClick,
+    });
+    await browser.screenshot(
+      `otio-comment-mark-pointer-${pointerCase.caseName}`
+    );
+    nativeControlMeasurements.push(receipt);
+    const evidence = JSON.stringify(receipt);
+    assert.ok(savedScroll, `pointer receipt has no saved scroll: ${evidence}`);
+    assert.deepEqual(
+      exposure.missing,
+      [],
+      `pointer mark is missing: ${evidence}`
+    );
+    assert.equal(
+      exposure.blocker,
+      null,
+      `pointer mark cannot be exposed: ${evidence}`
+    );
+    assert.equal(
+      exposure.after.hitId,
+      pointerCase.expectedId,
+      `pointer pre-hit did not identify the expected comment: ${evidence}`
+    );
+    assert.equal(
+      captureInstalled,
+      true,
+      `pointer click listener was not installed on the expected mark: ${evidence}`
+    );
+    assert.equal(
+      capture.commentId,
+      pointerCase.expectedId,
+      `real pointer click reached the wrong comment: ${evidence}`
+    );
+    assert.equal(
+      capture.trusted,
+      true,
+      `real pointer click was not trusted: ${evidence}`
+    );
+    assert.equal(
+      card.cardId,
+      pointerCase.expectedId,
+      `pointer click opened the wrong popover: ${evidence}`
+    );
+    assert.equal(
+      card.visible,
+      true,
+      `pointer click did not leave a visible popover: ${evidence}`
+    );
+    assert.equal(
+      card.bodyPresent,
+      true,
+      `pointer click popover omitted the independently read back body: ${evidence}`
+    );
+    assert.deepEqual(
+      exposure.after.anchor,
+      pointerCase.expectedAnchor,
+      `pointer mark anchor differs from fresh comment readback: ${evidence}`
+    );
+  } finally {
+    await closePopoverWithEscape(browser);
+    await clearPointerHover(browser);
+    receipt['postDrawerClose'] = await commentMarkPointerPosition(
+      browser,
+      pointerCase.expectedId
+    );
+    if (savedScroll !== null) {
+      await browser.evaluate<void>(String.raw`(() => {
+        const stage = document.querySelector('.stage-wrap');
+        const timeline = document.querySelector('.otio-timeline-scroll');
+        if (!(stage instanceof HTMLElement) || !(timeline instanceof HTMLElement))
+          return;
+        stage.scrollTop = ${savedScroll.stageScrollTop};
+        timeline.scrollLeft = ${savedScroll.timelineScrollLeft};
+      })()`);
+    }
+    receipt['restoredScroll'] = await browser.evaluate<Record<string, unknown>>(
+      `(() => {
+        const stage = document.querySelector('.stage-wrap');
+        const timeline = document.querySelector('.otio-timeline-scroll');
+        return {
+          stageScrollTop: stage instanceof HTMLElement ? stage.scrollTop : null,
+          timelineScrollLeft:
+            timeline instanceof HTMLElement ? timeline.scrollLeft : null,
+        };
+      })()`
+    );
+    await clearCommentMarkClickCapture(browser);
+  }
 }
 
 function assertStageControlExposure(
@@ -5485,12 +5953,6 @@ try {
       await openComposer(browser);
       const normalComposer = await measureComposer(browser);
       await browser.screenshot(`native-controls-320-${scheme}-composer-open`);
-      if (normalComposer.nativeControls.some((control) => !control.hitOwned))
-        await logComposerHitBoundaryDiagnostic(
-          browser,
-          `320px ${scheme} composer`,
-          normalComposer
-        );
       assertComposerProbe(normalComposer, `320px ${scheme} composer`, false);
       nativeControlMeasurements.push({
         state: 'supplemental-composer-normal',
@@ -5721,6 +6183,72 @@ try {
       probe: lowerComposer,
     });
     await dismissComposer(browser);
+    const clickReadback = await readComments(relicId);
+    const finalPointerAim = reaimed;
+    assert.ok(
+      finalPointerAim,
+      'pointer re-aim result is absent before comment-mark pointer proof'
+    );
+    const pointerRange: TimeRange = {
+      start_time: {
+        value: finalPointerAim.start,
+        rate: finalPointerAim.rate,
+      },
+      duration: {
+        value: finalPointerAim.duration,
+        rate: finalPointerAim.rate,
+      },
+    };
+    const pointerCases = [
+      pointerCommentCase(
+        clickReadback,
+        'primary-range',
+        primaryBody,
+        plan.dissolve_track_id,
+        plan.comment_source.editorial
+      ),
+      pointerCommentCase(
+        clickReadback,
+        'pointer-reaim',
+        pointerBody,
+        plan.dissolve_track_id,
+        pointerRange
+      ),
+      pointerCommentCase(
+        clickReadback,
+        'duplicate-point',
+        dupPointBody,
+        plan.duplicate_track_id,
+        {
+          start_time: {
+            value: plan.duplicate_frame,
+            rate: plan.timeline_rate,
+          },
+          duration: {
+            value: 0,
+            rate: plan.timeline_rate,
+          },
+        }
+      ),
+      pointerCommentCase(
+        clickReadback,
+        'whole-track',
+        wholeTrackBody,
+        plan.duplicate_track_id,
+        duplicateScope
+      ),
+    ];
+    assert.equal(
+      new Set(pointerCases.map((pointerCase) => pointerCase.expectedId)).size,
+      pointerCases.length,
+      'fresh comment readback reused a comment_id across pointer-proof bodies'
+    );
+    for (const pointerCase of pointerCases)
+      await assertCommentMarkPointerClick(
+        browser,
+        pointerCase,
+        nativeControlMeasurements
+      );
 
     await browser.evaluate<void>(
       `document.querySelector('.stage-wrap').scrollTop = 0`
