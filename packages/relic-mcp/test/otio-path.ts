@@ -3874,7 +3874,24 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       'true',
       nearZeroReady === 'true'
         ? undefined
-        : await timingDiagnostics(nearZeroBrowser)
+        : JSON.stringify(
+            await nearZeroBrowser.evaluate(`(() => {
+              const root = document.querySelector('.otio-view');
+              const videos = Array.from(document.querySelectorAll('.otio-video-decoders video'));
+              return {
+                ready: root?.dataset.ready,
+                previewState: root?.dataset.previewState,
+                previewBlocked: root?.dataset.previewBlocked,
+                diagnostics: Array.from(document.querySelectorAll('.otio-diagnostics'), element => element.textContent),
+                nativeVideoCount: videos.length,
+                videos: videos.map(video => ({
+                  currentTime: video.currentTime,
+                  readyState: video.readyState,
+                  error: video.error ? { code: video.error.code, message: video.error.message } : null,
+                })),
+              };
+            })()`)
+          )
     );
     await seekTo(nearZeroBrowser, 0);
     const first = await assertPacketCanvas(
