@@ -1,0 +1,538 @@
+{
+  "viewport": {
+    "width": 900,
+    "height": 900
+  },
+  "oldProduct": "704379d",
+  "repairedProduct": "eaf6d48",
+  "defaultSeedFileUnchanged": true,
+  "isolatedSeedCount": 40,
+  "results": [
+    {
+      "phase": "before",
+      "edge": "first",
+      "pre": {
+        "expectedId": "identity-40",
+        "expectedComment": {
+          "id": "identity-40",
+          "number": 40,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 40",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "center": {
+          "x": 725.5,
+          "y": 6350.9375
+        },
+        "markCenter": {
+          "x": 170,
+          "y": -21.015625
+        },
+        "mark": {
+          "x": 167.5,
+          "y": -28.015625,
+          "width": 5,
+          "height": 14,
+          "top": -28.015625,
+          "right": 172.5,
+          "bottom": -14.015625,
+          "left": 167.5
+        },
+        "body": {
+          "x": 170,
+          "y": -80.015625,
+          "width": 580,
+          "height": 928,
+          "top": -80.015625,
+          "right": 750,
+          "bottom": 847.984375,
+          "left": 170
+        },
+        "band": {
+          "x": 170,
+          "y": -32.015625,
+          "width": 580,
+          "height": 880,
+          "top": -32.015625,
+          "right": 750,
+          "bottom": 847.984375,
+          "left": 170
+        },
+        "viewport": {
+          "width": 900,
+          "height": 900
+        },
+        "document": {
+          "scrollY": 688,
+          "scrollTop": 688,
+          "clientHeight": 900,
+          "scrollHeight": 1978
+        },
+        "sidebarScrollTop": 0,
+        "rowHit": null,
+        "targetOffscreen": true,
+        "bodySpansBoth": false,
+        "preconditionsOk": false
+      },
+      "post": {
+        "center": {
+          "x": 170,
+          "y": -21.015625
+        },
+        "mark": {
+          "x": 167.5,
+          "y": -28.015625,
+          "width": 5,
+          "height": 14,
+          "top": -28.015625,
+          "right": 172.5,
+          "bottom": -14.015625,
+          "left": 167.5
+        },
+        "contentWindow": {
+          "left": 170,
+          "right": 580,
+          "top": 0,
+          "bottom": 900
+        },
+        "inside": false,
+        "hitId": null,
+        "click": null,
+        "activeId": null,
+        "markActive": false,
+        "rowActive": false,
+        "comment": {
+          "id": "identity-40",
+          "number": 40,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 40",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "selection": {
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0
+        },
+        "markLeft": "0%",
+        "document": {
+          "scrollY": 688,
+          "scrollTop": 688,
+          "clientHeight": 900,
+          "scrollHeight": 1978
+        },
+        "timelineScrollLeft": 0
+      },
+      "problems": [
+        "Unmet preconditions",
+        "Trusted sidebar target identity mismatch",
+        "Persisted or active identity mismatch",
+        "Intended mark center not exposed and hit-owned"
+      ],
+      "success": false
+    },
+    {
+      "phase": "before",
+      "edge": "last",
+      "pre": {
+        "expectedId": "identity-01",
+        "expectedComment": {
+          "id": "identity-01",
+          "number": 1,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 1",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "center": {
+          "x": 725.5,
+          "y": 142.015625
+        },
+        "markCenter": {
+          "x": 170,
+          "y": 915.984375
+        },
+        "mark": {
+          "x": 167.5,
+          "y": 908.984375,
+          "width": 5,
+          "height": 14,
+          "top": 908.984375,
+          "right": 172.5,
+          "bottom": 922.984375,
+          "left": 167.5
+        },
+        "body": {
+          "x": 170,
+          "y": -1.015625,
+          "width": 580,
+          "height": 928,
+          "top": -1.015625,
+          "right": 750,
+          "bottom": 926.984375,
+          "left": 170
+        },
+        "band": {
+          "x": 170,
+          "y": 46.984375,
+          "width": 580,
+          "height": 880,
+          "top": 46.984375,
+          "right": 750,
+          "bottom": 926.984375,
+          "left": 170
+        },
+        "viewport": {
+          "width": 900,
+          "height": 900
+        },
+        "document": {
+          "scrollY": 609,
+          "scrollTop": 609,
+          "clientHeight": 900,
+          "scrollHeight": 1978
+        },
+        "sidebarScrollTop": 0,
+        "rowHit": "identity-01",
+        "targetOffscreen": true,
+        "bodySpansBoth": true,
+        "preconditionsOk": true
+      },
+      "post": {
+        "center": {
+          "x": 0,
+          "y": 915.984375
+        },
+        "mark": {
+          "x": -2.5,
+          "y": 908.984375,
+          "width": 5,
+          "height": 14,
+          "top": 908.984375,
+          "right": 2.5,
+          "bottom": 922.984375,
+          "left": -2.5
+        },
+        "contentWindow": {
+          "left": 170,
+          "right": 580,
+          "top": 0,
+          "bottom": 900
+        },
+        "inside": false,
+        "hitId": null,
+        "click": {
+          "id": "identity-01",
+          "trusted": true
+        },
+        "activeId": "identity-01",
+        "markActive": true,
+        "rowActive": true,
+        "comment": {
+          "id": "identity-01",
+          "number": 1,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 1",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "selection": {
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0
+        },
+        "markLeft": "0%",
+        "document": {
+          "scrollY": 584,
+          "scrollTop": 584,
+          "clientHeight": 900,
+          "scrollHeight": 1953
+        },
+        "timelineScrollLeft": 170
+      },
+      "problems": ["Intended mark center not exposed and hit-owned"],
+      "success": false
+    },
+    {
+      "phase": "after",
+      "edge": "first",
+      "pre": {
+        "expectedId": "identity-40",
+        "expectedComment": {
+          "id": "identity-40",
+          "number": 40,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 40",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "center": {
+          "x": 725.5,
+          "y": 6350.9375
+        },
+        "markCenter": {
+          "x": 170,
+          "y": -21.015625
+        },
+        "mark": {
+          "x": 167.5,
+          "y": -28.015625,
+          "width": 5,
+          "height": 14,
+          "top": -28.015625,
+          "right": 172.5,
+          "bottom": -14.015625,
+          "left": 167.5
+        },
+        "body": {
+          "x": 170,
+          "y": -80.015625,
+          "width": 580,
+          "height": 928,
+          "top": -80.015625,
+          "right": 750,
+          "bottom": 847.984375,
+          "left": 170
+        },
+        "band": {
+          "x": 170,
+          "y": -32.015625,
+          "width": 580,
+          "height": 880,
+          "top": -32.015625,
+          "right": 750,
+          "bottom": 847.984375,
+          "left": 170
+        },
+        "viewport": {
+          "width": 900,
+          "height": 900
+        },
+        "document": {
+          "scrollY": 688,
+          "scrollTop": 688,
+          "clientHeight": 900,
+          "scrollHeight": 1978
+        },
+        "sidebarScrollTop": 0,
+        "rowHit": null,
+        "targetOffscreen": true,
+        "bodySpansBoth": false,
+        "preconditionsOk": false
+      },
+      "post": {
+        "center": {
+          "x": 170,
+          "y": -21.015625
+        },
+        "mark": {
+          "x": 167.5,
+          "y": -28.015625,
+          "width": 5,
+          "height": 14,
+          "top": -28.015625,
+          "right": 172.5,
+          "bottom": -14.015625,
+          "left": 167.5
+        },
+        "contentWindow": {
+          "left": 170,
+          "right": 580,
+          "top": 0,
+          "bottom": 900
+        },
+        "inside": false,
+        "hitId": null,
+        "click": null,
+        "activeId": null,
+        "markActive": false,
+        "rowActive": false,
+        "comment": {
+          "id": "identity-40",
+          "number": 40,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 40",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "selection": {
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0
+        },
+        "markLeft": "0%",
+        "document": {
+          "scrollY": 688,
+          "scrollTop": 688,
+          "clientHeight": 900,
+          "scrollHeight": 1978
+        },
+        "timelineScrollLeft": 0
+      },
+      "problems": [
+        "Unmet preconditions",
+        "Trusted sidebar target identity mismatch",
+        "Persisted or active identity mismatch",
+        "Intended mark center not exposed and hit-owned"
+      ],
+      "success": false
+    },
+    {
+      "phase": "after",
+      "edge": "last",
+      "pre": {
+        "expectedId": "identity-01",
+        "expectedComment": {
+          "id": "identity-01",
+          "number": 1,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 1",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "center": {
+          "x": 725.5,
+          "y": 142.015625
+        },
+        "markCenter": {
+          "x": 170,
+          "y": 915.984375
+        },
+        "mark": {
+          "x": 167.5,
+          "y": 908.984375,
+          "width": 5,
+          "height": 14,
+          "top": 908.984375,
+          "right": 172.5,
+          "bottom": 922.984375,
+          "left": 167.5
+        },
+        "body": {
+          "x": 170,
+          "y": -1.015625,
+          "width": 580,
+          "height": 928,
+          "top": -1.015625,
+          "right": 750,
+          "bottom": 926.984375,
+          "left": 170
+        },
+        "band": {
+          "x": 170,
+          "y": 46.984375,
+          "width": 580,
+          "height": 880,
+          "top": 46.984375,
+          "right": 750,
+          "bottom": 926.984375,
+          "left": 170
+        },
+        "viewport": {
+          "width": 900,
+          "height": 900
+        },
+        "document": {
+          "scrollY": 609,
+          "scrollTop": 609,
+          "clientHeight": 900,
+          "scrollHeight": 1978
+        },
+        "sidebarScrollTop": 0,
+        "rowHit": "identity-01",
+        "targetOffscreen": true,
+        "bodySpansBoth": true,
+        "preconditionsOk": true
+      },
+      "post": {
+        "center": {
+          "x": 170,
+          "y": 892.984375
+        },
+        "mark": {
+          "x": 167.5,
+          "y": 885.984375,
+          "width": 5,
+          "height": 14,
+          "top": 885.984375,
+          "right": 172.5,
+          "bottom": 899.984375,
+          "left": 167.5
+        },
+        "contentWindow": {
+          "left": 170,
+          "right": 580,
+          "top": 0,
+          "bottom": 900
+        },
+        "inside": true,
+        "hitId": "identity-01",
+        "click": {
+          "id": "identity-01",
+          "trusted": true
+        },
+        "activeId": "identity-01",
+        "markActive": true,
+        "rowActive": true,
+        "comment": {
+          "id": "identity-01",
+          "number": 1,
+          "version": 2,
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0,
+          "body": "Coincident point review 1",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "selection": {
+          "track": "video-2-duplicate",
+          "start": 0,
+          "end": 0
+        },
+        "markLeft": "0%",
+        "document": {
+          "scrollY": 607,
+          "scrollTop": 607,
+          "clientHeight": 900,
+          "scrollHeight": 1953
+        },
+        "timelineScrollLeft": 0
+      },
+      "problems": [],
+      "success": true
+    }
+  ],
+  "negativeDetected": true,
+  "positivePassed": false
+}

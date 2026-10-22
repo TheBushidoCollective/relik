@@ -1,0 +1,73 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+Formatted 1 file in 16ms. No fixes applied.
+[feat/otio-native-renderer fff2d96] Retain full verification and missing sampler integration evidence
+ 16 files changed, 316 insertions(+)
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/1440-light-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/1440-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/1440-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/1440-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/1440-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/1440-light.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/320-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/320-light.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/390-light-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/390-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/390-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/390-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/390-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/390-light.png
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/receipt.json
+ create mode 100644 docs/plans/otio/proof/integration-eadf85a-missing-sampler/source-tool-capture.txt
+Auto-merging packages/relic-mcp/test/otio-path.ts
+[feat/otio-native-renderer b1aab2e] test: clamp native control samples
+ Date: Thu Oct 22 14:53:53 2026 -0600
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+remote: This repository moved. Please use the new location:        
+remote:   git@github.com:TheBushidoCollective/relik.git        
+To github.com:TheBushidoCollective/relic.git
+   eadf85a..b1aab2e  feat/otio-native-renderer -> feat/otio-native-renderer
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+PUBLISHED relic_id=y3fam1e83abddc0b2vq8g05cpm
+STAGE published
+STAGE decrypted
+OFFICIAL nested=media/plate_1009.png dissolve=72 audio=48
+STAGE official-archive
+STAGE network-block
+STAGE pixels-offset
+STAGE default-view-negative-head
+STAGE nested-200
+STAGE nested-no-spill
+STAGE dissolve-pixels
+STAGE audio-signal
+STAGE state-gap-black
+STAGE state-effect
+STAGE ui-point-nested
+STAGE ui-range-nested
+STAGE ui-point-duplicate
+STAGE ui-range-duplicate
+STAGE ui-range-dissolve
+STAGE ui-track-duplicate
+SHOTS /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/otio-path-shots
+3843 |     assert.deepEqual(
+3844 |       exposure.missing,
+3845 |       [],
+3846 |       `pointer mark is missing: ${evidence}`
+3847 |     );
+3848 |     assert.equal(
+                  ^
+AssertionError: pointer mark cannot be exposed: {"state":"comment-mark-pointer-click","case":"duplicate-point","expectedId":"E-1bvR-6IooV8zo-Esx9GQ","expectedAnchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"savedScroll":{"stageScrollTop":31,"timelineScrollLeft":0},"exposure":{"missing":[],"blocker":"mark cannot be exposed in the stage and sticky-safe interval: {\"rect\":{\"left\":171.5,\"top\":886.375,\"right\":176.5,\"bottom\":900.375,\"width\":5,\"height\":14},\"center\":{\"x\":174,\"y\":893.375},\"hitId\":\"E-1bvR-6IooV8zo-Esx9GQ\",\"anchor\":{\"trackId\":\"track-v2-duplicate\",\"start\":0,\"duration\":0,\"rate\":24,\"durationRate\":24},\"commentLane\":0,\"stageScrollTop\":107,\"timelineScrollLeft\":0,\"exposedLeft\":174,\"exposedRight\":1411}","before":{"rect":{"left":171.5,"top":962.375,"right":176.5,"bottom":976.375,"width":5,"height":14},"center":{"x":174,"y":969.375},"hitId":null,"anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"commentLane":0,"stageScrollTop":31,"timelineScrollLeft":0,"exposedLeft":174,"exposedRight":1411},"after":{"rect":{"left":171.5,"top":886.375,"right":176.5,"bottom":900.375,"width":5,"height":14},"center":{"x":174,"y":893.375},"hitId":"E-1bvR-6IooV8zo-Esx9GQ","anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"commentLane":0,"stageScrollTop":107,"timelineScrollLeft":0,"exposedLeft":174,"exposedRight":1411}},"captureInstalled":true,"hitId":"E-1bvR-6IooV8zo-Esx9GQ","trustedClickId":"E-1bvR-6IooV8zo-Esx9GQ","trusted":true,"cardId":"E-1bvR-6IooV8zo-Esx9GQ","card":{"cardId":"E-1bvR-6IooV8zo-Esx9GQ","visible":true,"bodyPresent":true},"markRect":{"left":171.5,"top":886.375,"right":176.5,"bottom":900.375,"width":5,"height":14},"sample":{"x":174,"y":893.375},"anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"commentLane":0,"preExposure":{"rect":{"left":171.5,"top":962.375,"right":176.5,"bottom":976.375,"width":5,"height":14},"center":{"x":174,"y":969.375},"hitId":null,"anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"commentLane":0,"stageScrollTop":31,"timelineScrollLeft":0,"exposedLeft":174,"exposedRight":1411},"postClick":{"rect":{"left":171.5,"top":886.375,"right":176.5,"bottom":900.375,"width":5,"height":14},"center":{"x":174,"y":893.375},"hitId":"E-1bvR-6IooV8zo-Esx9GQ","anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"commentLane":0,"stageScrollTop":107,"timelineScrollLeft":0,"exposedLeft":174,"exposedRight":1411}}
++ actual - expected
+
++ 'mark cannot be exposed in the stage and sticky-safe interval: {"rect":{"left":171.5,"top":886.375,"right":176.5,"bottom":900.375,"width":5,"height":14},"center":{"x":174,"y":893.375},"hitId":"E-1bvR-6IooV8zo-Esx9GQ","anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"commentLane":0,"stageScrollTop":107,"timelineScrollLeft":0,"exposedLeft":174,"exposedRight":1411}'
+- null
+
+ generatedMessage: false,
+     actual: "mark cannot be exposed in the stage and sticky-safe interval: {\"rect\":{\"left\":171.5,\"top\":886.375,\"right\":176.5,\"bottom\":900.375,\"width\":5,\"height\":14},\"center\":{\"x\":174,\"y\":893.375},\"hitId\":\"E-1bvR-6IooV8zo-Esx9GQ\",\"anchor\":{\"trackId\":\"track-v2-duplicate\",\"start\":0,\"duration\":0,\"rate\":24,\"durationRate\":24},\"commentLane\":0,\"stageScrollTop\":107,\"timelineScrollLeft\":0,\"exposedLeft\":174,\"exposedRight\":1411}",
+   expected: null,
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at assertCommentMarkPointerClick (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:3848:12)
+
+Bun v1.4.3 (macOS arm64)

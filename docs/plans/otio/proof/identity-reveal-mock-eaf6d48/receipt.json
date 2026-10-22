@@ -1,0 +1,70 @@
+{
+  "oldProduct": "704379d",
+  "repairedProduct": "eaf6d48",
+  "browser": {
+    "ownedHeadless": true,
+    "pid": 96818,
+    "profile": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-reveal-mock-iI4yoI",
+    "width": 900,
+    "height": 900,
+    "deviceScaleFactor": 1
+  },
+  "firstProbe": "First case was not exercised: #thread-list is a non-scrolling OL. Complete unsuccessful probe retained; not counted as product evidence.",
+  "correction": "Use actual overflow:auto #thread sidebar. Do not change product, seeds, viewport, outcome assertions, or temporal geometry.",
+  "negativeDetected": true,
+  "positivePassed": true,
+  "cases": [
+    {
+      "phase": "before",
+      "edge": "first",
+      "expectedId": "identity-40",
+      "preconditionsOk": true,
+      "clickedId": "identity-40",
+      "trusted": true,
+      "hitId": "identity-40",
+      "activeId": "identity-40",
+      "inside": false,
+      "success": false,
+      "problems": ["Intended mark center not exposed and hit-owned"]
+    },
+    {
+      "phase": "before",
+      "edge": "last",
+      "expectedId": "identity-01",
+      "preconditionsOk": true,
+      "clickedId": "identity-01",
+      "trusted": true,
+      "hitId": null,
+      "activeId": "identity-01",
+      "inside": false,
+      "success": false,
+      "problems": ["Intended mark center not exposed and hit-owned"]
+    },
+    {
+      "phase": "after",
+      "edge": "first",
+      "expectedId": "identity-40",
+      "preconditionsOk": true,
+      "clickedId": "identity-40",
+      "trusted": true,
+      "hitId": "identity-40",
+      "activeId": "identity-40",
+      "inside": true,
+      "success": true,
+      "problems": []
+    },
+    {
+      "phase": "after",
+      "edge": "last",
+      "expectedId": "identity-01",
+      "preconditionsOk": true,
+      "clickedId": "identity-01",
+      "trusted": true,
+      "hitId": "identity-01",
+      "activeId": "identity-01",
+      "inside": true,
+      "success": true,
+      "problems": []
+    }
+  ]
+}
