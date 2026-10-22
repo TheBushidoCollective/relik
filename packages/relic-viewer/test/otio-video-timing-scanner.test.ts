@@ -131,6 +131,34 @@ function windows(timing: OtioVideoTiming): {
   return { starts: [...timing.starts], ends: [...timing.ends] };
 }
 
+function presentationEdit(endMovieTicks: number, movieTimescale: number) {
+  return {
+    start: 0,
+    end: endMovieTicks / movieTimescale,
+    endMovieTicks,
+    movieTimescale,
+  };
+}
+
+function representationStep(value: number): number {
+  return Math.max(Number.MIN_VALUE, Math.abs(value) * Number.EPSILON);
+}
+
+function representationUncertainty(
+  packet: OtioVideoTimingPacket,
+  movieTimescale: number
+): number {
+  const packetEndSeconds = packet.timestamp + packet.duration;
+  const packetEndTicks = packetEndSeconds * movieTimescale;
+  return (
+    movieTimescale *
+      (representationStep(packet.timestamp) +
+        representationStep(packet.duration) +
+        representationStep(packetEndSeconds)) +
+    representationStep(packetEndTicks)
+  );
+}
+
 describe('OTIO packet presentation windows', () => {
   test('sorts decode-order records by actual PTS, preserves positive origins, and leaves gaps uncovered', () => {
     const timing = windowsFromOtioVideoPackets(
@@ -190,7 +218,7 @@ describe('OTIO packet presentation windows', () => {
           { timestamp: 0, duration: 0.5 },
           { timestamp: 1.25, duration: 0.5 },
         ],
-        { start: 0, end: 1, movieTimescale: 1000 }
+        presentationEdit(1000, 1000)
       )
     ).toEqual({ kind: 'unknown', reason: 'edit-window-mismatch' });
 
@@ -201,6 +229,139 @@ describe('OTIO packet presentation windows', () => {
         Float64Array.BYTES_PER_ELEMENT * 2 - 1
       )
     ).toEqual({ kind: 'unknown', reason: 'index-budget' });
+  });
+
+  test('accepts representation-limited one-tick boundaries without moving windows', () => {
+    const tenMillisecondEdit = presentationEdit(10, 1000);
+    expect(
+      windows(
+        windowsFromOtioVideoPackets(
+          [{ timestamp: 0, duration: 0.009 }],
+          tenMillisecondEdit
+        )
+      )
+    ).toEqual({ starts: [0], ends: [0.009] });
+
+    expect(
+      windows(
+        windowsFromOtioVideoPackets(
+          [{ timestamp: 0, duration: 0.29 }],
+          presentationEdit(30, 100)
+        )
+      )
+    ).toEqual({ starts: [0], ends: [0.29] });
+
+    const additionPacket = { timestamp: 0.6, duration: 0.3 };
+    const addition = windows(
+      windowsFromOtioVideoPackets(
+        [additionPacket],
+        presentationEdit(10, 10)
+      )
+    );
+    expect(addition.ends[0]).toBe(
+      additionPacket.timestamp + additionPacket.duration
+    );
+
+    expect(
+      windows(
+        windowsFromOtioVideoPackets(
+          [{ timestamp: 0, duration: 0.0091 }],
+          tenMillisecondEdit
+        )
+      )
+    ).toEqual({ starts: [0], ends: [0.0091] });
+
+    expect(
+      windows(
+        windowsFromOtioVideoPackets(
+          [{ timestamp: 0, duration: 0.0101 }],
+          tenMillisecondEdit
+        )
+      )
+    ).toEqual({ starts: [0], ends: [0.01] });
+  });
+
+  test('rejects edit deficits outside the derived representation bound', () => {
+    const edit = presentationEdit(10, 1000);
+    for (const duration of [0.008999, 0.00875, 0.008]) {
+      const packet = { timestamp: 0, duration };
+      const packetEndTicks =
+        (packet.timestamp + packet.duration) * edit.movieTimescale;
+      const deficit = edit.endMovieTicks - 1 - packetEndTicks;
+      expect(deficit).toBeGreaterThan(
+        representationUncertainty(packet, edit.movieTimescale)
+      );
+      expect(windowsFromOtioVideoPackets([packet], edit)).toEqual({
+        kind: 'unknown',
+        reason: 'edit-window-mismatch',
+      });
+    }
+
+    expect(
+      windowsFromOtioVideoPackets(
+        [{ timestamp: edit.end, duration: 0.001 }],
+        edit
+      )
+    ).toEqual({ kind: 'unknown', reason: 'edit-window-mismatch' });
+  });
+
+  test('rejects coarse precision, cancellation uncertainty, and malformed edits', () => {
+    const huge = 2 ** 52;
+    const largePacket = { timestamp: 0, duration: huge - 1 };
+    expect(representationUncertainty(largePacket, 1)).toBeGreaterThanOrEqual(
+      0.5
+    );
+    expect(
+      windowsFromOtioVideoPackets(
+        [largePacket],
+        presentationEdit(huge, 1)
+      )
+    ).toEqual({ kind: 'unknown', reason: 'unsupported-edit-list' });
+
+    const cancellationPacket = { timestamp: -huge, duration: huge };
+    expect(
+      representationUncertainty(cancellationPacket, 1000)
+    ).toBeGreaterThanOrEqual(0.5);
+    expect(
+      windowsFromOtioVideoPackets(
+        [cancellationPacket],
+        presentationEdit(10, 1000)
+      )
+    ).toEqual({ kind: 'unknown', reason: 'unsupported-edit-list' });
+
+    const valid = presentationEdit(10, 1000);
+    for (const edit of [
+      { ...valid, endMovieTicks: 0 },
+      { ...valid, endMovieTicks: -1 },
+      { ...valid, endMovieTicks: 10.5 },
+      { ...valid, endMovieTicks: Number.MAX_SAFE_INTEGER + 1 },
+      { ...valid, endMovieTicks: Number.NaN },
+      { ...valid, endMovieTicks: Number.POSITIVE_INFINITY },
+      { ...valid, end: 0.011 },
+      { ...valid, movieTimescale: 0 },
+      { ...valid, movieTimescale: Number.NaN },
+      { ...valid, movieTimescale: Number.POSITIVE_INFINITY },
+      { ...valid, movieTimescale: 1.5 },
+      { ...valid, movieTimescale: 0x1_0000_0000 },
+    ]) {
+      expect(
+        windowsFromOtioVideoPackets([{ timestamp: 0, duration: 0.009 }], edit)
+      ).toEqual({ kind: 'unknown', reason: 'unsupported-edit-list' });
+    }
+  });
+
+  test('retains earlier windows when the terminal duration is zero', () => {
+    expect(
+      windows(
+        windowsFromOtioVideoPackets(
+          [
+            { timestamp: 0, duration: 0.009 },
+            { timestamp: 0.009, duration: 0 },
+          ],
+          presentationEdit(10, 1000)
+        )
+      )
+    ).toEqual({ starts: [0], ends: [0.009] });
   });
 });
 

@@ -13,6 +13,8 @@ export interface IsoPresentationEdit {
   readonly start: number;
   /** Exclusive presentation end, measured in the movie timeline. */
   readonly end: number;
+  /** Original exclusive endpoint in mvhd movie-timescale ticks. */
+  readonly endMovieTicks: number;
   readonly movieTimescale: number;
 }
 
@@ -293,7 +295,12 @@ async function parseEditList(
   if (!Number.isFinite(start) || !Number.isFinite(end) || !(start < end)) {
     return fail('unsupported-edit-list');
   }
-  return { start, end, movieTimescale: timescale };
+  return {
+    start,
+    end,
+    endMovieTicks: totalDuration,
+    movieTimescale: timescale,
+  };
 }
 
 /**

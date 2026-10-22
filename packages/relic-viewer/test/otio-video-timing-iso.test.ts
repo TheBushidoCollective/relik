@@ -132,7 +132,12 @@ describe('narrow ISO edit safety gate', () => {
       7
     );
 
-    expect(result).toEqual({ start: 0, end: 1, movieTimescale: 1000 });
+    expect(result).toEqual({
+      start: 0,
+      end: 1,
+      endMovieTicks: 1000,
+      movieTimescale: 1000,
+    });
   });
 
   test('accounts for one leading empty edit without replacing packet timing', async () => {
@@ -148,7 +153,12 @@ describe('narrow ISO edit safety gate', () => {
       7
     );
 
-    expect(result).toEqual({ start: 0.5, end: 1.5, movieTimescale: 1000 });
+    expect(result).toEqual({
+      start: 0.5,
+      end: 1.5,
+      endMovieTicks: 1500,
+      movieTimescale: 1000,
+    });
   });
 
   test('supports 64-bit ISO sizes and version-one movie and edit fields', async () => {
@@ -163,7 +173,12 @@ describe('narrow ISO edit safety gate', () => {
       7
     );
 
-    expect(result).toEqual({ start: 0, end: 3, movieTimescale: 1000 });
+    expect(result).toEqual({
+      start: 0,
+      end: 3,
+      endMovieTicks: 3000,
+      movieTimescale: 1000,
+    });
   });
 
   test('accepts an absent selected-track edit list', async () => {
@@ -180,6 +195,27 @@ describe('narrow ISO edit safety gate', () => {
     ]) {
       await expect(
         readSafeIsoPresentationEdit(reader(bytes), 7)
+      ).rejects.toEqual(
+        expect.objectContaining({
+          reason: 'unsupported-edit-list',
+        } satisfies Pick<IsoEditGateFailure, 'reason'>)
+      );
+    }
+  });
+
+  test('rejects unsafe version-one edit durations and endpoint sums', async () => {
+    for (const edits of [
+      [{ duration: Number.MAX_SAFE_INTEGER + 1, mediaTime: 0 }],
+      [
+        { duration: Number.MAX_SAFE_INTEGER, mediaTime: -1 },
+        { duration: 1, mediaTime: 0 },
+      ],
+    ]) {
+      await expect(
+        readSafeIsoPresentationEdit(
+          reader(isoMovie({ version: 1, edits })),
+          7
+        )
       ).rejects.toEqual(
         expect.objectContaining({
           reason: 'unsupported-edit-list',

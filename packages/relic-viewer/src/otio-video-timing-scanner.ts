@@ -202,6 +202,10 @@ function finalPacketEnd(packet: OtioVideoTimingPacket): number | null {
   return end;
 }
 
+function representationStep(value: number): number {
+  return Math.max(Number.MIN_VALUE, Math.abs(value) * Number.EPSILON);
+}
+
 function validateEditExtent(
   edit: IsoPresentationEdit | null,
   packets: readonly OtioVideoTimingPacket[]
@@ -210,10 +214,14 @@ function validateEditExtent(
   if (
     !Number.isFinite(edit.start) ||
     !Number.isFinite(edit.end) ||
-    !Number.isFinite(edit.movieTimescale) ||
+    !Number.isSafeInteger(edit.endMovieTicks) ||
+    edit.endMovieTicks <= 0 ||
+    !Number.isSafeInteger(edit.movieTimescale) ||
+    edit.movieTimescale < 1 ||
+    edit.movieTimescale > 0xffffffff ||
+    edit.end !== edit.endMovieTicks / edit.movieTimescale ||
     edit.start < 0 ||
-    !(edit.start < edit.end) ||
-    edit.movieTimescale <= 0
+    !(edit.start < edit.end)
   ) {
     scanFailure('unsupported-edit-list');
   }
@@ -224,13 +232,40 @@ function validateEditExtent(
     scanFailure('edit-window-mismatch');
   }
 
-  const finalEnd = finalPacketEnd(finalPacket);
-  if (finalEnd === null) return;
-  const oneMovieTick = 1 / edit.movieTimescale;
-  if (!Number.isFinite(oneMovieTick) || oneMovieTick <= 0) {
+  const packetEndSeconds = finalPacketEnd(finalPacket);
+  if (packetEndSeconds === null) return;
+  const packetEndTicks = packetEndSeconds * edit.movieTimescale;
+  // The public timestamp, duration, their addition, and seconds-to-ticks
+  // conversion each carry binary64 representation uncertainty. The integer
+  // edit endpoint and timescale do not. Half a tick keeps adjacent integer
+  // tick bands disjoint, so an excessive bound fails closed.
+  const uncertaintyTicks =
+    edit.movieTimescale *
+      (representationStep(finalPacket.timestamp) +
+        representationStep(finalPacket.duration) +
+        representationStep(packetEndSeconds)) +
+    representationStep(packetEndTicks);
+  if (
+    !Number.isFinite(packetEndTicks) ||
+    !Number.isFinite(uncertaintyTicks) ||
+    uncertaintyTicks >= 0.5
+  ) {
     scanFailure('unsupported-edit-list');
   }
-  if (edit.end - finalEnd > oneMovieTick) {
+
+  const minimumPacketEndTicks = edit.endMovieTicks - 1;
+  if (packetEndTicks >= minimumPacketEndTicks) return;
+  if (
+    minimumPacketEndTicks > 0 &&
+    packetEndTicks < minimumPacketEndTicks / 2
+  ) {
+    scanFailure('edit-window-mismatch');
+  }
+
+  // For positive thresholds this subtraction is exact by Sterbenz's lemma.
+  // With a zero threshold it is exact negation.
+  const deficit = minimumPacketEndTicks - packetEndTicks;
+  if (!Number.isFinite(deficit) || deficit > uncertaintyTicks) {
     scanFailure('edit-window-mismatch');
   }
 }
