@@ -2707,6 +2707,15 @@ interface ComposerControlProbe {
   readonly rect: DomRectProbe;
   readonly intersectionArea: number;
   readonly hitOwned: boolean;
+  readonly sample: {
+    readonly x: number;
+    readonly y: number;
+    readonly hitTag: string | null;
+    readonly hitClass: string | null;
+    readonly hitLabel: string | null;
+    readonly markerOwner: string | null;
+    readonly markerIndex: string | null;
+  };
 }
 
 interface ComposerProbe {
@@ -2957,12 +2966,25 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       const controlRect = rect(node);
       const exposed = intersect(intersect(controlRect, content), viewport);
       const overlap = intersect(cardRect, exposed);
+      const x = (exposed.left + exposed.right) / 2;
+      const y = (exposed.top + exposed.bottom) / 2;
+      const hit = document.elementFromPoint(x, y);
+      const marker = hit?.closest('.otio-timeline-marker');
       return {
         label: node.getAttribute('aria-label') || node.getAttribute('title') ||
           node.textContent?.trim() || node.className || node.tagName,
         rect: controlRect,
         intersectionArea: overlap.width * overlap.height,
         hitOwned: hitOwned(node, exposed),
+        sample: {
+          x, y,
+          hitTag: hit?.tagName ?? null,
+          hitClass: hit?.getAttribute('class') ?? null,
+          hitLabel: hit?.getAttribute('aria-label') ??
+            hit?.closest('button')?.getAttribute('aria-label') ?? null,
+          markerOwner: marker?.getAttribute('data-owner-id') ?? null,
+          markerIndex: marker?.getAttribute('data-marker-index') ?? null,
+        },
       };
     });
     const parseColor = (value) => {
@@ -5007,6 +5029,7 @@ try {
       await clearPointerHover(browser);
       await openComposer(browser);
       const normalComposer = await measureComposer(browser);
+      await browser.screenshot(`${shotWidth}-${scheme}-composer-open`);
       assertComposerProbe(
         normalComposer,
         `${shotWidth}px ${scheme} composer`,
@@ -5018,9 +5041,9 @@ try {
         scheme,
         probe: normalComposer,
       });
-      await browser.screenshot(`${shotWidth}-${scheme}-composer-open`);
       await hoverComposerPost(browser);
       const hoveredComposer = await measureComposer(browser);
+      await browser.screenshot(`${shotWidth}-${scheme}-composer-hover`);
       assertComposerProbe(
         hoveredComposer,
         `${shotWidth}px ${scheme} composer hover`,
@@ -5044,6 +5067,7 @@ try {
         await clearPointerHover(browser);
         await openComposer(browser);
         const measured = await measureComposer(browser);
+        await browser.screenshot(`${shotWidth}-${scheme}-${mode}-composer`);
         assertComposerProbe(
           measured,
           `${shotWidth}x900 ${scheme} ${mode} composer`,
@@ -5056,7 +5080,6 @@ try {
           scheme,
           probe: measured,
         });
-        await browser.screenshot(`${shotWidth}-${scheme}-${mode}-composer`);
         await dismissComposer(browser);
       }
       if (shotWidth === 1440) {
@@ -5107,6 +5130,9 @@ try {
           await clearPointerHover(browser);
           await openComposer(browser);
           const measured = await measureComposer(browser);
+          await browser.screenshot(
+            `${shotWidth}x${shotHeight}-${scheme}-${mode}-composer`
+          );
           assertComposerProbe(
             measured,
             `${shotWidth}x${shotHeight} ${scheme} ${mode} compact composer`,
@@ -5119,9 +5145,6 @@ try {
             scheme,
             probe: measured,
           });
-          await browser.screenshot(
-            `${shotWidth}x${shotHeight}-${scheme}-${mode}-composer`
-          );
           await dismissComposer(browser);
         }
       }
@@ -5195,6 +5218,7 @@ try {
       await clearPointerHover(browser);
       await openComposer(browser);
       const normalComposer = await measureComposer(browser);
+      await browser.screenshot(`native-controls-320-${scheme}-composer-open`);
       assertComposerProbe(normalComposer, `320px ${scheme} composer`, false);
       nativeControlMeasurements.push({
         state: 'supplemental-composer-normal',
@@ -5202,9 +5226,9 @@ try {
         scheme,
         probe: normalComposer,
       });
-      await browser.screenshot(`native-controls-320-${scheme}-composer-open`);
       await hoverComposerPost(browser);
       const hoveredComposer = await measureComposer(browser);
+      await browser.screenshot(`native-controls-320-${scheme}-composer-hover`);
       assertComposerProbe(
         hoveredComposer,
         `320px ${scheme} composer hover`,
@@ -5411,6 +5435,7 @@ try {
       'lower-track reveal scrolled the page'
     );
     const lowerComposer = await measureComposer(browser);
+    await browser.screenshot('1440-light-lower-track-composer-open');
     assertComposerProbe(
       lowerComposer,
       'lower track initial preview reveal',
@@ -5470,6 +5495,9 @@ try {
         `${shotWidth}x${shotHeight} resize rebuilt or cleared held editor`
       );
       const probe = await measureComposer(browser);
+      await browser.screenshot(
+        `${shotWidth}x${shotHeight}-light-resize-held-draft`
+      );
       assertComposerProbe(
         probe,
         `${shotWidth}x${shotHeight} held draft resize`,

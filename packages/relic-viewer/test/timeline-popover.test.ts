@@ -271,6 +271,7 @@ describe('a bounded OTIO composer', () => {
     aimOtio(mounted, base, true, band);
     const panel = only(mounted.stage, 'popover-card');
     const field = only(panel, 'popover-field');
+    field.value = 'The fullscreen draft remains.';
     expect(panel.style.top).toBe('214px');
     const preview = new Node('div');
     mounted.stage.appendChild(preview);
@@ -279,11 +280,14 @@ describe('a bounded OTIO composer', () => {
     fullscreenListener?.(new Event('fullscreenchange'));
     expect(panel.parent).toBe(preview);
     expect(only(preview, 'popover-field')).toBe(field);
+    expect(field.value).toBe('The fullscreen draft remains.');
     expect(panel.style.top).toBe('214px');
     aimOtio(mounted, { ...base, track_id: 'track-b' }, false, {
       ...band,
       top: 48,
     });
+    expect(only(preview, 'popover-field')).toBe(field);
+    expect(field.value).toBe('The fullscreen draft remains.');
     expect(panel.style.top).toBe('232px');
     documentNode.dispatch('keydown', { key: 'Escape' });
     doc.fullscreenElement = null;
