@@ -7,7 +7,12 @@
     "exit": 1,
     "sourceOutput": "artifact://3504",
     "label": "390px light composer Post escapes preview-safe band",
-    "postRect": { "left": 16.1875, "top": 232.75, "right": 62.34375, "bottom": 260.953125 },
+    "postRect": {
+      "left": 16.1875,
+      "top": 232.75,
+      "right": 62.34375,
+      "bottom": 260.953125
+    },
     "visualObservation": "Parent opened 390-light-composer-open.png and saw Post and Cancel clipped by the preview bottom, approximately y=249.",
     "correction": "c63a3ad places scrollable context, textarea and toolbar directly in the bounded flex card. The subsequent unchanged SOURCE run passed the compact composer matrix before a later marker ownership assertion failed."
   },
@@ -20,8 +25,18 @@
     "lastPrintedStage": "ui-track-duplicate",
     "label": "lower track initial preview reveal native control hit is blocked",
     "target": { "track": "Video 1", "start": 8, "duration": 8, "rate": 24 },
-    "targetRect": { "left": 215.234375, "top": 591.375, "right": 256.46875, "bottom": 605.375 },
-    "sample": { "x": 235.8515625, "y": 598.375, "hitTag": "BUTTON", "hitClass": "otio-comment-mark" },
+    "targetRect": {
+      "left": 215.234375,
+      "top": 591.375,
+      "right": 256.46875,
+      "bottom": 605.375
+    },
+    "sample": {
+      "x": 235.8515625,
+      "y": 598.375,
+      "hitTag": "BUTTON",
+      "hitClass": "otio-comment-mark"
+    },
     "blocker": { "track": "Video 1", "start": 9, "duration": 4, "rate": 24 },
     "composerIntersectionArea": 0,
     "inference": "Both temporal centers lie inside the other range, so paint-order changes cannot make both centers independently reachable in the same vertical band. Planner prescribed collision-packed annotation lanes below the unchanged content rail."

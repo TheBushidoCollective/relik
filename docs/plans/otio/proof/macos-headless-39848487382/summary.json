@@ -1,0 +1,12 @@
+{
+  "run": "https://github.com/TheBushidoCollective/relik/actions/runs/39848487382",
+  "head": "22c41c5aae87c7acae213591fec5d5455cca8998",
+  "runner": "macos-15",
+  "job": 120068034374,
+  "conclusion": "success",
+  "scope": "Pinned Playwright installation, exact executable discovery, owned browser launch and existing headless command-line attestation smoke",
+  "token": "OTIO_HEADLESS_SMOKE_OK",
+  "resolvedExecutable": "chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+  "fullRunConclusion": "failure",
+  "fullRunFailure": "Linux verify job stopped at formatting of composer-lane-before.json; the macOS smoke and image jobs passed. The receipt was subsequently formatted using the pinned biome command. Full verification remains required."
+}
