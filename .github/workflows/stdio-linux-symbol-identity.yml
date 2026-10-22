@@ -109,7 +109,8 @@ jobs:
           test "$STDIO_LINUX_VERIFIED_BUN_SHA256" = "$(sha256sum "$STDIO_LINUX_PINNED_BUN" | cut -d ' ' -f 1)"
 
       - name: Install dependencies with verified Bun
-        run: "$STDIO_LINUX_PINNED_BUN" install --frozen-lockfile
+        run: |
+          "$STDIO_LINUX_PINNED_BUN" install --frozen-lockfile
 
       # The preload has no child process, protocol, stdout, timer, GC, or
       # keepalive behavior. Its deliberate startup file copy and hashing are
