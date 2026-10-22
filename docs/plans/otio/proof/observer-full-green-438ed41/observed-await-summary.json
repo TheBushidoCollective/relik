@@ -1,0 +1,256 @@
+{
+  "sourceHead": "438ed41",
+  "calibrationPid": 60871,
+  "fullVerificationExit": 0,
+  "testsPassed": 2077,
+  "testsFailed": 0,
+  "testsDurationSeconds": 6.9,
+  "interpretation": "Original timeout did not occur in this observed run. No root cause established. stdio-eof-probe error is the deliberate suppressed-response negative probe.",
+  "observations": [
+    {
+      "origin": "stdio-eof-probe",
+      "events": 44,
+      "pids": [63003, 63009],
+      "errors": [
+        {
+          "origin": "stdio-eof-probe",
+          "pid": 63009,
+          "ppid": 61929,
+          "sequence": 20,
+          "wall_clock_ms": 1792701578113,
+          "monotonic_ms": 90.104,
+          "operation_id": "63009:2",
+          "stage": "probe_lifecycle",
+          "event": "error",
+          "duration_ms": 75.768833,
+          "cpu_user_us": 28049,
+          "cpu_system_us": 15693,
+          "observation_heartbeat_lateness_ms": 0,
+          "error_name": "Error"
+        }
+      ],
+      "longestCompleted": [
+        {
+          "stage": "probe_lifecycle",
+          "durationMs": 76.801667,
+          "operationId": "63003:2",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "node_child_spawn",
+          "durationMs": 0.45329100000000366,
+          "operationId": "63003:6",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "node_child_spawn",
+          "durationMs": 0.34808400000000006,
+          "operationId": "63009:6",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "bootstrap_scratch_mkdtemp",
+          "durationMs": 0.3324169999999995,
+          "operationId": "63003:1",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "bootstrap_scratch_mkdtemp",
+          "durationMs": 0.3175840000000001,
+          "operationId": "63009:1",
+          "heartbeatLatenessMs": 0
+        }
+      ]
+    },
+    {
+      "origin": "relic-mcp-build",
+      "events": 33,
+      "pids": [62999],
+      "errors": [],
+      "longestCompleted": [
+        {
+          "stage": "top_level_build",
+          "durationMs": 36.724417,
+          "operationId": "62999:1",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "cover_build",
+          "durationMs": 25.050292,
+          "operationId": "62999:3",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "mcp_bundle_build",
+          "durationMs": 6.579999999999998,
+          "operationId": "62999:16",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "plugin_manifest_write",
+          "durationMs": 1.2079159999999973,
+          "operationId": "62999:25",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "native_loader_build",
+          "durationMs": 0.7271250000000009,
+          "operationId": "62999:17",
+          "heartbeatLatenessMs": 0
+        }
+      ]
+    },
+    {
+      "origin": "relic-viewer-build-cover",
+      "events": 44,
+      "pids": [62999, 62571],
+      "errors": [],
+      "longestCompleted": [
+        {
+          "stage": "build_cover",
+          "durationMs": 24.815208000000002,
+          "operationId": "62999:4",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "build_cover",
+          "durationMs": 23.098875,
+          "operationId": "62571:1",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "cover_bundle_build",
+          "durationMs": 12.063875000000001,
+          "operationId": "62999:6",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "cover_bundle_build",
+          "durationMs": 11.676375,
+          "operationId": "62571:3",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "sandbox_bundle_build",
+          "durationMs": 9.01625,
+          "operationId": "62999:7",
+          "heartbeatLatenessMs": 0
+        }
+      ]
+    },
+    {
+      "origin": "protocol-test",
+      "events": 28,
+      "pids": [61929],
+      "errors": [],
+      "longestCompleted": [
+        {
+          "stage": "stamp_bundle_test",
+          "durationMs": 242.77000000000044,
+          "operationId": "61929:1",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "normal_eof_probe",
+          "durationMs": 97.29262500000004,
+          "operationId": "61929:9",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "eof_probe_wait",
+          "durationMs": 96.63904199999979,
+          "operationId": "61929:11",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "suppression_eof_probe",
+          "durationMs": 96.44075000000021,
+          "operationId": "61929:12",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "eof_probe_wait",
+          "durationMs": 95.62970799999994,
+          "operationId": "61929:14",
+          "heartbeatLatenessMs": 0
+        }
+      ]
+    },
+    {
+      "origin": "inventory-test",
+      "events": 590,
+      "pids": [61929],
+      "errors": [],
+      "longestCompleted": [
+        {
+          "stage": "list_relics",
+          "durationMs": 3.133291999999983,
+          "operationId": "61929:20",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "publish_relic",
+          "durationMs": 1.7681250000000546,
+          "operationId": "61929:66",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "after_each_hook",
+          "durationMs": 1.6515830000003007,
+          "operationId": "61929:147",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "fake_fetch",
+          "durationMs": 1.3591670000000704,
+          "operationId": "61929:21",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "fake_fetch",
+          "durationMs": 1.2787090000001626,
+          "operationId": "61929:22",
+          "heartbeatLatenessMs": 0
+        }
+      ]
+    },
+    {
+      "origin": "full-suite-observer",
+      "events": 52,
+      "pids": [61021],
+      "errors": [],
+      "longestCompleted": [
+        {
+          "stage": "outer_command_spawn",
+          "durationMs": 0,
+          "operationId": "verify-spawn",
+          "heartbeatLatenessMs": 0
+        },
+        {
+          "stage": "observer_heartbeat",
+          "durationMs": 0,
+          "operationId": "observer-heartbeat",
+          "heartbeatLatenessMs": 19.626874999999984
+        },
+        {
+          "stage": "observer_heartbeat",
+          "durationMs": 0,
+          "operationId": "observer-heartbeat",
+          "heartbeatLatenessMs": 12.25
+        },
+        {
+          "stage": "observer_heartbeat",
+          "durationMs": 0,
+          "operationId": "observer-heartbeat",
+          "heartbeatLatenessMs": 10.939750000000004
+        },
+        {
+          "stage": "observer_heartbeat",
+          "durationMs": 0,
+          "operationId": "observer-heartbeat",
+          "heartbeatLatenessMs": 11.772415999999907
+        }
+      ]
+    }
+  ]
+}

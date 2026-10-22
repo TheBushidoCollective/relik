@@ -1,0 +1,18 @@
+{
+  "command": ["bun", "run", "verify"],
+  "exit_code": 0,
+  "stopped_at_ceiling": false,
+  "snapshots": [],
+  "retained_eof_traces": [
+    {
+      "source": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/relic-stdio-eof-scB86v/stdio-eof-trace.jsonl",
+      "destination": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-suite-observation-amended-0dpyxB/verify/eof-traces/tap-63003.jsonl",
+      "bytes": 720
+    },
+    {
+      "source": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/relic-stdio-eof-nViCsk/stdio-eof-trace.jsonl",
+      "destination": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-suite-observation-amended-0dpyxB/verify/eof-traces/tap-63009.jsonl",
+      "bytes": 106
+    }
+  ]
+}

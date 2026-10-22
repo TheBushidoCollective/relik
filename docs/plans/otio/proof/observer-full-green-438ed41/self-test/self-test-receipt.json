@@ -1,0 +1,8 @@
+{
+  "checkpoint": "self_test_pending_checkpoint",
+  "observed_pending_operation_id": "60871:1",
+  "observed_pid": 60871,
+  "source_pending_operation_id": "60871:1",
+  "source_pid": 60871,
+  "exit_code": 0
+}

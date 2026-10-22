@@ -1,0 +1,13 @@
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 24.
+Checked 359 files in 144ms. No fixes applied.
+Found 28 warnings.
+@relic/format typecheck: Exited with code 0
+@relic/server typecheck: Exited with code 0
+@relic/viewer typecheck: Exited with code 0
+relic-mcp typecheck: Exited with code 0
+relic-mcp native:local: built darwin-arm64: /Users/jwaldrip/.omp/wt/otio-suite-observation-run/packages/relic-mcp/prebuilds/darwin-arm64/secure_open.node
+relic-mcp native:local: Exited with code 0
+@relic/viewer build: built 24 assets (shell hash: c9c4fd9e481f8e7d): card.v1.png, chunk-5rcs0s2s.js, chunk-6je1wrw8.js, chunk-cxdt56tv.js, chunk-cze9mtr7.js, chunk-f4ye20v7.js, chunk-hbqdtzpg.js, chunk-kqqscq0d.js, chunk-r3661b90.js, chunk-skb426k3.js, chunk-w2cwcjs6.js, chunk-ynaat1eh.js, home.js, icon.svg, main.js, manifest.webmanifest, mediabunny-license.txt, otio-video-timing-worker.js, pdf.worker.js, sandbox.html, sandbox.js, styles.css, sw.js, viewer.js
+@relic/viewer build: Exited with code 0
+bun test v1.4.3 (c6da4a4d3)

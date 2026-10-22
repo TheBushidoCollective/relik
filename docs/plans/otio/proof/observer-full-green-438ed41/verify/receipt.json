@@ -1,0 +1,10 @@
+{
+  "command": ["bun", "run", "verify"],
+  "exit_code": 0,
+  "observer_exit_code": 0,
+  "stopped_at_ceiling": false,
+  "original_suite_output": {
+    "stdout": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-suite-observation-amended-0dpyxB/verify/verify.stdout.log",
+    "stderr": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-suite-observation-amended-0dpyxB/verify/verify.stderr.log"
+  }
+}

@@ -1,0 +1,6 @@
+{"origin":"tap","pid":63006,"sequence":1,"at":1792701577981,"event":"tap_ready","suppress_response":false}
+{"origin":"tap","pid":63006,"sequence":2,"at":1792701578003,"event":"stdin_to_web_created"}
+{"origin":"tap","pid":63006,"sequence":3,"at":1792701578005,"event":"stdin_reader_attached"}
+{"origin":"tap","pid":63006,"sequence":4,"at":1792701578006,"event":"stdin_chunk","bytes":207,"total_bytes":207,"sha256":"21c1bc5451d0005ed97791a89a4260d2bf78f56bed5665ce23d520ef784ef2cd"}
+{"origin":"tap","pid":63006,"sequence":5,"at":1792701578006,"event":"stdin_physical_eof"}
+{"origin":"tap","pid":63006,"sequence":6,"at":1792701578007,"event":"comments_get_started","path":"/api/relics/6cdz90f6ytb4hbmbde6er1q8kw/comments"}

@@ -1,0 +1,11 @@
+{
+  "command": ["bun", "run", "verify"],
+  "cwd": "/Users/jwaldrip/.omp/wt/otio-suite-observation-run/",
+  "bun_version": "1.4.3",
+  "observer_pid": 61021,
+  "environment": {
+    "RELIC_SUITE_OBSERVATION_DIR": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-suite-observation-amended-0dpyxB/verify/events",
+    "XDG_CONFIG_HOME": "/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/relic-suite-observation-xdg-CWSq4E",
+    "RELIC_METADATA_CACHE": "unset"
+  }
+}
