@@ -167,7 +167,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .mode-controls button { padding: .3rem .55rem; font-size: 11px; }
 .mode-controls button + button { margin-left: -1px; }
 #anchor-track { font-size: 10px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.timeline-scroll { overflow-x: auto; overscroll-behavior-x: contain; width: 100%; }
+.timeline-scroll { overflow-x: auto; overscroll-behavior-x: contain; scroll-padding-inline-start: var(--label-width); width: 100%; }
 .track-grid { min-width: 750px; position: relative; }
 .ruler-row, .track-row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); }
 .ruler-label { position: sticky; left: 0; background: var(--surface); z-index: 7; color: var(--ink-soft); font: 9px var(--mono); padding: .4rem .8rem; border-right: 1px solid var(--rule-strong); }
@@ -854,13 +854,10 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     if (projection.track) {
       if (trackById(projection.track).child) { state.nested = true; renderTracks(); }
       setSelection(projection.track, projection.start, projection.end, { newComment: false });
-      const rail = $('.track-rail[data-track-id="' + projection.track + '"]');
-      if (rail) {
-        const scroller = $('#timeline-scroll');
-        const point = (projection.start / TOTAL) * rail.clientWidth;
-        scroller.scrollLeft = Math.max(0, point - (scroller.clientWidth - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-width'))) / 2);
-      }
-      rail?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'center' });
+      packMockComments();
+      $('.comment-band .otio-comment-mark[data-comment-id="' + id + '"]')?.scrollIntoView({
+        block: 'nearest', inline: 'center', behavior: 'instant'
+      });
     } else {
       state.selection = null; paintSelection();
       announce('v' + comment.version + ' · ' + projection.status + ' · View original');

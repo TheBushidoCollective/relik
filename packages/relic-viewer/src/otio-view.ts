@@ -1710,7 +1710,7 @@ export async function mountOtioView(
       marks.set(id, painted);
       return painted.length > 0;
     },
-    reveal(anchor) {
+    reveal(anchor, commentId) {
       let target = projectionOf(anchor);
       const mappedTimeline = projections.get(
         projectionsKey(anchor)
@@ -1729,12 +1729,6 @@ export async function mountOtioView(
       const first = target?.ranges[0];
       if (!target || !first) return;
       expandTrack(target.track);
-      flushCommentRepack();
-      const rail = rails.get(target.track);
-      rail?.parentElement?.scrollIntoView({
-        block: 'nearest',
-        inline: 'center',
-      });
       if (
         anchor.relic_version === options.revision &&
         anchor.document_sha256 === doc.document_sha256
@@ -1756,6 +1750,18 @@ export async function mountOtioView(
           : timeline;
       paintInspector();
       seekFrame(rescaleTime(first.start_time, rate).value);
+      flushCommentRepack();
+      const mark =
+        commentId === undefined
+          ? rails
+              .get(target.track)
+              ?.querySelector<HTMLElement>('.otio-selection')
+          : marks.get(commentId)?.find((piece) => piece.isConnected);
+      mark?.scrollIntoView({
+        block: 'nearest',
+        inline: 'center',
+        behavior: 'instant' as ScrollBehavior,
+      });
     },
     clearMarks() {
       for (const pieces of marks.values())

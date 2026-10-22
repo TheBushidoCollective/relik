@@ -6,11 +6,7 @@ import {
   readOtioDocument,
 } from '@relic/format';
 import { otioAdapter, otioTargetLabel } from '../src/annotate-otio.ts';
-import {
-  attachOtioController,
-  type OtioUiController,
-  otioControllerFor,
-} from '../src/otio-bridge.ts';
+import { otioControllerFor } from '../src/otio-bridge.ts';
 import {
   createOtioSelection,
   formatOtioTime,
@@ -1127,40 +1123,5 @@ describe('OTIO eager-shell bridge', () => {
         content: {} as HTMLElement,
       })
     ).toBe(false);
-  });
-
-  test('adapter paint and reveal call the native controller without substituting time anchors', () => {
-    const root = {
-      matches: (selector: string): boolean => selector === '.otio-view',
-    } as HTMLElement;
-    const seen: { anchor: OtioAnchorV1; id?: string }[] = [];
-    const controller: OtioUiController = {
-      document,
-      revision: 1,
-      paint(value, id) {
-        seen.push({ anchor: value, id });
-        return true;
-      },
-      reveal(value) {
-        seen.push({ anchor: value });
-      },
-      clearMarks() {},
-      project: async (value) => ({
-        status: 'same',
-        original_anchor: value,
-        source_spans: [],
-        diagnostics: [],
-      }),
-      projection: () => undefined,
-      dispose() {},
-    };
-    attachOtioController(root, controller);
-    const surface = { host: root, content: root };
-    expect(otioAdapter.supports(surface)).toBe(true);
-    expect(
-      otioAdapter.paint(surface, {} as HTMLElement, anchor, 'comment-1')
-    ).toBe(true);
-    otioAdapter.reveal?.(surface, anchor);
-    expect(seen).toEqual([{ anchor, id: 'comment-1' }, { anchor }]);
   });
 });

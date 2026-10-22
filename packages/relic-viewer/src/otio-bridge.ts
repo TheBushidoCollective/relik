@@ -9,7 +9,7 @@ export interface OtioUiController {
   readonly document: OtioDocumentV1;
   readonly revision: number;
   paint(anchor: OtioAnchorV1, commentId: string): boolean;
-  reveal(anchor: OtioAnchorV1): void;
+  reveal(anchor: OtioAnchorV1, commentId?: string): void;
   clearMarks(): void;
   project(
     anchor: OtioAnchorV1,
