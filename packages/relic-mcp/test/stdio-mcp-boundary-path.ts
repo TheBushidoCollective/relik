@@ -10,7 +10,15 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -52,6 +60,7 @@ interface Options {
   readonly corruptNonce: boolean;
   readonly targetStderr: TargetStderr;
   readonly calibrateStderrSink: boolean;
+  readonly gcProbe: 'off' | 'post-connect';
   readonly out?: string | undefined;
 }
 
@@ -100,6 +109,7 @@ interface NonTargetPhaseReceipt {
   process?: ContextProcessReceipt | undefined;
   classification?: 'probe_fixture' | 'probe_fixture_unclassified' | undefined;
   error?: ErrorReceipt | undefined;
+  fd_census_at_failure?: FdCensus | undefined;
 }
 
 class NonTargetPhaseTimeoutError extends Error {
@@ -225,6 +235,7 @@ interface BrowserReceipt {
   reap_sigkill_sent: boolean | null;
   reap_error?: ErrorReceipt | undefined;
   readonly close: BrowserCloseReceipt;
+  gc_probe?: GcProbeReceipt | undefined;
 }
 
 interface ContextReceipt {
@@ -283,6 +294,7 @@ interface TrialReceipt {
   context?: ContextReceipt | undefined;
   target?: TargetReceipt | undefined;
   discrepancy?: ErrorReceipt | undefined;
+  fd_census_at_failure?: FdCensus | undefined;
 }
 
 interface NodeMetadata {
@@ -303,13 +315,56 @@ interface StderrSinkCalibrationReceipt {
   error?: ErrorReceipt | undefined;
 }
 
+interface FdIdentity {
+  readonly fd: number;
+  readonly id: string;
+  readonly type: string;
+}
+interface FdCensus {
+  readonly open: readonly FdIdentity[];
+  readonly errors: readonly { fd: number; code: string }[];
+  readonly max_open_fd: number;
+}
+interface FdCensusDiff {
+  readonly closed: readonly FdIdentity[];
+  readonly replaced: readonly { fd: number; from: string; to: string }[];
+  readonly opened: readonly FdIdentity[];
+}
+interface FdCensusSelfTestReceipt {
+  readonly path: string;
+  fd: number | null;
+  first_diff: FdCensusDiff | null;
+  second_diff: FdCensusDiff | null;
+  passed: boolean | null;
+  error?: ErrorReceipt | undefined;
+}
+interface GcProbeReceipt {
+  readonly mode: Options['gcProbe'];
+  readonly census_limit: number;
+  readonly born: readonly FdIdentity[];
+  readonly prior_born_open_at_gc: readonly FdIdentity[];
+  readonly gc_forced: boolean;
+  readonly gc_elapsed_ms: number | null;
+  readonly across_gc: FdCensusDiff;
+  readonly verdict:
+    | 'closed_current_browser_fds'
+    | 'closed_other_fds'
+    | 'no_change_bracket_blind'
+    | 'no_change';
+  readonly census_errors: readonly { fd: number; code: string }[];
+  readonly max_open_fd: number;
+  census_at_failure?: FdCensus | undefined;
+  born_missing_at_failure?: readonly FdIdentity[] | undefined;
+}
+
 function usage(message?: string): never {
   const prefix = message === undefined ? '' : `${message}\n`;
   throw new Error(
     `${prefix}usage: mise exec -- bun packages/relic-mcp/test/stdio-mcp-boundary-path.ts ` +
       '--context=none|helper|browser-retired|browser-retired-then-helper ' +
       '--count=1..16 --seed=otio-mcp-boundary-v1 ' +
-      '[--target-stderr=pipe|file] [--corrupt-nonce] [--out=<directory>]\n' +
+      '[--target-stderr=pipe|file] [--gc-probe=off|post-connect] ' +
+      '[--corrupt-nonce] [--out=<directory>]\n' +
       '   or: --calibrate-stderr-sink [--seed=otio-mcp-boundary-v1] [--out=<directory>]'
   );
 }
@@ -321,6 +376,7 @@ function parseOptions(argv: readonly string[]): Options {
   let corruptNonce = false;
   let targetStderr: TargetStderr = 'pipe';
   let calibrateStderrSink = false;
+  let gcProbe: 'off' | 'post-connect' = 'off';
   let out: string | undefined;
 
   for (const arg of argv) {
@@ -339,6 +395,14 @@ function parseOptions(argv: readonly string[]): Options {
         continue;
       }
       usage(`unsupported target stderr mode ${JSON.stringify(value)}`);
+    }
+    if (arg.startsWith('--gc-probe=')) {
+      const value = arg.slice('--gc-probe='.length);
+      if (value === 'off' || value === 'post-connect') {
+        gcProbe = value;
+        continue;
+      }
+      usage(`unsupported gc probe mode ${JSON.stringify(value)}`);
     }
     if (arg.startsWith('--context=')) {
       const value = arg.slice('--context='.length);
@@ -389,6 +453,9 @@ function parseOptions(argv: readonly string[]): Options {
     if (corruptNonce) {
       usage('--calibrate-stderr-sink cannot use --corrupt-nonce');
     }
+    if (gcProbe !== 'off') {
+      usage('--calibrate-stderr-sink requires --gc-probe=off');
+    }
     return {
       context: 'none',
       count: 0,
@@ -396,6 +463,7 @@ function parseOptions(argv: readonly string[]): Options {
       corruptNonce: false,
       targetStderr,
       calibrateStderrSink: true,
+      gcProbe,
       ...(out === undefined ? {} : { out }),
     };
   }
@@ -405,6 +473,13 @@ function parseOptions(argv: readonly string[]): Options {
   if (corruptNonce && (context !== 'none' || count !== 1)) {
     usage('--corrupt-nonce requires --context=none --count=1');
   }
+  if (
+    gcProbe === 'post-connect' &&
+    context !== 'browser-retired' &&
+    context !== 'browser-retired-then-helper'
+  ) {
+    usage('--gc-probe=post-connect requires a browser-retired context');
+  }
   return {
     context,
     count,
@@ -412,6 +487,7 @@ function parseOptions(argv: readonly string[]): Options {
     corruptNonce,
     targetStderr,
     calibrateStderrSink: false,
+    gcProbe,
     ...(out === undefined ? {} : { out }),
   };
 }
@@ -486,6 +562,109 @@ function textReceipt(value: string): TextReceipt {
 function textReceiptFromBytes(value: Uint8Array): TextReceipt {
   const bytes = Buffer.from(value);
   return { text: bytes.toString('utf8'), ...bytesReceipt(bytes) };
+}
+
+const FD_CENSUS_LIMIT = 256;
+const FD_CENSUS_POINTS = [
+  'bootstrap: fd_census.self_test, after bundle.read',
+  'context: browser.spawn, immediately before spawn()',
+  'context: browser.gc_probe, after browser.connect_pipe and before browser.get_version',
+  'non-target phase failure: fail(), before its checkpoint',
+  'context: browser.retire catch, only when a browser phase fails after browser.gc_probe',
+  'trial failure: before its checkpoint, only when the trial is not pass',
+] as const;
+
+const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+  0o140000: 'socket',
+  0o010000: 'fifo',
+  0o020000: 'chr',
+  0o100000: 'file',
+  0o040000: 'dir',
+};
+
+function errnoCode(error: unknown): string {
+  if (error !== null && typeof error === 'object' && 'code' in error) {
+    return String(error.code);
+  }
+  return 'undefined';
+}
+
+function fdCensus(): FdCensus {
+  const open: FdIdentity[] = [];
+  const errors: { fd: number; code: string }[] = [];
+  for (let fd = 0; fd < FD_CENSUS_LIMIT; fd += 1) {
+    try {
+      const stat = fstatSync(fd, { bigint: true });
+      const fmt = Number(stat.mode) & 0o170000;
+      open.push({
+        fd,
+        id: `${stat.dev}:${stat.ino}:${fmt.toString(8)}`,
+        type: FD_CENSUS_TYPES[fmt] ?? 'other',
+      });
+    } catch (error) {
+      const code = errnoCode(error);
+      if (code !== 'EBADF') errors.push({ fd, code });
+    }
+  }
+  return { open, errors, max_open_fd: open.at(-1)?.fd ?? -1 };
+}
+
+function diffCensus(a: FdCensus, b: FdCensus): FdCensusDiff {
+  const aByFd = new Map(a.open.map((e) => [e.fd, e] as const));
+  const bByFd = new Map(b.open.map((e) => [e.fd, e] as const));
+  return {
+    closed: a.open.filter((e) => !bByFd.has(e.fd)),
+    replaced: a.open.flatMap((e) => {
+      const next = bByFd.get(e.fd);
+      return next && next.id !== e.id
+        ? [{ fd: e.fd, from: e.id, to: next.id }]
+        : [];
+    }),
+    opened: b.open.filter((e) => !aByFd.has(e.fd)),
+  };
+}
+
+function runFdCensusSelfTest(): void {
+  const path = join(scratch, 'fd-census-self-test.bin');
+  const receipt: FdCensusSelfTestReceipt = {
+    path,
+    fd: null,
+    first_diff: null,
+    second_diff: null,
+    passed: null,
+  };
+  fdCensusSelfTest = receipt;
+  try {
+    writeFileSync(path, 'fd census self-test\n', {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+    const before = fdCensus();
+    const fd = openSync(path, 'r');
+    receipt.fd = fd;
+    const whileOpen = fdCensus();
+    closeSync(fd);
+    const afterClose = fdCensus();
+    const openDiff = diffCensus(before, whileOpen);
+    const closeDiff = diffCensus(whileOpen, afterClose);
+    receipt.first_diff = openDiff;
+    receipt.second_diff = closeDiff;
+    assert.deepEqual(
+      openDiff.opened.map((e) => e.fd),
+      [fd],
+      'first census diff did not list exactly the self-test descriptor as opened'
+    );
+    assert.deepEqual(
+      closeDiff.closed.map((e) => e.fd),
+      [fd],
+      'second census diff did not list exactly the self-test descriptor as closed'
+    );
+    receipt.passed = true;
+  } catch (error) {
+    receipt.passed = false;
+    receipt.error = errorReceipt(error);
+    throw error;
+  }
 }
 
 function stderrSink(mode: TargetStderr, ownedPath: string | undefined) {
@@ -629,6 +808,7 @@ let runtimeNode: NodeMetadata = {
   version_stderr: null,
 };
 let stderrSinkCalibration: StderrSinkCalibrationReceipt | undefined;
+let fdCensusSelfTest: FdCensusSelfTestReceipt | undefined;
 
 const service = options.calibrateStderrSink
   ? undefined
@@ -755,7 +935,7 @@ function witnessPayload(
   sequence: number | null
 ): Record<string, unknown> {
   return {
-    kind: 'stdio-mcp-boundary-path-v2',
+    kind: 'stdio-mcp-boundary-path-v3',
     record_kind: recordKind,
     status: witnessStatus(),
     options,
@@ -772,6 +952,16 @@ function witnessPayload(
       checkpoint_io_changes_parent_fd_history: true,
       all_green_is_nondiscriminating: true,
       note: 'Checkpoint I/O occurs before non-target phases and changes the parent FD history. Results from this SHA are a changed diagnostic regime; all-green results are nondiscriminating.',
+      fd_census: {
+        method: 'fstatSync bigint, fd in [0,256), allocates no descriptors',
+        census_points: FD_CENSUS_POINTS,
+      },
+      gc_probe: {
+        mode: options.gcProbe,
+        point:
+          'browser.gc_probe phase, after browser.connect_pipe and before browser.get_version',
+        note: 'phase and censuses run in both modes; only Bun.gc(true) differs',
+      },
     },
     bundle: {
       path: bundlePath,
@@ -781,6 +971,7 @@ function witnessPayload(
     runtimes: {
       process_versions: process.versions,
       bun_version: Bun.version,
+      bun_revision: Bun.revision,
       node: runtimeNode,
     },
     metadata: {
@@ -800,6 +991,7 @@ function witnessPayload(
     in_progress_trial: inProgressTrial ?? null,
     all_loopback_receipts: mcpLoopbackReceipts,
     calibrate_stderr_sink: stderrSinkCalibration ?? null,
+    fd_census_self_test: fdCensusSelfTest ?? null,
     checkpoint_files: [
       ...checkpointPaths,
       ...(recordKind === 'checkpoint' ? [recordPath] : []),
@@ -895,6 +1087,7 @@ function runNonTargetPhase<T>(
     phase.classification = phaseClassification(scope);
     phase.process = snapshotContextProcess(owner);
     if (scope === 'finalization') finalizationFailures.push(phase);
+    phase.fd_census_at_failure = fdCensus();
     persistCheckpoint(`${scope}:${name}:${outcome}:before_cleanup`);
     if (outcome === 'timed_out') {
       killOwnedContextProcess(owner);
@@ -1315,6 +1508,7 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
   let profile: string | undefined;
   let owner: ContextProcessOwnership | undefined;
   let cdp: CdpConnection | undefined;
+  let preSpawn: FdCensus | undefined;
 
   try {
     const createdProfile = await runNonTargetPhase(
@@ -1323,11 +1517,12 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
       () => mkdtemp(join(tmpdir(), 'relic-stdio-mcp-chrome-'))
     );
     profile = createdProfile;
-    const child = await runNonTargetPhase('context', 'browser.spawn', () =>
-      spawn(found.path, chromeArgs(found.path, createdProfile), {
+    const child = await runNonTargetPhase('context', 'browser.spawn', () => {
+      preSpawn = fdCensus();
+      return spawn(found.path, chromeArgs(found.path, createdProfile), {
         stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
-      })
-    );
+      });
+    });
     const browserOwner = ownContextProcess(child, receipt.process);
     owner = browserOwner;
     child.once('close', (code, signal) => {
@@ -1359,6 +1554,61 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
       browserOwner
     );
     cdp = connection;
+    receipt.gc_probe = await runNonTargetPhase(
+      'context',
+      'browser.gc_probe',
+      (): GcProbeReceipt => {
+        assert.ok(
+          preSpawn,
+          'browser.spawn did not record its pre-spawn census'
+        );
+        const postConnect = fdCensus();
+        const born = diffCensus(preSpawn, postConnect).opened;
+        const openAtGc = new Set(postConnect.open.map((e) => e.fd));
+        const priorBornOpenAtGc = trials
+          .flatMap((t) => t.context?.browser?.gc_probe?.born ?? [])
+          .filter((e) => openAtGc.has(e.fd));
+        const forced = options.gcProbe === 'post-connect';
+        const t0 = performance.now();
+        if (forced) Bun.gc(true);
+        const gcElapsed = forced ? performance.now() - t0 : null;
+        const postGc = fdCensus();
+        const across = diffCensus(postConnect, postGc);
+        const bornKeys = new Set(born.map((e) => `${e.fd}@${e.id}`));
+        const hit = [
+          ...across.closed.map((e) => `${e.fd}@${e.id}`),
+          ...across.replaced.map((e) => `${e.fd}@${e.from}`),
+        ].some((key) => bornKeys.has(key));
+        const changed = across.closed.length + across.replaced.length > 0;
+        return {
+          mode: options.gcProbe,
+          census_limit: FD_CENSUS_LIMIT,
+          born,
+          prior_born_open_at_gc: priorBornOpenAtGc,
+          gc_forced: forced,
+          gc_elapsed_ms: gcElapsed,
+          across_gc: across,
+          verdict: changed
+            ? hit
+              ? 'closed_current_browser_fds'
+              : 'closed_other_fds'
+            : priorBornOpenAtGc.length === 0
+              ? 'no_change_bracket_blind'
+              : 'no_change',
+          census_errors: [
+            ...preSpawn.errors,
+            ...postConnect.errors,
+            ...postGc.errors,
+          ],
+          max_open_fd: Math.max(
+            preSpawn.max_open_fd,
+            postConnect.max_open_fd,
+            postGc.max_open_fd
+          ),
+        };
+      },
+      browserOwner
+    );
     const version = await runNonTargetPhase(
       'context',
       'browser.get_version',
@@ -1419,6 +1669,18 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
       }
     };
   } catch (error) {
+    const probe = receipt.gc_probe;
+    if (probe !== undefined) {
+      const failure = fdCensus();
+      const openAtFailure = new Map(
+        failure.open.map((e) => [e.fd, e] as const)
+      );
+      probe.census_at_failure = failure;
+      probe.born_missing_at_failure = probe.born.filter((e) => {
+        const now = openAtFailure.get(e.fd);
+        return now === undefined || now.id !== e.id;
+      });
+    }
     persistDirectPhaseFailure('context', 'browser.retire', error, owner);
     await cleanupBrowserAfterFailure(receipt, profile, owner, cdp);
     throw error;
@@ -1802,6 +2064,7 @@ async function runTrial(ordinal: number): Promise<TrialReceipt> {
     trial.discrepancy = errorReceipt(error);
   } finally {
     if (trial.status !== 'pass') {
+      trial.fd_census_at_failure = fdCensus();
       persistCheckpoint('trial:failure:before_cleanup');
     }
     arm?.reap();
@@ -1940,6 +2203,9 @@ try {
       await runNonTargetPhase('bootstrap', 'bundle.read', () =>
         readFile(bundlePath)
       )
+    );
+    await runNonTargetPhase('bootstrap', 'fd_census.self_test', () =>
+      runFdCensusSelfTest()
     );
 
     for (let ordinal = 1; ordinal <= options.count; ordinal += 1) {
