@@ -322,6 +322,7 @@ class ViewElement {
   readonly children: ViewElement[] = [];
   readonly dataset: Record<string, string> = {};
   readonly listeners = new Map<string, Set<(event: Event) => void>>();
+  readonly attributes = new Map<string, string>();
   readonly style = {
     setProperty: (): void => {},
     position: '',

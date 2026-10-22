@@ -212,10 +212,7 @@ describe('narrow ISO edit safety gate', () => {
       ],
     ]) {
       await expect(
-        readSafeIsoPresentationEdit(
-          reader(isoMovie({ version: 1, edits })),
-          7
-        )
+        readSafeIsoPresentationEdit(reader(isoMovie({ version: 1, edits })), 7)
       ).rejects.toEqual(
         expect.objectContaining({
           reason: 'unsupported-edit-list',

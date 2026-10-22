@@ -6010,9 +6010,7 @@
             },
             "protocol_parse": {
               "status": "error",
-              "errors": [
-                "protocol parse: JSON Parse error: Unexpected EOF"
-              ]
+              "errors": ["protocol parse: JSON Parse error: Unexpected EOF"]
             },
             "validation_errors": [
               "protocol parse: JSON Parse error: Unexpected EOF"
@@ -11556,9 +11554,7 @@
       "node_compat_version": "24.3.0"
     },
     "expected_failure": "corrupted child packet hash must be rejected",
-    "validation_errors": [
-      "child packet hash"
-    ],
+    "validation_errors": ["child packet hash"],
     "status": "expected-failure"
   }
 }
