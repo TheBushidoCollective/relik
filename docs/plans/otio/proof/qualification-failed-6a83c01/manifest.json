@@ -1,0 +1,2669 @@
+{
+  "schema": "otio-qualification-failure-packet-v1",
+  "source": {
+    "frozenHead": "6a83c011fe9ef4b40204a1ca0ed46744103fba49",
+    "originalPacketPath": "/Users/jwaldrip/.omp/otio-evidence/qualification-6a83c01",
+    "copiedTo": "raw/",
+    "rawSummaryPath": "raw/summary.json"
+  },
+  "recordedRuntime": {
+    "host": "Darwin imacto-m5128.local 27.0.0 Darwin Kernel Version 27.0.0: Tue Aug 11 21:06:40 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T6050 arm64",
+    "bun": "1.4.3",
+    "command": "Each round: mise exec node@<version> -- bun run verify; bun run --cwd packages/relic-mcp build; bun run --cwd packages/relic-viewer build; loopback-only SOURCE otio-path.ts with owned headless shell 1228",
+    "policy": "Five fail-fast rounds per Node runtime, no retries. Complete raw output and per-round screenshots retained. External writes remain isolated in loopback in-memory services.",
+    "rounds": [
+      {
+        "log": "node24.15.0-r1.log",
+        "mcpNode": "24.15.0",
+        "round": 1,
+        "testsPassed": 2076,
+        "testsFailed": 0,
+        "sourceStages": 34,
+        "pathOk": true,
+        "logSha256": "108f9f52e92a26d97f1212e0755475f7e2ba071bf4441e68cd666d9e01f42bdf"
+      },
+      {
+        "log": "node24.15.0-r2.log",
+        "mcpNode": "24.15.0",
+        "round": 2,
+        "testsPassed": 2076,
+        "testsFailed": 0,
+        "sourceStages": 34,
+        "pathOk": true,
+        "logSha256": "24f59503a5bab0776f7fd2c9a8e09162c0523f1201d3ecba4e639d7e726a72f6"
+      },
+      {
+        "log": "node24.15.0-r3.log",
+        "mcpNode": "24.15.0",
+        "round": 3,
+        "testsPassed": 2076,
+        "testsFailed": 0,
+        "sourceStages": 34,
+        "pathOk": true,
+        "logSha256": "78bffc7cf3f8ce7658901a9b0b45b4e4944a019d9d3e3b6297d22b7a175736ee"
+      },
+      {
+        "log": "node24.15.0-r4.log",
+        "mcpNode": "24.15.0",
+        "round": 4,
+        "testsPassed": 2076,
+        "testsFailed": 0,
+        "sourceStages": 34,
+        "pathOk": true,
+        "logSha256": "d9545eb32ed441c06867059bd0cd26640f026404472dbb246a6fc619f1ae5ab5"
+      },
+      {
+        "log": "node24.15.0-r5.log",
+        "mcpNode": "24.15.0",
+        "round": 5,
+        "testsPassed": 2076,
+        "testsFailed": 0,
+        "sourceStages": 34,
+        "pathOk": true,
+        "logSha256": "0c0b7f004259baf6c9b345f248f8677d4f50b67f10ad0c7e98cbf2e3b88ecf43"
+      },
+      {
+        "log": "node18.20.8-r1.log",
+        "mcpNode": "18.20.8",
+        "round": 1,
+        "failedStage": 3,
+        "exit": 1
+      }
+    ]
+  },
+  "canonicalRunner": {
+    "canonicalSourcePath": "/Users/jwaldrip/.omp/wt/otio-suite-observation-run/docs/plans/otio/proof/observer-full-green-438ed41/final-qualification-runner.mjs",
+    "copiedTo": "runner/final-qualification-runner.mjs",
+    "byteLength": 4791,
+    "sha256": "13d7002e0227b662e73431de214b5736ca661b022a3c0f06647a46dbaaa79d5b",
+    "expectedSha256": "13d7002e0227b662e73431de214b5736ca661b022a3c0f06647a46dbaaa79d5b",
+    "copyMode": "verbatim"
+  },
+  "observedFailure": {
+    "rawLogPath": "raw/node18.20.8-r1.log",
+    "node": "18.20.8",
+    "round": 1,
+    "failedStage": 3,
+    "exit": 1,
+    "assertion": "available-origin/cut witness first frame painted opaque black instead of decoded media",
+    "logLines": "raw/node18.20.8-r1.log:513-532",
+    "assertionLocation": "packages/relic-mcp/test/otio-path.ts:6033",
+    "callerLocation": "packages/relic-mcp/test/otio-path.ts:6376"
+  },
+  "rawPacket": {
+    "fileCount": 512,
+    "aggregateByteLength": 48830534,
+    "treeDigest": {
+      "algorithm": "sha256",
+      "value": "dac2b8a6607f05aed03ff1327f3977ffbf7497c8081cf933cfe22784094bfe96",
+      "recordFormat": "UTF-8 sorted relative-path records: path + NUL + decimal byte length + NUL + lowercase SHA-256 + LF"
+    },
+    "integrityAnchors": {
+      "node18.20.8-r1.log": "f74b33c451f34c2c60f4d3dd63734bc9fa0e9fea43c81c91455ae1fbcadee238",
+      "summary.json": "907f2a357efd8a576184d71ebe1bfb0f5e68ab2200e75e1e0705acc558311148",
+      "node18.20.8-r1-shots/packet-canvas-measurements.json": "f4e19783465c82b0e73a66381266d669188be9f5a770a56b7a64cae47770e221"
+    },
+    "files": [
+      {
+        "path": "node18.20.8-r1-shots/1440-dark-composer-hover.png",
+        "byteLength": 144994,
+        "sha256": "328e62cd2224943489974b23010cedfcff6919c3488b9298d672af8cecb2d3b2"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-dark-composer-open.png",
+        "byteLength": 144994,
+        "sha256": "328e62cd2224943489974b23010cedfcff6919c3488b9298d672af8cecb2d3b2"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-dark-point-composer.png",
+        "byteLength": 143710,
+        "sha256": "984a159fdf22e515b4b1eb5f84790ea2078ebb57dfb2c29220a6c67814177847"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-dark-range-composer.png",
+        "byteLength": 144918,
+        "sha256": "faee08d274b5b8e68732ec454131102d4ae02c6ea93dc85b15a3fe38b7d3ddf5"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-dark-track-composer.png",
+        "byteLength": 144994,
+        "sha256": "328e62cd2224943489974b23010cedfcff6919c3488b9298d672af8cecb2d3b2"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-dark.png",
+        "byteLength": 118291,
+        "sha256": "43c2029cc5ec08f681babe6470a1fb06ac5737ea7d409f581400d3a635fff104"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-light-composer-hover.png",
+        "byteLength": 145005,
+        "sha256": "1c62a7b710382acbdc9f009c52efa5b275062a87c7a837604b98cfd9e00282a0"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-light-composer-open.png",
+        "byteLength": 145005,
+        "sha256": "1c62a7b710382acbdc9f009c52efa5b275062a87c7a837604b98cfd9e00282a0"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-light-lower-track-composer-open.png",
+        "byteLength": 145276,
+        "sha256": "3c186203d067196db86ab7ecb59a625d12072e0d31fd5582d7e8b7188a725ac3"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-light-point-composer.png",
+        "byteLength": 143271,
+        "sha256": "74e8f679566df8345cd0767de39089324be8730ae913dd4f210a54f666961ae3"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-light-range-composer.png",
+        "byteLength": 144429,
+        "sha256": "b07594a9109bc98039df78e7ff3baf542d5600719d8f370b46edf954454810b8"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-light-track-composer.png",
+        "byteLength": 145005,
+        "sha256": "1c62a7b710382acbdc9f009c52efa5b275062a87c7a837604b98cfd9e00282a0"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440-light.png",
+        "byteLength": 117806,
+        "sha256": "40645d13fef77d9bfd92cd0b465b9e15f43b091356f08d10462f008f6ec144c0"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440x600-dark-point-composer.png",
+        "byteLength": 106014,
+        "sha256": "3d5ecca214c8d4a65d93981f2d17c78c12581112add8bf83d4df13e5ba6f3cbd"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440x600-dark-range-composer.png",
+        "byteLength": 107198,
+        "sha256": "51eeb268d8173b4db4e71d11ec26352ba99940e08f4621250ce9996fd2e928f6"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440x600-dark-track-composer.png",
+        "byteLength": 105696,
+        "sha256": "1f6014c2b5b9e20edcb051be342ef4a56ac63cc117ed388dc520c4379188af5e"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440x600-light-point-composer.png",
+        "byteLength": 106144,
+        "sha256": "2864b9407b6aaa0470a1a9fe688688ed2f4a06efbc329ea7dda359281eff948e"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440x600-light-range-composer.png",
+        "byteLength": 107316,
+        "sha256": "05e7aca8332f4dfd42b87e4a6d8856a09a43bae5fa98684d8883b9db3d8cb45e"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440x600-light-track-composer.png",
+        "byteLength": 106115,
+        "sha256": "064e0abbd8599cd8cc70b8bed501a52c856a98580aa6479af11e18867232f302"
+      },
+      {
+        "path": "node18.20.8-r1-shots/1440x900-light-resize-held-draft.png",
+        "byteLength": 138930,
+        "sha256": "09a8c4407bc2ffc2c05163365c15aae12ed968a01da2ec6c1443d748a191e608"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-dark-composer-hover.png",
+        "byteLength": 55842,
+        "sha256": "d02905c23c23610c37d667b031d2af73c19830c2e615e2b017804c3b4285cab7"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-dark-composer-open.png",
+        "byteLength": 55842,
+        "sha256": "d02905c23c23610c37d667b031d2af73c19830c2e615e2b017804c3b4285cab7"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-dark-point-composer.png",
+        "byteLength": 55506,
+        "sha256": "23f740bb8a1d8a02368392b910378e53726e2afc514824079ac40545c476cce9"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-dark-range-composer.png",
+        "byteLength": 55482,
+        "sha256": "9331bc262ffa070604a8f4719c068818f778e1010c1044f85c8c7b3d76285de5"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-dark-track-composer.png",
+        "byteLength": 55842,
+        "sha256": "d02905c23c23610c37d667b031d2af73c19830c2e615e2b017804c3b4285cab7"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-dark.png",
+        "byteLength": 47571,
+        "sha256": "416c1ef5004cd1f12a37bc8dd46fc057c4dab29bde4d113d75b3213f68369afa"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-light-composer-hover.png",
+        "byteLength": 56136,
+        "sha256": "869efc3301acb77abcdf55784537a6286c7eabb7281120e3f914d43c14cd77aa"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-light-composer-open.png",
+        "byteLength": 56136,
+        "sha256": "869efc3301acb77abcdf55784537a6286c7eabb7281120e3f914d43c14cd77aa"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-light-point-composer.png",
+        "byteLength": 55807,
+        "sha256": "458cbac5e36b0ce22be305f79fb770c15ba5d1087122c41ff8e8f7b002b46d6f"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-light-range-composer.png",
+        "byteLength": 55834,
+        "sha256": "4a751532f3b8cbc22e2208bc52199a4c7560f25305011e0aab10ebd2865f8c4c"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-light-track-composer.png",
+        "byteLength": 56136,
+        "sha256": "869efc3301acb77abcdf55784537a6286c7eabb7281120e3f914d43c14cd77aa"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320-light.png",
+        "byteLength": 47560,
+        "sha256": "c3b943a1d82a36041e952c7d8a60ffb817cd2a9bf2a0cd8c6b45b38f2dc6ef1e"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320x480-dark-point-composer.png",
+        "byteLength": 33466,
+        "sha256": "0365cc73d8e383dffaf12622714bbc0c3262dff342d24cf94790d92f77818c6d"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320x480-dark-range-composer.png",
+        "byteLength": 33254,
+        "sha256": "0574671013ba93609eded550b241f6f25a1be7e79d8cd423b1b179d77e8d7611"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320x480-dark-track-composer.png",
+        "byteLength": 33239,
+        "sha256": "d6a180105043fc4233909774085cdca80228e144140906532e18672370042e6d"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320x480-light-point-composer.png",
+        "byteLength": 33740,
+        "sha256": "6da704a68c43de40f23eaca92488cd9e69f0b4973c52780f919d2471d64a0e9a"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320x480-light-range-composer.png",
+        "byteLength": 33593,
+        "sha256": "74e58eebb65ba054972e41bc89bfd86e27092ccf31e03e94da6f6075a3f81485"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320x480-light-resize-held-draft.png",
+        "byteLength": 34001,
+        "sha256": "3c2fb80a0198fbf1230d2f63fb2941b30b38ef3c47eb7235f9c8b2089dc6efce"
+      },
+      {
+        "path": "node18.20.8-r1-shots/320x480-light-track-composer.png",
+        "byteLength": 33586,
+        "sha256": "1522742ca11f82a7af954470d5b08572612a7cf0bdde517aec7535736ff284c0"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-dark-composer-hover.png",
+        "byteLength": 62204,
+        "sha256": "3c71795e36e8b8c8b581484f4e0ebd7c474bb27c5664b66f22ccbd0ffd8f8e43"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-dark-composer-open.png",
+        "byteLength": 62204,
+        "sha256": "3c71795e36e8b8c8b581484f4e0ebd7c474bb27c5664b66f22ccbd0ffd8f8e43"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-dark-point-composer.png",
+        "byteLength": 63833,
+        "sha256": "4038cdfb1ae46bce5f74bd60276bcea23ca118b2f5ebd08d4ed512d6437c534f"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-dark-range-composer.png",
+        "byteLength": 60939,
+        "sha256": "426582a5ce4427f20d982240b0f3f3e783ab0505287e545703ba3f74a9113c50"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-dark-track-composer.png",
+        "byteLength": 62204,
+        "sha256": "3c71795e36e8b8c8b581484f4e0ebd7c474bb27c5664b66f22ccbd0ffd8f8e43"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-dark.png",
+        "byteLength": 50897,
+        "sha256": "2ef21713f22495e4cd1047d341efccda3c52c0178a3d41484dc1977097e9d0b3"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-light-composer-hover.png",
+        "byteLength": 62229,
+        "sha256": "0d408001ae9aeb27918e3b0a239534b98dae6cbdccc56f750d8b1c04aedf7919"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-light-composer-open.png",
+        "byteLength": 62229,
+        "sha256": "0d408001ae9aeb27918e3b0a239534b98dae6cbdccc56f750d8b1c04aedf7919"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-light-point-composer.png",
+        "byteLength": 63799,
+        "sha256": "836f5e9727c59dd649cad9b977678f51c069a52db9fe8628fd1550c7ce91c96b"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-light-range-composer.png",
+        "byteLength": 61013,
+        "sha256": "ce7881f8d303a3838ca95c6074b8277e4e28a70fc292b7b20ba7401aa44f779e"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-light-track-composer.png",
+        "byteLength": 62229,
+        "sha256": "0d408001ae9aeb27918e3b0a239534b98dae6cbdccc56f750d8b1c04aedf7919"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390-light.png",
+        "byteLength": 50744,
+        "sha256": "f51fbbc593770929bd29669afa568fdc191c17e48163ca2813e307f1457f2656"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390x568-dark-point-composer.png",
+        "byteLength": 44055,
+        "sha256": "f38bebcdb51c2e4cfb7b1d0a82031cf8060008cb5ecaf05e87e628aed2efd669"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390x568-dark-range-composer.png",
+        "byteLength": 41052,
+        "sha256": "5dbdbe313e537346388a70bf1ce34fd70292108498bf321041260aeb8de4c990"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390x568-dark-track-composer.png",
+        "byteLength": 41623,
+        "sha256": "7255dfc9193f6a462a56a212a3f0a5c8985cebd80137128953735e026bf76c98"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390x568-light-point-composer.png",
+        "byteLength": 44006,
+        "sha256": "b87642b653c0d0931b7e7183bf2022884c88d948b63a50a626605fdf51a058f8"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390x568-light-range-composer.png",
+        "byteLength": 41048,
+        "sha256": "919b50858ed40e875d96dbdb1ef0fae720e399ce1b4e901fa54a1e28afac5dcb"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390x568-light-resize-held-draft.png",
+        "byteLength": 43519,
+        "sha256": "2325ae52856e1d0a4f66d3f711f7fd355977c8ce15a90323707f65856939ba5b"
+      },
+      {
+        "path": "node18.20.8-r1-shots/390x568-light-track-composer.png",
+        "byteLength": 41619,
+        "sha256": "1eda9a9766de16edd67a94915b41af8b1cee90b273d7087ba76c6605319de819"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-1440-dark-blocked-preview.png",
+        "byteLength": 130679,
+        "sha256": "175d6ac77de869f6b9ce6da7da1ad809697f70f9fc40ed9353b48c57b89fd818"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-1440-light-blocked-preview.png",
+        "byteLength": 130467,
+        "sha256": "12ccb5d8dfffbff3727e824b9bf5b2a72a47be18fb8fae8f090d0e160ce03c4b"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-dark-blocked-preview.png",
+        "byteLength": 57101,
+        "sha256": "a19109b324f04d99011e90a7a3a50177343b6a4ed8aff8d85e5e8637da7b1a57"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-dark-closed.png",
+        "byteLength": 47508,
+        "sha256": "9d720df8ffa08780fe7b92787526ca216d1d3956b540b1296d093579d09a10d7"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-dark-composer-hover.png",
+        "byteLength": 55778,
+        "sha256": "4a5ed4978ce4b4882931150990bd64390a697f3ec89be9aa4b4b777ad99b3f60"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-dark-composer-open.png",
+        "byteLength": 55778,
+        "sha256": "4a5ed4978ce4b4882931150990bd64390a697f3ec89be9aa4b4b777ad99b3f60"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-dark-preview-base.png",
+        "byteLength": 57101,
+        "sha256": "a19109b324f04d99011e90a7a3a50177343b6a4ed8aff8d85e5e8637da7b1a57"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-dark-selection-controls.png",
+        "byteLength": 55866,
+        "sha256": "13d754306490b2afef169f104c3050d6ad479b65c7b1bb6d87bc45563a2b1603"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-light-blocked-preview.png",
+        "byteLength": 57055,
+        "sha256": "ff3f2e6ca611e15c5781970c8573ac65bc28f12fffa056609e5e7bd015bf1cc7"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-light-closed.png",
+        "byteLength": 47526,
+        "sha256": "28a2b083fbdd3cd67d2076010e2115c213cf8069dd77da6f0357cca0058822ec"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-light-composer-hover.png",
+        "byteLength": 56093,
+        "sha256": "2cbea9fcc21b547b390d86796a2f90f534a78a3401a9e27cfead4341885d1444"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-light-composer-open.png",
+        "byteLength": 56093,
+        "sha256": "2cbea9fcc21b547b390d86796a2f90f534a78a3401a9e27cfead4341885d1444"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-light-preview-base.png",
+        "byteLength": 57055,
+        "sha256": "ff3f2e6ca611e15c5781970c8573ac65bc28f12fffa056609e5e7bd015bf1cc7"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-320-light-selection-controls.png",
+        "byteLength": 56014,
+        "sha256": "fb5cf844e8096afbadb13688fe4820f29c35b2910704353f28becbf9bd61dea3"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-390-dark-blocked-preview.png",
+        "byteLength": 63194,
+        "sha256": "74c872952a7ac24b73abaf5d11440c22fe86090176fd1f9f87401cc1834a86c1"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-390-light-blocked-preview.png",
+        "byteLength": 62993,
+        "sha256": "eeec65c52c19d4cc80cc6d59a0e6446390e82ad09d6f70d32d40a6fbd936501d"
+      },
+      {
+        "path": "node18.20.8-r1-shots/native-controls-measurements.json",
+        "byteLength": 1696164,
+        "sha256": "a5d189f295f0e57b567f6579f0edba36a10a84e825b39499d46685359e3fe2cb"
+      },
+      {
+        "path": "node18.20.8-r1-shots/otio-comment-mark-pointer-duplicate-point.png",
+        "byteLength": 125616,
+        "sha256": "7c28686480f12f8286dfe4400b56a41f6ee6a257d723d5589e30f0019a3f5b5d"
+      },
+      {
+        "path": "node18.20.8-r1-shots/otio-comment-mark-pointer-pointer-reaim.png",
+        "byteLength": 133506,
+        "sha256": "22bd4ba588a5323e536f542cf628f5c646b222366204a8d17231451444d2bd0b"
+      },
+      {
+        "path": "node18.20.8-r1-shots/otio-comment-mark-pointer-primary-range.png",
+        "byteLength": 131626,
+        "sha256": "7ab0dc81d515b55dcdab5176a76f6ab1e66b54e7d2f66b2ed23f75e05b4dec34"
+      },
+      {
+        "path": "node18.20.8-r1-shots/otio-comment-mark-pointer-whole-track.png",
+        "byteLength": 138927,
+        "sha256": "e1c408c1cbd260cd043dbf1c8393833e3e3fabace6305dadaa5a0ac1acb9790d"
+      },
+      {
+        "path": "node18.20.8-r1-shots/packet-canvas-measurements.json",
+        "byteLength": 3827,
+        "sha256": "f4e19783465c82b0e73a66381266d669188be9f5a770a56b7a64cae47770e221"
+      },
+      {
+        "path": "node18.20.8-r1.log",
+        "byteLength": 23266,
+        "sha256": "f74b33c451f34c2c60f4d3dd63734bc9fa0e9fea43c81c91455ae1fbcadee238"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-dark-composer-hover.png",
+        "byteLength": 144916,
+        "sha256": "90f0ab70b0a5d517bc284f35b887dfdb6c0c45ef64e164e03e9449431e3d4ac9"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-dark-composer-open.png",
+        "byteLength": 144916,
+        "sha256": "90f0ab70b0a5d517bc284f35b887dfdb6c0c45ef64e164e03e9449431e3d4ac9"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-dark-point-composer.png",
+        "byteLength": 143619,
+        "sha256": "12f719576af7190b80298f6dc8f08f0a5fa85aac97199dce5f281e1731a0aa53"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-dark-range-composer.png",
+        "byteLength": 144834,
+        "sha256": "75e77fb22009e9943397e6345554e93655927c0ee407cd58d7cc10667c73a864"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-dark-track-composer.png",
+        "byteLength": 144916,
+        "sha256": "90f0ab70b0a5d517bc284f35b887dfdb6c0c45ef64e164e03e9449431e3d4ac9"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-dark.png",
+        "byteLength": 118209,
+        "sha256": "b257e62ac0ef64cd4c92772378b4eb7b0e821a7e21587ae2109db1a09404b439"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-light-composer-hover.png",
+        "byteLength": 144965,
+        "sha256": "14e512559a39d32babada08e1d71c8a338b884379158c8a208e7d4166e1de120"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-light-composer-open.png",
+        "byteLength": 144965,
+        "sha256": "14e512559a39d32babada08e1d71c8a338b884379158c8a208e7d4166e1de120"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-light-lower-track-composer-open.png",
+        "byteLength": 145233,
+        "sha256": "b1a9a86b56d727724e5a13017b6b0c67acc3dab52c3c54ea17308f6b5000f137"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-light-point-composer.png",
+        "byteLength": 143225,
+        "sha256": "711daef6505cb9dab8581c4fd65a3ad432e0ae3b5508a7669458be044cd90c2d"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-light-range-composer.png",
+        "byteLength": 144384,
+        "sha256": "54c4fc2fe527a64a9ead78f77377b0566e0086c7422e9add33d10bfac3a78984"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-light-track-composer.png",
+        "byteLength": 144965,
+        "sha256": "14e512559a39d32babada08e1d71c8a338b884379158c8a208e7d4166e1de120"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440-light.png",
+        "byteLength": 117759,
+        "sha256": "c571b4d17efc823ec843a81fb734ed1ccb411ba40cd91f3e73025a78351a1248"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440x600-dark-point-composer.png",
+        "byteLength": 105926,
+        "sha256": "2119879ee9dc90d0a7380bbcd4acd99cd475c010d0003ef6cd9eae98a04127c3"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440x600-dark-range-composer.png",
+        "byteLength": 107114,
+        "sha256": "4f613ddf0a140029756b270de70cffcaf8f804955a2aa35aeb5c9c7ca386ddc6"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440x600-dark-track-composer.png",
+        "byteLength": 105614,
+        "sha256": "74b1ffe8586da9b4eeea11df3dae32e408b7e2616ac1ca54e0b2917053f029ae"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440x600-light-point-composer.png",
+        "byteLength": 106099,
+        "sha256": "e84e8eda8069986d89e0e171706303129079d5cc2f009d7e77a26af1612c0d7c"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440x600-light-range-composer.png",
+        "byteLength": 107271,
+        "sha256": "0e5caa7a5a403f059379c3ef1b743a002c7c2111e1a333ea8db2dbd6a3ebba85"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440x600-light-track-composer.png",
+        "byteLength": 106069,
+        "sha256": "7528df93e063a5dcb8686dec76dfdf6060eb7095432949cebdd8601c6b105e51"
+      },
+      {
+        "path": "node24.15.0-r1-shots/1440x900-light-resize-held-draft.png",
+        "byteLength": 138895,
+        "sha256": "ff0e0e4aef856e1cc7482be90f957b133e8f0d4fb4c0b1846542f4ac2113129e"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-dark-composer-hover.png",
+        "byteLength": 55846,
+        "sha256": "486815226d74533fcc4d2729fbbae4ce01f11657b0f4469dba1cbcedac927907"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-dark-composer-open.png",
+        "byteLength": 55846,
+        "sha256": "486815226d74533fcc4d2729fbbae4ce01f11657b0f4469dba1cbcedac927907"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-dark-point-composer.png",
+        "byteLength": 55509,
+        "sha256": "0af2209010e2981cafc060c0fbf320daa139df426051f9751d04f75599812df2"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-dark-range-composer.png",
+        "byteLength": 55488,
+        "sha256": "8926c99d75a8b51046190f09f26ba90bfe05b4803d7606cf95faaf83394db2e7"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-dark-track-composer.png",
+        "byteLength": 55846,
+        "sha256": "486815226d74533fcc4d2729fbbae4ce01f11657b0f4469dba1cbcedac927907"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-dark.png",
+        "byteLength": 47580,
+        "sha256": "8786a1cbddea1ccce241cbb0acee7dc7bbf97d07cd5c5f1822a440df528cce01"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-light-composer-hover.png",
+        "byteLength": 56162,
+        "sha256": "53b35c947561a2efbdb2c04b17798f2edeb836343be6ca6d611b4a54aa7c9c67"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-light-composer-open.png",
+        "byteLength": 56162,
+        "sha256": "53b35c947561a2efbdb2c04b17798f2edeb836343be6ca6d611b4a54aa7c9c67"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-light-point-composer.png",
+        "byteLength": 55835,
+        "sha256": "22abd93eefd744737e5039cc29d9b2e2421863ffcd3c38198c2cfd226b1e0733"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-light-range-composer.png",
+        "byteLength": 55863,
+        "sha256": "213feddcaff410838cbdd7baae67dae46e3ad187ec7ee3c78ceae80f1544cb06"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-light-track-composer.png",
+        "byteLength": 56162,
+        "sha256": "53b35c947561a2efbdb2c04b17798f2edeb836343be6ca6d611b4a54aa7c9c67"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320-light.png",
+        "byteLength": 47588,
+        "sha256": "71a43f3fd90e58c0b49a4609ad2cbbd068f4778e86e81c4f295df893eef2f64a"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320x480-dark-point-composer.png",
+        "byteLength": 33472,
+        "sha256": "5749115dac8c17abe8d79acbafc1b44dd99baba476989cd4f95fe5f6c2e37914"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320x480-dark-range-composer.png",
+        "byteLength": 33257,
+        "sha256": "cddc928f499844fe57e3451b1d4ca09f9dbec196dd9d7dee8d48cb35643a1909"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320x480-dark-track-composer.png",
+        "byteLength": 33240,
+        "sha256": "86ebe208e5dac348b676cbfbd5c3cf957b6ce32a359e80cc6c9f4cedc41794bc"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320x480-light-point-composer.png",
+        "byteLength": 33766,
+        "sha256": "701fe9b57dd7ea643d591a498aa8041897e9d560728ed71dd876493d14e4c091"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320x480-light-range-composer.png",
+        "byteLength": 33619,
+        "sha256": "2a68309ab3d143ebacf5103ee809dfa6098c0bbfea2471e0a87d19d2103ce366"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320x480-light-resize-held-draft.png",
+        "byteLength": 34027,
+        "sha256": "874ff19f1c07a1e87c0c313cdfdd1e2caf5c67a0f95b86d597041ba39d41052b"
+      },
+      {
+        "path": "node24.15.0-r1-shots/320x480-light-track-composer.png",
+        "byteLength": 33613,
+        "sha256": "951975b8491ed83f771abb5023646eb813dacbb799f208470d69496929b654c4"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-dark-composer-hover.png",
+        "byteLength": 62159,
+        "sha256": "39583e2ce232a0196ee5a20b34b9fd711c87a3fded83e6935501354052cc79ee"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-dark-composer-open.png",
+        "byteLength": 62159,
+        "sha256": "39583e2ce232a0196ee5a20b34b9fd711c87a3fded83e6935501354052cc79ee"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-dark-point-composer.png",
+        "byteLength": 63793,
+        "sha256": "b9ba307f715daa0d0bda665ca129bb31b5b3cb6a2edba6cda4d4607ecaaf8642"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-dark-range-composer.png",
+        "byteLength": 60898,
+        "sha256": "6ed9ad953f4b86249de38f7811e1864d352e10d659b43a5dfb685ac047072fcb"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-dark-track-composer.png",
+        "byteLength": 62159,
+        "sha256": "39583e2ce232a0196ee5a20b34b9fd711c87a3fded83e6935501354052cc79ee"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-dark.png",
+        "byteLength": 50862,
+        "sha256": "734f17db2626b6c0eddd93ca8407fd155625acd7945af19d66fd60493579f56d"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-light-composer-hover.png",
+        "byteLength": 62230,
+        "sha256": "18c70bd8d2349416634effdb95190ea9a9ef2a19f8cb3905bacb38617242f949"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-light-composer-open.png",
+        "byteLength": 62230,
+        "sha256": "18c70bd8d2349416634effdb95190ea9a9ef2a19f8cb3905bacb38617242f949"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-light-point-composer.png",
+        "byteLength": 63793,
+        "sha256": "a3e14770e19125d482c9d6344e3774a66d4b05726922c74eeb289b0b3e20bd14"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-light-range-composer.png",
+        "byteLength": 61011,
+        "sha256": "d8c9b52d220110fbd1118bf5887f95e08c8057e27f4c8a567311816a4ccaa40a"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-light-track-composer.png",
+        "byteLength": 62230,
+        "sha256": "18c70bd8d2349416634effdb95190ea9a9ef2a19f8cb3905bacb38617242f949"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390-light.png",
+        "byteLength": 50734,
+        "sha256": "16bcf1f0f8b9d23fc81f8f9ba8031cab229367966d391205ae8d113e4232a6f4"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390x568-dark-point-composer.png",
+        "byteLength": 44012,
+        "sha256": "29ac7dc64785e15ed08a2e3413b011d3dbad11d542786d2e7e666cba9ef1de0c"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390x568-dark-range-composer.png",
+        "byteLength": 41008,
+        "sha256": "cd22a85b29ab806903dadaf976e0ecb2b986736bb6aaad4a0044841bb9a6ae09"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390x568-dark-track-composer.png",
+        "byteLength": 41579,
+        "sha256": "35b07c63d3c5d62ca300065511475ebb79422cdc3269a8a53585a6b85a744060"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390x568-light-point-composer.png",
+        "byteLength": 44003,
+        "sha256": "c5292baaff4180640535541841083331542a796790614bf1f09904c3f4cae4c5"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390x568-light-range-composer.png",
+        "byteLength": 41045,
+        "sha256": "fb19c11f7ffc5f3a31084625c7a65343c6ec5a884364925368e9c6f693527e56"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390x568-light-resize-held-draft.png",
+        "byteLength": 43501,
+        "sha256": "46217917e368ffdba02113b3556303a849d9b8d49bf87e0ca951bde28c31fcf0"
+      },
+      {
+        "path": "node24.15.0-r1-shots/390x568-light-track-composer.png",
+        "byteLength": 41616,
+        "sha256": "5215284a0301bdba20aa8c2d336de0c3e761abd472f4f60646f0544ebcea1871"
+      },
+      {
+        "path": "node24.15.0-r1-shots/auxiliary-coincident-comment-reveal-measurements.json",
+        "byteLength": 8056,
+        "sha256": "2ba5d358a8e3dbaebf5d7f96ce80338238d9a6efa8be43db4f4f180687987ef6"
+      },
+      {
+        "path": "node24.15.0-r1-shots/auxiliary-coincident-spatial-bottom-sidebar-after.png",
+        "byteLength": 108130,
+        "sha256": "da7f95093af96a6ee5d1704eeb083e37b222e79a32e9628e4cf75bbe27ebedd0"
+      },
+      {
+        "path": "node24.15.0-r1-shots/auxiliary-coincident-spatial-bottom-sidebar-before.png",
+        "byteLength": 90802,
+        "sha256": "8ef4624afe9081ee487ac4acca3ee1855d36c89d1397ec7d20696fe50b6463ec"
+      },
+      {
+        "path": "node24.15.0-r1-shots/auxiliary-coincident-spatial-top-sidebar-after.png",
+        "byteLength": 104964,
+        "sha256": "031007b8a6dcf6757f2d8cf9b7cad35ae8460b96e749082fa5e8947238a34963"
+      },
+      {
+        "path": "node24.15.0-r1-shots/auxiliary-coincident-spatial-top-sidebar-before.png",
+        "byteLength": 86926,
+        "sha256": "573a176862eae9c8180fc37f9c9f905d62df34d0c4139c7ae7c91ad3cc7cbfac"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-1440-dark-blocked-preview.png",
+        "byteLength": 130597,
+        "sha256": "56701212db2d2164019c14851c8f2b72d838ea8a53d79529f533baa2937acd6d"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-1440-light-blocked-preview.png",
+        "byteLength": 130420,
+        "sha256": "587fd6084663dba4da71c09f66d112737ab496ece0aecc4bf1776d93b5cefbdd"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-dark-blocked-preview.png",
+        "byteLength": 57110,
+        "sha256": "d4aa280c7b6b3d34adcefda1ae907887c6a4cfe3160c5c0b8ba007f8cf6e7b02"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-dark-closed.png",
+        "byteLength": 47517,
+        "sha256": "01b974f93b47a39ed273b72dce6f47cb8fac16828c37f0b1783cfe0c69e0eea7"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-dark-composer-hover.png",
+        "byteLength": 55784,
+        "sha256": "2aa2c9e00937d06ed95d9446204adeefc0bddebb88380559ffba1c045c4cba8f"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-dark-composer-open.png",
+        "byteLength": 55784,
+        "sha256": "2aa2c9e00937d06ed95d9446204adeefc0bddebb88380559ffba1c045c4cba8f"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-dark-preview-base.png",
+        "byteLength": 57110,
+        "sha256": "d4aa280c7b6b3d34adcefda1ae907887c6a4cfe3160c5c0b8ba007f8cf6e7b02"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-dark-selection-controls.png",
+        "byteLength": 55874,
+        "sha256": "dbaf340941658b2ee388a0e8d971a3434bc38880a5b5f9dfe06ece8e5a4558a2"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-light-blocked-preview.png",
+        "byteLength": 57073,
+        "sha256": "1ff1c9eb7269e987399f42685dd03931bd0e3d76b993795391f66ab3847c183b"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-light-closed.png",
+        "byteLength": 47554,
+        "sha256": "ebe39f2fd663005d837a41f2e06deb06b71d2ad46d6b4dd4c8a105b1a8a36f54"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-light-composer-hover.png",
+        "byteLength": 56123,
+        "sha256": "b200c709ae7cccc51ab8bb20325aa3bb2930b40f810c373f8802c338f649d136"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-light-composer-open.png",
+        "byteLength": 56123,
+        "sha256": "b200c709ae7cccc51ab8bb20325aa3bb2930b40f810c373f8802c338f649d136"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-light-preview-base.png",
+        "byteLength": 57073,
+        "sha256": "1ff1c9eb7269e987399f42685dd03931bd0e3d76b993795391f66ab3847c183b"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-320-light-selection-controls.png",
+        "byteLength": 56047,
+        "sha256": "bc788838687ada87b5900603973e1ee47025d7ebcc36977018adcb4b5b7272e2"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-390-dark-blocked-preview.png",
+        "byteLength": 63148,
+        "sha256": "b2733885dfd71bd5331121b030026f63d632eef1d14d63dda7480bae5a3fafcf"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-390-light-blocked-preview.png",
+        "byteLength": 62992,
+        "sha256": "943df6fcf461f6c46ac260c6b4cb277b60b11b0cf005d22bb8ffd00ef69a76ee"
+      },
+      {
+        "path": "node24.15.0-r1-shots/native-controls-measurements.json",
+        "byteLength": 1696164,
+        "sha256": "c15ed1ee0f3d283f3c8295fcdd1fcb6b080be6fc686ae9977b6e919b4ebdb299"
+      },
+      {
+        "path": "node24.15.0-r1-shots/otio-comment-mark-pointer-duplicate-point.png",
+        "byteLength": 125588,
+        "sha256": "5ac4817c529311550d623a7e87bafdc60d0c38af99e18d9072c5d2c504b93e64"
+      },
+      {
+        "path": "node24.15.0-r1-shots/otio-comment-mark-pointer-pointer-reaim.png",
+        "byteLength": 133493,
+        "sha256": "e2c4735b34ba85576658b6e6883990457230541505f74adef68e3d610c0310b7"
+      },
+      {
+        "path": "node24.15.0-r1-shots/otio-comment-mark-pointer-primary-range.png",
+        "byteLength": 131703,
+        "sha256": "73d62c678bf1c5f9c4369f6d962a2870fe47b66f3f03e89a3f443ebe1525ad8a"
+      },
+      {
+        "path": "node24.15.0-r1-shots/otio-comment-mark-pointer-whole-track.png",
+        "byteLength": 139028,
+        "sha256": "232eab94fa8199999bebd0399e4f8355c29ee0f174e785c47d78de9af478028c"
+      },
+      {
+        "path": "node24.15.0-r1-shots/packet-canvas-measurements.json",
+        "byteLength": 4665,
+        "sha256": "b99f2bb8cc08872a3d10a02644c894cf2950e1fa75f613b15aaf69c64260ad33"
+      },
+      {
+        "path": "node24.15.0-r1.log",
+        "byteLength": 26980,
+        "sha256": "108f9f52e92a26d97f1212e0755475f7e2ba071bf4441e68cd666d9e01f42bdf"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-dark-composer-hover.png",
+        "byteLength": 144762,
+        "sha256": "d544466817a78ea3955c0f94d2a1be422a3dbc114f50b2487e3739283401e027"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-dark-composer-open.png",
+        "byteLength": 144762,
+        "sha256": "d544466817a78ea3955c0f94d2a1be422a3dbc114f50b2487e3739283401e027"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-dark-point-composer.png",
+        "byteLength": 143439,
+        "sha256": "1572462396c61dcd452eaf8ccd623f1f8a1599f1a6ae971125f4cb36af55d660"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-dark-range-composer.png",
+        "byteLength": 144666,
+        "sha256": "0e68afde730c279a282df4f6c8e2a13f9a47d4692cc037e233ed03f2116cf047"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-dark-track-composer.png",
+        "byteLength": 144762,
+        "sha256": "d544466817a78ea3955c0f94d2a1be422a3dbc114f50b2487e3739283401e027"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-dark.png",
+        "byteLength": 118043,
+        "sha256": "0b6a2616b3843aed52f60d2896d372d37bac63e4448b1e6a205c135ad37adf97"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-light-composer-hover.png",
+        "byteLength": 144785,
+        "sha256": "15fecd340deb23e550a7914f1044185df2bf19227b14ac15a707c811c49c2fc2"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-light-composer-open.png",
+        "byteLength": 144785,
+        "sha256": "15fecd340deb23e550a7914f1044185df2bf19227b14ac15a707c811c49c2fc2"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-light-lower-track-composer-open.png",
+        "byteLength": 145028,
+        "sha256": "000a42fcbd666555fb808fb8afd97af03769ef6346a50a5a84dca947ae663faa"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-light-point-composer.png",
+        "byteLength": 143031,
+        "sha256": "10193f3a79a6933c59b7e2c240012c27f14b946e8dbe5e0abb6a77b59f1e2fae"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-light-range-composer.png",
+        "byteLength": 144197,
+        "sha256": "3c4619213596593374216eba0307da5cfcb1011a1ba0a71d748ddce4187551bd"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-light-track-composer.png",
+        "byteLength": 144785,
+        "sha256": "15fecd340deb23e550a7914f1044185df2bf19227b14ac15a707c811c49c2fc2"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440-light.png",
+        "byteLength": 117567,
+        "sha256": "1bb1ce2077be8b3034a494ac6e927e952f929eac67e45fee5e0ee93566134e7b"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440x600-dark-point-composer.png",
+        "byteLength": 105751,
+        "sha256": "e8445185029f04b97b67f39b18484665826546d8b775d09ce96494307b0cac11"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440x600-dark-range-composer.png",
+        "byteLength": 106942,
+        "sha256": "d98eac2235ccd62758ae02ac7c806167e6d389fa004aac440a3663e01d6e1625"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440x600-dark-track-composer.png",
+        "byteLength": 105446,
+        "sha256": "9c3f50427e30edad7f3cf6bed33a3d238bfd59c3b036aa861a559adaab766fb3"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440x600-light-point-composer.png",
+        "byteLength": 105904,
+        "sha256": "a347f7eb4b2871f3c961fbb3b75a5348f9edaf8f6a6f5eb2ef020204b1f6a3c7"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440x600-light-range-composer.png",
+        "byteLength": 107080,
+        "sha256": "257754235867936fdd474376a67cf5e6ec250c0dac482d7625c5cc18d88ad0fc"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440x600-light-track-composer.png",
+        "byteLength": 105879,
+        "sha256": "d386b57247574778f7ccc68c9aa7d9b2c8b4b393fb8a75f1bcc1175ae6537240"
+      },
+      {
+        "path": "node24.15.0-r2-shots/1440x900-light-resize-held-draft.png",
+        "byteLength": 138701,
+        "sha256": "46a7938bbe510d79490781f9a9b31716a987a540f203b625a918a64b4624601c"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-dark-composer-hover.png",
+        "byteLength": 55761,
+        "sha256": "380738bb59e9a93246a804f62debf5101f1f336de20b0fc8fae231623fb726e3"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-dark-composer-open.png",
+        "byteLength": 55761,
+        "sha256": "380738bb59e9a93246a804f62debf5101f1f336de20b0fc8fae231623fb726e3"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-dark-point-composer.png",
+        "byteLength": 55422,
+        "sha256": "0b50240157cab7f949820766784794f2bfc4abd11e1bccca813c816f0fe5c58e"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-dark-range-composer.png",
+        "byteLength": 55405,
+        "sha256": "a85e12ea5c8b13a226f61d15b4d83d4f7ae1430e5a3b8de6f993303fcccc4043"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-dark-track-composer.png",
+        "byteLength": 55761,
+        "sha256": "380738bb59e9a93246a804f62debf5101f1f336de20b0fc8fae231623fb726e3"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-dark.png",
+        "byteLength": 47493,
+        "sha256": "93628a038e2720a73d00f0ec1fcf60c4af648d4cef43180b1aa1bc993c8d377f"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-light-composer-hover.png",
+        "byteLength": 56074,
+        "sha256": "a744925be25efccdb7d8b7ef53f9b9b3347a1f6a0654e8d1681c6f324b656919"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-light-composer-open.png",
+        "byteLength": 56074,
+        "sha256": "a744925be25efccdb7d8b7ef53f9b9b3347a1f6a0654e8d1681c6f324b656919"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-light-point-composer.png",
+        "byteLength": 55744,
+        "sha256": "76217f9beec33b45d43d107a3cd96dcb9a8a8441a16e121b12d64dfda934dd6f"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-light-range-composer.png",
+        "byteLength": 55771,
+        "sha256": "c3a0f0b156c10e6e14fa4641744101cba46677a57b3577cda14f077b7bf9428c"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-light-track-composer.png",
+        "byteLength": 56074,
+        "sha256": "a744925be25efccdb7d8b7ef53f9b9b3347a1f6a0654e8d1681c6f324b656919"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320-light.png",
+        "byteLength": 47496,
+        "sha256": "d3b379a9bf4cf2b9e2bb98ebfc6b3fc31833ee641d9a54fe9000b10e5f62adb6"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320x480-dark-point-composer.png",
+        "byteLength": 33382,
+        "sha256": "a2f25de95b7afa48623be318ed249663e903f5f10f4a26f32a16f050983594b6"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320x480-dark-range-composer.png",
+        "byteLength": 33171,
+        "sha256": "96b09ed79a59557fe57cb419590bea4748db77fae86f29a05b0153a9736666cc"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320x480-dark-track-composer.png",
+        "byteLength": 33157,
+        "sha256": "936726eb83de1fcc35897d1b48f8e98dc95c8397f067eb0c938433eaf14dd8a7"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320x480-light-point-composer.png",
+        "byteLength": 33677,
+        "sha256": "1b03ccb0b28ca715eee3fcb3b0cf5ac8b9d30eb82733439442faf9e23336e7f8"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320x480-light-range-composer.png",
+        "byteLength": 33529,
+        "sha256": "24008163dce2c98bae5d6ecd5f92dc4aaffd6728abe245de4dc455f7bf03cb35"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320x480-light-resize-held-draft.png",
+        "byteLength": 33938,
+        "sha256": "8dd04331d4adadad9a9bb7db328b9a208b1631ab57b0f7fdaa8dd71101a86b05"
+      },
+      {
+        "path": "node24.15.0-r2-shots/320x480-light-track-composer.png",
+        "byteLength": 33526,
+        "sha256": "897957b28559e294789dfc0b98d23640f1e457d17c5ea97182a7e6436127d03a"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-dark-composer-hover.png",
+        "byteLength": 62059,
+        "sha256": "3efc2c1d85b609567a8986145ab26d50f7be1ea5f1a282baccd893950fc9f070"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-dark-composer-open.png",
+        "byteLength": 62059,
+        "sha256": "3efc2c1d85b609567a8986145ab26d50f7be1ea5f1a282baccd893950fc9f070"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-dark-point-composer.png",
+        "byteLength": 63693,
+        "sha256": "fc5c43e94b1148746272ef114d96f0e1eb3d1c601f1771a75fbd8b52edfd8950"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-dark-range-composer.png",
+        "byteLength": 60793,
+        "sha256": "f896baf6b18dd1bf320b37badd37b345c58c19f4c39fcdec6d088e6aa3361435"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-dark-track-composer.png",
+        "byteLength": 62059,
+        "sha256": "3efc2c1d85b609567a8986145ab26d50f7be1ea5f1a282baccd893950fc9f070"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-dark.png",
+        "byteLength": 50773,
+        "sha256": "c9b0bbf5ee2067d39b2dd8c425ed3da779412340373aebb5a3e2ebaf1cc2b06f"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-light-composer-hover.png",
+        "byteLength": 62101,
+        "sha256": "23369fa6cad32d1a4c42d71985b8402293b407cc90cfb20e0e422d708ec889ff"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-light-composer-open.png",
+        "byteLength": 62101,
+        "sha256": "23369fa6cad32d1a4c42d71985b8402293b407cc90cfb20e0e422d708ec889ff"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-light-point-composer.png",
+        "byteLength": 63669,
+        "sha256": "15a697609f1d706bd4384bac68d5e33af97a2995b06ab409b82fbdf07ba5e3f7"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-light-range-composer.png",
+        "byteLength": 60887,
+        "sha256": "1fc1691e049a1ee1f012f99e0f9401ae72742668b885f198aaffcfb4f07b46e3"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-light-track-composer.png",
+        "byteLength": 62101,
+        "sha256": "23369fa6cad32d1a4c42d71985b8402293b407cc90cfb20e0e422d708ec889ff"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390-light.png",
+        "byteLength": 50617,
+        "sha256": "aed55dac003ae9668625d9f475d467657f2854da8685d119d2577614ff4d5baf"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390x568-dark-point-composer.png",
+        "byteLength": 43914,
+        "sha256": "342562f2e8d91d57cf5789e32028d50c91f93d0eb947c6933c9f4ace2ab8d2d5"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390x568-dark-range-composer.png",
+        "byteLength": 40907,
+        "sha256": "f56c177f43332b4c5221a9381d50fb2c2a3f0b5d1a6f19c1b0996d9b7f3c37e6"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390x568-dark-track-composer.png",
+        "byteLength": 41482,
+        "sha256": "678f89bf0995403edb102b8ecf81767325fd36cf6e2b8b75f271bf2ecc79755e"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390x568-light-point-composer.png",
+        "byteLength": 43876,
+        "sha256": "5c1c948371e29ff1193c62233a840cfd22b358317c38bb360eae3210cba4ebec"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390x568-light-range-composer.png",
+        "byteLength": 40918,
+        "sha256": "d3eb4a9eafe6041cda7d2871584de8030ad525624f775dcf6344cc17009d29a8"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390x568-light-resize-held-draft.png",
+        "byteLength": 43383,
+        "sha256": "1ae9d95046bd28f4aaa593c9647219d82fdc24093263815079b433f4f67c7883"
+      },
+      {
+        "path": "node24.15.0-r2-shots/390x568-light-track-composer.png",
+        "byteLength": 41489,
+        "sha256": "7f4059735dff116dcf2c1e3cab4664deaf96106dda960d51c4b266482726640c"
+      },
+      {
+        "path": "node24.15.0-r2-shots/auxiliary-coincident-comment-reveal-measurements.json",
+        "byteLength": 8058,
+        "sha256": "5f3f4c81dd3451ecbec3b6a19c5bddfee23aa311f6ad4552792c29f93ddb26ac"
+      },
+      {
+        "path": "node24.15.0-r2-shots/auxiliary-coincident-spatial-bottom-sidebar-after.png",
+        "byteLength": 106250,
+        "sha256": "517756a0a87b8700ba63d14ed479fa5f7a96f0d56ff83438afb14db8ebf43b7b"
+      },
+      {
+        "path": "node24.15.0-r2-shots/auxiliary-coincident-spatial-bottom-sidebar-before.png",
+        "byteLength": 88666,
+        "sha256": "5421e2aac8123096a4013d4672499cd60f5ebc9cead9b3eb2f79f5a12976e752"
+      },
+      {
+        "path": "node24.15.0-r2-shots/auxiliary-coincident-spatial-top-sidebar-after.png",
+        "byteLength": 105527,
+        "sha256": "6ba38dec6e4992a79e5a759b0262262a8f7665e8c1632d17a02f3e979d0e9ad3"
+      },
+      {
+        "path": "node24.15.0-r2-shots/auxiliary-coincident-spatial-top-sidebar-before.png",
+        "byteLength": 87316,
+        "sha256": "bd64dc9473bd923a11a131d43ce0de9ec9b8af319259c3213f1a376dbb6bf54f"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-1440-dark-blocked-preview.png",
+        "byteLength": 130418,
+        "sha256": "e16878927c2e3158cfdaff990dd98337b34e231e3d46eeaa298b1e05ee438d3e"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-1440-light-blocked-preview.png",
+        "byteLength": 130226,
+        "sha256": "3ba85ed20ce20c621aebd849d70ba34003947300cb298c3d0d114cd74488205c"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-dark-blocked-preview.png",
+        "byteLength": 57024,
+        "sha256": "049b39cba53c21976da2ce22b5ebf050cb9fdfce3c907fa09926c13c3502f0db"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-dark-closed.png",
+        "byteLength": 47428,
+        "sha256": "89541d7355176e817bc1ac40c58cd3973bb5e76875c49b2f12a5a9c6c059c25c"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-dark-composer-hover.png",
+        "byteLength": 55696,
+        "sha256": "661dc35249d031075ce0cb6ccb412531141a6036cc01b64d239413477455a7c0"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-dark-composer-open.png",
+        "byteLength": 55696,
+        "sha256": "661dc35249d031075ce0cb6ccb412531141a6036cc01b64d239413477455a7c0"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-dark-preview-base.png",
+        "byteLength": 57024,
+        "sha256": "049b39cba53c21976da2ce22b5ebf050cb9fdfce3c907fa09926c13c3502f0db"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-dark-selection-controls.png",
+        "byteLength": 55780,
+        "sha256": "d67f746c5d2a62124c85adb96d3cbd0d58ec559c05b3c2155a8366623efa771a"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-light-blocked-preview.png",
+        "byteLength": 56984,
+        "sha256": "0f6476573b489f36a39c275c8c0d30cdead37276af0cfe64b70912ec818a845d"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-light-closed.png",
+        "byteLength": 47462,
+        "sha256": "34d036e9f7165ce4a11ba4b45647a7456ab990e0823d07427b0fbc52ede5b8e1"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-light-composer-hover.png",
+        "byteLength": 56035,
+        "sha256": "423a9dc15098d7426ce231def8b8d49b6fe0a41df3a14dd3ee2f4a1a7cdb7e75"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-light-composer-open.png",
+        "byteLength": 56035,
+        "sha256": "423a9dc15098d7426ce231def8b8d49b6fe0a41df3a14dd3ee2f4a1a7cdb7e75"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-light-preview-base.png",
+        "byteLength": 56984,
+        "sha256": "0f6476573b489f36a39c275c8c0d30cdead37276af0cfe64b70912ec818a845d"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-320-light-selection-controls.png",
+        "byteLength": 55954,
+        "sha256": "f072a41fc558ce4eefd3fecdac942122970cbd862e74c6f180996474f1bef5ff"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-390-dark-blocked-preview.png",
+        "byteLength": 63047,
+        "sha256": "a3dde336a1d91a985d694242ff12e3f95b630549e9597716d033a61f28c0ac9b"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-390-light-blocked-preview.png",
+        "byteLength": 62865,
+        "sha256": "91f8424e3cdc4d2301b9a93effb2244ead71386b24dbe3fad57002ef830e3ef3"
+      },
+      {
+        "path": "node24.15.0-r2-shots/native-controls-measurements.json",
+        "byteLength": 1696164,
+        "sha256": "701811f679ed4b4cc89731f9ada369513eb2b1449f5fea44a565275593fd3c08"
+      },
+      {
+        "path": "node24.15.0-r2-shots/otio-comment-mark-pointer-duplicate-point.png",
+        "byteLength": 125363,
+        "sha256": "fca5af5e78020d6e526b7f448ed87c08a69a778d658414cc895e622c8ebdff67"
+      },
+      {
+        "path": "node24.15.0-r2-shots/otio-comment-mark-pointer-pointer-reaim.png",
+        "byteLength": 133271,
+        "sha256": "52337fc3a4237f8a35177956a549cad50731a74b869d3543f1ceae7fdf153cf6"
+      },
+      {
+        "path": "node24.15.0-r2-shots/otio-comment-mark-pointer-primary-range.png",
+        "byteLength": 131452,
+        "sha256": "41d73b5607538bf07d44200bc185961d8a3e9d58d9fd125773cfbead6e3ddee8"
+      },
+      {
+        "path": "node24.15.0-r2-shots/otio-comment-mark-pointer-whole-track.png",
+        "byteLength": 138823,
+        "sha256": "d5bd02f416c6f79e47d2d052cbaed7d20085aee77d023983e7d32b0e681a7178"
+      },
+      {
+        "path": "node24.15.0-r2-shots/packet-canvas-measurements.json",
+        "byteLength": 4665,
+        "sha256": "b99f2bb8cc08872a3d10a02644c894cf2950e1fa75f613b15aaf69c64260ad33"
+      },
+      {
+        "path": "node24.15.0-r2.log",
+        "byteLength": 26982,
+        "sha256": "24f59503a5bab0776f7fd2c9a8e09162c0523f1201d3ecba4e639d7e726a72f6"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-dark-composer-hover.png",
+        "byteLength": 144209,
+        "sha256": "23c40613d0489af1909adeb84c701b0629fd08311f310123e3f45faa13da9fda"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-dark-composer-open.png",
+        "byteLength": 144209,
+        "sha256": "23c40613d0489af1909adeb84c701b0629fd08311f310123e3f45faa13da9fda"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-dark-point-composer.png",
+        "byteLength": 142869,
+        "sha256": "e8f5c4141f8b052a6c173a54cd5ff24e2253f71d07f41c5daf2365aae4c18923"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-dark-range-composer.png",
+        "byteLength": 144105,
+        "sha256": "e2f86f4e75ff82a542870d9d28e74ad3c9533e9e6fb0d8df4d30adc1f82933dd"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-dark-track-composer.png",
+        "byteLength": 144209,
+        "sha256": "23c40613d0489af1909adeb84c701b0629fd08311f310123e3f45faa13da9fda"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-dark.png",
+        "byteLength": 117487,
+        "sha256": "39952487e8ab1195e8cd6d70eace55d610cd7cc6525c89f4396eeb983bf5fe3f"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-light-composer-hover.png",
+        "byteLength": 144238,
+        "sha256": "ec57f7d2eee82f67f157008e4e4919a28e3c6af16d2f3af9b15900f831b7ca9f"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-light-composer-open.png",
+        "byteLength": 144238,
+        "sha256": "ec57f7d2eee82f67f157008e4e4919a28e3c6af16d2f3af9b15900f831b7ca9f"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-light-lower-track-composer-open.png",
+        "byteLength": 144427,
+        "sha256": "b2a7c4352dcb7de473bd4abd06d0906e66f38cd724977c91dcd4b137cae3b104"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-light-point-composer.png",
+        "byteLength": 142478,
+        "sha256": "d4b3335b94ba3498704a460b34171e126c8dcf4f42bc48cd28b415c864f03ce2"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-light-range-composer.png",
+        "byteLength": 143625,
+        "sha256": "2c05acb7021ce2d08190be33a785e26bae0fb75b5c92d14800a566d672d07874"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-light-track-composer.png",
+        "byteLength": 144238,
+        "sha256": "ec57f7d2eee82f67f157008e4e4919a28e3c6af16d2f3af9b15900f831b7ca9f"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440-light.png",
+        "byteLength": 117002,
+        "sha256": "594b58a3694d0858339dd483226440261da75643a9226cad20711c3af2dde108"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440x600-dark-point-composer.png",
+        "byteLength": 105200,
+        "sha256": "80103f21dfe4dfd1af23c452d3233072bd7aa2e332634fc2f089fe4c21104efe"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440x600-dark-range-composer.png",
+        "byteLength": 106367,
+        "sha256": "e7e8eca06fe2d50dad8517f412850b052fcbcc6b723ecd822ef74205505dfcd8"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440x600-dark-track-composer.png",
+        "byteLength": 104896,
+        "sha256": "73fe9cb8fce4cdc6eb5a554c6fbe2f329805b0953911f6b9596e09d55d4da8c3"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440x600-light-point-composer.png",
+        "byteLength": 105337,
+        "sha256": "bfdfb4b91ab7c673a5df7c4dff081a161868c8bf8cda19e1e09cb195e193ef52"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440x600-light-range-composer.png",
+        "byteLength": 106496,
+        "sha256": "0d7d9afa1b0589b68dd2b3fb939009b6ce0bf0806e9fd5dfc5d70c5c45075346"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440x600-light-track-composer.png",
+        "byteLength": 105305,
+        "sha256": "369060002181f176529d06fbb7e17997ada2eff6a5241c2a81baf9c73cc3d125"
+      },
+      {
+        "path": "node24.15.0-r3-shots/1440x900-light-resize-held-draft.png",
+        "byteLength": 138150,
+        "sha256": "48cbc0621cf119bf612c82e4e51615b385369ccf24f56c09ecae0df9d7dd2c9b"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-dark-composer-hover.png",
+        "byteLength": 55637,
+        "sha256": "2d45caee17ad6ab5ed0c891d29c9f92a54b666fdb8c904a4bb5e04e2981d9bfa"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-dark-composer-open.png",
+        "byteLength": 55637,
+        "sha256": "2d45caee17ad6ab5ed0c891d29c9f92a54b666fdb8c904a4bb5e04e2981d9bfa"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-dark-point-composer.png",
+        "byteLength": 55298,
+        "sha256": "a4fb6cfb4f0f8e14c8f4b541fce98bb02a532e7e52f9521d6a0fe1fccad22d3a"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-dark-range-composer.png",
+        "byteLength": 55282,
+        "sha256": "bb83a5ae0c90e96b218900ec5a30f5022a4c380b3483acde499f57f04c814c16"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-dark-track-composer.png",
+        "byteLength": 55637,
+        "sha256": "2d45caee17ad6ab5ed0c891d29c9f92a54b666fdb8c904a4bb5e04e2981d9bfa"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-dark.png",
+        "byteLength": 47365,
+        "sha256": "32e7c51157c486cd89f6d3ffd75528d78ab8aeb3b43d03bd2cc1e28be6aee644"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-light-composer-hover.png",
+        "byteLength": 55936,
+        "sha256": "457e76cda9607f47f21ca000e059b9593560e3b34b6ec29c29bbd234e2d3607b"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-light-composer-open.png",
+        "byteLength": 55936,
+        "sha256": "457e76cda9607f47f21ca000e059b9593560e3b34b6ec29c29bbd234e2d3607b"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-light-point-composer.png",
+        "byteLength": 55604,
+        "sha256": "871c7c6e9c16799ae1fd12c173b4f3f06657b583660260c3ba3b56fe3347c9ed"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-light-range-composer.png",
+        "byteLength": 55630,
+        "sha256": "201c9d13edda51067542fd93490c983f9b9063f75d9057500eb3495dde1d1aba"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-light-track-composer.png",
+        "byteLength": 55936,
+        "sha256": "457e76cda9607f47f21ca000e059b9593560e3b34b6ec29c29bbd234e2d3607b"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320-light.png",
+        "byteLength": 47360,
+        "sha256": "cb8711583054757b73db719083cfb736c951c2a4db970460503925a67eaf32e5"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320x480-dark-point-composer.png",
+        "byteLength": 33258,
+        "sha256": "7c922684cbe67c329e7c553b6bc815556d105d47b50b7d19b418b1a2b1df9701"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320x480-dark-range-composer.png",
+        "byteLength": 33046,
+        "sha256": "96a8c0266df5b2239bb33526b08e20f154b3f56ae94e8e6eb82b7756a69e0b62"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320x480-dark-track-composer.png",
+        "byteLength": 33029,
+        "sha256": "9dcf31f3a80da91e2493fdfbc3f4c162c4d7dd7d39e67897e7f9ce09a7d20c5d"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320x480-light-point-composer.png",
+        "byteLength": 33538,
+        "sha256": "32a36d36b02f8abb8b7f84dd115dbf4639d76698374077c720023406b7b0b227"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320x480-light-range-composer.png",
+        "byteLength": 33391,
+        "sha256": "dd2c70d5118fff8fcead9b13aa45fa3a6ed26cd512d5b642ab80a4438a9c3780"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320x480-light-resize-held-draft.png",
+        "byteLength": 33798,
+        "sha256": "e735243242277930186bfa06c10337b8a54f611983d98b486ec7639f41860200"
+      },
+      {
+        "path": "node24.15.0-r3-shots/320x480-light-track-composer.png",
+        "byteLength": 33384,
+        "sha256": "5a600a6d04a5356547818109922da89872f03ed522a095d93d3eb5e0659921b5"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-dark-composer-hover.png",
+        "byteLength": 62051,
+        "sha256": "c18317dbc590b4048e262dddef6dcdeb46a43ebba21ecb7c3b883008aba35147"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-dark-composer-open.png",
+        "byteLength": 62051,
+        "sha256": "c18317dbc590b4048e262dddef6dcdeb46a43ebba21ecb7c3b883008aba35147"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-dark-point-composer.png",
+        "byteLength": 63681,
+        "sha256": "ea04cd0b7c32609116fb8c41fc885990a1a5b4bb9f541d5c2740e2def739d476"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-dark-range-composer.png",
+        "byteLength": 60782,
+        "sha256": "0b627ecfb1ab1d3b7d792737593e0beeafaf2019baf1461a6cb7991095cb276b"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-dark-track-composer.png",
+        "byteLength": 62051,
+        "sha256": "c18317dbc590b4048e262dddef6dcdeb46a43ebba21ecb7c3b883008aba35147"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-dark.png",
+        "byteLength": 50767,
+        "sha256": "871cfcde02861f4031c90b8942f036c900fdb93a6d1a94bb8cb3fbc096f0f87e"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-light-composer-hover.png",
+        "byteLength": 62102,
+        "sha256": "054c1db13b99b1777e9244ac78a850b551b46cfa63a2e5b2936c640c358c9461"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-light-composer-open.png",
+        "byteLength": 62102,
+        "sha256": "054c1db13b99b1777e9244ac78a850b551b46cfa63a2e5b2936c640c358c9461"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-light-point-composer.png",
+        "byteLength": 63667,
+        "sha256": "85e54b131020791b7b27fa2bbde249c600424f761585f293dba65a38dea7b7fb"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-light-range-composer.png",
+        "byteLength": 60888,
+        "sha256": "27f39e5c4441b58f4994a3149baab9cad713be1c4d6d9dd12be6c8bb78f945f7"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-light-track-composer.png",
+        "byteLength": 62102,
+        "sha256": "054c1db13b99b1777e9244ac78a850b551b46cfa63a2e5b2936c640c358c9461"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390-light.png",
+        "byteLength": 50617,
+        "sha256": "e248f6a1e902fccc67a411929e4ee8cadef681bec47234868f7d9465321856fc"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390x568-dark-point-composer.png",
+        "byteLength": 43903,
+        "sha256": "635484bfe612dfa429e7489bb59ed17ec6d10a03a3a4d8ce875e3e99b488c025"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390x568-dark-range-composer.png",
+        "byteLength": 40896,
+        "sha256": "24f929dc12af618f496090ffd96dd14924e633e725de546e9f57cb850831a295"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390x568-dark-track-composer.png",
+        "byteLength": 41468,
+        "sha256": "ec8a38f84bfa7ca775fedb1dc624d5c0c44ff0fa1bb000ec6e52548da7f22a44"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390x568-light-point-composer.png",
+        "byteLength": 43878,
+        "sha256": "fa0161336da98f913239364b297e9f71f1f5d72bd561762081b10891b5145897"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390x568-light-range-composer.png",
+        "byteLength": 40920,
+        "sha256": "a9ed8e5d20df125f1eb5009d8555ce333b13131fa1c37a4a00fca7beb36c09db"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390x568-light-resize-held-draft.png",
+        "byteLength": 43376,
+        "sha256": "809e58242a6e4b230f2e32c3826fe865583ad4094af1c984f100637d2dc24fa5"
+      },
+      {
+        "path": "node24.15.0-r3-shots/390x568-light-track-composer.png",
+        "byteLength": 41491,
+        "sha256": "d83b0b188661b95819d629064042d00200b4774d21aa1278fba6d50f1d774498"
+      },
+      {
+        "path": "node24.15.0-r3-shots/auxiliary-coincident-comment-reveal-measurements.json",
+        "byteLength": 8060,
+        "sha256": "83f72fb6145d73fe6ad0f849a11a5de69ef52c0fecba9a4995f74b99f3455e96"
+      },
+      {
+        "path": "node24.15.0-r3-shots/auxiliary-coincident-spatial-bottom-sidebar-after.png",
+        "byteLength": 105603,
+        "sha256": "fc07324e54eae5046bced7405b57ad4e8b9f0a6508ee0d226789c2abc249a982"
+      },
+      {
+        "path": "node24.15.0-r3-shots/auxiliary-coincident-spatial-bottom-sidebar-before.png",
+        "byteLength": 88015,
+        "sha256": "83074b78ed927bce11d9ee9bcb52290b3c17e116320ffed64261cd380d69831a"
+      },
+      {
+        "path": "node24.15.0-r3-shots/auxiliary-coincident-spatial-top-sidebar-after.png",
+        "byteLength": 104895,
+        "sha256": "a8187f545875611a9369621afa04fcde09fc9f5ff419fc67b34e2fbb9b3313df"
+      },
+      {
+        "path": "node24.15.0-r3-shots/auxiliary-coincident-spatial-top-sidebar-before.png",
+        "byteLength": 86990,
+        "sha256": "22fa5bfa0ae4c09c47e80dca270a777ccd7a1275624abd75464d2c7fa0f31b14"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-1440-dark-blocked-preview.png",
+        "byteLength": 129858,
+        "sha256": "02b01dc4df5647ad4dc2e5037fee28c12814eb479f0b44d2d0b1e5736340ed53"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-1440-light-blocked-preview.png",
+        "byteLength": 129662,
+        "sha256": "1a5b41e2988c5b23406333fe83877c37c9ed77cd4a15743b0b356229e162e0ab"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-dark-blocked-preview.png",
+        "byteLength": 56886,
+        "sha256": "215a20b1c616d97a8f18f73d3b61e32a555634f8edc347c5a9de15ac002d1839"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-dark-closed.png",
+        "byteLength": 47303,
+        "sha256": "ff95df484d10bf1198195fe9e356aefc96d23c0d0c34a30716fcf0c3654ae05b"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-dark-composer-hover.png",
+        "byteLength": 55572,
+        "sha256": "b65e569ed468791ee84aa74b0f5fa96180d4915c824d7cb6de6b89520830f65c"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-dark-composer-open.png",
+        "byteLength": 55572,
+        "sha256": "b65e569ed468791ee84aa74b0f5fa96180d4915c824d7cb6de6b89520830f65c"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-dark-preview-base.png",
+        "byteLength": 56886,
+        "sha256": "215a20b1c616d97a8f18f73d3b61e32a555634f8edc347c5a9de15ac002d1839"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-dark-selection-controls.png",
+        "byteLength": 55648,
+        "sha256": "c540447dc1e273b47b11b2debcc9caf3458c26c21138527200c109bc531b5e7f"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-light-blocked-preview.png",
+        "byteLength": 56839,
+        "sha256": "f115af568270c39af0622ae8d5b5d3ce7fe81aacaf8fcf867722031db67bd963"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-light-closed.png",
+        "byteLength": 47326,
+        "sha256": "dfb688fcbc60819bfed261cbbdce4155c4d3e89d5a576e6f608207b3f8a2323d"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-light-composer-hover.png",
+        "byteLength": 55898,
+        "sha256": "9a51d736df48626cd775031379b87b82531517054d236eb865133f723bc049a1"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-light-composer-open.png",
+        "byteLength": 55898,
+        "sha256": "9a51d736df48626cd775031379b87b82531517054d236eb865133f723bc049a1"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-light-preview-base.png",
+        "byteLength": 56839,
+        "sha256": "f115af568270c39af0622ae8d5b5d3ce7fe81aacaf8fcf867722031db67bd963"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-320-light-selection-controls.png",
+        "byteLength": 55812,
+        "sha256": "ac36a8874b39adb638d36d983fada1a4787c467afbb531f15e46df6d764578d4"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-390-dark-blocked-preview.png",
+        "byteLength": 63043,
+        "sha256": "ebff072f7abacd02e643ac248f8bd7581d01c73f802f0ce06b16eff2d2bc336a"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-390-light-blocked-preview.png",
+        "byteLength": 62867,
+        "sha256": "1293535217801ea50a74b5a4932e238bb4012df7eb0cfa923b1faa8bb6c98826"
+      },
+      {
+        "path": "node24.15.0-r3-shots/native-controls-measurements.json",
+        "byteLength": 1696164,
+        "sha256": "5984265a5ec2533fc97f4295cd6d6479185a772fdf509ac9fa6da36d52b236f7"
+      },
+      {
+        "path": "node24.15.0-r3-shots/otio-comment-mark-pointer-duplicate-point.png",
+        "byteLength": 124808,
+        "sha256": "d0c2e53e8a4769d98b5594988c2fa9a864422d082291951e2aefad04d96784d4"
+      },
+      {
+        "path": "node24.15.0-r3-shots/otio-comment-mark-pointer-pointer-reaim.png",
+        "byteLength": 132714,
+        "sha256": "70da7816f44808dda42fcc042853730e3d176f3bd400fdab466fc7c19dd7866f"
+      },
+      {
+        "path": "node24.15.0-r3-shots/otio-comment-mark-pointer-primary-range.png",
+        "byteLength": 130885,
+        "sha256": "d482afa4159c6d55b754e6e72a229bce57c3d0f1c04082814e8d10f92b05e3f4"
+      },
+      {
+        "path": "node24.15.0-r3-shots/otio-comment-mark-pointer-whole-track.png",
+        "byteLength": 138275,
+        "sha256": "61590dd1c1b892eb823efd74a2775c10ff02745538f0d71fc0ffc880c5031f2d"
+      },
+      {
+        "path": "node24.15.0-r3-shots/packet-canvas-measurements.json",
+        "byteLength": 4665,
+        "sha256": "b99f2bb8cc08872a3d10a02644c894cf2950e1fa75f613b15aaf69c64260ad33"
+      },
+      {
+        "path": "node24.15.0-r3.log",
+        "byteLength": 26174,
+        "sha256": "78bffc7cf3f8ce7658901a9b0b45b4e4944a019d9d3e3b6297d22b7a175736ee"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-dark-composer-hover.png",
+        "byteLength": 144490,
+        "sha256": "90bd66f4341231d05d2686ebe3adfeca1498161f6e3ca3c9ba8470064b845dcb"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-dark-composer-open.png",
+        "byteLength": 144490,
+        "sha256": "90bd66f4341231d05d2686ebe3adfeca1498161f6e3ca3c9ba8470064b845dcb"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-dark-point-composer.png",
+        "byteLength": 143142,
+        "sha256": "1ea8a51e58c88a1f2909df22f0aa35303dcd89bf70f2041ab51036e4d1fe38b8"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-dark-range-composer.png",
+        "byteLength": 144392,
+        "sha256": "2f03bab2168afcd984ea7a7d142c54c152b2ef83e47d69843206f513fe91b43a"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-dark-track-composer.png",
+        "byteLength": 144490,
+        "sha256": "90bd66f4341231d05d2686ebe3adfeca1498161f6e3ca3c9ba8470064b845dcb"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-dark.png",
+        "byteLength": 117760,
+        "sha256": "ecbaf42f684900502ea446d23ab13be37b89152d4e60581168bb04ac228a7d84"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-light-composer-hover.png",
+        "byteLength": 144514,
+        "sha256": "4e20292e570415f910c54393c8b031053474eec3f1169a345477d15e9882e43d"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-light-composer-open.png",
+        "byteLength": 144514,
+        "sha256": "4e20292e570415f910c54393c8b031053474eec3f1169a345477d15e9882e43d"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-light-lower-track-composer-open.png",
+        "byteLength": 144720,
+        "sha256": "ffdbd61ddfd1c4dd2122a553bb6ef7a6aab95f866c77a2471fe5b9ddf9fe2b4d"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-light-point-composer.png",
+        "byteLength": 142747,
+        "sha256": "4ee88771a1a14ade4416a5a4d2efafe262f73d9258fe70553beb2ca4bf6a0b0c"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-light-range-composer.png",
+        "byteLength": 143905,
+        "sha256": "1e31160f9f39152d84b712f172d0093ea37cf4a28745e93006910a46e60bec3c"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-light-track-composer.png",
+        "byteLength": 144514,
+        "sha256": "4e20292e570415f910c54393c8b031053474eec3f1169a345477d15e9882e43d"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440-light.png",
+        "byteLength": 117288,
+        "sha256": "589ad309c61809a688dff16f6fe700d89346407ac6299bc4cb40a1f303d9b53b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440x600-dark-point-composer.png",
+        "byteLength": 105469,
+        "sha256": "5fca224cbb6e20f809a0ae1bd5dc01717bb536a1047191dd8c8f028972b5f0fe"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440x600-dark-range-composer.png",
+        "byteLength": 106646,
+        "sha256": "fbff52790c71feef3ed28c965f0921871159f71a602ae0cc8b5c0da9ee9e4f3b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440x600-dark-track-composer.png",
+        "byteLength": 105164,
+        "sha256": "f7e32851e9a4981dfdd69947e50d5a09ff0186f60a9c0f751db6f3ef4f6edac0"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440x600-light-point-composer.png",
+        "byteLength": 105614,
+        "sha256": "6171dcb404d8cf540fb0e359299d7528582fccbfa1211496a0e333b0de4cd3cd"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440x600-light-range-composer.png",
+        "byteLength": 106777,
+        "sha256": "b0c1c7eef83b60134312ad5bc6974586fe4e1bd8f1fba562e1ac2b585b072692"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440x600-light-track-composer.png",
+        "byteLength": 105588,
+        "sha256": "f74802e824c00809fafda5a0961afe001703c5ad879fb74f83cb60338985b630"
+      },
+      {
+        "path": "node24.15.0-r4-shots/1440x900-light-resize-held-draft.png",
+        "byteLength": 138420,
+        "sha256": "2d1038da6955cf79317a3ac52098cbcb1dc03d32d73ee00bca797c3c22a8b1f0"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-dark-composer-hover.png",
+        "byteLength": 55782,
+        "sha256": "a7fa6d5493add2f412fe690242c3b1d6de2dd47c3cf0f64bb0a2b3e2001e8c5b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-dark-composer-open.png",
+        "byteLength": 55782,
+        "sha256": "a7fa6d5493add2f412fe690242c3b1d6de2dd47c3cf0f64bb0a2b3e2001e8c5b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-dark-point-composer.png",
+        "byteLength": 55444,
+        "sha256": "e0102f8a0c32adecb3ed38e8a740a5b23a1e7f25eb886072802681792e5b4ece"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-dark-range-composer.png",
+        "byteLength": 55424,
+        "sha256": "9848fe7fd4b2da958e27458654f8e066b5db7924eb3d164b682c30f9fb3a5ee3"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-dark-track-composer.png",
+        "byteLength": 55782,
+        "sha256": "a7fa6d5493add2f412fe690242c3b1d6de2dd47c3cf0f64bb0a2b3e2001e8c5b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-dark.png",
+        "byteLength": 47515,
+        "sha256": "dad15b432916dea5daa922268603e0f35dfafbca40f4801d47f2ecb7b93ad52d"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-light-composer-hover.png",
+        "byteLength": 56114,
+        "sha256": "97cb9389bae6f538b2692acb9455eaf7900c3c5c86314220766e2dcc14ef3a10"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-light-composer-open.png",
+        "byteLength": 56114,
+        "sha256": "97cb9389bae6f538b2692acb9455eaf7900c3c5c86314220766e2dcc14ef3a10"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-light-point-composer.png",
+        "byteLength": 55785,
+        "sha256": "b3dbe51a5018a647ef24290c561b9b1bec7e1c1ffadd0663de8fc4cace5f0726"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-light-range-composer.png",
+        "byteLength": 55811,
+        "sha256": "bbf892eac23e8f80e7a885ea210d8de36dd759d3051760f6ba9cf730cb0a4802"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-light-track-composer.png",
+        "byteLength": 56114,
+        "sha256": "97cb9389bae6f538b2692acb9455eaf7900c3c5c86314220766e2dcc14ef3a10"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320-light.png",
+        "byteLength": 47538,
+        "sha256": "9899469451b68f54c51851f74153a1c9fd4dd94cd28d4379010cff497a671983"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320x480-dark-point-composer.png",
+        "byteLength": 33408,
+        "sha256": "fb0c8f2e7e3913ef927d6d6d78a3e23d9ed5ea9042efc74ddb14103e3eb1bcc1"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320x480-dark-range-composer.png",
+        "byteLength": 33197,
+        "sha256": "3177613a5565fa547c42d93cc138fc7b8e22751d5837618d84c4b97171c58faa"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320x480-dark-track-composer.png",
+        "byteLength": 33177,
+        "sha256": "aaa6eb0e9e930b26631bc4f2b2ff502569304963402a8560ba050d7de13c454a"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320x480-light-point-composer.png",
+        "byteLength": 33720,
+        "sha256": "721811266c10f9b480a7f3371938a536a3698fecf2746c46f982c2b09cb4b034"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320x480-light-range-composer.png",
+        "byteLength": 33572,
+        "sha256": "5439aefbaaf8e49321ac91aa261c16fde51e99398b04f20fe426c7d9cbbdbb56"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320x480-light-resize-held-draft.png",
+        "byteLength": 33982,
+        "sha256": "0b1825aa59819dc33f54f001dd487efa990975f7f2cfaf817cb16643421e3edb"
+      },
+      {
+        "path": "node24.15.0-r4-shots/320x480-light-track-composer.png",
+        "byteLength": 33565,
+        "sha256": "d8728b2e8c489792794aa7d34882c5d2b9327bea1d13354d2037c07ceb6a1417"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-dark-composer-hover.png",
+        "byteLength": 62173,
+        "sha256": "b1e17bdd012f840698c1f15a30b8366bb92d773d270fc1cc2d8bf950e700060b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-dark-composer-open.png",
+        "byteLength": 62173,
+        "sha256": "b1e17bdd012f840698c1f15a30b8366bb92d773d270fc1cc2d8bf950e700060b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-dark-point-composer.png",
+        "byteLength": 63806,
+        "sha256": "72829ee0717ee1ab74bfc18adfa70f64d7cacf4ec9a9c6cc46dfc2362dbcd934"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-dark-range-composer.png",
+        "byteLength": 60912,
+        "sha256": "2bfa97abeeacec01388548b3b913ed1a6826b5310c09cd9ecb6415da0d0e3aab"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-dark-track-composer.png",
+        "byteLength": 62173,
+        "sha256": "b1e17bdd012f840698c1f15a30b8366bb92d773d270fc1cc2d8bf950e700060b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-dark.png",
+        "byteLength": 50873,
+        "sha256": "4191ef99dd1832a9b41e44cb5684db9d5a113c2389d0cd12a6e50acf615e1a48"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-light-composer-hover.png",
+        "byteLength": 62212,
+        "sha256": "255bc1266683927fdc4cea2f36b28f43bbc8627cc8ddc62697c27bd6c0d172c8"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-light-composer-open.png",
+        "byteLength": 62212,
+        "sha256": "255bc1266683927fdc4cea2f36b28f43bbc8627cc8ddc62697c27bd6c0d172c8"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-light-point-composer.png",
+        "byteLength": 63777,
+        "sha256": "35d49457660d57c9205297554ccf3f2e41b9e3d3c671d39b3ebb77e6fbb1cfdd"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-light-range-composer.png",
+        "byteLength": 60995,
+        "sha256": "c81399cbd0e3aa49df3646634110e3795938ffbc3886ca3cef9a7f23e0da8618"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-light-track-composer.png",
+        "byteLength": 62212,
+        "sha256": "255bc1266683927fdc4cea2f36b28f43bbc8627cc8ddc62697c27bd6c0d172c8"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390-light.png",
+        "byteLength": 50715,
+        "sha256": "8ef10fa8c3b9e4524850b753d13ecc5a4c4981bc9db2aae03cefe58c42acfbd6"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390x568-dark-point-composer.png",
+        "byteLength": 44025,
+        "sha256": "ed78fe57be657e45a788083526e187a64e461ada4bce27470e1021806fdd1f4a"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390x568-dark-range-composer.png",
+        "byteLength": 41020,
+        "sha256": "140b7589e0ce4c316dad5c79ce604c9c6704649b20df020b5b6339ebc81bc8a6"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390x568-dark-track-composer.png",
+        "byteLength": 41590,
+        "sha256": "11d9e0774c3cc2895a8fc6b4ffc1719d447fa5c99c5bb1711da51ffaae56549b"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390x568-light-point-composer.png",
+        "byteLength": 43985,
+        "sha256": "9b7dd5c9f3cf4cf343e7631b3a5ed5b55d12c5308d4c34bf22d53394a71fef61"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390x568-light-range-composer.png",
+        "byteLength": 41028,
+        "sha256": "294544e31dabf23d325693f9a92966d3c2c0772f38ce07ca12c0ecbe78753c5d"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390x568-light-resize-held-draft.png",
+        "byteLength": 43483,
+        "sha256": "0b9186808173a9197b4145b9e933925a2b3c65d3c6496f4d3ef00b881c85caf1"
+      },
+      {
+        "path": "node24.15.0-r4-shots/390x568-light-track-composer.png",
+        "byteLength": 41600,
+        "sha256": "bbb84e194dc24e28d410986c018c53c1918fda48607f0406cc269b34da847137"
+      },
+      {
+        "path": "node24.15.0-r4-shots/auxiliary-coincident-comment-reveal-measurements.json",
+        "byteLength": 8058,
+        "sha256": "dec2345a5ecac94e85634e3c1c12cbf7799e00e52b87c6392e139bce956fae53"
+      },
+      {
+        "path": "node24.15.0-r4-shots/auxiliary-coincident-spatial-bottom-sidebar-after.png",
+        "byteLength": 108323,
+        "sha256": "2799f670977d862af4de1528a0a47b9f8f35c8300408af3ac4d4047d98174f22"
+      },
+      {
+        "path": "node24.15.0-r4-shots/auxiliary-coincident-spatial-bottom-sidebar-before.png",
+        "byteLength": 90969,
+        "sha256": "bfce56079653c5bd432a14101b767ff2d11afb51c33b943f0927062fe6fd5537"
+      },
+      {
+        "path": "node24.15.0-r4-shots/auxiliary-coincident-spatial-top-sidebar-after.png",
+        "byteLength": 105184,
+        "sha256": "331e4124371ed5e5beafcf1066209a081221666b1f0fabf3e4a10ccb2192d2c1"
+      },
+      {
+        "path": "node24.15.0-r4-shots/auxiliary-coincident-spatial-top-sidebar-before.png",
+        "byteLength": 87267,
+        "sha256": "786fb8d67a959aec349163b52759429d7b2f445d74c6932cee4d89a4d679fa41"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-1440-dark-blocked-preview.png",
+        "byteLength": 130142,
+        "sha256": "4ae51bbcbaceefeb9ba2f7e26728c4e6a6aaf242095305e5fb4c7e2d86626a58"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-1440-light-blocked-preview.png",
+        "byteLength": 129940,
+        "sha256": "0558c692c735d2c382c7c61f4117b99740fe30217609d8e6bf09ffd7b71e37a8"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-dark-blocked-preview.png",
+        "byteLength": 57044,
+        "sha256": "54a59a0511da5667642dbf1811e521689718d2e6bd41d9ef63f2dfb7f965b618"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-dark-closed.png",
+        "byteLength": 47450,
+        "sha256": "8783abd51c127997eaf81706ab0ec9adb2ec569c11e9d5e46d1ef9ff8f60834c"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-dark-composer-hover.png",
+        "byteLength": 55717,
+        "sha256": "d6f6a3a0ca3b9c343f21ed9746b3e12bed9d3c5ededfd7006696aaffa81faec0"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-dark-composer-open.png",
+        "byteLength": 55717,
+        "sha256": "d6f6a3a0ca3b9c343f21ed9746b3e12bed9d3c5ededfd7006696aaffa81faec0"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-dark-preview-base.png",
+        "byteLength": 57044,
+        "sha256": "54a59a0511da5667642dbf1811e521689718d2e6bd41d9ef63f2dfb7f965b618"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-dark-selection-controls.png",
+        "byteLength": 55803,
+        "sha256": "1593b98c9700ce949948966203ef390dc6160c07adfe03745e4d9d4cecb1964f"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-light-blocked-preview.png",
+        "byteLength": 57028,
+        "sha256": "749f01cb2c7e85871e0939aea801e4b9ff715d10a02724e0b8f1a7a3b0c031f0"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-light-closed.png",
+        "byteLength": 47504,
+        "sha256": "ab5865e3ba8f2ed346462f1952fef6ca925654c6dc3ab8a691abb4c77a14114c"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-light-composer-hover.png",
+        "byteLength": 56075,
+        "sha256": "93794a946c8e05b73f75191773b8fb1b75cb9c2c5e14973592625ee8adc0c109"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-light-composer-open.png",
+        "byteLength": 56075,
+        "sha256": "93794a946c8e05b73f75191773b8fb1b75cb9c2c5e14973592625ee8adc0c109"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-light-preview-base.png",
+        "byteLength": 57028,
+        "sha256": "749f01cb2c7e85871e0939aea801e4b9ff715d10a02724e0b8f1a7a3b0c031f0"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-320-light-selection-controls.png",
+        "byteLength": 56002,
+        "sha256": "e85fc35c899dbb5e26675489e0f66821becc9b0208a170a647ddba528742a96e"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-390-dark-blocked-preview.png",
+        "byteLength": 63167,
+        "sha256": "2184b8cf8ccecb89d2bbcfc268e29c93208575ecc7f460c55b34556cf425358f"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-390-light-blocked-preview.png",
+        "byteLength": 62974,
+        "sha256": "7865ca6ef10e85de3af373ca0d676de5e91114f3e7b577facf6547f8dde478da"
+      },
+      {
+        "path": "node24.15.0-r4-shots/native-controls-measurements.json",
+        "byteLength": 1696164,
+        "sha256": "10fabf015a423ca44f9d4e9c7449beb2086ae06ee1769d4667501ae0ac499f1c"
+      },
+      {
+        "path": "node24.15.0-r4-shots/otio-comment-mark-pointer-duplicate-point.png",
+        "byteLength": 124986,
+        "sha256": "f6ede67c7a3a90b7ca26d023d0c041b2d8f40c163ea25c33f824dcf7a1a9c2d5"
+      },
+      {
+        "path": "node24.15.0-r4-shots/otio-comment-mark-pointer-pointer-reaim.png",
+        "byteLength": 132896,
+        "sha256": "127b7c5a577b87b89a4ecd6797a9847204e0f8ce2c662555dff450fb443cf4e3"
+      },
+      {
+        "path": "node24.15.0-r4-shots/otio-comment-mark-pointer-primary-range.png",
+        "byteLength": 131196,
+        "sha256": "5825a0575b1b041dc9bfd024767f862544e40a60acf0fc98f91940447ca467b4"
+      },
+      {
+        "path": "node24.15.0-r4-shots/otio-comment-mark-pointer-whole-track.png",
+        "byteLength": 138551,
+        "sha256": "fdbb9045785ff97be0da0a85ce5d962d7e3364949082dcf8ee82be3e4094cdcc"
+      },
+      {
+        "path": "node24.15.0-r4-shots/packet-canvas-measurements.json",
+        "byteLength": 4665,
+        "sha256": "b99f2bb8cc08872a3d10a02644c894cf2950e1fa75f613b15aaf69c64260ad33"
+      },
+      {
+        "path": "node24.15.0-r4.log",
+        "byteLength": 26982,
+        "sha256": "d9545eb32ed441c06867059bd0cd26640f026404472dbb246a6fc619f1ae5ab5"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-dark-composer-hover.png",
+        "byteLength": 144859,
+        "sha256": "215e26a4dc84488f3266f159553643d566ba403d648f44b42364ac36735e585c"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-dark-composer-open.png",
+        "byteLength": 144859,
+        "sha256": "215e26a4dc84488f3266f159553643d566ba403d648f44b42364ac36735e585c"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-dark-point-composer.png",
+        "byteLength": 143555,
+        "sha256": "13006d006bb581d89fedc52f2a7e5d92222f2079be43f13f75e346d333236512"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-dark-range-composer.png",
+        "byteLength": 144774,
+        "sha256": "8917e40e7290b3f20a092836e5504929424eb2df1cc1fa4f79a957d82aff8731"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-dark-track-composer.png",
+        "byteLength": 144859,
+        "sha256": "215e26a4dc84488f3266f159553643d566ba403d648f44b42364ac36735e585c"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-dark.png",
+        "byteLength": 118146,
+        "sha256": "807ff2e4dec6a846814b559e128a9c2f8afca925aef7d3ea36f546bcd9733341"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-light-composer-hover.png",
+        "byteLength": 144926,
+        "sha256": "896c691a04d97e7adbcf9b293f80de914fc9cb65a7c12389c3e9bf44dc0ae076"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-light-composer-open.png",
+        "byteLength": 144926,
+        "sha256": "896c691a04d97e7adbcf9b293f80de914fc9cb65a7c12389c3e9bf44dc0ae076"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-light-lower-track-composer-open.png",
+        "byteLength": 145183,
+        "sha256": "61ee631e623b16dc47e53a5392aa60bf70d9cf957a3da4f6b576a03d2116633d"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-light-point-composer.png",
+        "byteLength": 143182,
+        "sha256": "4b84e0d548dc7582d14aaf0ce75841968f1dc0c5859594f9858977ff9de26525"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-light-range-composer.png",
+        "byteLength": 144342,
+        "sha256": "89157e33242c9dd97c2c9c369a17adc47419796fbfa0fe2f1db8424578dadaf0"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-light-track-composer.png",
+        "byteLength": 144926,
+        "sha256": "896c691a04d97e7adbcf9b293f80de914fc9cb65a7c12389c3e9bf44dc0ae076"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440-light.png",
+        "byteLength": 117717,
+        "sha256": "8ffdc96a260796a976ee52cae8f33e868089be541b374079607662bf624b66f7"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440x600-dark-point-composer.png",
+        "byteLength": 105859,
+        "sha256": "7ca05680036bca78e3c5321dcb333074d90c41cce42f98a82ef94e6876807e12"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440x600-dark-range-composer.png",
+        "byteLength": 107052,
+        "sha256": "a6d1de73b2891f85958b9195b3e80e5164f553531c8712faece451d68446adeb"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440x600-dark-track-composer.png",
+        "byteLength": 105553,
+        "sha256": "e900d52cb758d660f868b8bd70718d91d80b7c3d0a724d45735fec5870984d92"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440x600-light-point-composer.png",
+        "byteLength": 106055,
+        "sha256": "d83b54f16d424289423654d20b7d04d26cf7805e6b1ac83e2f95c9350830e1f8"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440x600-light-range-composer.png",
+        "byteLength": 107228,
+        "sha256": "248c20474a1496d2f8ca3d3be145116e4267d25974cb3e5c5742daa923f2020c"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440x600-light-track-composer.png",
+        "byteLength": 106029,
+        "sha256": "b0b17c45787d33e3dfccacdc9caa8defecabd098b5b829e6c850de72e89a7fef"
+      },
+      {
+        "path": "node24.15.0-r5-shots/1440x900-light-resize-held-draft.png",
+        "byteLength": 138846,
+        "sha256": "2e59f704d1285c9f7bf4d1956bd4220f87cb266b74d04caadc349c188de41a9b"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-dark-composer-hover.png",
+        "byteLength": 55667,
+        "sha256": "b757f90bd66cf90655dfe8183be293ea6979ea5f9e27c77e6bb6c60429d58b51"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-dark-composer-open.png",
+        "byteLength": 55667,
+        "sha256": "b757f90bd66cf90655dfe8183be293ea6979ea5f9e27c77e6bb6c60429d58b51"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-dark-point-composer.png",
+        "byteLength": 55330,
+        "sha256": "3bff52ed3d3db099dcb4246eff3e88a7d41ae351382fd4047bb4c3fe4e12d388"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-dark-range-composer.png",
+        "byteLength": 55311,
+        "sha256": "19fdeb5cdca82c2d531844abc5a5a0e8d7029598604515a5d3436c3e872eb063"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-dark-track-composer.png",
+        "byteLength": 55667,
+        "sha256": "b757f90bd66cf90655dfe8183be293ea6979ea5f9e27c77e6bb6c60429d58b51"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-dark.png",
+        "byteLength": 47398,
+        "sha256": "0a9ead890d4ec86f7059975fef82f2929d3aabcd4d565d573880a95e195c7bef"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-light-composer-hover.png",
+        "byteLength": 55983,
+        "sha256": "fe586ddcecebbb710ab022cac11b3b7749afe8f36e9913c91f4d2142011fd16b"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-light-composer-open.png",
+        "byteLength": 55983,
+        "sha256": "fe586ddcecebbb710ab022cac11b3b7749afe8f36e9913c91f4d2142011fd16b"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-light-point-composer.png",
+        "byteLength": 55653,
+        "sha256": "fb85cb22b252b90ca4cb29c98585615a9acca85f178aff1b8582ab102d20d251"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-light-range-composer.png",
+        "byteLength": 55676,
+        "sha256": "b782357318aede9f651c259a494daf24e01a94c6beff1d984f0576c895b4e6da"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-light-track-composer.png",
+        "byteLength": 55983,
+        "sha256": "fe586ddcecebbb710ab022cac11b3b7749afe8f36e9913c91f4d2142011fd16b"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320-light.png",
+        "byteLength": 47405,
+        "sha256": "29caf6a4e3d4a8c4cfd6e713b30ead7b0d4a9cf635658d121cd335d5dd76277d"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320x480-dark-point-composer.png",
+        "byteLength": 33291,
+        "sha256": "35dd1ec0e4b32c4094e80e59d13816392244698b1cdedd22e8e01408e37ff1b9"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320x480-dark-range-composer.png",
+        "byteLength": 33077,
+        "sha256": "8ca691d80cb7344b2a71a05d2555ddba3d64697784099c2f12a3d6455c98a204"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320x480-dark-track-composer.png",
+        "byteLength": 33061,
+        "sha256": "6ddc7a8ae32656121c935dc87aa825edf45d0c2d7dff12f47a4b3c5742f39f49"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320x480-light-point-composer.png",
+        "byteLength": 33587,
+        "sha256": "7f359f08e7a47332e262a163eb079156825ad5ddbf38a515bf8313cf32cb8d47"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320x480-light-range-composer.png",
+        "byteLength": 33441,
+        "sha256": "254e7ac06cad4dfc961becba8c0e09d656ade9d57e125ff8eff2ef78434a7ec3"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320x480-light-resize-held-draft.png",
+        "byteLength": 33848,
+        "sha256": "15cc8f0dc2b95ab71fbdb29f407ee62797b3ca822abff1067012412a2366b87f"
+      },
+      {
+        "path": "node24.15.0-r5-shots/320x480-light-track-composer.png",
+        "byteLength": 33436,
+        "sha256": "d87c06d982596b5b5368d0001af9f71e08482f192925209512bf9ca5088ad0f8"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-dark-composer-hover.png",
+        "byteLength": 62063,
+        "sha256": "68f2d25fdc6b39721bb0d5cac24b1c9b3dbbd02a75efddde9730a405f5eccfee"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-dark-composer-open.png",
+        "byteLength": 62063,
+        "sha256": "68f2d25fdc6b39721bb0d5cac24b1c9b3dbbd02a75efddde9730a405f5eccfee"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-dark-point-composer.png",
+        "byteLength": 63693,
+        "sha256": "de19d7c09e5db3d90966569a6482d515d3676b2ef4d98ea70d23c8cbc1eff9bc"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-dark-range-composer.png",
+        "byteLength": 60793,
+        "sha256": "333c349bfef1c1665c707e2b5870214abbac374c4bed9aa97c8acf9a9c792fb7"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-dark-track-composer.png",
+        "byteLength": 62063,
+        "sha256": "68f2d25fdc6b39721bb0d5cac24b1c9b3dbbd02a75efddde9730a405f5eccfee"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-dark.png",
+        "byteLength": 50778,
+        "sha256": "533bcbfb2636db81867dbaf669374c713829c0c7c0ac6ab21575ad86385a57ac"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-light-composer-hover.png",
+        "byteLength": 62110,
+        "sha256": "7b597a474c13487862cc119177cb7deacd2fdfd73498f5b924b25c6f873e8692"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-light-composer-open.png",
+        "byteLength": 62110,
+        "sha256": "7b597a474c13487862cc119177cb7deacd2fdfd73498f5b924b25c6f873e8692"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-light-point-composer.png",
+        "byteLength": 63677,
+        "sha256": "6bf739031ccae6fca40ec2bc89af25da2a94bc61dba912d7cac789c4c5fc8cc2"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-light-range-composer.png",
+        "byteLength": 60897,
+        "sha256": "ce7b31325fd3a855081edfa21736974e95bb8fec0c2d87d6d80ec655b77b6432"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-light-track-composer.png",
+        "byteLength": 62110,
+        "sha256": "7b597a474c13487862cc119177cb7deacd2fdfd73498f5b924b25c6f873e8692"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390-light.png",
+        "byteLength": 50626,
+        "sha256": "40bb5fee60c7a77e2b59acee9ddfc718071edbd5a2706d98268f2fff366fe0bd"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390x568-dark-point-composer.png",
+        "byteLength": 43912,
+        "sha256": "77388154ec85438f749aa5abd522d0924e2d7c1e15e30f8301293fe9138717f3"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390x568-dark-range-composer.png",
+        "byteLength": 40905,
+        "sha256": "069b53f0f6eadc3ccfca2f4349abfbb739e26fb46f16b32e8b78a4cea4a766d1"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390x568-dark-track-composer.png",
+        "byteLength": 41474,
+        "sha256": "b29ee3b4e92e16b0b98aa7892050bcf4c9c7f861fe50d92b2083274fed5e88d0"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390x568-light-point-composer.png",
+        "byteLength": 43886,
+        "sha256": "bf583200e264dbe8c00dfdf814b248fde087c3b60cc4bd4d2da225d266f3fd42"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390x568-light-range-composer.png",
+        "byteLength": 40928,
+        "sha256": "52d7967a5364140d4a6f36c9c9dcd70f7db0fbaeb16838c3709b70a6674a56b5"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390x568-light-resize-held-draft.png",
+        "byteLength": 43394,
+        "sha256": "3fa5775fd590a4536b066db9d8c968bef53b42eae1bfeb49a2f92a0f343ec9a8"
+      },
+      {
+        "path": "node24.15.0-r5-shots/390x568-light-track-composer.png",
+        "byteLength": 41499,
+        "sha256": "23b929e4a3143389928230c0307cde0314f202e4ff49ed455c1cfab5bdeb17e5"
+      },
+      {
+        "path": "node24.15.0-r5-shots/auxiliary-coincident-comment-reveal-measurements.json",
+        "byteLength": 8058,
+        "sha256": "db22542232b43f2dc8acb0aac2e432a04c3bd7d18cb01e206a83b8e372e48532"
+      },
+      {
+        "path": "node24.15.0-r5-shots/auxiliary-coincident-spatial-bottom-sidebar-after.png",
+        "byteLength": 108036,
+        "sha256": "f011134328fed76ac34b35763754a1c12629875b6f68cb2e412f4f6929692fa4"
+      },
+      {
+        "path": "node24.15.0-r5-shots/auxiliary-coincident-spatial-bottom-sidebar-before.png",
+        "byteLength": 90811,
+        "sha256": "701d254b0a9e8e84a3e880deeb5346848d1e04d3bca11fc3fe532019707991d9"
+      },
+      {
+        "path": "node24.15.0-r5-shots/auxiliary-coincident-spatial-top-sidebar-after.png",
+        "byteLength": 105827,
+        "sha256": "e6cbfdea0b6f4d88a8760b0cb06b6054772980b7c0978dd54d5ecbbabad7b145"
+      },
+      {
+        "path": "node24.15.0-r5-shots/auxiliary-coincident-spatial-top-sidebar-before.png",
+        "byteLength": 87613,
+        "sha256": "36aea07846a61769db050f0022fc4f4bbfa8c3457488c2fdcc3a729509299df2"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-1440-dark-blocked-preview.png",
+        "byteLength": 130533,
+        "sha256": "0f428e1e0672d2fec0a4a2d7294babafa290d1119aec25cac1f0041ea71a349c"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-1440-light-blocked-preview.png",
+        "byteLength": 130377,
+        "sha256": "1cd156f9e7ed7f2c77bcd8c1929f2a6c7d0046c95fbb9163c00f3b729ed4571b"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-dark-blocked-preview.png",
+        "byteLength": 56919,
+        "sha256": "8d3483e1863c4963e18c401461c9082494b14ca3cbb548ed12fa1d559a7530e8"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-dark-closed.png",
+        "byteLength": 47334,
+        "sha256": "0477637aeb008cf09ab961fdcbe588b34365efec63dcc9c9983cebc550b7f63b"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-dark-composer-hover.png",
+        "byteLength": 55606,
+        "sha256": "7df8ea965a72bd4483e6bb9575f95483fb5640b01f36701dd777f1d544aeb9a5"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-dark-composer-open.png",
+        "byteLength": 55606,
+        "sha256": "7df8ea965a72bd4483e6bb9575f95483fb5640b01f36701dd777f1d544aeb9a5"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-dark-preview-base.png",
+        "byteLength": 56919,
+        "sha256": "8d3483e1863c4963e18c401461c9082494b14ca3cbb548ed12fa1d559a7530e8"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-dark-selection-controls.png",
+        "byteLength": 55687,
+        "sha256": "86d2d4b196114e2959ae514f50904f48704ffc6a2900c6c5867ec3cad807e383"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-light-blocked-preview.png",
+        "byteLength": 56892,
+        "sha256": "c5b523f19e97c8a5c2a24c9ebb622005e5522a537b1c3ce7dce7f776c9f3f4a2"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-light-closed.png",
+        "byteLength": 47370,
+        "sha256": "85d6bf7794bfcaed32f32917c8bc2e498cdd6e3a80df7c53df898a987c3c5b25"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-light-composer-hover.png",
+        "byteLength": 55938,
+        "sha256": "043b4ff3b4cc831ecae2c7a6a8f8c823132eeba8eb5e821619ef124e1d1ba4d6"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-light-composer-open.png",
+        "byteLength": 55938,
+        "sha256": "043b4ff3b4cc831ecae2c7a6a8f8c823132eeba8eb5e821619ef124e1d1ba4d6"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-light-preview-base.png",
+        "byteLength": 56892,
+        "sha256": "c5b523f19e97c8a5c2a24c9ebb622005e5522a537b1c3ce7dce7f776c9f3f4a2"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-320-light-selection-controls.png",
+        "byteLength": 55862,
+        "sha256": "07109978220bf004ef176c7cb0e74d03cb9346d987248daadeffae4677b0f4f2"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-390-dark-blocked-preview.png",
+        "byteLength": 63049,
+        "sha256": "9be1d93104f86b4f921534ac746f7b98cca721700481365e57a4ba0c3f35397c"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-390-light-blocked-preview.png",
+        "byteLength": 62879,
+        "sha256": "efc0c8a796260d8a679c44dc4c2a11e25c8f633ed5f78d46901e3c69a4be8d65"
+      },
+      {
+        "path": "node24.15.0-r5-shots/native-controls-measurements.json",
+        "byteLength": 1696164,
+        "sha256": "5c15a44177d5f1e2344cd39d1a5cfa15296dad7f57aab3fdb72865ef1e591dd1"
+      },
+      {
+        "path": "node24.15.0-r5-shots/otio-comment-mark-pointer-duplicate-point.png",
+        "byteLength": 125481,
+        "sha256": "c25bf2096ae229be561b03e80a0d79534e66508eb5bc24958d318b84e9d8c808"
+      },
+      {
+        "path": "node24.15.0-r5-shots/otio-comment-mark-pointer-pointer-reaim.png",
+        "byteLength": 133371,
+        "sha256": "7ed35a582d5032a23d201c2af5a83681fcd94a63f597cbfc51e53c0e9516f2d2"
+      },
+      {
+        "path": "node24.15.0-r5-shots/otio-comment-mark-pointer-primary-range.png",
+        "byteLength": 131595,
+        "sha256": "f3ae956447be390ae5125830e8fce2cbea7cb77bc2381a3d4a92cd26e27906c4"
+      },
+      {
+        "path": "node24.15.0-r5-shots/otio-comment-mark-pointer-whole-track.png",
+        "byteLength": 138903,
+        "sha256": "91bc608bb29f2600e4b6a50af319e6c8359258e094ec2a66908e4c0a4387371d"
+      },
+      {
+        "path": "node24.15.0-r5-shots/packet-canvas-measurements.json",
+        "byteLength": 4665,
+        "sha256": "b99f2bb8cc08872a3d10a02644c894cf2950e1fa75f613b15aaf69c64260ad33"
+      },
+      {
+        "path": "node24.15.0-r5.log",
+        "byteLength": 26983,
+        "sha256": "0c0b7f004259baf6c9b345f248f8677d4f50b67f10ad0c7e98cbf2e3b88ecf43"
+      },
+      {
+        "path": "summary.json",
+        "byteLength": 2188,
+        "sha256": "907f2a357efd8a576184d71ebe1bfb0f5e68ab2200e75e1e0705acc558311148"
+      }
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "sourceHead": "6a83c011fe9ef4b40204a1ca0ed46744103fba49",
+  "host": "Darwin imacto-m5128.local 27.0.0 Darwin Kernel Version 27.0.0: Tue Aug 11 21:06:40 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T6050 arm64",
+  "bun": "1.4.3",
+  "command": "Each round: mise exec node@<version> -- bun run verify; bun run --cwd packages/relic-mcp build; bun run --cwd packages/relic-viewer build; loopback-only SOURCE otio-path.ts with owned headless shell 1228",
+  "policy": "Five fail-fast rounds per Node runtime, no retries. Complete raw output and per-round screenshots retained. External writes remain isolated in loopback in-memory services.",
+  "rounds": [
+    {
+      "log": "node24.15.0-r1.log",
+      "mcpNode": "24.15.0",
+      "round": 1,
+      "testsPassed": 2076,
+      "testsFailed": 0,
+      "sourceStages": 34,
+      "pathOk": true,
+      "logSha256": "108f9f52e92a26d97f1212e0755475f7e2ba071bf4441e68cd666d9e01f42bdf"
+    },
+    {
+      "log": "node24.15.0-r2.log",
+      "mcpNode": "24.15.0",
+      "round": 2,
+      "testsPassed": 2076,
+      "testsFailed": 0,
+      "sourceStages": 34,
+      "pathOk": true,
+      "logSha256": "24f59503a5bab0776f7fd2c9a8e09162c0523f1201d3ecba4e639d7e726a72f6"
+    },
+    {
+      "log": "node24.15.0-r3.log",
+      "mcpNode": "24.15.0",
+      "round": 3,
+      "testsPassed": 2076,
+      "testsFailed": 0,
+      "sourceStages": 34,
+      "pathOk": true,
+      "logSha256": "78bffc7cf3f8ce7658901a9b0b45b4e4944a019d9d3e3b6297d22b7a175736ee"
+    },
+    {
+      "log": "node24.15.0-r4.log",
+      "mcpNode": "24.15.0",
+      "round": 4,
+      "testsPassed": 2076,
+      "testsFailed": 0,
+      "sourceStages": 34,
+      "pathOk": true,
+      "logSha256": "d9545eb32ed441c06867059bd0cd26640f026404472dbb246a6fc619f1ae5ab5"
+    },
+    {
+      "log": "node24.15.0-r5.log",
+      "mcpNode": "24.15.0",
+      "round": 5,
+      "testsPassed": 2076,
+      "testsFailed": 0,
+      "sourceStages": 34,
+      "pathOk": true,
+      "logSha256": "0c0b7f004259baf6c9b345f248f8677d4f50b67f10ad0c7e98cbf2e3b88ecf43"
+    },
+    {
+      "log": "node18.20.8-r1.log",
+      "mcpNode": "18.20.8",
+      "round": 1,
+      "failedStage": 3,
+      "exit": 1
+    }
+  ]
+}

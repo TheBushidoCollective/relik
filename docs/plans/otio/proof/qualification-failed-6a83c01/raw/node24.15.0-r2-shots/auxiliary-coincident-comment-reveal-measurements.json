@@ -1,0 +1,318 @@
+{
+  "relic_id": "gnddry6e6nn3h46dj39m6n4v48",
+  "viewport": {
+    "width": 900,
+    "height": 900
+  },
+  "clock": {
+    "configuredLimit": 30,
+    "configuredWindowSeconds": 3600,
+    "initialBoundary": {
+      "before": 1792705753036,
+      "after": 1792709353036
+    },
+    "boundaries": [
+      {
+        "before": 1792709353036,
+        "after": 1792712953036,
+        "completedUiPosts": 30
+      }
+    ],
+    "completedUiPosts": 40,
+    "finalNow": 1792712953036
+  },
+  "measurements": [
+    {
+      "state": "auxiliary-coincident-sidebar-reveal",
+      "position": "spatial-top",
+      "expectedId": "ZZtQdh4bHwIb0iLBnhMJHw",
+      "expectedAnchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 0,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "beforeScreenshot": "auxiliary-coincident-spatial-top-sidebar-before",
+      "afterScreenshot": "auxiliary-coincident-spatial-top-sidebar-after",
+      "precondition": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "stageScrollTop": 0,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": 824.953125,
+            "right": 760,
+            "bottom": 1758.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 882.953125,
+            "right": 176.5,
+            "bottom": 896.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": false,
+          "markOffscreen": false,
+          "direction": null
+        },
+        "after": {
+          "stageScrollTop": 851,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": -26.046875,
+            "right": 760,
+            "bottom": 907.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 31.953125,
+            "right": 176.5,
+            "bottom": 45.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": true,
+          "markOffscreen": true,
+          "direction": "above"
+        }
+      },
+      "row": {
+        "missing": [],
+        "rowRect": {
+          "left": 569,
+          "top": 743.734375,
+          "right": 880,
+          "bottom": 900.28125,
+          "width": 311,
+          "height": 156.546875
+        },
+        "center": {
+          "x": 724.5,
+          "y": 822.0078125
+        },
+        "visible": true,
+        "hitOwned": true,
+        "stageBefore": 851,
+        "stageAfter": 851,
+        "timelineBefore": 0,
+        "timelineAfter": 0
+      },
+      "captureInstalled": true,
+      "trustedClickId": "ZZtQdh4bHwIb0iLBnhMJHw",
+      "trusted": true,
+      "after": {
+        "missing": [],
+        "markRect": {
+          "left": 171.5,
+          "top": 53.953125,
+          "right": 176.5,
+          "bottom": 67.953125,
+          "width": 5,
+          "height": 14
+        },
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 548,
+          "bottom": 900.0625,
+          "width": 548,
+          "height": 846
+        },
+        "center": {
+          "x": 174,
+          "y": 60.953125
+        },
+        "usableLeft": 174,
+        "usableRight": 548,
+        "hitId": "ZZtQdh4bHwIb0iLBnhMJHw",
+        "hitOwned": true,
+        "activeIds": [
+          "ZZtQdh4bHwIb0iLBnhMJHw"
+        ],
+        "cardId": "ZZtQdh4bHwIb0iLBnhMJHw",
+        "cardVisible": true,
+        "bodyPresent": true,
+        "anchor": {
+          "trackId": "track-v2-duplicate",
+          "start": 0,
+          "duration": 0,
+          "rate": 24,
+          "durationRate": 24
+        },
+        "stageScrollTop": 829,
+        "timelineScrollLeft": 0
+      }
+    },
+    {
+      "state": "auxiliary-coincident-sidebar-reveal",
+      "position": "spatial-bottom",
+      "expectedId": "_6xsqCSUHNZa7LlNlXuQRw",
+      "expectedAnchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 0,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "beforeScreenshot": "auxiliary-coincident-spatial-bottom-sidebar-before",
+      "afterScreenshot": "auxiliary-coincident-spatial-bottom-sidebar-after",
+      "precondition": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "stageScrollTop": 829,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": -4.046875,
+            "right": 760,
+            "bottom": 929.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 911.953125,
+            "right": 176.5,
+            "bottom": 925.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": true,
+          "markOffscreen": true,
+          "direction": null
+        },
+        "after": {
+          "stageScrollTop": 806,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": 18.953125,
+            "right": 760,
+            "bottom": 952.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 934.953125,
+            "right": 176.5,
+            "bottom": 948.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": true,
+          "markOffscreen": true,
+          "direction": "below"
+        }
+      },
+      "row": {
+        "missing": [],
+        "rowRect": {
+          "left": 569,
+          "top": 743.578125,
+          "right": 880,
+          "bottom": 900.125,
+          "width": 311,
+          "height": 156.546875
+        },
+        "center": {
+          "x": 724.5,
+          "y": 821.8515625
+        },
+        "visible": true,
+        "hitOwned": true,
+        "stageBefore": 806,
+        "stageAfter": 806,
+        "timelineBefore": 0,
+        "timelineAfter": 0
+      },
+      "captureInstalled": true,
+      "trustedClickId": "_6xsqCSUHNZa7LlNlXuQRw",
+      "trusted": true,
+      "after": {
+        "missing": [],
+        "markRect": {
+          "left": 171.5,
+          "top": 885.953125,
+          "right": 176.5,
+          "bottom": 899.953125,
+          "width": 5,
+          "height": 14
+        },
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 548,
+          "bottom": 900.0625,
+          "width": 548,
+          "height": 846
+        },
+        "center": {
+          "x": 174,
+          "y": 892.953125
+        },
+        "usableLeft": 174,
+        "usableRight": 548,
+        "hitId": "_6xsqCSUHNZa7LlNlXuQRw",
+        "hitOwned": true,
+        "activeIds": [
+          "_6xsqCSUHNZa7LlNlXuQRw"
+        ],
+        "cardId": "_6xsqCSUHNZa7LlNlXuQRw",
+        "cardVisible": true,
+        "bodyPresent": true,
+        "anchor": {
+          "trackId": "track-v2-duplicate",
+          "start": 0,
+          "duration": 0,
+          "rate": 24,
+          "durationRate": 24
+        },
+        "stageScrollTop": 855,
+        "timelineScrollLeft": 0
+      }
+    }
+  ]
+}
