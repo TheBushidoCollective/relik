@@ -6076,8 +6076,11 @@ export function buildThread(
       if (disclosure) body.append(disclosure);
       const note = composer.element.querySelector('.popover-note');
       if (note) body.append(note);
-      panel.append(body, composer.element);
+      panel.append(body, ...Array.from(composer.element.children));
       panel.classList.add('is-otio-composer');
+      // Keep existing composer selectors on the card now that its rows are
+      // direct flex children instead of descendants of the old wrapper.
+      panel.classList.add('popover-composer');
     } else panel.appendChild(composer.element);
     const state = { anchor, panel, target, field: composer.field };
     if (options.bounds && host) {
