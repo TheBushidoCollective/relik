@@ -1675,6 +1675,14 @@ async function openBrowser(
     );
     const cdp = connectPipe(toChrome, fromChrome);
     startupConnection = cdp;
+    const blocked: string[] = [];
+    const continuedNonLoopback: string[] = [];
+    const cspHeaders: string[] = [];
+    const workerUrls: string[] = [];
+    const workerHookErrors: Error[] = [];
+    const workerHooks = new Set<Promise<void>>();
+    let stopWorkerAttach: (() => void) | undefined;
+    const documentUrl = url.split('#')[0] ?? url;
     await attestBrowserHeadless(cdp, launch);
     const created = (await cdp.send('Target.createTarget', {
       url: 'about:blank',
@@ -1704,10 +1712,9 @@ async function openBrowser(
           headers?: Record<string, string | number | boolean>;
         };
       };
-      if (params.response?.url !== documentUrl) return;
-      for (const [name, value] of Object.entries(
-        params.response.headers ?? {}
-      )) {
+      const response = params.response;
+      if (response === undefined || response.url !== documentUrl) return;
+      for (const [name, value] of Object.entries(response.headers ?? {})) {
         if (name.toLowerCase() === 'content-security-policy')
           cspHeaders.push(String(value));
       }
