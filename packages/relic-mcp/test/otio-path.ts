@@ -4706,7 +4706,12 @@ try {
         effect_frame: plan.effect_frame,
         probe: blocked,
       });
-      const previewBase = await exposePreviewBase(browser);
+      const previewBase: StageControlExposure = {
+        missing: blocked.missing,
+        visible: blocked.button.visible,
+        withinStage: blocked.button.contained,
+        rect: blocked.button.rect,
+      };
       assertStageControlExposure(previewBase, `320px ${scheme} base preview`);
       nativeControlMeasurements.push({
         state: 'supplemental-preview-base',

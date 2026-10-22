@@ -1552,6 +1552,1898 @@
       }
     },
     {
+      "state": "blocked-preview",
+      "width": 390,
+      "scheme": "light",
+      "prior_frame": 60,
+      "effect_frame": 168,
+      "probe": {
+        "missing": [],
+        "state": {
+          "ready": "diagnostic",
+          "previewState": "blocked",
+          "buffering": "false",
+          "frame": "168"
+        },
+        "scope": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDRBlock affected playback",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 11.1875,
+            "top": 65.25,
+            "right": 348.78125,
+            "bottom": 83.625,
+            "width": 337.59375,
+            "height": 18.375
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 361.21875,
+              "bottom": 900,
+              "width": 361.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 390,
+              "bottom": 900,
+              "width": 390,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 343.1875,
+                "bottom": 80.4375,
+                "width": 326.40625,
+                "height": 12
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 179.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 339.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 343.1875,
+                "bottom": 79.4375,
+                "width": 326.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 179.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 339.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "scopeText": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDR",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 16.78125,
+            "top": 68.4375,
+            "right": 343.1875,
+            "bottom": 80.4375,
+            "width": 326.40625,
+            "height": 12
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 361.21875,
+              "bottom": 900,
+              "width": 361.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 390,
+              "bottom": 900,
+              "width": 390,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 343.1875,
+                "bottom": 79.4375,
+                "width": 326.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 179.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 339.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "text": "unsupported-effect · Enabled effect MagicBulletLook is not applied; preview is base media",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 114.015625,
+              "right": 341.21875,
+              "bottom": 171.578125,
+              "width": 321.21875,
+              "height": 57.5625
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 361.21875,
+                "bottom": 900,
+                "width": 361.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 390,
+                "bottom": 900,
+                "width": 390,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 54.609375,
+                  "top": 115.015625,
+                  "right": 306.609375,
+                  "bottom": 131.015625,
+                  "width": 252,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 58.609375,
+                    "y": 123.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 123.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 302.609375,
+                    "y": 123.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 29.40625,
+                  "top": 134.203125,
+                  "right": 331.8125,
+                  "bottom": 150.203125,
+                  "width": 302.40625,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 33.40625,
+                    "y": 142.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 142.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 327.8125,
+                    "y": 142.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 144.609375,
+                  "top": 153.390625,
+                  "right": 216.609375,
+                  "bottom": 169.390625,
+                  "width": 72,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 148.609375,
+                    "y": 161.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 161.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 212.609375,
+                    "y": 161.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "text": "unsupported-effect · Unsupported effect: CustomLook",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 181.96875,
+              "right": 341.21875,
+              "bottom": 220.34375,
+              "width": 321.21875,
+              "height": 38.375
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 361.21875,
+                "bottom": 900,
+                "width": 361.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 390,
+                "bottom": 900,
+                "width": 390,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 36.609375,
+                  "top": 182.96875,
+                  "right": 324.609375,
+                  "bottom": 198.96875,
+                  "width": 288,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 40.609375,
+                    "y": 190.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 190.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 320.609375,
+                    "y": 190.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 144.609375,
+                  "top": 202.15625,
+                  "right": 216.609375,
+                  "bottom": 218.15625,
+                  "width": 72,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 148.609375,
+                    "y": 210.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 210.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 212.609375,
+                    "y": 210.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "button": {
+          "text": "Preview base media without unsupported effects",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 39.453125,
+            "top": 230.734375,
+            "right": 321.765625,
+            "bottom": 262.734375,
+            "width": 282.3125,
+            "height": 32
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 361.21875,
+              "bottom": 900,
+              "width": 361.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 390,
+              "bottom": 900,
+              "width": 390,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 51.640625,
+                "top": 239.734375,
+                "right": 309.578125,
+                "bottom": 253.734375,
+                "width": 257.9375,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 55.640625,
+                  "y": 246.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 180.609375,
+                  "y": 246.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 305.578125,
+                  "y": 246.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            }
+          ]
+        },
+        "scopeDiagnosticIntersections": 0,
+        "scopeButtonIntersections": 0,
+        "scopeStatusGap": 31.390625,
+        "diagnosticButtonGap": 21.578125,
+        "requiredGap": 10.4
+      }
+    },
+    {
+      "state": "blocked-preview",
+      "width": 1440,
+      "scheme": "light",
+      "prior_frame": 60,
+      "effect_frame": 168,
+      "probe": {
+        "missing": [],
+        "state": {
+          "ready": "diagnostic",
+          "previewState": "blocked",
+          "buffering": "false",
+          "frame": "168"
+        },
+        "scope": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDRBlock affected playback",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 11.1875,
+            "top": 65.25,
+            "right": 414.0625,
+            "bottom": 86.015625,
+            "width": 402.875,
+            "height": 20.765625
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 1411.21875,
+              "bottom": 900,
+              "width": 1411.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 1440,
+              "bottom": 900,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 408.46875,
+                "bottom": 82.828125,
+                "width": 391.6875,
+                "height": 14.390625
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 75.6328125,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 212.625,
+                  "y": 75.6328125,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 404.46875,
+                  "y": 75.6328125,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 408.46875,
+                "bottom": 81.4375,
+                "width": 391.6875,
+                "height": 13
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 212.625,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 404.46875,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "scopeText": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDR",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 16.78125,
+            "top": 68.4375,
+            "right": 408.46875,
+            "bottom": 82.828125,
+            "width": 391.6875,
+            "height": 14.390625
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 1411.21875,
+              "bottom": 900,
+              "width": 1411.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 1440,
+              "bottom": 900,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 408.46875,
+                "bottom": 81.4375,
+                "width": 391.6875,
+                "height": 13
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 212.625,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 404.46875,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "text": "unsupported-effect · Enabled effect MagicBulletLook is not applied; preview is base media",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 279.609375,
+              "top": 210.0625,
+              "right": 887.609375,
+              "bottom": 248.4375,
+              "width": 608,
+              "height": 38.375
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 1411.21875,
+                "bottom": 900,
+                "width": 1411.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 1440,
+                "bottom": 900,
+                "width": 1440,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 284.796875,
+                  "top": 211.0625,
+                  "right": 882.40625,
+                  "bottom": 227.0625,
+                  "width": 597.609375,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 288.796875,
+                    "y": 219.0625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 583.6015625,
+                    "y": 219.0625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 878.40625,
+                    "y": 219.0625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 565.609375,
+                  "top": 230.25,
+                  "right": 601.609375,
+                  "bottom": 246.25,
+                  "width": 36,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 569.609375,
+                    "y": 238.25,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 583.609375,
+                    "y": 238.25,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 597.609375,
+                    "y": 238.25,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "text": "unsupported-effect · Unsupported effect: CustomLook",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 400,
+              "top": 258.828125,
+              "right": 767.203125,
+              "bottom": 278.015625,
+              "width": 367.203125,
+              "height": 19.1875
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 1411.21875,
+                "bottom": 900,
+                "width": 1411.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 1440,
+                "bottom": 900,
+                "width": 1440,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 400,
+                  "top": 259.828125,
+                  "right": 767.203125,
+                  "bottom": 275.828125,
+                  "width": 367.203125,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 404,
+                    "y": 267.828125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 583.6015625,
+                    "y": 267.828125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 763.203125,
+                    "y": 267.828125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "button": {
+          "text": "Preview base media without unsupported effects",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 442.453125,
+            "top": 288.40625,
+            "right": 724.765625,
+            "bottom": 320.40625,
+            "width": 282.3125,
+            "height": 32
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 1411.21875,
+              "bottom": 900,
+              "width": 1411.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 1440,
+              "bottom": 900,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 454.640625,
+                "top": 297.40625,
+                "right": 712.578125,
+                "bottom": 311.40625,
+                "width": 257.9375,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 458.640625,
+                  "y": 304.40625,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 583.609375,
+                  "y": 304.40625,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 708.578125,
+                  "y": 304.40625,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            }
+          ]
+        },
+        "scopeDiagnosticIntersections": 0,
+        "scopeButtonIntersections": 0,
+        "scopeStatusGap": 125.046875,
+        "diagnosticButtonGap": 21.578125,
+        "requiredGap": 10.4
+      }
+    },
+    {
+      "state": "blocked-preview",
+      "width": 390,
+      "scheme": "dark",
+      "prior_frame": 60,
+      "effect_frame": 168,
+      "probe": {
+        "missing": [],
+        "state": {
+          "ready": "diagnostic",
+          "previewState": "blocked",
+          "buffering": "false",
+          "frame": "168"
+        },
+        "scope": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDRBlock affected playback",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 11.1875,
+            "top": 65.25,
+            "right": 348.78125,
+            "bottom": 83.625,
+            "width": 337.59375,
+            "height": 18.375
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 361.21875,
+              "bottom": 900,
+              "width": 361.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 390,
+              "bottom": 900,
+              "width": 390,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 343.1875,
+                "bottom": 80.4375,
+                "width": 326.40625,
+                "height": 12
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 179.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 339.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 343.1875,
+                "bottom": 79.4375,
+                "width": 326.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 179.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 339.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "scopeText": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDR",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 16.78125,
+            "top": 68.4375,
+            "right": 343.1875,
+            "bottom": 80.4375,
+            "width": 326.40625,
+            "height": 12
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 361.21875,
+              "bottom": 900,
+              "width": 361.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 390,
+              "bottom": 900,
+              "width": 390,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 343.1875,
+                "bottom": 79.4375,
+                "width": 326.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 179.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 339.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "text": "unsupported-effect · Enabled effect MagicBulletLook is not applied; preview is base media",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 114.015625,
+              "right": 341.21875,
+              "bottom": 171.578125,
+              "width": 321.21875,
+              "height": 57.5625
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 361.21875,
+                "bottom": 900,
+                "width": 361.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 390,
+                "bottom": 900,
+                "width": 390,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 54.609375,
+                  "top": 115.015625,
+                  "right": 306.609375,
+                  "bottom": 131.015625,
+                  "width": 252,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 58.609375,
+                    "y": 123.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 123.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 302.609375,
+                    "y": 123.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 29.40625,
+                  "top": 134.203125,
+                  "right": 331.8125,
+                  "bottom": 150.203125,
+                  "width": 302.40625,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 33.40625,
+                    "y": 142.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 142.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 327.8125,
+                    "y": 142.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 144.609375,
+                  "top": 153.390625,
+                  "right": 216.609375,
+                  "bottom": 169.390625,
+                  "width": 72,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 148.609375,
+                    "y": 161.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 161.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 212.609375,
+                    "y": 161.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "text": "unsupported-effect · Unsupported effect: CustomLook",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 181.96875,
+              "right": 341.21875,
+              "bottom": 220.34375,
+              "width": 321.21875,
+              "height": 38.375
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 361.21875,
+                "bottom": 900,
+                "width": 361.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 390,
+                "bottom": 900,
+                "width": 390,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 36.609375,
+                  "top": 182.96875,
+                  "right": 324.609375,
+                  "bottom": 198.96875,
+                  "width": 288,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 40.609375,
+                    "y": 190.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 190.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 320.609375,
+                    "y": 190.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 144.609375,
+                  "top": 202.15625,
+                  "right": 216.609375,
+                  "bottom": 218.15625,
+                  "width": 72,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 148.609375,
+                    "y": 210.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 180.609375,
+                    "y": 210.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 212.609375,
+                    "y": 210.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "button": {
+          "text": "Preview base media without unsupported effects",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 39.453125,
+            "top": 230.734375,
+            "right": 321.765625,
+            "bottom": 262.734375,
+            "width": 282.3125,
+            "height": 32
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 361.21875,
+              "bottom": 900,
+              "width": 361.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 390,
+              "bottom": 900,
+              "width": 390,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 51.640625,
+                "top": 239.734375,
+                "right": 309.578125,
+                "bottom": 253.734375,
+                "width": 257.9375,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 55.640625,
+                  "y": 246.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 180.609375,
+                  "y": 246.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 305.578125,
+                  "y": 246.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            }
+          ]
+        },
+        "scopeDiagnosticIntersections": 0,
+        "scopeButtonIntersections": 0,
+        "scopeStatusGap": 31.390625,
+        "diagnosticButtonGap": 21.578125,
+        "requiredGap": 10.4
+      }
+    },
+    {
+      "state": "blocked-preview",
+      "width": 1440,
+      "scheme": "dark",
+      "prior_frame": 60,
+      "effect_frame": 168,
+      "probe": {
+        "missing": [],
+        "state": {
+          "ready": "diagnostic",
+          "previewState": "blocked",
+          "buffering": "false",
+          "frame": "168"
+        },
+        "scope": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDRBlock affected playback",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 11.1875,
+            "top": 65.25,
+            "right": 414.0625,
+            "bottom": 86.015625,
+            "width": 402.875,
+            "height": 20.765625
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 1411.21875,
+              "bottom": 900,
+              "width": 1411.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 1440,
+              "bottom": 900,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 408.46875,
+                "bottom": 82.828125,
+                "width": 391.6875,
+                "height": 14.390625
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 75.6328125,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 212.625,
+                  "y": 75.6328125,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 404.46875,
+                  "y": 75.6328125,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 408.46875,
+                "bottom": 81.4375,
+                "width": 391.6875,
+                "height": 13
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 212.625,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 404.46875,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "scopeText": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDR",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 16.78125,
+            "top": 68.4375,
+            "right": 408.46875,
+            "bottom": 82.828125,
+            "width": 391.6875,
+            "height": 14.390625
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 1411.21875,
+              "bottom": 900,
+              "width": 1411.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 1440,
+              "bottom": 900,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 408.46875,
+                "bottom": 81.4375,
+                "width": 391.6875,
+                "height": 13
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 212.625,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 404.46875,
+                  "y": 74.9375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "text": "unsupported-effect · Enabled effect MagicBulletLook is not applied; preview is base media",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 279.609375,
+              "top": 210.0625,
+              "right": 887.609375,
+              "bottom": 248.4375,
+              "width": 608,
+              "height": 38.375
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 1411.21875,
+                "bottom": 900,
+                "width": 1411.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 1440,
+                "bottom": 900,
+                "width": 1440,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 284.796875,
+                  "top": 211.0625,
+                  "right": 882.40625,
+                  "bottom": 227.0625,
+                  "width": 597.609375,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 288.796875,
+                    "y": 219.0625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 583.6015625,
+                    "y": 219.0625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 878.40625,
+                    "y": 219.0625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 565.609375,
+                  "top": 230.25,
+                  "right": 601.609375,
+                  "bottom": 246.25,
+                  "width": 36,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 569.609375,
+                    "y": 238.25,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 583.609375,
+                    "y": 238.25,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 597.609375,
+                    "y": 238.25,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "text": "unsupported-effect · Unsupported effect: CustomLook",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 400,
+              "top": 258.828125,
+              "right": 767.203125,
+              "bottom": 278.015625,
+              "width": 367.203125,
+              "height": 19.1875
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 1411.21875,
+                "bottom": 900,
+                "width": 1411.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 1440,
+                "bottom": 900,
+                "width": 1440,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 400,
+                  "top": 259.828125,
+                  "right": 767.203125,
+                  "bottom": 275.828125,
+                  "width": 367.203125,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 404,
+                    "y": 267.828125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 583.6015625,
+                    "y": 267.828125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 763.203125,
+                    "y": 267.828125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "button": {
+          "text": "Preview base media without unsupported effects",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 442.453125,
+            "top": 288.40625,
+            "right": 724.765625,
+            "bottom": 320.40625,
+            "width": 282.3125,
+            "height": 32
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 1411.21875,
+              "bottom": 900,
+              "width": 1411.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 1440,
+              "bottom": 900,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 454.640625,
+                "top": 297.40625,
+                "right": 712.578125,
+                "bottom": 311.40625,
+                "width": 257.9375,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 458.640625,
+                  "y": 304.40625,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 583.609375,
+                  "y": 304.40625,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 708.578125,
+                  "y": 304.40625,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            }
+          ]
+        },
+        "scopeDiagnosticIntersections": 0,
+        "scopeButtonIntersections": 0,
+        "scopeStatusGap": 125.046875,
+        "diagnosticButtonGap": 21.578125,
+        "requiredGap": 10.4
+      }
+    },
+    {
       "state": "supplemental-closed",
       "width": 320,
       "scheme": "light",
@@ -1942,11 +3834,617 @@
       }
     },
     {
-      "state": "supplemental-preview-context",
+      "state": "blocked-preview",
       "width": 320,
       "scheme": "light",
       "prior_frame": 60,
-      "effect_frame": 168
+      "effect_frame": 168,
+      "probe": {
+        "missing": [],
+        "state": {
+          "ready": "diagnostic",
+          "previewState": "blocked",
+          "buffering": "false",
+          "frame": "168"
+        },
+        "scope": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDRBlock affected playback",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 11.1875,
+            "top": 65.25,
+            "right": 280,
+            "bottom": 95.625,
+            "width": 268.8125,
+            "height": 30.375
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 291.21875,
+              "bottom": 900,
+              "width": 291.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 320,
+              "bottom": 900,
+              "width": 320,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 274.40625,
+                "bottom": 92.4375,
+                "width": 257.625,
+                "height": 24
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 80.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 145.59375,
+                  "y": 80.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 270.40625,
+                  "y": 80.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 247.1875,
+                "bottom": 79.4375,
+                "width": 230.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 131.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 243.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 81.4375,
+                "right": 107.984375,
+                "bottom": 91.4375,
+                "width": 91.203125,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 62.3828125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 103.984375,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "scopeText": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDR",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 16.78125,
+            "top": 68.4375,
+            "right": 274.40625,
+            "bottom": 92.4375,
+            "width": 257.625,
+            "height": 24
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 291.21875,
+              "bottom": 900,
+              "width": 291.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 320,
+              "bottom": 900,
+              "width": 320,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 247.1875,
+                "bottom": 79.4375,
+                "width": 230.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 131.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 243.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 81.4375,
+                "right": 107.984375,
+                "bottom": 91.4375,
+                "width": 91.203125,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 62.3828125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 103.984375,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "text": "unsupported-effect · Enabled effect MagicBulletLook is not applied; preview is base media",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 126.015625,
+              "right": 271.21875,
+              "bottom": 183.578125,
+              "width": 251.21875,
+              "height": 57.5625
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 291.21875,
+                "bottom": 900,
+                "width": 291.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 320,
+                "bottom": 900,
+                "width": 320,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 44.796875,
+                  "top": 127.015625,
+                  "right": 246.40625,
+                  "bottom": 143.015625,
+                  "width": 201.609375,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 48.796875,
+                    "y": 135.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.6015625,
+                    "y": 135.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 242.40625,
+                    "y": 135.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 41.203125,
+                  "top": 146.203125,
+                  "right": 250.015625,
+                  "bottom": 162.203125,
+                  "width": 208.8125,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 45.203125,
+                    "y": 154.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.609375,
+                    "y": 154.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 246.015625,
+                    "y": 154.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 37.609375,
+                  "top": 165.390625,
+                  "right": 253.609375,
+                  "bottom": 181.390625,
+                  "width": 216,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 41.609375,
+                    "y": 173.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.609375,
+                    "y": 173.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 249.609375,
+                    "y": 173.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "text": "unsupported-effect · Unsupported effect: CustomLook",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 193.96875,
+              "right": 271.21875,
+              "bottom": 232.34375,
+              "width": 251.21875,
+              "height": 38.375
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 291.21875,
+                "bottom": 900,
+                "width": 291.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 320,
+                "bottom": 900,
+                "width": 320,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 30.40625,
+                  "top": 194.96875,
+                  "right": 260.8125,
+                  "bottom": 210.96875,
+                  "width": 230.40625,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 34.40625,
+                    "y": 202.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.609375,
+                    "y": 202.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 256.8125,
+                    "y": 202.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 80.796875,
+                  "top": 214.15625,
+                  "right": 210.40625,
+                  "bottom": 230.15625,
+                  "width": 129.609375,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 84.796875,
+                    "y": 222.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.6015625,
+                    "y": 222.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 206.40625,
+                    "y": 222.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "button": {
+          "text": "Preview base media without unsupported effects",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 20,
+            "top": 242.734375,
+            "right": 271.21875,
+            "bottom": 288.734375,
+            "width": 251.21875,
+            "height": 46
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 291.21875,
+              "bottom": 900,
+              "width": 291.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 320,
+              "bottom": 900,
+              "width": 320,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 35.875,
+                "top": 251.734375,
+                "right": 255.34375,
+                "bottom": 265.734375,
+                "width": 219.46875,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 39.875,
+                  "y": 258.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 145.609375,
+                  "y": 258.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 251.34375,
+                  "y": 258.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 128.03125,
+                "top": 265.734375,
+                "right": 163.171875,
+                "bottom": 279.734375,
+                "width": 35.140625,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 132.03125,
+                  "y": 272.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 145.6015625,
+                  "y": 272.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 159.171875,
+                  "y": 272.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            }
+          ]
+        },
+        "scopeDiagnosticIntersections": 0,
+        "scopeButtonIntersections": 0,
+        "scopeStatusGap": 31.390625,
+        "diagnosticButtonGap": 21.578125,
+        "requiredGap": 10.4
+      }
     },
     {
       "state": "supplemental-preview-base",
@@ -1958,9 +4456,9 @@
         "withinStage": true,
         "rect": {
           "left": 20,
-          "top": 179.421875,
+          "top": 242.734375,
           "right": 271.21875,
-          "bottom": 225.421875,
+          "bottom": 288.734375,
           "width": 251.21875,
           "height": 46
         }
@@ -2375,11 +4873,617 @@
       }
     },
     {
-      "state": "supplemental-preview-context",
+      "state": "blocked-preview",
       "width": 320,
       "scheme": "dark",
       "prior_frame": 60,
-      "effect_frame": 168
+      "effect_frame": 168,
+      "probe": {
+        "missing": [],
+        "state": {
+          "ready": "diagnostic",
+          "previewState": "blocked",
+          "buffering": "false",
+          "frame": "168"
+        },
+        "scope": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDRBlock affected playback",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 11.1875,
+            "top": 65.25,
+            "right": 280,
+            "bottom": 95.625,
+            "width": 268.8125,
+            "height": 30.375
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 291.21875,
+              "bottom": 900,
+              "width": 291.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 320,
+              "bottom": 900,
+              "width": 320,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 68.4375,
+                "right": 274.40625,
+                "bottom": 92.4375,
+                "width": 257.625,
+                "height": 24
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 80.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 145.59375,
+                  "y": 80.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 270.40625,
+                  "y": 80.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 247.1875,
+                "bottom": 79.4375,
+                "width": 230.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 131.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 243.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 81.4375,
+                "right": 107.984375,
+                "bottom": 91.4375,
+                "width": 91.203125,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 62.3828125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 103.984375,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "scopeText": {
+          "text": "Incomplete preview · affected playback blocked · browser-managed SDR",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 16.78125,
+            "top": 68.4375,
+            "right": 274.40625,
+            "bottom": 92.4375,
+            "width": 257.625,
+            "height": 24
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 291.21875,
+              "bottom": 900,
+              "width": 291.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 320,
+              "bottom": 900,
+              "width": 320,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 69.4375,
+                "right": 247.1875,
+                "bottom": 79.4375,
+                "width": 230.40625,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 131.984375,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 243.1875,
+                  "y": 74.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 16.78125,
+                "top": 81.4375,
+                "right": 107.984375,
+                "bottom": 91.4375,
+                "width": 91.203125,
+                "height": 10
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 20.78125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 62.3828125,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                },
+                {
+                  "x": 103.984375,
+                  "y": 86.4375,
+                  "owned": true,
+                  "tag": "SPAN",
+                  "className": ""
+                }
+              ]
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "text": "unsupported-effect · Enabled effect MagicBulletLook is not applied; preview is base media",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 126.015625,
+              "right": 271.21875,
+              "bottom": 183.578125,
+              "width": 251.21875,
+              "height": 57.5625
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 291.21875,
+                "bottom": 900,
+                "width": 291.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 320,
+                "bottom": 900,
+                "width": 320,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 44.796875,
+                  "top": 127.015625,
+                  "right": 246.40625,
+                  "bottom": 143.015625,
+                  "width": 201.609375,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 48.796875,
+                    "y": 135.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.6015625,
+                    "y": 135.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 242.40625,
+                    "y": 135.015625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 41.203125,
+                  "top": 146.203125,
+                  "right": 250.015625,
+                  "bottom": 162.203125,
+                  "width": 208.8125,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 45.203125,
+                    "y": 154.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.609375,
+                    "y": 154.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 246.015625,
+                    "y": 154.203125,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 37.609375,
+                  "top": 165.390625,
+                  "right": 253.609375,
+                  "bottom": 181.390625,
+                  "width": 216,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 41.609375,
+                    "y": 173.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.609375,
+                    "y": 173.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 249.609375,
+                    "y": 173.390625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "text": "unsupported-effect · Unsupported effect: CustomLook",
+            "visible": true,
+            "opacity": 1,
+            "rect": {
+              "left": 20,
+              "top": 193.96875,
+              "right": 271.21875,
+              "bottom": 232.34375,
+              "width": 251.21875,
+              "height": 38.375
+            },
+            "contained": true,
+            "clipping": [
+              {
+                "left": 0,
+                "top": 54.0625,
+                "right": 291.21875,
+                "bottom": 900,
+                "width": 291.21875,
+                "height": 845.9375
+              },
+              {
+                "left": 0,
+                "top": 0,
+                "right": 320,
+                "bottom": 900,
+                "width": 320,
+                "height": 900
+              }
+            ],
+            "lines": [
+              {
+                "rect": {
+                  "left": 30.40625,
+                  "top": 194.96875,
+                  "right": 260.8125,
+                  "bottom": 210.96875,
+                  "width": 230.40625,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 34.40625,
+                    "y": 202.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.609375,
+                    "y": 202.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 256.8125,
+                    "y": 202.96875,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              },
+              {
+                "rect": {
+                  "left": 80.796875,
+                  "top": 214.15625,
+                  "right": 210.40625,
+                  "bottom": 230.15625,
+                  "width": 129.609375,
+                  "height": 16
+                },
+                "contained": true,
+                "clippingContained": true,
+                "hits": [
+                  {
+                    "x": 84.796875,
+                    "y": 222.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 145.6015625,
+                    "y": 222.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  },
+                  {
+                    "x": 206.40625,
+                    "y": 222.15625,
+                    "owned": true,
+                    "tag": "P",
+                    "className": "otio-diagnostic"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "button": {
+          "text": "Preview base media without unsupported effects",
+          "visible": true,
+          "opacity": 1,
+          "rect": {
+            "left": 20,
+            "top": 242.734375,
+            "right": 271.21875,
+            "bottom": 288.734375,
+            "width": 251.21875,
+            "height": 46
+          },
+          "contained": true,
+          "clipping": [
+            {
+              "left": 0,
+              "top": 54.0625,
+              "right": 291.21875,
+              "bottom": 900,
+              "width": 291.21875,
+              "height": 845.9375
+            },
+            {
+              "left": 0,
+              "top": 0,
+              "right": 320,
+              "bottom": 900,
+              "width": 320,
+              "height": 900
+            }
+          ],
+          "lines": [
+            {
+              "rect": {
+                "left": 35.875,
+                "top": 251.734375,
+                "right": 255.34375,
+                "bottom": 265.734375,
+                "width": 219.46875,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 39.875,
+                  "y": 258.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 145.609375,
+                  "y": 258.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 251.34375,
+                  "y": 258.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            },
+            {
+              "rect": {
+                "left": 128.03125,
+                "top": 265.734375,
+                "right": 163.171875,
+                "bottom": 279.734375,
+                "width": 35.140625,
+                "height": 14
+              },
+              "contained": true,
+              "clippingContained": true,
+              "hits": [
+                {
+                  "x": 132.03125,
+                  "y": 272.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 145.6015625,
+                  "y": 272.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                },
+                {
+                  "x": 159.171875,
+                  "y": 272.734375,
+                  "owned": true,
+                  "tag": "BUTTON",
+                  "className": "otio-preview-base"
+                }
+              ]
+            }
+          ]
+        },
+        "scopeDiagnosticIntersections": 0,
+        "scopeButtonIntersections": 0,
+        "scopeStatusGap": 31.390625,
+        "diagnosticButtonGap": 21.578125,
+        "requiredGap": 10.4
+      }
     },
     {
       "state": "supplemental-preview-base",
@@ -2391,9 +5495,9 @@
         "withinStage": true,
         "rect": {
           "left": 20,
-          "top": 179.421875,
+          "top": 242.734375,
           "right": 271.21875,
-          "bottom": 225.421875,
+          "bottom": 288.734375,
           "width": 251.21875,
           "height": 46
         }
