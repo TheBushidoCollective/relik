@@ -593,13 +593,6 @@ async function runBunPipe(
   }, CHILD_DEADLINE_MS);
 
   try {
-    const stdoutPromise = new Response(child.stdout)
-      .arrayBuffer()
-      .then((value) => Buffer.from(value));
-    const stderrPromise = new Response(child.stderr)
-      .arrayBuffer()
-      .then((value) => Buffer.from(value));
-    const exitPromise = child.exited;
     const gcBeforeWrite = beforeWrite();
 
     let writeCalled = false;
@@ -623,6 +616,14 @@ async function runBunPipe(
         endThrown = error;
       }
     }
+
+    const stdoutPromise = new Response(child.stdout)
+      .arrayBuffer()
+      .then((value) => Buffer.from(value));
+    const stderrPromise = new Response(child.stderr)
+      .arrayBuffer()
+      .then((value) => Buffer.from(value));
+    const exitPromise = child.exited;
 
     const [
       stdoutOutcome,
