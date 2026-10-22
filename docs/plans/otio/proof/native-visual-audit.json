@@ -1,0 +1,173 @@
+{
+  "baseSha": "97593f9a743b0b22330e2662eabcb19f09cd57c0",
+  "scope": "Eight actual native path screenshots at 1440x900 and 390x900, light and dark, composer closed and open. Older mock screenshots excluded. No browser DOM measurement, build, test or live write was made for this review.",
+  "method": {
+    "pixels": "Opened every PNG, inspected original images and 2x crops, counted RGB pixels in control regions, and computed WCAG 2.2 relative-luminance contrast from representative opaque foreground and background pixels. Antialiased edge pixels are excluded from the representative color pairs.",
+    "geometry": "Bounding coordinates are approximate screenshot pixel bounds, not DOM getBoundingClientRect values. Observations about visibility and overlap are by eye against the captured pixels.",
+    "cssCrossReference": "packages/relic-viewer/src/styles.css:665-668, 3987-4002, 4021-4034, 4078-4083, 4096-4111"
+  },
+  "captures": [
+    {
+      "file": "path-1440-light.png",
+      "px": [1440, 900],
+      "scheme": "light",
+      "composer": "closed",
+      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible."
+    },
+    {
+      "file": "path-1440-dark.png",
+      "px": [1440, 900],
+      "scheme": "dark",
+      "composer": "closed",
+      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible."
+    },
+    {
+      "file": "path-390-light.png",
+      "px": [390, 900],
+      "scheme": "light",
+      "composer": "closed",
+      "select": "Label ellipsized before visible native dropdown arrow; no collision by eye."
+    },
+    {
+      "file": "path-390-dark.png",
+      "px": [390, 900],
+      "scheme": "dark",
+      "composer": "closed",
+      "select": "Label ellipsized before visible native dropdown arrow; no collision by eye."
+    },
+    {
+      "file": "path-1440-light-composer-open.png",
+      "px": [1440, 900],
+      "scheme": "light",
+      "composer": "open",
+      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible.",
+      "composerNote": "Context, textarea, Post, Cancel and disclosure visible without foreground clipping."
+    },
+    {
+      "file": "path-1440-dark-composer-open.png",
+      "px": [1440, 900],
+      "scheme": "dark",
+      "composer": "open",
+      "select": "Rightmost approximately 29 px covered by COMMENTS tab; native dropdown arrow not visible.",
+      "composerNote": "Context, textarea, Post, Cancel and disclosure visible, but Post text has insufficient pixel contrast."
+    },
+    {
+      "file": "path-390-light-composer-open.png",
+      "px": [390, 900],
+      "scheme": "light",
+      "composer": "open",
+      "select": "Under foreground composer, not independently observable in this capture.",
+      "composerNote": "Foreground card x30..382, y195..462; context, textarea, Post, Cancel and disclosure fit inside the image without clipping. Background transport and toolbar are covered by the composer."
+    },
+    {
+      "file": "path-390-dark-composer-open.png",
+      "px": [390, 900],
+      "scheme": "dark",
+      "composer": "open",
+      "select": "Under foreground composer, not independently observable in this capture.",
+      "composerNote": "Foreground card x30..382, y195..462; context, textarea, Post, Cancel and disclosure fit inside the image without clipping. Background transport and toolbar are covered by the composer. Post text has insufficient pixel contrast."
+    }
+  ],
+  "pixelContrasts": [
+    {
+      "control": "Play",
+      "light": {
+        "foreground": "#fbfbfa",
+        "background": "#1f6b64",
+        "ratio": 6.062
+      },
+      "dark": {
+        "foreground": "#171b1c",
+        "background": "#4fb3a6",
+        "ratio": 6.885
+      },
+      "basis": "Opaque colors counted in closed mobile PNG button rectangles x106..151, y282..306; also visible in desktop PNGs."
+    },
+    {
+      "control": "Preview warning and Block affected playback",
+      "light": {
+        "foreground": "#e6e9e7",
+        "background": "#0b0f12",
+        "ratio": 15.737
+      },
+      "dark": {
+        "foreground": "#e6e9e7",
+        "background": "#0b0f12",
+        "ratio": 15.737
+      },
+      "basis": "Opaque colors counted in all four mobile PNG warning rectangles x17..378, y68..119; wording and button fully visible in 2x crops."
+    },
+    {
+      "control": "Selected Range mode",
+      "light": {
+        "foreground": "#0f3b37",
+        "background": "#dfeeea",
+        "ratio": 10.32
+      },
+      "dark": {
+        "foreground": "#a7ded6",
+        "background": "#15332f",
+        "ratio": 9.093
+      },
+      "basis": "Representative CSS theme colors cross-checked against closed PNG appearance; not asserted as DOM computed colors."
+    },
+    {
+      "control": "Track select label",
+      "light": {
+        "foreground": "#16191a",
+        "background": "#fbfbfa",
+        "ratio": 17.07
+      },
+      "dark": {
+        "foreground": "#e6e9e7",
+        "background": "#171b1c",
+        "ratio": 14.194
+      },
+      "basis": "Opaque colors counted in closed select PNG rectangles: desktop x1238..1410,y494..517; mobile x158..318,y378..403. Desktop label reads before tab, but arrow is obscured."
+    },
+    {
+      "control": "Composer Post",
+      "light": {
+        "foreground": "#ffffff",
+        "background": "#1f6b64",
+        "ratio": 6.277
+      },
+      "dark": {
+        "foreground": "#ffffff",
+        "background": "#4fb3a6",
+        "ratio": 2.521
+      },
+      "basis": "Opaque colors counted in mobile open composer PNG x42..88,y347..375 and dark desktop composer PNG x415..452,y461..490; CSS .action.primary uses #fff in both themes."
+    }
+  ],
+  "defects": [
+    {
+      "id": "desktop-select-tab-overlap",
+      "observedIn": [
+        "path-1440-light.png",
+        "path-1440-dark.png",
+        "path-1440-light-composer-open.png",
+        "path-1440-dark-composer-open.png"
+      ],
+      "severity": "actionable",
+      "evidence": "By eye and pixel coordinates: select roughly x1238..1439,y493..517 while closed COMMENTS edge tab covers x1411..1439 across that y range. The final 29 px and native dropdown indicator are concealed. CSS reserves inline-end 1.5rem within the select, but does not reserve space from the overlaid tab.",
+      "appCodeEdited": false
+    },
+    {
+      "id": "dark-post-contrast",
+      "observedIn": [
+        "path-1440-dark-composer-open.png",
+        "path-390-dark-composer-open.png"
+      ],
+      "severity": "actionable",
+      "evidence": "Rendered white Post text (#ffffff) on teal #4fb3a6 measures 2.521:1, below 4.5:1 for small text. styles.css:665-668 hardcodes white for .action.primary regardless of theme; the OTIO Play control instead uses dark surface text and measures 6.885:1.",
+      "appCodeEdited": false
+    }
+  ],
+  "unverifiedFromTheseCaptures": [
+    "The .otio-preview-base button and .otio-comment-selection button do not appear in any of the eight PNGs. styles.css:3999 and 4083 use var(--surface) on var(--patina), with token ratios 6.062:1 light and 6.885:1 dark, but these are CSS-only predictions, not actual rendered button certifications.",
+    "The mobile image ends at x390 and shows a clipped timeline rail after sticky labels. styles.css:4033-4034 sets a max-width:100%, overflow-x:auto wrapper around a 760px-minimum track grid, which supports intentional internal horizontal timeline scrolling. PNGs cannot establish document scrollWidth or rule out invisible page-level overflow; that needs a DOM measurement on the native route.",
+    "Screenshots cannot show whether the desktop covered select indicator remains keyboard-operable or pointer-hit-testable."
+  ],
+  "designRead": "The dense editor timeline, restrained patina controls and squared typographic chrome read as an editing instrument rather than a default marketing template. I reject a redesign or smaller type as a substitute for reserving the closed comments tab footprint and correcting the dark button color. This is an observation by eye on the actual PNGs, not a site-registry or mock DOM certificate."
+}
