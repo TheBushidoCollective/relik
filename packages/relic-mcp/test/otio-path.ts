@@ -139,6 +139,7 @@ const store = new MemoryStore();
 const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 const mails: { to: string; mail: OutboundMail }[] = [];
 const children = new Set<ChildProcess>();
+const packetCanvasMeasurements: Array<Record<string, unknown>> = [];
 
 let handler: ((request: Request) => Promise<Response>) | undefined;
 const service = Bun.serve({
@@ -3109,6 +3110,16 @@ async function timingDiagnostics(browser: ChromeSession): Promise<string> {
   );
 }
 
+async function recordPacketCanvasMeasurement(
+  measurement: Record<string, unknown>
+): Promise<void> {
+  packetCanvasMeasurements.push(measurement);
+  await writeFile(
+    join(shotDir, 'packet-canvas-measurements.json'),
+    `${JSON.stringify({ measurements: packetCanvasMeasurements }, null, 2)}\n`
+  );
+}
+
 async function assertPacketCanvas(
   browser: ChromeSession,
   label: string,
@@ -3137,6 +3148,33 @@ async function assertPacketCanvas(
   );
   const toCorrect = rmse(canvas, correct);
   const toWrong = rmse(canvas, wrong);
+  const toBlack = rmse(canvas, new Uint8Array(correct.length));
+  const decoderCount = await browser.evaluate<number>(
+    `document.querySelectorAll('.otio-video-decoders video').length`
+  );
+  await recordPacketCanvasMeasurement({
+    label,
+    file_name: fileName,
+    source_seconds: sourceSeconds,
+    expected_frame: expected.frame,
+    neighbor_frame: neighbor.frame,
+    decoder_count: decoderCount,
+    canvas_black: isOpaqueBlack(canvas),
+    reference_black: isOpaqueBlack(correct),
+    rmse_correct: toCorrect,
+    rmse_wrong: toWrong,
+    rmse_black: toBlack,
+  });
+  assert.equal(
+    isOpaqueBlack(correct),
+    false,
+    `${label} reference frame cannot distinguish decoded media from withheld black`
+  );
+  assert.equal(
+    isOpaqueBlack(canvas),
+    false,
+    `${label} painted opaque black instead of decoded media`
+  );
   assert.ok(
     rmse(correct, wrong) > 4,
     `${label} fixture frames ${expected.frame} and ${neighbor.frame} are not distinct`
@@ -3348,6 +3386,13 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       0
     );
     assert.equal(first.frame, 0);
+    const nearZeroDecoderCount = await nearZeroBrowser.evaluate<number>(
+      `document.querySelectorAll('.otio-video-decoders video').length`
+    );
+    assert.ok(
+      nearZeroDecoderCount > 0,
+      'representational zero first frame created no native video decoder'
+    );
     assert.equal(
       (await timingDiagnostics(nearZeroBrowser)).includes('missing-handles'),
       false,
