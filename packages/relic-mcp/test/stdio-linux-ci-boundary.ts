@@ -491,6 +491,10 @@ async function runNodeChild(
     const child = spawnNode(process.execPath, childArgs(paths, entry), {
       stdio: ['inherit', 'pipe', 'pipe'],
     });
+    // This is a valid concurrent-drain Node control; consumption timing
+    // differs from the original Bun arm.
+    const stdoutPromise = captureNodePipe(child.stdout);
+    const stderrPromise = captureNodePipe(child.stderr);
     let exited: Record<string, unknown>;
     let exitCode: number | null = null;
     let signal: string | null = null;
@@ -504,10 +508,7 @@ async function runNodeChild(
       error = errorReceipt(closeError);
       exited = { status: 'rejected', error };
     }
-    // This also waits before draining, so producer selection remains the
-    // intended comparison rather than output consumption order.
-    const stdout = await captureNodePipe(child.stdout);
-    const stderr = await captureNodePipe(child.stderr);
+    const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
     return collectRun(
       arm,
       entry,
