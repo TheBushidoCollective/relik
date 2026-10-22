@@ -98,6 +98,68 @@ function timelineWithItems(items: readonly OtioFixtureItem[]): string {
     },
   });
 }
+function otioRange(start: number, duration: number, rate = 24): OtioTimeRange {
+  return {
+    start_time: { value: start, rate },
+    duration: { value: duration, rate },
+  };
+}
+
+function boundaryClip(
+  clipId: string,
+  clipName: string,
+  sourceStart: number,
+  mediaPath: string
+): OtioFixtureItem {
+  return {
+    OTIO_SCHEMA: 'Clip.1',
+    name: clipName,
+    metadata: { relic: { id: clipId } },
+    source_range: otioRange(sourceStart, 1),
+    media_reference: {
+      OTIO_SCHEMA: 'ExternalReference.1',
+      target_url: mediaPath,
+      available_range: otioRange(0, 1_000),
+    },
+  };
+}
+
+function boundaryGap(gapId: string, gapName: string): OtioFixtureItem {
+  return {
+    OTIO_SCHEMA: 'Gap.1',
+    name: gapName,
+    metadata: { relic: { id: gapId } },
+    source_range: otioRange(0, 1),
+  };
+}
+
+function boundaryTimeline(
+  items: readonly OtioFixtureItem[],
+  sourceDuration?: number
+): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    name: 'Boundary Cut',
+    metadata: { relic: { id: 'tl1' } },
+    ...(sourceDuration === undefined
+      ? {}
+      : { source_range: otioRange(0, sourceDuration) }),
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      name: 'tracks',
+      metadata: { relic: { id: 'stack-1' } },
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          name: 'V1',
+          kind: 'Video',
+          metadata: { relic: { id: 'track-v1' } },
+          children: items,
+        },
+      ],
+    },
+  });
+}
 
 function timeline(
   clipId: string,
@@ -243,6 +305,37 @@ async function resolvedOtioComment(
     throw new Error(`expected OTIO resolution for ${body}`);
   }
   return comment.resolved;
+}
+interface PublicOtioReadback {
+  readonly isError: boolean;
+  readonly structuredContent: {
+    readonly comments: readonly CommentRecord[];
+  };
+}
+
+async function readOtioCommentsThroughPublicTool(
+  relicId: string
+): Promise<PublicOtioReadback> {
+  const response = await handleMessage(
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: READ_COMMENTS_TOOL_NAME,
+        arguments: {
+          relic_id: relicId,
+          version: '*',
+          resolve_anchors: true,
+        },
+      },
+    },
+    deps
+  );
+  if (response?.result === undefined || response.result === null) {
+    throw new Error('expected a public read-comments tool result');
+  }
+  return response.result as PublicOtioReadback;
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -1188,6 +1281,409 @@ describe('OTIO comment anchors', () => {
       'mapped_range'
     );
     expect(mintBodies).toEqual([{ version: 1 }]);
+  });
+
+  test('reads exact before-cut source context through public encrypted OTIO feedback', async () => {
+    const aBytes = new TextEncoder().encode('boundary A source bytes');
+    const bBytes = new TextEncoder().encode('boundary B source bytes');
+    const text = boundaryTimeline([
+      boundaryClip('clip-a', 'A', 100, 'media/a.mov'),
+      boundaryClip('clip-b', 'B', 200, 'media/b.mov'),
+    ]);
+    const originalArchive = otioArchive(text, [
+      { name: 'media/a.mov', bytes: aBytes },
+      { name: 'media/b.mov', bytes: bBytes },
+    ]);
+    const original = await browserOtioDocument(originalArchive);
+    const timelineId = original.timeline_ids[0];
+    if (!timelineId) throw new Error('expected a boundary timeline');
+
+    const beforeRange = otioRange(1999, 0, 48_000);
+    const cutRange = otioRange(1, 0);
+    const beforeAnchor: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: original.document_sha256,
+      timeline_id: timelineId,
+      track_id: 'track-v1',
+      range: beforeRange,
+      snapshot: { timeline: 'Boundary Cut', track: 'V1', item: null },
+    };
+    const cutAnchor: OtioAnchorV1 = {
+      ...beforeAnchor,
+      range: cutRange,
+    };
+    const v1Path = join(scratch, 'boundary-v1.otioz');
+    await writeFile(v1Path, originalArchive);
+    const published = await publish({ path: v1Path, cover: false }, deps);
+
+    const v2Path = join(scratch, 'boundary-v2.otioz');
+    await writeFile(
+      v2Path,
+      otioArchive(text, [
+        {
+          name: 'media/a.mov',
+          bytes: new TextEncoder().encode('changed boundary A source bytes'),
+        },
+        {
+          name: 'media/b.mov',
+          bytes: new TextEncoder().encode('changed boundary B source bytes'),
+        },
+      ])
+    );
+    await republish(
+      { relic_id: published.relic_id, path: v2Path, cover: false },
+      deps
+    );
+
+    const beforeBody = 'The frame immediately before the cut.';
+    const atCutBody = 'The exact cut frame.';
+    const before = await postComment(
+      {
+        relic_id: published.relic_id,
+        body: beforeBody,
+        anchor: beforeAnchor,
+      },
+      deps
+    );
+    const atCut = await postComment(
+      {
+        relic_id: published.relic_id,
+        body: atCutBody,
+        anchor: cutAnchor,
+      },
+      deps
+    );
+
+    const toolResult = await readOtioCommentsThroughPublicTool(
+      published.relic_id
+    );
+    expect(toolResult.isError).toBe(false);
+
+    const beforeRow = toolResult.structuredContent.comments.find(
+      (comment) => comment.comment_id === before.comment_id
+    );
+    expect(beforeRow?.comment_id).toBe(before.comment_id);
+    expect(beforeRow?.body).toBe(beforeBody);
+    expect(beforeRow?.version).toBe(1);
+    expect(beforeRow?.readable).toBe(true);
+    expect(beforeRow?.anchor).toEqual(beforeAnchor);
+    if (beforeRow?.resolved?.kind !== 'otio') {
+      throw new Error('expected the before-cut comment to resolve as OTIO');
+    }
+    expect(beforeRow.resolved.status).toBe('resolved');
+    expect(beforeRow.resolved.relic_version).toBe(1);
+    expect(beforeRow.resolved.document_sha256).toBe(original.document_sha256);
+    expect(beforeRow.resolved.range).toEqual(beforeRange);
+    expect(beforeRow.resolved.timeline_path.map((node) => node.id)).toContain(
+      'track-v1'
+    );
+    expect(
+      beforeRow.resolved.intersections.map((span) => span.node_id)
+    ).toEqual(['clip-a']);
+    const beforeSpan = beforeRow.resolved.intersections[0];
+    expect(beforeSpan?.bundle_path).toBe('media/a.mov');
+    expect(beforeSpan?.media_digest).toBe(await sha256Hex(aBytes));
+    expect(beforeSpan?.source_range).toEqual(otioRange(100.9995, 0));
+    expect(beforeSpan?.source_mapping).toEqual({
+      timeline_origin: beforeRange.start_time,
+      source_origin: { value: 100.9995, rate: 24 },
+      scalar: 1,
+    });
+    expect(beforeRow.resolved.current_projection).toMatchObject({
+      current_version: 2,
+      status: 'changed',
+    });
+    expect(beforeRow.resolved.current_projection).not.toHaveProperty(
+      'mapped_range'
+    );
+
+    const atCutRow = toolResult.structuredContent.comments.find(
+      (comment) => comment.comment_id === atCut.comment_id
+    );
+    expect(atCutRow?.comment_id).toBe(atCut.comment_id);
+    expect(atCutRow?.body).toBe(atCutBody);
+    expect(atCutRow?.version).toBe(1);
+    expect(atCutRow?.readable).toBe(true);
+    expect(atCutRow?.anchor).toEqual(cutAnchor);
+    if (atCutRow?.resolved?.kind !== 'otio') {
+      throw new Error('expected the cut comment to resolve as OTIO');
+    }
+    expect(atCutRow.resolved.status).toBe('resolved');
+    expect(atCutRow.resolved.range).toEqual(cutRange);
+    expect(atCutRow.resolved.intersections.map((span) => span.node_id)).toEqual(
+      ['clip-b']
+    );
+    const atCutSpan = atCutRow.resolved.intersections[0];
+    expect(atCutSpan?.bundle_path).toBe('media/b.mov');
+    expect(atCutSpan?.media_digest).toBe(await sha256Hex(bBytes));
+    expect(atCutSpan?.source_range).toEqual(otioRange(200, 0));
+    expect(atCutSpan?.source_mapping).toEqual({
+      timeline_origin: cutRange.start_time,
+      source_origin: { value: 200, rate: 24 },
+      scalar: 1,
+    });
+    expect(atCutRow.resolved.current_projection).toMatchObject({
+      current_version: 2,
+      status: 'changed',
+    });
+  });
+
+  test('returns readable invalid original OTIO rows without requesting current content', async () => {
+    const text = boundaryTimeline([
+      boundaryClip('clip-a', 'A', 100, 'media/a.mov'),
+      boundaryClip('clip-b', 'B', 200, 'media/b.mov'),
+    ]);
+    const archive = otioArchive(text, [
+      {
+        name: 'media/a.mov',
+        bytes: new TextEncoder().encode('invalid target A bytes'),
+      },
+      {
+        name: 'media/b.mov',
+        bytes: new TextEncoder().encode('invalid target B bytes'),
+      },
+    ]);
+    const original = await browserOtioDocument(archive);
+    const timelineId = original.timeline_ids[0];
+    if (!timelineId) throw new Error('expected an invalid-target timeline');
+    const path = join(scratch, 'invalid-targets.otioz');
+    await writeFile(path, archive);
+    const published = await publish({ path, cover: false }, deps);
+    const base = {
+      kind: 'otio' as const,
+      v: 1 as const,
+      relic_version: 1,
+      document_sha256: original.document_sha256,
+      timeline_id: timelineId,
+      snapshot: { timeline: 'Boundary Cut', track: 'V1', item: null },
+    };
+    const invalidRows: readonly {
+      readonly body: string;
+      readonly anchor: OtioAnchorV1;
+    }[] = [
+      {
+        body: 'A clip is not a selected track.',
+        anchor: {
+          ...base,
+          track_id: 'clip-a',
+          range: otioRange(0, 0),
+        },
+      },
+      {
+        body: 'The selected track endpoint is exclusive.',
+        anchor: {
+          ...base,
+          track_id: 'track-v1',
+          range: otioRange(2, 0),
+        },
+      },
+      {
+        body: 'The timeline endpoint is exclusive.',
+        anchor: {
+          ...base,
+          track_id: null,
+          range: otioRange(2, 0),
+        },
+      },
+      {
+        body: 'A range cannot cross the selected track boundary.',
+        anchor: {
+          ...base,
+          track_id: 'track-v1',
+          range: otioRange(1.5, 1),
+        },
+      },
+      {
+        body: 'A point beyond the selected track is invalid.',
+        anchor: {
+          ...base,
+          track_id: 'track-v1',
+          range: otioRange(3, 0),
+        },
+      },
+      {
+        body: 'A point beyond the selected timeline is invalid.',
+        anchor: {
+          ...base,
+          track_id: null,
+          range: otioRange(3, 0),
+        },
+      },
+    ];
+    const posted: {
+      readonly body: string;
+      readonly anchor: OtioAnchorV1;
+      readonly comment_id: string;
+    }[] = [];
+    for (const invalid of invalidRows) {
+      const result = await postComment(
+        {
+          relic_id: published.relic_id,
+          body: invalid.body,
+          anchor: invalid.anchor,
+        },
+        deps
+      );
+      posted.push({
+        body: invalid.body,
+        anchor: invalid.anchor,
+        comment_id: result.comment_id,
+      });
+    }
+
+    mintRequests = 0;
+    mintBodies = [];
+    sentMails = [];
+    const toolResult = await readOtioCommentsThroughPublicTool(
+      published.relic_id
+    );
+    expect(toolResult.isError).toBe(false);
+    for (const invalid of posted) {
+      const comment = toolResult.structuredContent.comments.find(
+        (entry) => entry.comment_id === invalid.comment_id
+      );
+      expect(comment?.comment_id).toBe(invalid.comment_id);
+      expect(comment?.body).toBe(invalid.body);
+      expect(comment?.version).toBe(1);
+      expect(comment?.readable).toBe(true);
+      expect(comment?.anchor).toEqual(invalid.anchor);
+      if (comment?.resolved?.kind !== 'otio') {
+        throw new Error('expected an invalid OTIO row to resolve as OTIO');
+      }
+      expect(comment.resolved.status).toBe('unresolvable');
+      expect(comment.resolved.range).toEqual(invalid.anchor.range);
+      expect(comment.resolved.timeline_path).toEqual([]);
+      expect(comment.resolved.intersections).toEqual([]);
+      expect(comment.resolved.current_projection).toMatchObject({
+        current_version: null,
+        status: 'unresolvable',
+      });
+      expect(comment.resolved.current_projection).not.toHaveProperty(
+        'mapped_range'
+      );
+      expect(comment.resolved.current_projection).not.toHaveProperty(
+        'mapped_ranges'
+      );
+      expect(comment.resolved.current_projection).not.toHaveProperty(
+        'mapped_timeline_id'
+      );
+      expect(comment.resolved.current_projection).not.toHaveProperty(
+        'mapped_track_id'
+      );
+      expect(comment.resolved.current_projection).not.toHaveProperty(
+        'mapped_item_id'
+      );
+      expect(comment.resolved.current_projection).not.toHaveProperty(
+        'mapped_start_seconds'
+      );
+      expect(comment.resolved.current_projection).not.toHaveProperty(
+        'mapped_start_timecode'
+      );
+    }
+    expect(mintRequests).toBe(1);
+    expect(mintBodies).toEqual([{ version: 1 }]);
+    expect(sentMails).toEqual([]);
+  });
+
+  test('keeps explicit gaps and empty exposed timeline tails resolvable through public readback', async () => {
+    const text = boundaryTimeline(
+      [
+        boundaryClip('clip-a', 'A', 100, 'media/a.mov'),
+        boundaryGap('gap-1', 'Editorial gap'),
+        boundaryClip('clip-b', 'B', 200, 'media/b.mov'),
+      ],
+      4
+    );
+    const archive = otioArchive(text, [
+      {
+        name: 'media/a.mov',
+        bytes: new TextEncoder().encode('gap control A bytes'),
+      },
+      {
+        name: 'media/b.mov',
+        bytes: new TextEncoder().encode('gap control B bytes'),
+      },
+    ]);
+    const original = await browserOtioDocument(archive);
+    const timelineId = original.timeline_ids[0];
+    if (!timelineId) throw new Error('expected a gap-control timeline');
+    const path = join(scratch, 'gap-and-tail.otioz');
+    await writeFile(path, archive);
+    const published = await publish({ path, cover: false }, deps);
+    const gapAnchor: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: original.document_sha256,
+      timeline_id: timelineId,
+      track_id: 'track-v1',
+      range: otioRange(1.5, 0),
+      snapshot: {
+        timeline: 'Boundary Cut',
+        track: 'V1',
+        item: 'Editorial gap',
+      },
+    };
+    const tailAnchor: OtioAnchorV1 = {
+      ...gapAnchor,
+      track_id: null,
+      range: otioRange(3.5, 0),
+      snapshot: {
+        timeline: 'Boundary Cut',
+        track: null,
+        item: null,
+      },
+    };
+    const gap = await postComment(
+      {
+        relic_id: published.relic_id,
+        body: 'This explicit gap has no media.',
+        anchor: gapAnchor,
+      },
+      deps
+    );
+    const tail = await postComment(
+      {
+        relic_id: published.relic_id,
+        body: 'This exposed timeline tail has no item.',
+        anchor: tailAnchor,
+      },
+      deps
+    );
+
+    const toolResult = await readOtioCommentsThroughPublicTool(
+      published.relic_id
+    );
+    expect(toolResult.isError).toBe(false);
+
+    const gapRow = toolResult.structuredContent.comments.find(
+      (comment) => comment.comment_id === gap.comment_id
+    );
+    if (gapRow?.resolved?.kind !== 'otio') {
+      throw new Error('expected the explicit gap to resolve as OTIO');
+    }
+    expect(gapRow.resolved.status).toBe('resolved');
+    expect(gapRow.resolved.intersections.map((span) => span.node_id)).toEqual([
+      'gap-1',
+    ]);
+    expect(gapRow.resolved.intersections[0]?.bundle_path).toBeNull();
+    expect(gapRow.resolved.intersections[0]?.media_digest).toBeNull();
+    expect(gapRow.resolved.current_projection.status).toBe('same');
+
+    const tailRow = toolResult.structuredContent.comments.find(
+      (comment) => comment.comment_id === tail.comment_id
+    );
+    if (tailRow?.resolved?.kind !== 'otio') {
+      throw new Error('expected the empty tail to resolve as OTIO');
+    }
+    expect(tailRow.resolved.status).toBe('resolved');
+    expect(tailRow.resolved.intersections).toEqual([]);
+    expect(tailRow.resolved.current_projection.status).toBe('same');
+    expect(tailRow.resolved.current_projection.mapped_range).toEqual(
+      tailAnchor.range
+    );
   });
 
   test('withholds a validly decrypted wrong revision without fetching its latest projection', async () => {
