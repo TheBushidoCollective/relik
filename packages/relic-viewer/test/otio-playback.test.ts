@@ -1564,6 +1564,8 @@ describe('otio playback controller', () => {
     if (!qualifiedHandle || !unqualifiedHandle) {
       throw new Error('mixed handle diagnostics are missing');
     }
+    expect(evaluation.diagnostics).toContain(qualifiedHandle);
+    expect(evaluation.diagnostics).toContain(unqualifiedHandle);
     expect(
       compareRationalTimes(qualified.source_time, {
         value: 0,

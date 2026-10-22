@@ -540,10 +540,9 @@ function collectDecoderPresentationHandleDiagnostics(
 ): void {
   let qualifies: boolean | undefined;
   for (const issue of contribution.diagnostics) {
-    if (
-      issue.code !== 'missing-handles' ||
-      issue.target?.node_id !== contribution.node_id
-    ) {
+    if (issue.code !== 'missing-handles') continue;
+    if (issue.target?.node_id !== contribution.node_id) {
+      retained.add(issue);
       continue;
     }
     if (qualifies === undefined) {
