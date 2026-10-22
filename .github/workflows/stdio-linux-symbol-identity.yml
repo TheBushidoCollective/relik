@@ -68,9 +68,10 @@ jobs:
         if: always()
         shell: bash
         run: |
-          printf '{\"artifact\":\"stdio-linux-full-test-trace-39723814228\",\"download_step_outcome\":\"%s\"}\\n' \
+          mkdir -p "$RUNNER_TEMP/stdio-linux-historical-provenance"
+          printf '{"artifact":"stdio-linux-full-test-trace-39723814228","download_step_outcome":"%s"}\n' \
             '${{ steps.historical-artifact.outcome }}' \
-            > \"$RUNNER_TEMP/stdio-linux-historical-provenance/download-status.json\"
+            > "$RUNNER_TEMP/stdio-linux-historical-provenance/download-status.json"
 
       - name: Collect runtime identity and symbolize saved native frames
         env:
