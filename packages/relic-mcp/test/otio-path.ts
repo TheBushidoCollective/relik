@@ -2902,8 +2902,8 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
         const exposed = intersect(intersect(rect(node), rect(scroller)), intersect(content, viewport));
         scrollReachable = hitOwned(node, exposed);
         scroller.scrollTop = prior;
-        const { promise: restored, resolve } = Promise.withResolvers();
-        requestAnimationFrame(resolve);
+        const { promise: restored, resolve: restore } = Promise.withResolvers();
+        requestAnimationFrame(restore);
         await restored;
       }
       const exposed = value ? intersect(intersect(value, content), viewport) : null;
