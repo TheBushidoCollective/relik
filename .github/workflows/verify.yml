@@ -154,18 +154,34 @@ jobs:
           install: true
           cache: true
 
-      - name: Install strace
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends strace
+      - name: Install strace and ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends strace ffmpeg
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Record trace environment
         run: |
-          mkdir -p "$RUNNER_TEMP/stdio-linux-full-test-trace"
-          bun -e 'const os = require("node:os"); console.log(JSON.stringify({ runner_os: process.env.RUNNER_OS ?? process.platform, platform: process.platform, architecture: process.arch, kernel_release: os.release(), kernel_version: os.version(), bun_version: Bun.version, bun_revision: Bun.revision ?? null, node_version: process.version }))' \
-            > "$RUNNER_TEMP/stdio-linux-full-test-trace/environment.json"
-          strace --version > "$RUNNER_TEMP/stdio-linux-full-test-trace/strace-version.txt"
+          TRACE_ROOT="$RUNNER_TEMP/stdio-linux-full-test-trace"
+          mkdir -p "$TRACE_ROOT"
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          SOURCE_SHA="$SOURCE_SHA" bun -e 'const os = require("node:os"); console.log(JSON.stringify({ runner_os: process.env.RUNNER_OS ?? process.platform, platform: process.platform, architecture: process.arch, kernel_release: os.release(), kernel_version: os.version(), bun_version: Bun.version, bun_revision: Bun.revision ?? null, node_version: process.version, source_sha: process.env.SOURCE_SHA }))' \
+            > "$TRACE_ROOT/environment.json"
+          printf '%s\n' "$SOURCE_SHA" > "$TRACE_ROOT/source-sha.txt"
+          BUN_BIN="$(command -v bun)"
+          BUN_REAL="$(readlink -f "$BUN_BIN")"
+          {
+            printf 'path=%s\n' "$BUN_BIN"
+            printf 'resolved_path=%s\n' "$BUN_REAL"
+            sha256sum "$BUN_REAL"
+            file "$BUN_REAL"
+          } > "$TRACE_ROOT/bun-binary-identity.txt"
+          if command -v readelf > /dev/null 2>&1; then
+            readelf -n "$BUN_REAL" > "$TRACE_ROOT/bun-build-id.txt"
+          else
+            printf 'readelf unavailable\n' > "$TRACE_ROOT/bun-build-id.txt"
+          fi
+          strace --version > "$TRACE_ROOT/strace-version.txt"
           test "$(bun --version)" = '1.3.14'
 
       # This observes descriptor lifecycle only. A successful traced run does
@@ -174,7 +190,7 @@ jobs:
         run: |
           TRACE_ROOT="$RUNNER_TEMP/stdio-linux-full-test-trace"
           set +e
-          strace -f -ttt -yy -o "$TRACE_ROOT/bun-run-test.strace" \
+          strace -f -ttt -yy -k -o "$TRACE_ROOT/bun-run-test.strace" \
             -e trace=close,close_range,dup,dup2,dup3,fcntl,epoll_create,epoll_create1,epoll_ctl,pidfd_open,pidfd_getfd,execve,execveat,wait4,waitid,clone,clone3,fork,vfork,pipe,pipe2,socket,socketpair,open,openat,openat2,eventfd,eventfd2,timerfd_create,signalfd,signalfd4,accept,accept4 \
             bun run test
           status=$?
@@ -188,3 +204,4 @@ jobs:
           name: stdio-linux-full-test-trace-${{ github.run_id }}
           path: ${{ runner.temp }}/stdio-linux-full-test-trace
           if-no-files-found: warn
+          compression-level: 6
