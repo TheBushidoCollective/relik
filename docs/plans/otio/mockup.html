@@ -127,9 +127,11 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .preview-state h2 { font: 18px var(--sans); font-weight: 500; margin: 0; }
 .preview-state p { margin: 0; max-width: 34rem; font: 11px/1.7 var(--mono); color: #b9c0be; overflow-wrap: anywhere; }
 .preview-state .primary { max-width: 26rem; font-size: 12px; }
+.preview-state button:not(.primary) { color: var(--ink); background: var(--surface); }
 .state-icon { width: 32px; height: 32px; color: #c98058; }
 .spinner { width: 24px; height: 24px; border: 2px solid #596060; border-right-color: #a7ded6; border-radius: 50%; }
 .base-preview-note { position: absolute; top: 12px; right: 12px; max-width: 60%; background: #34231df2; color: #e4c5b5; border: 1px solid #684331; font-size: 10px; padding: .3rem .45rem; }
+.composition:has(> .base-preview-note:not([hidden])) > .base-preview-note { top: auto; bottom: 12px; }
 .inspector { background: var(--surface); min-width: 0; display: flex; flex-direction: column; }
 .inspector-tabs { display: flex; border-bottom: 1px solid var(--rule); }
 .tab { border: 0; border-bottom: 2px solid transparent; background: none; padding: .65rem .55rem; font-size: 11px; flex: 1; }
@@ -733,11 +735,13 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     $('#preview-overlay').style.display = state.enabled['video-2-overlay'] && state.frame < 48 ? '' : 'none';
     const autoEffect = state.frame >= 144 && state.frame < 192 && state.enabled['video-2-overlay'];
     const issue = state.preview !== 'supported' ? state.preview : autoEffect && !state.baseMedia ? 'unsupported-effect' : 'supported';
-    $('#preview-scope').textContent = issue === 'unsupported-effect' || state.baseMedia && autoEffect
-      ? 'Incomplete preview · base media without unsupported effects · browser-managed SDR'
-      : 'Composition · browser-managed SDR';
+    $('#preview-scope').textContent = issue === 'unsupported-effect'
+      ? 'Incomplete preview · affected playback blocked · browser-managed SDR'
+      : state.baseMedia
+        ? 'Incomplete preview · base media without unsupported effects · browser-managed SDR'
+        : 'Composition · browser-managed SDR';
     const panel = $('#preview-state-panel'); panel.replaceChildren(); panel.hidden = issue === 'supported';
-    $('#base-preview-note').hidden = !(state.baseMedia && autoEffect);
+    $('#base-preview-note').hidden = !state.baseMedia;
     if (issue === 'supported') return;
     if (playing) pause();
     if (issue === 'buffering') panel.append(make('div', 'spinner'), make('h2', '', 'Buffering'), make('p', '', 'media/primary_a.mp4'), action('Play', () => { state.preview = 'supported'; $('#preview-state').value = 'supported'; paintPreview(); play(); }, 'primary'));

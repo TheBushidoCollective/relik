@@ -1,10 +1,14 @@
 {
-  "captureRevision": "505810cf4b1567e81bba64c3e25187f9d79e4452",
-  "scope": "Actual native OTIO viewer, not the clickable mock. Read all eight refreshed path PNGs and eight 320px supplemental PNGs from the pushed capture revision. Read its 30-row native-controls-measurements.json as a separate DOM receipt. No product build, test, formatter, or vendor write was run during this review.",
+  "captureRevision": "0a8b21d146c23b103c73eb557609db82678263fe",
+  "scope": "Actual native OTIO viewer, not the clickable mock. Inspected eight refreshed path PNGs, eight 320px supplemental PNGs, six new blocked-preview PNGs, and their 36-row native-controls-measurements.json DOM receipt. Separately rendered the local-only clickable mock at 1440, 390, and 320 in light/dark before and after base consent. No product build, test, formatter, or vendor write was run during this review.",
   "evidencePaths": {
     "primary": "docs/plans/otio/proof/path-{1440,390}-{light,dark}{,-composer-open}.png",
     "supplemental": "docs/plans/otio/proof/native-controls-320-{light,dark}-{closed,composer-open,preview-base,selection-controls}.png",
-    "dom": "docs/plans/otio/proof/native-controls-measurements.json"
+    "blocked": "docs/plans/otio/proof/native-controls-{320,390,1440}-{light,dark}-blocked-preview.png",
+    "dom": "docs/plans/otio/proof/native-controls-measurements.json",
+    "negativeControl": "docs/plans/otio/proof/blocked-preview-falsification.json",
+    "mockBlocked": "docs/plans/otio/proof/mock-blocked-{1440,390,320}-{light,dark}.png",
+    "mockConsented": "docs/plans/otio/proof/mock-base-consented-{1440,390,320}-{light,dark}.png"
   },
   "methods": {
     "pngByEye": "Read each original native PNG and zoomed critical controls. Screenshot observations cannot establish DOM hit testing or hidden overflow.",
@@ -72,11 +76,11 @@
     },
     {
       "file": "native-controls-320-light-preview-base.png",
-      "observation": "Teal Preview base media without unsupported effects button is legible. Separately, scope banner overlaps the first blocked-preview status lines above it."
+      "observation": "Scope banner and two blocked-preview diagnostics now occupy separate rows; the teal Preview base media without unsupported effects button is fully readable."
     },
     {
       "file": "native-controls-320-dark-preview-base.png",
-      "observation": "Dark-ink teal Preview base button is legible. The same two top text layers overlap as in light scheme."
+      "observation": "The same separation holds in dark scheme. Dark ink on teal Preview base button remains readable."
     },
     {
       "file": "native-controls-320-light-selection-controls.png",
@@ -85,6 +89,38 @@
     {
       "file": "native-controls-320-dark-selection-controls.png",
       "observation": "Same selected range controls visible in dark scheme; teal Comment text uses dark foreground."
+    }
+  ],
+  "blockedPreviewCaptures": [
+    {
+      "file": "native-controls-320-light-blocked-preview.png",
+      "sizePx": [320, 900],
+      "observation": "Two-line scope banner ends around y96. Both diagnostics begin below y126 and the complete two-line teal button sits at y243..289. No overlap or clipping by eye."
+    },
+    {
+      "file": "native-controls-320-dark-blocked-preview.png",
+      "sizePx": [320, 900],
+      "observation": "Same two-line scope, separate diagnostic text, and full dark-ink teal button."
+    },
+    {
+      "file": "native-controls-390-light-blocked-preview.png",
+      "sizePx": [390, 900],
+      "observation": "Scope occupies one line at the top; diagnostics and complete button form distinct readable rows."
+    },
+    {
+      "file": "native-controls-390-dark-blocked-preview.png",
+      "sizePx": [390, 900],
+      "observation": "Same separation in dark scheme. Select arrow and Comments edge remain visible below the preview."
+    },
+    {
+      "file": "native-controls-1440-light-blocked-preview.png",
+      "sizePx": [1440, 900],
+      "observation": "Scope is left-aligned in its own row. Both diagnostics and button sit centered in the remaining preview area with no collision."
+    },
+    {
+      "file": "native-controls-1440-dark-blocked-preview.png",
+      "sizePx": [1440, 900],
+      "observation": "Same separation in dark scheme, including inspector, transport and unobstructed timeline selector."
     }
   ],
   "geometryFromNativeDom": {
@@ -141,6 +177,46 @@
     ],
     "composerComponents": "All six composer-normal and six composer-hover measurements report context, textarea, Post, Cancel and disclosure visible and within the stage. Screenshot inspection independently confirms no foreground text or control is clipped."
   },
+  "blockedPreviewNativeDom": {
+    "state": "Six native blocked states report diagnostic-ready, preview blocked, non-buffering, frame 168, with nonempty scope text, two diagnostics, and complete consent button wording.",
+    "scopeDiagnosticLineIntersections": 0,
+    "scopeButtonIntersections": 0,
+    "linePaintAndClipping": "Every scope, diagnostic, and button text-line sample reports owning element from hit testing and containment within preview, stage, and viewport clipping bounds in all six width/scheme combinations.",
+    "scopeTextToFirstDiagnosticGapPx": [
+      { "width": 320, "light": 31.390625, "dark": 31.390625 },
+      { "width": 390, "light": 31.390625, "dark": 31.390625 },
+      { "width": 1440, "light": 125.046875, "dark": 125.046875 }
+    ],
+    "requiredGapPx": 10.4,
+    "lastDiagnosticToButtonGapPx": 21.578125,
+    "mobile320BoxesPx": {
+      "scope": {
+        "left": 11.1875,
+        "top": 65.25,
+        "right": 280,
+        "bottom": 95.625
+      },
+      "firstDiagnostic": {
+        "left": 20,
+        "top": 126.015625,
+        "right": 271.21875,
+        "bottom": 183.578125
+      },
+      "button": {
+        "left": 20,
+        "top": 242.734375,
+        "right": 271.21875,
+        "bottom": 288.734375
+      }
+    },
+    "contrast": "The repaired blocked-preview button has native pixel colors #fbfbfa on #1f6b64 light, 6.062:1, and #171b1c on #4fb3a6 dark, 6.885:1."
+  },
+  "mockParityFromPrivateHeadless": {
+    "provenance": "Rendered existing self-contained docs/plans/otio/mockup.html over private loopback in HeadlessChrome. These values are mock DOM and screenshot observations, separate from native proof.",
+    "matrix": "Six width/scheme combinations: 1440, 390, and 320px in light and dark. The blocked scope reads 'Incomplete preview · affected playback blocked · browser-managed SDR', with status title and consent button beneath; scope-to-title gap is 268.36px at 1440 and 80px at 390/320. Document scrollWidth is respectively 1425, 375, and 305px, below each viewport width.",
+    "afterConsent": "Clicking Preview base media without unsupported effects hides the status, keeps the scope explicitly 'Incomplete preview · base media without unsupported effects · browser-managed SDR', and shows a separate base-media note. At all six sizes, measured scope/note and frame-burn/note rectangles do not intersect; all 12 blocked/consented screenshots were saved and read.",
+    "mockCorrection": "The separate mock's optional Inspector button was pale-on-pale in light mode; its foreground/background now match the scheme's surface/ink. The mock preview scope changes to the native blocked wording before consent and base-media wording after it. The base-media note moves to the lower right on consent, clearing the scope and frame burn; the two bounds do not intersect at 1440, 390 or 320. No native app code or state logic was changed for this mock correction."
+  },
   "contrastFromActualNativePixels": [
     {
       "control": "Play",
@@ -192,24 +268,15 @@
     "note": "Hover was measured in the native DOM receipt, not captured in the static PNGs."
   },
   "resolvedComparedWith97593f9": [
-    "Previously, the desktop Comments edge tab covered approximately 29px of the select and hid its arrow in all four 1440 captures. Final captures show a visible gap and unobstructed arrow.",
-    "Previously, white dark-mode composer Post ink on #4fb3a6 measured 2.521:1. Final actual dark ink measures 6.885:1 in 390 and 320 PNGs and in normal/hover DOM receipts. The captured Post selector is .popover-card .popover-action.is-primary, not .action.primary."
+    "Previously, the desktop Comments edge tab covered approximately 29px of the select and hid its arrow in all four 1440 captures. The final eight native path captures show a visible gap and unobstructed arrow.",
+    "Previously, white dark-mode composer Post ink on #4fb3a6 measured 2.521:1. Final actual dark ink measures 6.885:1 in 390 and 320 PNGs and in normal/hover DOM receipts. The captured Post selector is .popover-card .popover-action.is-primary, not .action.primary.",
+    "The 320px blocked-preview scope/status text collision seen at 505810c is resolved in all six new 320/390/1440 light/dark blocked PNGs. Text-line hit testing reports 0 scope/diagnostic intersections with minimum 31.390625px clear gap (required 10.4px). The unfixed 505810c CSS separately failed the same guard at 390px light with one intersecting diagnostic line, per blocked-preview-falsification.json."
   ],
-  "currentDefects": [
-    {
-      "id": "blocked-preview-scope-status-collision-320",
-      "seenIn": [
-        "native-controls-320-light-preview-base.png",
-        "native-controls-320-dark-preview-base.png"
-      ],
-      "evidence": "At 320px the Incomplete preview scope text and first lines of the blocked-preview status are superimposed near the top of the dark stage, approximately x16..270, y70..110. Zoomed PNG pixels show both strings occupying the same rows, making the status opening unreadable. The teal Preview base button below is separately legible. This is a screenshot observation; the existing DOM receipt did not measure text ink overlap.",
-      "status": "Open visual defect, reported to integration owner before any additional UI edits."
-    }
-  ],
+  "currentDefects": [],
   "limits": [
-    "The eight primary captures show the ordinary preview and composer; the separate 320px supplemental captures are required to inspect Preview base and Comment selection. Neither control was present in the older eight-image-only review.",
-    "PNG pixels establish appearance but not clickability. Native DOM receipt establishes control rectangles and page overflow, not text-ink collision, which the separate blocked-preview screenshot exposes.",
-    "This audit certifies neither the full source PATH nor external publish/deploy state. It records visual evidence only."
+    "The eight primary captures show the ordinary preview and composer; separate 320px supplemental and six blocked-preview PNGs are required to inspect Preview base and Comment selection and to certify the scope/diagnostic layout.",
+    "PNG pixels establish appearance but not clickability. Native DOM receipt supplies boxes, text-line hit testing, clipping and page overflow. The mock measurements certify only its own local interaction parity.",
+    "This audit certifies visual evidence on a loopback native path and mock, not external publish or deployed state. It does not diagnose the playback-state wording that put 'preview is base media' in the blocked status."
   ],
-  "designRead": "The restrained square editor chrome and patina controls remain tied to the existing Relic visual system. Reject shrinking type or an unrelated new design to hide layout defects; the new scope/status overlap requires a targeted readability correction."
+  "designRead": "The restrained square editor chrome and patina controls remain tied to the existing Relic visual system. The status-visible grid reserves real text rows, not smaller type or an unrelated redesign, and the six final blocked native captures read without overlap."
 }
