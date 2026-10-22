@@ -1,0 +1,375 @@
+{
+  "artifacts_inventory": {
+    "artifacts": [
+      {
+        "created_at": "2026-10-22T22:13:40Z",
+        "expired": false,
+        "expires_at": "2026-10-29T22:13:39Z",
+        "id": 12463051248,
+        "name": "otio-browser-proof-linux",
+        "size_in_bytes": 722
+      },
+      {
+        "created_at": "2026-10-22T21:49:19Z",
+        "expired": false,
+        "expires_at": "2027-01-20T21:48:22Z",
+        "id": 12462115343,
+        "name": "native-darwin-x64",
+        "size_in_bytes": 8168
+      },
+      {
+        "created_at": "2026-10-22T21:48:51Z",
+        "expired": false,
+        "expires_at": "2027-01-20T21:48:22Z",
+        "id": 12461680908,
+        "name": "native-darwin-arm64",
+        "size_in_bytes": 8527
+      },
+      {
+        "created_at": "2026-10-22T21:49:09Z",
+        "expired": false,
+        "expires_at": "2027-01-20T21:48:22Z",
+        "id": 12461372325,
+        "name": "native-linux-arm64-gnu",
+        "size_in_bytes": 11050
+      },
+      {
+        "created_at": "2026-10-22T21:48:55Z",
+        "expired": false,
+        "expires_at": "2026-10-29T21:48:54Z",
+        "id": 12460743224,
+        "name": "otio-browser-proof-macos",
+        "size_in_bytes": 979
+      },
+      {
+        "created_at": "2026-10-22T21:49:09Z",
+        "expired": false,
+        "expires_at": "2027-01-20T21:48:22Z",
+        "id": 12459969251,
+        "name": "native-linux-x64-gnu",
+        "size_in_bytes": 9683
+      }
+    ],
+    "page_count": 1,
+    "query": {
+      "per_page": 100
+    },
+    "requested_path": "repos/TheBushidoCollective/relic/actions/runs/39860172891/artifacts",
+    "retrieved_entry_count": 6,
+    "total_count": 6
+  },
+  "capture_constraints": {
+    "archive_payload_format_normalized": false,
+    "payload_execution": false,
+    "persisted_authentication_headers": false,
+    "persisted_signed_redirect_urls": false,
+    "read_only_github_api_calls": true,
+    "tests_builds_installs_lint_format_browser": false,
+    "workflow_dispatch": false
+  },
+  "jobs_inventory": {
+    "jobs": [
+      {
+        "completed_at": "2026-10-22T21:49:12Z",
+        "conclusion": "success",
+        "id": 120108545405,
+        "name": "native linux-arm64-gnu",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T21:48:27Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T21:48:59Z",
+        "conclusion": "success",
+        "id": 120108545644,
+        "name": "verify / otio-headless-smoke-macos",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T21:48:25Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T21:48:55Z",
+        "conclusion": "success",
+        "id": 120108545664,
+        "name": "native darwin-arm64",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T21:48:25Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T21:49:24Z",
+        "conclusion": "success",
+        "id": 120108545686,
+        "name": "native darwin-x64",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T21:48:26Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T21:48:46Z",
+        "conclusion": "success",
+        "id": 120108545785,
+        "name": "verify / image",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T21:48:24Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T21:49:12Z",
+        "conclusion": "success",
+        "id": 120108545842,
+        "name": "native linux-x64-gnu",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T21:48:24Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T22:13:44Z",
+        "conclusion": "cancelled",
+        "id": 120108546093,
+        "name": "verify / verify",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T21:48:24Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T22:13:44Z",
+        "conclusion": "skipped",
+        "id": 120119392079,
+        "name": "pack",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T22:13:45Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T22:13:44Z",
+        "conclusion": "skipped",
+        "id": 120119392602,
+        "name": "packed native ${{ matrix.target }} on Node ${{ matrix.node }}",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T22:13:45Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-10-22T22:13:44Z",
+        "conclusion": "skipped",
+        "id": 120119392731,
+        "name": "publish",
+        "run_attempt": 1,
+        "started_at": "2026-10-22T22:13:45Z",
+        "status": "completed"
+      }
+    ],
+    "page_count": 1,
+    "query": {
+      "filter": "all",
+      "per_page": 100
+    },
+    "requested_path": "repos/TheBushidoCollective/relic/actions/runs/39860172891/jobs",
+    "retrieved_entry_count": 10,
+    "total_count": 10
+  },
+  "objects": [
+    {
+      "availability": "downloaded",
+      "byte_count": 13618,
+      "category": "run_metadata",
+      "id": 39860172891,
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/runs/39860172891",
+      "retrieved_at": "2026-10-22T22:25:06.277615Z",
+      "sha256": "19e68b6f71b7d817061bf0384649f402e03d327d5f1bb3af6a49f69cdb946555",
+      "source": "github_api",
+      "stored_path": "run-39860172891.json"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 26870,
+      "category": "run_jobs_page",
+      "id": 39860172891,
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/runs/39860172891/jobs?filter=all&per_page=100&page=1",
+      "retrieved_at": "2026-10-22T22:25:06.973178Z",
+      "sha256": "d53dfe72bf53c79e0f27115e169399315e97ca30feca9e00a10cf73cf2fb2e3d",
+      "source": "github_api",
+      "stored_path": "jobs-page-001.json"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 4966,
+      "category": "job_metadata",
+      "id": 120108546093,
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/jobs/120108546093",
+      "retrieved_at": "2026-10-22T22:25:07.906169Z",
+      "sha256": "f9a0bc3acff28308b9dbdf76e20a47c5010f6e860e3c92664e99ac0a630738b6",
+      "source": "github_api",
+      "stored_path": "job-120108546093.json"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 429062,
+      "category": "job_raw_log",
+      "id": 120108546093,
+      "reason": "Raw response retained with GitHub CLI escape-sequence output explicitly enabled so terminal control bytes are preserved unchanged.",
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/jobs/120108546093/logs",
+      "retrieved_at": "2026-10-22T22:26:14.039461Z",
+      "sha256": "45dd3b3d6a01cb40a721f5141b9c0c083cc51bc4c61bce107909ebc3236efb90",
+      "source": "github_api",
+      "stored_path": "job-120108546093.raw.log"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 324195,
+      "category": "run_logs_zip",
+      "id": 39860172891,
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/runs/39860172891/logs",
+      "retrieved_at": "2026-10-22T22:25:09.927985Z",
+      "sha256": "01559d7e6d7d505af1d64087f56002c6baad6012fd4b7bcf57340138fb4124ae",
+      "source": "github_api",
+      "stored_path": "run-39860172891-attempt-1.logs.zip"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 4356,
+      "category": "run_artifacts_page",
+      "id": 39860172891,
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/runs/39860172891/artifacts?per_page=100&page=1",
+      "retrieved_at": "2026-10-22T22:25:12.632051Z",
+      "sha256": "f06649819f9e5663561a99e0e3d4b169371330eac74035567686f5a82baec7b6",
+      "source": "github_api",
+      "stored_path": "artifacts-page-001.json"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 722,
+      "category": "artifact_zip",
+      "id": 12463051248,
+      "inventory_expired": false,
+      "inventory_size_in_bytes": 722,
+      "name": "otio-browser-proof-linux",
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/artifacts/12463051248/zip",
+      "retrieved_at": "2026-10-22T22:25:13.777188Z",
+      "sha256": "061dd3dc47c7b8c4650b0d2c3d4ea7542ea5af229b45a9a2644681ebc30775de",
+      "source": "github_api",
+      "stored_path": "artifact-12463051248.zip"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 8168,
+      "category": "artifact_zip",
+      "id": 12462115343,
+      "inventory_expired": false,
+      "inventory_size_in_bytes": 8168,
+      "name": "native-darwin-x64",
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/artifacts/12462115343/zip",
+      "retrieved_at": "2026-10-22T22:25:15.464584Z",
+      "sha256": "e114f165f2d9f865caa7e19a91ae581511c9dfd54befc2371284511b20515e80",
+      "source": "github_api",
+      "stored_path": "artifact-12462115343.zip"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 8527,
+      "category": "artifact_zip",
+      "id": 12461680908,
+      "inventory_expired": false,
+      "inventory_size_in_bytes": 8527,
+      "name": "native-darwin-arm64",
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/artifacts/12461680908/zip",
+      "retrieved_at": "2026-10-22T22:25:16.819378Z",
+      "sha256": "b560c6b9f85e5349537b4d7d5a4546e54705b8923f4caf1429bb46ae0bf309c7",
+      "source": "github_api",
+      "stored_path": "artifact-12461680908.zip"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 11050,
+      "category": "artifact_zip",
+      "id": 12461372325,
+      "inventory_expired": false,
+      "inventory_size_in_bytes": 11050,
+      "name": "native-linux-arm64-gnu",
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/artifacts/12461372325/zip",
+      "retrieved_at": "2026-10-22T22:25:17.869813Z",
+      "sha256": "2193e3610a6353c8325e6f2038a46c960d8408721ef6b2794e7017b9074c3cd1",
+      "source": "github_api",
+      "stored_path": "artifact-12461372325.zip"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 979,
+      "category": "artifact_zip",
+      "id": 12460743224,
+      "inventory_expired": false,
+      "inventory_size_in_bytes": 979,
+      "name": "otio-browser-proof-macos",
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/artifacts/12460743224/zip",
+      "retrieved_at": "2026-10-22T22:25:18.919967Z",
+      "sha256": "62ba059a4dae04f0bbe2c7a54a1086ee530e6ba73754bba6f7151cb36dc0ff81",
+      "source": "github_api",
+      "stored_path": "artifact-12460743224.zip"
+    },
+    {
+      "availability": "downloaded",
+      "byte_count": 9683,
+      "category": "artifact_zip",
+      "id": 12459969251,
+      "inventory_expired": false,
+      "inventory_size_in_bytes": 9683,
+      "name": "native-linux-x64-gnu",
+      "requested_endpoint": "repos/TheBushidoCollective/relic/actions/artifacts/12459969251/zip",
+      "retrieved_at": "2026-10-22T22:25:20.047256Z",
+      "sha256": "b6ece8831edb22f6b41c71ea52aee6c446b793bd7fba382acebd6b04becb9ce7",
+      "source": "github_api",
+      "stored_path": "artifact-12459969251.zip"
+    },
+    {
+      "availability": "reused_downloaded",
+      "byte_count": 549455,
+      "category": "parent_cli_raw_log",
+      "id": 120108546093,
+      "name": "complete CLI log capture for job 120108546093",
+      "reason": "Retained unchanged as supplementary provenance; canonical GitHub API job log is captured separately.",
+      "retrieved_at": "2026-10-22T22:25:21.096256Z",
+      "sha256": "b4d5600b490a29d826947911c4446cb267a50dc67db664528adde63bda30c3aa",
+      "source": "parent_provided_cli_capture",
+      "source_reference": "artifact://3814",
+      "stored_path": "job-120108546093.parent-cli-artifact-3814.raw.log"
+    },
+    {
+      "availability": "generated",
+      "byte_count": 1204,
+      "category": "checksum_index",
+      "reason": "Checksum-only index over retained source bytes; archive payloads were not transformed.",
+      "retrieved_at": "2026-10-22T22:26:15.365694Z",
+      "sha256": "dd7c7dfa1e437aa20a9c0e285820e0bc900cb64223e46c32eca5014f644d1204",
+      "source": "local_derivative",
+      "stored_path": "SHA256SUMS"
+    }
+  ],
+  "purpose": "Read-only preservation of GitHub Actions run evidence. This capture makes no causal claim about the timeout or black frame.",
+  "repository_note": "The requested GitHub API repository path is used as supplied. Redirect targets, authentication headers, and signed redirect URLs are not retained.",
+  "repository_request_path": "repos/TheBushidoCollective/relic",
+  "retrieval_completed_at": "2026-10-22T22:26:15.365723Z",
+  "retrieval_started_at": "2026-10-22T22:25:06.277213Z",
+  "run": {
+    "conclusion": "cancelled",
+    "created_at": "2026-10-22T21:48:21Z",
+    "display_title": "publish-mcp",
+    "event": "workflow_dispatch",
+    "head_sha": "6a83c011fe9ef4b40204a1ca0ed46744103fba49",
+    "html_url": "https://github.com/TheBushidoCollective/relik/actions/runs/39860172891",
+    "id": 39860172891,
+    "name": "publish-mcp",
+    "run_attempt": 1,
+    "status": "completed",
+    "updated_at": "2026-10-22T22:13:45Z"
+  },
+  "schema_version": 1,
+  "target_job": {
+    "canonical_raw_log_path": "job-120108546093.raw.log",
+    "id": 120108546093,
+    "logs_endpoint": "repos/TheBushidoCollective/relic/actions/jobs/120108546093/logs",
+    "metadata_endpoint": "repos/TheBushidoCollective/relic/actions/jobs/120108546093",
+    "parent_cli_supplement_path": "job-120108546093.parent-cli-artifact-3814.raw.log"
+  },
+  "unavailable_objects": []
+}
