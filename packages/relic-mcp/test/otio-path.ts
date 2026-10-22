@@ -2836,10 +2836,26 @@ function assertBlockedPreviewReadable(
   label: string,
   effectFrame: number
 ): void {
-  assert.deepEqual(probe.missing, [], `${label} blocked preview nodes are missing`);
-  assert.equal(probe.state.ready, 'diagnostic', `${label} blocked preview is not diagnostic`);
-  assert.equal(probe.state.previewState, 'blocked', `${label} preview is not blocked`);
-  assert.equal(probe.state.buffering, 'false', `${label} blocked preview is buffering`);
+  assert.deepEqual(
+    probe.missing,
+    [],
+    `${label} blocked preview nodes are missing`
+  );
+  assert.equal(
+    probe.state.ready,
+    'diagnostic',
+    `${label} blocked preview is not diagnostic`
+  );
+  assert.equal(
+    probe.state.previewState,
+    'blocked',
+    `${label} preview is not blocked`
+  );
+  assert.equal(
+    probe.state.buffering,
+    'false',
+    `${label} blocked preview is buffering`
+  );
   assert.equal(
     Number(probe.state.frame),
     effectFrame,
@@ -2875,7 +2891,10 @@ function assertBlockedPreviewReadable(
       true,
       `${label} element escapes preview containment: ${node.text}`
     );
-    assert.ok(node.lines.length > 0, `${label} has no text lines: ${node.text}`);
+    assert.ok(
+      node.lines.length > 0,
+      `${label} has no text lines: ${node.text}`
+    );
     for (const line of node.lines) {
       assert.equal(
         line.contained,
@@ -3140,7 +3159,11 @@ async function prepareBlockedPreview(
   assert.equal(state.ready, 'diagnostic', 'blocked preview is not diagnostic');
   assert.equal(state.previewState, 'blocked', 'preview state is not blocked');
   assert.equal(state.buffering, 'false', 'blocked preview is buffering');
-  assert.equal(state.frame, effectFrame, 'blocked preview left the effect frame');
+  assert.equal(
+    state.frame,
+    effectFrame,
+    'blocked preview left the effect frame'
+  );
   return priorFrame;
 }
 
@@ -4582,7 +4605,10 @@ try {
       await browser.evaluate<void>(
         `document.querySelector('.stage-wrap').scrollTop = 0`
       );
-      const priorFrame = await prepareBlockedPreview(browser, plan.effect_frame);
+      const priorFrame = await prepareBlockedPreview(
+        browser,
+        plan.effect_frame
+      );
       const blocked = await measureBlockedPreview(browser);
       assertBlockedPreviewReadable(
         blocked,
@@ -4662,7 +4688,10 @@ try {
       await browser.evaluate<void>(
         `document.querySelector('.stage-wrap').scrollTop = 0`
       );
-      const priorFrame = await prepareBlockedPreview(browser, plan.effect_frame);
+      const priorFrame = await prepareBlockedPreview(
+        browser,
+        plan.effect_frame
+      );
       const blocked = await measureBlockedPreview(browser);
       assertBlockedPreviewReadable(
         blocked,
@@ -4686,9 +4715,7 @@ try {
         probe: previewBase,
       });
       await browser.screenshot(`native-controls-320-${scheme}-preview-base`);
-      await browser.screenshot(
-        `native-controls-320-${scheme}-blocked-preview`
-      );
+      await browser.screenshot(`native-controls-320-${scheme}-blocked-preview`);
       await restorePreviewBase(browser);
       await seekTo(browser, priorFrame);
       const commentSelection = await exposeSelectionControl(browser);
