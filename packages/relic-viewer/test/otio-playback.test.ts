@@ -1039,6 +1039,11 @@ describe('otio playback controller', () => {
       rate: 30,
       duration: 60,
     });
+    const video48000 = sampledMediaDocument({
+      kind: 'Video',
+      rate: 48000,
+      duration: 96000,
+    });
     const source24 = await decoderTimeAt(video24, { value: 32, rate: 24 });
     expect(source24.target).toBeCloseTo(80.5 / 60, 14);
     expect(source24.calls).toHaveLength(1);
@@ -1057,6 +1062,9 @@ describe('otio playback controller', () => {
     expect(
       (await decoderTimeAt(video30, { value: 58.75, rate: 30 })).target
     ).toBeCloseTo(117.5 / 60, 14);
+    expect(
+      (await decoderTimeAt(video48000, { value: 799, rate: 48000 })).target
+    ).toBeCloseTo(0.5 / 60, 14);
   });
   test('selects the certified WebM packet window instead of an FPS grid', async () => {
     const mediaBlob = new Blob(['webm packet timing marker'], {
@@ -1227,7 +1235,7 @@ describe('otio playback controller', () => {
     expect(resolverDisposeCalls).toBe(0);
   });
 
-  test('plays representationally zero video and audio samples', async () => {
+  test('decodes near-zero source samples locally without normalizing them', async () => {
     const sourceStart = { value: 4, rate: 24000 / 1001 };
     const availableStartTime = { value: 5, rate: 30000 / 1001 };
     const videoBlob = new Blob(['near-zero video marker'], {
@@ -1253,15 +1261,26 @@ describe('otio playback controller', () => {
       sourceStart,
       availableStartTime,
     });
-    const sourceTime = evaluateOtioAt(videoDocument, 'timeline_1', {
+    const videoContribution = evaluateOtioAt(videoDocument, 'timeline_1', {
       value: 0,
       rate: 24,
-    }).video_contributions[0]?.source_time;
-    if (!sourceTime) throw new Error('near-zero video sample is missing');
+    }).video_contributions[0];
+    if (!videoContribution) {
+      throw new Error('near-zero video sample is missing');
+    }
+    const sourceTime = videoContribution.source_time;
+    const videoHandle = videoContribution.diagnostics.find(
+      (issue) => issue.code === 'missing-handles'
+    );
+    if (!videoHandle) {
+      throw new Error(
+        'near-zero video sample is missing its handle diagnostic'
+      );
+    }
     expect(sourceTime.value).toBeLessThan(0);
     expect(
       compareRationalTimes(sourceTime, { value: 0, rate: sourceTime.rate })
-    ).toBe(0);
+    ).toBeLessThan(0);
     const video = createOtioPlayback({
       document: videoDocument,
       timelineId: 'timeline_1',
@@ -1279,6 +1298,13 @@ describe('otio playback controller', () => {
         .getState()
         .diagnostics.some((issue) => issue.code === 'invalid-timing')
     ).toBe(false);
+    expect(video.getState().diagnostics).toContainEqual(videoHandle);
+    expect(
+      evaluateOtioAt(videoDocument, 'timeline_1', {
+        value: 0,
+        rate: 24,
+      }).video_contributions[0]
+    ).toEqual(videoContribution);
     video.dispose();
 
     const firstAudio = created.length;
@@ -1289,18 +1315,29 @@ describe('otio playback controller', () => {
       sourceStart: { value: 56, rate: 30 },
       availableStartTime: { value: 56.00000000000001, rate: 30 },
     });
-    const audioSourceTime = evaluateOtioAt(audioDocument, 'timeline_1', {
+    const audioContribution = evaluateOtioAt(audioDocument, 'timeline_1', {
       value: 0,
       rate: 30,
-    }).audio_contributions[0]?.source_time;
-    if (!audioSourceTime) throw new Error('near-zero audio sample is missing');
+    }).audio_contributions[0];
+    if (!audioContribution) {
+      throw new Error('near-zero audio sample is missing');
+    }
+    const audioSourceTime = audioContribution.source_time;
+    const audioHandle = audioContribution.diagnostics.find(
+      (issue) => issue.code === 'missing-handles'
+    );
+    if (!audioHandle) {
+      throw new Error(
+        'near-zero audio sample is missing its handle diagnostic'
+      );
+    }
     expect(audioSourceTime.value).toBeLessThan(0);
     expect(
       compareRationalTimes(audioSourceTime, {
         value: 0,
         rate: audioSourceTime.rate,
       })
-    ).toBe(0);
+    ).toBeLessThan(0);
     const audio = createOtioPlayback({
       document: audioDocument,
       timelineId: 'timeline_1',
@@ -1315,6 +1352,13 @@ describe('otio playback controller', () => {
     expect(voice?.currentTime).toBe(0);
     expect(voice?.paused).toBe(false);
     expect(voice?.attrs.get('data-active')).toBe('true');
+    expect(audio.getState().diagnostics).toContainEqual(audioHandle);
+    expect(
+      evaluateOtioAt(audioDocument, 'timeline_1', {
+        value: 0,
+        rate: 30,
+      }).audio_contributions[0]
+    ).toEqual(audioContribution);
     audio.dispose();
   });
 
@@ -1530,6 +1574,22 @@ describe('otio playback controller', () => {
       duration: 48,
       availableStart: 24,
     });
+    const unavailable = evaluateOtioAt(doc, 'timeline_1', {
+      value: 0,
+      rate: 24,
+    }).audio_contributions[0];
+    if (!unavailable) {
+      throw new Error('unavailable audio sample is missing');
+    }
+    expect(
+      compareRationalTimes(unavailable.source_time, {
+        value: 0,
+        rate: unavailable.source_time.rate,
+      })
+    ).toBeLessThan(0);
+    expect(
+      unavailable.diagnostics.some((issue) => issue.code === 'missing-handles')
+    ).toBe(true);
     const playback = createOtioPlayback({
       document: doc,
       timelineId: 'timeline_1',
@@ -1550,6 +1610,12 @@ describe('otio playback controller', () => {
 
     expect(voice?.paused).toBe(true);
     expect(voice?.attrs.get('data-active')).toBe('false');
+    expect(
+      evaluateOtioAt(doc, 'timeline_1', {
+        value: 0,
+        rate: 24,
+      }).audio_contributions[0]
+    ).toEqual(unavailable);
     playback.dispose();
   });
 

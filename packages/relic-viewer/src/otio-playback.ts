@@ -36,6 +36,7 @@ export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
 const HAVE_CURRENT_DATA = 2;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 
+const DECODER_LOCAL_ZERO_SOURCE_VALUE_TOLERANCE = 1e-7;
 export interface OtioTrackState {
   readonly id: string;
   readonly name: string;
@@ -432,23 +433,59 @@ function sampleKind(contrib: OtioVideoContribution): 'media' | 'black' {
   return kind === 'black' ? 'black' : 'media';
 }
 
+// Decoder-only compatibility for legacy start-edge samples, in source-value
+// units after both values are expressed on the same source clock.
+
+function compareDecoderSourceTimes(
+  sourceTime: OtioRationalTime,
+  candidate: OtioRationalTime
+): number {
+  const candidateAtSourceRate =
+    candidate.rate === sourceTime.rate
+      ? candidate
+      : rescaleTime(candidate, sourceTime.rate);
+  const difference = sourceTime.value - candidateAtSourceRate.value;
+  if (!Number.isFinite(difference)) return NaN;
+  if (Math.abs(difference) < DECODER_LOCAL_ZERO_SOURCE_VALUE_TOLERANCE) {
+    return 0;
+  }
+  return difference < 0 ? -1 : 1;
+}
+
+function acceptsDecoderLocalZero(sourceTime: OtioRationalTime): boolean {
+  if (sourceTime.value >= 0) return false;
+  return (
+    compareDecoderSourceTimes(sourceTime, {
+      value: 0,
+      rate: sourceTime.rate,
+    }) === 0
+  );
+}
+
 function decoderLocalSourceTime(
   sourceTime: OtioRationalTime
 ): OtioRationalTime {
-  const zero = { value: 0, rate: sourceTime.rate };
-  return sourceTime.value < 0 && compareRationalTimes(sourceTime, zero) === 0
-    ? zero
+  if (sourceTime.value === 0) {
+    return Object.is(sourceTime.value, -0)
+      ? { value: 0, rate: sourceTime.rate }
+      : sourceTime;
+  }
+  return acceptsDecoderLocalZero(sourceTime)
+    ? { value: 0, rate: sourceTime.rate }
     : sourceTime;
 }
 
 function sampleUnavailable(
   contrib: OtioVideoContribution | OtioAudioContribution
 ): boolean {
-  const zero = { value: 0, rate: contrib.source_time.rate };
+  const acceptedLocalZero = acceptsDecoderLocalZero(contrib.source_time);
+  const localSourceTime = decoderLocalSourceTime(contrib.source_time);
   return (
-    contrib.diagnostics.some(
-      (diagnostic) => diagnostic.code === 'missing-handles'
-    ) || compareRationalTimes(contrib.source_time, zero) < 0
+    localSourceTime.value < 0 ||
+    (!acceptedLocalZero &&
+      contrib.diagnostics.some(
+        (diagnostic) => diagnostic.code === 'missing-handles'
+      ))
   );
 }
 
@@ -483,10 +520,10 @@ function videoDecoderTime(
     const start = timing.starts[middle];
     if (
       start !== undefined &&
-      compareRationalTimes(
-        containerTimeAtSourceRate(start, localTime),
-        localTime
-      ) <= 0
+      compareDecoderSourceTimes(
+        localTime,
+        containerTimeAtSourceRate(start, localTime)
+      ) >= 0
     ) {
       lower = middle + 1;
     } else {
@@ -503,7 +540,7 @@ function videoDecoderTime(
     !Number.isFinite(start) ||
     !Number.isFinite(end) ||
     end <= start ||
-    compareRationalTimes(
+    compareDecoderSourceTimes(
       localTime,
       containerTimeAtSourceRate(end, localTime)
     ) >= 0
