@@ -4534,6 +4534,7 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
 ): Promise<void> {
   const published = await callMcp('relic_publish', {
     path: fixtureDir,
+    force_new: true,
     title: 'OTIO coincident comment reveal proof',
     cover: false,
   });
