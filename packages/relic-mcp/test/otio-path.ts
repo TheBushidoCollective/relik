@@ -2096,6 +2096,722 @@ async function dismissComposer(browser: ChromeSession): Promise<void> {
   );
 }
 
+interface DomRectProbe {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+interface NativeControlProbe {
+  readonly label: string;
+  readonly withinStage: boolean;
+  readonly coveredByTab: boolean;
+}
+
+interface NativeSelectProbe extends NativeControlProbe {
+  readonly arrowOwned: boolean;
+}
+
+interface NativeControlSnapshot {
+  readonly tab: {
+    readonly present: boolean;
+    readonly visible: boolean;
+    readonly outsideStage: boolean;
+  };
+  readonly controls: readonly NativeControlProbe[];
+  readonly selects: readonly NativeSelectProbe[];
+}
+
+interface ClosedNativeControlsProbe {
+  readonly missing: readonly string[];
+  readonly before: NativeControlSnapshot;
+  readonly afterScroll: NativeControlSnapshot;
+  readonly documentOverflow: number;
+  readonly bodyOverflow: number;
+  readonly stageOverflow: number;
+  readonly timelineOverflow: number;
+  readonly stageScrollRange: number;
+  readonly timelineScrollRange: number;
+}
+
+interface SidebarProbe {
+  readonly missing: readonly string[];
+  readonly open: boolean;
+  readonly threadVisibleWhenOpen: boolean;
+  readonly tabVisibleWhenOpen: boolean;
+  readonly resizerVisible: boolean;
+  readonly stageToThreadGap: number | null;
+  readonly narrowThreadOwnsRow: boolean;
+  readonly tabVisibleAfterClose: boolean;
+  readonly threadOpenAfterClose: boolean;
+}
+
+function assertClosedNativeControls(
+  probe: ClosedNativeControlsProbe,
+  label: string
+): void {
+  assert.deepEqual(probe.missing, [], `${label} missing native controls`);
+  for (const [phase, snapshot, requireWithinStage] of [
+    ['before scrolling', probe.before, true],
+    ['after stage and timeline scrolling', probe.afterScroll, false],
+  ] as const) {
+    assert.equal(snapshot.tab.present, true, `${label} ${phase} has no tab`);
+    assert.equal(
+      snapshot.tab.visible,
+      true,
+      `${label} ${phase} closed Comments tab is not visible`
+    );
+    assert.equal(
+      snapshot.tab.outsideStage,
+      true,
+      `${label} ${phase} closed Comments tab covers stage content`
+    );
+    assert.ok(
+      snapshot.controls.length > 0,
+      `${label} ${phase} has no exposed OTIO controls`
+    );
+    for (const control of snapshot.controls) {
+      if (requireWithinStage)
+        assert.equal(
+          control.withinStage,
+          true,
+          `${label} ${phase} control escapes the stage: ${control.label}`
+        );
+      assert.equal(
+        control.coveredByTab,
+        false,
+        `${label} ${phase} control is covered by Comments: ${control.label}`
+      );
+    }
+    for (const select of snapshot.selects) {
+      if (requireWithinStage)
+        assert.equal(
+          select.withinStage,
+          true,
+          `${label} ${phase} select escapes the stage: ${select.label}`
+        );
+      assert.equal(
+        select.coveredByTab,
+        false,
+        `${label} ${phase} select is covered by Comments: ${select.label}`
+      );
+      assert.equal(
+        select.arrowOwned,
+        true,
+        `${label} ${phase} native select arrow is not exposed: ${select.label}`
+      );
+    }
+  }
+  assert.ok(
+    probe.documentOverflow <= 1,
+    `${label} document has horizontal overflow ${probe.documentOverflow}px`
+  );
+  assert.ok(
+    probe.bodyOverflow <= 1,
+    `${label} body has horizontal overflow ${probe.bodyOverflow}px`
+  );
+  assert.ok(
+    probe.stageOverflow <= 1,
+    `${label} stage has horizontal overflow ${probe.stageOverflow}px`
+  );
+  assert.ok(
+    probe.timelineOverflow >= 0,
+    `${label} has invalid timeline overflow measurement`
+  );
+}
+
+async function measureClosedNativeControls(
+  browser: ChromeSession
+): Promise<ClosedNativeControlsProbe> {
+  return browser.evaluate<ClosedNativeControlsProbe>(String.raw`(async () => {
+    const stage = document.querySelector('.stage-wrap');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    const root = document.querySelector('.otio-view');
+    const missing = [];
+    if (!stage) missing.push('.stage-wrap');
+    if (!timeline) missing.push('.otio-timeline-scroll');
+    if (!root) missing.push('.otio-view');
+    if (missing.length > 0) {
+      return {
+        missing,
+        before: { tab: { present: false, visible: false, outsideStage: false }, controls: [], selects: [] },
+        afterScroll: { tab: { present: false, visible: false, outsideStage: false }, controls: [], selects: [] },
+        documentOverflow: 0,
+        bodyOverflow: 0,
+        stageOverflow: 0,
+        timelineOverflow: 0,
+        stageScrollRange: 0,
+        timelineScrollRange: 0,
+      };
+    }
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const visible = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const style = getComputedStyle(node);
+      const value = rect(node);
+      return style.display !== 'none' && style.visibility !== 'hidden' &&
+        value.width > 0 && value.height > 0;
+    };
+    const overlaps = (a, b) =>
+      a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    const stageContent = () => {
+      const value = stage.getBoundingClientRect();
+      const left = value.left + stage.clientLeft;
+      const top = value.top + stage.clientTop;
+      return {
+        left,
+        top,
+        right: left + stage.clientWidth,
+        bottom: top + stage.clientHeight,
+        width: stage.clientWidth,
+        height: stage.clientHeight,
+      };
+    };
+    const within = (inner, outer) =>
+      inner.left >= outer.left - 1 && inner.right <= outer.right + 1 &&
+      inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+    const labelOf = (node) =>
+      node.getAttribute('aria-label') || node.className || node.tagName;
+    const snapshot = () => {
+      const content = stageContent();
+      const tab = document.querySelector('.thread-tab');
+      const tabVisible = visible(tab);
+      const tabRect = tabVisible ? rect(tab) : null;
+      const exposed = (node) => visible(node) && overlaps(rect(node), content);
+      const controls = [
+        ...document.querySelectorAll(
+          '.otio-transport button, .otio-transport input, .otio-timeline-heading button, .otio-selection-readout button, .otio-selection-readout input'
+        ),
+      ].filter(exposed).map((node) => {
+        const value = rect(node);
+        return {
+          label: labelOf(node),
+          withinStage: within(value, content),
+          coveredByTab: tabRect !== null && overlaps(value, tabRect),
+        };
+      });
+      const selects = [
+        ...document.querySelectorAll(
+          '.otio-timeline-heading select, select.otio-track-select'
+        ),
+      ].filter(exposed).map((node) => {
+        const value = rect(node);
+        const arrowX = Math.max(value.left + 1, value.right - Math.min(8, value.width / 3));
+        const arrowY = value.top + value.height / 2;
+        const hit = document.elementFromPoint(arrowX, arrowY);
+        return {
+          label: labelOf(node),
+          withinStage: within(value, content),
+          coveredByTab: tabRect !== null && overlaps(value, tabRect),
+          arrowOwned: hit === node || hit?.closest('select') === node,
+        };
+      });
+      return {
+        tab: {
+          present: tab !== null,
+          visible: tabVisible,
+          outsideStage: tabRect === null || !overlaps(tabRect, content),
+        },
+        controls,
+        selects,
+      };
+    };
+    const before = snapshot();
+    const priorStageTop = stage.scrollTop;
+    const priorTimelineLeft = timeline.scrollLeft;
+    stage.scrollTop = stage.scrollHeight;
+    timeline.scrollLeft = timeline.scrollWidth;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const afterScroll = snapshot();
+    stage.scrollTop = priorStageTop;
+    timeline.scrollLeft = priorTimelineLeft;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return {
+      missing,
+      before,
+      afterScroll,
+      documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      bodyOverflow: document.body.scrollWidth - document.documentElement.clientWidth,
+      stageOverflow: stage.scrollWidth - stage.clientWidth,
+      timelineOverflow: timeline.scrollWidth - timeline.clientWidth,
+      stageScrollRange: stage.scrollHeight - stage.clientHeight,
+      timelineScrollRange: timeline.scrollWidth - timeline.clientWidth,
+    };
+  })()`);
+}
+
+async function measureSidebar(
+  browser: ChromeSession
+): Promise<SidebarProbe> {
+  return browser.evaluate<SidebarProbe>(String.raw`(async () => {
+    const row = document.querySelector('.relic-row');
+    const stage = document.querySelector('.stage-wrap');
+    const thread = document.querySelector('.thread');
+    const tab = document.querySelector('.thread-tab');
+    const missing = [];
+    if (!row) missing.push('.relic-row');
+    if (!stage) missing.push('.stage-wrap');
+    if (!thread) missing.push('.thread');
+    if (!tab) missing.push('.thread-tab');
+    const visible = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' &&
+        rect.width > 0 && rect.height > 0;
+    };
+    if (missing.length > 0) {
+      return {
+        missing,
+        open: false,
+        threadVisibleWhenOpen: false,
+        tabVisibleWhenOpen: false,
+        resizerVisible: false,
+        stageToThreadGap: null,
+        narrowThreadOwnsRow: false,
+        tabVisibleAfterClose: false,
+        threadOpenAfterClose: false,
+      };
+    }
+    tab.click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const stageRect = stage.getBoundingClientRect();
+    const threadRect = thread.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const resizer = document.querySelector('.thread-resizer');
+    const open = thread.classList.contains('is-open');
+    const threadVisibleWhenOpen = visible(thread);
+    const tabVisibleWhenOpen = visible(tab);
+    const resizerVisible = visible(resizer);
+    const gap = Math.max(0, threadRect.left - stageRect.right);
+    const narrowThreadOwnsRow =
+      threadRect.left <= rowRect.left + 1 && threadRect.right >= rowRect.right - 1;
+    const closer = thread.querySelector('.thread-toggle');
+    closer?.click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return {
+      missing,
+      open,
+      threadVisibleWhenOpen,
+      tabVisibleWhenOpen,
+      resizerVisible,
+      stageToThreadGap: gap,
+      narrowThreadOwnsRow,
+      tabVisibleAfterClose: visible(tab),
+      threadOpenAfterClose: thread.classList.contains('is-open'),
+    };
+  })()`);
+}
+
+function assertSidebar(
+  probe: SidebarProbe,
+  label: string,
+  narrow: boolean
+): void {
+  assert.deepEqual(probe.missing, [], `${label} missing sidebar chrome`);
+  assert.equal(probe.open, true, `${label} Comments did not open`);
+  assert.equal(
+    probe.threadVisibleWhenOpen,
+    true,
+    `${label} open Comments sidebar has no visible row`
+  );
+  assert.equal(
+    probe.tabVisibleWhenOpen,
+    false,
+    `${label} hidden Comments tab still consumes visible chrome`
+  );
+  assert.equal(
+    probe.tabVisibleAfterClose,
+    true,
+    `${label} Comments tab did not return after close`
+  );
+  assert.equal(
+    probe.threadOpenAfterClose,
+    false,
+    `${label} Comments sidebar did not close`
+  );
+  if (narrow) {
+    assert.equal(
+      probe.narrowThreadOwnsRow,
+      true,
+      `${label} narrow Comments sidebar does not own the row`
+    );
+    assert.equal(
+      probe.resizerVisible,
+      false,
+      `${label} narrow Comments sidebar exposed the desktop resizer`
+    );
+  } else {
+    assert.equal(
+      probe.resizerVisible,
+      true,
+      `${label} desktop Comments sidebar lost its resizer`
+    );
+    assert.ok(
+      (probe.stageToThreadGap ?? Infinity) <= 1,
+      `${label} hidden Comments tab left a ${probe.stageToThreadGap}px gap`
+    );
+  }
+}
+
+interface ComposerElementProbe {
+  readonly name: string;
+  readonly present: boolean;
+  readonly visible: boolean;
+  readonly withinStage: boolean;
+  readonly rect: DomRectProbe | null;
+}
+
+interface ComposerProbe {
+  readonly missing: readonly string[];
+  readonly stageContent: DomRectProbe | null;
+  readonly viewportWidth: number;
+  readonly documentOverflow: number;
+  readonly bodyOverflow: number;
+  readonly stageOverflow: number;
+  readonly timelineOverflow: number;
+  readonly components: readonly ComposerElementProbe[];
+  readonly post: {
+    readonly hovered: boolean;
+    readonly foreground: string | null;
+    readonly background: string | null;
+    readonly contrast: number | null;
+  };
+}
+
+interface StageControlExposure {
+  readonly missing: readonly string[];
+  readonly visible: boolean;
+  readonly withinStage: boolean;
+  readonly rect: DomRectProbe | null;
+}
+
+function assertComposerProbe(
+  probe: ComposerProbe,
+  label: string,
+  expectHovered: boolean
+): void {
+  assert.deepEqual(probe.missing, [], `${label} composer controls are missing`);
+  assert.ok(probe.stageContent, `${label} has no stage content bounds`);
+  for (const component of probe.components) {
+    assert.equal(
+      component.present,
+      true,
+      `${label} composer component is absent: ${component.name}`
+    );
+    assert.equal(
+      component.visible,
+      true,
+      `${label} composer component is hidden: ${component.name}`
+    );
+    assert.equal(
+      component.withinStage,
+      true,
+      `${label} composer component escapes its stage: ${component.name}`
+    );
+  }
+  assert.equal(
+    probe.post.hovered,
+    expectHovered,
+    `${label} Post hover state was not reached`
+  );
+  assert.ok(
+    probe.post.contrast !== null && probe.post.contrast >= 4.5,
+    `${label} Post contrast is ${probe.post.contrast} (${probe.post.foreground} on ${probe.post.background})`
+  );
+  assert.ok(
+    probe.documentOverflow <= 1,
+    `${label} document has horizontal overflow ${probe.documentOverflow}px`
+  );
+  assert.ok(
+    probe.bodyOverflow <= 1,
+    `${label} body has horizontal overflow ${probe.bodyOverflow}px`
+  );
+  assert.ok(
+    probe.stageOverflow <= 1,
+    `${label} stage has horizontal overflow ${probe.stageOverflow}px`
+  );
+  assert.ok(
+    probe.timelineOverflow >= 0,
+    `${label} has invalid timeline overflow measurement`
+  );
+}
+
+async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
+  return browser.evaluate<ComposerProbe>(String.raw`(() => {
+    const stage = document.querySelector('.stage-wrap');
+    const card = document.querySelector('.popover-card');
+    const missing = [];
+    if (!stage) missing.push('.stage-wrap');
+    if (!card) missing.push('.popover-card');
+    const empty = {
+      missing,
+      stageContent: null,
+      viewportWidth: window.innerWidth,
+      documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      bodyOverflow: document.body.scrollWidth - document.documentElement.clientWidth,
+      stageOverflow: 0,
+      timelineOverflow: 0,
+      components: [],
+      post: { hovered: false, foreground: null, background: null, contrast: null },
+    };
+    if (missing.length > 0) return empty;
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const contentRect = () => {
+      const value = stage.getBoundingClientRect();
+      const left = value.left + stage.clientLeft;
+      const top = value.top + stage.clientTop;
+      return {
+        left,
+        top,
+        right: left + stage.clientWidth,
+        bottom: top + stage.clientHeight,
+        width: stage.clientWidth,
+        height: stage.clientHeight,
+      };
+    };
+    const visible = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const style = getComputedStyle(node);
+      const value = rect(node);
+      return style.display !== 'none' && style.visibility !== 'hidden' &&
+        value.width > 0 && value.height > 0;
+    };
+    const within = (inner, outer) =>
+      inner.left >= outer.left - 1 && inner.right <= outer.right + 1 &&
+      inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+    const parseColor = (value) => {
+      const parts = value.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+      return parts?.length === 3 && parts.every(Number.isFinite) ? parts : null;
+    };
+    const luminance = (channels) => {
+      const linear = channels.map((value) => {
+        const unit = value / 255;
+        return unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+    };
+    const ratio = (foreground, background) => {
+      const fg = parseColor(foreground);
+      const bg = parseColor(background);
+      if (!fg || !bg) return null;
+      const first = luminance(fg);
+      const second = luminance(bg);
+      return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+    };
+    const post = document.querySelector('.popover-card .popover-action.is-primary');
+    const cancel = [...card.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Cancel') ?? null;
+    const parts = [
+      ['card', card],
+      ['context', card.querySelector('.popover-target')],
+      ['textarea', card.querySelector('textarea.popover-field')],
+      ['Post', post],
+      ['Cancel', cancel],
+      ['disclosure', card.querySelector('.popover-disclosure')],
+    ];
+    const content = contentRect();
+    const components = parts.map(([name, node]) => {
+      const isVisible = visible(node);
+      const value = isVisible ? rect(node) : null;
+      return {
+        name,
+        present: node !== null,
+        visible: isVisible,
+        withinStage: value !== null && within(value, content),
+        rect: value,
+      };
+    });
+    const style = post instanceof HTMLElement ? getComputedStyle(post) : null;
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    return {
+      missing,
+      stageContent: content,
+      viewportWidth: window.innerWidth,
+      documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      bodyOverflow: document.body.scrollWidth - document.documentElement.clientWidth,
+      stageOverflow: stage.scrollWidth - stage.clientWidth,
+      timelineOverflow: timeline ? timeline.scrollWidth - timeline.clientWidth : 0,
+      components,
+      post: {
+        hovered: post instanceof Element && post.matches(':hover'),
+        foreground: style?.color ?? null,
+        background: style?.backgroundColor ?? null,
+        contrast: style ? ratio(style.color, style.backgroundColor) : null,
+      },
+    };
+  })()`);
+}
+
+async function hoverComposerPost(browser: ChromeSession): Promise<void> {
+  const point = await browser.evaluate<{ readonly x: number; readonly y: number } | null>(
+    `(() => {
+      const post = document.querySelector('.popover-card .popover-action.is-primary');
+      if (!(post instanceof HTMLElement)) return null;
+      const rect = post.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`
+  );
+  assert.ok(point, 'native Post button has no hover point');
+  await browser.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: point.x,
+    y: point.y,
+    button: 'none',
+  });
+  await browser.evaluate<void>(
+    `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
+  );
+}
+
+async function clearPointerHover(browser: ChromeSession): Promise<void> {
+  await browser.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: 0,
+    y: 0,
+    button: 'none',
+  });
+  await browser.evaluate<void>(
+    `new Promise((resolve) => requestAnimationFrame(resolve))`
+  );
+}
+
+function assertStageControlExposure(
+  probe: StageControlExposure,
+  label: string
+): void {
+  assert.deepEqual(probe.missing, [], `${label} control is unavailable`);
+  assert.equal(probe.visible, true, `${label} control is hidden`);
+  assert.equal(probe.withinStage, true, `${label} control escapes the stage`);
+}
+
+async function exposePreviewBase(
+  browser: ChromeSession
+): Promise<StageControlExposure> {
+  return browser.evaluate<StageControlExposure>(String.raw`(async () => {
+    const stage = document.querySelector('.stage-wrap');
+    const block = document.querySelector('button.otio-preview-block');
+    const missing = [];
+    if (!stage) missing.push('.stage-wrap');
+    if (!(block instanceof HTMLButtonElement) || block.hidden) missing.push('.otio-preview-block');
+    if (missing.length > 0) return { missing, visible: false, withinStage: false, rect: null };
+    stage.scrollTop = 0;
+    block.click();
+    const started = Date.now();
+    while (Date.now() - started < 4000) {
+      const preview = document.querySelector('button.otio-preview-base');
+      if (preview instanceof HTMLElement) {
+        const style = getComputedStyle(preview);
+        const rect = preview.getBoundingClientRect();
+        const host = stage.getBoundingClientRect();
+        const left = host.left + stage.clientLeft;
+        const top = host.top + stage.clientTop;
+        const content = {
+          left,
+          top,
+          right: left + stage.clientWidth,
+          bottom: top + stage.clientHeight,
+        };
+        return {
+          missing,
+          visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+          withinStage: rect.left >= content.left - 1 && rect.right <= content.right + 1 &&
+            rect.top >= content.top - 1 && rect.bottom <= content.bottom + 1,
+          rect: {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height,
+          },
+        };
+      }
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return { missing: [...missing, '.otio-preview-base'], visible: false, withinStage: false, rect: null };
+  })()`);
+}
+
+async function restorePreviewBase(browser: ChromeSession): Promise<void> {
+  const restored = await browser.evaluate<string>(String.raw`(async () => {
+    const preview = document.querySelector('button.otio-preview-base');
+    if (!(preview instanceof HTMLButtonElement)) return 'missing';
+    preview.click();
+    const started = Date.now();
+    while (Date.now() - started < 4000) {
+      const block = document.querySelector('button.otio-preview-block');
+      if (block instanceof HTMLElement && !block.hidden) return 'restored';
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return 'timeout';
+  })()`);
+  assert.equal(restored, 'restored', `base preview did not restore: ${restored}`);
+}
+
+async function exposeSelectionControl(
+  browser: ChromeSession
+): Promise<StageControlExposure> {
+  return browser.evaluate<StageControlExposure>(String.raw`(async () => {
+    const stage = document.querySelector('.stage-wrap');
+    const control = document.querySelector('button.otio-comment-selection');
+    const missing = [];
+    if (!stage) missing.push('.stage-wrap');
+    if (!(control instanceof HTMLElement)) missing.push('.otio-comment-selection');
+    if (missing.length > 0) return { missing, visible: false, withinStage: false, rect: null };
+    stage.scrollTop = stage.scrollHeight;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const style = getComputedStyle(control);
+    const rect = control.getBoundingClientRect();
+    const host = stage.getBoundingClientRect();
+    const left = host.left + stage.clientLeft;
+    const top = host.top + stage.clientTop;
+    const content = {
+      left,
+      top,
+      right: left + stage.clientWidth,
+      bottom: top + stage.clientHeight,
+    };
+    return {
+      missing,
+      visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+      withinStage: rect.left >= content.left - 1 && rect.right <= content.right + 1 &&
+        rect.top >= content.top - 1 && rect.bottom <= content.bottom + 1,
+      rect: {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      },
+    };
+  })()`);
+}
+
 function asRange(value: unknown): TimeRange | null {
   if (!value || typeof value !== 'object') return null;
   const range = value as { start_time?: Rational; duration?: Rational };
@@ -3209,6 +3925,7 @@ try {
     );
     await postComposer(browser, dissolveBody);
     pass('ui-range-dissolve');
+    const nativeControlMeasurements: Array<Record<string, unknown>> = [];
 
     for (const [shotWidth, scheme] of [
       [1440, 'light'],
@@ -3225,11 +3942,177 @@ try {
       await browser.send('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-color-scheme', value: scheme }],
       });
+      const closed = await measureClosedNativeControls(browser);
+      assertClosedNativeControls(closed, `${shotWidth}px ${scheme} closed`);
+      nativeControlMeasurements.push({
+        state: 'closed',
+        width: shotWidth,
+        scheme,
+        probe: closed,
+      });
       await browser.screenshot(`${shotWidth}-${scheme}`);
+      await clearPointerHover(browser);
       await openComposer(browser);
+      const normalComposer = await measureComposer(browser);
+      assertComposerProbe(
+        normalComposer,
+        `${shotWidth}px ${scheme} composer`,
+        false
+      );
+      nativeControlMeasurements.push({
+        state: 'composer-normal',
+        width: shotWidth,
+        scheme,
+        probe: normalComposer,
+      });
       await browser.screenshot(`${shotWidth}-${scheme}-composer-open`);
+      await hoverComposerPost(browser);
+      const hoveredComposer = await measureComposer(browser);
+      assertComposerProbe(
+        hoveredComposer,
+        `${shotWidth}px ${scheme} composer hover`,
+        true
+      );
+      nativeControlMeasurements.push({
+        state: 'composer-hover',
+        width: shotWidth,
+        scheme,
+        probe: hoveredComposer,
+      });
       await dismissComposer(browser);
+      if (shotWidth === 1440) {
+        const sidebar = await measureSidebar(browser);
+        assertSidebar(sidebar, `${shotWidth}px ${scheme} sidebar`, false);
+        nativeControlMeasurements.push({
+          state: 'desktop-sidebar',
+          width: shotWidth,
+          scheme,
+          probe: sidebar,
+        });
+      }
+      if (shotWidth === 390) {
+        const sidebar = await measureSidebar(browser);
+        assertSidebar(sidebar, `${shotWidth}px ${scheme} sidebar`, true);
+        nativeControlMeasurements.push({
+          state: 'narrow-sidebar',
+          width: shotWidth,
+          scheme,
+          probe: sidebar,
+        });
+      }
     }
+
+    for (const scheme of ['light', 'dark'] as const) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width: 320,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await browser.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: scheme }],
+      });
+      await browser.evaluate<void>(
+        `document.querySelector('.stage-wrap').scrollTop = 0`
+      );
+      const closed = await measureClosedNativeControls(browser);
+      assertClosedNativeControls(closed, `320px ${scheme} closed`);
+      nativeControlMeasurements.push({
+        state: 'supplemental-closed',
+        width: 320,
+        scheme,
+        probe: closed,
+      });
+      await browser.screenshot(`native-controls-320-${scheme}-closed`);
+      await clearPointerHover(browser);
+      await openComposer(browser);
+      const normalComposer = await measureComposer(browser);
+      assertComposerProbe(
+        normalComposer,
+        `320px ${scheme} composer`,
+        false
+      );
+      nativeControlMeasurements.push({
+        state: 'supplemental-composer-normal',
+        width: 320,
+        scheme,
+        probe: normalComposer,
+      });
+      await browser.screenshot(`native-controls-320-${scheme}-composer-open`);
+      await hoverComposerPost(browser);
+      const hoveredComposer = await measureComposer(browser);
+      assertComposerProbe(
+        hoveredComposer,
+        `320px ${scheme} composer hover`,
+        true
+      );
+      nativeControlMeasurements.push({
+        state: 'supplemental-composer-hover',
+        width: 320,
+        scheme,
+        probe: hoveredComposer,
+      });
+      await dismissComposer(browser);
+      const sidebar = await measureSidebar(browser);
+      assertSidebar(sidebar, `320px ${scheme} sidebar`, true);
+      nativeControlMeasurements.push({
+        state: 'supplemental-narrow-sidebar',
+        width: 320,
+        scheme,
+        probe: sidebar,
+      });
+      const previewBase = await exposePreviewBase(browser);
+      assertStageControlExposure(
+        previewBase,
+        `320px ${scheme} base preview`
+      );
+      nativeControlMeasurements.push({
+        state: 'supplemental-preview-base',
+        width: 320,
+        scheme,
+        probe: previewBase,
+      });
+      await browser.screenshot(`native-controls-320-${scheme}-preview-base`);
+      await restorePreviewBase(browser);
+      const commentSelection = await exposeSelectionControl(browser);
+      assertStageControlExposure(
+        commentSelection,
+        `320px ${scheme} selection control`
+      );
+      nativeControlMeasurements.push({
+        state: 'supplemental-selection-control',
+        width: 320,
+        scheme,
+        probe: commentSelection,
+      });
+      await browser.screenshot(
+        `native-controls-320-${scheme}-selection-controls`
+      );
+      await browser.evaluate<void>(
+        `document.querySelector('.stage-wrap').scrollTop = 0`
+      );
+    }
+    await writeFile(
+      join(shotDir, 'native-controls-measurements.json'),
+      `${JSON.stringify(
+        {
+          capture_height: 900,
+          old_capture_filenames: [
+            '1440-light.png',
+            '390-light.png',
+            '1440-dark.png',
+            '390-dark.png',
+            '1440-light-composer-open.png',
+            '390-light-composer-open.png',
+            '1440-dark-composer-open.png',
+            '390-dark-composer-open.png',
+          ],
+          measurements: nativeControlMeasurements,
+        },
+        null,
+        2
+      )}\n`
+    );
     pass('screenshots');
   } finally {
     await browser.close();
