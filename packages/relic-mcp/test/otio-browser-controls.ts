@@ -99,34 +99,40 @@ async function smoke(): Promise<void> {
 }
 
 function wrapperSource(): string {
-  return `#!/usr/bin/env bun
-import { spawn } from 'node:child_process';
+  return `#!/usr/bin/env bash
+set -eu
 
-const executable = process.env['RELIC_OTIO_CONTROL_REAL_CHROME'];
-const mode = process.env['RELIC_OTIO_CONTROL_WRAPPER_MODE'];
-const profile = process.env['RELIC_OTIO_CONTROL_WRAPPER_PROFILE'];
-if (!executable || (mode !== 'strip-headless' && mode !== 'substitute-profile')) {
-  process.exit(127);
-}
+executable="\${RELIC_OTIO_CONTROL_REAL_CHROME:-}"
+mode="\${RELIC_OTIO_CONTROL_WRAPPER_MODE:-}"
+profile="\${RELIC_OTIO_CONTROL_WRAPPER_PROFILE:-}"
+if [[ -z "$executable" ]]; then
+  exit 127
+fi
+case "$mode" in
+  strip-headless|substitute-profile) ;;
+  *) exit 127 ;;
+esac
 
-const input = process.argv.slice(2);
-let args = input;
-if (mode === 'strip-headless') {
-  args = input.filter((arg) => arg !== '--headless' && arg !== '--headless=new');
-} else {
-  if (!profile) process.exit(127);
-  let substituted = false;
-  args = input.map((arg) => {
-    if (!arg.startsWith('--user-data-dir=')) return arg;
-    substituted = true;
-    return '--user-data-dir=' + profile;
-  });
-  if (!substituted) process.exit(126);
-}
-
-const child = spawn(executable, args, { stdio: [0, 1, 2, 3, 4] });
-child.once('error', () => process.exit(126));
-child.once('close', (code) => process.exit(code ?? 1));
+args=()
+substituted=0
+for arg in "$@"; do
+  if [[ "$mode" == "strip-headless" ]]; then
+    case "$arg" in
+      --headless|--headless=new) continue ;;
+    esac
+  elif [[ "$arg" == --user-data-dir=* ]]; then
+    if [[ -z "$profile" ]]; then
+      exit 127
+    fi
+    arg="--user-data-dir=$profile"
+    substituted=1
+  fi
+  args+=("$arg")
+done
+if [[ "$mode" == "substitute-profile" && "$substituted" -ne 1 ]]; then
+  exit 126
+fi
+exec "$executable" "\${args[@]}"
 `;
 }
 
@@ -136,8 +142,8 @@ async function writeWrapper(
 ): Promise<string> {
   const name =
     mode === 'strip-headless'
-      ? 'relic-headless-lookalike.ts'
-      : 'relic-profile-substitution.ts';
+      ? 'relic-headless-lookalike.sh'
+      : 'relic-profile-substitution.sh';
   const path = join(scratch, name);
   await writeFile(path, wrapperSource(), { mode: 0o700 });
   await chmod(path, 0o700);
