@@ -1537,6 +1537,42 @@ function fractionalReverseTimeline(
   });
 }
 
+function roundToEvenClipExposureTimeline(name: string): string {
+  const gap = 2 ** -53;
+  const end = 1 + 2 ** -52;
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    name,
+    metadata: { relic: { id: 'timeline' } },
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      source_range: {
+        start_time: { value: 0, rate: 24 },
+        duration: { value: end, rate: 24 },
+      },
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          name: 'V',
+          kind: 'Video',
+          metadata: { relic: { id: 'track' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Gap.1',
+              metadata: { relic: { id: 'g' } },
+              source_range: {
+                start_time: { value: 0, rate: 24 },
+                duration: { value: gap, rate: 24 },
+              },
+            },
+            clip('clip', 0, 2),
+          ],
+        },
+      ],
+    },
+  });
+}
+
 describe('OTIO original selection and reverse projection edges', () => {
   test('keeps a handle point structurally valid while reporting its missing media handle', () => {
     const doc = readOtioDocument(handleTimeline());
@@ -1829,5 +1865,71 @@ describe('OTIO original selection and reverse projection edges', () => {
     );
     expect(resolved.status).toBe('ambiguous');
     expectNoMappedIdentityFields(resolved);
+  });
+
+  test('preserves literal round-to-even mixed-clock clip exposure payloads', () => {
+    const gap = 2 ** -53;
+    const expected = {
+      start_time: { value: gap, rate: 24 },
+      duration: { value: 1, rate: 24 },
+    };
+    const original = readOtioDocument(
+      roundToEvenClipExposureTimeline('Original')
+    );
+    const current = readOtioDocument(
+      roundToEvenClipExposureTimeline('Current')
+    );
+    const originalClip = original.nodes.clip;
+    const currentClip = current.nodes.clip;
+    const originalExposed =
+      originalClip?.visible_timeline_range ?? originalClip?.timeline_range;
+    const currentExposed =
+      currentClip?.visible_timeline_range ?? currentClip?.timeline_range;
+    const originalMap = originalClip
+      ? otioSamplingMap(originalClip)
+      : undefined;
+    const currentMap = currentClip ? otioSamplingMap(currentClip) : undefined;
+    if (!originalMap || !currentMap || !originalExposed || !currentExposed)
+      throw new Error('expected round-to-even clip exposure');
+    expect(originalExposed).toEqual(expected);
+    expect(currentExposed).toEqual(expected);
+    const originalStartWitness = otioIntervalEdge(
+      originalMap,
+      originalExposed.start_time
+    );
+    const originalEndWitness = otioIntervalEdge(
+      originalMap,
+      rangeEndTime(originalExposed)
+    );
+    const currentStartWitness = otioIntervalEdge(
+      currentMap,
+      currentExposed.start_time
+    );
+    const currentEndWitness = otioIntervalEdge(
+      currentMap,
+      rangeEndTime(currentExposed)
+    );
+    expect(
+      compareRationalTimes(originalStartWitness, currentStartWitness)
+    ).toBe(0);
+    expect(compareRationalTimes(originalEndWitness, currentEndWitness)).toBe(0);
+    expect(
+      compareRationalTimes(currentStartWitness, currentEndWitness)
+    ).not.toBe(0);
+    const saved: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: original.document_sha256,
+      timeline_id: 'timeline',
+      track_id: 'track',
+      range: expected,
+      snapshot: { timeline: 'Original', track: 'V', item: null },
+    };
+    const resolved = resolveOtioAnchor(saved, original, current);
+    expect(resolved.status).toBe('mapped');
+    expect(resolved.original_anchor).toEqual(saved);
+    expect(resolved.mapped_range).toEqual(expected);
+    expect(resolved.mapped_ranges?.[0]).toEqual(expected);
   });
 });
