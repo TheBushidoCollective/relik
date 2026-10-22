@@ -379,28 +379,42 @@ async function callMcp(
     child.kill();
   }, 45000);
   try {
-    child.stdin.write(
-      `${JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: { name: toolName, arguments: args },
-      })}\n`
-    );
-    child.stdin.end();
-    const [stdout, stderr, exit] = await Promise.all([
+    const packet = `${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: toolName, arguments: args },
+    })}\n`;
+    const writeResult = child.stdin.write(packet);
+    const endResult = child.stdin.end();
+    const [stdout, stderr, exit, inputOutcomes] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
       child.exited,
+      Promise.allSettled([writeResult, endResult]),
     ]);
-    assert.equal(exit, 0, `relic-mcp exited ${exit}: ${stderr}`);
+    const transport =
+      exit !== 0 || stdout.trim().length === 0
+        ? JSON.stringify({
+            pid: child.pid,
+            packetBytes: Buffer.byteLength(packet),
+            packetSha256: await sha256Hex(packet),
+            inputOutcomes,
+            stdoutBytes: Buffer.byteLength(stdout),
+            stdoutSha256: await sha256Hex(stdout),
+            exit,
+            signal: child.signalCode,
+            stderr,
+          })
+        : '';
+    assert.equal(exit, 0, `relic-mcp exited ${exit}: ${transport}`);
     const lines = stdout
       .trim()
       .split('\n')
       .filter((line) => line.trim().length > 0);
     assert.ok(
       lines.length > 0,
-      `no JSON-RPC response from ${toolName}: exit=${exit}; stderr=${JSON.stringify(stderr)}`
+      `no JSON-RPC response from ${toolName}: ${transport}`
     );
     const response = JSON.parse(lines[lines.length - 1] ?? '{}') as Record<
       string,
