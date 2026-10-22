@@ -1,0 +1,3230 @@
+{
+  "kind": "stdio-mcp-boundary-path-v1",
+  "status": "PASS",
+  "options": {
+    "context": "helper",
+    "count": 16,
+    "seed": "otio-mcp-boundary-v1",
+    "corruptNonce": false,
+    "out": "/tmp/otio-mcp-boundary-bghREV/helper16"
+  },
+  "started_at": 1792649356988,
+  "finished_at": 1792649359127,
+  "scratch": "/tmp/otio-mcp-boundary-bghREV/helper16",
+  "witness_path": "/tmp/otio-mcp-boundary-bghREV/helper16/stdio-mcp-boundary-witness-1792649356986-54695fd0-3f02-4401-807f-93730960bccc.json",
+  "bundle": {
+    "path": "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js",
+    "sha256": "f0ca19764ab8b0983758f8f9ad89b25464e3342baf61f2a6f857f59cd598d424",
+    "bytes": 1133484
+  },
+  "runtimes": {
+    "process_versions": {
+      "node": "24.3.0",
+      "bun": "1.3.14",
+      "boringssl": "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1",
+      "openssl": "1.1.0",
+      "llhttp": "9.3.0",
+      "libarchive": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+      "mimalloc": "f15aecb94fc8096008bf87b90c53ed682026914a",
+      "picohttpparser": "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
+      "uwebsockets": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+      "webkit": "5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b",
+      "zig": "04e7f6ac1e009525bc00934f20199c68f04e0a24",
+      "zlib": "12731092979c6d07f42da27da673a9f6c7b13586",
+      "tinycc": "12882eee073cfe5c7621bcfadf679e1372d4537b",
+      "lolhtml": "77127cd2b8545998756e8d64e36ee2313c4bb312",
+      "ares": "3ac47ee46edd8ea40370222f91613fc16c434853",
+      "libdeflate": "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+      "usockets": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+      "lshpack": "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
+      "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+      "v8": "13.6.233.10-node.18",
+      "uv": "1.48.0",
+      "napi": "10",
+      "icu": "74.2",
+      "unicode": "15.1",
+      "modules": "137"
+    },
+    "bun_version": "1.3.14",
+    "node": {
+      "command": "node",
+      "resolved_path": "/Users/jwaldrip/.local/share/mise/installs/node/24.15.0/bin/node",
+      "version": "v24.15.0",
+      "version_exit": 0,
+      "version_stderr": null
+    }
+  },
+  "origin": "http://127.0.0.1:50467",
+  "trials": [
+    {
+      "ordinal": 1,
+      "started_at": 1792649356989,
+      "status": "pass",
+      "fixture": {
+        "trial": 1,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-01",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-01/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-01/comment-source.md",
+        "expected_nonce": "b36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d",
+        "stored_nonce": "b36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d",
+        "corrupt_nonce": false,
+        "relic_id": "rx2x5rdmrega3zyryhjnc9b0yr",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "384c2f7dec0b139910823e9d9aeeeee9a136212f1924dfdb21d77892d6e8f7ae",
+          "base64": "QVQ4cUt6dmxPZnRyenhGSl9oRVlPSnFVOE9NMlJLbHZ0dnFkMVN4cml6N1V2Tzh3aVF4Z0d3NnRRcEdaZTVDeU11VHA3OGpKY2gwVUE3elV1b1NvZmRSaFp3akJrYllsRzI1MzhPLWM0dzBtZjFza2ZHeUlQMFE2cWpOUHFHZ09VM0lrY1Vuamk2V2dFcWthWXZYZ2Z5ZmRXM2hCRHNyNXhpaTlDTWRjZTNQOWphN1dYajBrbUsybm5YQmxKT3hVSWc="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "30c361157f2708e6e7d563323a11f877e28ab87a0aa96afc1e75375e4644058b",
+          "input": {
+            "bytes": 77,
+            "sha256": "39e72f765e0c52bd90ebb01b135947cc1c59f7f0830e3300f871fae8dccad50f",
+            "base64": "eyJub25jZSI6IjMwYzM2MTE1N2YyNzA4ZTZlN2Q1NjMzMjNhMTFmODc3ZTI4YWI4N2EwYWE5NmFmYzFlNzUzNzVlNDY0NDA1OGIifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"30c361157f2708e6e7d563323a11f877e28ab87a0aa96afc1e75375e4644058b\"}\n",
+            "bytes": 77,
+            "sha256": "39e72f765e0c52bd90ebb01b135947cc1c59f7f0830e3300f871fae8dccad50f",
+            "base64": "eyJub25jZSI6IjMwYzM2MTE1N2YyNzA4ZTZlN2Q1NjMzMjNhMTFmODc3ZTI4YWI4N2EwYWE5NmFmYzFlNzUzNzVlNDY0NDA1OGIifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-01",
+        "pid": 57369,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 1,
+            "tool": "relic_read_comments",
+            "relicId": "rx2x5rdmrega3zyryhjnc9b0yr",
+            "pid": 57369,
+            "method": "GET",
+            "pathname": "/api/relics/rx2x5rdmrega3zyryhjnc9b0yr/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "c8c1f18b839b997ea2120b43b0bd389b1d423c099e1a7d608a8db375006c1d91"
+          },
+          {
+            "callOrdinal": 1,
+            "tool": "relic_read_comments",
+            "relicId": "rx2x5rdmrega3zyryhjnc9b0yr",
+            "pid": 57369,
+            "method": "GET",
+            "pathname": "/api/relics/rx2x5rdmrega3zyryhjnc9b0yr/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "c8c1f18b839b997ea2120b43b0bd389b1d423c099e1a7d608a8db375006c1d91"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "c8c1f18b839b997ea2120b43b0bd389b1d423c099e1a7d608a8db375006c1d91",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJyeDJ4NXJkbXJlZ2EzenlyeWhqbmM5YjB5ciIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic rx2x5rdmrega3zyryhjnc9b0yr, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.022Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nb36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d\"}],\"structuredContent\":{\"relic_id\":\"rx2x5rdmrega3zyryhjnc9b0yr\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"0r1c03XPKh6SH_XPLoZE1A\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.022Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"b36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "c00073aa35bf445928ccc923fe1ccba71510bdcd2f4e902722f6aff7b43a3dd4",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyByeDJ4NXJkbXJlZ2EzenlyeWhqbmM5YjB5ciwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3LjAyMlogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG5iMzZkMWQyY2M2MDQyMWU1MzhlMjIyNjEwYjAzNzU4MmVkNDA5ZjA0NjI5YWVmYTA2MTAzMzJkODBhYzk5ZjBkIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6InJ4Mng1cmRtcmVnYTN6eXJ5aGpuYzliMHlyIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IjByMWMwM1hQS2g2U0hfWFBMb1pFMUEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy4wMjJaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6ImIzNmQxZDJjYzYwNDIxZTUzOGUyMjI2MTBiMDM3NTgyZWQ0MDlmMDQ2MjlhZWZhMDYxMDMzMmQ4MGFjOTlmMGQiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic rx2x5rdmrega3zyryhjnc9b0yr, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.022Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nb36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d\"}],\"structuredContent\":{\"relic_id\":\"rx2x5rdmrega3zyryhjnc9b0yr\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"0r1c03XPKh6SH_XPLoZE1A\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.022Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"b36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic rx2x5rdmrega3zyryhjnc9b0yr, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.022Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\nb36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "rx2x5rdmrega3zyryhjnc9b0yr",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "0r1c03XPKh6SH_XPLoZE1A",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.022Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "b36d1d2cc60421e538e222610b037582ed409f04629aefa0610332d80ac99f0d",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649357148
+    },
+    {
+      "ordinal": 2,
+      "started_at": 1792649357148,
+      "status": "pass",
+      "fixture": {
+        "trial": 2,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-02",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-02/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-02/comment-source.md",
+        "expected_nonce": "5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f",
+        "stored_nonce": "5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f",
+        "corrupt_nonce": false,
+        "relic_id": "xx6nmxhrqhs9jj29ap26dkd5g4",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "03747d17eb50653b564c53f8615f366e34a90d13370ad5d2968e6971b15c90ff",
+          "base64": "VzE3NWpnazJacGxzbEtqUS01ajJzZ1AtZHY5YjRSWmhlZ09xa3l3V2t2RVZiR2dVUzZtU3gxa2JUSG1qQVZOZzFYck1oTUNBNTlONzZTT1NOeTA2am1CVVRwU21ZOG5UdTlkYnkyVnh5WmkzaWpEdTFnZ19Ia3lzWHUyRF82a1B3VFh2NlhKdk41bXJ4SWxZbDJiWjA1akljaGp4Qng1WjBqWXpIa3N1NWpIUUdfcWJjVlNzbFMyZi1abVVOTGpsa2c="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "d1cade6fefd76cd0670d55709bd9b121efdf7ad7bfc9a728bbadafd439e0aef9",
+          "input": {
+            "bytes": 77,
+            "sha256": "3849d2b6d7d2467070b52536fc82e8962fddf6653b4e6fb2bcf181637420ba01",
+            "base64": "eyJub25jZSI6ImQxY2FkZTZmZWZkNzZjZDA2NzBkNTU3MDliZDliMTIxZWZkZjdhZDdiZmM5YTcyOGJiYWRhZmQ0MzllMGFlZjkifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"d1cade6fefd76cd0670d55709bd9b121efdf7ad7bfc9a728bbadafd439e0aef9\"}\n",
+            "bytes": 77,
+            "sha256": "3849d2b6d7d2467070b52536fc82e8962fddf6653b4e6fb2bcf181637420ba01",
+            "base64": "eyJub25jZSI6ImQxY2FkZTZmZWZkNzZjZDA2NzBkNTU3MDliZDliMTIxZWZkZjdhZDdiZmM5YTcyOGJiYWRhZmQ0MzllMGFlZjkifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-02",
+        "pid": 57375,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 2,
+            "tool": "relic_read_comments",
+            "relicId": "xx6nmxhrqhs9jj29ap26dkd5g4",
+            "pid": 57375,
+            "method": "GET",
+            "pathname": "/api/relics/xx6nmxhrqhs9jj29ap26dkd5g4/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "301d50c6383b72ed770ebb4a1ee4f7bd98fe47c51c5bfc1e1b2c8857814525f7"
+          },
+          {
+            "callOrdinal": 2,
+            "tool": "relic_read_comments",
+            "relicId": "xx6nmxhrqhs9jj29ap26dkd5g4",
+            "pid": 57375,
+            "method": "GET",
+            "pathname": "/api/relics/xx6nmxhrqhs9jj29ap26dkd5g4/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "301d50c6383b72ed770ebb4a1ee4f7bd98fe47c51c5bfc1e1b2c8857814525f7"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "301d50c6383b72ed770ebb4a1ee4f7bd98fe47c51c5bfc1e1b2c8857814525f7",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJ4eDZubXhocnFoczlqajI5YXAyNmRrZDVnNCIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic xx6nmxhrqhs9jj29ap26dkd5g4, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.161Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f\"}],\"structuredContent\":{\"relic_id\":\"xx6nmxhrqhs9jj29ap26dkd5g4\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"iBNO2rqJxHhTYQkzMIV2BQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.161Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "b03c549a097019616bf9216f4531e8ed86b44334d637887025f9213e59c3a60a",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyB4eDZubXhocnFoczlqajI5YXAyNmRrZDVnNCwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3LjE2MVogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG41ZjdjZmExZDc1YTBkN2E0NzE3YzI3MGUxNGE1OTAxM2U1MDU0MWNiY2MxYzNkMmI1YTBhNWI4OWYwOTNkZDRmIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6Inh4Nm5teGhycWhzOWpqMjlhcDI2ZGtkNWc0IiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6ImlCTk8ycnFKeEhoVFlRa3pNSVYyQlEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy4xNjFaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjVmN2NmYTFkNzVhMGQ3YTQ3MTdjMjcwZTE0YTU5MDEzZTUwNTQxY2JjYzFjM2QyYjVhMGE1Yjg5ZjA5M2RkNGYiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic xx6nmxhrqhs9jj29ap26dkd5g4, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.161Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f\"}],\"structuredContent\":{\"relic_id\":\"xx6nmxhrqhs9jj29ap26dkd5g4\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"iBNO2rqJxHhTYQkzMIV2BQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.161Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic xx6nmxhrqhs9jj29ap26dkd5g4, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.161Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "xx6nmxhrqhs9jj29ap26dkd5g4",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "iBNO2rqJxHhTYQkzMIV2BQ",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.161Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "5f7cfa1d75a0d7a4717c270e14a59013e50541cbcc1c3d2b5a0a5b89f093dd4f",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649357278
+    },
+    {
+      "ordinal": 3,
+      "started_at": 1792649357278,
+      "status": "pass",
+      "fixture": {
+        "trial": 3,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-03",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-03/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-03/comment-source.md",
+        "expected_nonce": "34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb",
+        "stored_nonce": "34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb",
+        "corrupt_nonce": false,
+        "relic_id": "fycsh9s23d07gwex48tz1vbpxm",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "f43ae7e75965b10cf33de22d1234120b5fca23c4daf25efef0988ceb74710d14",
+          "base64": "WFRhSklmWEpiTGV4andHdW5hQTRPR1NnZ1FaamN5WjdvWWZUTHd4MkdOZmduc2JGMEFnNXV1YU5OTHdmaWV4NnJhdGVlemhwamFFR2xjZmlPVS1tQzdzdWRSOXRKYnU1VnhWWXdMUW5JZ1hieEJfZ2dIZUN4N1hJNEwzVElhbm01ZFVVUXV3Y0k3ZTBlLWtpZUZIYUd4UGhhakdRU19Vbi1rOV9pX0ZZNERURm5kSlhUdEdGM085MXQ2U2pXdHAtSnc="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "ccdd79f965c97966f4558eb647b4cb3b652685f7bc0250f3453066b3e05439c0",
+          "input": {
+            "bytes": 77,
+            "sha256": "611aff696dbe091e9851fe2f24fbc9a3b89c45483e07a0a6c7369f2f54156758",
+            "base64": "eyJub25jZSI6ImNjZGQ3OWY5NjVjOTc5NjZmNDU1OGViNjQ3YjRjYjNiNjUyNjg1ZjdiYzAyNTBmMzQ1MzA2NmIzZTA1NDM5YzAifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"ccdd79f965c97966f4558eb647b4cb3b652685f7bc0250f3453066b3e05439c0\"}\n",
+            "bytes": 77,
+            "sha256": "611aff696dbe091e9851fe2f24fbc9a3b89c45483e07a0a6c7369f2f54156758",
+            "base64": "eyJub25jZSI6ImNjZGQ3OWY5NjVjOTc5NjZmNDU1OGViNjQ3YjRjYjNiNjUyNjg1ZjdiYzAyNTBmMzQ1MzA2NmIzZTA1NDM5YzAifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-03",
+        "pid": 57379,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 3,
+            "tool": "relic_read_comments",
+            "relicId": "fycsh9s23d07gwex48tz1vbpxm",
+            "pid": 57379,
+            "method": "GET",
+            "pathname": "/api/relics/fycsh9s23d07gwex48tz1vbpxm/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "4ef218859a145594db04150da97ff58fb2ef37b4c5e3e794c3e5d4ac0adbf419"
+          },
+          {
+            "callOrdinal": 3,
+            "tool": "relic_read_comments",
+            "relicId": "fycsh9s23d07gwex48tz1vbpxm",
+            "pid": 57379,
+            "method": "GET",
+            "pathname": "/api/relics/fycsh9s23d07gwex48tz1vbpxm/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "4ef218859a145594db04150da97ff58fb2ef37b4c5e3e794c3e5d4ac0adbf419"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "4ef218859a145594db04150da97ff58fb2ef37b4c5e3e794c3e5d4ac0adbf419",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJmeWNzaDlzMjNkMDdnd2V4NDh0ejF2YnB4bSIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic fycsh9s23d07gwex48tz1vbpxm, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.293Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb\"}],\"structuredContent\":{\"relic_id\":\"fycsh9s23d07gwex48tz1vbpxm\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"5JuAtzrYbY2uUzd-v_V8VA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.293Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "82d16f826ffec674579b6f36937dd7e8f19236780da982956543cf8297e7a7c5",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyBmeWNzaDlzMjNkMDdnd2V4NDh0ejF2YnB4bSwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3LjI5M1ogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG4zNGQxOGFhYTU2ZDNhMDJkNTExOWQ5NTNiZThiYjlmOGJiNjgzNDI0ZTBiYzMxYjBkNjE1YmViZGUxNWUwYWNiIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6ImZ5Y3NoOXMyM2QwN2d3ZXg0OHR6MXZicHhtIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IjVKdUF0enJZYlkydVV6ZC12X1Y4VkEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy4yOTNaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjM0ZDE4YWFhNTZkM2EwMmQ1MTE5ZDk1M2JlOGJiOWY4YmI2ODM0MjRlMGJjMzFiMGQ2MTViZWJkZTE1ZTBhY2IiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic fycsh9s23d07gwex48tz1vbpxm, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.293Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb\"}],\"structuredContent\":{\"relic_id\":\"fycsh9s23d07gwex48tz1vbpxm\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"5JuAtzrYbY2uUzd-v_V8VA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.293Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic fycsh9s23d07gwex48tz1vbpxm, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.293Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "fycsh9s23d07gwex48tz1vbpxm",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "5JuAtzrYbY2uUzd-v_V8VA",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.293Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "34d18aaa56d3a02d5119d953be8bb9f8bb683424e0bc31b0d615bebde15e0acb",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649357417
+    },
+    {
+      "ordinal": 4,
+      "started_at": 1792649357417,
+      "status": "pass",
+      "fixture": {
+        "trial": 4,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-04",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-04/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-04/comment-source.md",
+        "expected_nonce": "af04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94",
+        "stored_nonce": "af04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94",
+        "corrupt_nonce": false,
+        "relic_id": "zz6szy5ypqah8j0enbmp7ysmwg",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "ec7026f687abebbd8d8d01d563dbad123eceed036a73616b6ac8ea4ee89d8c0e",
+          "base64": "cC1reWZJaGVuanEtbHc3Y2x0YzZMbXI0ZnpWUDB0bGEydk1mdmJSY3RieUhXSVBGR21JZ2FoTEg1UlVNaG1mWm00U3cxeFEyNWREWDh3a1Brelk5a3B6dVh5dVBYUFpDUUE2M192SkFoTUV1QUV6UXNVNnFXMUVMaFZNXy1RNE9pNkxRTkhtclprS2cwdDJiQXliU2pIN0pCaGNuMEVNUzVPUVhocngxSmt3eC1GNlpBVDZaNUdHTHVFLU05WWdNY3c="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "ac97dc6b84d4e1a2a21e5c655737411d06e32896439faaa85e32ca2afcca0739",
+          "input": {
+            "bytes": 77,
+            "sha256": "67839e47fb71399c99e06c4ada9cc3938806039268e632845ef42e8b58247aac",
+            "base64": "eyJub25jZSI6ImFjOTdkYzZiODRkNGUxYTJhMjFlNWM2NTU3Mzc0MTFkMDZlMzI4OTY0MzlmYWFhODVlMzJjYTJhZmNjYTA3MzkifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"ac97dc6b84d4e1a2a21e5c655737411d06e32896439faaa85e32ca2afcca0739\"}\n",
+            "bytes": 77,
+            "sha256": "67839e47fb71399c99e06c4ada9cc3938806039268e632845ef42e8b58247aac",
+            "base64": "eyJub25jZSI6ImFjOTdkYzZiODRkNGUxYTJhMjFlNWM2NTU3Mzc0MTFkMDZlMzI4OTY0MzlmYWFhODVlMzJjYTJhZmNjYTA3MzkifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-04",
+        "pid": 57383,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 4,
+            "tool": "relic_read_comments",
+            "relicId": "zz6szy5ypqah8j0enbmp7ysmwg",
+            "pid": 57383,
+            "method": "GET",
+            "pathname": "/api/relics/zz6szy5ypqah8j0enbmp7ysmwg/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "aba91f930f9310af20949fb1e67c954800cc2ed245ee3906028d29df4b74f6d0"
+          },
+          {
+            "callOrdinal": 4,
+            "tool": "relic_read_comments",
+            "relicId": "zz6szy5ypqah8j0enbmp7ysmwg",
+            "pid": 57383,
+            "method": "GET",
+            "pathname": "/api/relics/zz6szy5ypqah8j0enbmp7ysmwg/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "aba91f930f9310af20949fb1e67c954800cc2ed245ee3906028d29df4b74f6d0"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "aba91f930f9310af20949fb1e67c954800cc2ed245ee3906028d29df4b74f6d0",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJ6ejZzenk1eXBxYWg4ajBlbmJtcDd5c213ZyIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic zz6szy5ypqah8j0enbmp7ysmwg, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.433Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\naf04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94\"}],\"structuredContent\":{\"relic_id\":\"zz6szy5ypqah8j0enbmp7ysmwg\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"h0-cCGpg_vEoUqhAn4UtTA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.433Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"af04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "f5c920c39cec364b52bafb0ecb9cb898c99a3b1475f8df9e79fbc0f2892275ec",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyB6ejZzenk1eXBxYWg4ajBlbmJtcDd5c213Zywgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3LjQzM1ogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG5hZjA0YzIyMjYwMTY3NmI1YjFkOTQ4NzBmNTlhMTNiOWQ0MDBjZTkzZmQ5NzRiZTFiOGZjYmYyNmU1ZWQwYTk0In1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6Inp6NnN6eTV5cHFhaDhqMGVuYm1wN3lzbXdnIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6ImgwLWNDR3BnX3ZFb1VxaEFuNFV0VEEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy40MzNaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6ImFmMDRjMjIyNjAxNjc2YjViMWQ5NDg3MGY1OWExM2I5ZDQwMGNlOTNmZDk3NGJlMWI4ZmNiZjI2ZTVlZDBhOTQiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic zz6szy5ypqah8j0enbmp7ysmwg, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.433Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\naf04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94\"}],\"structuredContent\":{\"relic_id\":\"zz6szy5ypqah8j0enbmp7ysmwg\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"h0-cCGpg_vEoUqhAn4UtTA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.433Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"af04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic zz6szy5ypqah8j0enbmp7ysmwg, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.433Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\naf04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "zz6szy5ypqah8j0enbmp7ysmwg",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "h0-cCGpg_vEoUqhAn4UtTA",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.433Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "af04c222601676b5b1d94870f59a13b9d400ce93fd974be1b8fcbf26e5ed0a94",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649357551
+    },
+    {
+      "ordinal": 5,
+      "started_at": 1792649357551,
+      "status": "pass",
+      "fixture": {
+        "trial": 5,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-05",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-05/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-05/comment-source.md",
+        "expected_nonce": "14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e",
+        "stored_nonce": "14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e",
+        "corrupt_nonce": false,
+        "relic_id": "5361c1sjwt4ymtt2g6cnjzs1qr",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "7139ee4c780ad95c6cb8d88508abc9f1fb8f8fb3901cc235d3abb88716fd8500",
+          "base64": "dVM2cXgzY244R1hEem1nbjRKTEZOYnJqdHZ0c0tzaURLVDVDdDRfSTdldHBaYjEzNzU2YVNmN1Z6VjhpQ01XMVpCakJ1VTRuNE1kekxDZzJVamFHQUZ1RUYtMXlwV0x0NnVmd1gtYWNjUlVkbDRSRkNuYnBKQWFWN203MXMzM3VISEdfbmtpbVdfck80aDJ5OW4wQW5TRVA1YkQxLWszdklyLW1Sc1VCZWxIbFJyWUlDdUwyZjREM0FxSnFwdnJFT2c="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "440bbf5f5dfe11780807fd9b17a43acb3f3fb2d30b9906c2b6a0febb42bf6c6d",
+          "input": {
+            "bytes": 77,
+            "sha256": "4d0d8b81ec5eebac1b418d7d83ef16a5a6c21b3ebb45a9331b7d1e52864befc2",
+            "base64": "eyJub25jZSI6IjQ0MGJiZjVmNWRmZTExNzgwODA3ZmQ5YjE3YTQzYWNiM2YzZmIyZDMwYjk5MDZjMmI2YTBmZWJiNDJiZjZjNmQifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"440bbf5f5dfe11780807fd9b17a43acb3f3fb2d30b9906c2b6a0febb42bf6c6d\"}\n",
+            "bytes": 77,
+            "sha256": "4d0d8b81ec5eebac1b418d7d83ef16a5a6c21b3ebb45a9331b7d1e52864befc2",
+            "base64": "eyJub25jZSI6IjQ0MGJiZjVmNWRmZTExNzgwODA3ZmQ5YjE3YTQzYWNiM2YzZmIyZDMwYjk5MDZjMmI2YTBmZWJiNDJiZjZjNmQifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-05",
+        "pid": 57391,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 5,
+            "tool": "relic_read_comments",
+            "relicId": "5361c1sjwt4ymtt2g6cnjzs1qr",
+            "pid": 57391,
+            "method": "GET",
+            "pathname": "/api/relics/5361c1sjwt4ymtt2g6cnjzs1qr/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "0672087a5f6d192eda4617a299c253c579194b7a5d488952736ee8795bf024e2"
+          },
+          {
+            "callOrdinal": 5,
+            "tool": "relic_read_comments",
+            "relicId": "5361c1sjwt4ymtt2g6cnjzs1qr",
+            "pid": 57391,
+            "method": "GET",
+            "pathname": "/api/relics/5361c1sjwt4ymtt2g6cnjzs1qr/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "0672087a5f6d192eda4617a299c253c579194b7a5d488952736ee8795bf024e2"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "0672087a5f6d192eda4617a299c253c579194b7a5d488952736ee8795bf024e2",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiI1MzYxYzFzand0NHltdHQyZzZjbmp6czFxciIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 5361c1sjwt4ymtt2g6cnjzs1qr, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.563Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e\"}],\"structuredContent\":{\"relic_id\":\"5361c1sjwt4ymtt2g6cnjzs1qr\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"CeN4jbmqwRwxHWAuxO3gXA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.563Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "29a14482191490b62194449dece0fe457290263c55f6c30a6516ef0a13120c91",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyA1MzYxYzFzand0NHltdHQyZzZjbmp6czFxciwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3LjU2M1ogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG4xNGQ4YzQ5ZWIxNmU1YTc4MWI3YWZjNjkyYjAyNWEwNzUzZmE2N2UyNzAzM2U1NzZjYmQyYmVhMzM3MDYyMTNlIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6IjUzNjFjMXNqd3Q0eW10dDJnNmNuanpzMXFyIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IkNlTjRqYm1xd1J3eEhXQXV4TzNnWEEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy41NjNaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjE0ZDhjNDllYjE2ZTVhNzgxYjdhZmM2OTJiMDI1YTA3NTNmYTY3ZTI3MDMzZTU3NmNiZDJiZWEzMzcwNjIxM2UiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 5361c1sjwt4ymtt2g6cnjzs1qr, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.563Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e\"}],\"structuredContent\":{\"relic_id\":\"5361c1sjwt4ymtt2g6cnjzs1qr\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"CeN4jbmqwRwxHWAuxO3gXA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.563Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic 5361c1sjwt4ymtt2g6cnjzs1qr, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.563Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "5361c1sjwt4ymtt2g6cnjzs1qr",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "CeN4jbmqwRwxHWAuxO3gXA",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.563Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "14d8c49eb16e5a781b7afc692b025a0753fa67e27033e576cbd2bea33706213e",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649357679
+    },
+    {
+      "ordinal": 6,
+      "started_at": 1792649357679,
+      "status": "pass",
+      "fixture": {
+        "trial": 6,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-06",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-06/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-06/comment-source.md",
+        "expected_nonce": "af4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d",
+        "stored_nonce": "af4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d",
+        "corrupt_nonce": false,
+        "relic_id": "na5h234wb9k5s7vxtf4yxfvwyc",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "e5faefddcf8a1ec4ed688e7ed15d4aa076112533c676215849d45eca0d482c5a",
+          "base64": "Y19tMHpScUxDSjZ6TGxKeENJdVpjVGVQcDByZUNLOXUyNWdmb2MtUFRkSU9jTTc0a0IwUGlOeW9BeDlyMjlkZXZBNXRNSUdUWjlRbGs0LWl0MFB2dHBQTndkcC1fVnpWYXFqUEszcm1wN1NvWEZqWjY0NkdRcE5TUC1fM05TbXN4Y0VTd0lzaVFnTHNEZ1pEV1ZYeWJwam1BaGNvR2FtMzVBREhTc2xxNHlhQ19jTEJYYnlWaW9BM3pxN1NtWEFTZlE="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "c66807fd3a48ad9e769f767e3035f3972bcca2013d59a66caad1fd36da9a744a",
+          "input": {
+            "bytes": 77,
+            "sha256": "c6ffb89cc1ab3ab414386ce35502a3fe2fbc9e0df48b8e00f18e07a0988bf29a",
+            "base64": "eyJub25jZSI6ImM2NjgwN2ZkM2E0OGFkOWU3NjlmNzY3ZTMwMzVmMzk3MmJjY2EyMDEzZDU5YTY2Y2FhZDFmZDM2ZGE5YTc0NGEifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"c66807fd3a48ad9e769f767e3035f3972bcca2013d59a66caad1fd36da9a744a\"}\n",
+            "bytes": 77,
+            "sha256": "c6ffb89cc1ab3ab414386ce35502a3fe2fbc9e0df48b8e00f18e07a0988bf29a",
+            "base64": "eyJub25jZSI6ImM2NjgwN2ZkM2E0OGFkOWU3NjlmNzY3ZTMwMzVmMzk3MmJjY2EyMDEzZDU5YTY2Y2FhZDFmZDM2ZGE5YTc0NGEifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-06",
+        "pid": 57395,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 6,
+            "tool": "relic_read_comments",
+            "relicId": "na5h234wb9k5s7vxtf4yxfvwyc",
+            "pid": 57395,
+            "method": "GET",
+            "pathname": "/api/relics/na5h234wb9k5s7vxtf4yxfvwyc/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "7dda64bfb39f1f9b3db128bfae15352ad659cc40da77f8cdb5eb18c13b301b7a"
+          },
+          {
+            "callOrdinal": 6,
+            "tool": "relic_read_comments",
+            "relicId": "na5h234wb9k5s7vxtf4yxfvwyc",
+            "pid": 57395,
+            "method": "GET",
+            "pathname": "/api/relics/na5h234wb9k5s7vxtf4yxfvwyc/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "7dda64bfb39f1f9b3db128bfae15352ad659cc40da77f8cdb5eb18c13b301b7a"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "7dda64bfb39f1f9b3db128bfae15352ad659cc40da77f8cdb5eb18c13b301b7a",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJuYTVoMjM0d2I5azVzN3Z4dGY0eXhmdnd5YyIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic na5h234wb9k5s7vxtf4yxfvwyc, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.692Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\naf4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d\"}],\"structuredContent\":{\"relic_id\":\"na5h234wb9k5s7vxtf4yxfvwyc\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"kcEgpRhAaXj2MDgnOFExXg\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.692Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"af4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "6a7e94f4e0d0689fb520804dcc96516c4a56800de59483f48bdd9725daa4cc60",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyBuYTVoMjM0d2I5azVzN3Z4dGY0eXhmdnd5Yywgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3LjY5Mlogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG5hZjRlZDE5MzhjNGM1NzhkMGU4ZDZmYzAzODY3Y2FlYzhiODdhMDI1OTNlZGZiNDYxMGQ3ZmIxY2U2YWFkYTVkIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6Im5hNWgyMzR3YjlrNXM3dnh0ZjR5eGZ2d3ljIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6ImtjRWdwUmhBYVhqMk1EZ25PRkV4WGciLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy42OTJaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6ImFmNGVkMTkzOGM0YzU3OGQwZThkNmZjMDM4NjdjYWVjOGI4N2EwMjU5M2VkZmI0NjEwZDdmYjFjZTZhYWRhNWQiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic na5h234wb9k5s7vxtf4yxfvwyc, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.692Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\naf4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d\"}],\"structuredContent\":{\"relic_id\":\"na5h234wb9k5s7vxtf4yxfvwyc\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"kcEgpRhAaXj2MDgnOFExXg\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.692Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"af4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic na5h234wb9k5s7vxtf4yxfvwyc, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.692Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\naf4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "na5h234wb9k5s7vxtf4yxfvwyc",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "kcEgpRhAaXj2MDgnOFExXg",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.692Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "af4ed1938c4c578d0e8d6fc03867caec8b87a02593edfb4610d7fb1ce6aada5d",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649357811
+    },
+    {
+      "ordinal": 7,
+      "started_at": 1792649357811,
+      "status": "pass",
+      "fixture": {
+        "trial": 7,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-07",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-07/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-07/comment-source.md",
+        "expected_nonce": "c3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9",
+        "stored_nonce": "c3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9",
+        "corrupt_nonce": false,
+        "relic_id": "ewzqjz0e603z6hbm66k0n7q20r",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "8f377d1b7b9c2f4e5677c18bd81c05b07267008aba3ef04a4a4540c00344a3eb",
+          "base64": "cC1EX0JtTnhKVzNJNFZOaDhwNVhHVXZYbVJTd1VKZXRIbkN6TkZuendaRlFZaHNvXzEtVHhXcmItOVZyTHk4MUxXV1hZdjliY2NEaGpXS0FhZ2JRWHJCMk9zZGdfQ19kckNBbEIwa0FZRjNKMmpwMHllLXdIaFhqVkpNWmxabE5SMlJvZnBOcXdtYXJSQ1FSRFRwRWt0ekFKaXVjOXlNdzNfMjFiU3ZpQ241d3ZxT3BrNWhBNVNiOV9YQVlYMjl5Z1E="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "e33e559cc4994d5972aa9ee91c8407bda5e396944154bd4720603cfa004aeec2",
+          "input": {
+            "bytes": 77,
+            "sha256": "225fa84627560d2bd5e439ccaeda89b3ad63cb4bbe0fdcae61a1dd7de5bf5bcc",
+            "base64": "eyJub25jZSI6ImUzM2U1NTljYzQ5OTRkNTk3MmFhOWVlOTFjODQwN2JkYTVlMzk2OTQ0MTU0YmQ0NzIwNjAzY2ZhMDA0YWVlYzIifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"e33e559cc4994d5972aa9ee91c8407bda5e396944154bd4720603cfa004aeec2\"}\n",
+            "bytes": 77,
+            "sha256": "225fa84627560d2bd5e439ccaeda89b3ad63cb4bbe0fdcae61a1dd7de5bf5bcc",
+            "base64": "eyJub25jZSI6ImUzM2U1NTljYzQ5OTRkNTk3MmFhOWVlOTFjODQwN2JkYTVlMzk2OTQ0MTU0YmQ0NzIwNjAzY2ZhMDA0YWVlYzIifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-07",
+        "pid": 57401,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 7,
+            "tool": "relic_read_comments",
+            "relicId": "ewzqjz0e603z6hbm66k0n7q20r",
+            "pid": 57401,
+            "method": "GET",
+            "pathname": "/api/relics/ewzqjz0e603z6hbm66k0n7q20r/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "1f98c263157431b18d10070cb331e9f2655f538cdd9a2eccb534fe21d54532bf"
+          },
+          {
+            "callOrdinal": 7,
+            "tool": "relic_read_comments",
+            "relicId": "ewzqjz0e603z6hbm66k0n7q20r",
+            "pid": 57401,
+            "method": "GET",
+            "pathname": "/api/relics/ewzqjz0e603z6hbm66k0n7q20r/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "1f98c263157431b18d10070cb331e9f2655f538cdd9a2eccb534fe21d54532bf"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "1f98c263157431b18d10070cb331e9f2655f538cdd9a2eccb534fe21d54532bf",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJld3pxanowZTYwM3o2aGJtNjZrMG43cTIwciIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic ewzqjz0e603z6hbm66k0n7q20r, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.821Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nc3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9\"}],\"structuredContent\":{\"relic_id\":\"ewzqjz0e603z6hbm66k0n7q20r\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"I2KT2-QVyIi9PFOMz-y5zA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.821Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"c3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "79fd2b6dc4d145f1375a71cbfeb3c5a110829812be79927b0899d10f2f809d15",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyBld3pxanowZTYwM3o2aGJtNjZrMG43cTIwciwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3LjgyMVogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG5jMzMwNDk2NjY4ODg1NmFhYzZiNzA5NmJmNWNiOTcxZDNmY2JlYmJkODZkNjRiMzgwYmUyNDAwMjljZjQyZWE5In1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6ImV3enFqejBlNjAzejZoYm02NmswbjdxMjByIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IkkyS1QyLVFWeUlpOVBGT016LXk1ekEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy44MjFaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6ImMzMzA0OTY2Njg4ODU2YWFjNmI3MDk2YmY1Y2I5NzFkM2ZjYmViYmQ4NmQ2NGIzODBiZTI0MDAyOWNmNDJlYTkiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic ewzqjz0e603z6hbm66k0n7q20r, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.821Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nc3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9\"}],\"structuredContent\":{\"relic_id\":\"ewzqjz0e603z6hbm66k0n7q20r\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"I2KT2-QVyIi9PFOMz-y5zA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.821Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"c3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic ewzqjz0e603z6hbm66k0n7q20r, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.821Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\nc3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "ewzqjz0e603z6hbm66k0n7q20r",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "I2KT2-QVyIi9PFOMz-y5zA",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.821Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "c3304966688856aac6b7096bf5cb971d3fcbebbd86d64b380be240029cf42ea9",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649357929
+    },
+    {
+      "ordinal": 8,
+      "started_at": 1792649357929,
+      "status": "pass",
+      "fixture": {
+        "trial": 8,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-08",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-08/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-08/comment-source.md",
+        "expected_nonce": "7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e",
+        "stored_nonce": "7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e",
+        "corrupt_nonce": false,
+        "relic_id": "b14cqxn8tyctktgc4n6ntrfkg4",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "b5b799b1cf141c79382492080d132aefad24f811f8f173cb71009d76baf2e2cc",
+          "base64": "M2dKajZZNC1WOFV0OXJsbE1ZY0FTT0pmZWRSUWFCV1lPdGF6eFdwQndxbG5wTXNvSHhBNzNqLU54M2ZoeWN5bGhyQXNWckdXV3d5TGhPckE3RTdIX0dkZVBkeENWeV9TV2ZQZFhYZFhjLVFOV0tFb3V5b0FCS2NzRElZblU0ak5XQmhvSHpZU29YMmxSMnUyTjRzbmloTFNLTm1mZkljdDNNSXhDbFlyMFlQSUx0NXhnTmptZnlwU21BNnhReXl6VHc="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "8a52b1507bc0c8a3fce1673ff18f99847cdbdbc9c9f87fa4a786370234f7e756",
+          "input": {
+            "bytes": 77,
+            "sha256": "afdf485b5f66fc5bbc2e6abc59dbe418c85b2fb4425fffe2cb29c95b6bd65b26",
+            "base64": "eyJub25jZSI6IjhhNTJiMTUwN2JjMGM4YTNmY2UxNjczZmYxOGY5OTg0N2NkYmRiYzljOWY4N2ZhNGE3ODYzNzAyMzRmN2U3NTYifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"8a52b1507bc0c8a3fce1673ff18f99847cdbdbc9c9f87fa4a786370234f7e756\"}\n",
+            "bytes": 77,
+            "sha256": "afdf485b5f66fc5bbc2e6abc59dbe418c85b2fb4425fffe2cb29c95b6bd65b26",
+            "base64": "eyJub25jZSI6IjhhNTJiMTUwN2JjMGM4YTNmY2UxNjczZmYxOGY5OTg0N2NkYmRiYzljOWY4N2ZhNGE3ODYzNzAyMzRmN2U3NTYifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-08",
+        "pid": 57405,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 8,
+            "tool": "relic_read_comments",
+            "relicId": "b14cqxn8tyctktgc4n6ntrfkg4",
+            "pid": 57405,
+            "method": "GET",
+            "pathname": "/api/relics/b14cqxn8tyctktgc4n6ntrfkg4/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "d6b20e28887cdd0b4145e93142b11eedf09e47fb55cdb52fae040d5ee183f159"
+          },
+          {
+            "callOrdinal": 8,
+            "tool": "relic_read_comments",
+            "relicId": "b14cqxn8tyctktgc4n6ntrfkg4",
+            "pid": 57405,
+            "method": "GET",
+            "pathname": "/api/relics/b14cqxn8tyctktgc4n6ntrfkg4/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "d6b20e28887cdd0b4145e93142b11eedf09e47fb55cdb52fae040d5ee183f159"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "d6b20e28887cdd0b4145e93142b11eedf09e47fb55cdb52fae040d5ee183f159",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJiMTRjcXhuOHR5Y3RrdGdjNG42bnRyZmtnNCIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic b14cqxn8tyctktgc4n6ntrfkg4, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.941Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e\"}],\"structuredContent\":{\"relic_id\":\"b14cqxn8tyctktgc4n6ntrfkg4\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"_E_ExovPXZyHAoBjE1qLNQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.941Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "0aad93d20dc9ee13d9d5ac150f07eb65f85327c190d4f59262903c7c7ade1ccb",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyBiMTRjcXhuOHR5Y3RrdGdjNG42bnRyZmtnNCwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE3Ljk0MVogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG43ZTFiYzBhYzFkOGY1YzVmODI5Y2NiZjQ4M2ZiZDk3M2Q1ZTdjMzdhMjQwMzE4MDQyZDdiYWEwMmZlZjkxMzFlIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6ImIxNGNxeG44dHljdGt0Z2M0bjZudHJma2c0IiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6Il9FX0V4b3ZQWFp5SEFvQmpFMXFMTlEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxNy45NDFaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjdlMWJjMGFjMWQ4ZjVjNWY4MjljY2JmNDgzZmJkOTczZDVlN2MzN2EyNDAzMTgwNDJkN2JhYTAyZmVmOTEzMWUiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic b14cqxn8tyctktgc4n6ntrfkg4, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:17.941Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e\"}],\"structuredContent\":{\"relic_id\":\"b14cqxn8tyctktgc4n6ntrfkg4\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"_E_ExovPXZyHAoBjE1qLNQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:17.941Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic b14cqxn8tyctktgc4n6ntrfkg4, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:17.941Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "b14cqxn8tyctktgc4n6ntrfkg4",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "_E_ExovPXZyHAoBjE1qLNQ",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:17.941Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "7e1bc0ac1d8f5c5f829ccbf483fbd973d5e7c37a240318042d7baa02fef9131e",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358051
+    },
+    {
+      "ordinal": 9,
+      "started_at": 1792649358051,
+      "status": "pass",
+      "fixture": {
+        "trial": 9,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-09",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-09/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-09/comment-source.md",
+        "expected_nonce": "fb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e",
+        "stored_nonce": "fb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e",
+        "corrupt_nonce": false,
+        "relic_id": "1xjf2grxt6fkbhp06wsreb3m64",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "cd35cef9712895bed736a2e07f867d23e84bb0eb17c12c9743bfc3c1c8445570",
+          "base64": "cDU3VzBvNkNjZFNscEt4VWRvMVJLdDNzZm4tZ0s2OVZpdkYxVFMtZHRGaXRhalNpdm9yUXZwRGt0NUdHUGpZTzduS1pnOXZzeGg3WGdPTUVjVDd2V0gzaTAwaHEtZmJ5UFBybDJSLWhSNUdJNWpEcFdwd0h2Zl9NVjRuM1ZnY3BBR0wwRFN2VE4xUzNuZ1VuVkZuM0R5Qzg3RjU3RDkwZ25WT1VxTGFqZXltdkM3OFVGZllFVy1aQWFINTBGbWNaWkE="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "b20fc490c74619ecf2bfa5160ab9f6433c1385178a029cccf5d02bb60eb5198e",
+          "input": {
+            "bytes": 77,
+            "sha256": "a8c77c770a819792c7d4e8cf9d2bfae43fad56ce3ab9c2990668f3633ee1465b",
+            "base64": "eyJub25jZSI6ImIyMGZjNDkwYzc0NjE5ZWNmMmJmYTUxNjBhYjlmNjQzM2MxMzg1MTc4YTAyOWNjY2Y1ZDAyYmI2MGViNTE5OGUifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"b20fc490c74619ecf2bfa5160ab9f6433c1385178a029cccf5d02bb60eb5198e\"}\n",
+            "bytes": 77,
+            "sha256": "a8c77c770a819792c7d4e8cf9d2bfae43fad56ce3ab9c2990668f3633ee1465b",
+            "base64": "eyJub25jZSI6ImIyMGZjNDkwYzc0NjE5ZWNmMmJmYTUxNjBhYjlmNjQzM2MxMzg1MTc4YTAyOWNjY2Y1ZDAyYmI2MGViNTE5OGUifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-09",
+        "pid": 57410,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 9,
+            "tool": "relic_read_comments",
+            "relicId": "1xjf2grxt6fkbhp06wsreb3m64",
+            "pid": 57410,
+            "method": "GET",
+            "pathname": "/api/relics/1xjf2grxt6fkbhp06wsreb3m64/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "a48f422d09d11499dd6360c1a58313b5da80f59547c5e92bf01a6a2f0dd8f4d7"
+          },
+          {
+            "callOrdinal": 9,
+            "tool": "relic_read_comments",
+            "relicId": "1xjf2grxt6fkbhp06wsreb3m64",
+            "pid": 57410,
+            "method": "GET",
+            "pathname": "/api/relics/1xjf2grxt6fkbhp06wsreb3m64/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "a48f422d09d11499dd6360c1a58313b5da80f59547c5e92bf01a6a2f0dd8f4d7"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "a48f422d09d11499dd6360c1a58313b5da80f59547c5e92bf01a6a2f0dd8f4d7",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiIxeGpmMmdyeHQ2ZmtiaHAwNndzcmViM202NCIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 1xjf2grxt6fkbhp06wsreb3m64, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.065Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nfb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e\"}],\"structuredContent\":{\"relic_id\":\"1xjf2grxt6fkbhp06wsreb3m64\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"i2rsqcoU8fndB3ZJYEtFtg\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.065Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"fb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "15f996185eb38e923534bfa376af15b9215612b800f22952430ba60066aa361c",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyAxeGpmMmdyeHQ2ZmtiaHAwNndzcmViM202NCwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4LjA2NVogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG5mYjExMzg3YzY1ZmI1OGFmZDM5YTJlNTNiZmQ4Njg5NzQ5MmJiZWUyNzM3ZWJmYmQyMjU4OTgwZmMzNmViYTFlIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6IjF4amYyZ3J4dDZma2JocDA2d3NyZWIzbTY0IiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6ImkycnNxY29VOGZuZEIzWkpZRXRGdGciLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC4wNjVaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6ImZiMTEzODdjNjVmYjU4YWZkMzlhMmU1M2JmZDg2ODk3NDkyYmJlZTI3MzdlYmZiZDIyNTg5ODBmYzM2ZWJhMWUiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 1xjf2grxt6fkbhp06wsreb3m64, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.065Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nfb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e\"}],\"structuredContent\":{\"relic_id\":\"1xjf2grxt6fkbhp06wsreb3m64\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"i2rsqcoU8fndB3ZJYEtFtg\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.065Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"fb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic 1xjf2grxt6fkbhp06wsreb3m64, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.065Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\nfb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "1xjf2grxt6fkbhp06wsreb3m64",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "i2rsqcoU8fndB3ZJYEtFtg",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.065Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "fb11387c65fb58afd39a2e53bfd86897492bbee2737ebfbd2258980fc36eba1e",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358184
+    },
+    {
+      "ordinal": 10,
+      "started_at": 1792649358184,
+      "status": "pass",
+      "fixture": {
+        "trial": 10,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-10",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-10/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-10/comment-source.md",
+        "expected_nonce": "832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10",
+        "stored_nonce": "832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10",
+        "corrupt_nonce": false,
+        "relic_id": "90ky2d3jygm06t767rkvpy0j0w",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "e8ca70ca5e784f4af9fdc79ed91f1788d99ef3f44c65983a6aa850fbf2442f21",
+          "base64": "WkFFeTJQWVZGdHFFYURfR3Y4dHIyVW5FenE5LUVVcWJHd0ltSmNhLU1TeFJpdmM3Y1QtRWxHa0E4OWtvOVA2WmF6WEp3cHZ1eW4zYlFET3o5T1RtRHdPLUl3aFE5X3FXamtINmg5OGZ1V3ZDbldielFyMks2LVpwUk0tekY3RUpzUEFfZGlacjdZdGdvNDJuOUFZNlluUHNrUnh1UVdyWlJMaHREM1cyWWRlR3gxdnBHNmp4Mkk4eHJpUDFLUHR0cXc="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "5e2b3652ea06a4d25c3bfdc105eb778430b8abe30d01ad6c5b50329d39e73589",
+          "input": {
+            "bytes": 77,
+            "sha256": "4d9876216c4116f7344299451b51e4c0a90a9b33f0dec093d8d71cc0b4052504",
+            "base64": "eyJub25jZSI6IjVlMmIzNjUyZWEwNmE0ZDI1YzNiZmRjMTA1ZWI3Nzg0MzBiOGFiZTMwZDAxYWQ2YzViNTAzMjlkMzllNzM1ODkifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"5e2b3652ea06a4d25c3bfdc105eb778430b8abe30d01ad6c5b50329d39e73589\"}\n",
+            "bytes": 77,
+            "sha256": "4d9876216c4116f7344299451b51e4c0a90a9b33f0dec093d8d71cc0b4052504",
+            "base64": "eyJub25jZSI6IjVlMmIzNjUyZWEwNmE0ZDI1YzNiZmRjMTA1ZWI3Nzg0MzBiOGFiZTMwZDAxYWQ2YzViNTAzMjlkMzllNzM1ODkifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-10",
+        "pid": 57422,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 10,
+            "tool": "relic_read_comments",
+            "relicId": "90ky2d3jygm06t767rkvpy0j0w",
+            "pid": 57422,
+            "method": "GET",
+            "pathname": "/api/relics/90ky2d3jygm06t767rkvpy0j0w/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "39423117563de77520be9f50672c989dd6cab1b16229346aa51032a391c04f57"
+          },
+          {
+            "callOrdinal": 10,
+            "tool": "relic_read_comments",
+            "relicId": "90ky2d3jygm06t767rkvpy0j0w",
+            "pid": 57422,
+            "method": "GET",
+            "pathname": "/api/relics/90ky2d3jygm06t767rkvpy0j0w/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "39423117563de77520be9f50672c989dd6cab1b16229346aa51032a391c04f57"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "39423117563de77520be9f50672c989dd6cab1b16229346aa51032a391c04f57",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiI5MGt5MmQzanlnbTA2dDc2N3JrdnB5MGowdyIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 90ky2d3jygm06t767rkvpy0j0w, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.196Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10\"}],\"structuredContent\":{\"relic_id\":\"90ky2d3jygm06t767rkvpy0j0w\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"7S9_zPnJzYraJfzYN7aU2A\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.196Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "abf2d2bfe7f68f6ec09567eaa7551be3e32bb494358a14469b84682fd5b1e0d9",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyA5MGt5MmQzanlnbTA2dDc2N3JrdnB5MGowdywgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4LjE5Nlogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG44MzI1MjU1MDQ4NTJkMTQ2ZDI1NmMyYTI0MzY5OTBhZjRiY2I0MTE3NjhhZTc3NDZiNzk4NDdiZGJmYTMyZjEwIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6Ijkwa3kyZDNqeWdtMDZ0NzY3cmt2cHkwajB3IiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IjdTOV96UG5KellyYUpmellON2FVMkEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC4xOTZaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjgzMjUyNTUwNDg1MmQxNDZkMjU2YzJhMjQzNjk5MGFmNGJjYjQxMTc2OGFlNzc0NmI3OTg0N2JkYmZhMzJmMTAiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 90ky2d3jygm06t767rkvpy0j0w, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.196Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10\"}],\"structuredContent\":{\"relic_id\":\"90ky2d3jygm06t767rkvpy0j0w\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"7S9_zPnJzYraJfzYN7aU2A\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.196Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic 90ky2d3jygm06t767rkvpy0j0w, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.196Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "90ky2d3jygm06t767rkvpy0j0w",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "7S9_zPnJzYraJfzYN7aU2A",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.196Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "832525504852d146d256c2a2436990af4bcb411768ae7746b79847bdbfa32f10",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358305
+    },
+    {
+      "ordinal": 11,
+      "started_at": 1792649358305,
+      "status": "pass",
+      "fixture": {
+        "trial": 11,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-11",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-11/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-11/comment-source.md",
+        "expected_nonce": "9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279",
+        "stored_nonce": "9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279",
+        "corrupt_nonce": false,
+        "relic_id": "q7vktv8h8mbp5vkvedvzz21fsm",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "dceaa19655ace6da456faa173321b4360bb81b8289bc4ce35e5c226de3aab2c8",
+          "base64": "V2EzX2FqOWVXMVVQc25ISlpfb0JCaVRXMEhnc0Z6eVIwN0s1Z1J3b2hLYWhJeVhGc0lGV1A0cGEtZ3dUTkZ1bDl6MHhUTGp0cVJBNkhTWkNKMnY4anBWeGFQdGVQd1ZIVkxiQ2hrMlN3akhIbHY2MG9OWko0ak0zUFJ4NVpZY0YxZWNCcXNjZ3RqOVRsWnlZM3BrTDZzckJ0Z1haX0NYaS1hRFllMWFOSC03R29JaXNJMWJuQ3ZWdG1zY2FuZ1gyT1E="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "339c60475d80b15051dd74dfc35c7206cddb8161ae3df6a16bf48fdb2bbac511",
+          "input": {
+            "bytes": 77,
+            "sha256": "714deedabbf93e7d81d9f63cea14bae97b138acc420eb37b11f1a9c58d540b96",
+            "base64": "eyJub25jZSI6IjMzOWM2MDQ3NWQ4MGIxNTA1MWRkNzRkZmMzNWM3MjA2Y2RkYjgxNjFhZTNkZjZhMTZiZjQ4ZmRiMmJiYWM1MTEifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"339c60475d80b15051dd74dfc35c7206cddb8161ae3df6a16bf48fdb2bbac511\"}\n",
+            "bytes": 77,
+            "sha256": "714deedabbf93e7d81d9f63cea14bae97b138acc420eb37b11f1a9c58d540b96",
+            "base64": "eyJub25jZSI6IjMzOWM2MDQ3NWQ4MGIxNTA1MWRkNzRkZmMzNWM3MjA2Y2RkYjgxNjFhZTNkZjZhMTZiZjQ4ZmRiMmJiYWM1MTEifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-11",
+        "pid": 57426,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 11,
+            "tool": "relic_read_comments",
+            "relicId": "q7vktv8h8mbp5vkvedvzz21fsm",
+            "pid": 57426,
+            "method": "GET",
+            "pathname": "/api/relics/q7vktv8h8mbp5vkvedvzz21fsm/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "a0219c740053dd5e0649bf8f1d0d5231d19b822815d4b5e55e5931741569f622"
+          },
+          {
+            "callOrdinal": 11,
+            "tool": "relic_read_comments",
+            "relicId": "q7vktv8h8mbp5vkvedvzz21fsm",
+            "pid": 57426,
+            "method": "GET",
+            "pathname": "/api/relics/q7vktv8h8mbp5vkvedvzz21fsm/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "a0219c740053dd5e0649bf8f1d0d5231d19b822815d4b5e55e5931741569f622"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "a0219c740053dd5e0649bf8f1d0d5231d19b822815d4b5e55e5931741569f622",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJxN3ZrdHY4aDhtYnA1dmt2ZWR2enoyMWZzbSIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic q7vktv8h8mbp5vkvedvzz21fsm, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.315Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279\"}],\"structuredContent\":{\"relic_id\":\"q7vktv8h8mbp5vkvedvzz21fsm\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"WHUPaIVzcyLwppzzmhcNdQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.315Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "eaf5c786d0de45a77ccc367d87a2134bdbdc17a70e1dc03830bc59ee11e188dd",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyBxN3ZrdHY4aDhtYnA1dmt2ZWR2enoyMWZzbSwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4LjMxNVogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG45YjNlZmU3MTliZGM4Yzc2YWNhMDc0MjM3ZWViM2VhMDI1ODlmMmQ1YjVhYWFkMTljYzMzNWY3OGJiNmZjMjc5In1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6InE3dmt0djhoOG1icDV2a3ZlZHZ6ejIxZnNtIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IldIVVBhSVZ6Y3lMd3BwenptaGNOZFEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC4zMTVaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjliM2VmZTcxOWJkYzhjNzZhY2EwNzQyMzdlZWIzZWEwMjU4OWYyZDViNWFhYWQxOWNjMzM1Zjc4YmI2ZmMyNzkiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic q7vktv8h8mbp5vkvedvzz21fsm, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.315Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279\"}],\"structuredContent\":{\"relic_id\":\"q7vktv8h8mbp5vkvedvzz21fsm\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"WHUPaIVzcyLwppzzmhcNdQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.315Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic q7vktv8h8mbp5vkvedvzz21fsm, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.315Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "q7vktv8h8mbp5vkvedvzz21fsm",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "WHUPaIVzcyLwppzzmhcNdQ",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.315Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "9b3efe719bdc8c76aca074237eeb3ea02589f2d5b5aaad19cc335f78bb6fc279",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358439
+    },
+    {
+      "ordinal": 12,
+      "started_at": 1792649358439,
+      "status": "pass",
+      "fixture": {
+        "trial": 12,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-12",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-12/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-12/comment-source.md",
+        "expected_nonce": "2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899",
+        "stored_nonce": "2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899",
+        "corrupt_nonce": false,
+        "relic_id": "hxheznp7fas61gn8n934dnqqb0",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "086f7c7c694bed3d8ce79ec14c9f02ac5575ea9d19f01031d3cbe0899e058b1d",
+          "base64": "ZkgtY3NfRXRFR21Wd3k2TXk2RDZCRmFUZE1uOUdZVTB2bzMtcmdiaGhkbktwVkpzS2NCdU83S01wSFZmbG1tczlDUGh6WWg3eXo4M0ptU1lDUG4yNVRLRDJwM3poQWVEN1FtVnoxcTdYNkxIOTRXdENiQnQ5Y3pNQ1djblFLTVJkSm9hYktxb2h0LVdITEo0Snk4NVlaTnQ4bEppVHl6ZmhfS2VXLTE2UFJZTGQzcE9QdHI0NlZqbDNFOERySVZsOXc="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "2b575c89ffd8e7922434e515aea8a4e3e3a9e2020307e9681083b2ac4b8922be",
+          "input": {
+            "bytes": 77,
+            "sha256": "50cc94098319b7a535a2c05cd8a82e7bb688ac0cfa9874d1c8c7191b603d720e",
+            "base64": "eyJub25jZSI6IjJiNTc1Yzg5ZmZkOGU3OTIyNDM0ZTUxNWFlYThhNGUzZTNhOWUyMDIwMzA3ZTk2ODEwODNiMmFjNGI4OTIyYmUifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"2b575c89ffd8e7922434e515aea8a4e3e3a9e2020307e9681083b2ac4b8922be\"}\n",
+            "bytes": 77,
+            "sha256": "50cc94098319b7a535a2c05cd8a82e7bb688ac0cfa9874d1c8c7191b603d720e",
+            "base64": "eyJub25jZSI6IjJiNTc1Yzg5ZmZkOGU3OTIyNDM0ZTUxNWFlYThhNGUzZTNhOWUyMDIwMzA3ZTk2ODEwODNiMmFjNGI4OTIyYmUifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-12",
+        "pid": 57436,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 12,
+            "tool": "relic_read_comments",
+            "relicId": "hxheznp7fas61gn8n934dnqqb0",
+            "pid": 57436,
+            "method": "GET",
+            "pathname": "/api/relics/hxheznp7fas61gn8n934dnqqb0/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "c399f7392d3c105e51b287731986dbcabc3ff8bbcae119a339b0e47a3a644c70"
+          },
+          {
+            "callOrdinal": 12,
+            "tool": "relic_read_comments",
+            "relicId": "hxheznp7fas61gn8n934dnqqb0",
+            "pid": 57436,
+            "method": "GET",
+            "pathname": "/api/relics/hxheznp7fas61gn8n934dnqqb0/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "c399f7392d3c105e51b287731986dbcabc3ff8bbcae119a339b0e47a3a644c70"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "c399f7392d3c105e51b287731986dbcabc3ff8bbcae119a339b0e47a3a644c70",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJoeGhlem5wN2ZhczYxZ244bjkzNGRucXFiMCIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic hxheznp7fas61gn8n934dnqqb0, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.459Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899\"}],\"structuredContent\":{\"relic_id\":\"hxheznp7fas61gn8n934dnqqb0\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"3FJSh7WlbZGNd3-G9OsNNQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.459Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "8736ba8e24f1ecc2a6af1187911507a9adb3da0211745f02f01c0e2fd354b563",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyBoeGhlem5wN2ZhczYxZ244bjkzNGRucXFiMCwgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4LjQ1OVogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG4yMTkzY2EyZDkzOGQ2OTQ0NWE4OGY5MmY1NGFiNDI1NmNiY2VjYjUwMTczYzI1M2VhMmJhYmI2ZjQzNmVmODk5In1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6Imh4aGV6bnA3ZmFzNjFnbjhuOTM0ZG5xcWIwIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IjNGSlNoN1dsYlpHTmQzLUc5T3NOTlEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC40NTlaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjIxOTNjYTJkOTM4ZDY5NDQ1YTg4ZjkyZjU0YWI0MjU2Y2JjZWNiNTAxNzNjMjUzZWEyYmFiYjZmNDM2ZWY4OTkiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic hxheznp7fas61gn8n934dnqqb0, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.459Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899\"}],\"structuredContent\":{\"relic_id\":\"hxheznp7fas61gn8n934dnqqb0\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"3FJSh7WlbZGNd3-G9OsNNQ\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.459Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic hxheznp7fas61gn8n934dnqqb0, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.459Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "hxheznp7fas61gn8n934dnqqb0",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "3FJSh7WlbZGNd3-G9OsNNQ",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.459Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "2193ca2d938d69445a88f92f54ab4256cbcecb50173c253ea2babb6f436ef899",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358579
+    },
+    {
+      "ordinal": 13,
+      "started_at": 1792649358579,
+      "status": "pass",
+      "fixture": {
+        "trial": 13,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-13",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-13/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-13/comment-source.md",
+        "expected_nonce": "9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8",
+        "stored_nonce": "9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8",
+        "corrupt_nonce": false,
+        "relic_id": "wxeacbd6f6a193zkjzjj5wwwew",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "982fe0b74d36f371ea863913efa7c2dbde9014a70f5f73402f8d74c6a1b0dc16",
+          "base64": "M200Y1Y2SWNaN0NXaXZ0OThiRURmNUtuYkw3LWJZVmZzUE9CdFY3SXN6ZW1CaFRGZHhrcjNabGVDWnd3cTNuTjlPb0NXS3NvX25OTGptN3dnS2ZHSDNYSzRxclhLbTFMdm1BWGtiR2MwOVFOTkE5UTRQclNwdGJCUzlaOW5qZGdINllXYmhUSmg0SGVuR1M3S3ktMnZfSWZmWnRTdEQ1ZmMySlZ2d2Vna3hRd25Fa3JSc0FIbC03ZXYxRmFXOWxpVUE="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "e545ac1b48de34ddaa9d22134ca06fd6ddf505b1d6fc457cdbf3e71e1dbc3c72",
+          "input": {
+            "bytes": 77,
+            "sha256": "64082b09093cbe520049e78c9cdb1da58dc96e116cf7cb903457c6d3fb473905",
+            "base64": "eyJub25jZSI6ImU1NDVhYzFiNDhkZTM0ZGRhYTlkMjIxMzRjYTA2ZmQ2ZGRmNTA1YjFkNmZjNDU3Y2RiZjNlNzFlMWRiYzNjNzIifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"e545ac1b48de34ddaa9d22134ca06fd6ddf505b1d6fc457cdbf3e71e1dbc3c72\"}\n",
+            "bytes": 77,
+            "sha256": "64082b09093cbe520049e78c9cdb1da58dc96e116cf7cb903457c6d3fb473905",
+            "base64": "eyJub25jZSI6ImU1NDVhYzFiNDhkZTM0ZGRhYTlkMjIxMzRjYTA2ZmQ2ZGRmNTA1YjFkNmZjNDU3Y2RiZjNlNzFlMWRiYzNjNzIifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-13",
+        "pid": 57446,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 13,
+            "tool": "relic_read_comments",
+            "relicId": "wxeacbd6f6a193zkjzjj5wwwew",
+            "pid": 57446,
+            "method": "GET",
+            "pathname": "/api/relics/wxeacbd6f6a193zkjzjj5wwwew/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "baa52369e5f2009f50a52170117dc8df073e4ba5b246427ebe64e4dd4d959068"
+          },
+          {
+            "callOrdinal": 13,
+            "tool": "relic_read_comments",
+            "relicId": "wxeacbd6f6a193zkjzjj5wwwew",
+            "pid": 57446,
+            "method": "GET",
+            "pathname": "/api/relics/wxeacbd6f6a193zkjzjj5wwwew/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "baa52369e5f2009f50a52170117dc8df073e4ba5b246427ebe64e4dd4d959068"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "baa52369e5f2009f50a52170117dc8df073e4ba5b246427ebe64e4dd4d959068",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJ3eGVhY2JkNmY2YTE5M3pranpqajV3d3dldyIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic wxeacbd6f6a193zkjzjj5wwwew, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.589Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8\"}],\"structuredContent\":{\"relic_id\":\"wxeacbd6f6a193zkjzjj5wwwew\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"V9UgSGxi3T37Gyd40fDIbw\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.589Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "f7ae872944644c6f1a714f15fb0f019e49021904ca363006a12a998124f19c75",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyB3eGVhY2JkNmY2YTE5M3pranpqajV3d3dldywgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4LjU4OVogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG45ZmNjZGM5ZWYxMTU3OTY4MzE4YzY4ODI3ZDhmNzYyN2JkMWQyNzdlZmNhODQ3OTQwODMwMDc3YzAyNmMyMmY4In1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6Ind4ZWFjYmQ2ZjZhMTkzemtqempqNXd3d2V3IiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IlY5VWdTR3hpM1QzN0d5ZDQwZkRJYnciLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC41ODlaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjlmY2NkYzllZjExNTc5NjgzMThjNjg4MjdkOGY3NjI3YmQxZDI3N2VmY2E4NDc5NDA4MzAwNzdjMDI2YzIyZjgiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic wxeacbd6f6a193zkjzjj5wwwew, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.589Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8\"}],\"structuredContent\":{\"relic_id\":\"wxeacbd6f6a193zkjzjj5wwwew\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"V9UgSGxi3T37Gyd40fDIbw\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.589Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic wxeacbd6f6a193zkjzjj5wwwew, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.589Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "wxeacbd6f6a193zkjzjj5wwwew",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "V9UgSGxi3T37Gyd40fDIbw",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.589Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "9fccdc9ef1157968318c68827d8f7627bd1d277efca847940830077c026c22f8",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358710
+    },
+    {
+      "ordinal": 14,
+      "started_at": 1792649358710,
+      "status": "pass",
+      "fixture": {
+        "trial": 14,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-14",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-14/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-14/comment-source.md",
+        "expected_nonce": "b45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27",
+        "stored_nonce": "b45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27",
+        "corrupt_nonce": false,
+        "relic_id": "f71czxgk28jvn192mgf656fkgg",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "ae858d8b3cd78a43e08aa9b7cf6ba602fc34d86586e383121a3a724adad6acec",
+          "base64": "QlFkUExPSkowbzI3TjlERGNSd2RjaC1lSDliekt5aldPQnF4U0w2VXlfYXZUZFUxeHI2VHBqLXJFelZDVktOSkR4OE9sM2g3LUVaVHc5M2VUR2JDNXkzclpZQWYxT3JFa3EzYVBUWk5yRm5RWG51MlhaOHE4VkJFRmdkMEZGRWl5SGE5T2V0X2lhLTBqdHF6dVBzUDdjRnVhTlFibzU5YUFFNFFCSTUwbGphWXl6WGZYeFdpZ0NiOC1ua0NOeDYxeEE="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "d183e888b03a44b951395fa3638eb680590088a11d00e36f47075febf213ef6d",
+          "input": {
+            "bytes": 77,
+            "sha256": "a6d9f9608d10d8bbcfebc42143ac761fecdd1a62a4232dc323de80133202cffc",
+            "base64": "eyJub25jZSI6ImQxODNlODg4YjAzYTQ0Yjk1MTM5NWZhMzYzOGViNjgwNTkwMDg4YTExZDAwZTM2ZjQ3MDc1ZmViZjIxM2VmNmQifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"d183e888b03a44b951395fa3638eb680590088a11d00e36f47075febf213ef6d\"}\n",
+            "bytes": 77,
+            "sha256": "a6d9f9608d10d8bbcfebc42143ac761fecdd1a62a4232dc323de80133202cffc",
+            "base64": "eyJub25jZSI6ImQxODNlODg4YjAzYTQ0Yjk1MTM5NWZhMzYzOGViNjgwNTkwMDg4YTExZDAwZTM2ZjQ3MDc1ZmViZjIxM2VmNmQifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-14",
+        "pid": 57451,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 14,
+            "tool": "relic_read_comments",
+            "relicId": "f71czxgk28jvn192mgf656fkgg",
+            "pid": 57451,
+            "method": "GET",
+            "pathname": "/api/relics/f71czxgk28jvn192mgf656fkgg/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "92fdc8282a3c53304e32846bc35a34be48f697da69d297959cd53d2c81afb4c9"
+          },
+          {
+            "callOrdinal": 14,
+            "tool": "relic_read_comments",
+            "relicId": "f71czxgk28jvn192mgf656fkgg",
+            "pid": 57451,
+            "method": "GET",
+            "pathname": "/api/relics/f71czxgk28jvn192mgf656fkgg/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "92fdc8282a3c53304e32846bc35a34be48f697da69d297959cd53d2c81afb4c9"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "92fdc8282a3c53304e32846bc35a34be48f697da69d297959cd53d2c81afb4c9",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiJmNzFjenhnazI4anZuMTkybWdmNjU2ZmtnZyIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic f71czxgk28jvn192mgf656fkgg, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.723Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nb45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27\"}],\"structuredContent\":{\"relic_id\":\"f71czxgk28jvn192mgf656fkgg\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"BV5Pd8rfUUFGOP61eTr9jg\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.723Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"b45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "37e476cc24f8d8bb26c2b5671d94028e1de9e1d9cc471a895a2c0dcc55ecc79f",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyBmNzFjenhnazI4anZuMTkybWdmNjU2ZmtnZywgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4LjcyM1ogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG5iNDVjZTdhMmFlMTU5ZDIwYzczZGM0MjMwZGY1NWZiN2RjMWE0MDRkMGE1MDA5NWQ5MzlkNTAzZjQzNDFhYjI3In1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6ImY3MWN6eGdrMjhqdm4xOTJtZ2Y2NTZma2dnIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IkJWNVBkOHJmVVVGR09QNjFlVHI5amciLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC43MjNaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6ImI0NWNlN2EyYWUxNTlkMjBjNzNkYzQyMzBkZjU1ZmI3ZGMxYTQwNGQwYTUwMDk1ZDkzOWQ1MDNmNDM0MWFiMjciLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic f71czxgk28jvn192mgf656fkgg, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.723Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\nb45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27\"}],\"structuredContent\":{\"relic_id\":\"f71czxgk28jvn192mgf656fkgg\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"BV5Pd8rfUUFGOP61eTr9jg\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.723Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"b45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic f71czxgk28jvn192mgf656fkgg, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.723Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\nb45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "f71czxgk28jvn192mgf656fkgg",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "BV5Pd8rfUUFGOP61eTr9jg",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.723Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "b45ce7a2ae159d20c73dc4230df55fb7dc1a404d0a50095d939d503f4341ab27",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358844
+    },
+    {
+      "ordinal": 15,
+      "started_at": 1792649358844,
+      "status": "pass",
+      "fixture": {
+        "trial": 15,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-15",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-15/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-15/comment-source.md",
+        "expected_nonce": "cdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c",
+        "stored_nonce": "cdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c",
+        "corrupt_nonce": false,
+        "relic_id": "9vkt7watm1d9r7x749cg903yew",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "1949731753f9f8b1cee71880501b371c8c55a46755fd4f3803fd37bc45515c60",
+          "base64": "WWRsNU9DaXE2NVpMX05GcmtXTlBlX1pEbVRxVFBoc0ZwNDh5QUVGWkxOa013OVBfNE9JYlZOdGZCTkdZbVM1cjBYRUlobWNlckN0bWx3ZklXS1EwanVCdXpOMWxPeHNfU3JMUi03VzdudHAyb1RWUDlTcXl4UjZJT19LYlVZQzYtTjRiZFZSNVRCZTQtVUwzU052cWVWWmZHdlVmZHJlQmdIcTA3WnlTTVFRZXlRTUdXR2dJNUxPVFppVUpWQzdETEE="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "21d2be4862eb88a76837d2ac21475968b35089ced5ae005a33a234568b7b08f8",
+          "input": {
+            "bytes": 77,
+            "sha256": "9cf194dbe918d9d59578abbd2559174e06792fd4faf2ea3e6c6f021ca2fa21f0",
+            "base64": "eyJub25jZSI6IjIxZDJiZTQ4NjJlYjg4YTc2ODM3ZDJhYzIxNDc1OTY4YjM1MDg5Y2VkNWFlMDA1YTMzYTIzNDU2OGI3YjA4ZjgifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"21d2be4862eb88a76837d2ac21475968b35089ced5ae005a33a234568b7b08f8\"}\n",
+            "bytes": 77,
+            "sha256": "9cf194dbe918d9d59578abbd2559174e06792fd4faf2ea3e6c6f021ca2fa21f0",
+            "base64": "eyJub25jZSI6IjIxZDJiZTQ4NjJlYjg4YTc2ODM3ZDJhYzIxNDc1OTY4YjM1MDg5Y2VkNWFlMDA1YTMzYTIzNDU2OGI3YjA4ZjgifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-15",
+        "pid": 57457,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 15,
+            "tool": "relic_read_comments",
+            "relicId": "9vkt7watm1d9r7x749cg903yew",
+            "pid": 57457,
+            "method": "GET",
+            "pathname": "/api/relics/9vkt7watm1d9r7x749cg903yew/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "c92ea5691248034e38a27633ab40e930fd94c2dafd8c520552750f01383e0205"
+          },
+          {
+            "callOrdinal": 15,
+            "tool": "relic_read_comments",
+            "relicId": "9vkt7watm1d9r7x749cg903yew",
+            "pid": 57457,
+            "method": "GET",
+            "pathname": "/api/relics/9vkt7watm1d9r7x749cg903yew/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "c92ea5691248034e38a27633ab40e930fd94c2dafd8c520552750f01383e0205"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "c92ea5691248034e38a27633ab40e930fd94c2dafd8c520552750f01383e0205",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiI5dmt0N3dhdG0xZDlyN3g3NDljZzkwM3lldyIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 9vkt7watm1d9r7x749cg903yew, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.858Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\ncdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c\"}],\"structuredContent\":{\"relic_id\":\"9vkt7watm1d9r7x749cg903yew\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"9GaGZWHp2bNLo9_SyLzRPA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.858Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"cdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "b25519f4eb8c498dc491ebc2b3a633254f82eca6476c97762516866e43b5944c",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyA5dmt0N3dhdG0xZDlyN3g3NDljZzkwM3lldywgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4Ljg1OFogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG5jZGQ3N2I3NGM4NDgyZmU4NjU4YWJmY2FiY2I5YzIyYTgxYmM2YjkwZTMyYjI4NmJmZjViODkyMmRkZjAxMDdjIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6Ijl2a3Q3d2F0bTFkOXI3eDc0OWNnOTAzeWV3IiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6IjlHYUdaV0hwMmJOTG85X1N5THpSUEEiLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC44NThaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6ImNkZDc3Yjc0Yzg0ODJmZTg2NThhYmZjYWJjYjljMjJhODFiYzZiOTBlMzJiMjg2YmZmNWI4OTIyZGRmMDEwN2MiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 9vkt7watm1d9r7x749cg903yew, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.858Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\ncdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c\"}],\"structuredContent\":{\"relic_id\":\"9vkt7watm1d9r7x749cg903yew\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"9GaGZWHp2bNLo9_SyLzRPA\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.858Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"cdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic 9vkt7watm1d9r7x749cg903yew, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.858Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\ncdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "9vkt7watm1d9r7x749cg903yew",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "9GaGZWHp2bNLo9_SyLzRPA",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.858Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "cdd77b74c8482fe8658abfcabcb9c22a81bc6b90e32b286bff5b8922ddf0107c",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649358976
+    },
+    {
+      "ordinal": 16,
+      "started_at": 1792649358976,
+      "status": "pass",
+      "fixture": {
+        "trial": 16,
+        "directory": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-16",
+        "state_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-16/publish-state.json",
+        "fixture_path": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-16/comment-source.md",
+        "expected_nonce": "26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf",
+        "stored_nonce": "26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf",
+        "corrupt_nonce": false,
+        "relic_id": "6k6nsbfczwr2wrk89z7p8dptrc",
+        "publish_version": 1,
+        "local_state_present": true,
+        "seed_status": 201,
+        "ciphertext": {
+          "bytes": 194,
+          "sha256": "9372aad1c8d98d9fcf671894b4166ca42e7eb3ea55af2fab94a988c8b3024f6b",
+          "base64": "a0Q3RFQ3eVNNM3R0cy1PSkJMaFY5LVFMMXNEWEdjaXE1U1dSZFlOY3hrVW9uQ3FXUzdIcFVjTlB1OTVUak1sejQ1c2JqelVfUUdJREIzVExYVmpOWVFFRXZ2WHUyWG9sR18yT3RDcktVOVI0X0FjbUhnVzZaUEY2enBvSWdDbGNNZjNSbWUxcm9wN0g4dnk5V1lJbUJ1aUUwQkI4RVpZNmxma216Tk55a2NnWTZEbW9oYmJrZWpERThjZHlIWVVYUFE="
+        },
+        "stored_comment_count": 1,
+        "mails_after_seed": 0
+      },
+      "context": {
+        "name": "helper",
+        "status": "ready",
+        "helper": {
+          "nonce": "2e05728fd3391036ff5992b512f2be9c3d83ffb9e9f34e63d37a090686fa8213",
+          "input": {
+            "bytes": 77,
+            "sha256": "3728a681743f22bdb32e71cf5d1defecbc4d1a73d48f93b9aebfff643ac5ab1c",
+            "base64": "eyJub25jZSI6IjJlMDU3MjhmZDMzOTEwMzZmZjU5OTJiNTEyZjJiZTljM2Q4M2ZmYjllOWYzNGU2M2QzN2EwOTA2ODZmYTgyMTMifQo="
+          },
+          "validated": true,
+          "stdout": {
+            "text": "{\"nonce\":\"2e05728fd3391036ff5992b512f2be9c3d83ffb9e9f34e63d37a090686fa8213\"}\n",
+            "bytes": 77,
+            "sha256": "3728a681743f22bdb32e71cf5d1defecbc4d1a73d48f93b9aebfff643ac5ab1c",
+            "base64": "eyJub25jZSI6IjJlMDU3MjhmZDMzOTEwMzZmZjU5OTJiNTEyZjJiZTljM2Q4M2ZmYjllOWYzNGU2M2QzN2EwOTA2ODZmYTgyMTMifQo="
+          },
+          "stderr": {
+            "text": "",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "base64": ""
+          },
+          "exit": 0
+        }
+      },
+      "target": {
+        "command": [
+          "node",
+          "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js"
+        ],
+        "cwd": "/tmp/otio-mcp-boundary-bghREV/helper16/trial-16",
+        "pid": 57463,
+        "deadline_ms": 45000,
+        "loopback_receipts": [
+          {
+            "callOrdinal": 16,
+            "tool": "relic_read_comments",
+            "relicId": "6k6nsbfczwr2wrk89z7p8dptrc",
+            "pid": 57463,
+            "method": "GET",
+            "pathname": "/api/relics/6k6nsbfczwr2wrk89z7p8dptrc/comments",
+            "event": "entry",
+            "status": null,
+            "requestHash": "54774427f82bb553e4e984bf5b5ee6ccd9d251be8b854f871cfa6f457ac436d3"
+          },
+          {
+            "callOrdinal": 16,
+            "tool": "relic_read_comments",
+            "relicId": "6k6nsbfczwr2wrk89z7p8dptrc",
+            "pid": 57463,
+            "method": "GET",
+            "pathname": "/api/relics/6k6nsbfczwr2wrk89z7p8dptrc/comments",
+            "event": "response",
+            "status": 200,
+            "requestHash": "54774427f82bb553e4e984bf5b5ee6ccd9d251be8b854f871cfa6f457ac436d3"
+          }
+        ],
+        "packet": {
+          "bytes": 178,
+          "sha256": "54774427f82bb553e4e984bf5b5ee6ccd9d251be8b854f871cfa6f457ac436d3",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6InJlbGljX3JlYWRfY29tbWVudHMiLCJhcmd1bWVudHMiOnsicmVsaWNfaWQiOiI2azZuc2JmY3p3cjJ3cms4OXo3cDhkcHRyYyIsInZlcnNpb24iOiIqIiwicmVzb2x2ZV9hbmNob3JzIjp0cnVlfX19Cg=="
+        },
+        "input_outcomes": [
+          {
+            "operation": "stdin.write",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          },
+          {
+            "operation": "stdin.end",
+            "settlement": "fulfilled",
+            "value_type": "number",
+            "numeric_value": 178,
+            "value": 178,
+            "clean_numeric": true
+          }
+        ],
+        "stdout": {
+          "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 6k6nsbfczwr2wrk89z7p8dptrc, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.993Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf\"}],\"structuredContent\":{\"relic_id\":\"6k6nsbfczwr2wrk89z7p8dptrc\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"kJ5qE7Jq72ZV2vgKBDSgqw\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.993Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}\n",
+          "bytes": 1109,
+          "sha256": "23c9c8180862cb48bb2c356fcf5ab1cf0e646d6c4406ce9cab138f4724967d21",
+          "base64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOjEsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiIxIGNvbW1lbnQocykgb24gZXZlcnkgdmVyc2lvbiBvZiByZWxpYyA2azZuc2JmY3p3cjJ3cms4OXo3cDhkcHRyYywgb2xkZXN0IGZpcnN0LlxuU3VtbWFyeTogMSB0b3RhbCwgMCBhZGRyZXNzZWQsIDEgb3BlbiwgMCByZXNvbHZlZCwgMCB1bnJlYWRhYmxlLlxuXG4yMDI2LTEwLTIyVDA2OjA5OjE4Ljk5M1ogc3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIChwdWJsaXNoZXIpOlxuYWJvdXQgdGhlIHdob2xlIHJlbGljXG5bbWFkZSBvbiB2ZXJzaW9uIDFdXG4yNmZjNTMwODA4ZjJjYjg0OTM1ZTkwNGE4MjEyZWIzZWEyOWZiZTAyNWQ3Y2E3ZjMxOWEzMmZjZTYwZDBmYWJmIn1dLCJzdHJ1Y3R1cmVkQ29udGVudCI6eyJyZWxpY19pZCI6IjZrNm5zYmZjendyMndyazg5ejdwOGRwdHJjIiwiY291bnQiOjEsInVucmVhZGFibGVfY291bnQiOjAsInN1bW1hcnkiOnsidG90YWwiOjEsImFkZHJlc3NlZCI6MCwib3BlbiI6MSwicmVzb2x2ZWQiOjAsInVucmVhZGFibGUiOjB9LCJjb21tZW50cyI6W3siY29tbWVudF9pZCI6ImtKNXFFN0pxNzJaVjJ2Z0tCRFNncXciLCJhdXRob3IiOiJwdWJsaXNoZXIiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwNjowOToxOC45OTNaIiwiZGlzcGxheV9uYW1lIjoic3RkaW8gTUNQIGJvdW5kYXJ5IHByb2JlIiwiYm9keSI6IjI2ZmM1MzA4MDhmMmNiODQ5MzVlOTA0YTgyMTJlYjNlYTI5ZmJlMDI1ZDdjYTdmMzE5YTMyZmNlNjBkMGZhYmYiLCJhbmNob3IiOm51bGwsImFkZHJlc3NlcyI6bnVsbCwicmVhZGFibGUiOnRydWUsInVucmVhZGFibGVfcmVhc29uIjpudWxsLCJhZGRyZXNzZWQiOmZhbHNlLCJhZGRyZXNzZWRfYnkiOm51bGwsImFkZHJlc3NlZF9ieV9jb21tZW50X2lkIjpudWxsLCJhZGRyZXNzZWRfYnlfdmVyc2lvbiI6bnVsbCwidmVyc2lvbiI6MSwiZWRpdGVkX2F0IjpudWxsLCJyZXNvbHV0aW9uIjpudWxsfV0sInZlcnNpb25fc2NvcGUiOiJhbGwiLCJjdXJyZW50X3ZlcnNpb24iOm51bGwsImhpZGRlbl9ieV9zY29wZSI6MCwiY29udGVudF9ibG9ja3MiOltdfSwiaXNFcnJvciI6ZmFsc2V9fQo="
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "base64": ""
+        },
+        "exit": 0,
+        "signal_code": null,
+        "protocol": {
+          "line_count": 1,
+          "last_line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"1 comment(s) on every version of relic 6k6nsbfczwr2wrk89z7p8dptrc, oldest first.\\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\\n\\n2026-10-22T06:09:18.993Z stdio MCP boundary probe (publisher):\\nabout the whole relic\\n[made on version 1]\\n26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf\"}],\"structuredContent\":{\"relic_id\":\"6k6nsbfczwr2wrk89z7p8dptrc\",\"count\":1,\"unreadable_count\":0,\"summary\":{\"total\":1,\"addressed\":0,\"open\":1,\"resolved\":0,\"unreadable\":0},\"comments\":[{\"comment_id\":\"kJ5qE7Jq72ZV2vgKBDSgqw\",\"author\":\"publisher\",\"created_at\":\"2026-10-22T06:09:18.993Z\",\"display_name\":\"stdio MCP boundary probe\",\"body\":\"26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf\",\"anchor\":null,\"addresses\":null,\"readable\":true,\"unreadable_reason\":null,\"addressed\":false,\"addressed_by\":null,\"addressed_by_comment_id\":null,\"addressed_by_version\":null,\"version\":1,\"edited_at\":null,\"resolution\":null}],\"version_scope\":\"all\",\"current_version\":null,\"hidden_by_scope\":0,\"content_blocks\":[]},\"isError\":false}}",
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "1 comment(s) on every version of relic 6k6nsbfczwr2wrk89z7p8dptrc, oldest first.\nSummary: 1 total, 0 addressed, 1 open, 0 resolved, 0 unreadable.\n\n2026-10-22T06:09:18.993Z stdio MCP boundary probe (publisher):\nabout the whole relic\n[made on version 1]\n26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf"
+                }
+              ],
+              "structuredContent": {
+                "relic_id": "6k6nsbfczwr2wrk89z7p8dptrc",
+                "count": 1,
+                "unreadable_count": 0,
+                "summary": {
+                  "total": 1,
+                  "addressed": 0,
+                  "open": 1,
+                  "resolved": 0,
+                  "unreadable": 0
+                },
+                "comments": [
+                  {
+                    "comment_id": "kJ5qE7Jq72ZV2vgKBDSgqw",
+                    "author": "publisher",
+                    "created_at": "2026-10-22T06:09:18.993Z",
+                    "display_name": "stdio MCP boundary probe",
+                    "body": "26fc530808f2cb84935e904a8212eb3ea29fbe025d7ca7f319a32fce60d0fabf",
+                    "anchor": null,
+                    "addresses": null,
+                    "readable": true,
+                    "unreadable_reason": null,
+                    "addressed": false,
+                    "addressed_by": null,
+                    "addressed_by_comment_id": null,
+                    "addressed_by_version": null,
+                    "version": 1,
+                    "edited_at": null,
+                    "resolution": null
+                  }
+                ],
+                "version_scope": "all",
+                "current_version": null,
+                "hidden_by_scope": 0,
+                "content_blocks": []
+              },
+              "isError": false
+            }
+          }
+        },
+        "mail_count_after_target": 0
+      },
+      "finished_at": 1792649359112
+    }
+  ],
+  "all_loopback_receipts": [
+    {
+      "callOrdinal": 1,
+      "tool": "relic_read_comments",
+      "relicId": "rx2x5rdmrega3zyryhjnc9b0yr",
+      "pid": 57369,
+      "method": "GET",
+      "pathname": "/api/relics/rx2x5rdmrega3zyryhjnc9b0yr/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "c8c1f18b839b997ea2120b43b0bd389b1d423c099e1a7d608a8db375006c1d91"
+    },
+    {
+      "callOrdinal": 1,
+      "tool": "relic_read_comments",
+      "relicId": "rx2x5rdmrega3zyryhjnc9b0yr",
+      "pid": 57369,
+      "method": "GET",
+      "pathname": "/api/relics/rx2x5rdmrega3zyryhjnc9b0yr/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "c8c1f18b839b997ea2120b43b0bd389b1d423c099e1a7d608a8db375006c1d91"
+    },
+    {
+      "callOrdinal": 2,
+      "tool": "relic_read_comments",
+      "relicId": "xx6nmxhrqhs9jj29ap26dkd5g4",
+      "pid": 57375,
+      "method": "GET",
+      "pathname": "/api/relics/xx6nmxhrqhs9jj29ap26dkd5g4/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "301d50c6383b72ed770ebb4a1ee4f7bd98fe47c51c5bfc1e1b2c8857814525f7"
+    },
+    {
+      "callOrdinal": 2,
+      "tool": "relic_read_comments",
+      "relicId": "xx6nmxhrqhs9jj29ap26dkd5g4",
+      "pid": 57375,
+      "method": "GET",
+      "pathname": "/api/relics/xx6nmxhrqhs9jj29ap26dkd5g4/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "301d50c6383b72ed770ebb4a1ee4f7bd98fe47c51c5bfc1e1b2c8857814525f7"
+    },
+    {
+      "callOrdinal": 3,
+      "tool": "relic_read_comments",
+      "relicId": "fycsh9s23d07gwex48tz1vbpxm",
+      "pid": 57379,
+      "method": "GET",
+      "pathname": "/api/relics/fycsh9s23d07gwex48tz1vbpxm/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "4ef218859a145594db04150da97ff58fb2ef37b4c5e3e794c3e5d4ac0adbf419"
+    },
+    {
+      "callOrdinal": 3,
+      "tool": "relic_read_comments",
+      "relicId": "fycsh9s23d07gwex48tz1vbpxm",
+      "pid": 57379,
+      "method": "GET",
+      "pathname": "/api/relics/fycsh9s23d07gwex48tz1vbpxm/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "4ef218859a145594db04150da97ff58fb2ef37b4c5e3e794c3e5d4ac0adbf419"
+    },
+    {
+      "callOrdinal": 4,
+      "tool": "relic_read_comments",
+      "relicId": "zz6szy5ypqah8j0enbmp7ysmwg",
+      "pid": 57383,
+      "method": "GET",
+      "pathname": "/api/relics/zz6szy5ypqah8j0enbmp7ysmwg/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "aba91f930f9310af20949fb1e67c954800cc2ed245ee3906028d29df4b74f6d0"
+    },
+    {
+      "callOrdinal": 4,
+      "tool": "relic_read_comments",
+      "relicId": "zz6szy5ypqah8j0enbmp7ysmwg",
+      "pid": 57383,
+      "method": "GET",
+      "pathname": "/api/relics/zz6szy5ypqah8j0enbmp7ysmwg/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "aba91f930f9310af20949fb1e67c954800cc2ed245ee3906028d29df4b74f6d0"
+    },
+    {
+      "callOrdinal": 5,
+      "tool": "relic_read_comments",
+      "relicId": "5361c1sjwt4ymtt2g6cnjzs1qr",
+      "pid": 57391,
+      "method": "GET",
+      "pathname": "/api/relics/5361c1sjwt4ymtt2g6cnjzs1qr/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "0672087a5f6d192eda4617a299c253c579194b7a5d488952736ee8795bf024e2"
+    },
+    {
+      "callOrdinal": 5,
+      "tool": "relic_read_comments",
+      "relicId": "5361c1sjwt4ymtt2g6cnjzs1qr",
+      "pid": 57391,
+      "method": "GET",
+      "pathname": "/api/relics/5361c1sjwt4ymtt2g6cnjzs1qr/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "0672087a5f6d192eda4617a299c253c579194b7a5d488952736ee8795bf024e2"
+    },
+    {
+      "callOrdinal": 6,
+      "tool": "relic_read_comments",
+      "relicId": "na5h234wb9k5s7vxtf4yxfvwyc",
+      "pid": 57395,
+      "method": "GET",
+      "pathname": "/api/relics/na5h234wb9k5s7vxtf4yxfvwyc/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "7dda64bfb39f1f9b3db128bfae15352ad659cc40da77f8cdb5eb18c13b301b7a"
+    },
+    {
+      "callOrdinal": 6,
+      "tool": "relic_read_comments",
+      "relicId": "na5h234wb9k5s7vxtf4yxfvwyc",
+      "pid": 57395,
+      "method": "GET",
+      "pathname": "/api/relics/na5h234wb9k5s7vxtf4yxfvwyc/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "7dda64bfb39f1f9b3db128bfae15352ad659cc40da77f8cdb5eb18c13b301b7a"
+    },
+    {
+      "callOrdinal": 7,
+      "tool": "relic_read_comments",
+      "relicId": "ewzqjz0e603z6hbm66k0n7q20r",
+      "pid": 57401,
+      "method": "GET",
+      "pathname": "/api/relics/ewzqjz0e603z6hbm66k0n7q20r/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "1f98c263157431b18d10070cb331e9f2655f538cdd9a2eccb534fe21d54532bf"
+    },
+    {
+      "callOrdinal": 7,
+      "tool": "relic_read_comments",
+      "relicId": "ewzqjz0e603z6hbm66k0n7q20r",
+      "pid": 57401,
+      "method": "GET",
+      "pathname": "/api/relics/ewzqjz0e603z6hbm66k0n7q20r/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "1f98c263157431b18d10070cb331e9f2655f538cdd9a2eccb534fe21d54532bf"
+    },
+    {
+      "callOrdinal": 8,
+      "tool": "relic_read_comments",
+      "relicId": "b14cqxn8tyctktgc4n6ntrfkg4",
+      "pid": 57405,
+      "method": "GET",
+      "pathname": "/api/relics/b14cqxn8tyctktgc4n6ntrfkg4/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "d6b20e28887cdd0b4145e93142b11eedf09e47fb55cdb52fae040d5ee183f159"
+    },
+    {
+      "callOrdinal": 8,
+      "tool": "relic_read_comments",
+      "relicId": "b14cqxn8tyctktgc4n6ntrfkg4",
+      "pid": 57405,
+      "method": "GET",
+      "pathname": "/api/relics/b14cqxn8tyctktgc4n6ntrfkg4/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "d6b20e28887cdd0b4145e93142b11eedf09e47fb55cdb52fae040d5ee183f159"
+    },
+    {
+      "callOrdinal": 9,
+      "tool": "relic_read_comments",
+      "relicId": "1xjf2grxt6fkbhp06wsreb3m64",
+      "pid": 57410,
+      "method": "GET",
+      "pathname": "/api/relics/1xjf2grxt6fkbhp06wsreb3m64/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "a48f422d09d11499dd6360c1a58313b5da80f59547c5e92bf01a6a2f0dd8f4d7"
+    },
+    {
+      "callOrdinal": 9,
+      "tool": "relic_read_comments",
+      "relicId": "1xjf2grxt6fkbhp06wsreb3m64",
+      "pid": 57410,
+      "method": "GET",
+      "pathname": "/api/relics/1xjf2grxt6fkbhp06wsreb3m64/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "a48f422d09d11499dd6360c1a58313b5da80f59547c5e92bf01a6a2f0dd8f4d7"
+    },
+    {
+      "callOrdinal": 10,
+      "tool": "relic_read_comments",
+      "relicId": "90ky2d3jygm06t767rkvpy0j0w",
+      "pid": 57422,
+      "method": "GET",
+      "pathname": "/api/relics/90ky2d3jygm06t767rkvpy0j0w/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "39423117563de77520be9f50672c989dd6cab1b16229346aa51032a391c04f57"
+    },
+    {
+      "callOrdinal": 10,
+      "tool": "relic_read_comments",
+      "relicId": "90ky2d3jygm06t767rkvpy0j0w",
+      "pid": 57422,
+      "method": "GET",
+      "pathname": "/api/relics/90ky2d3jygm06t767rkvpy0j0w/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "39423117563de77520be9f50672c989dd6cab1b16229346aa51032a391c04f57"
+    },
+    {
+      "callOrdinal": 11,
+      "tool": "relic_read_comments",
+      "relicId": "q7vktv8h8mbp5vkvedvzz21fsm",
+      "pid": 57426,
+      "method": "GET",
+      "pathname": "/api/relics/q7vktv8h8mbp5vkvedvzz21fsm/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "a0219c740053dd5e0649bf8f1d0d5231d19b822815d4b5e55e5931741569f622"
+    },
+    {
+      "callOrdinal": 11,
+      "tool": "relic_read_comments",
+      "relicId": "q7vktv8h8mbp5vkvedvzz21fsm",
+      "pid": 57426,
+      "method": "GET",
+      "pathname": "/api/relics/q7vktv8h8mbp5vkvedvzz21fsm/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "a0219c740053dd5e0649bf8f1d0d5231d19b822815d4b5e55e5931741569f622"
+    },
+    {
+      "callOrdinal": 12,
+      "tool": "relic_read_comments",
+      "relicId": "hxheznp7fas61gn8n934dnqqb0",
+      "pid": 57436,
+      "method": "GET",
+      "pathname": "/api/relics/hxheznp7fas61gn8n934dnqqb0/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "c399f7392d3c105e51b287731986dbcabc3ff8bbcae119a339b0e47a3a644c70"
+    },
+    {
+      "callOrdinal": 12,
+      "tool": "relic_read_comments",
+      "relicId": "hxheznp7fas61gn8n934dnqqb0",
+      "pid": 57436,
+      "method": "GET",
+      "pathname": "/api/relics/hxheznp7fas61gn8n934dnqqb0/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "c399f7392d3c105e51b287731986dbcabc3ff8bbcae119a339b0e47a3a644c70"
+    },
+    {
+      "callOrdinal": 13,
+      "tool": "relic_read_comments",
+      "relicId": "wxeacbd6f6a193zkjzjj5wwwew",
+      "pid": 57446,
+      "method": "GET",
+      "pathname": "/api/relics/wxeacbd6f6a193zkjzjj5wwwew/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "baa52369e5f2009f50a52170117dc8df073e4ba5b246427ebe64e4dd4d959068"
+    },
+    {
+      "callOrdinal": 13,
+      "tool": "relic_read_comments",
+      "relicId": "wxeacbd6f6a193zkjzjj5wwwew",
+      "pid": 57446,
+      "method": "GET",
+      "pathname": "/api/relics/wxeacbd6f6a193zkjzjj5wwwew/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "baa52369e5f2009f50a52170117dc8df073e4ba5b246427ebe64e4dd4d959068"
+    },
+    {
+      "callOrdinal": 14,
+      "tool": "relic_read_comments",
+      "relicId": "f71czxgk28jvn192mgf656fkgg",
+      "pid": 57451,
+      "method": "GET",
+      "pathname": "/api/relics/f71czxgk28jvn192mgf656fkgg/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "92fdc8282a3c53304e32846bc35a34be48f697da69d297959cd53d2c81afb4c9"
+    },
+    {
+      "callOrdinal": 14,
+      "tool": "relic_read_comments",
+      "relicId": "f71czxgk28jvn192mgf656fkgg",
+      "pid": 57451,
+      "method": "GET",
+      "pathname": "/api/relics/f71czxgk28jvn192mgf656fkgg/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "92fdc8282a3c53304e32846bc35a34be48f697da69d297959cd53d2c81afb4c9"
+    },
+    {
+      "callOrdinal": 15,
+      "tool": "relic_read_comments",
+      "relicId": "9vkt7watm1d9r7x749cg903yew",
+      "pid": 57457,
+      "method": "GET",
+      "pathname": "/api/relics/9vkt7watm1d9r7x749cg903yew/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "c92ea5691248034e38a27633ab40e930fd94c2dafd8c520552750f01383e0205"
+    },
+    {
+      "callOrdinal": 15,
+      "tool": "relic_read_comments",
+      "relicId": "9vkt7watm1d9r7x749cg903yew",
+      "pid": 57457,
+      "method": "GET",
+      "pathname": "/api/relics/9vkt7watm1d9r7x749cg903yew/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "c92ea5691248034e38a27633ab40e930fd94c2dafd8c520552750f01383e0205"
+    },
+    {
+      "callOrdinal": 16,
+      "tool": "relic_read_comments",
+      "relicId": "6k6nsbfczwr2wrk89z7p8dptrc",
+      "pid": 57463,
+      "method": "GET",
+      "pathname": "/api/relics/6k6nsbfczwr2wrk89z7p8dptrc/comments",
+      "event": "entry",
+      "status": null,
+      "requestHash": "54774427f82bb553e4e984bf5b5ee6ccd9d251be8b854f871cfa6f457ac436d3"
+    },
+    {
+      "callOrdinal": 16,
+      "tool": "relic_read_comments",
+      "relicId": "6k6nsbfczwr2wrk89z7p8dptrc",
+      "pid": 57463,
+      "method": "GET",
+      "pathname": "/api/relics/6k6nsbfczwr2wrk89z7p8dptrc/comments",
+      "event": "response",
+      "status": 200,
+      "requestHash": "54774427f82bb553e4e984bf5b5ee6ccd9d251be8b854f871cfa6f457ac436d3"
+    }
+  ]
+}
