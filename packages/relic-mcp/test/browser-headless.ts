@@ -61,10 +61,7 @@ interface ValidatedBrowserArguments {
   readonly profile: string;
 }
 
-function guardFailure(
-  code: BrowserHeadlessGuardCode,
-  message: string
-): never {
+function guardFailure(code: BrowserHeadlessGuardCode, message: string): never {
   throw new BrowserHeadlessGuardError(code, message);
 }
 
@@ -297,8 +294,11 @@ export async function attestBrowserHeadless(
     const commandLine = await beforeDeadline(() =>
       connection.send('Browser.getBrowserCommandLine')
     );
-    const arguments = validateBrowserHeadlessCommandLine(commandLine, launch);
-    return { version, arguments };
+    const observedArguments = validateBrowserHeadlessCommandLine(
+      commandLine,
+      launch
+    );
+    return { version, arguments: observedArguments };
   } catch (error) {
     if (error instanceof BrowserHeadlessGuardError) throw error;
     return guardFailure(
@@ -314,7 +314,9 @@ function childHasExited(child: OwnedBrowserChild): boolean {
   return child.exitCode !== null || child.signalCode !== null;
 }
 
-async function waitForOwnedBrowserExit(child: OwnedBrowserChild): Promise<void> {
+async function waitForOwnedBrowserExit(
+  child: OwnedBrowserChild
+): Promise<void> {
   if (childHasExited(child)) return;
   const { promise, resolve } = Promise.withResolvers<void>();
   let settled = false;
