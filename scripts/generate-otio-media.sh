@@ -126,6 +126,7 @@ write_decoder_timing() {
   local mode="$1"
   python3 - "$DECODER_DIR" "$DECODER_TIMING" "$mode" <<'PY'
 import json
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -157,6 +158,155 @@ codecs = {
     "loop-edit.mp4": "h264",
     "no-duration.webm": "vp9",
 }
+
+def bmff_boxes(data, start, end, context):
+    offset = start
+    while offset < end:
+        remaining = end - offset
+        if remaining < 8:
+            raise SystemExit(f"{context}: truncated box header at byte {offset}")
+        size = struct.unpack_from(">I", data, offset)[0]
+        kind = data[offset + 4:offset + 8]
+        header = 8
+        if size == 1:
+            if remaining < 16:
+                raise SystemExit(f"{context}: truncated extended box header at byte {offset}")
+            size = struct.unpack_from(">Q", data, offset + 8)[0]
+            header = 16
+        elif size == 0:
+            size = remaining
+        if size < header:
+            raise SystemExit(f"{context}: invalid {kind!r} box size {size} at byte {offset}")
+        box_end = offset + size
+        if box_end > end:
+            raise SystemExit(f"{context}: {kind!r} box exceeds its parent at byte {offset}")
+        yield kind, offset + header, box_end
+        offset = box_end
+
+
+def one_bmff_box(boxes, kind, context):
+    matches = [(start, end) for actual, start, end in boxes if actual == kind]
+    if len(matches) != 1:
+        raise SystemExit(f"{context}: expected one {kind!r} box, found {len(matches)}")
+    return matches[0]
+
+
+def full_box_version(data, start, end, context):
+    if end - start < 4:
+        raise SystemExit(f"{context}: truncated full-box header")
+    if data[start + 1:start + 4] != b"\0\0\0":
+        raise SystemExit(f"{context}: nonzero full-box flags")
+    return data[start]
+
+
+def edit_list_entry_count(data, track_boxes, context):
+    edits = [(start, end) for kind, start, end in track_boxes if kind == b"edts"]
+    if not edits:
+        return 1
+    if len(edits) != 1:
+        raise SystemExit(f"{context}: expected one edts box, found {len(edits)}")
+    start, end = edits[0]
+    elst_start, elst_end = one_bmff_box(
+        list(bmff_boxes(data, start, end, f"{context} edts")), b"elst", f"{context} edts"
+    )
+    if elst_end - elst_start < 8:
+        raise SystemExit(f"{context}: truncated elst header")
+    version = full_box_version(data, elst_start, elst_end, f"{context} elst")
+    if version not in (0, 1):
+        raise SystemExit(f"{context}: unsupported elst version {version}")
+    entry_count = struct.unpack_from(">I", data, elst_start + 4)[0]
+    entry_size = 12 if version == 0 else 20
+    if elst_end - elst_start != 8 + entry_count * entry_size:
+        raise SystemExit(f"{context}: elst entries do not fit the box")
+    if entry_count == 0:
+        raise SystemExit(f"{context}: elst has no entries")
+    return entry_count
+
+
+def bmff_packet_durations(path, packet_count):
+    data = path.read_bytes()
+    moov_start, moov_end = one_bmff_box(
+        list(bmff_boxes(data, 0, len(data), str(path))), b"moov", f"{path} root"
+    )
+    video_tracks = []
+    for kind, track_start, track_end in bmff_boxes(data, moov_start, moov_end, f"{path} moov"):
+        if kind != b"trak":
+            continue
+        track_boxes = list(bmff_boxes(data, track_start, track_end, f"{path} trak"))
+        mdia_start, mdia_end = one_bmff_box(track_boxes, b"mdia", f"{path} trak")
+        hdlr_start, hdlr_end = one_bmff_box(
+            list(bmff_boxes(data, mdia_start, mdia_end, f"{path} mdia")),
+            b"hdlr",
+            f"{path} mdia",
+        )
+        if hdlr_end - hdlr_start < 12:
+            raise SystemExit(f"{path}: truncated hdlr payload")
+        if data[hdlr_start + 8:hdlr_start + 12] == b"vide":
+            video_tracks.append((track_boxes, mdia_start, mdia_end))
+    if len(video_tracks) != 1:
+        raise SystemExit(f"{path}: expected one video track, found {len(video_tracks)}")
+
+    track_boxes, mdia_start, mdia_end = video_tracks[0]
+    context = f"{path} video track"
+    minf_start, minf_end = one_bmff_box(
+        list(bmff_boxes(data, mdia_start, mdia_end, f"{context} mdia")),
+        b"minf",
+        f"{context} mdia",
+    )
+    stbl_start, stbl_end = one_bmff_box(
+        list(bmff_boxes(data, minf_start, minf_end, f"{context} minf")),
+        b"stbl",
+        f"{context} minf",
+    )
+    stts_start, stts_end = one_bmff_box(
+        list(bmff_boxes(data, stbl_start, stbl_end, f"{context} stbl")),
+        b"stts",
+        f"{context} stbl",
+    )
+    if stts_end - stts_start < 8:
+        raise SystemExit(f"{context}: truncated stts header")
+    if full_box_version(data, stts_start, stts_end, f"{context} stts") != 0:
+        raise SystemExit(f"{context}: unsupported stts version")
+    entry_count = struct.unpack_from(">I", data, stts_start + 4)[0]
+    if stts_end - stts_start != 8 + entry_count * 8:
+        raise SystemExit(f"{context}: stts entries do not fit the box")
+
+    entries = [
+        struct.unpack_from(">II", data, stts_start + 8 + entry * 8)
+        for entry in range(entry_count)
+    ]
+    source_packet_count = sum(sample_count for sample_count, _ in entries)
+    edit_count = edit_list_entry_count(data, track_boxes, context)
+    derived_packet_count = source_packet_count * edit_count
+    if derived_packet_count != packet_count:
+        raise SystemExit(
+            f"{path}: stts/elst derive {derived_packet_count} packets, "
+            f"ffprobe reported {packet_count}"
+        )
+    durations = [
+        duration
+        for sample_count, duration in entries
+        for _ in range(sample_count)
+    ]
+    return durations * edit_count
+
+
+def packet_durations(path, packets):
+    if path.suffix.lower() in {".mp4", ".mov"}:
+        return bmff_packet_durations(path, len(packets))
+    return [packet.get("duration") for packet in packets]
+
+
+def packet_rows(path, packets):
+    durations = packet_durations(path, packets)
+    if len(durations) != len(packets):
+        raise SystemExit(f"{path}: packet duration count differs from ffprobe")
+    return [
+        {"pts": packet.get("pts"), "duration": durations[index]}
+        for index, packet in enumerate(packets)
+    ]
+
+
 report = {"provenance": {
     "producer": "ffprobe packet PTS and presentation-frame identity timestamps",
     "scope": "Independent PTS-to-presentation-frame identity oracle. It does not certify the reader's reported packet durations or production timing windows.",
@@ -189,10 +339,7 @@ for name in names:
             "codec_name": streams[0]["codec_name"],
             "time_base": streams[0]["time_base"],
         },
-        "packets": [
-            {"pts": row.get("pts"), "duration": row.get("duration")}
-            for row in packets
-        ],
+        "packets": packet_rows(path, packets),
         "frames": [
             {
                 "best_effort_timestamp": row.get("best_effort_timestamp"),
