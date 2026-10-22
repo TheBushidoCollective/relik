@@ -1,0 +1,17 @@
+{
+  "run": "https://github.com/TheBushidoCollective/relik/actions/runs/39822843969",
+  "probeSha": "44078bb (agent/otio-linux-eof-diag): observation-only waiter instrumentation of test/stdio-eof-path.ts; resolution logic unchanged",
+  "runs": "ubuntu-24.04: Bun 1.4.3 mode0 x3, mode1 x3; Bun 1.3.14 mode0 x3; plus macOS 27.0.1 Bun 1.4.3 sanity mode0 (PASS, STDIO_EOF_PATH_OK) and mode1 (fails as designed: suppression armed, then no matching JSON-RPC response)",
+  "linuxResult": "9/9 Linux runs stall about 12 s, identical signature on both Bun versions and both modes",
+  "signature": {
+    "t81": "W1 (exact request delivery) resolves via callback#3 and closes inside finish(); W2 (physical stdin EOF) and W3 (comments GET start) are created and armed; both post_watch inspects find=false at 477 bytes",
+    "t82": "tap appends stdin_physical_eof",
+    "t83": "W2 and W3 each receive one change callback; W2 finds its row and resolves; W3 inspects at 566 bytes, found=false",
+    "t83b": "tap appends comments_get_started (file grows to 714 bytes); W3 receives no callback for this append",
+    "t87to93": "comments_get_accepted: comments_get_started_in_file=true, trace_bytes=714, pending_waits=[W3 callbacks=1]",
+    "t11982to11991": "W3's second callback arrives only with the child's later stdout_write_attempt append; release follows within 1 ms"
+  },
+  "classification": "Lost notification: an armed fs.watch on Linux delivered no callback for an append made by another process immediately after its previous callback, while the row was already readable. Matches the planner's I1 except W3 holds one callback (for the preceding EOF append) rather than zero. Not I2 (reads see every row once woken), not I3 (waiters resolve within 1 ms of a callback), not I4 (deterministic).",
+  "bun1314": "Same stall on Bun 1.3.14: a pre-existing probe race that the earlier Linux EBADF failures in the same test were hiding, not a 1.4.x regression.",
+  "product": "Product behaved correctly in every run: exact 207-byte request, physical EOF traced, GET started, matching JSON-RPC response with stdout_write_callback error=null once the held GET was released."
+}
