@@ -23,6 +23,7 @@ export interface OtioAimDetail {
   readonly anchor: OtioAnchorV1;
   readonly focus?: boolean;
   readonly measure?: () => DOMRect | undefined;
+  readonly measureBounds?: () => DOMRect | undefined;
 }
 
 const controllers = new WeakMap<HTMLElement, OtioUiController>();

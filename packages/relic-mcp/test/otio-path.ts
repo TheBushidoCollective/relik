@@ -45,6 +45,7 @@ import { fileURLToPath } from 'node:url';
 import {
   compareRationalTimes,
   decodeKey,
+  indexOtioZip,
   evaluateOtioAt,
   openRelic,
   readOtioDocument,
@@ -107,6 +108,7 @@ const REQUIRED = [
   'ui-point-duplicate',
   'ui-range-duplicate',
   'ui-range-dissolve',
+  'ui-track-duplicate',
   'ciphertext',
   'mcp-original',
   'revision-insert',
@@ -2092,7 +2094,7 @@ async function assertTrackVisible(
 async function selectTrack(
   browser: ChromeSession,
   trackId: string,
-  mode: 'point' | 'range',
+  mode: 'point' | 'range' | 'track',
   start: number,
   end: number
 ): Promise<void> {
@@ -2125,6 +2127,86 @@ async function selectTrack(
   );
   if (mode === 'point')
     assert.equal(selected.duration, '0', 'point selection has a duration');
+  if (mode === 'track')
+    assert.ok(
+      Number(selected.duration) > 0,
+      `whole-track selection has no exposed core: ${JSON.stringify(selected)}`
+    );
+}
+
+interface HeldComposerProbe {
+  readonly sameField: boolean;
+  readonly text: string;
+  readonly focused: boolean;
+  readonly track: string;
+  readonly start: number;
+  readonly duration: number;
+  readonly rate: number;
+}
+
+async function aimHeldDraftWithPointer(
+  browser: ChromeSession,
+  trackId: string,
+  draft: string,
+  fromFrame: number,
+  toFrame: number
+): Promise<HeldComposerProbe> {
+  const rail = await browser.evaluate<{
+    x: number;
+    y: number;
+    end: number;
+  } | null>(
+    `(() => {
+      const field = document.querySelector('.popover-composer textarea');
+      const rail = [...document.querySelectorAll('.otio-track-rail')].find(
+        (row) => row.dataset.trackId === ${JSON.stringify(trackId)});
+      if (!(field instanceof HTMLTextAreaElement) || !(rail instanceof HTMLElement)) return null;
+      field.value = ${JSON.stringify(draft)};
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.blur();
+      window.__otioHeldField = field;
+      const box = rail.getBoundingClientRect();
+      const count = Number(document.querySelector('input.otio-seek')?.max) + 1;
+      return {
+        x: box.left + box.width * ${fromFrame} / count,
+        end: box.left + box.width * ${toFrame} / count,
+        y: box.top + box.height / 2,
+      };
+    })()`
+  );
+  assert.ok(rail, `no visible rail for ${trackId}`);
+  for (const event of [
+    { type: 'mouseMoved', x: rail.x, y: rail.y, button: 'none' },
+    {
+      type: 'mousePressed',
+      x: rail.x,
+      y: rail.y,
+      button: 'left',
+      clickCount: 1,
+    },
+    { type: 'mouseMoved', x: rail.end, y: rail.y, button: 'left', buttons: 1 },
+    {
+      type: 'mouseReleased',
+      x: rail.end,
+      y: rail.y,
+      button: 'left',
+      clickCount: 1,
+    },
+  ])
+    await browser.send('Input.dispatchMouseEvent', event);
+  return browser.evaluate<HeldComposerProbe>(`(() => {
+    const field = document.querySelector('.popover-composer textarea');
+    const mark = document.querySelector('.otio-selection');
+    return {
+      sameField: field === window.__otioHeldField,
+      text: field?.value ?? '',
+      focused: field === document.activeElement,
+      track: mark?.dataset.trackId ?? '',
+      start: Number(mark?.dataset.start),
+      duration: Number(mark?.dataset.duration),
+      rate: Number(mark?.dataset.rate),
+    };
+  })()`);
 }
 
 async function postComposer(
@@ -2163,6 +2245,35 @@ async function postComposer(
     'posted',
     `native composer did not submit ${JSON.stringify(body)}: ${posted}`
   );
+}
+
+async function postHeldComposer(
+  browser: ChromeSession,
+  body: string
+): Promise<void> {
+  const result = await browser.evaluate<string>(`(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    const field = document.querySelector('.popover-composer textarea');
+    const button = document.querySelector('.popover-composer .popover-action.is-primary');
+    if (!(field instanceof HTMLTextAreaElement) || !(button instanceof HTMLButtonElement)) {
+      resolve('missing');
+      return promise;
+    }
+    if (field.value !== ${JSON.stringify(body)}) {
+      resolve('lost-draft');
+      return promise;
+    }
+    button.click();
+    const start = Date.now();
+    const tick = () => {
+      if (document.body.textContent.includes(${JSON.stringify(body)})) resolve('posted');
+      else if (Date.now() - start > 10000) resolve('timeout');
+      else setTimeout(tick, 50);
+    };
+    tick();
+    return promise;
+  })()`);
+  assert.equal(result, 'posted', `held OTIO draft did not post: ${result}`);
 }
 
 async function openComposer(browser: ChromeSession): Promise<void> {
@@ -4349,6 +4460,15 @@ try {
   assert.equal(plan.nested_inside, true);
   assert.equal(plan.nested_frame, 200);
   assert.notEqual(plan.duplicate_track_id, plan.duplicate_other_track_id);
+  const scopedDocument = readOtioDocument(
+    (await indexOtioZip(opened.content)).contentOtioBytes
+  );
+  const duplicateScope =
+    scopedDocument.nodes[plan.duplicate_track_id]?.timeline_range;
+  assert.ok(
+    duplicateScope,
+    'original duplicate track has no exposed core range'
+  );
   assert.ok(
     plan.dissolve_spans.length >= 2,
     'official reader did not see both dissolve sources'
@@ -4362,6 +4482,13 @@ try {
   );
   pass('official-archive');
 
+  const wholeTrackBody = 'Duplicate Video 2 whole-track note, stable id.';
+  const pointerBody =
+    'Pointer re-aim retains this draft on the selected range.';
+  const cancelledText = 'CANCEL SENTINEL never reaches storage';
+  const editedDupRangeBody = 'Duplicate Video 2 edit stays on the same range.';
+  const replyBody = 'Reply to the duplicate Video 2 range.';
+  let reaimed: HeldComposerProbe | undefined;
   const browser = await openBrowser(shareUrl, sessionToken);
   try {
     await waitReady(browser);
@@ -4814,13 +4941,50 @@ try {
     );
     await postComposer(browser, dissolveBody);
     pass('ui-range-dissolve');
+    await selectTrack(
+      browser,
+      plan.duplicate_track_id,
+      'track',
+      duplicateScope.start_time.value,
+      duplicateScope.start_time.value + duplicateScope.duration.value
+    );
+    const wholeTrackMark = await browser.evaluate<{
+      start: string;
+      duration: string;
+      rate: string;
+    }>(
+      `(() => { const mark = document.querySelector('.otio-selection'); return {
+        start: mark?.dataset.start ?? '', duration: mark?.dataset.duration ?? '',
+        rate: mark?.dataset.rate ?? ''
+      }; })()`
+    );
+    assert.ok(
+      rangeClose(
+        {
+          start_time: {
+            value: Number(wholeTrackMark.start),
+            rate: Number(wholeTrackMark.rate),
+          },
+          duration: {
+            value: Number(wholeTrackMark.duration),
+            rate: Number(wholeTrackMark.rate),
+          },
+        },
+        duplicateScope
+      ),
+      'whole-track UI did not select the original document exposed-core range'
+    );
+    await postComposer(browser, wholeTrackBody);
+    pass('ui-track-duplicate');
     const nativeControlMeasurements: Array<Record<string, unknown>> = [];
 
     for (const [shotWidth, scheme] of [
       [1440, 'light'],
       [390, 'light'],
+      [320, 'light'],
       [1440, 'dark'],
       [390, 'dark'],
+      [320, 'dark'],
     ] as const) {
       await browser.send('Emulation.setDeviceMetricsOverride', {
         width: shotWidth,
@@ -4869,6 +5033,32 @@ try {
         probe: hoveredComposer,
       });
       await dismissComposer(browser);
+      for (const mode of ['point', 'range', 'track'] as const) {
+        await selectTrack(
+          browser,
+          plan.duplicate_track_id,
+          mode,
+          plan.duplicate_frame,
+          plan.duplicate_frame + 2
+        );
+        await clearPointerHover(browser);
+        await openComposer(browser);
+        const measured = await measureComposer(browser);
+        assertComposerProbe(
+          measured,
+          `${shotWidth}x900 ${scheme} ${mode} composer`,
+          false
+        );
+        nativeControlMeasurements.push({
+          state: `composer-${mode}`,
+          width: shotWidth,
+          height: 900,
+          scheme,
+          probe: measured,
+        });
+        await browser.screenshot(`${shotWidth}-${scheme}-${mode}-composer`);
+        await dismissComposer(browser);
+      }
       if (shotWidth === 1440) {
         const sidebar = await measureSidebar(browser);
         assertSidebar(sidebar, `${shotWidth}px ${scheme} sidebar`, false);
@@ -4888,6 +5078,52 @@ try {
           scheme,
           probe: sidebar,
         });
+      }
+    }
+
+    for (const [shotWidth, shotHeight] of [
+      [320, 480],
+      [390, 568],
+      [1440, 600],
+    ] as const) {
+      for (const scheme of ['light', 'dark'] as const) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width: shotWidth,
+          height: shotHeight,
+          deviceScaleFactor: 1,
+          mobile: shotWidth < 600,
+        });
+        await browser.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: scheme }],
+        });
+        for (const mode of ['point', 'range', 'track'] as const) {
+          await selectTrack(
+            browser,
+            plan.duplicate_track_id,
+            mode,
+            plan.duplicate_frame,
+            plan.duplicate_frame + 2
+          );
+          await clearPointerHover(browser);
+          await openComposer(browser);
+          const measured = await measureComposer(browser);
+          assertComposerProbe(
+            measured,
+            `${shotWidth}x${shotHeight} ${scheme} ${mode} compact composer`,
+            false
+          );
+          nativeControlMeasurements.push({
+            state: `compact-${mode}`,
+            width: shotWidth,
+            height: shotHeight,
+            scheme,
+            probe: measured,
+          });
+          await browser.screenshot(
+            `${shotWidth}x${shotHeight}-${scheme}-${mode}-composer`
+          );
+          await dismissComposer(browser);
+        }
       }
     }
 
@@ -5045,6 +5281,305 @@ try {
         `document.querySelector('.stage-wrap').scrollTop = 0`
       );
     }
+    await browser.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await browser.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: 'light' }],
+    });
+    await browser.evaluate<void>(
+      `document.querySelector('.stage-wrap').scrollTop = 0`
+    );
+    await selectTrack(
+      browser,
+      plan.dissolve_track_id,
+      'range',
+      primaryStart,
+      primaryStart + 2
+    );
+    await openComposer(browser);
+    reaimed = await aimHeldDraftWithPointer(
+      browser,
+      plan.dissolve_track_id,
+      pointerBody,
+      primaryStart + 1,
+      primaryStart + 5
+    );
+    assert.deepEqual(
+      {
+        sameField: reaimed.sameField,
+        text: reaimed.text,
+        focused: reaimed.focused,
+        track: reaimed.track,
+      },
+      {
+        sameField: true,
+        text: pointerBody,
+        focused: false,
+        track: plan.dissolve_track_id,
+      },
+      `pointer re-aim rebuilt or stole focus from held draft: ${JSON.stringify(reaimed)}`
+    );
+    assert.ok(
+      reaimed.duration > 0 && reaimed.start !== primaryStart,
+      `pointer re-aim did not change the range: ${JSON.stringify(reaimed)}`
+    );
+    await postHeldComposer(browser, pointerBody);
+
+    const beforeCancel = (
+      (await (
+        await fetch(`${origin}/api/relics/${relicId}/comments`)
+      ).json()) as unknown[]
+    ).length;
+    await openComposer(browser);
+    await browser.evaluate<void>(`(() => {
+      const field = document.querySelector('.popover-composer textarea');
+      field.value = ${JSON.stringify(cancelledText)};
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await dismissComposer(browser);
+    const afterCancel = (
+      (await (
+        await fetch(`${origin}/api/relics/${relicId}/comments`)
+      ).json()) as unknown[]
+    ).length;
+    assert.equal(afterCancel, beforeCancel, 'Cancel wrote a comment event');
+    await openComposer(browser);
+    const reopened = await browser.evaluate<{
+      text: string;
+      track: string;
+      start: string;
+      duration: string;
+    }>(`(() => {
+      const mark = document.querySelector('.otio-selection');
+      return {
+        text: document.querySelector('.popover-composer textarea')?.value ?? '',
+        track: mark?.dataset.trackId ?? '', start: mark?.dataset.start ?? '',
+        duration: mark?.dataset.duration ?? '',
+      };
+    })()`);
+    assert.equal(
+      reopened.text,
+      '',
+      'Cancel retained typed sentinel on reopened composer'
+    );
+    assert.equal(
+      reopened.track,
+      reaimed.track,
+      'Cancel cleared OTIO selection'
+    );
+    assert.equal(
+      Number(reopened.start),
+      reaimed.start,
+      'Cancel restored an older selection'
+    );
+    assert.equal(Number(reopened.duration), reaimed.duration);
+    await dismissComposer(browser);
+
+    await selectTrack(
+      browser,
+      plan.nested_track_id,
+      'range',
+      plan.nested_frame,
+      plan.nested_frame + 4
+    );
+    const lowerScroll = await browser.evaluate<{ stage: number; page: number }>(
+      `(() => {
+        const stage = document.querySelector('.stage-wrap');
+        stage.scrollTop = stage.scrollHeight;
+        return { stage: stage.scrollTop, page: window.scrollY };
+      })()`
+    );
+    assert.ok(
+      lowerScroll.stage > 0,
+      'lower-track proof did not scroll the stage'
+    );
+    await openComposer(browser);
+    const revealed = await browser.evaluate<{ stage: number; page: number }>(
+      `(() => ({ stage: document.querySelector('.stage-wrap').scrollTop, page: window.scrollY }))()`
+    );
+    assert.ok(
+      revealed.stage < lowerScroll.stage,
+      `lower-track composer did not reveal preview in stage: ${JSON.stringify({ lowerScroll, revealed })}`
+    );
+    assert.equal(
+      revealed.page,
+      lowerScroll.page,
+      'lower-track reveal scrolled the page'
+    );
+    const lowerComposer = await measureComposer(browser);
+    assertComposerProbe(
+      lowerComposer,
+      'lower track initial preview reveal',
+      false
+    );
+    nativeControlMeasurements.push({
+      state: 'lower-track-reveal',
+      width: 1440,
+      height: 900,
+      scheme: 'light',
+      probe: lowerComposer,
+    });
+    await dismissComposer(browser);
+
+    await browser.evaluate<void>(
+      `document.querySelector('.stage-wrap').scrollTop = 0`
+    );
+    await selectTrack(
+      browser,
+      plan.duplicate_track_id,
+      'point',
+      plan.duplicate_frame,
+      plan.duplicate_frame
+    );
+    await openComposer(browser);
+    const resizeDraft = 'Draft survives preview resize.';
+    await browser.evaluate<void>(`(() => {
+      const field = document.querySelector('.popover-composer textarea');
+      field.value = ${JSON.stringify(resizeDraft)};
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      window.__otioResizeField = field;
+    })()`);
+    for (const [shotWidth, shotHeight] of [
+      [320, 480],
+      [390, 568],
+      [1440, 900],
+    ] as const) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width: shotWidth,
+        height: shotHeight,
+        deviceScaleFactor: 1,
+        mobile: shotWidth < 600,
+      });
+      const settled = await browser.evaluate<{ same: boolean; text: string }>(
+        `(() => {
+          const { promise, resolve } = Promise.withResolvers();
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const field = document.querySelector('.popover-composer textarea');
+            resolve({ same: field === window.__otioResizeField, text: field?.value ?? '' });
+          }));
+          return promise;
+        })()`
+      );
+      assert.deepEqual(
+        settled,
+        { same: true, text: resizeDraft },
+        `${shotWidth}x${shotHeight} resize rebuilt or cleared held editor`
+      );
+      const probe = await measureComposer(browser);
+      assertComposerProbe(
+        probe,
+        `${shotWidth}x${shotHeight} held draft resize`,
+        false
+      );
+      nativeControlMeasurements.push({
+        state: 'resize-held-draft',
+        width: shotWidth,
+        height: shotHeight,
+        scheme: 'light',
+        probe,
+      });
+    }
+    await dismissComposer(browser);
+
+    const editId = await browser.evaluate<string | null>(`(() => {
+      const row = [...document.querySelectorAll('[data-comment-id]')].find(
+        (node) => node.textContent?.includes('Duplicate Video 2 range stays on this id.'));
+      const id = row?.getAttribute('data-comment-id');
+      const mark = id && document.querySelector('.otio-comment-mark[data-comment-id="' + id + '"]');
+      if (!(mark instanceof HTMLButtonElement)) return null;
+      mark.click();
+      const card = document.querySelector('.popover-card');
+      return card?.getAttribute('data-comment-id') === id &&
+        card.querySelector('.popover-reply') && card.querySelector('.popover-edit') &&
+        card.querySelector('.popover-resolve') ? id : null;
+    })()`);
+    assert.ok(editId, 'OTIO mark card is missing reply, edit, or resolve');
+    const replied = await browser.evaluate<string>(`(() => {
+      const { promise, resolve } = Promise.withResolvers();
+      document.querySelector('.popover-card .popover-reply')?.click();
+      const field = document.querySelector('.popover-card .popover-composer textarea');
+      const submit = document.querySelector('.popover-card .popover-composer .popover-action.is-primary');
+      if (!(field instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) {
+        resolve('missing'); return promise;
+      }
+      field.value = ${JSON.stringify(replyBody)};
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      submit.click();
+      const start = Date.now();
+      const check = () => {
+        if (document.body.textContent.includes(${JSON.stringify(replyBody)})) resolve('replied');
+        else if (Date.now() - start > 10000) resolve('timeout');
+        else setTimeout(check, 50);
+      };
+      check();
+      return promise;
+    })()`);
+    assert.equal(
+      replied,
+      'replied',
+      `native OTIO mark reply did not land: ${replied}`
+    );
+    const edited = await browser.evaluate<string>(`(() => {
+      const { promise, resolve } = Promise.withResolvers();
+      document.querySelector('.otio-comment-mark[data-comment-id="${editId}"]')?.click();
+      document.querySelector('.popover-card .popover-edit')?.click();
+      const field = document.querySelector('.popover-card .popover-composer textarea');
+      const submit = document.querySelector('.popover-card .popover-composer .popover-action.is-primary');
+      if (!(field instanceof HTMLTextAreaElement) || !(submit instanceof HTMLButtonElement)) {
+        resolve('missing'); return promise;
+      }
+      field.value = ${JSON.stringify(editedDupRangeBody)};
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      submit.click();
+      const start = Date.now();
+      const check = () => {
+        if (document.body.textContent.includes(${JSON.stringify(editedDupRangeBody)})) resolve('edited');
+        else if (Date.now() - start > 10000) resolve('timeout');
+        else setTimeout(check, 50);
+      };
+      check();
+      return promise;
+    })()`);
+    assert.equal(
+      edited,
+      'edited',
+      `native OTIO mark edit did not land: ${edited}`
+    );
+    const status = await browser.evaluate<string>(`(() => {
+      const { promise, resolve } = Promise.withResolvers();
+      document.querySelector('.otio-comment-mark[data-comment-id="${editId}"]')?.click();
+      document.querySelector('.popover-card .popover-resolve')?.click();
+      const start = Date.now();
+      const check = () => {
+        const action = document.querySelector('.popover-card .popover-resolve');
+        if (action?.textContent === 'Reopen') {
+          action.click();
+          const again = () => {
+            if (document.querySelector('.popover-card .popover-resolve')?.textContent === 'Resolve')
+              resolve('reopened');
+            else if (Date.now() - start > 10000) resolve('reopen-timeout');
+            else setTimeout(again, 50);
+          };
+          again();
+        } else if (Date.now() - start > 10000) resolve('resolve-timeout');
+        else setTimeout(check, 50);
+      };
+      check();
+      return promise;
+    })()`);
+    assert.equal(
+      status,
+      'reopened',
+      `OTIO Resolve/Reopen path failed: ${status}`
+    );
+    await browser.evaluate<void>(
+      `document.querySelector('.popover-card .popover-open-thread')?.click()`
+    );
+
     await writeFile(
       join(shotDir, 'native-controls-measurements.json'),
       `${JSON.stringify(
@@ -5091,6 +5626,10 @@ try {
     'Duplicate Video 2 range stays on this id.',
     'Dissolve window needs both sources.',
     'Primary grade range, before the dissolve.',
+    wholeTrackBody,
+    pointerBody,
+    editedDupRangeBody,
+    replyBody,
   ]) {
     assert.equal(
       listedText.includes(body),
@@ -5172,6 +5711,60 @@ try {
   };
   assert.equal(nestedAnchor.track_id, plan.nested_track_id);
   assert.equal(nestedAnchor.range?.duration.value, 0);
+  assert.equal(
+    JSON.stringify(original).includes(cancelledText),
+    false,
+    'cancelled sentinel reached fresh agent readback'
+  );
+  const wholeTrack = commentByBody(original, wholeTrackBody);
+  const wholeAnchor = wholeTrack['anchor'] as {
+    track_id?: string;
+    range?: TimeRange;
+  };
+  assert.equal(
+    wholeAnchor.track_id,
+    plan.duplicate_track_id,
+    'whole-track comment changed the duplicate-name track identity'
+  );
+  assert.notEqual(wholeAnchor.track_id, plan.duplicate_other_track_id);
+  assert.ok(
+    rangeClose(wholeAnchor.range, duplicateScope),
+    'fresh original-source whole-track anchor differs from exposed-core scope'
+  );
+  assert.equal(
+    resolvedOf(wholeTrack)['status'],
+    'resolved',
+    'fresh original-source whole-track readback is unresolved'
+  );
+  assert.ok(reaimed, 'pointer re-aim result is absent');
+  const pointer = commentByBody(original, pointerBody);
+  const pointerAnchor = pointer['anchor'] as {
+    track_id?: string;
+    range?: TimeRange;
+  };
+  assert.equal(pointerAnchor.track_id, plan.dissolve_track_id);
+  assert.ok(
+    rangeClose(pointerAnchor.range, {
+      start_time: { value: reaimed.start, rate: reaimed.rate },
+      duration: { value: reaimed.duration, rate: reaimed.rate },
+    }),
+    'fresh readback posted older coordinates instead of the final pointer aim'
+  );
+  const editedAnchor = commentByBody(original, editedDupRangeBody)[
+    'anchor'
+  ] as {
+    track_id?: string;
+    range?: TimeRange;
+  };
+  assert.equal(editedAnchor.track_id, plan.duplicate_track_id);
+  assert.ok(
+    rangeClose(editedAnchor.range, plan.duplicate_range),
+    'editing the existing OTIO mark changed its original range'
+  );
+  assert.ok(
+    JSON.stringify(original).includes(replyBody),
+    'fresh agent readback omitted the OTIO mark reply'
+  );
   pass('mcp-original');
 
   const insertDir = join(scratch, 'insert.otiod');
@@ -5190,7 +5783,9 @@ try {
   const insertRange = insertExpect.mapped_range;
   assert.ok(insertRange, 'insert projection missing');
   const reviewer = 'reader@example.test';
-  const insertIds = original.map((entry) => String(entry['comment_id']));
+  const insertIds = original
+    .filter((entry) => entry['body'] !== replyBody)
+    .map((entry) => String(entry['comment_id']));
   assert.deepEqual(
     await store.listCommenters(relicId),
     ['reader@example.test'],
