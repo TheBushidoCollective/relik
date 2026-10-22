@@ -141,6 +141,59 @@ const mails: { to: string; mail: OutboundMail }[] = [];
 const children = new Set<ChildProcess>();
 const packetCanvasMeasurements: Array<Record<string, unknown>> = [];
 
+interface McpLoopbackReceipt {
+  readonly callOrdinal: number;
+  readonly tool: string;
+  readonly relicId: string | null;
+  readonly pid: number;
+  readonly requestHash: string;
+  readonly method: string;
+  readonly pathname: string;
+  readonly event: 'entry' | 'response';
+  readonly status: number | null;
+}
+interface ActiveMcpCall {
+  readonly callOrdinal: number;
+  readonly tool: string;
+  readonly relicId: string | null;
+  readonly pid: number;
+  readonly requestHash: string;
+  readonly pendingReceipts: McpLoopbackReceipt[];
+}
+const mcpLoopbackReceipts: McpLoopbackReceipt[] = [];
+let activeMcpCall: ActiveMcpCall | undefined;
+let nextMcpCallOrdinal = 0;
+
+function recordMcpLoopbackReceipt(
+  method: string,
+  pathname: string,
+  event: McpLoopbackReceipt['event'],
+  status: number | null
+): void {
+  const call = activeMcpCall;
+  if (!call) return;
+  call.pendingReceipts.push({
+    callOrdinal: call.callOrdinal,
+    tool: call.tool,
+    relicId: call.relicId,
+    pid: call.pid,
+    requestHash: call.requestHash,
+    method,
+    pathname,
+    event,
+    status,
+  });
+}
+
+function persistMcpLoopbackReceipts(
+  call: ActiveMcpCall
+): readonly McpLoopbackReceipt[] {
+  mcpLoopbackReceipts.push(...call.pendingReceipts);
+  return mcpLoopbackReceipts.filter(
+    (receipt) => receipt.callOrdinal === call.callOrdinal
+  );
+}
+
 let handler: ((request: Request) => Promise<Response>) | undefined;
 const service = Bun.serve({
   port: 0,
@@ -174,6 +227,8 @@ handler = async (request: Request): Promise<Response> => {
     url.hostname === '127.0.0.1' || url.hostname === 'localhost',
     `non-loopback request reached the proof server: ${url.hostname}`
   );
+  recordMcpLoopbackReceipt(request.method, url.pathname, 'entry', null);
+
   if (
     url.pathname.startsWith('/__storage/upload/') &&
     request.method === 'PUT'
@@ -191,7 +246,14 @@ handler = async (request: Request): Promise<Response> => {
       headers: { 'content-type': 'application/octet-stream' },
     });
   }
-  return app.fetch(request);
+  const response = await app.fetch(request);
+  recordMcpLoopbackReceipt(
+    request.method,
+    url.pathname,
+    'response',
+    response.status
+  );
+  return response;
 };
 
 interface Rational {
@@ -362,6 +424,14 @@ async function callMcp(
   toolName: string,
   args: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
+  const packet = `${JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: toolName, arguments: args },
+  })}\n`;
+  const requestHash = await sha256Hex(packet);
+  const relicId = args['relic_id'];
   const child = Bun.spawn(resolveCommand(), {
     cwd: scratch,
     env: {
@@ -375,16 +445,20 @@ async function callMcp(
     stdout: 'pipe',
     stderr: 'pipe',
   });
+  const call: ActiveMcpCall = {
+    callOrdinal: ++nextMcpCallOrdinal,
+    tool: toolName,
+    relicId: typeof relicId === 'string' ? relicId : null,
+    pid: child.pid,
+    requestHash,
+    pendingReceipts: [],
+  };
+  activeMcpCall = call;
   const timer = setTimeout(() => {
     child.kill();
   }, 45000);
+  let receiptsPersisted = false;
   try {
-    const packet = `${JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'tools/call',
-      params: { name: toolName, arguments: args },
-    })}\n`;
     const writeResult = child.stdin.write(packet);
     const endResult = child.stdin.end();
     const [stdout, stderr, exit, inputOutcomes] = await Promise.all([
@@ -393,18 +467,21 @@ async function callMcp(
       child.exited,
       Promise.allSettled([writeResult, endResult]),
     ]);
+    const loopbackReceipts = persistMcpLoopbackReceipts(call);
+    receiptsPersisted = true;
     const transport =
       exit !== 0 || stdout.trim().length === 0
         ? JSON.stringify({
             pid: child.pid,
             packetBytes: Buffer.byteLength(packet),
-            packetSha256: await sha256Hex(packet),
+            packetSha256: requestHash,
             inputOutcomes,
             stdoutBytes: Buffer.byteLength(stdout),
             stdoutSha256: await sha256Hex(stdout),
             exit,
             signal: child.signalCode,
             stderr,
+            loopbackReceipts,
           })
         : '';
     assert.equal(exit, 0, `relic-mcp exited ${exit}: ${transport}`);
@@ -431,8 +508,10 @@ async function callMcp(
     );
     return (result['structuredContent'] ?? {}) as Record<string, unknown>;
   } finally {
+    if (!receiptsPersisted) persistMcpLoopbackReceipts(call);
     clearTimeout(timer);
     child.kill();
+    if (activeMcpCall === call) activeMcpCall = undefined;
   }
 }
 
