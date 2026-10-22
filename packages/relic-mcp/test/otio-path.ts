@@ -42,7 +42,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { decodeKey, openRelic } from '@relic/format';
+import {
+  compareRationalTimes,
+  decodeKey,
+  evaluateOtioAt,
+  openRelic,
+  readOtioDocument,
+} from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import type { OutboundMail } from '@relic/server/src/mail.ts';
@@ -2901,13 +2907,16 @@ function otioRange(value: TimeRange): Record<string, unknown> {
   };
 }
 
-function decoderDocument(name: string, clips: readonly DecoderClip[]): string {
+function decoderDocument(
+  name: string,
+  clips: readonly DecoderClip[],
+  leadingGap?: TimeRange
+): string {
   return `${JSON.stringify(
     {
       OTIO_SCHEMA: 'Timeline.1',
       metadata: { relic: { id: `timeline-${name}` } },
       name: `Decoder timing ${name}`,
-      global_start_time: null,
       tracks: {
         OTIO_SCHEMA: 'Stack.1',
         metadata: { relic: { id: `stack-${name}` } },
@@ -2922,32 +2931,49 @@ function decoderDocument(name: string, clips: readonly DecoderClip[]): string {
             OTIO_SCHEMA: 'Track.1',
             metadata: { relic: { id: `track-${name}` } },
             name: 'Packet timing',
+            kind: 'Video',
             source_range: null,
             effects: [],
             markers: [],
             enabled: true,
             color: null,
-            children: clips.map((clip) => ({
-              OTIO_SCHEMA: 'Clip.2',
-              metadata: { relic: { id: clip.id } },
-              name: clip.id,
-              source_range: otioRange(clip.source),
-              effects: [],
-              markers: [],
-              enabled: true,
-              color: null,
-              media_references: {
-                DEFAULT_MEDIA: {
-                  OTIO_SCHEMA: 'ExternalReference.1',
-                  metadata: {},
-                  name: '',
-                  available_range: otioRange(clip.available),
-                  available_image_bounds: null,
-                  target_url: `media/${clip.media}`,
+            children: [
+              ...(leadingGap === undefined
+                ? []
+                : [
+                    {
+                      OTIO_SCHEMA: 'Gap.1',
+                      metadata: { relic: { id: `gap-${name}` } },
+                      name: 'Timing lead-in',
+                      source_range: otioRange(leadingGap),
+                      effects: [],
+                      markers: [],
+                      enabled: true,
+                      color: null,
+                    },
+                  ]),
+              ...clips.map((clip) => ({
+                OTIO_SCHEMA: 'Clip.2',
+                metadata: { relic: { id: clip.id } },
+                name: clip.id,
+                source_range: otioRange(clip.source),
+                effects: [],
+                markers: [],
+                enabled: true,
+                color: null,
+                media_references: {
+                  DEFAULT_MEDIA: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    metadata: {},
+                    name: '',
+                    available_range: otioRange(clip.available),
+                    available_image_bounds: null,
+                    target_url: `media/${clip.media}`,
+                  },
                 },
-              },
-              active_media_reference_key: 'DEFAULT_MEDIA',
-            })),
+                active_media_reference_key: 'DEFAULT_MEDIA',
+              })),
+            ],
           },
         ],
       },
@@ -2975,17 +3001,101 @@ async function publishDecoderDirectory(
   return shareUrl;
 }
 
-async function publishDecoderCase(
+async function publishDecoderDocument(
   name: string,
-  clips: readonly DecoderClip[]
+  document: string
 ): Promise<string> {
   const directory = join(scratch, `decoder-${name}.otiod`);
   await cp(decoderFixtureDir, directory, { recursive: true });
-  await writeFile(
-    join(directory, 'content.otio'),
-    decoderDocument(name, clips)
-  );
+  await writeFile(join(directory, 'content.otio'), document);
   return publishDecoderDirectory(name, directory);
+}
+
+async function publishDecoderCase(
+  name: string,
+  clips: readonly DecoderClip[],
+  leadingGap?: TimeRange
+): Promise<string> {
+  return publishDecoderDocument(name, decoderDocument(name, clips, leadingGap));
+}
+
+function selectedVideoSourceTime(
+  name: string,
+  documentText: string,
+  time: Rational,
+  nodeId: string
+): Rational {
+  const document = readOtioDocument(documentText);
+  const result = evaluateOtioAt(document, `timeline-${name}`, time);
+  assert.equal(
+    result.video_contributions.length,
+    1,
+    `${name} at ${time.value}@${time.rate} has ${result.video_contributions.length} video contributions`
+  );
+  const contribution = result.video_contributions.find(
+    (candidate) => candidate.node_id === nodeId
+  );
+  assert.ok(
+    contribution,
+    `${name} at ${time.value}@${time.rate} did not select ${nodeId}`
+  );
+  return contribution.source_time;
+}
+
+function assertRepresentationalZero(
+  name: string,
+  documentText: string,
+  time: Rational,
+  nodeId: string
+): void {
+  const sourceTime = selectedVideoSourceTime(name, documentText, time, nodeId);
+  assert.ok(
+    sourceTime.value < 0,
+    `${name} source is not representationally negative: ${sourceTime.value}@${sourceTime.rate}`
+  );
+  assert.equal(
+    compareRationalTimes(sourceTime, {
+      value: 0,
+      rate: sourceTime.rate,
+    }),
+    0,
+    `${name} source is not compare-equal to zero`
+  );
+}
+
+function assertSelectedPositiveSource(
+  name: string,
+  documentText: string,
+  time: Rational,
+  nodeId: string,
+  expected: Rational
+): void {
+  const sourceTime = selectedVideoSourceTime(name, documentText, time, nodeId);
+  assert.ok(
+    sourceTime.value > 0,
+    `${name} second source is not positive: ${sourceTime.value}@${sourceTime.rate}`
+  );
+  assert.equal(
+    compareRationalTimes(sourceTime, expected),
+    0,
+    `${name} source does not match ${expected.value}@${expected.rate}`
+  );
+}
+
+function assertStrictlyNegativeSource(
+  name: string,
+  documentText: string,
+  time: Rational,
+  nodeId: string
+): void {
+  const sourceTime = selectedVideoSourceTime(name, documentText, time, nodeId);
+  assert.ok(
+    compareRationalTimes(sourceTime, {
+      value: 0,
+      rate: sourceTime.rate,
+    }) < 0,
+    `${name} source is not truly negative: ${sourceTime.value}@${sourceTime.rate}`
+  );
 }
 
 async function timingDiagnostics(browser: ChromeSession): Promise<string> {
@@ -3204,14 +3314,24 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
 
   const r2398 = 24000 / 1001;
   const r2997 = 30000 / 1001;
-  const nearZeroUrl = await publishDecoderCase('near-zero', [
+  const nearZeroDocument = decoderDocument('near-zero', [
     decoderClip(
       'near-zero',
       'fr24.mp4',
-      decoderRange(4, r2398, 24),
-      decoderRange(5, r2997, 60)
+      decoderRange(4, r2398, 48, 24),
+      decoderRange(5, r2997, 48, 24)
     ),
   ]);
+  assertRepresentationalZero(
+    'near-zero',
+    nearZeroDocument,
+    { value: 0, rate: 24 },
+    'near-zero'
+  );
+  const nearZeroUrl = await publishDecoderDocument(
+    'near-zero',
+    nearZeroDocument
+  );
   const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken);
   try {
     assert.equal(await waitReady(nearZeroBrowser), 'true');
@@ -3232,14 +3352,24 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     await nearZeroBrowser.close();
   }
 
-  const strictNegativeUrl = await publishDecoderCase('strict-negative', [
+  const strictNegativeDocument = decoderDocument('strict-negative', [
     decoderClip(
       'strict-negative',
       'fr24.mp4',
-      decoderRange(3, r2398, 24),
-      decoderRange(5, r2997, 60)
+      decoderRange(3, r2398, 48, 24),
+      decoderRange(5, r2997, 48, 24)
     ),
   ]);
+  assertStrictlyNegativeSource(
+    'strict-negative',
+    strictNegativeDocument,
+    { value: 0, rate: 24 },
+    'strict-negative'
+  );
+  const strictNegativeUrl = await publishDecoderDocument(
+    'strict-negative',
+    strictNegativeDocument
+  );
   const strictNegativeBrowser = await openBrowser(
     strictNegativeUrl,
     sessionToken
@@ -3261,56 +3391,78 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     await strictNegativeBrowser.close();
   }
 
-  const driftUrl = await publishDecoderCase('drift-cut', [
-    decoderClip(
-      'drift-a',
-      'fr24.mp4',
-      decoderRange(0, r2398, 12),
-      decoderRange(0, r2398, 24)
-    ),
-    decoderClip(
-      'drift-b',
-      'fr24.mp4',
-      decoderRange(0, r2997, 55),
-      decoderRange(0, r2997, 90)
-    ),
-    decoderClip(
-      'drift-c',
-      'fr24.mp4',
-      decoderRange(0, r2398, 24),
-      decoderRange(0, r2398, 48)
-    ),
-  ]);
-  const driftBrowser = await openBrowser(driftUrl, sessionToken);
+  const availableOriginCutDocument = decoderDocument(
+    'available-origin-cut',
+    [
+      decoderClip(
+        'cut-c',
+        'fr30.webm',
+        decoderRange(56, 30, 60),
+        decoderRange(56.00000000000001, 30, 60)
+      ),
+    ],
+    decoderRange(0, 30, 56)
+  );
+  assertRepresentationalZero(
+    'available-origin-cut',
+    availableOriginCutDocument,
+    { value: 56, rate: 30 },
+    'cut-c'
+  );
+  assertSelectedPositiveSource(
+    'available-origin-cut',
+    availableOriginCutDocument,
+    { value: 57, rate: 30 },
+    'cut-c',
+    { value: 1, rate: 30 }
+  );
+  const availableOriginCutUrl = await publishDecoderDocument(
+    'available-origin-cut',
+    availableOriginCutDocument
+  );
+  const availableOriginCutBrowser = await openBrowser(
+    availableOriginCutUrl,
+    sessionToken
+  );
   try {
-    assert.equal(await waitReady(driftBrowser), 'true');
-    await seekTo(driftBrowser, 56);
+    assert.equal(await waitReady(availableOriginCutBrowser), 'true');
+    await seekTo(availableOriginCutBrowser, 55);
+    assert.equal(
+      isOpaqueBlack(
+        await sampleCanvas(availableOriginCutBrowser, width, height)
+      ),
+      true,
+      'available-origin/cut witness has media before cut-c'
+    );
+    await seekTo(availableOriginCutBrowser, 56);
     assert.equal(
       (
         await assertPacketCanvas(
-          driftBrowser,
-          'mixed-rate drift-cut first frame',
-          'fr24.mp4',
-          0
+          availableOriginCutBrowser,
+          'available-origin/cut witness first frame',
+          'fr30.webm',
+          0,
+          false
         )
       ).frame,
       0
     );
-    await seekTo(driftBrowser, 57);
+    await seekTo(availableOriginCutBrowser, 57);
     assert.equal(
       (
         await assertPacketCanvas(
-          driftBrowser,
-          'mixed-rate drift-cut second frame',
-          'fr24.mp4',
-          1 / r2398
+          availableOriginCutBrowser,
+          'available-origin/cut witness second frame',
+          'fr30.webm',
+          1 / 30,
+          false
         )
       ).frame,
       1
     );
     pass('decoder-near-zero');
   } finally {
-    await driftBrowser.close();
+    await availableOriginCutBrowser.close();
   }
 
   const editUrl = await publishDecoderCase('unsupported-edits', [
