@@ -1,0 +1,53 @@
+{
+  "sourceHead": "747591e",
+  "viewerShellHash": "370cd0871bd3f5ca",
+  "gateCommits": ["117af41", "8b85b88"],
+  "productCssCommit": "14a2708",
+  "sourceStagesObserved": 33,
+  "originalMatrixAndContextAllocationGate": "Passed through STAGE screenshots, preserving compact/draft/fullscreen/native control assertions",
+  "sourceResult": "Not qualified: auxiliary eleventh-post refusal",
+  "exit": 1,
+  "postingFailure": {
+    "posted": "timeout",
+    "payload": {
+      "expectedBody": "Coincident duplicate-point reveal 11.",
+      "fieldValue": "Coincident duplicate-point reveal 11.",
+      "selection": {
+        "trackId": "track-v2-duplicate",
+        "start": "0",
+        "duration": "0",
+        "rate": "24",
+        "durationRate": "24"
+      }
+    },
+    "card": {
+      "left": 8,
+      "top": 184.25,
+      "right": 360,
+      "bottom": 421.734375,
+      "width": 352,
+      "height": 237.484375
+    },
+    "composer": {
+      "present": true,
+      "visible": true,
+      "className": "popover popover-card is-otio-composer popover-composer",
+      "ariaBusy": null,
+      "text": "v1 · Relik Feature Editorial · Video 2 · point 0 @ 24Your address is shown with your comment and in emails to people following the relic, and Relic sees who commented on what. When someone comments or a new version is published, Relic emails you, with a link to stop.Too many comments from here just nowPostCancel"
+    },
+    "submit": {
+      "present": true,
+      "disabled": false,
+      "ariaBusy": null,
+      "text": "Post"
+    },
+    "note": {
+      "present": true,
+      "visible": true,
+      "text": "Too many comments from here just now"
+    },
+    "bodyVisible": false
+  },
+  "rateLimitPolicyUnchanged": true,
+  "externalWrites": "Isolated loopback in-memory only"
+}
