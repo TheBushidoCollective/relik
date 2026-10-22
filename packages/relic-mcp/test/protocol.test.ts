@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { createApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import {
+  observeAwait,
+  observeBegin,
+  observeComplete,
+  observeError,
+} from '../../../scripts/full-suite-observation.ts';
 import { createHttpHandler } from '../src/http.ts';
 import {
   decodeHeaderValue,
@@ -211,86 +217,144 @@ describe('the version the server reports', () => {
   });
 
   test('stamps bundle and plugin launch config from package.json when built', async () => {
-    const root = new URL('../', import.meta.url).pathname;
-    const pkg = (await Bun.file(`${root}package.json`).json()) as {
-      name: string;
-      version: string;
-    };
-
-    const build = Bun.spawn(['bun', 'run', 'build.ts'], {
-      cwd: root,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    expect(await build.exited).toBe(0);
-
-    const bundle = await Bun.file(`${root}dist/relic-mcp.js`).text();
-    expect(bundle).toContain(pkg.version);
-    expect(bundle).not.toContain('process.env.RELIC_MCP_VERSION');
-
-    const plugin = (await Bun.file(
-      `${root}.claude-plugin/plugin.json`
-    ).json()) as {
-      version: string;
-      mcpServers: string;
-    };
-    const marketplace = (await Bun.file(
-      `${root}.claude-plugin/marketplace.json`
-    ).json()) as {
-      plugins: Array<{ version: string }>;
-      metadata: { version: string };
-    };
-    const mcpServers = (await Bun.file(`${root}mcp-servers.json`).json()) as {
-      relic: {
-        type: string;
-        command: string;
-        args: string[];
-        env: Record<string, string>;
+    const lifecycle = observeBegin('protocol-test', 'stamp_bundle_test');
+    try {
+      const root = new URL('../', import.meta.url).pathname;
+      const pkg = (await observeAwait('protocol-test', 'package_read', () =>
+        Bun.file(`${root}package.json`).json()
+      )) as {
+        name: string;
+        version: string;
       };
-    };
 
-    expect(plugin.version).toBe(pkg.version);
-    expect(plugin.mcpServers).toBe('./mcp-servers.json');
-    expect(marketplace.plugins[0]?.version).toBe(pkg.version);
-    expect(marketplace.metadata.version).toBe(pkg.version);
-    expect(mcpServers.relic).toEqual({
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', `${pkg.name}@${pkg.version}`],
-      env: { RELIC_CLIENT_NAME: `relic-plugin/${pkg.version}` },
-    });
-    const runEofProbe = async (suppressResponse: boolean) => {
-      const probe = Bun.spawn(['bun', `${root}test/stdio-eof-path.ts`], {
+      const buildSpawn = observeBegin('protocol-test', 'stamp_child_spawn');
+      const build = Bun.spawn(['bun', 'run', 'build.ts'], {
         cwd: root,
-        env: {
-          ...process.env,
-          RELIC_STDIO_EOF_SUPPRESS_RESPONSE: suppressResponse ? '1' : '0',
-        },
         stdout: 'pipe',
         stderr: 'pipe',
       });
-      const [stdout, stderr, exit] = await Promise.all([
-        new Response(probe.stdout).text(),
-        new Response(probe.stderr).text(),
-        probe.exited,
-      ]);
-      return { exit, stderr, stdout };
-    };
+      observeComplete(buildSpawn, { owned_child_pid: build.pid });
+      const buildExit = await observeAwait(
+        'protocol-test',
+        'stamp_child_exit_wait',
+        () => build.exited,
+        { owned_child_pid: build.pid }
+      );
+      expect(buildExit).toBe(0);
 
-    const probe = await runEofProbe(false);
-    expect(probe.exit).toBe(0);
-    expect(probe.stderr).toBe('');
-    expect(probe.stdout).toContain('STDIO_EOF_PATH_OK');
+      const bundle = await observeAwait('protocol-test', 'bundle_read', () =>
+        Bun.file(`${root}dist/relic-mcp.js`).text()
+      );
+      expect(bundle).toContain(pkg.version);
+      expect(bundle).not.toContain('process.env.RELIC_MCP_VERSION');
 
-    // The tap reads this only after the loopback comments GET is accepted and
-    // held. A zero child exit cannot stand in for the matching response.
-    const suppressed = await runEofProbe(true);
-    expect(suppressed.exit).not.toBe(0);
-    expect(`${suppressed.stdout}\n${suppressed.stderr}`).toContain(
-      'matching JSON-RPC response'
-    );
-    expect(suppressed.stderr).toContain('comments_get_accepted');
-    expect(suppressed.stderr).toContain('response_suppression_armed');
+      const plugin = (await observeAwait(
+        'protocol-test',
+        'plugin_manifest_read',
+        () => Bun.file(`${root}.claude-plugin/plugin.json`).json()
+      )) as {
+        version: string;
+        mcpServers: string;
+      };
+      const marketplace = (await observeAwait(
+        'protocol-test',
+        'marketplace_manifest_read',
+        () => Bun.file(`${root}.claude-plugin/marketplace.json`).json()
+      )) as {
+        plugins: Array<{ version: string }>;
+        metadata: { version: string };
+      };
+      const mcpServers = (await observeAwait(
+        'protocol-test',
+        'mcp_servers_manifest_read',
+        () => Bun.file(`${root}mcp-servers.json`).json()
+      )) as {
+        relic: {
+          type: string;
+          command: string;
+          args: string[];
+          env: Record<string, string>;
+        };
+      };
+
+      expect(plugin.version).toBe(pkg.version);
+      expect(plugin.mcpServers).toBe('./mcp-servers.json');
+      expect(marketplace.plugins[0]?.version).toBe(pkg.version);
+      expect(marketplace.metadata.version).toBe(pkg.version);
+      expect(mcpServers.relic).toEqual({
+        type: 'stdio',
+        command: 'npx',
+        args: ['-y', `${pkg.name}@${pkg.version}`],
+        env: { RELIC_CLIENT_NAME: `relic-plugin/${pkg.version}` },
+      });
+      const runEofProbe = async (suppressResponse: boolean) => {
+        const probeSpawn = observeBegin('protocol-test', 'eof_probe_spawn', {
+          suppress_response: suppressResponse,
+        });
+        const probe = Bun.spawn(['bun', `${root}test/stdio-eof-path.ts`], {
+          cwd: root,
+          env: {
+            ...process.env,
+            RELIC_STDIO_EOF_SUPPRESS_RESPONSE: suppressResponse ? '1' : '0',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        observeComplete(probeSpawn, {
+          owned_child_pid: probe.pid,
+          suppress_response: suppressResponse,
+        });
+        const probeWait = observeBegin('protocol-test', 'eof_probe_wait', {
+          owned_child_pid: probe.pid,
+          suppress_response: suppressResponse,
+        });
+        try {
+          const [stdout, stderr, exit] = await Promise.all([
+            new Response(probe.stdout).text(),
+            new Response(probe.stderr).text(),
+            probe.exited,
+          ]);
+          observeComplete(probeWait, {
+            owned_child_pid: probe.pid,
+            suppress_response: suppressResponse,
+          });
+          return { exit, stderr, stdout };
+        } catch (error) {
+          observeError(probeWait, error, {
+            owned_child_pid: probe.pid,
+            suppress_response: suppressResponse,
+          });
+          throw error;
+        }
+      };
+
+      const probe = await observeAwait(
+        'protocol-test',
+        'normal_eof_probe',
+        () => runEofProbe(false)
+      );
+      expect(probe.exit).toBe(0);
+      expect(probe.stderr).toBe('');
+      expect(probe.stdout).toContain('STDIO_EOF_PATH_OK');
+
+      // The tap reads this only after the loopback comments GET is accepted and
+      // held. A zero child exit cannot stand in for the matching response.
+      const suppressed = await observeAwait(
+        'protocol-test',
+        'suppression_eof_probe',
+        () => runEofProbe(true)
+      );
+      expect(suppressed.exit).not.toBe(0);
+      expect(`${suppressed.stdout}\n${suppressed.stderr}`).toContain(
+        'matching JSON-RPC response'
+      );
+      expect(suppressed.stderr).toContain('comments_get_accepted');
+      expect(suppressed.stderr).toContain('response_suppression_armed');
+      observeComplete(lifecycle);
+    } catch (error) {
+      observeError(lifecycle, error);
+      throw error;
+    }
   });
 });
 

@@ -12,6 +12,12 @@
  */
 
 import { copyFile, mkdir, readdir } from 'node:fs/promises';
+import {
+  observeAwait,
+  observeBegin,
+  observeComplete,
+  observeError,
+} from '../../scripts/full-suite-observation.ts';
 
 const pkgDir = new URL('.', import.meta.url).pathname;
 
@@ -312,70 +318,103 @@ export const FRAME_CSP_META = `<meta http-equiv="Content-Security-Policy" conten
 
 export async function buildCover(options?: { outdir?: string }): Promise<void> {
   const out = options?.outdir ?? `${pkgDir}dist/cover/`;
-  await mkdir(out, { recursive: true });
-
-  const builtCover = await Bun.build({
-    entrypoints: [`${pkgDir}src/cover/main.ts`],
-    outdir: out,
-    target: 'browser',
-    format: 'esm',
-    minify: false,
-    splitting: false,
-    naming: 'cover.js',
-    define: { 'process.env.NODE_ENV': '"production"' },
+  const lifecycle = observeBegin('relic-viewer-build-cover', 'build_cover', {
+    output_directory: out,
   });
-
-  if (!builtCover.success) {
-    for (const log of builtCover.logs) console.error(log);
-    throw new Error('Failed to bundle cover.js');
-  }
-
-  const builtSandbox = await Bun.build({
-    entrypoints: [`${pkgDir}src/sandbox.ts`],
-    target: 'browser',
-    format: 'esm',
-    minify: false,
-    splitting: false,
-    define: { 'process.env.NODE_ENV': '"production"' },
-  });
-
-  if (!builtSandbox.success) {
-    for (const log of builtSandbox.logs) console.error(log);
-    throw new Error('Failed to bundle sandbox for frame.html');
-  }
-
-  const output = builtSandbox.outputs[0];
-  if (!output) {
-    throw new Error('Failed to bundle sandbox for frame.html');
-  }
-  const sandboxJs = await output.text();
-  const SCRIPT_TAG = '<script type="module" src="/assets/sandbox.js"></script>';
-  const shell = await Bun.file(`${pkgDir}public/sandbox.html`).text();
-  if (!shell.includes(SCRIPT_TAG)) {
-    throw new Error('sandbox.html does not contain the expected script tag');
-  }
-
-  let frameHtml = shell.replace(
-    SCRIPT_TAG,
-    () =>
-      `<script type="module">${sandboxJs.replace(/<\/script/gi, '<\\/script')}</script>`
-  );
-
-  if (frameHtml.includes('<head>')) {
-    frameHtml = frameHtml.replace('<head>', `<head>\n${FRAME_CSP_META}`);
-  } else {
-    frameHtml = frameHtml.replace(
-      '<!doctype html>\n',
-      `<!doctype html>\n${FRAME_CSP_META}\n`
+  try {
+    await observeAwait(
+      'relic-viewer-build-cover',
+      'cover_directory_mkdir',
+      () => mkdir(out, { recursive: true })
     );
-  }
 
-  await Bun.write(`${out}frame.html`, frameHtml);
+    const builtCover = await observeAwait(
+      'relic-viewer-build-cover',
+      'cover_bundle_build',
+      () =>
+        Bun.build({
+          entrypoints: [`${pkgDir}src/cover/main.ts`],
+          outdir: out,
+          target: 'browser',
+          format: 'esm',
+          minify: false,
+          splitting: false,
+          naming: 'cover.js',
+          define: { 'process.env.NODE_ENV': '"production"' },
+        })
+    );
 
-  await copyFile(`${pkgDir}src/styles.css`, `${out}styles.css`);
-  await copyFile(`${pkgDir}src/cover/cover.css`, `${out}cover.css`);
+    if (!builtCover.success) {
+      for (const log of builtCover.logs) console.error(log);
+      throw new Error('Failed to bundle cover.js');
+    }
 
-  const indexHtml = `<!doctype html>
+    const builtSandbox = await observeAwait(
+      'relic-viewer-build-cover',
+      'sandbox_bundle_build',
+      () =>
+        Bun.build({
+          entrypoints: [`${pkgDir}src/sandbox.ts`],
+          target: 'browser',
+          format: 'esm',
+          minify: false,
+          splitting: false,
+          define: { 'process.env.NODE_ENV': '"production"' },
+        })
+    );
+
+    if (!builtSandbox.success) {
+      for (const log of builtSandbox.logs) console.error(log);
+      throw new Error('Failed to bundle sandbox for frame.html');
+    }
+
+    const output = builtSandbox.outputs[0];
+    if (!output) {
+      throw new Error('Failed to bundle sandbox for frame.html');
+    }
+    const sandboxJs = await observeAwait(
+      'relic-viewer-build-cover',
+      'sandbox_output_read',
+      () => output.text()
+    );
+    const SCRIPT_TAG =
+      '<script type="module" src="/assets/sandbox.js"></script>';
+    const shell = await observeAwait(
+      'relic-viewer-build-cover',
+      'sandbox_template_read',
+      () => Bun.file(`${pkgDir}public/sandbox.html`).text()
+    );
+    if (!shell.includes(SCRIPT_TAG)) {
+      throw new Error('sandbox.html does not contain the expected script tag');
+    }
+
+    let frameHtml = shell.replace(
+      SCRIPT_TAG,
+      () =>
+        `<script type="module">${sandboxJs.replace(/<\/script/gi, '<\\/script')}</script>`
+    );
+
+    if (frameHtml.includes('<head>')) {
+      frameHtml = frameHtml.replace('<head>', `<head>\n${FRAME_CSP_META}`);
+    } else {
+      frameHtml = frameHtml.replace(
+        '<!doctype html>\n',
+        `<!doctype html>\n${FRAME_CSP_META}\n`
+      );
+    }
+
+    await observeAwait('relic-viewer-build-cover', 'frame_write', () =>
+      Bun.write(`${out}frame.html`, frameHtml)
+    );
+
+    await observeAwait('relic-viewer-build-cover', 'styles_css_copy', () =>
+      copyFile(`${pkgDir}src/styles.css`, `${out}styles.css`)
+    );
+    await observeAwait('relic-viewer-build-cover', 'cover_css_copy', () =>
+      copyFile(`${pkgDir}src/cover/cover.css`, `${out}cover.css`)
+    );
+
+    const indexHtml = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -390,13 +429,22 @@ export async function buildCover(options?: { outdir?: string }): Promise<void> {
 </body>
 </html>
 `;
-  await Bun.write(`${out}index.html`, indexHtml);
+    await observeAwait('relic-viewer-build-cover', 'index_write', () =>
+      Bun.write(`${out}index.html`, indexHtml)
+    );
 
-  const workerPath = new URL(
-    './node_modules/pdfjs-dist/build/pdf.worker.mjs',
-    import.meta.url
-  ).pathname;
-  await copyFile(workerPath, `${out}pdf.worker.mjs`);
+    const workerPath = new URL(
+      './node_modules/pdfjs-dist/build/pdf.worker.mjs',
+      import.meta.url
+    ).pathname;
+    await observeAwait('relic-viewer-build-cover', 'pdf_worker_copy', () =>
+      copyFile(workerPath, `${out}pdf.worker.mjs`)
+    );
+    observeComplete(lifecycle);
+  } catch (error) {
+    observeError(lifecycle, error);
+    throw error;
+  }
 }
 
 if (import.meta.main) {

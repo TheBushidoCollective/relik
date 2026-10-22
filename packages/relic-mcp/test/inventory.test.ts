@@ -13,6 +13,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  observeAwait,
+  observeBegin,
+  observeComplete,
+  observeError,
+  observeEvent,
+} from '../../../scripts/full-suite-observation.ts';
+import {
   encodeKey,
   encryptRelic,
   generateKey,
@@ -23,6 +30,7 @@ import { MNEMONIC_WORDS, mnemonicToKey } from '@relic/format/mnemonic';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import { metadataCachePath } from '../src/metadata-cache.ts';
 import { listRelics, showRelic } from '../src/inventory.ts';
 import { type FileReader, type PublishDeps, publish } from '../src/publish.ts';
 import { republish } from '../src/republish.ts';
@@ -46,43 +54,154 @@ let store: MemoryStore;
 let app: RelicApp;
 let disk: Map<string, Uint8Array>;
 let deps: PublishDeps;
+let fixtureEpoch = 0;
+let identitySequence = 0;
+const identities = new WeakMap<object, string>();
+
+function objectIdentity(value: object): string {
+  const existing = identities.get(value);
+  if (existing !== undefined) return existing;
+  const next = `object-${++identitySequence}`;
+  identities.set(value, next);
+  return next;
+}
+
+function observeTestBodyEntry(caseName: string): void {
+  observeEvent(
+    'inventory-test',
+    `case-${fixtureEpoch}-${caseName}`,
+    'test_body_entry',
+    'complete',
+    { case_name: caseName, fixture_epoch: fixtureEpoch }
+  );
+}
+
+function observeAssertionCheckpoint(assertion: string): void {
+  observeEvent(
+    'inventory-test',
+    `assertion-${fixtureEpoch}-${assertion}`,
+    'assertion_checkpoint',
+    'complete',
+    {
+      assertion,
+      fixture_epoch: fixtureEpoch,
+      metadata_cache_path: metadataCachePath(),
+      publish_state_path: publishStatePath(),
+      range_array_identity: objectIdentity(rangedFetches),
+    }
+  );
+}
 
 beforeEach(async () => {
-  now = Date.parse('2026-08-20T12:00:00.000Z');
-  scratch = await mkdtemp(join(tmpdir(), 'relic-inventory-'));
-  process.env['RELIC_PUBLISH_STATE'] = join(scratch, 'publish-state.json');
-  storage = new MemoryStorage();
-  store = new MemoryStore();
-  disk = new Map();
-  app = createApp({
-    store,
-    storage,
-    now: () => now,
-    config: { serviceOrigin: SERVICE },
+  const epoch = ++fixtureEpoch;
+  const hook = observeBegin('inventory-test', 'before_each_hook', {
+    fixture_epoch: epoch,
   });
-  deps = {
-    serviceOrigin: SERVICE,
-    relicOrigin: SERVICE,
-    files: fakeFiles(),
-    fetch: shimFetch(),
-    clientName: 'relic-mcp/inventory-test',
-    identifySource: async (path) => ({
-      identity: `realpath:${encodeURIComponent(path)}`,
-      kind: 'realpath',
-      path,
-      description: path,
-    }),
-    renderCover: async () => ({
-      status: 'skipped',
-      reason: 'browser_disabled',
-      detail: 'test fake renderer',
-    }),
-  };
+  try {
+    now = Date.parse('2026-08-20T12:00:00.000Z');
+    scratch = await observeAwait(
+      'inventory-test',
+      'fixture_scratch_mkdtemp',
+      () => mkdtemp(join(tmpdir(), 'relic-inventory-')),
+      { fixture_epoch: epoch }
+    );
+    const statePath = join(scratch, 'publish-state.json');
+    process.env['RELIC_PUBLISH_STATE'] = statePath;
+    storage = new MemoryStorage();
+    store = new MemoryStore();
+    disk = new Map();
+    app = createApp({
+      store,
+      storage,
+      now: () => now,
+      config: { serviceOrigin: SERVICE },
+    });
+    deps = {
+      serviceOrigin: SERVICE,
+      relicOrigin: SERVICE,
+      files: fakeFiles(),
+      fetch: shimFetch(),
+      clientName: 'relic-mcp/inventory-test',
+      identifySource: async (path) => ({
+        identity: `realpath:${encodeURIComponent(path)}`,
+        kind: 'realpath',
+        path,
+        description: path,
+      }),
+      renderCover: async () => ({
+        status: 'skipped',
+        reason: 'browser_disabled',
+        detail: 'test fake renderer',
+      }),
+    };
+    observeEvent(
+      'inventory-test',
+      `fixture-assignment-${epoch}`,
+      'fixture_assignment',
+      'complete',
+      {
+        app_identity: objectIdentity(app),
+        disk_identity: objectIdentity(disk),
+        fixture_epoch: epoch,
+        publish_state_path: statePath,
+        storage_identity: objectIdentity(storage),
+        store_identity: objectIdentity(store),
+      }
+    );
+    observeComplete(hook, { fixture_epoch: epoch });
+  } catch (error) {
+    observeError(hook, error, { fixture_epoch: epoch });
+    throw error;
+  }
 });
 
 afterEach(async () => {
-  delete process.env['RELIC_PUBLISH_STATE'];
-  await rm(scratch, { recursive: true, force: true });
+  const hook = observeBegin('inventory-test', 'after_each_hook', {
+    fixture_epoch: fixtureEpoch,
+    scratch_path: scratch,
+  });
+  try {
+    const statePath = process.env['RELIC_PUBLISH_STATE'];
+    observeEvent(
+      'inventory-test',
+      `teardown-entry-${fixtureEpoch}`,
+      'teardown_entry',
+      'complete',
+      { fixture_epoch: fixtureEpoch, scratch_path: scratch }
+    );
+    delete process.env['RELIC_PUBLISH_STATE'];
+    observeEvent(
+      'inventory-test',
+      `teardown-environment-${fixtureEpoch}`,
+      'teardown_environment_deletion',
+      'complete',
+      {
+        fixture_epoch: fixtureEpoch,
+        publish_state_path: statePath ?? '',
+      }
+    );
+    const removal = observeBegin('inventory-test', 'fixture_scratch_rm', {
+      fixture_epoch: fixtureEpoch,
+      removal_path: scratch,
+    });
+    try {
+      await rm(scratch, { recursive: true, force: true });
+      observeComplete(removal, {
+        fixture_epoch: fixtureEpoch,
+        removal_path: scratch,
+      });
+    } catch (error) {
+      observeError(removal, error, {
+        fixture_epoch: fixtureEpoch,
+        removal_path: scratch,
+      });
+      throw error;
+    }
+    observeComplete(hook, { fixture_epoch: fixtureEpoch });
+  } catch (error) {
+    observeError(hook, error, { fixture_epoch: fixtureEpoch });
+    throw error;
+  }
 });
 
 function fakeFiles(): FileReader {
@@ -138,46 +257,101 @@ function fakeFiles(): FileReader {
  */
 function shimFetch(): typeof globalThis.fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(typeof input === 'string' ? input : String(input));
+    const epoch = fixtureEpoch;
+    const appAtEntry = app;
+    const storageAtEntry = storage;
+    const rangeArrayAtEntry = rangedFetches;
+    const operationFields = {
+      app_identity: objectIdentity(appAtEntry),
+      fixture_epoch: epoch,
+      range_array_identity: objectIdentity(rangeArrayAtEntry),
+      storage_identity: objectIdentity(storageAtEntry),
+    };
+    const operation = observeBegin(
+      'inventory-test',
+      'fake_fetch',
+      operationFields
+    );
+    try {
+      const url = new URL(typeof input === 'string' ? input : String(input));
 
-    if (url.origin === SERVICE) {
-      const headers = new Headers(init?.headers);
-      headers.set('x-forwarded-for', '198.51.100.10');
-      return app.fetch(new Request(url.toString(), { ...init, headers }));
-    }
-
-    if (url.hostname === 'storage.invalid') {
-      const key = url.pathname.replace(/^\/(?:upload|o)\//, '');
-      if (init?.method === 'PUT') {
-        storage.put(key, new Uint8Array(init.body as Uint8Array));
-        return new Response(null, { status: 200 });
-      }
-      const bytes = await storage.read(key);
-      if (bytes === undefined) return new Response(null, { status: 404 });
-
-      const range = new Headers(init?.headers).get('range');
-      const match = range?.match(/^bytes=(\d+)-(\d+)$/);
-      if (match?.[1] !== undefined && match[2] !== undefined) {
-        const start = Number(match[1]);
-        const end = Math.min(Number(match[2]), bytes.length - 1);
-        rangedFetches.push({ key, start, end });
-        return new Response(
-          bytes.slice(start, end + 1) as unknown as BodyInit,
-          {
-            status: 206,
-          }
+      if (url.origin === SERVICE) {
+        const headers = new Headers(init?.headers);
+        headers.set('x-forwarded-for', '198.51.100.10');
+        const response = await appAtEntry.fetch(
+          new Request(url.toString(), { ...init, headers })
         );
+        observeComplete(operation, operationFields);
+        return response;
       }
-      return new Response(bytes as unknown as BodyInit, { status: 200 });
-    }
 
-    return new Response(null, { status: 404 });
+      if (url.hostname === 'storage.invalid') {
+        const key = url.pathname.replace(/^\/(?:upload|o)\//, '');
+        if (init?.method === 'PUT') {
+          storageAtEntry.put(key, new Uint8Array(init.body as Uint8Array));
+          observeComplete(operation, operationFields);
+          return new Response(null, { status: 200 });
+        }
+        const bytes = await storageAtEntry.read(key);
+        if (bytes === undefined) {
+          observeComplete(operation, operationFields);
+          return new Response(null, { status: 404 });
+        }
+
+        const range = new Headers(init?.headers).get('range');
+        const match = range?.match(/^bytes=(\d+)-(\d+)$/);
+        if (match?.[1] !== undefined && match[2] !== undefined) {
+          const start = Number(match[1]);
+          const end = Math.min(Number(match[2]), bytes.length - 1);
+          rangedFetches.push({ key, start, end });
+          observeEvent(
+            'inventory-test',
+            `range-append-${epoch}-${start}-${end}`,
+            'range_append',
+            'complete',
+            {
+              app_identity: objectIdentity(appAtEntry),
+              current_fixture_epoch: fixtureEpoch,
+              fixture_epoch: epoch,
+              operation_range_array_identity: objectIdentity(rangeArrayAtEntry),
+              range_array_identity: objectIdentity(rangedFetches),
+              storage_identity: objectIdentity(storageAtEntry),
+            }
+          );
+          observeComplete(operation, operationFields);
+          return new Response(
+            bytes.slice(start, end + 1) as unknown as BodyInit,
+            {
+              status: 206,
+            }
+          );
+        }
+        observeComplete(operation, operationFields);
+        return new Response(bytes as unknown as BodyInit, { status: 200 });
+      }
+
+      observeComplete(operation, operationFields);
+      return new Response(null, { status: 404 });
+    } catch (error) {
+      observeError(operation, error, operationFields);
+      throw error;
+    }
   }) as typeof globalThis.fetch;
 }
 
 let rangedFetches: { key: string; start: number; end: number }[] = [];
 beforeEach(() => {
   rangedFetches = [];
+  observeEvent(
+    'inventory-test',
+    `range-reset-${fixtureEpoch}`,
+    'range_array_reset',
+    'complete',
+    {
+      fixture_epoch: fixtureEpoch,
+      range_array_identity: objectIdentity(rangedFetches),
+    }
+  );
 });
 
 /** Publish through the real flow, so the envelope really holds the name. */
@@ -277,23 +451,47 @@ async function callTool(
 
 describe('relic_list enumerates what nothing else could', () => {
   test('lists every relic in a state file written by an older client', async () => {
+    observeTestBodyEntry('legacy_state_list');
     // The gap this closes: entries with no filename, no timestamp, and no
     // source are invisible to relic_lookup_source, which is the only other
     // way to find a relic id.
-    const first = await seedLegacyRelic({
-      filename: 'proposal.md',
-      body: '# proposal\n',
-    });
-    const second = await seedLegacyRelic({
-      filename: 'notes.md',
-      body: '# notes\n',
-    });
-    const third = await seedLegacyRelic({
-      filename: 'audit.md',
-      body: '# audit\n',
-    });
+    const first = await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () =>
+        seedLegacyRelic({
+          filename: 'proposal.md',
+          body: '# proposal\n',
+        }),
+      { fixture_epoch: fixtureEpoch }
+    );
+    const second = await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () =>
+        seedLegacyRelic({
+          filename: 'notes.md',
+          body: '# notes\n',
+        }),
+      { fixture_epoch: fixtureEpoch }
+    );
+    const third = await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () =>
+        seedLegacyRelic({
+          filename: 'audit.md',
+          body: '# audit\n',
+        }),
+      { fixture_epoch: fixtureEpoch }
+    );
 
-    const result = await listRelics({}, deps);
+    const result = await observeAwait(
+      'inventory-test',
+      'list_relics',
+      () => listRelics({}, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
 
     expect(result.total).toBe(3);
     expect(result.count).toBe(3);
@@ -310,12 +508,24 @@ describe('relic_list enumerates what nothing else could', () => {
   });
 
   test('recovers the filename by decrypting a relic with no recorded source', async () => {
-    const seeded = await seedLegacyRelic({
-      filename: 'quarterly-review.md',
-      body: '# quarterly review\n',
-    });
+    observeTestBodyEntry('recover_filename');
+    const seeded = await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () =>
+        seedLegacyRelic({
+          filename: 'quarterly-review.md',
+          body: '# quarterly review\n',
+        }),
+      { fixture_epoch: fixtureEpoch }
+    );
 
-    const result = await listRelics({}, deps);
+    const result = await observeAwait(
+      'inventory-test',
+      'list_relics',
+      () => listRelics({}, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
     const row = result.relics[0];
 
     expect(row?.filename).toBe('quarterly-review.md');
@@ -325,21 +535,39 @@ describe('relic_list enumerates what nothing else could', () => {
     expect(result.recovered_filenames).toBe(1);
     // Recovery reads the first record, not the object: a 40 MB relic costs
     // the same 64 KB as a small one.
+    observeAssertionCheckpoint('range_after_recovery');
     expect(rangedFetches).toEqual([
       { key: seeded.relicId, start: 0, end: 65_556 },
     ]);
   });
 
   test('caches a recovered name, so a second listing spends no opens', async () => {
-    await seedLegacyRelic({ filename: 'report.md', body: '# report\n' });
+    observeTestBodyEntry('cached_recovered_name');
+    await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () => seedLegacyRelic({ filename: 'report.md', body: '# report\n' }),
+      { fixture_epoch: fixtureEpoch }
+    );
 
-    const first = await listRelics({}, deps);
+    const first = await observeAwait(
+      'inventory-test',
+      'list_relics',
+      () => listRelics({}, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
     expect(first.opens_spent).toBe(1);
     expect(first.recovered_filenames).toBe(1);
 
-    const second = await listRelics({}, deps);
+    const second = await observeAwait(
+      'inventory-test',
+      'list_relics',
+      () => listRelics({}, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
     expect(second.opens_spent).toBe(0);
     expect(second.recovered_filenames).toBe(0);
+    observeAssertionCheckpoint('cached_filename');
     expect(second.relics[0]?.filename).toBe('report.md');
     expect(second.relics[0]?.filename_basis).toBe('cache');
     // The cheap check still ran, so the row is not a stale assertion that
@@ -349,14 +577,27 @@ describe('relic_list enumerates what nothing else could', () => {
   });
 
   test('reports a removed relic as removed rather than dropping it', async () => {
-    const alive = await seedLegacyRelic({
-      filename: 'alive.md',
-      body: '# alive\n',
-    });
-    const taken = await seedLegacyRelic({
-      filename: 'taken-down.md',
-      body: '# taken down\n',
-    });
+    observeTestBodyEntry('removed_relic');
+    const alive = await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () =>
+        seedLegacyRelic({
+          filename: 'alive.md',
+          body: '# alive\n',
+        }),
+      { fixture_epoch: fixtureEpoch }
+    );
+    const taken = await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () =>
+        seedLegacyRelic({
+          filename: 'taken-down.md',
+          body: '# taken down\n',
+        }),
+      { fixture_epoch: fixtureEpoch }
+    );
 
     await store.putTombstone({
       id: taken.relicId,
@@ -371,7 +612,12 @@ describe('relic_list enumerates what nothing else could', () => {
       reportReference: undefined,
     });
 
-    const result = await listRelics({}, deps);
+    const result = await observeAwait(
+      'inventory-test',
+      'list_relics',
+      () => listRelics({}, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
 
     expect(result.count).toBe(2);
     const removed = result.relics.find((row) => row.relic_id === taken.relicId);
@@ -387,14 +633,26 @@ describe('relic_list enumerates what nothing else could', () => {
   });
 
   test('reports an expired relic as expired rather than dropping it', async () => {
-    const seeded = await seedLegacyRelic({
-      filename: 'ephemeral.md',
-      body: '# ephemeral\n',
-      ttlDays: 1,
-    });
+    observeTestBodyEntry('expired_relic');
+    const seeded = await observeAwait(
+      'inventory-test',
+      'seed_legacy_relic',
+      () =>
+        seedLegacyRelic({
+          filename: 'ephemeral.md',
+          body: '# ephemeral\n',
+          ttlDays: 1,
+        }),
+      { fixture_epoch: fixtureEpoch }
+    );
     now += 2 * DAY;
 
-    const result = await listRelics({}, deps);
+    const result = await observeAwait(
+      'inventory-test',
+      'list_relics',
+      () => listRelics({}, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
 
     expect(result.count).toBe(1);
     expect(result.relics[0]?.relic_id).toBe(seeded.relicId);
@@ -403,15 +661,27 @@ describe('relic_list enumerates what nothing else could', () => {
   });
 
   test('a recorded lifetime that has run out beats the cheap check', async () => {
+    observeTestBodyEntry('recorded_lifetime');
     // The unmetered check cannot see an expiry: the service's record outlives
     // the content, so it answers for an expired relic. A recorded lifetime is
     // what stops the row calling that relic reachable, and it costs nothing.
     disk.set('/work/short.md', new TextEncoder().encode('# short\n'));
-    await publish({ path: '/work/short.md', ttl_days: 1 }, deps);
+    await observeAwait(
+      'inventory-test',
+      'publish_relic',
+      () => publish({ path: '/work/short.md', ttl_days: 1 }, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
     now += 2 * DAY;
 
-    const result = await listRelics({}, deps);
+    const result = await observeAwait(
+      'inventory-test',
+      'list_relics',
+      () => listRelics({}, deps),
+      { fixture_epoch: fixtureEpoch }
+    );
 
+    observeAssertionCheckpoint('recorded_lifetime_count');
     expect(result.count).toBe(1);
     expect(result.opens_spent).toBe(0);
     expect(result.relics[0]?.status).toBe('expired');

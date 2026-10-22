@@ -26,6 +26,13 @@ import { createApp } from '@relic/server/src/app.ts';
 import type { OutboundMail } from '@relic/server/src/mail.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import {
+  observeAwait,
+  observeBegin,
+  observeComplete,
+  observeError,
+  observeEvent,
+} from '../../../scripts/full-suite-observation.ts';
 import { nodeFiles } from '../src/files.ts';
 import { type PublishDeps, publish } from '../src/publish.ts';
 import { loadPublishState } from '../src/state.ts';
@@ -39,13 +46,33 @@ const bundlePath = fileURLToPath(
 const tapPath = fileURLToPath(
   new URL('./fixtures/stdio-eof-tap.mjs', import.meta.url)
 );
-const scratch = await mkdtemp(join(tmpdir(), 'relic-stdio-eof-'));
+const scratch = await observeAwait(
+  'stdio-eof-probe',
+  'bootstrap_scratch_mkdtemp',
+  () => mkdtemp(join(tmpdir(), 'relic-stdio-eof-'))
+);
 const statePath = join(scratch, 'publish-state.json');
 const tracePath = join(scratch, 'stdio-eof-trace.jsonl');
 const suppressionMarker = join(scratch, 'response-suppression-armed');
 const fixturePath = join(scratch, 'probe.md');
 const suppressResponse =
   process.env['RELIC_STDIO_EOF_SUPPRESS_RESPONSE'] === '1';
+const probeLifecycle = observeBegin('stdio-eof-probe', 'probe_lifecycle', {
+  scratch_path: scratch,
+  tap_trace_path: tracePath,
+  suppress_response: suppressResponse,
+});
+observeEvent(
+  'stdio-eof-probe',
+  'probe-bootstrap',
+  'bootstrap_paths',
+  'complete',
+  {
+    scratch_path: scratch,
+    tap_trace_path: tracePath,
+    suppress_response: suppressResponse,
+  }
+);
 
 interface TraceEvent {
   readonly origin: string;
@@ -85,13 +112,54 @@ function traceParent(
   event: string,
   fields: Record<string, unknown> = {}
 ): void {
+  const sequence = ++parentSequence;
   parentEvents.push({
     origin: 'parent',
-    sequence: ++parentSequence,
+    sequence,
     at: Date.now(),
     event,
     ...fields,
   });
+
+  const observationFields: Record<string, boolean | number | string> = {
+    parent_event: event,
+  };
+  for (const key of [
+    'bytes',
+    'total_bytes',
+    'request_bytes',
+    'write_result_type',
+    'end_result_type',
+    'physical_eof_already_observed',
+    'suppress_response',
+    'code',
+    'sha256',
+    'request_sha256',
+  ]) {
+    const value = fields[key];
+    if (
+      typeof value === 'boolean' ||
+      typeof value === 'number' ||
+      typeof value === 'string'
+    ) {
+      observationFields[key] = value;
+    }
+  }
+  if (typeof fields['path'] === 'string') {
+    observationFields['path'] = fields['path'].split(/[?#]/, 1)[0] ?? '';
+  }
+  if ('error' in fields) observationFields['error_present'] = true;
+  observeEvent(
+    'stdio-eof-probe',
+    `parent-trace-${sequence}`,
+    'parent_trace',
+    event.includes('error') ||
+      event.includes('rejected') ||
+      event.includes('threw')
+      ? 'error'
+      : 'complete',
+    observationFields
+  );
 }
 
 function textError(error: unknown): string {
@@ -446,12 +514,21 @@ handler = async (request: Request): Promise<Response> => {
 };
 
 try {
+  const bundleExists = await observeAwait(
+    'stdio-eof-probe',
+    'bootstrap_bundle_exists',
+    () => Bun.file(bundlePath).exists()
+  );
   assert.ok(
-    await Bun.file(bundlePath).exists(),
+    bundleExists,
     `built Node bundle is missing at ${bundlePath}; run bun run --cwd packages/relic-mcp build first`
   );
-  await writeFile(tracePath, '');
-  await writeFile(fixturePath, '# stdio EOF probe\n');
+  await observeAwait('stdio-eof-probe', 'bootstrap_trace_write', () =>
+    writeFile(tracePath, '')
+  );
+  await observeAwait('stdio-eof-probe', 'bootstrap_fixture_write', () =>
+    writeFile(fixturePath, '# stdio EOF probe\n')
+  );
   process.env['RELIC_PUBLISH_STATE'] = statePath;
 
   const deps: PublishDeps = {
@@ -515,6 +592,10 @@ try {
   const requestBytes = new TextEncoder().encode(requestLine);
   const requestSha256 = sha256(requestBytes);
 
+  const nodeChildSpawn = observeBegin('stdio-eof-probe', 'node_child_spawn', {
+    tap_trace_path: tracePath,
+    suppress_response: suppressResponse,
+  });
   const child = Bun.spawn(['node', '--import', tapPath, bundlePath], {
     cwd: scratch,
     env: {
@@ -531,6 +612,11 @@ try {
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
+  });
+  observeComplete(nodeChildSpawn, {
+    owned_child_pid: child.pid,
+    tap_trace_path: tracePath,
+    suppress_response: suppressResponse,
   });
   activeChild = child;
   const stdin = child.stdin;
@@ -674,12 +760,21 @@ try {
     'tap did not record child process exit 0'
   );
   assert.equal(mails.length, 0, 'read must not send captured mail');
+  observeEvent(
+    'stdio-eof-probe',
+    'tap-trace-finalization',
+    'tap_trace_finalized',
+    'complete',
+    { tap_trace_path: tracePath }
+  );
+  observeComplete(probeLifecycle);
 
   console.log(
     `STDIO_EOF_PROBE bytes=${requestBytes.byteLength} sha256=${requestSha256} response_id=${REQUEST_ID} nonce_decrypted=true exit=${exit}`
   );
   console.log('STDIO_EOF_PATH_OK');
 } catch (error) {
+  observeError(probeLifecycle, error);
   await settleActiveChild();
   throw new Error(
     `${textError(error)}\nchild_exit=${childExitCode ?? 'unobserved'} stderr=${JSON.stringify(childStderr)}\ntrace:\n${formatTrace()}`
