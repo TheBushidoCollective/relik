@@ -4213,6 +4213,21 @@ try {
         scheme,
         probe: sidebar,
       });
+      const priorFrame = await browser.evaluate<number>(
+        `Number(document.querySelector('.otio-view')?.dataset.frame ?? NaN)`
+      );
+      assert.ok(
+        Number.isInteger(priorFrame) && priorFrame >= 0,
+        `320px ${scheme} has no restorable playback frame: ${priorFrame}`
+      );
+      await seekTo(browser, plan.effect_frame);
+      nativeControlMeasurements.push({
+        state: 'supplemental-preview-context',
+        width: 320,
+        scheme,
+        prior_frame: priorFrame,
+        effect_frame: plan.effect_frame,
+      });
       const previewBase = await exposePreviewBase(browser);
       assertStageControlExposure(
         previewBase,
@@ -4226,6 +4241,7 @@ try {
       });
       await browser.screenshot(`native-controls-320-${scheme}-preview-base`);
       await restorePreviewBase(browser);
+      await seekTo(browser, priorFrame);
       const commentSelection = await exposeSelectionControl(browser);
       assertStageControlExposure(
         commentSelection,
