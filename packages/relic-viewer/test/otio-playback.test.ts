@@ -1,7 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import type { OtioDocumentV1, OtioNode, OtioRationalTime } from '@relic/format';
-import { evaluateOtioAt, readOtioDocument } from '@relic/format';
+import type {
+  OtioBundleEntryName,
+  OtioDocumentV1,
+  OtioNode,
+  OtioRationalTime,
+} from '@relic/format';
+import {
+  compareRationalTimes,
+  evaluateOtioAt,
+  readOtioDocument,
+} from '@relic/format';
 import {
   createOtioPlayback,
   decodedImageAllowed,
@@ -11,6 +20,13 @@ import {
   type OtioVideoCompositionTree,
   renderOtioVideoTree,
 } from '../src/otio-playback.ts';
+import type { OtioMediaResolver } from '../src/otio-media.ts';
+import {
+  readOtioVideoTiming,
+  type OtioVideoTiming,
+} from '../src/otio-video-timing.ts';
+
+type ReadVideoTiming = typeof readOtioVideoTiming;
 
 const standardFixtureUrl = new URL(
   '../../relic-format/test/fixtures/otio/standard-sample.otiod/content.otio',
@@ -411,15 +427,27 @@ function sampledMediaDocument(options: {
   readonly rate: number;
   readonly duration: number;
   readonly availableStart?: number;
+  readonly sourceStart?: OtioRationalTime;
+  readonly availableStartTime?: OtioRationalTime;
 }): OtioDocumentV1 {
-  const { kind, rate, duration, availableStart = 0 } = options;
+  const {
+    kind,
+    rate,
+    duration,
+    availableStart = 0,
+    sourceStart = { value: 0, rate },
+    availableStartTime = { value: availableStart, rate },
+  } = options;
   const trackId = kind === 'Video' ? 'track_v' : 'track_a';
   const clipId = kind === 'Video' ? 'clip_v' : 'clip_a';
   const targetUrl = kind === 'Video' ? 'media/clip.mp4' : 'media/dialogue.wav';
-  const time = (value: number): Record<string, number | string> => ({
+  const time = (
+    value: number,
+    timeRate = rate
+  ): Record<string, number | string> => ({
     OTIO_SCHEMA: 'RationalTime.1',
     value,
-    rate,
+    rate: timeRate,
   });
   return readOtioDocument(
     JSON.stringify({
@@ -439,7 +467,7 @@ function sampledMediaDocument(options: {
                 metadata: { relic: { id: clipId } },
                 source_range: {
                   OTIO_SCHEMA: 'TimeRange.1',
-                  start_time: time(0),
+                  start_time: time(sourceStart.value, sourceStart.rate),
                   duration: time(duration),
                 },
                 media_reference: {
@@ -447,12 +475,108 @@ function sampledMediaDocument(options: {
                   target_url: targetUrl,
                   available_range: {
                     OTIO_SCHEMA: 'TimeRange.1',
-                    start_time: time(availableStart),
+                    start_time: time(
+                      availableStartTime.value,
+                      availableStartTime.rate
+                    ),
                     duration: time(duration),
                   },
                 },
               },
             ],
+          },
+        ],
+      },
+    })
+  );
+}
+
+interface TimingReadCall {
+  readonly blob: Blob;
+  readonly mime: string;
+  readonly signal: AbortSignal | undefined;
+}
+
+function timingMediaFixture(options: {
+  readonly blobs: ReadonlyMap<string, Blob>;
+  readonly timings: ReadonlyMap<Blob, OtioVideoTiming>;
+  readonly resolveUrl?: (
+    entryName: OtioBundleEntryName
+  ) => Promise<string | null> | string | null;
+}): {
+  readonly resolver: OtioMediaResolver;
+  readonly readVideoTiming: ReadVideoTiming;
+  readonly calls: TimingReadCall[];
+  readonly state: { disposeCalls: number };
+} {
+  const calls: TimingReadCall[] = [];
+  const state = { disposeCalls: 0 };
+  const resolver: OtioMediaResolver = {
+    hasEntry: (entryName) => options.blobs.has(entryName),
+    getDecompressedBytes: () => 0,
+    resolveBlob: async (entryName) => options.blobs.get(entryName) ?? null,
+    resolveUrl: async (entryName) =>
+      options.resolveUrl === undefined
+        ? `blob:${entryName}`
+        : options.resolveUrl(entryName),
+    dispose: () => {
+      state.disposeCalls += 1;
+    },
+  };
+  const readVideoTiming: ReadVideoTiming = async (blob, mime, signal) => {
+    calls.push({ blob, mime, signal });
+    const timing = options.timings.get(blob);
+    if (timing === undefined) {
+      throw new Error('Missing explicit timing fixture for Blob');
+    }
+    return timing;
+  };
+  return { resolver, readVideoTiming, calls, state };
+}
+
+function parallelVideoOccurrencesDocument(): OtioDocumentV1 {
+  const time = (value: number): Record<string, number | string> => ({
+    OTIO_SCHEMA: 'RationalTime.1',
+    value,
+    rate: 24,
+  });
+  const clip = (id: string): Record<string, unknown> => ({
+    OTIO_SCHEMA: 'Clip.1',
+    metadata: { relic: { id } },
+    source_range: {
+      OTIO_SCHEMA: 'TimeRange.1',
+      start_time: time(0),
+      duration: time(24),
+    },
+    media_reference: {
+      OTIO_SCHEMA: 'ExternalReference.1',
+      target_url: 'media/clip.mp4',
+      available_range: {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: time(0),
+        duration: time(24),
+      },
+    },
+  });
+  return readOtioDocument(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline_1' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        metadata: { relic: { id: 'stack_1' } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_v_a' } },
+            kind: 'Video',
+            children: [clip('clip_v_a')],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_v_b' } },
+            kind: 'Video',
+            children: [clip('clip_v_b')],
           },
         ],
       },
@@ -863,23 +987,45 @@ describe('otio playback controller', () => {
     playback.dispose();
   });
 
-  test('seeks video decoders to selected presentation-frame centers', async () => {
+  test('seeks video decoders to certified presentation windows', async () => {
+    const mediaBlob = new Blob(['unit-test video marker'], {
+      type: 'video/mp4',
+    });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 120 }, (_, frame) => frame / 60),
+      ends: Float64Array.from(
+        { length: 120 },
+        (_, frame) => (frame + 1) / 60
+      ),
+    };
     const decoderTimeAt = async (
       doc: OtioDocumentV1,
       time: OtioRationalTime
-    ): Promise<number> => {
+    ): Promise<{
+      target: number;
+      calls: readonly TimingReadCall[];
+      signalWasAborted: boolean | undefined;
+    }> => {
+      const fixture = timingMediaFixture({
+        blobs: new Map([['media/clip.mp4', mediaBlob]]),
+        timings: new Map([[mediaBlob, timing]]),
+      });
       const first = created.length;
       const playback = createOtioPlayback({
         document: doc,
         timelineId: 'timeline_1',
         canvas: canvas(),
-        resolveMedia: async () => 'blob:clip',
+        resolveMedia: fixture.resolver,
+        readVideoTiming: fixture.readVideoTiming,
       });
       await playback.seek(time);
       const decoder = created.slice(first).find((element) => element.muted);
-      playback.dispose();
       if (!decoder) throw new Error('video decoder did not load');
-      return decoder.currentTime;
+      const target = decoder.currentTime;
+      const signalWasAborted = fixture.calls[0]?.signal?.aborted;
+      playback.dispose();
+      return { target, calls: fixture.calls, signalWasAborted };
     };
 
     const video24 = sampledMediaDocument({
@@ -892,32 +1038,386 @@ describe('otio playback controller', () => {
       rate: 30,
       duration: 60,
     });
-    expect(await decoderTimeAt(video24, { value: 32, rate: 24 })).toBe(
-      32.5 / 24
-    );
+    const source24 = await decoderTimeAt(video24, { value: 32, rate: 24 });
+    expect(source24.target).toBe(80.5 / 60);
+    expect(source24.calls).toHaveLength(1);
+    expect(source24.calls[0]?.blob).toBe(mediaBlob);
+    expect(source24.calls[0]?.mime).toBe('video/mp4');
+    expect(source24.calls[0]?.signal).toBeDefined();
+    expect(source24.signalWasAborted).toBe(false);
     expect(
-      await decoderTimeAt(video24, {
-        value: 32 - Number.EPSILON * 32,
+      (
+        await decoderTimeAt(video24, {
+          value: 32 - Number.EPSILON * 32,
+          rate: 24,
+        })
+      ).target
+    ).toBe(80.5 / 60);
+    expect(
+      (await decoderTimeAt(video30, { value: 58.75, rate: 30 })).target
+    ).toBe(117.5 / 60);
+  });
+
+  test('caches one timing read per path without sharing occurrence decoders', async () => {
+    const mediaBlob = new Blob(['two occurrence marker'], {
+      type: 'video/mp4',
+    });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: new Float64Array([0]),
+      ends: new Float64Array([1]),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+      resolveUrl: async () => 'blob:media/primary_a.mp4',
+    });
+    const playback = createOtioPlayback({
+      document: parallelVideoOccurrencesDocument(),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    await playback.seek({ value: 0, rate: 24 });
+
+    const decoders = created.filter((element) => element.muted);
+    expect(decoders).toHaveLength(2);
+    expect(decoders.map((decoder) => decoder.src)).toEqual([
+      'blob:media/primary_a.mp4',
+      'blob:media/primary_a.mp4',
+    ]);
+    expect(decoders.map((decoder) => decoder.currentTime)).toEqual([0.5, 0.5]);
+    expect(fixture.calls).toHaveLength(1);
+    playback.dispose();
+    expect(fixture.state.disposeCalls).toBe(0);
+  });
+
+  test('uses one callback Blob for the decoder and timing reader', async () => {
+    const mediaBlob = new Blob(['callback video marker'], {
+      type: 'video/mp4',
+    });
+    const calls: TimingReadCall[] = [];
+    let resolves = 0;
+    const readVideoTiming: ReadVideoTiming = async (blob, mime, signal) => {
+      calls.push({ blob, mime, signal });
+      return {
+        kind: 'windows',
+        starts: new Float64Array([0]),
+        ends: new Float64Array([1]),
+      };
+    };
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({
+        kind: 'Video',
         rate: 24,
-      })
-    ).toBe(32.5 / 24);
+        duration: 24,
+      }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => {
+        resolves += 1;
+        return mediaBlob;
+      },
+      readVideoTiming,
+    });
+
+    await playback.seek({ value: 0, rate: 24 });
+
+    const decoder = created.find((element) => element.muted);
+    expect(resolves).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.blob).toBe(mediaBlob);
+    expect(decoder?.src).toBe(createdUrls[0]);
+    playback.dispose();
+  });
+
+  test('drops a stale timing result before it seeks a decoder', async () => {
+    const mediaBlob = new Blob(['stale timing marker'], { type: 'video/mp4' });
+    const timing = Promise.withResolvers<OtioVideoTiming>();
+    const started = Promise.withResolvers<void>();
+    const calls: TimingReadCall[] = [];
+    let resolverDisposeCalls = 0;
+    const resolver: OtioMediaResolver = {
+      hasEntry: () => true,
+      getDecompressedBytes: () => 0,
+      resolveBlob: async () => mediaBlob,
+      resolveUrl: async () => 'blob:stale-timing',
+      dispose: () => {
+        resolverDisposeCalls += 1;
+      },
+    };
+    const readVideoTiming: ReadVideoTiming = async (blob, mime, signal) => {
+      calls.push({ blob, mime, signal });
+      started.resolve();
+      return timing.promise;
+    };
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({
+        kind: 'Video',
+        rate: 24,
+        duration: 48,
+      }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: resolver,
+      readVideoTiming,
+    });
+
+    const first = playback.seek({ value: 0, rate: 24 });
+    await started.promise;
+    const second = playback.seek({ value: 12, rate: 24 });
+    timing.resolve({
+      kind: 'windows',
+      starts: new Float64Array([0, 0.5]),
+      ends: new Float64Array([0.5, 1]),
+    });
+    await first;
+    await second;
+
+    const decoder = created.find((element) => element.muted);
+    expect(calls).toHaveLength(1);
+    expect(decoder?.seekTargets).toEqual([0.75]);
+    expect(playback.getState().time).toEqual({ value: 12, rate: 24 });
+    playback.dispose();
+    expect(resolverDisposeCalls).toBe(0);
+  });
+
+  test('plays representationally zero video and audio samples', async () => {
+    const sourceStart = { value: 4, rate: 24000 / 1001 };
+    const availableStartTime = { value: 5, rate: 30000 / 1001 };
+    const videoBlob = new Blob(['near-zero video marker'], {
+      type: 'video/mp4',
+    });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', videoBlob]]),
+      timings: new Map<Blob, OtioVideoTiming>([
+        [
+          videoBlob,
+          {
+            kind: 'windows',
+            starts: new Float64Array([0]),
+            ends: new Float64Array([1 / 60]),
+          },
+        ],
+      ]),
+    });
+    const videoDocument = sampledMediaDocument({
+      kind: 'Video',
+      rate: 24,
+      duration: 48,
+      sourceStart,
+      availableStartTime,
+    });
+    const sourceTime = evaluateOtioAt(
+      videoDocument,
+      'timeline_1',
+      { value: 0, rate: 24 }
+    ).video_contributions[0]?.source_time;
+    if (!sourceTime) throw new Error('near-zero video sample is missing');
+    expect(sourceTime.value).toBeLessThan(0);
     expect(
-      await decoderTimeAt(video30, {
-        value: 58.75,
-        rate: 30,
+      compareRationalTimes(sourceTime, { value: 0, rate: sourceTime.rate })
+    ).toBe(0);
+    const video = createOtioPlayback({
+      document: videoDocument,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    await video.seek({ value: 0, rate: 24 });
+
+    const decoder = created.find((element) => element.muted);
+    expect(decoder?.currentTime).toBe(1 / 120);
+    expect(
+      video
+        .getState()
+        .diagnostics.some((issue) => issue.code === 'invalid-timing')
+    ).toBe(false);
+    video.dispose();
+
+    const firstAudio = created.length;
+    const audioDocument = sampledMediaDocument({
+      kind: 'Audio',
+      rate: 30,
+      duration: 60,
+      sourceStart: { value: 56, rate: 30 },
+      availableStartTime: { value: 56.00000000000001, rate: 30 },
+    });
+    const audioSourceTime = evaluateOtioAt(
+      audioDocument,
+      'timeline_1',
+      { value: 0, rate: 30 }
+    ).audio_contributions[0]?.source_time;
+    if (!audioSourceTime) throw new Error('near-zero audio sample is missing');
+    expect(audioSourceTime.value).toBeLessThan(0);
+    expect(
+      compareRationalTimes(audioSourceTime, {
+        value: 0,
+        rate: audioSourceTime.rate,
       })
-    ).toBe(58.5 / 30);
+    ).toBe(0);
+    const audio = createOtioPlayback({
+      document: audioDocument,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:dialogue',
+    });
+    await audio.play();
+    await audio.seek({ value: 0, rate: 30 });
+    const voice = created
+      .slice(firstAudio)
+      .find((element) => element.attrs.get('data-bundle-path') !== undefined);
+    expect(voice?.currentTime).toBe(0);
+    expect(voice?.paused).toBe(false);
+    expect(voice?.attrs.get('data-active')).toBe('true');
+    audio.dispose();
+  });
+
+  test('keeps positive fractional audio timing exact', async () => {
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({
+        kind: 'Audio',
+        rate: 3,
+        duration: 9,
+      }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:dialogue',
+    });
+
+    await playback.play();
+    await playback.seek({ value: 2, rate: 3 });
+
+    const voice = created.find(
+      (element) =>
+        element.attrs.get('data-bundle-path') === 'media/dialogue.wav'
+    );
+    expect(voice?.currentTime).toBe(2 / 3);
+    expect(voice?.attrs.get('data-active')).toBe('true');
+    playback.dispose();
+  });
+
+  test('uses exact source seconds for unknown and uncovered packet timing', async () => {
+    const unknownBlob = new Blob(['unknown timing marker'], {
+      type: 'video/mp4',
+    });
+    const unknownFixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', unknownBlob]]),
+      timings: new Map<Blob, OtioVideoTiming>([
+        [unknownBlob, { kind: 'unknown', reason: 'unknown-duration' }],
+      ]),
+    });
+    const unknown = createOtioPlayback({
+      document: sampledMediaDocument({
+        kind: 'Video',
+        rate: 3,
+        duration: 9,
+      }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: unknownFixture.resolver,
+      readVideoTiming: unknownFixture.readVideoTiming,
+    });
+
+    await unknown.seek({ value: 5, rate: 3 });
+
+    const unknownDecoder = created.find((element) => element.muted);
+    expect(unknownDecoder?.currentTime).toBe(5 / 3);
+    expect(
+      unknown
+        .getState()
+        .diagnostics.some(
+          (issue) =>
+            issue.code === 'invalid-timing' &&
+            issue.message.includes('unknown-duration')
+        )
+    ).toBe(true);
+    unknown.dispose();
+
+    const firstGapDecoder = created.length;
+    const gapBlob = new Blob(['gap timing marker'], { type: 'video/mp4' });
+    const gapFixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', gapBlob]]),
+      timings: new Map<Blob, OtioVideoTiming>([
+        [
+          gapBlob,
+          {
+            kind: 'windows',
+            starts: new Float64Array([0, 2]),
+            ends: new Float64Array([1, 3]),
+          },
+        ],
+      ]),
+    });
+    const gapped = createOtioPlayback({
+      document: sampledMediaDocument({
+        kind: 'Video',
+        rate: 2,
+        duration: 6,
+      }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: gapFixture.resolver,
+      readVideoTiming: gapFixture.readVideoTiming,
+    });
+
+    await gapped.seek({ value: 2, rate: 2 });
+
+    const gapDecoder = created
+      .slice(firstGapDecoder)
+      .find((element) => element.muted);
+    expect(gapDecoder?.currentTime).toBe(1);
+    expect(
+      gapped
+        .getState()
+        .diagnostics.some(
+          (issue) =>
+            issue.code === 'invalid-timing' &&
+            issue.message.includes('outside certified packet timing')
+        )
+    ).toBe(true);
+    gapped.dispose();
   });
 
   test('withholds unavailable Video 2 fixture samples before they seek zero', async () => {
     const doc = readOtioDocument(readFileSync(standardFixtureUrl));
     const timelineId = doc.timeline_ids[0];
     if (!timelineId) throw new Error('standard fixture has no timeline');
+    const mediaBlob = new Blob(['standard fixture timing marker'], {
+      type: 'video/mp4',
+    });
+    const videoPaths = [
+      'media/primary_a.mp4',
+      'media/secondary_b_prores.mov',
+      'media/secondary_b.mp4',
+      'media/fx_flare.webm',
+      'media/overlay_alpha.webm',
+    ] as const;
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 240 }, (_, frame) => frame / 60),
+      ends: Float64Array.from(
+        { length: 240 },
+        (_, frame) => (frame + 1) / 60
+      ),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map<string, Blob>(
+        videoPaths.map((path): [string, Blob] => [path, mediaBlob])
+      ),
+      timings: new Map([[mediaBlob, timing]]),
+      resolveUrl: async (path) => `blob:${path}`,
+    });
     const playback = createOtioPlayback({
       document: doc,
       timelineId,
       canvas: canvas(),
-      resolveMedia: async (path) => `blob:${path}`,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
     });
 
     await playback.seek({ value: 48, rate: 24 });
@@ -1040,6 +1540,50 @@ describe('otio playback controller', () => {
     await playback.play();
     expect(playback.getState().playing).toBe(true);
     playback.dispose();
+  });
+
+  test('aborts pending timing reads and drops late timing without disposing the resolver', async () => {
+    const mediaBlob = new Blob(['late timing marker'], { type: 'video/mp4' });
+    const timing = Promise.withResolvers<OtioVideoTiming>();
+    const started = Promise.withResolvers<void>();
+    const calls: TimingReadCall[] = [];
+    let resolverDisposed = false;
+    const resolver: OtioMediaResolver = {
+      hasEntry: () => true,
+      getDecompressedBytes: () => 0,
+      resolveBlob: async () => mediaBlob,
+      resolveUrl: async () => 'blob:deferred-timing',
+      dispose: () => {
+        resolverDisposed = true;
+      },
+    };
+    const readVideoTiming: ReadVideoTiming = async (blob, mime, signal) => {
+      calls.push({ blob, mime, signal });
+      started.resolve();
+      return timing.promise;
+    };
+    const playback = createOtioPlayback({
+      document: buildDocument(),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: resolver,
+      readVideoTiming,
+    });
+
+    const seek = playback.seek({ value: 0, rate: 24 });
+    await started.promise;
+    const decoder = created.find((element) => element.muted);
+    playback.dispose();
+    expect(calls[0]?.signal?.aborted).toBe(true);
+    expect(resolverDisposed).toBe(false);
+
+    timing.resolve({
+      kind: 'windows',
+      starts: new Float64Array([0]),
+      ends: new Float64Array([1]),
+    });
+    await seek;
+    expect(decoder?.seekTargets).toEqual([]);
   });
 
   test('dispose leaves an injected resolver alive and drops a late blob', async () => {
