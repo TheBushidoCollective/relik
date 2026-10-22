@@ -1737,6 +1737,12 @@ describe('otio playback controller', () => {
     );
     expect(fixture.calls).toHaveLength(0);
     expect(video.getState().diagnostics).toContainEqual(unknownAvailability);
+    // The core note already explains the withheld video sample.
+    expect(
+      video
+        .getState()
+        .diagnostics.some((issue) => issue.message.includes('was withheld'))
+    ).toBe(false);
     expect(
       evaluateOtioAt(videoDocument, 'timeline_1', {
         value: 0,
@@ -1789,6 +1795,15 @@ describe('otio playback controller', () => {
         rate: 30,
       }).audio_contributions[0]
     ).toEqual(audioContribution);
+    // Nothing in the core evaluation explains the withheld audio sample, so
+    // playback state must, or the view would report a silent clip as ready.
+    expect(audioContribution.diagnostics).toEqual([]);
+    expect(audio.getState().diagnostics).toContainEqual({
+      severity: 'warning',
+      code: 'invalid-timing',
+      message: `Source sample for ${audioContribution.name || audioContribution.node_id} is outside known media availability and was withheld`,
+      target: { node_id: audioContribution.node_id },
+    });
     audio.dispose();
   });
 

@@ -957,6 +957,36 @@ export function createOtioPlayback(
     return issues;
   }
 
+  // A contribution the decoder guard withholds plays nothing. When the core
+  // evaluator already explains why (a handle or timing diagnostic), that
+  // explanation stands; otherwise report it here, or the view would call a
+  // silent clip ready. Kept out of contributionIssues, which blocks preview.
+  function withheldSampleIssues(
+    result: OtioEvaluationResult
+  ): OtioDiagnostic[] {
+    const issues: OtioDiagnostic[] = [];
+    for (const contrib of [
+      ...result.video_contributions,
+      ...result.audio_contributions,
+    ]) {
+      if (!sampleUnavailable(doc, contrib)) continue;
+      const explained = contrib.diagnostics.some(
+        (issue) =>
+          issue.code === 'missing-handles' || issue.code === 'invalid-timing'
+      );
+      if (explained) continue;
+      issues.push(
+        diagnostic(
+          'warning',
+          'invalid-timing',
+          `Source sample for ${contrib.name || contrib.node_id} is outside known media availability and was withheld`,
+          contrib.node_id
+        )
+      );
+    }
+    return issues;
+  }
+
   function previewBlocked(result?: OtioEvaluationResult): boolean {
     if (baseMediaPreviewAllowed) return false;
     const evaluation = result ?? evaluateOtioAt(doc, timelineId, currentTime);
@@ -1825,6 +1855,7 @@ export function createOtioPlayback(
         (issue) => !suppressedPresentationDiagnostics.has(issue)
       ),
       ...contributionIssues(evaluation),
+      ...withheldSampleIssues(evaluation),
       ...mediaFailures.values(),
     ];
     if (!clock.known) {
