@@ -1,0 +1,33 @@
+{
+  "script": "extra-stdio-gc.mjs (sha256 11cac7fed2909f419c57a471f7b5b275beaf3efa6d66db95abcda24565cf426b, standalone, no Relic code)",
+  "host": "macOS 27.0.1 arm64",
+  "shape": "Each cycle spawns /bin/sh -c 'cat <&3 >&4' with stdio ['ignore','ignore','pipe','pipe','pipe'], round-trips, destroys stdio[3]/stdio[4], drops the reference; then spawns a victim the same way, takes an fstat-only fd census, optionally Bun.gc(true) / global.gc(), censuses again, and round-trips the victim with a 3 s limit.",
+  "results": [
+    {
+      "runtime": "bun 1.3.14",
+      "gc": "on",
+      "runs": 3,
+      "outcome": "every run: cycle 2 GC closed the live victim's socket fds 6 and 8; victim round trip timed out with nothing received"
+    },
+    {
+      "runtime": "bun 1.3.14",
+      "gc": "off",
+      "runs": 1,
+      "outcome": "6/6 cycles clean"
+    },
+    {
+      "runtime": "bun 1.4.3",
+      "gc": "on",
+      "runs": 3,
+      "outcome": "18/18 cycles clean, nothing closed across GC"
+    },
+    {
+      "runtime": "node 24.15.0 --expose-gc",
+      "gc": "on",
+      "runs": 1,
+      "outcome": "6/6 cycles clean"
+    }
+  ],
+  "upstream": "Matches oven-sh/bun#30443 (Playwright five-pipe Chromium crashes after 7-12 launches); fixed by oven-sh/bun#32520 (extra stdio index >= 3 mapped to socket-fd so finalize_streams never double-closes), first released in bun-v1.4.0.",
+  "scope": "Proves the Bun <= 1.3.14 extra-stdio double close in isolation. Does not by itself prove the Relic PATH or boundary failures are this mechanism; that is the job of the in-situ gc-probe run."
+}

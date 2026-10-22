@@ -1,0 +1,183 @@
+{
+  "runtime": "node-24.15.0",
+  "forceGc": true,
+  "cycles": 6,
+  "retired": [
+    {
+      "ordinal": 1,
+      "born": [11, 12, 14, 18],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-1\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "ordinal": 2,
+      "born": [12, 14, 18],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-2\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "ordinal": 3,
+      "born": [13, 16, 19],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-3\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "ordinal": 4,
+      "born": [13, 16, 19],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-4\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "ordinal": 5,
+      "born": [13, 16, 19],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-5\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "ordinal": 6,
+      "born": [13, 16, 19],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-6\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    }
+  ],
+  "victims": [
+    {
+      "cycle": 1,
+      "born": [12, 14, 18],
+      "gcDiff": {
+        "closed": [],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "end",
+        "received": "victim-1\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "cycle": 2,
+      "born": [12, 14, 18],
+      "gcDiff": {
+        "closed": [],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "end",
+        "received": "victim-2\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "cycle": 3,
+      "born": [12, 14, 18],
+      "gcDiff": {
+        "closed": [],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "end",
+        "received": "victim-3\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "cycle": 4,
+      "born": [12, 14, 18],
+      "gcDiff": {
+        "closed": [],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "end",
+        "received": "victim-4\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "cycle": 5,
+      "born": [12, 14, 18],
+      "gcDiff": {
+        "closed": [],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "end",
+        "received": "victim-5\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "cycle": 6,
+      "born": [12, 14, 18],
+      "gcDiff": {
+        "closed": [],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "end",
+        "received": "victim-6\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    }
+  ]
+}

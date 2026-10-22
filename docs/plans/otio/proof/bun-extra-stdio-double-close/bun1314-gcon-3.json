@@ -1,0 +1,76 @@
+{
+  "runtime": "bun-1.3.14",
+  "forceGc": true,
+  "cycles": 6,
+  "retired": [
+    {
+      "ordinal": 1,
+      "born": [4, 6, 8],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-1\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "ordinal": 2,
+      "born": [6, 8],
+      "rt": {
+        "outcome": "end",
+        "received": "retire-2\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    }
+  ],
+  "victims": [
+    {
+      "cycle": 1,
+      "born": [4, 6, 8],
+      "gcDiff": {
+        "closed": [],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "end",
+        "received": "victim-1\n"
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "cycle": 2,
+      "born": [4, 6, 8],
+      "gcDiff": {
+        "closed": [
+          {
+            "fd": 6,
+            "id": "18446744073709552000:1254951:140000"
+          },
+          {
+            "fd": 8,
+            "id": "18446744073709552000:1254952:140000"
+          }
+        ],
+        "opened": [],
+        "changed": []
+      },
+      "rt": {
+        "outcome": "timeout",
+        "received": ""
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    }
+  ]
+}
