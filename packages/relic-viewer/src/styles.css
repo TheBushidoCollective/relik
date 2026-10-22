@@ -4136,7 +4136,7 @@ canvas.relic-page {
   margin-top: 0;
 }
 .is-otio-composer .popover-bounded-body {
-  flex: 1 1 0;
+  flex: 1 1 auto;
   min-height: 1.35rem;
   overflow-y: auto;
   overscroll-behavior: contain;
