@@ -1,0 +1,11 @@
+{
+  "command": [
+    "bun",
+    "--eval",
+    "import { observeBegin, observeComplete } from \"file:///Users/jwaldrip/.omp/wt/otio-suite-observation-run/scripts/full-suite-observation.ts\";\nconst operation = observeBegin('full-suite-observer-self-test', \"self_test_pending_checkpoint\");\nconst { promise, resolve } = Promise.withResolvers(); setTimeout(resolve, 500); await promise;\nobserveComplete(operation);"
+  ],
+  "exit_code": 0,
+  "stopped_at_ceiling": false,
+  "snapshots": [],
+  "retained_eof_traces": []
+}

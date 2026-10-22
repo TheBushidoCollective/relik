@@ -1,0 +1,7 @@
+{
+  "command": ["bun", "run", "verify"],
+  "exit_code": 1,
+  "stopped_at_ceiling": false,
+  "snapshots": [],
+  "retained_eof_traces": []
+}

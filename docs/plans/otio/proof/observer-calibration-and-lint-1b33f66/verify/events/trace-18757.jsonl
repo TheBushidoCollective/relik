@@ -1,0 +1,1 @@
+{"origin":"full-suite-observer","pid":18757,"ppid":73829,"sequence":1,"wall_clock_ms":1792701346319,"monotonic_ms":6.713459,"operation_id":"verify-spawn","stage":"outer_command_spawn","event":"complete","duration_ms":0,"cpu_user_us":14182,"cpu_system_us":16872,"observation_heartbeat_lateness_ms":0,"owned_child_pid":18759}

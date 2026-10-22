@@ -1,0 +1,438 @@
+$ bun run lint && bun run typecheck && bun run test
+$ biome check .
+packages/relic-format/src/otio-json.ts:426:16 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    424 │       if (val.length === 0) return '[]';
+    425 │       if (!isPretty) {
+  > 426 │         return '[' + val.map((item) => serialize(item, '')).join(',') + ']';
+        │                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    427 │       }
+    428 │       const nextIndent = currentIndent + indentStr;
+  
+  i Unsafe fix: Use a template literal.
+  
+    424 424 │         if (val.length === 0) return '[]';
+    425 425 │         if (!isPretty) {
+    426     │ - ········return·'['·+·val.map((item)·=>·serialize(item,·'')).join(',')·+·']';
+        426 │ + ········return·`[${val.map((item)·=>·serialize(item,·'')).join(',')}]`;
+    427 427 │         }
+    428 428 │         const nextIndent = currentIndent + indentStr;
+  
+
+packages/relic-format/src/otio-json.ts:432:14 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    430 │         .map((item) => nextIndent + serialize(item, nextIndent))
+    431 │         .join(',\n');
+  > 432 │       return '[\n' + items + '\n' + currentIndent + ']';
+        │              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    433 │     }
+    434 │     if (typeof val === 'object') {
+  
+  i Unsafe fix: Use a template literal.
+  
+    430 430 │           .map((item) => nextIndent + serialize(item, nextIndent))
+    431 431 │           .join(',\n');
+    432     │ - ······return·'[\n'·+·items·+·'\n'·+·currentIndent·+·']';
+        432 │ + ······return·`[\n${items}\n${currentIndent}]`;
+    433 433 │       }
+    434 434 │       if (typeof val === 'object') {
+  
+
+packages/relic-format/src/otio-json.ts:444:16 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    442 │             serialize((val as Record<string, unknown>)[k], '')
+    443 │         );
+  > 444 │         return '{' + entries.join(',') + '}';
+        │                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    445 │       }
+    446 │       const nextIndent = currentIndent + indentStr;
+  
+  i Unsafe fix: Use a template literal.
+  
+    442 442 │               serialize((val as Record<string, unknown>)[k], '')
+    443 443 │           );
+    444     │ - ········return·'{'·+·entries.join(',')·+·'}';
+        444 │ + ········return·`{${entries.join(',')}}`;
+    445 445 │         }
+    446 446 │         const nextIndent = currentIndent + indentStr;
+  
+
+packages/relic-format/src/otio-json.ts:456:14 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    454 │         )
+    455 │         .join(',\n');
+  > 456 │       return '{\n' + entries + '\n' + currentIndent + '}';
+        │              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    457 │     }
+    458 │     return JSON.stringify(val);
+  
+  i Unsafe fix: Use a template literal.
+  
+    454 454 │           )
+    455 455 │           .join(',\n');
+    456     │ - ······return·'{\n'·+·entries·+·'\n'·+·currentIndent·+·'}';
+        456 │ + ······return·`{\n${entries}\n${currentIndent}}`;
+    457 457 │       }
+    458 458 │       return JSON.stringify(val);
+  
+
+packages/relic-format/src/otio-identity.ts:1389:9 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    1387 │     .filter((node): node is OtioNode =>
+    1388 │       Boolean(
+  > 1389 │         node && node.fingerprint && node.fingerprint === source.fingerprint
+         │         ^^^^^^^^^^^^^^^^^^^^^^^^
+    1390 │       )
+    1391 │     );
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    1387 1387 │       .filter((node): node is OtioNode =>
+    1388 1388 │         Boolean(
+    1389      │ - ········node·&&·node.fingerprint·&&·node.fingerprint·===·source.fingerprint
+         1389 │ + ········node?.fingerprint·&&·node.fingerprint·===·source.fingerprint
+    1390 1390 │         )
+    1391 1391 │       );
+  
+
+packages/relic-format/src/otio-json.ts:412:11 lint/suspicious/noGlobalIsNan  FIXABLE  ━━━━━━━━━━━━━━
+
+  ! isNaN is unsafe. It attempts a type coercion. Use Number.isNaN instead.
+  
+    410 │     }
+    411 │     if (typeof val === 'number') {
+  > 412 │       if (isNaN(val)) return 'NaN';
+        │           ^^^^^
+    413 │       if (val === Infinity) return 'Infinity';
+    414 │       if (val === -Infinity) return '-Infinity';
+  
+  i See the MDN documentation for more details.
+  
+  i Unsafe fix: Use Number.isNaN instead.
+  
+    410 410 │       }
+    411 411 │       if (typeof val === 'number') {
+    412     │ - ······if·(isNaN(val))·return·'NaN';
+        412 │ + ······if·(Number.isNaN(val))·return·'NaN';
+    413 413 │         if (val === Infinity) return 'Infinity';
+    414 414 │         if (val === -Infinity) return '-Infinity';
+  
+
+packages/relic-format/src/otio-timing.ts:16:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    14 │   OtioDiagnostic,
+    15 │   OtioDocumentV1,
+  > 16 │   OtioEffect,
+       │   ^^^^^^^^^^
+    17 │   OtioEvaluationResult,
+    18 │   OtioMediaReference,
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+      14   14 │     OtioDiagnostic,
+      15   15 │     OtioDocumentV1,
+      16      │ - ··OtioEffect,
+      17   16 │     OtioEvaluationResult,
+      18   17 │     OtioMediaReference,
+  
+
+packages/relic-format/src/otio-timing.ts:930:3 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━
+
+  ! This parameter is unused.
+  
+    929 │ function buildAudioContribution(
+  > 930 │   document: OtioDocumentV1,
+        │   ^^^^^^^^
+    931 │   node: OtioNode,
+    932 │   ancestry: readonly string[],
+  
+  i Unused parameters might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: If this is intentional, prepend document with an underscore.
+  
+     928  928 │   
+     929  929 │   function buildAudioContribution(
+     930      │ - ··document:·OtioDocumentV1,
+          930 │ + ··_document:·OtioDocumentV1,
+     931  931 │     node: OtioNode,
+     932  932 │     ancestry: readonly string[],
+  
+
+packages/relic-format/src/otio-zip.ts:800:22 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    798 │   extents.sort((a, b) => a.start - b.start || a.end - b.end);
+    799 │   for (let i = 1; i < extents.length; i++) {
+  > 800 │     const previous = extents[i - 1]!;
+        │                      ^^^^^^^^^^^^^^^
+    801 │     const current = extents[i]!;
+    802 │     if (current.start < previous.end) {
+  
+
+packages/relic-format/src/otio-zip.ts:801:21 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    799 │   for (let i = 1; i < extents.length; i++) {
+    800 │     const previous = extents[i - 1]!;
+  > 801 │     const current = extents[i]!;
+        │                     ^^^^^^^^^^^
+    802 │     if (current.start < previous.end) {
+    803 │       throw new OtioZipError(
+  
+
+packages/relic-mcp/src/otio-bundle.ts:226:18 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    224 │   let centralCursor = centralDirectoryOffset;
+    225 │   for (let index = 0; index < prepared.length; index++) {
+  > 226 │     const item = prepared[index]!;
+        │                  ^^^^^^^^^^^^^^^^
+    227 │     const localOffset = localHeaderOffsets[index]!;
+    228 │     view.setUint32(centralCursor + 0, 0x02014b50, true);
+  
+
+packages/relic-mcp/src/otio-bundle.ts:227:25 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    225 │   for (let index = 0; index < prepared.length; index++) {
+    226 │     const item = prepared[index]!;
+  > 227 │     const localOffset = localHeaderOffsets[index]!;
+        │                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    228 │     view.setUint32(centralCursor + 0, 0x02014b50, true);
+    229 │     view.setUint16(centralCursor + 4, 0x0014, true);
+  
+
+packages/relic-mcp/src/otio-bundle.ts:624:21 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    622 │     }> = [];
+    623 │     for (const archivePath of Array.from(mediaRefMap.keys()).sort()) {
+  > 624 │       const media = mediaRefMap.get(archivePath)!;
+        │                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    625 │       let fileBytes: Uint8Array;
+    626 │       try {
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:582:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    581 │ const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+  > 582 │   0o140000: 'socket',
+        │   ^^^^^^^^
+    583 │   0o010000: 'fifo',
+    584 │   0o020000: 'chr',
+  
+  i Safe fix: Replace 0o140000 with 26411
+  
+     580  580 │   
+     581  581 │   const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+     582      │ - ··0o140000:·'socket',
+          582 │ + ··26411:·'socket',
+     583  583 │     0o010000: 'fifo',
+     584  584 │     0o020000: 'chr',
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:583:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    581 │ const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+    582 │   0o140000: 'socket',
+  > 583 │   0o010000: 'fifo',
+        │   ^^^^^^^^
+    584 │   0o020000: 'chr',
+    585 │   0o100000: 'file',
+  
+  i Safe fix: Replace 0o010000 with 2401
+  
+     581  581 │   const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+     582  582 │     0o140000: 'socket',
+     583      │ - ··0o010000:·'fifo',
+          583 │ + ··2401:·'fifo',
+     584  584 │     0o020000: 'chr',
+     585  585 │     0o100000: 'file',
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:584:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    582 │   0o140000: 'socket',
+    583 │   0o010000: 'fifo',
+  > 584 │   0o020000: 'chr',
+        │   ^^^^^^^^
+    585 │   0o100000: 'file',
+    586 │   0o040000: 'dir',
+  
+  i Safe fix: Replace 0o020000 with 4802
+  
+     582  582 │     0o140000: 'socket',
+     583  583 │     0o010000: 'fifo',
+     584      │ - ··0o020000:·'chr',
+          584 │ + ··4802:·'chr',
+     585  585 │     0o100000: 'file',
+     586  586 │     0o040000: 'dir',
+  
+
+packages/relic-mcp/build.ts:16:1 assist/source/organizeImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × The imports and exports are not sorted.
+  
+    14 │  */
+    15 │ 
+  > 16 │ import { chmod, mkdir } from 'node:fs/promises';
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    17 │ import {
+    18 │   observeAwait,
+  
+  i Safe fix: Organize Imports (Biome)
+  
+     15  15 │   
+     16  16 │   import { chmod, mkdir } from 'node:fs/promises';
+     17     │ - import·{
+     18     │ - ··observeAwait,
+     19     │ - ··observeBegin,
+     20     │ - ··observeComplete,
+     21     │ - ··observeError,
+     22     │ - ··observeEvent,
+     23     │ - }·from·'../../scripts/full-suite-observation.ts';
+     24     │ - import·{·buildCover·}·from·'@relic/viewer/build';
+         17 │ + import·{·buildCover·}·from·'@relic/viewer/build';
+         18 │ + import·{
+         19 │ + ··observeAwait,
+         20 │ + ··observeBegin,
+         21 │ + ··observeComplete,
+         22 │ + ··observeError,
+         23 │ + ··observeEvent,
+         24 │ + }·from·'../../scripts/full-suite-observation.ts';
+     25  25 │   
+     26  26 │   const buildLifecycle = observeBegin('relic-mcp-build', 'top_level_build');
+  
+
+packages/relic-mcp/test/inventory.test.ts:11:1 assist/source/organizeImports  FIXABLE  ━━━━━━━━━━━━━
+
+  × The imports and exports are not sorted.
+  
+     9 │  */
+    10 │ 
+  > 11 │ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    12 │ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+    13 │ import { tmpdir } from 'node:os';
+  
+  i Safe fix: Organize Imports (Biome)
+  
+      14   14 │   import { join } from 'node:path';
+      15   15 │   import {
+      16      │ - ··observeAwait,
+      17      │ - ··observeBegin,
+      18      │ - ··observeComplete,
+      19      │ - ··observeError,
+      20      │ - ··observeEvent,
+      21      │ - }·from·'../../../scripts/full-suite-observation.ts';
+      22      │ - import·{
+      23      │ - ··encodeKey,
+      24      │ - ··encryptRelic,
+      25      │ - ··generateKey,
+      26      │ - ··generateRelicId,
+      27      │ - ··parseFragment,
+      28      │ - }·from·'@relic/format';
+      29      │ - import·{·MNEMONIC_WORDS,·mnemonicToKey·}·from·'@relic/format/mnemonic';
+      30      │ - import·{·createApp,·type·RelicApp·}·from·'@relic/server/src/app.ts';
+      31      │ - import·{·MemoryStorage·}·from·'@relic/server/src/storage.ts';
+      32      │ - import·{·MemoryStore·}·from·'@relic/server/src/store.ts';
+      33      │ - import·{·metadataCachePath·}·from·'../src/metadata-cache.ts';
+      34      │ - import·{·listRelics,·showRelic·}·from·'../src/inventory.ts';
+           16 │ + ··encodeKey,
+           17 │ + ··encryptRelic,
+           18 │ + ··generateKey,
+           19 │ + ··generateRelicId,
+           20 │ + ··parseFragment,
+           21 │ + }·from·'@relic/format';
+           22 │ + import·{·MNEMONIC_WORDS,·mnemonicToKey·}·from·'@relic/format/mnemonic';
+           23 │ + import·{·createApp,·type·RelicApp·}·from·'@relic/server/src/app.ts';
+           24 │ + import·{·MemoryStorage·}·from·'@relic/server/src/storage.ts';
+           25 │ + import·{·MemoryStore·}·from·'@relic/server/src/store.ts';
+           26 │ + import·{
+           27 │ + ··observeAwait,
+           28 │ + ··observeBegin,
+           29 │ + ··observeComplete,
+           30 │ + ··observeError,
+           31 │ + ··observeEvent,
+           32 │ + }·from·'../../../scripts/full-suite-observation.ts';
+           33 │ + import·{·listRelics,·showRelic·}·from·'../src/inventory.ts';
+           34 │ + import·{·metadataCachePath·}·from·'../src/metadata-cache.ts';
+      35   35 │   import { type FileReader, type PublishDeps, publish } from '../src/publish.ts';
+      36   36 │   import { republish } from '../src/republish.ts';
+  
+
+scripts/observe-full-suite.ts:1:1 assist/source/organizeImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × The imports and exports are not sorted.
+  
+   > 1 │ import {
+       │ ^^^^^^^^
+   > 2 │   copyFile,
+   > 3 │   mkdir,
+   > 4 │   mkdtemp,
+        ...
+   > 9 │   writeFile,
+  > 10 │ } from 'node:fs/promises';
+       │ ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    11 │ import { tmpdir } from 'node:os';
+    12 │ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+  
+  i Safe fix: Organize Imports (Biome)
+  
+      3   3 │     mkdir,
+      4   4 │     mkdtemp,
+      5     │ - ··readFile,
+      6     │ - ··readdir,
+          5 │ + ··readdir,
+          6 │ + ··readFile,
+      7   7 │     rm,
+      8   8 │     stat,
+  
+
+scripts/observe-full-suite.ts:649:36 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+  
+    647 │   if (exitCode === undefined) {
+    648 │     await Promise.race([
+  > 649 │       child.exited.then((code) => (exitCode = code)),
+        │                                    ^^^^^^^^^^^^^^^
+    650 │       sleep(10_000),
+    651 │     ]);
+  
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+  
+
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+error: script "lint" exited with code 1
+error: script "verify" exited with code 1
