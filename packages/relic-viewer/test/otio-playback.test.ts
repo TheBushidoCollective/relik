@@ -429,6 +429,7 @@ function sampledMediaDocument(options: {
   readonly availableStart?: number;
   readonly sourceStart?: OtioRationalTime;
   readonly availableStartTime?: OtioRationalTime;
+  readonly targetUrl?: string;
 }): OtioDocumentV1 {
   const {
     kind,
@@ -437,10 +438,13 @@ function sampledMediaDocument(options: {
     availableStart = 0,
     sourceStart = { value: 0, rate },
     availableStartTime = { value: availableStart, rate },
+    targetUrl: explicitTargetUrl,
   } = options;
   const trackId = kind === 'Video' ? 'track_v' : 'track_a';
   const clipId = kind === 'Video' ? 'clip_v' : 'clip_a';
-  const targetUrl = kind === 'Video' ? 'media/clip.mp4' : 'media/dialogue.wav';
+  const targetUrl =
+    explicitTargetUrl ??
+    (kind === 'Video' ? 'media/clip.mp4' : 'media/dialogue.wav');
   const time = (
     value: number,
     timeRate = rate
@@ -1057,6 +1061,49 @@ describe('otio playback controller', () => {
       (await decoderTimeAt(video30, { value: 58.75, rate: 30 })).target
     ).toBe(117.5 / 60);
   });
+  test('selects the certified WebM packet window instead of an FPS grid', async () => {
+    const mediaBlob = new Blob(['webm packet timing marker'], {
+      type: 'video/webm',
+    });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.webm', mediaBlob]]),
+      timings: new Map<Blob, OtioVideoTiming>([
+        [
+          mediaBlob,
+          {
+            kind: 'windows',
+            starts: new Float64Array([0, 0.033, 0.067]),
+            ends: new Float64Array([0.033, 0.067, 0.1]),
+          },
+        ],
+      ]),
+    });
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({
+        kind: 'Video',
+        rate: 30,
+        duration: 3,
+        targetUrl: 'media/clip.webm',
+      }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    await playback.seek({ value: 2, rate: 30 });
+
+    const decoder = created.find((element) => element.muted);
+    expect(decoder?.currentTime).toBe(0.05);
+    expect(fixture.calls[0]?.mime).toBe('video/webm');
+    expect(
+      playback
+        .getState()
+        .diagnostics.some((issue) => issue.code === 'invalid-timing')
+    ).toBe(false);
+    playback.dispose();
+  });
+
 
   test('caches one timing read per path without sharing occurrence decoders', async () => {
     const mediaBlob = new Blob(['two occurrence marker'], {
