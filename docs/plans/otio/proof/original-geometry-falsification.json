@@ -1,0 +1,90 @@
+{
+  "sourceHead": "24926ed",
+  "runtime": "Bun 1.3.14 (0d9b296a)",
+  "source": "packages/relic-format/src/otio-identity.ts",
+  "sourceSha256BeforeAndAfter": "fdd2cdd8f39189c3272ccecd24405d76a3f508ca0755dbcc3413da94fe823a4c",
+  "command": "mise exec -- bun test packages/relic-format/test/otio-identity.test.ts packages/relic-mcp/test/otio-feedback.test.ts -t 'rejects non-Track|contains anchors|keeps valid gaps|exact before-cut|readable invalid original|keeps explicit gaps'",
+  "baselineAndEachRestoredRun": {
+    "exit": 0,
+    "pass": 6,
+    "fail": 0,
+    "assertions": 357
+  },
+  "mutations": [
+    {
+      "change": "Remove actual Track.1 schema requirement from original track selection",
+      "exit": 1,
+      "pass": 4,
+      "fail": 2,
+      "assertions": 140,
+      "failures": [
+        {
+          "file": "otio-identity.test.ts",
+          "line": 1057,
+          "expected": "changed",
+          "received": "same"
+        },
+        {
+          "file": "otio-feedback.test.ts",
+          "line": 1555,
+          "expected": "unresolvable",
+          "received": "resolved"
+        }
+      ]
+    },
+    {
+      "change": "Remove Timeline outer-exposure containment guard alone, leaving Track containment intact",
+      "exit": 1,
+      "pass": 5,
+      "fail": 1,
+      "assertions": 292,
+      "failures": [
+        {
+          "file": "otio-feedback.test.ts",
+          "line": 1555,
+          "expected": "unresolvable",
+          "received": "resolved"
+        }
+      ],
+      "interpretation": "The core combined geometry test remained green because its selected Track also rejected those cases. Public Timeline-scope readback independently caught this missing guard."
+    },
+    {
+      "change": "Remove selected Track outer-exposure containment guard alone, leaving Timeline containment intact",
+      "exit": 1,
+      "pass": 5,
+      "fail": 1,
+      "assertions": 330,
+      "failures": [
+        {
+          "file": "otio-identity.test.ts",
+          "line": 1162,
+          "expected": "changed",
+          "received": "same"
+        }
+      ]
+    },
+    {
+      "change": "Require nonempty original source_spans in the original-selection validation condition",
+      "exit": 1,
+      "pass": 4,
+      "fail": 2,
+      "assertions": 353,
+      "failures": [
+        {
+          "file": "otio-identity.test.ts",
+          "line": 1217,
+          "expected": "same",
+          "received": "changed"
+        },
+        {
+          "file": "otio-feedback.test.ts",
+          "line": 1681,
+          "expected": "resolved",
+          "received": "unresolvable"
+        }
+      ],
+      "interpretation": "Both core and public encrypted readback detect invalid refusal of a valid exposed empty Timeline tail."
+    }
+  ],
+  "scope": "Four separate mutations, each followed by restoration and the same six passing behavioral tests. No source mutation survives. Tests use the existing isolated loopback storage/mail harness. This does not clear full SOURCE or release gates."
+}
