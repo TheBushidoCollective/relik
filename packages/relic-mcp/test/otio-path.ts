@@ -2779,6 +2779,363 @@ async function restorePreviewBase(browser: ChromeSession): Promise<void> {
   assert.equal(restored, 'restored', `base preview did not restore: ${restored}`);
 }
 
+interface BlockedPreviewHitProbe {
+  readonly x: number;
+  readonly y: number;
+  readonly owned: boolean;
+  readonly tag: string | null;
+  readonly className: string | null;
+}
+
+interface BlockedPreviewLineProbe {
+  readonly rect: DomRectProbe;
+  readonly contained: boolean;
+  readonly clippingContained: boolean;
+  readonly hits: readonly BlockedPreviewHitProbe[];
+}
+
+interface BlockedPreviewTextProbe {
+  readonly text: string;
+  readonly visible: boolean;
+  readonly opacity: number;
+  readonly rect: DomRectProbe | null;
+  readonly contained: boolean;
+  readonly clipping: readonly DomRectProbe[];
+  readonly lines: readonly BlockedPreviewLineProbe[];
+}
+
+interface BlockedPreviewProbe {
+  readonly missing: readonly string[];
+  readonly state: {
+    readonly ready: string;
+    readonly previewState: string;
+    readonly buffering: string;
+    readonly frame: string;
+  };
+  readonly scope: BlockedPreviewTextProbe;
+  readonly scopeText: BlockedPreviewTextProbe;
+  readonly diagnostics: readonly BlockedPreviewTextProbe[];
+  readonly button: BlockedPreviewTextProbe;
+  readonly scopeDiagnosticIntersections: number;
+  readonly scopeButtonIntersections: number;
+  readonly scopeStatusGap: number | null;
+  readonly diagnosticButtonGap: number | null;
+  readonly requiredGap: number;
+}
+
+function assertBlockedPreviewReadable(
+  probe: BlockedPreviewProbe,
+  label: string,
+  effectFrame: number
+): void {
+  assert.deepEqual(probe.missing, [], `${label} blocked preview nodes are missing`);
+  assert.equal(probe.state.ready, 'diagnostic', `${label} blocked preview is not diagnostic`);
+  assert.equal(probe.state.previewState, 'blocked', `${label} preview is not blocked`);
+  assert.equal(probe.state.buffering, 'false', `${label} blocked preview is buffering`);
+  assert.equal(
+    Number(probe.state.frame),
+    effectFrame,
+    `${label} blocked preview is not at the effect frame`
+  );
+  assert.ok(probe.scopeText.text.length > 0, `${label} scope text is empty`);
+  assert.ok(probe.diagnostics.length > 0, `${label} has no blocked diagnostic`);
+  assert.equal(
+    probe.button.text,
+    'Preview base media without unsupported effects',
+    `${label} consent label is incomplete`
+  );
+  assert.equal(
+    probe.scopeDiagnosticIntersections,
+    0,
+    `${label} scope banner overlaps blocked diagnostic text`
+  );
+  assert.equal(
+    probe.scopeButtonIntersections,
+    0,
+    `${label} scope banner overlaps blocked consent button`
+  );
+  for (const node of [
+    probe.scope,
+    probe.scopeText,
+    ...probe.diagnostics,
+    probe.button,
+  ]) {
+    assert.equal(node.visible, true, `${label} text is hidden: ${node.text}`);
+    assert.ok(node.opacity > 0, `${label} text is transparent: ${node.text}`);
+    assert.equal(
+      node.contained,
+      true,
+      `${label} element escapes preview containment: ${node.text}`
+    );
+    assert.ok(node.lines.length > 0, `${label} has no text lines: ${node.text}`);
+    for (const line of node.lines) {
+      assert.equal(
+        line.contained,
+        true,
+        `${label} text line escapes preview, stage, or viewport`
+      );
+      assert.equal(
+        line.clippingContained,
+        true,
+        `${label} text line is clipped by an ancestor`
+      );
+      assert.ok(
+        line.hits.every((hit) => hit.owned),
+        `${label} text line is covered at ${JSON.stringify(line.hits)}`
+      );
+    }
+  }
+  assert.ok(
+    probe.scopeStatusGap !== null && probe.scopeStatusGap >= probe.requiredGap,
+    `${label} scope-to-status gap is ${probe.scopeStatusGap}px`
+  );
+  assert.ok(
+    probe.diagnosticButtonGap !== null &&
+      probe.diagnosticButtonGap >= probe.requiredGap,
+    `${label} diagnostic-to-button gap is ${probe.diagnosticButtonGap}px`
+  );
+}
+
+async function measureBlockedPreview(
+  browser: ChromeSession
+): Promise<BlockedPreviewProbe> {
+  return browser.evaluate<BlockedPreviewProbe>(String.raw`(() => {
+    const root = document.querySelector('.otio-view');
+    const stage = document.querySelector('.stage-wrap');
+    const preview = document.querySelector('.otio-preview');
+    const scope = document.querySelector('.otio-preview > .otio-preview-scope');
+    const scopeText = document.querySelector('.otio-preview > .otio-preview-scope > span');
+    const status = document.querySelector('.otio-preview > .otio-preview-status');
+    const diagnostics = status ? [...status.querySelectorAll(':scope > p')] : [];
+    const button = status?.querySelector(':scope > button.otio-preview-base') ?? null;
+    const missing = [];
+    if (!root) missing.push('.otio-view');
+    if (!stage) missing.push('.stage-wrap');
+    if (!preview) missing.push('.otio-preview');
+    if (!scope) missing.push('.otio-preview > .otio-preview-scope');
+    if (!scopeText) missing.push('.otio-preview > .otio-preview-scope > span');
+    if (!status) missing.push('.otio-preview > .otio-preview-status');
+    if (!button) missing.push('.otio-preview > .otio-preview-status button.otio-preview-base');
+    const empty = {
+      missing,
+      state: {
+        ready: root?.dataset.ready ?? '',
+        previewState: root?.dataset.previewState ?? '',
+        buffering: root?.dataset.buffering ?? '',
+        frame: root?.dataset.frame ?? '',
+      },
+      scope: { text: '', visible: false, opacity: 0, rect: null, contained: false, clipping: [], lines: [] },
+      scopeText: { text: '', visible: false, opacity: 0, rect: null, contained: false, clipping: [], lines: [] },
+      diagnostics: [],
+      button: { text: '', visible: false, opacity: 0, rect: null, contained: false, clipping: [], lines: [] },
+      scopeDiagnosticIntersections: 0,
+      scopeButtonIntersections: 0,
+      scopeStatusGap: null,
+      diagnosticButtonGap: null,
+      requiredGap: 0,
+    };
+    if (missing.length > 0) return empty;
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const stageContent = () => {
+      const value = stage.getBoundingClientRect();
+      const left = value.left + stage.clientLeft;
+      const top = value.top + stage.clientTop;
+      return {
+        left,
+        top,
+        right: left + stage.clientWidth,
+        bottom: top + stage.clientHeight,
+        width: stage.clientWidth,
+        height: stage.clientHeight,
+      };
+    };
+    const viewport = {
+      left: 0,
+      top: 0,
+      right: window.innerWidth,
+      bottom: window.innerHeight,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+    const within = (inner, outer) =>
+      inner.left >= outer.left - 1 && inner.right <= outer.right + 1 &&
+      inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+    const intersects = (a, b) =>
+      a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    const visibility = (node) => {
+      let current = node;
+      let opacity = 1;
+      let visible = true;
+      const clipping = [];
+      while (current instanceof HTMLElement) {
+        const style = getComputedStyle(current);
+        opacity *= Number(style.opacity);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)
+          visible = false;
+        if (
+          style.overflow !== 'visible' ||
+          style.overflowX !== 'visible' ||
+          style.overflowY !== 'visible'
+        )
+          clipping.push(rect(current));
+        current = current.parentElement;
+      }
+      return { visible, opacity, clipping };
+    };
+    const textLines = (node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return [...range.getClientRects()]
+        .filter((line) => line.width > 0 && line.height > 0)
+        .map((line) => ({
+          left: line.left,
+          top: line.top,
+          right: line.right,
+          bottom: line.bottom,
+          width: line.width,
+          height: line.height,
+        }));
+    };
+    const describe = (node, accepted) => {
+      const own = rect(node);
+      const state = visibility(node);
+      const lines = textLines(node).map((line) => {
+        const inset = Math.min(4, Math.max(1, line.width / 4));
+        const points = [
+          [line.left + inset, line.top + line.height / 2],
+          [line.left + line.width / 2, line.top + line.height / 2],
+          [line.right - inset, line.top + line.height / 2],
+        ];
+        return {
+          rect: line,
+          contained:
+            within(line, rect(preview)) &&
+            within(line, stageContent()) &&
+            within(line, viewport),
+          clippingContained: state.clipping.every((clip) => within(line, clip)),
+          hits: points.map(([x, y]) => {
+            const hit = document.elementFromPoint(x, y);
+            return {
+              x,
+              y,
+              owned: accepted.some((owner) => owner === hit || owner.contains(hit)),
+              tag: hit?.tagName ?? null,
+              className: hit instanceof HTMLElement ? hit.className : null,
+            };
+          }),
+        };
+      });
+      return {
+        text: node.textContent?.trim() ?? '',
+        visible: state.visible,
+        opacity: state.opacity,
+        rect: own,
+        contained:
+          within(own, rect(preview)) &&
+          within(own, stageContent()) &&
+          within(own, viewport) &&
+          state.clipping.every((clip) => within(own, clip)),
+        clipping: state.clipping,
+        lines,
+      };
+    };
+    const scopeProbe = describe(scope, [scope, scopeText]);
+    const scopeTextProbe = describe(scopeText, [scope, scopeText]);
+    const diagnosticProbes = diagnostics.map((diagnostic) =>
+      describe(diagnostic, [status, diagnostic])
+    );
+    const buttonProbe = describe(button, [status, button]);
+    const diagnosticLines = diagnosticProbes.flatMap((diagnostic) => diagnostic.lines);
+    const buttonLines = buttonProbe.lines;
+    const scopeRect = rect(scope);
+    const firstStatusTop = Math.min(
+      ...[
+        ...diagnosticLines.map((line) => line.rect.top),
+        ...buttonLines.map((line) => line.rect.top),
+      ]
+    );
+    const lastDiagnosticBottom = diagnosticLines.length
+      ? Math.max(...diagnosticLines.map((line) => line.rect.bottom))
+      : null;
+    const firstButtonTop = buttonLines.length
+      ? Math.min(...buttonLines.map((line) => line.rect.top))
+      : null;
+    const requiredGap = parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.65;
+    return {
+      missing,
+      state: {
+        ready: root.dataset.ready ?? '',
+        previewState: root.dataset.previewState ?? '',
+        buffering: root.dataset.buffering ?? '',
+        frame: root.dataset.frame ?? '',
+      },
+      scope: scopeProbe,
+      scopeText: scopeTextProbe,
+      diagnostics: diagnosticProbes,
+      button: buttonProbe,
+      scopeDiagnosticIntersections: diagnosticLines.filter((line) =>
+        intersects(scopeRect, line.rect)
+      ).length,
+      scopeButtonIntersections: buttonLines.filter((line) =>
+        intersects(scopeRect, line.rect)
+      ).length,
+      scopeStatusGap: Number.isFinite(firstStatusTop) ? firstStatusTop - scopeRect.bottom : null,
+      diagnosticButtonGap:
+        lastDiagnosticBottom !== null && firstButtonTop !== null
+          ? firstButtonTop - lastDiagnosticBottom
+          : null,
+      requiredGap,
+    };
+  })()`);
+}
+
+async function prepareBlockedPreview(
+  browser: ChromeSession,
+  effectFrame: number
+): Promise<number> {
+  const priorFrame = await browser.evaluate<number>(
+    `Number(document.querySelector('.otio-view')?.dataset.frame ?? NaN)`
+  );
+  assert.ok(
+    Number.isInteger(priorFrame) && priorFrame >= 0,
+    `blocked preview has no restorable playback frame: ${priorFrame}`
+  );
+  await seekTo(browser, effectFrame);
+  const exposed = await exposePreviewBase(browser);
+  assertStageControlExposure(exposed, 'blocked preview consent');
+  const state = await browser.evaluate<{
+    readonly ready: string;
+    readonly previewState: string;
+    readonly buffering: string;
+    readonly frame: number;
+  }>(String.raw`(async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const root = document.querySelector('.otio-view');
+    return {
+      ready: root?.dataset.ready ?? '',
+      previewState: root?.dataset.previewState ?? '',
+      buffering: root?.dataset.buffering ?? '',
+      frame: Number(root?.dataset.frame ?? NaN),
+    };
+  })()`);
+  assert.equal(state.ready, 'diagnostic', 'blocked preview is not diagnostic');
+  assert.equal(state.previewState, 'blocked', 'preview state is not blocked');
+  assert.equal(state.buffering, 'false', 'blocked preview is buffering');
+  assert.equal(state.frame, effectFrame, 'blocked preview left the effect frame');
+  return priorFrame;
+}
+
 async function exposeSelectionControl(
   browser: ChromeSession
 ): Promise<StageControlExposure> {
@@ -4199,6 +4556,46 @@ try {
       }
     }
 
+    for (const [shotWidth, scheme] of [
+      [390, 'light'],
+      [1440, 'light'],
+      [390, 'dark'],
+      [1440, 'dark'],
+    ] as const) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width: shotWidth,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: shotWidth < 600,
+      });
+      await browser.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: scheme }],
+      });
+      await browser.evaluate<void>(
+        `document.querySelector('.stage-wrap').scrollTop = 0`
+      );
+      const priorFrame = await prepareBlockedPreview(browser, plan.effect_frame);
+      const blocked = await measureBlockedPreview(browser);
+      assertBlockedPreviewReadable(
+        blocked,
+        `${shotWidth}px ${scheme}`,
+        plan.effect_frame
+      );
+      nativeControlMeasurements.push({
+        state: 'blocked-preview',
+        width: shotWidth,
+        scheme,
+        prior_frame: priorFrame,
+        effect_frame: plan.effect_frame,
+        probe: blocked,
+      });
+      await browser.screenshot(
+        `native-controls-${shotWidth}-${scheme}-blocked-preview`
+      );
+      await restorePreviewBase(browser);
+      await seekTo(browser, priorFrame);
+    }
+
     for (const scheme of ['light', 'dark'] as const) {
       await browser.send('Emulation.setDeviceMetricsOverride', {
         width: 320,
@@ -4258,33 +4655,27 @@ try {
         scheme,
         probe: sidebar,
       });
-      const priorFrame = await browser.evaluate<number>(
-        `Number(document.querySelector('.otio-view')?.dataset.frame ?? NaN)`
+      await browser.evaluate<void>(
+        `document.querySelector('.stage-wrap').scrollTop = 0`
       );
-      assert.ok(
-        Number.isInteger(priorFrame) && priorFrame >= 0,
-        `320px ${scheme} has no restorable playback frame: ${priorFrame}`
+      const priorFrame = await prepareBlockedPreview(browser, plan.effect_frame);
+      const blocked = await measureBlockedPreview(browser);
+      assertBlockedPreviewReadable(
+        blocked,
+        `320px ${scheme}`,
+        plan.effect_frame
       );
-      await seekTo(browser, plan.effect_frame);
       nativeControlMeasurements.push({
-        state: 'supplemental-preview-context',
+        state: 'blocked-preview',
         width: 320,
         scheme,
         prior_frame: priorFrame,
         effect_frame: plan.effect_frame,
+        probe: blocked,
       });
-      const previewBase = await exposePreviewBase(browser);
-      assertStageControlExposure(
-        previewBase,
-        `320px ${scheme} base preview`
+      await browser.screenshot(
+        `native-controls-320-${scheme}-blocked-preview`
       );
-      nativeControlMeasurements.push({
-        state: 'supplemental-preview-base',
-        width: 320,
-        scheme,
-        probe: previewBase,
-      });
-      await browser.screenshot(`native-controls-320-${scheme}-preview-base`);
       await restorePreviewBase(browser);
       await seekTo(browser, priorFrame);
       const commentSelection = await exposeSelectionControl(browser);
