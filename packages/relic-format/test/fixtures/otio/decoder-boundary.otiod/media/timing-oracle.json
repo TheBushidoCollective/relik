@@ -1,10 +1,11 @@
 {
   "provenance": {
-    "producer": "ffprobe packet and frame timestamps",
+    "producer": "ffprobe packet PTS and presentation-frame identity timestamps",
+    "scope": "Independent PTS-to-presentation-frame identity oracle. It does not certify the reader's reported packet durations or production timing windows.",
     "command": "ffprobe -v error -select_streams v:0 -show_packets -show_frames -show_entries stream=codec_name,time_base,r_frame_rate,avg_frame_rate:packet=pts,dts,duration,pts_time,dts_time,duration_time:frame=best_effort_timestamp,best_effort_timestamp_time,pkt_dts,pkt_dts_time,pict_type,coded_picture_number -of json",
     "notes": {
-      "fr30.webm": "Packet PTS are millisecond-quantized. 2/30 seconds is inside [0.033, 0.067), frame 1.",
-      "no-duration.webm": "DefaultDuration is replaced in the synthetic bytes. Its terminal packet has no certified browser-reader interval."
+      "fr30.webm": "Packet PTS are millisecond-quantized. 2/30 seconds maps to presentation frame 1 between .033 and .067. The ffprobe duration field does not certify the reader's duration bound.",
+      "no-duration.webm": "DefaultDuration is replaced in the synthetic bytes. Its raw final PTS identifies a frame but does not certify a terminal reader window."
     }
   },
   "files": {
