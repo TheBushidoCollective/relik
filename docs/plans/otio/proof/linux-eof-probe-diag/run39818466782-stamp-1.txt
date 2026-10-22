@@ -1,0 +1,15 @@
+bun test v1.4.3 (c6da4a4d3)
+
+::group::packages/relic-mcp/test/protocol.test.ts:
+killed 1 dangling process
+::error title=error: Test "stamps bundle and plugin launch config from package.json when built" timed out after 5000ms::
+(fail) the version the server reports > stamps bundle and plugin launch config from package.json when built [5000.62ms]
+  ^ this test timed out after 5000ms.
+
+::endgroup::
+
+ 0 pass
+ 33 filtered out
+ 1 fail
+ 8 expect() calls
+Ran 1 test across 1 file. [5.03s]

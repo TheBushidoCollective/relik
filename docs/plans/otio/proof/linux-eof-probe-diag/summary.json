@@ -1,0 +1,13 @@
+{
+  "context": "After pinning Bun 1.4.3 (f196460), Linux CI verify run 39817583484 had no EBADF; 2061 pass, 1 fail: protocol.test.ts 'stamps bundle and plugin launch config from package.json when built' timed out at 5000 ms. That test builds relic-mcp, then runs test/stdio-eof-path.ts twice (normal and response-suppressed).",
+  "diagnosticBranch": "agent/otio-linux-eof-diag (never merged), ubuntu-24.04, Bun 1.4.3 via mise",
+  "runs": {
+    "39818466782": "stdio-eof-path direct: mode0 (normal) rc=1 at ~12 s twice; mode1 (suppressed) rc=1 once at ~12 s and once at 124 ms; build-stamp test 5/5 timed out at 5 s. Deterministic.",
+    "39819152879": "fs.watch shared-path repro (two watchers, close one, append): survivor fired after sibling close on Bun 1.3.14, Bun 1.4.3 and Node 24.15.0, 3/3 each. Hypothesis 1 refuted.",
+    "39819658955": "fs.watch close-then-rewatch repro (same tick, after microtask, after macrotask): re-added watchers fired on all three runtimes, 3/3 each. Hypothesis 2 refuted."
+  },
+  "mode0Signature": "Parent trace: stdin write/end completed; tap: stdin_chunk 207 bytes, stdin_physical_eof, comments_get_started; parent: comments_get_accepted with physical_eof_already_observed=true; then NO eof_and_comments_get_accepted_before_release / comments_get_released. Parent stderr: 'Bun.serve() timed out a request after 10 seconds'. Child got fetch failed, returned service_unreachable tool error at ~12 s, and exited 143. [INFERENCE] the parent's await physicalEof (stdio-eof-path.ts:577-591) resolved only at child exit, through the exit-code re-inspect, not through a watch event.",
+  "macOS": "Same probe passes locally on Bun 1.4.3 (whole build-stamp test 556 ms); 10/10 macOS qualification rounds green.",
+  "status": "Cause unproven. Product transport unchanged. Release gate open on Linux.",
+  "files": "run39818466782-* (probe stdout/stderr per mode, summary, one stamp log), run39819152879-fs-watch-shared-path.jsonl, run39819658955-fs-watch-rewatch.jsonl, the two repro scripts, and the diagnostic workflow."
+}

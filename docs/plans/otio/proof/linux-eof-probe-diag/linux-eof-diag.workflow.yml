@@ -1,0 +1,94 @@
+name: linux-eof-diag
+
+# Diagnostic only, never merged. Measures where the build-stamp test's EOF
+# probe stalls on Linux under the pinned Bun, outside bun test's 5 s limit.
+on:
+  push:
+    branches: [agent/otio-linux-eof-diag]
+
+jobs:
+  diag:
+    if: github.repository == 'TheBushidoCollective/relik'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Require Linux native build prerequisites
+        run: |
+          set -euo pipefail
+          command -v docker
+          if ! command -v readelf >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends binutils
+          fi
+          echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build relic-mcp
+        run: |
+          bun --version
+          bun run --cwd packages/relic-mcp build
+
+      - name: fs.watch shared-path repro
+        shell: bash
+        run: |
+          set -u +e
+          mkdir -p diag
+          for v in 1.3.14 1.4.3; do
+            for i in 1 2 3; do
+              mise exec bun@$v -- bun diag/fs-watch-shared-path.mjs | tee -a diag/fs-watch.jsonl
+            done
+          done
+          for i in 1 2 3; do node diag/fs-watch-shared-path.mjs | tee -a diag/fs-watch.jsonl; done
+          for v in 1.3.14 1.4.3; do
+            for i in 1 2 3; do
+              mise exec bun@$v -- bun diag/fs-watch-rewatch.mjs | tee -a diag/fs-rewatch.jsonl
+            done
+          done
+          for i in 1 2 3; do node diag/fs-watch-rewatch.mjs | tee -a diag/fs-rewatch.jsonl; done
+
+      - name: EOF probe direct runs
+        shell: bash
+        run: |
+          set -u +e
+          mkdir -p diag
+          for mode in 0 1 0 1; do
+            n=$(ls diag | wc -l)
+            start=$(date +%s%N)
+            RELIC_STDIO_EOF_SUPPRESS_RESPONSE=$mode timeout 60 bun packages/relic-mcp/test/stdio-eof-path.ts \
+              > "diag/eof-$n-mode$mode.stdout.txt" 2> "diag/eof-$n-mode$mode.stderr.txt"
+            rc=$?
+            end=$(date +%s%N)
+            echo "eof run $n mode=$mode rc=$rc ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
+          done
+
+      - name: Build-stamp test repeated
+        shell: bash
+        run: |
+          set -u +e
+          for i in 1 2 3 4 5; do
+            start=$(date +%s%N)
+            timeout 120 bun test packages/relic-mcp/test/protocol.test.ts -t 'stamps bundle and plugin launch config' \
+              > "diag/stamp-$i.txt" 2>&1
+            rc=$?
+            end=$(date +%s%N)
+            echo "stamp run $i rc=$rc ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
+          done
+
+      - name: Show summary
+        if: always()
+        run: cat diag/summary.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-eof-diag-${{ github.run_id }}
+          path: diag/
