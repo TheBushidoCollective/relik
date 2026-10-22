@@ -1,0 +1,240 @@
+# llvm-symbolizer raw output for docs/plans/otio/proof/stdio-linux-symbolized-39723814228.json
+# tool: /opt/homebrew/opt/llvm/bin/llvm-symbolizer (Homebrew LLVM version 22.1.8)
+# object: bun-linux-x64-profile/bun-profile sha256 60a1d0bb2af4cc34e32d8536d3d2e8b6f484a76a3b24b30927e5b0a093e4b406
+# command: llvm-symbolizer --inlines --obj=<bun-profile> <vmas below, in this order>
+# vma = bracket + 0x460000 for every bun-ELF frame of run 39723814228 (see JSON)
+# [0] vma=0x3aa855a first_trace_line=303862
+# [1] vma=0x28716f0 first_trace_line=303863
+# [2] vma=0x37cbe36 first_trace_line=303864
+# [3] vma=0x37ca6eb first_trace_line=303865
+# [4] vma=0x26116c4 first_trace_line=303878
+# [5] vma=0x5590082 first_trace_line=303879
+# [6] vma=0x558e5bf first_trace_line=303880
+# [7] vma=0x57f8233 first_trace_line=303881
+# [8] vma=0x3d283dd first_trace_line=303882
+# [9] vma=0x51540b9 first_trace_line=303886
+# [10] vma=0x53dcca0 first_trace_line=303887
+# [11] vma=0x3cef503 first_trace_line=303888
+# [12] vma=0x27a0dae first_trace_line=303889
+# [13] vma=0x28b21ad first_trace_line=303890
+# [14] vma=0x2872850 first_trace_line=304120
+# [15] vma=0x35f7d67 first_trace_line=304459
+# [16] vma=0x4186a5b first_trace_line=304460
+# [17] vma=0x54f61ef first_trace_line=304461
+# [18] vma=0x50ceb85 first_trace_line=304462
+# [19] vma=0x50cd07f first_trace_line=304463
+# [20] vma=0x3a7e8cd first_trace_line=304464
+# [21] vma=0x4188b3b first_trace_line=304465
+# [22] vma=0x37d04b4 first_trace_line=304466
+# [23] vma=0x279e148 first_trace_line=304721
+# [24] vma=0x279c0af first_trace_line=304722
+# [25] vma=0x37d8f43 first_trace_line=304723
+# [26] vma=0x37d062c first_trace_line=304724
+# [27] vma=0x28a3388 first_trace_line=304751
+# [28] vma=0x37d067b first_trace_line=304766
+# [29] vma=0x277f96e first_trace_line=304797
+# [30] vma=0x277e14d first_trace_line=304798
+# --- raw output: one block per address, blank line ends each block ---
+posix_spawn_bun::$_1::operator()() const
+./build/release/unified/../../../src/jsc/bindings/bun-spawn.cpp:232:46
+posix_spawn_bun
+./build/release/unified/../../../src/jsc/bindings/bun-spawn.cpp:317:16
+
+runtime.api.bun.spawn.PosixSpawn.BunSpawnRequest.spawn
+/var/lib/buildkite-agent/build/src/runtime/api/bun/spawn.zig:314:17
+runtime.api.bun.spawn.PosixSpawn.spawnZ
+/var/lib/buildkite-agent/build/src/runtime/api/bun/spawn.zig:347:41
+runtime.api.bun.process.spawnProcessPosix
+/var/lib/buildkite-agent/build/src/runtime/api/bun/process.zig:1610:43
+
+runtime.api.bun.process.spawnProcess
+/var/lib/buildkite-agent/build/src/runtime/api/bun/process.zig:1346:9
+runtime.api.bun.js_bun_spawn_bindings.spawnMaybeSync__anon_537756694
+/var/lib/buildkite-agent/build/src/runtime/api/bun/js_bun_spawn_bindings.zig:621:49
+
+jsc.host_fn.wrapStaticMethod__struct_58076.method
+/var/lib/buildkite-agent/build/src/jsc/host_fn.zig:791:13
+BunObject_callback_spawn
+/var/lib/buildkite-agent/build/src/jsc/host_fn.zig:19:63
+
+llint_call_javascript
+ld-temp.o:0:0
+
+JSC::JSValue JSC::MicrotaskCall::tryCallWithArguments<JSC::JSGenerator*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue>(JSC::VM&, JSC::JSFunction*, JSC::JSValue, JSC::JSCell*, T...)
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/MicrotaskCallInlines.h:84:13
+
+JSC::JSValue JSC::callMicrotask<JSC::JSGenerator*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue>(JSC::JSGlobalObject*, JSC::JSValue, JSC::JSValue, JSC::JSCell*, WTF::ASCIILiteral, JSC::MicrotaskCall*, T...)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/JSMicrotask.cpp:143:46
+JSC::runInternalMicrotask(JSC::JSGlobalObject*, JSC::VM&, JSC::InternalMicrotask, unsigned char, std::span<JSC::JSValue const, 4ul>, JSC::MicrotaskCall*)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/JSMicrotask.cpp:1783:21
+
+JSC::VM::exception() const
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/VM.h:1271:16
+JSC::ExceptionScope::exception() const
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/ExceptionScope.h:97:62
+JSC::runMicrotask(JSC::JSGlobalObject*, JSC::TopExceptionScope&, JSC::VM&, JSC::QueuedTask&, JSC::MicrotaskCall*)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp:62:38
+std::pair<JSC::JSGlobalObject*, bool> JSC::MicrotaskQueue::drainImpl<true>(JSC::JSGlobalObject*, JSC::VM&, JSC::TopExceptionScope&)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp:193:18
+JSC::MicrotaskQueue::drainWithUseCallOnEachMicrotask(JSC::JSGlobalObject*, JSC::VM&, JSC::TopExceptionScope&)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/MicrotaskQueue.cpp:246:12
+std::pair<JSC::JSGlobalObject*, bool> JSC::MicrotaskQueue::drain<true>(JSC::JSGlobalObject*, JSC::VM&, JSC::TopExceptionScope&)
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/MicrotaskQueue.h:281:20
+void JSC::MicrotaskQueue::performMicrotaskCheckpoint<true, JSC::VM::drainMicrotasks()::$_0>(JSC::VM&, JSC::VM::drainMicrotasks()::$_0 const&)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/MicrotaskQueueInlines.h:118:45
+JSC::VM::drainMicrotasks()
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/VM.cpp:1452:38
+
+Bun::jsFunctionDrainMicrotaskQueue(JSC::JSGlobalObject*, JSC::CallFrame*)
+./build/release/../../src/jsc/bindings/BunProcess.cpp:3807:5
+
+JSC::Interpreter::executeCallImpl(JSC::VM&, JSC::JSObject*, JSC::CallData const&, JSC::JSValue, JSC::JSCell*, JSC::ArgList const&)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:1311:32
+
+JSC::call(JSC::JSGlobalObject*, JSC::JSValue, JSC::JSValue, JSC::ArgList const&, WTF::ASCIILiteral)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/CallData.cpp:56:1
+
+std::__atomic_base<unsigned int>::load(std::memory_order) const
+/usr/include/c++/13/bits/atomic_base.h:505:9
+WTF::Atomic<unsigned int>::load(std::memory_order) const
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/wtf/Atomics.h:55:100
+WTF::Atomic<unsigned int>::loadRelaxed() const
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/wtf/Atomics.h:57:50
+JSC::VMTraps::maybeNeedHandling() const
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/VMTraps.h:210:70
+Bun::JSNextTickQueue::drain(JSC::VM&, JSC::JSGlobalObject*)
+./build/release/unified/../../../src/jsc/bindings/JSNextTickQueue.cpp:97:9
+
+JSC::VM::exception() const
+/var/lib/buildkite-agent/build/src/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/VM.h:1271:16
+JSC::ExceptionScope::exception() const
+/var/lib/buildkite-agent/build/src/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/ExceptionScope.h:97:62
+Zig::GlobalObject::drainMicrotasks()
+/var/lib/buildkite-agent/build/src/./build/release/../../src/jsc/bindings/ZigGlobalObject.cpp:2999:37
+JSC__JSGlobalObject__drainMicrotasks
+/var/lib/buildkite-agent/build/src/./build/release/../../src/jsc/bindings/ZigGlobalObject.cpp:3022:26
+jsc.event_loop.drainMicrotasksWithGlobal
+/var/lib/buildkite-agent/build/src/jsc/event_loop.zig:135:49
+
+jsc.Task.tickQueueWithCount
+/var/lib/buildkite-agent/build/src/jsc/Task.zig:539:43
+
+os.linux.x86_64.syscall1
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/os/linux/x86_64.zig:0:5
+os.linux.close
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/os/linux.zig:1414:20
+sys.fd.FD.closeAllowingStandardIo
+/var/lib/buildkite-agent/build/src/sys/fd.zig:266:77
+sys.fd.FD.closeAllowingBadFileDescriptor
+/var/lib/buildkite-agent/build/src/sys/fd.zig:250:42
+sys.fd.FD.close
+/var/lib/buildkite-agent/build/src/sys/fd.zig:237:54
+runtime.api.bun.process.spawnProcessPosix
+/var/lib/buildkite-agent/build/src/runtime/api/bun/process.zig:1426:21
+
+sys.fd.FD.closeAllowingBadFileDescriptor
+/var/lib/buildkite-agent/build/src/sys/fd.zig:250:9
+sys.fd.FD.close
+/var/lib/buildkite-agent/build/src/sys/fd.zig:237:54
+runtime.api.bun.subprocess.finalizeStreams
+/var/lib/buildkite-agent/build/src/runtime/api/bun/subprocess.zig:781:39
+
+runtime.api.bun.subprocess.finalize
+/var/lib/buildkite-agent/build/src/runtime/api/bun/subprocess.zig:814:24
+ZigGeneratedClasses.JSSubprocess.JavaScriptCoreBindings.SubprocessClass__finalize
+/var/lib/buildkite-agent/build/build/release/codegen/ZigGeneratedClasses.zig:21738:47
+WebCore::JSSubprocess::~JSSubprocess()
+./build/release/codegen/ZigGeneratedClasses.cpp:66397:9
+WebCore::JSSubprocess::destroy(JSC::JSCell*)
+./build/release/codegen/ZigGeneratedClasses.cpp:66412:53
+
+JSC::HeapCell::zap(JSC::HeapCell::ZapReason)
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/HeapCell.h:62:22
+void JSC::MarkedBlock::Handle::specializedSweep<true, (JSC::MarkedBlock::Handle::EmptyMode)0, (JSC::MarkedBlock::Handle::SweepMode)1, (JSC::MarkedBlock::Handle::SweepDestructionMode)1, (JSC::MarkedBlock::Handle::ScribbleMode)0, (JSC::MarkedBlock::Handle::NewlyAllocatedMode)1, (JSC::MarkedBlock::Handle::MarksMode)0, JSC::JSDestructibleObjectDestroyFunc>(JSC::FreeList*, JSC::MarkedBlock::Handle::EmptyMode, JSC::MarkedBlock::Handle::SweepMode, JSC::MarkedBlock::Handle::SweepDestructionMode, JSC::MarkedBlock::Handle::ScribbleMode, JSC::MarkedBlock::Handle::NewlyAllocatedMode, JSC::MarkedBlock::Handle::MarksMode, JSC::JSDestructibleObjectDestroyFunc const&)::'lambda'(void*)::operator()(void*) const
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/MarkedBlockInlines.h:183:21
+void JSC::MarkedBlock::Handle::specializedSweep<true, (JSC::MarkedBlock::Handle::EmptyMode)0, (JSC::MarkedBlock::Handle::SweepMode)1, (JSC::MarkedBlock::Handle::SweepDestructionMode)1, (JSC::MarkedBlock::Handle::ScribbleMode)0, (JSC::MarkedBlock::Handle::NewlyAllocatedMode)1, (JSC::MarkedBlock::Handle::MarksMode)0, JSC::JSDestructibleObjectDestroyFunc>(JSC::FreeList*, JSC::MarkedBlock::Handle::EmptyMode, JSC::MarkedBlock::Handle::SweepMode, JSC::MarkedBlock::Handle::SweepDestructionMode, JSC::MarkedBlock::Handle::ScribbleMode, JSC::MarkedBlock::Handle::NewlyAllocatedMode, JSC::MarkedBlock::Handle::MarksMode, JSC::JSDestructibleObjectDestroyFunc const&)
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/MarkedBlockInlines.h:224:21
+
+JSC::Subspace::finishSweep(JSC::MarkedBlock::Handle&, JSC::FreeList*)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/heap/Subspace.cpp:0:21
+JSC::MarkedBlock::Handle::sweep(JSC::FreeList*)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/heap/MarkedBlock.cpp:584:21
+
+JSC::FreeList::allocationWillFail() const
+/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/FreeList.h:92:46
+JSC::LocalAllocator::tryAllocateIn(JSC::MarkedBlock::Handle*, unsigned long)
+/webkitbuild/vendor/WebKit/Source/JavaScriptCore/heap/LocalAllocator.cpp:232:20
+
+JSC::LocalAllocator::tryAllocateWithoutCollecting(unsigned long)
+./build/release/vendor/WebKit/Source/JavaScriptCore/heap/LocalAllocator.cpp:195:19
+JSC::LocalAllocator::allocateSlowCase(JSC::Heap&, unsigned long, JSC::GCDeferralContext*, JSC::AllocationFailureMode)
+./build/release/vendor/WebKit/Source/JavaScriptCore/heap/LocalAllocator.cpp:133:20
+JSC::LocalAllocator::allocate(JSC::Heap&, unsigned long, JSC::GCDeferralContext*, JSC::AllocationFailureMode)::'lambda'()::operator()() const
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/LocalAllocatorInlines.h:47:43
+
+JSC::HeapCell* JSC::FreeList::allocateWithCellSize<JSC::LocalAllocator::allocate(JSC::Heap&, unsigned long, JSC::GCDeferralContext*, JSC::AllocationFailureMode)::'lambda'()>(JSC::LocalAllocator::allocate(JSC::Heap&, unsigned long, JSC::GCDeferralContext*, JSC::AllocationFailureMode)::'lambda'() const&, unsigned long)
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/FreeListInlines.h:0:16
+JSC::LocalAllocator::allocate(JSC::Heap&, unsigned long, JSC::GCDeferralContext*, JSC::AllocationFailureMode)
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/LocalAllocatorInlines.h:44:23
+JSC::GCClient::IsoSubspace::allocate(JSC::VM&, unsigned long, JSC::GCDeferralContext*, JSC::AllocationFailureMode)
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/IsoSubspaceInlines.h:42:29
+void* JSC::tryAllocateCellHelper<WebCore::JSSubprocess, (JSC::AllocationFailureMode)0>(JSC::VM&, unsigned long, JSC::GCDeferralContext*)
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/JSCellInlines.h:162:63
+void* JSC::allocateCell<WebCore::JSSubprocess>(JSC::VM&, unsigned long)
+./build/release/cache/webkit-5488984d20e0dbfe-lto/include/JavaScriptCore/JSCellInlines.h:182:12
+WebCore::JSSubprocess::create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, void*)
+./build/release/codegen/ZigGeneratedClasses.cpp:66424:37
+Subprocess__create
+./build/release/codegen/ZigGeneratedClasses.cpp:66573:28
+
+ZigGeneratedClasses.JSSubprocess.toJS
+/var/lib/buildkite-agent/build/build/release/codegen/ZigGeneratedClasses.zig:21694:38
+runtime.api.bun.js_bun_spawn_bindings.spawnMaybeSync__anon_537756694
+/var/lib/buildkite-agent/build/src/runtime/api/bun/js_bun_spawn_bindings.zig:858:24
+
+bit_set.IntegerBitSet(23).set
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/bit_set.zig:112:17
+enums.EnumSet(posix_event_loop.FilePoll.Flags).insert
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/enums.zig:363:26
+posix_event_loop.FilePoll.registerWithFd
+/var/lib/buildkite-agent/build/src/aio/posix_event_loop.zig:866:30
+
+io.PipeReader.PosixBufferedReader.registerPoll
+/var/lib/buildkite-agent/build/src/io/PipeReader.zig:291:17
+
+runtime.api.bun.subprocess.SubprocessPipeReader.start
+/var/lib/buildkite-agent/build/src/runtime/api/bun/subprocess/SubprocessPipeReader.zig:80:25
+
+runtime.node.Maybe(void,sys.Error).asErr
+/var/lib/buildkite-agent/build/src/runtime/node.zig:140:17
+runtime.api.bun.js_bun_spawn_bindings.spawnMaybeSync__anon_537756694
+/var/lib/buildkite-agent/build/src/runtime/api/bun/js_bun_spawn_bindings.zig:930:71
+
+jsc.event_loop.tick
+/var/lib/buildkite-agent/build/src/jsc/event_loop.zig:519:34
+
+runtime.node.Maybe(void,sys.Error).asErr
+/var/lib/buildkite-agent/build/src/runtime/node.zig:140:17
+runtime.api.bun.js_bun_spawn_bindings.spawnMaybeSync__anon_537756694
+/var/lib/buildkite-agent/build/src/runtime/api/bun/js_bun_spawn_bindings.zig:941:71
+
+os.linux.x86_64.syscall1
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/os/linux/x86_64.zig:0:5
+os.linux.close
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/os/linux.zig:1414:20
+sys.fd.FD.closeAllowingStandardIo
+/var/lib/buildkite-agent/build/src/sys/fd.zig:266:77
+sys.fd.FD.closeAllowingBadFileDescriptor
+/var/lib/buildkite-agent/build/src/sys/fd.zig:250:42
+sys.fd.FD.close
+/var/lib/buildkite-agent/build/src/sys/fd.zig:237:54
+posix_event_loop.Closer.onClose
+/var/lib/buildkite-agent/build/src/aio/posix_event_loop.zig:1404:24
+
+threading.ThreadPool.Thread.run
+/var/lib/buildkite-agent/build/src/threading/ThreadPool.zig:581:32
+Thread.callFn__anon_538153611
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/Thread.zig:509:13
+Thread.PosixThreadImpl.spawn__anon_537970252.Instance.entryFn
+/var/lib/buildkite-agent/build/vendor/zig/lib/std/Thread.zig:781:30
+
