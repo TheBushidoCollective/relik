@@ -399,7 +399,15 @@ export async function scanOtioVideoTimingWithApi(
       if (warned) return unknown('demux-warning');
     }
 
-    return windowsFromOtioVideoPackets(packets, edit, limits.maxIndexBytes);
+    const timing = windowsFromOtioVideoPackets(
+      packets,
+      edit,
+      limits.maxIndexBytes
+    );
+    input.dispose();
+    input = undefined;
+    if (warned) return unknown('demux-warning');
+    return timing;
   } catch (error) {
     return errorTiming(error, warned);
   } finally {
