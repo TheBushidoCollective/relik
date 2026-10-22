@@ -1,0 +1,110 @@
+{
+  "sourceHead": "b42f8c4",
+  "host": "macOS 27.0.1 arm64",
+  "bun": "1.4.3 (c6da4a4d)",
+  "command": "For each MCP Node runtime and round: mise exec -- bun run verify && mise exec -- bun run --cwd packages/relic-mcp build && RELIC_OTIO_PATH_CLIENT=source RELIC_OTIO_CHROME_PATH=<own headless 1228> mise exec node@<version> -- bun packages/relic-mcp/test/otio-path.ts",
+  "policy": "Five fail-fast rounds per runtime; no retries; each complete raw log archived",
+  "rounds": [
+    {
+      "log": "node24.15.0-r1.log",
+      "mcpNode": "24.15.0",
+      "round": 1,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "3714dc61b44ecf770d781aad6fcd2b606f471208fd988ce91efd4e5128378a94"
+    },
+    {
+      "log": "node24.15.0-r2.log",
+      "mcpNode": "24.15.0",
+      "round": 2,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "58b8aaa67b8bc1ffb466dfde4d83536998ea84dabea666cb393980286e9496d9"
+    },
+    {
+      "log": "node24.15.0-r3.log",
+      "mcpNode": "24.15.0",
+      "round": 3,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "257be53e2c5c7f8f7b0564d3582e628263cb9ab7fe898695148c85dab9c1afbb"
+    },
+    {
+      "log": "node24.15.0-r4.log",
+      "mcpNode": "24.15.0",
+      "round": 4,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "8ba0cb4cefbc220fe7b4c0cd396f4c99e78e848d43684e97e54933e4b5884477"
+    },
+    {
+      "log": "node24.15.0-r5.log",
+      "mcpNode": "24.15.0",
+      "round": 5,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "e5d3c04caea6f2485df86b977e53a2c316064b93850f73972571fe7b744305f5"
+    },
+    {
+      "log": "node18.20.8-r1.log",
+      "mcpNode": "18.20.8",
+      "round": 1,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "e8708595dd1871816d9a2b760fac299e81cbb8e2771f172d5f5124d0d908ea06"
+    },
+    {
+      "log": "node18.20.8-r2.log",
+      "mcpNode": "18.20.8",
+      "round": 2,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "d41bbb91f85709db68e63d35dd79497b24263edf84c853d390582c14d596da48"
+    },
+    {
+      "log": "node18.20.8-r3.log",
+      "mcpNode": "18.20.8",
+      "round": 3,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "93857c103fad9a8dd9aebc4166851d24f923bd4c669c0200e1ae49837907a615"
+    },
+    {
+      "log": "node18.20.8-r4.log",
+      "mcpNode": "18.20.8",
+      "round": 4,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "b59b2cde06d9431bd3b7a776b873f10070efdd0b8dc296533896be1a6a62615f"
+    },
+    {
+      "log": "node18.20.8-r5.log",
+      "mcpNode": "18.20.8",
+      "round": 5,
+      "testsPassed": 2063,
+      "testsFailed": 0,
+      "sourceStages": 33,
+      "pathOk": true,
+      "logSha256": "14eb6799b76db53abb2c101bca7ed870c3311682947d0005afed17bbef38db3a"
+    }
+  ],
+  "scope": "Product head b42f8c4. Later UI/audio fixes require a new qualification; this result is not attributed to unexercised code."
+}

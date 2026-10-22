@@ -1,0 +1,108 @@
+{
+  "run": "https://github.com/TheBushidoCollective/relik/actions/runs/39825187237",
+  "committedFfprobe": "8.1.2 (macOS arm64)",
+  "computedFfprobe": "6.1.1-3ubuntu5 (ubuntu-24.04 x64)",
+  "differences": [
+    {
+      "path": ["files", "vfr.mp4", "packets", "0", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "2", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "5", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "6", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "7", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "8", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "9", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "10", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "13", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "14", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "15", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "16", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "17", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "18", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "21", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "22", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "23", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "24", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "25", "duration"],
+      "committed": 1024,
+      "computed": 512
+    },
+    {
+      "path": ["files", "vfr.mp4", "packets", "26", "duration"],
+      "committed": 1024,
+      "computed": 512
+    }
+  ],
+  "scope": "All other leaves compare equal. No fixtures or expectations changed to obtain these observations."
+}

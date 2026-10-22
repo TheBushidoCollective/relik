@@ -1,0 +1,548 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+$ bun run lint && bun run typecheck && bun run test
+$ biome check .
+packages/relic-format/src/otio-json.ts:426:16 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    424 │       if (val.length === 0) return '[]';
+    425 │       if (!isPretty) {
+  > 426 │         return '[' + val.map((item) => serialize(item, '')).join(',') + ']';
+        │                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    427 │       }
+    428 │       const nextIndent = currentIndent + indentStr;
+  
+  i Unsafe fix: Use a template literal.
+  
+    424 424 │         if (val.length === 0) return '[]';
+    425 425 │         if (!isPretty) {
+    426     │ - ········return·'['·+·val.map((item)·=>·serialize(item,·'')).join(',')·+·']';
+        426 │ + ········return·`[${val.map((item)·=>·serialize(item,·'')).join(',')}]`;
+    427 427 │         }
+    428 428 │         const nextIndent = currentIndent + indentStr;
+  
+
+packages/relic-format/src/otio-json.ts:432:14 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    430 │         .map((item) => nextIndent + serialize(item, nextIndent))
+    431 │         .join(',\n');
+  > 432 │       return '[\n' + items + '\n' + currentIndent + ']';
+        │              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    433 │     }
+    434 │     if (typeof val === 'object') {
+  
+  i Unsafe fix: Use a template literal.
+  
+    430 430 │           .map((item) => nextIndent + serialize(item, nextIndent))
+    431 431 │           .join(',\n');
+    432     │ - ······return·'[\n'·+·items·+·'\n'·+·currentIndent·+·']';
+        432 │ + ······return·`[\n${items}\n${currentIndent}]`;
+    433 433 │       }
+    434 434 │       if (typeof val === 'object') {
+  
+
+packages/relic-format/src/otio-json.ts:444:16 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    442 │             serialize((val as Record<string, unknown>)[k], '')
+    443 │         );
+  > 444 │         return '{' + entries.join(',') + '}';
+        │                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    445 │       }
+    446 │       const nextIndent = currentIndent + indentStr;
+  
+  i Unsafe fix: Use a template literal.
+  
+    442 442 │               serialize((val as Record<string, unknown>)[k], '')
+    443 443 │           );
+    444     │ - ········return·'{'·+·entries.join(',')·+·'}';
+        444 │ + ········return·`{${entries.join(',')}}`;
+    445 445 │         }
+    446 446 │         const nextIndent = currentIndent + indentStr;
+  
+
+packages/relic-format/src/otio-json.ts:456:14 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    454 │         )
+    455 │         .join(',\n');
+  > 456 │       return '{\n' + entries + '\n' + currentIndent + '}';
+        │              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    457 │     }
+    458 │     return JSON.stringify(val);
+  
+  i Unsafe fix: Use a template literal.
+  
+    454 454 │           )
+    455 455 │           .join(',\n');
+    456     │ - ······return·'{\n'·+·entries·+·'\n'·+·currentIndent·+·'}';
+        456 │ + ······return·`{\n${entries}\n${currentIndent}}`;
+    457 457 │       }
+    458 458 │       return JSON.stringify(val);
+  
+
+packages/relic-mcp/test/otio-path.ts:1730:25 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    1728 │       .catch(() => {});
+    1729 │   });
+  > 1730 │   const webCodecsTrap = String.raw`(() => {
+         │                         ^^^^^^^^^^^^^^^^^^^
+  > 1731 │     for (const name of ['VideoDecoder', 'AudioDecoder']) {
+          ...
+  > 1740 │     }
+  > 1741 │   })()`;
+         │   ^^^^^
+    1742 │   const pagePrelude = [
+    1743 │     options.recordMediaSeekTargets
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:1744:9 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    1742 │   const pagePrelude = [
+    1743 │     options.recordMediaSeekTargets
+  > 1744 │       ? String.raw`(() => {
+         │         ^^^^^^^^^^^^^^^^^^^
+  > 1745 │           const key = '__relicOtioMediaSeekTargets';
+          ...
+  > 1763 │           });
+  > 1764 │         })()`
+         │         ^^^^^
+    1765 │       : '',
+    1766 │     options.blockWebCodecs ? webCodecsTrap : '',
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-format/src/otio-identity.ts:1389:9 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    1387 │     .filter((node): node is OtioNode =>
+    1388 │       Boolean(
+  > 1389 │         node && node.fingerprint && node.fingerprint === source.fingerprint
+         │         ^^^^^^^^^^^^^^^^^^^^^^^^
+    1390 │       )
+    1391 │     );
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    1387 1387 │       .filter((node): node is OtioNode =>
+    1388 1388 │         Boolean(
+    1389      │ - ········node·&&·node.fingerprint·&&·node.fingerprint·===·source.fingerprint
+         1389 │ + ········node?.fingerprint·&&·node.fingerprint·===·source.fingerprint
+    1390 1390 │         )
+    1391 1391 │       );
+  
+
+packages/relic-format/src/otio-json.ts:412:11 lint/suspicious/noGlobalIsNan  FIXABLE  ━━━━━━━━━━━━━━
+
+  ! isNaN is unsafe. It attempts a type coercion. Use Number.isNaN instead.
+  
+    410 │     }
+    411 │     if (typeof val === 'number') {
+  > 412 │       if (isNaN(val)) return 'NaN';
+        │           ^^^^^
+    413 │       if (val === Infinity) return 'Infinity';
+    414 │       if (val === -Infinity) return '-Infinity';
+  
+  i See the MDN documentation for more details.
+  
+  i Unsafe fix: Use Number.isNaN instead.
+  
+    410 410 │       }
+    411 411 │       if (typeof val === 'number') {
+    412     │ - ······if·(isNaN(val))·return·'NaN';
+        412 │ + ······if·(Number.isNaN(val))·return·'NaN';
+    413 413 │         if (val === Infinity) return 'Infinity';
+    414 414 │         if (val === -Infinity) return '-Infinity';
+  
+
+packages/relic-format/src/otio-timing.ts:16:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    14 │   OtioDiagnostic,
+    15 │   OtioDocumentV1,
+  > 16 │   OtioEffect,
+       │   ^^^^^^^^^^
+    17 │   OtioEvaluationResult,
+    18 │   OtioMediaReference,
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+      14   14 │     OtioDiagnostic,
+      15   15 │     OtioDocumentV1,
+      16      │ - ··OtioEffect,
+      17   16 │     OtioEvaluationResult,
+      18   17 │     OtioMediaReference,
+  
+
+packages/relic-format/src/otio-timing.ts:930:3 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━
+
+  ! This parameter is unused.
+  
+    929 │ function buildAudioContribution(
+  > 930 │   document: OtioDocumentV1,
+        │   ^^^^^^^^
+    931 │   node: OtioNode,
+    932 │   ancestry: readonly string[],
+  
+  i Unused parameters might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: If this is intentional, prepend document with an underscore.
+  
+     928  928 │   
+     929  929 │   function buildAudioContribution(
+     930      │ - ··document:·OtioDocumentV1,
+          930 │ + ··_document:·OtioDocumentV1,
+     931  931 │     node: OtioNode,
+     932  932 │     ancestry: readonly string[],
+  
+
+packages/relic-format/src/otio-zip.ts:800:22 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    798 │   extents.sort((a, b) => a.start - b.start || a.end - b.end);
+    799 │   for (let i = 1; i < extents.length; i++) {
+  > 800 │     const previous = extents[i - 1]!;
+        │                      ^^^^^^^^^^^^^^^
+    801 │     const current = extents[i]!;
+    802 │     if (current.start < previous.end) {
+  
+
+packages/relic-format/src/otio-zip.ts:801:21 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    799 │   for (let i = 1; i < extents.length; i++) {
+    800 │     const previous = extents[i - 1]!;
+  > 801 │     const current = extents[i]!;
+        │                     ^^^^^^^^^^^
+    802 │     if (current.start < previous.end) {
+    803 │       throw new OtioZipError(
+  
+
+packages/relic-mcp/src/otio-bundle.ts:226:18 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    224 │   let centralCursor = centralDirectoryOffset;
+    225 │   for (let index = 0; index < prepared.length; index++) {
+  > 226 │     const item = prepared[index]!;
+        │                  ^^^^^^^^^^^^^^^^
+    227 │     const localOffset = localHeaderOffsets[index]!;
+    228 │     view.setUint32(centralCursor + 0, 0x02014b50, true);
+  
+
+packages/relic-mcp/src/otio-bundle.ts:227:25 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    225 │   for (let index = 0; index < prepared.length; index++) {
+    226 │     const item = prepared[index]!;
+  > 227 │     const localOffset = localHeaderOffsets[index]!;
+        │                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    228 │     view.setUint32(centralCursor + 0, 0x02014b50, true);
+    229 │     view.setUint16(centralCursor + 4, 0x0014, true);
+  
+
+packages/relic-mcp/src/otio-bundle.ts:624:21 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    622 │     }> = [];
+    623 │     for (const archivePath of Array.from(mediaRefMap.keys()).sort()) {
+  > 624 │       const media = mediaRefMap.get(archivePath)!;
+        │                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    625 │       let fileBytes: Uint8Array;
+    626 │       try {
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:578:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    577 │ const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+  > 578 │   0o140000: 'socket',
+        │   ^^^^^^^^
+    579 │   0o010000: 'fifo',
+    580 │   0o020000: 'chr',
+  
+  i Safe fix: Replace 0o140000 with 26411
+  
+     576  576 │   
+     577  577 │   const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+     578      │ - ··0o140000:·'socket',
+          578 │ + ··26411:·'socket',
+     579  579 │     0o010000: 'fifo',
+     580  580 │     0o020000: 'chr',
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:579:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    577 │ const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+    578 │   0o140000: 'socket',
+  > 579 │   0o010000: 'fifo',
+        │   ^^^^^^^^
+    580 │   0o020000: 'chr',
+    581 │   0o100000: 'file',
+  
+  i Safe fix: Replace 0o010000 with 2401
+  
+     577  577 │   const FD_CENSUS_TYPES: Readonly<Record<number, string>> = {
+     578  578 │     0o140000: 'socket',
+     579      │ - ··0o010000:·'fifo',
+          579 │ + ··2401:·'fifo',
+     580  580 │     0o020000: 'chr',
+     581  581 │     0o100000: 'file',
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:580:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    578 │   0o140000: 'socket',
+    579 │   0o010000: 'fifo',
+  > 580 │   0o020000: 'chr',
+        │   ^^^^^^^^
+    581 │   0o100000: 'file',
+    582 │   0o040000: 'dir',
+  
+  i Safe fix: Replace 0o020000 with 4802
+  
+     578  578 │     0o140000: 'socket',
+     579  579 │     0o010000: 'fifo',
+     580      │ - ··0o020000:·'chr',
+          580 │ + ··4802:·'chr',
+     581  581 │     0o100000: 'file',
+     582  582 │     0o040000: 'dir',
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:581:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    579 │   0o010000: 'fifo',
+    580 │   0o020000: 'chr',
+  > 581 │   0o100000: 'file',
+        │   ^^^^^^^^
+    582 │   0o040000: 'dir',
+    583 │ };
+  
+  i Safe fix: Replace 0o100000 with 16807
+  
+     579  579 │     0o010000: 'fifo',
+     580  580 │     0o020000: 'chr',
+     581      │ - ··0o100000:·'file',
+          581 │ + ··16807:·'file',
+     582  582 │     0o040000: 'dir',
+     583  583 │   };
+  
+
+packages/relic-mcp/test/stdio-mcp-boundary-path.ts:582:3 lint/complexity/useSimpleNumberKeys  FIXABLE  ━━━━━━━━━━
+
+  ! Octal number literal is not allowed here.
+  
+    580 │   0o020000: 'chr',
+    581 │   0o100000: 'file',
+  > 582 │   0o040000: 'dir',
+        │   ^^^^^^^^
+    583 │ };
+    584 │ 
+  
+  i Safe fix: Replace 0o040000 with 9604
+  
+     580  580 │     0o020000: 'chr',
+     581  581 │     0o100000: 'file',
+     582      │ - ··0o040000:·'dir',
+          582 │ + ··9604:·'dir',
+     583  583 │   };
+     584  584 │   
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 15.
+Checked 336 files in 311ms. No fixes applied.
+Found 19 warnings.
+$ bun run --filter '*' typecheck
+@relic/format typecheck: Exited with code 0
+@relic/server typecheck: Exited with code 0
+@relic/viewer typecheck: Exited with code 0
+relic-mcp typecheck: Exited with code 0
+$ bun run build && bun test
+$ bun run --filter 'relic-mcp' native:local && bun run --filter '@relic/viewer' build
+relic-mcp native:local: built darwin-arm64: /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/prebuilds/darwin-arm64/secure_open.node
+relic-mcp native:local: Exited with code 0
+@relic/viewer build: built 21 assets (shell hash: 5410c3b8c8afee7b): card.v1.png, chunk-6je1wrw8.js, chunk-cxdt56tv.js, chunk-cze9mtr7.js, chunk-f4ye20v7.js, chunk-hbqdtzpg.js, chunk-kqqscq0d.js, chunk-r3661b90.js, chunk-ynaat1eh.js, home.js, icon.svg, main.js, manifest.webmanifest, mediabunny-license.txt, otio-video-timing-worker.js, pdf.worker.js, sandbox.html, sandbox.js, styles.css, sw.js, viewer.js
+@relic/viewer build: Exited with code 0
+bun test v1.4.3 (c6da4a4d3)
+
+packages/relic-viewer/test/otio-video-timing-real-bytes.test.ts:
+Unsupported edit list entry: media rate must be 1.
+Unsupported edit list: multiple edits are not currently supported. Only using first edit.
+
+packages/relic-mcp/test/inventory.test.ts:
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+
+packages/relic-mcp/test/e2e.test.ts:
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+
+packages/relic-mcp/test/republish-comments.test.ts:
+relic: change notice mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: change notice mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: change notice mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+
+packages/relic-server/test/app.test.ts:
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: change notice mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: sign-in mail failed: resend refused with 403 validation_error
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification failed for recipient c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351: resend refused with 403 validation_error: domain unverified
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+relic: comment notification mailer unavailable
+
+packages/relic-server/test/notify.test.ts:
+relic: change notice send failed for recipient 9deea299f53adf1e0fd848c8f649f92fea8ae39ca381c8fdf3a443779438abc7: Resend 500 network error
+relic: change notice rate limit reached
+relic: comment notification mailer unavailable
+
+packages/relic-server/test/gcsstore.test.ts:
+Failed to update author relic index in GCS 168 |     // Somebody else wrote first. The caller decides whether to retry or to
+169 |     // treat losing the race as the answer.
+170 |     if (response.status === 412) return false;
+171 | 
+172 |     if (!response.ok) {
+173 |       throw new Error(
+                      ^
+error: gcs put m/author_relic/d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0/relic1.json returned 500: index write error
+      at put (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-server/src/gcsstore.ts:173:17)
+      at async putComment (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-server/src/gcsstore.ts:598:15)
+      at async <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-server/test/gcsstore.test.ts:677:17)
+
+
+ 2063 pass
+ 0 fail
+ 60958 expect() calls
+Ran 2063 tests across 97 files. [10.93s]
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+$ node native/local-build.mjs && bun run build:bundle
+built darwin-arm64: /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/prebuilds/darwin-arm64/secure_open.node
+$ bun run build.ts
+built dist/relic-mcp.js: 37903 readable lines
+wrote plugin manifests and launch config at version 0.3.0
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+PUBLISHED relic_id=hwarvbn907gh5hv98k3yk8nd08
+STAGE published
+STAGE decrypted
+OFFICIAL nested=media/plate_1009.png dissolve=72 audio=48
+STAGE official-archive
+STAGE network-block
+STAGE pixels-offset
+STAGE default-view-negative-head
+STAGE nested-200
+STAGE nested-no-spill
+STAGE dissolve-pixels
+STAGE audio-signal
+STAGE state-gap-black
+STAGE state-effect
+STAGE ui-point-nested
+STAGE ui-range-nested
+STAGE ui-point-duplicate
+STAGE ui-range-duplicate
+STAGE ui-range-dissolve
+STAGE screenshots
+STAGE decoder-worker-csp
+STAGE decoder-timing-windows
+STAGE decoder-webm-quantization
+STAGE decoder-near-zero
+STAGE decoder-edit-diagnostics
+STAGE decoder-no-duration
+STAGE ciphertext
+STAGE mcp-original
+STAGE revision-insert
+STAGE revision-trim
+STAGE revision-ambiguous
+STAGE state-hold
+STAGE state-sequence-black
+STAGE state-codec
+STAGE no-mail
+OTIO_PATH_OK
+SHOTS /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/otio-path-shots

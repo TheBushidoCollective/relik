@@ -1,0 +1,35 @@
+{
+  "run": "https://github.com/TheBushidoCollective/relik/actions/runs/39824443774",
+  "diagnosticHead": "90b7a19",
+  "productFix": "b42f8c4",
+  "platform": "ubuntu-24.04, Bun 1.4.3",
+  "baselineSha256": "7a090514a934efc62d5632c6d3308cd64f87f5624da056d73ea8cc4e4f6b76c1",
+  "pollingSha256": "d0be49a19520dc8ff645f248b75b7069decfd06e7d78d5519b0d53909dbd1582",
+  "comparison": "Exact uninstrumented PR-parent EOF probe versus polling-only cutover. Same fixture, callbacks, predicates, immediate inspect, physical-EOF gate, 15 s stage timeout, child-exit branch, server idle timeout and response assertions. Only the wake source differs; baseline/polling mode0 runs interleaved five times, fresh process per invocation.",
+  "results": {
+    "baselineMode0": {
+      "passed": 0,
+      "failed": 5,
+      "milliseconds": [12083, 12080, 12080, 12079, 12077]
+    },
+    "pollingMode0": {
+      "passed": 5,
+      "failed": 0,
+      "milliseconds": [211, 201, 204, 199, 205],
+      "allPrinted": "STDIO_EOF_PATH_OK"
+    },
+    "pollingMode1": {
+      "passed": 0,
+      "failedAsRequired": 3,
+      "milliseconds": [199, 200, 208],
+      "allContained": [
+        "matching JSON-RPC response",
+        "comments_get_accepted",
+        "response_suppression_armed"
+      ]
+    }
+  },
+  "observedBoundary": "The instrumented baseline in run39822843969 established a missing callback for a readable trace row, not a product read/write failure. Polling restores the harness's intended observation while the suppressed-response falsifier still detects a zero-exit child without its matching response.",
+  "mechanism": "Bun's same-handler repeat-event suppression in bun-v1.4.3 src/runtime/node/path_watcher.rs:232-245 (should_emit) and bun-v1.3.14 path_watcher.zig:139-150 (shouldEmit). [INFERENCE] The two tap append dispatches land inside its millisecond suppression window; dispatch timestamps were not directly logged.",
+  "linuxCiAfterFix": "verify run39824400679 passed all 2063 tests including the build-stamp test. The later OTIO conformance step failed on ffprobe6-versus8 VFR duration metadata, separately preserved in ffprobe-duration-divergence. The whole CI run is not claimed green."
+}
