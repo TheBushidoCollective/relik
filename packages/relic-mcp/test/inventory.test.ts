@@ -13,13 +13,6 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  observeAwait,
-  observeBegin,
-  observeComplete,
-  observeError,
-  observeEvent,
-} from '../../../scripts/full-suite-observation.ts';
-import {
   encodeKey,
   encryptRelic,
   generateKey,
@@ -30,8 +23,15 @@ import { MNEMONIC_WORDS, mnemonicToKey } from '@relic/format/mnemonic';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
-import { metadataCachePath } from '../src/metadata-cache.ts';
+import {
+  observeAwait,
+  observeBegin,
+  observeComplete,
+  observeError,
+  observeEvent,
+} from '../../../scripts/full-suite-observation.ts';
 import { listRelics, showRelic } from '../src/inventory.ts';
+import { metadataCachePath } from '../src/metadata-cache.ts';
 import { type FileReader, type PublishDeps, publish } from '../src/publish.ts';
 import { republish } from '../src/republish.ts';
 import {

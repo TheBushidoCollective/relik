@@ -14,6 +14,7 @@
  */
 
 import { chmod, mkdir } from 'node:fs/promises';
+import { buildCover } from '@relic/viewer/build';
 import {
   observeAwait,
   observeBegin,
@@ -21,7 +22,6 @@ import {
   observeError,
   observeEvent,
 } from '../../scripts/full-suite-observation.ts';
-import { buildCover } from '@relic/viewer/build';
 
 const buildLifecycle = observeBegin('relic-mcp-build', 'top_level_build');
 process.once('exit', (code) => {
