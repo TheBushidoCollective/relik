@@ -1628,7 +1628,25 @@ export async function mountOtioView(
         positionMark(mark, range);
         const projection = projections.get(projectionsKey(anchor));
         if (projection) mark.dataset['projection'] = projection.status;
-        rails.get(target.track)?.append(mark);
+        const rail = rails.get(target.track);
+        if (rail) {
+          const duration = timeToSeconds(range.duration);
+          let before: Element | null = null;
+          for (const child of rail.children) {
+            if (!child.classList.contains('otio-comment-mark')) continue;
+            const sibling = child as HTMLElement;
+            if (
+              Number(sibling.dataset['duration']) /
+                Number(sibling.dataset['durationRate']) <
+              duration
+            ) {
+              before = sibling;
+              break;
+            }
+          }
+          if (before) rail.insertBefore(mark, before);
+          else rail.append(mark);
+        }
         painted.push(mark);
       }
       marks.set(id, painted);
