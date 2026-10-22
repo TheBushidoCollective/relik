@@ -89,6 +89,32 @@ jobs:
             echo "eof bun=$bunver run=$run mode=0 rc=$rc ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
           done
 
+      - name: Baseline vs polling interleaved proof
+        shell: bash
+        run: |
+          set -u +e
+          mkdir -p diag
+          for i in 1 2 3 4 5; do
+            for arm in baseline polling; do
+              start=$(date +%s%N)
+              RELIC_STDIO_EOF_SUPPRESS_RESPONSE=0 timeout 60 bun packages/relic-mcp/test/stdio-eof-path.$arm.ts \
+                > "diag/proof-$arm-mode0-$i.stdout.txt" 2> "diag/proof-$arm-mode0-$i.stderr.txt"
+              rc=$?
+              end=$(date +%s%N)
+              ok=$(grep -c STDIO_EOF_PATH_OK "diag/proof-$arm-mode0-$i.stdout.txt")
+              echo "proof arm=$arm mode=0 i=$i rc=$rc ok=$ok ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
+            done
+          done
+          for i in 1 2 3; do
+            start=$(date +%s%N)
+            RELIC_STDIO_EOF_SUPPRESS_RESPONSE=1 timeout 60 bun packages/relic-mcp/test/stdio-eof-path.polling.ts \
+              > "diag/proof-polling-mode1-$i.stdout.txt" 2> "diag/proof-polling-mode1-$i.stderr.txt"
+            rc=$?
+            end=$(date +%s%N)
+            e="diag/proof-polling-mode1-$i.stderr.txt"
+            echo "proof arm=polling mode=1 i=$i rc=$rc accepted=$(grep -c comments_get_accepted $e) armed=$(grep -c response_suppression_armed $e) nomatch=$(grep -c 'matching JSON-RPC response' $e) ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
+          done
+
       - name: Show summary
         if: always()
         run: cat diag/summary.txt || true
