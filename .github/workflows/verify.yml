@@ -196,10 +196,13 @@ jobs:
           shells=()
           while IFS= read -r candidate; do
             shells+=("$candidate")
-          done < <(find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name headless_shell -print)
+          done < <(find "$PLAYWRIGHT_BROWSERS_PATH" -type f \
+            \( -name headless_shell -o -name chrome-headless-shell \) -print)
           if [ "${#shells[@]}" -ne 1 ]; then
             printf 'expected one Playwright headless shell, found %s\n' "${#shells[@]}" >&2
-            printf '%s\n' "${shells[@]}" >&2
+            if [ "${#shells[@]}" -gt 0 ]; then
+              printf '%s\n' "${shells[@]}" >&2
+            fi
             exit 1
           fi
           test -x "${shells[0]}"
