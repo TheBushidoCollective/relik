@@ -1,0 +1,160 @@
+[feat/otio-native-renderer b393762] Request the deliberate separate OTIO proof relic explicitly
+ 1 file changed, 1 insertion(+)
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+docs/plans/otio/proof/source-original-15cae60/native-controls-measurements.json format ━━━━━━━━━━━━━
+
+  i The size of the file is 1.4 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+Formatted 2 files in 7ms. No fixes applied.
+[feat/otio-native-renderer 83dec3e] Retain original source stages and four trusted marker identities
+ 82 files changed, 47870 insertions(+)
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-dark-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-dark-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-dark-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-dark-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-dark-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-dark.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-light-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-light-lower-track-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440-light.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440x600-dark-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440x600-dark-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440x600-dark-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440x600-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440x600-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440x600-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/1440x900-light-resize-held-draft.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-dark-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-dark-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-dark-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-dark-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-dark-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-dark.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-light-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320-light.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320x480-dark-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320x480-dark-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320x480-dark-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320x480-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320x480-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320x480-light-resize-held-draft.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/320x480-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-dark-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-dark-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-dark-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-dark-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-dark-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-dark.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-light-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390-light.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390x568-dark-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390x568-dark-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390x568-dark-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390x568-light-point-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390x568-light-range-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390x568-light-resize-held-draft.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/390x568-light-track-composer.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-1440-dark-blocked-preview.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-1440-light-blocked-preview.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-dark-blocked-preview.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-dark-closed.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-dark-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-dark-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-dark-preview-base.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-dark-selection-controls.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-light-blocked-preview.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-light-closed.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-light-composer-hover.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-light-preview-base.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-320-light-selection-controls.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-390-dark-blocked-preview.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-390-light-blocked-preview.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/native-controls-measurements.json
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/otio-comment-mark-pointer-duplicate-point.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/otio-comment-mark-pointer-pointer-reaim.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/otio-comment-mark-pointer-primary-range.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/otio-comment-mark-pointer-whole-track.png
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/packet-canvas-measurements.json
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/receipt.json
+ create mode 100644 docs/plans/otio/proof/source-original-15cae60/source-tool-capture.txt
+remote: This repository moved. Please use the new location:        
+remote:   git@github.com:TheBushidoCollective/relik.git        
+To github.com:TheBushidoCollective/relic.git
+   15cae60..83dec3e  feat/otio-native-renderer -> feat/otio-native-renderer
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+PUBLISHED relic_id=aw3qfn95vx4c6k8xmxfkdnkhhm
+STAGE published
+STAGE decrypted
+OFFICIAL nested=media/plate_1009.png dissolve=72 audio=48
+STAGE official-archive
+STAGE network-block
+STAGE pixels-offset
+STAGE default-view-negative-head
+STAGE nested-200
+STAGE nested-no-spill
+STAGE dissolve-pixels
+STAGE audio-signal
+STAGE state-gap-black
+STAGE state-effect
+STAGE ui-point-nested
+STAGE ui-range-nested
+STAGE ui-point-duplicate
+STAGE ui-range-duplicate
+STAGE ui-range-dissolve
+STAGE ui-track-duplicate
+STAGE screenshots
+STAGE decoder-worker-csp
+STAGE decoder-timing-windows
+STAGE decoder-webm-quantization
+STAGE decoder-near-zero
+STAGE decoder-edit-diagnostics
+STAGE decoder-no-duration
+STAGE ciphertext
+STAGE mcp-original
+STAGE revision-insert
+STAGE revision-trim
+STAGE revision-ambiguous
+STAGE state-hold
+STAGE state-sequence-black
+STAGE state-codec
+SHOTS /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/otio-path-shots
+2290 |       else setTimeout(tick, 50);
+2291 |     };
+2292 |     tick();
+2293 |     return promise;
+2294 |   })()`);
+2295 |   assert.equal(
+                ^
+AssertionError: native composer did not submit "Coincident duplicate-point reveal 11.": timeout
++ actual - expected
+
++ 'timeout'
+- 'posted'
+
+ generatedMessage: false,
+     actual: "timeout",
+   expected: "posted",
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at postComposer (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:2295:10)
+      at runAuxiliaryCoincidentCommentRevealScenario (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:4588:13)
+      at processTicksAndRejections (native:7:39)
+
+Bun v1.4.3 (macOS arm64)
