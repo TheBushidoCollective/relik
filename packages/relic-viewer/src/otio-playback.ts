@@ -25,11 +25,16 @@ import {
   timeToSeconds,
 } from '@relic/format';
 import { inferMediaMimeType, type OtioMediaResolver } from './otio-media.ts';
+import {
+  readOtioVideoTiming,
+  type OtioVideoTiming,
+} from './otio-video-timing.ts';
 
 export const OTIO_MAX_IMAGE_EDGE = 4096;
 export const OTIO_MAX_IMAGE_PIXELS = 4096 * 4096;
 export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
 const HAVE_CURRENT_DATA = 2;
+const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 
 export interface OtioTrackState {
   readonly id: string;
@@ -64,6 +69,7 @@ export interface CreateOtioPlaybackOptions {
         entryName: OtioBundleEntryName
       ) => Promise<string | Blob | null> | string | Blob | null);
   readonly audioContext?: AudioContext;
+  readonly readVideoTiming?: typeof readOtioVideoTiming;
 }
 
 export interface OtioPlaybackController {
@@ -426,21 +432,86 @@ function sampleKind(contrib: OtioVideoContribution): 'media' | 'black' {
   return kind === 'black' ? 'black' : 'media';
 }
 
+function decoderLocalSourceTime(
+  sourceTime: OtioRationalTime
+): OtioRationalTime {
+  const zero = { value: 0, rate: sourceTime.rate };
+  return sourceTime.value < 0 &&
+    compareRationalTimes(sourceTime, zero) === 0
+    ? zero
+    : sourceTime;
+}
+
 function sampleUnavailable(
   contrib: OtioVideoContribution | OtioAudioContribution
 ): boolean {
+  const zero = { value: 0, rate: contrib.source_time.rate };
   return (
     contrib.diagnostics.some(
       (diagnostic) => diagnostic.code === 'missing-handles'
-    ) || timeToSeconds(contrib.source_time) < 0
+    ) || compareRationalTimes(contrib.source_time, zero) < 0
   );
 }
 
-function videoDecoderTime(sourceTime: OtioRationalTime): number {
-  const floor = Math.floor(sourceTime.value);
-  const next = { value: floor + 1, rate: sourceTime.rate };
-  const frame = compareRationalTimes(next, sourceTime) <= 0 ? floor + 1 : floor;
-  return timeToSeconds({ value: frame + 0.5, rate: sourceTime.rate });
+function decoderLocalSeconds(sourceTime: OtioRationalTime): number {
+  return timeToSeconds(decoderLocalSourceTime(sourceTime));
+}
+
+function containerTimeAtSourceRate(
+  seconds: number,
+  sourceTime: OtioRationalTime
+): OtioRationalTime {
+  return { value: seconds * sourceTime.rate, rate: sourceTime.rate };
+}
+
+function videoDecoderTime(
+  sourceTime: OtioRationalTime,
+  timing: OtioVideoTiming | null
+): number | null {
+  if (
+    timing === null ||
+    timing.kind !== 'windows' ||
+    timing.starts.length === 0 ||
+    timing.starts.length !== timing.ends.length
+  ) {
+    return null;
+  }
+  const localTime = decoderLocalSourceTime(sourceTime);
+  let lower = 0;
+  let upper = timing.starts.length;
+  while (lower < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    const start = timing.starts[middle];
+    if (
+      start !== undefined &&
+      compareRationalTimes(
+        containerTimeAtSourceRate(start, localTime),
+        localTime
+      ) <= 0
+    ) {
+      lower = middle + 1;
+    } else {
+      upper = middle;
+    }
+  }
+  const index = lower - 1;
+  if (index < 0) return null;
+  const start = timing.starts[index];
+  const end = timing.ends[index];
+  if (
+    start === undefined ||
+    end === undefined ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    end <= start ||
+    compareRationalTimes(
+      localTime,
+      containerTimeAtSourceRate(end, localTime)
+    ) >= 0
+  ) {
+    return null;
+  }
+  return start + (end - start) / 2;
 }
 
 function ancestryOf(contrib: {
@@ -530,6 +601,8 @@ function isAssignableUrl(url: string): boolean {
 export function createOtioPlayback(
   options: CreateOtioPlaybackOptions
 ): OtioPlaybackController {
+  const readVideoTiming = options.readVideoTiming ?? readOtioVideoTiming;
+  const videoTimingAbort = new AbortController();
   const { document: doc, timelineId, canvas, resolveMedia } = options;
   const clock = readTimelineClock(doc, timelineId);
   const tracks: Record<string, OtioTrackState> = collectTracks(doc, timelineId);
@@ -547,7 +620,24 @@ export function createOtioPlayback(
 
   const listeners = new Set<OtioPlaybackListener>();
   const mediaFailures = new Map<string, OtioDiagnostic>();
-  const urlPromises = new Map<string, Promise<string | null>>();
+  const urlPromises = new Map<
+    OtioBundleEntryName,
+    Promise<string | null>
+  >();
+  const callbackMediaPromises = new Map<
+    OtioBundleEntryName,
+    Promise<string | Blob | null>
+  >();
+  const blobPromises = new Map<
+    OtioBundleEntryName,
+    Promise<Blob | null>
+  >();
+  const videoTimingPromises = new Map<
+    OtioBundleEntryName,
+    Promise<OtioVideoTiming | null>
+  >();
+  const videoTimingFailures = new Map<string, OtioDiagnostic>();
+  let retainedVideoTimingBytes = 0;
   const ownedUrls = new Set<string>();
   const videoPromises = new Map<string, Promise<LoadedVideo | null>>();
   const audioPromises = new Map<string, Promise<LoadedAudio | null>>();
@@ -786,6 +876,20 @@ export function createOtioPlayback(
     }
   }
 
+  // A callback Blob must keep one identity for URL creation and timing reads.
+  function callbackMedia(
+    path: OtioBundleEntryName
+  ): Promise<string | Blob | null> {
+    const existing = callbackMediaPromises.get(path);
+    if (existing) return existing;
+    const pending = (async () => {
+      if (typeof resolveMedia !== 'function') return null;
+      return resolveMedia(path);
+    })();
+    callbackMediaPromises.set(path, pending);
+    return pending;
+  }
+
   async function resolveOne(path: OtioBundleEntryName): Promise<string | null> {
     if (isDisposed) return null;
     if (
@@ -797,20 +901,17 @@ export function createOtioPlayback(
       if (isDisposed || !url || !isAssignableUrl(url)) return null;
       return url;
     }
-    if (typeof resolveMedia !== 'function') return null;
-    const resolved = await resolveMedia(path);
+    const resolved = await callbackMedia(path);
     if (isDisposed || resolved == null) return null;
     if (typeof resolved === 'string') {
       return isAssignableUrl(resolved) ? resolved : null;
     }
-    if (!(resolved instanceof Blob)) return null;
     if (
       typeof URL === 'undefined' ||
       typeof URL.createObjectURL !== 'function'
     ) {
       return null;
     }
-    if (isDisposed) return null;
     const url = URL.createObjectURL(resolved);
     if (isDisposed) {
       try {
@@ -824,11 +925,79 @@ export function createOtioPlayback(
     return url;
   }
 
+  async function resolveBlob(path: OtioBundleEntryName): Promise<Blob | null> {
+    if (isDisposed) return null;
+    if (
+      typeof resolveMedia === 'object' &&
+      resolveMedia !== null &&
+      'resolveBlob' in resolveMedia
+    ) {
+      const blob = await resolveMedia.resolveBlob(path);
+      return isDisposed ? null : blob;
+    }
+    // URL-only callbacks stay decoder-only; timing never fetches a URL.
+    const resolved = await callbackMedia(path);
+    return !isDisposed && resolved instanceof Blob ? resolved : null;
+  }
+
   function sharedUrl(path: OtioBundleEntryName): Promise<string | null> {
     const existing = urlPromises.get(path);
     if (existing) return existing;
     const pending = resolveOne(path);
     urlPromises.set(path, pending);
+    return pending;
+  }
+
+  function sharedBlob(path: OtioBundleEntryName): Promise<Blob | null> {
+    const existing = blobPromises.get(path);
+    if (existing) return existing;
+    const pending = resolveBlob(path);
+    blobPromises.set(path, pending);
+    return pending;
+  }
+
+  function reserveVideoTiming(timing: OtioVideoTiming): OtioVideoTiming {
+    if (timing.kind !== 'windows') return timing;
+    const bytes = timing.starts.byteLength + timing.ends.byteLength;
+    if (
+      !Number.isSafeInteger(bytes) ||
+      bytes > OTIO_RETAINED_VIDEO_TIMING_BYTES - retainedVideoTimingBytes
+    ) {
+      return { kind: 'unknown', reason: 'index-budget' };
+    }
+    retainedVideoTimingBytes += bytes;
+    return timing;
+  }
+
+  function sharedVideoTiming(
+    path: OtioBundleEntryName,
+    mimeType: string
+  ): Promise<OtioVideoTiming | null> {
+    const existing = videoTimingPromises.get(path);
+    if (existing) return existing;
+    const pending = (async () => {
+      const blob = await sharedBlob(path);
+      if (blob === null || isDisposed || videoTimingAbort.signal.aborted) {
+        return null;
+      }
+      try {
+        const timing = await readVideoTiming(
+          blob,
+          mimeType,
+          videoTimingAbort.signal
+        );
+        if (isDisposed || videoTimingAbort.signal.aborted) {
+          return { kind: 'unknown', reason: 'cancelled' } as const;
+        }
+        return reserveVideoTiming(timing);
+      } catch (error) {
+        if (isDisposed || videoTimingAbort.signal.aborted) {
+          return { kind: 'unknown', reason: 'cancelled' } as const;
+        }
+        throw error;
+      }
+    })();
+    videoTimingPromises.set(path, pending);
     return pending;
   }
 
@@ -1244,7 +1413,24 @@ export function createOtioPlayback(
     const key = occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
     const video = await acquireVideo(key, contrib.bundle_path, gen);
     if (stale(gen) || !video) return { kind: 'empty' };
-    const target = videoDecoderTime(contrib.source_time);
+    const timing = await sharedVideoTiming(contrib.bundle_path, mime);
+    if (stale(gen)) return { kind: 'empty' };
+    const midpoint = videoDecoderTime(contrib.source_time, timing);
+    const target = midpoint ?? decoderLocalSeconds(contrib.source_time);
+    if (midpoint === null) {
+      const message =
+        timing === null
+          ? `Video packet timing is unavailable: ${contrib.bundle_path}`
+          : timing.kind === 'unknown'
+            ? `Video packet timing is ${timing.reason}: ${contrib.bundle_path}`
+            : `Video source sample is outside certified packet timing: ${contrib.bundle_path}`;
+      videoTimingFailures.set(
+        key,
+        diagnostic('error', 'invalid-timing', message, contrib.node_id)
+      );
+    } else {
+      videoTimingFailures.delete(key);
+    }
     const ready = await seekElement(video.element, target, gen);
     if (stale(gen)) return { kind: 'empty' };
     if (!ready) {
@@ -1330,7 +1516,7 @@ export function createOtioPlayback(
       const gain = Math.max(0, contrib.volume * contrib.transition_weight);
       applyAudioGain(loaded, gain, audible);
       loaded.element.setAttribute('data-active', audible ? 'true' : 'false');
-      const target = timeToSeconds(contrib.source_time);
+      const target = decoderLocalSeconds(contrib.source_time);
       if (fidelity.kind === 'freeze' || !audible || !isPlaying) {
         loaded.element.pause();
         if (decodedAt.get(loaded.element) !== target) {
@@ -1428,6 +1614,7 @@ export function createOtioPlayback(
     try {
       const evaluation = evaluateOtioAt(doc, timelineId, time);
       if (stale(gen)) return;
+      videoTimingFailures.clear();
       images.clearPins();
       const tree = videoTree(evaluation);
       if (tree === null && evaluation.video_contributions.length > 0) {
@@ -1511,6 +1698,7 @@ export function createOtioPlayback(
   function getState(): OtioPlaybackState {
     const evaluation = evaluateOtioAt(doc, timelineId, currentTime);
     const issues = [
+      ...videoTimingFailures.values(),
       ...evaluation.diagnostics,
       ...contributionIssues(evaluation),
       ...mediaFailures.values(),
@@ -1662,6 +1850,7 @@ export function createOtioPlayback(
     dispose(): void {
       if (isDisposed) return;
       isDisposed = true;
+      videoTimingAbort.abort();
       isPlaying = false;
       renderGeneration += 1;
       renderInFlight = false;
@@ -1678,6 +1867,12 @@ export function createOtioPlayback(
       videoPromises.clear();
       audioPromises.clear();
       imagePromises.clear();
+      urlPromises.clear();
+      callbackMediaPromises.clear();
+      blobPromises.clear();
+      videoTimingPromises.clear();
+      videoTimingFailures.clear();
+      retainedVideoTimingBytes = 0;
       for (const url of ownedUrls) revokeOwned(url);
       ownedUrls.clear();
       audioGraph?.remove();
