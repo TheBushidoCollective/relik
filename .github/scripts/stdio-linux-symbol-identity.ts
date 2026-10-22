@@ -1273,13 +1273,12 @@ async function qualifyOfficialPair(
       !buildIdsMatch ||
       !textAgreement.virtual_address_matches ||
       !textAgreement.size_matches ||
-      !textAgreement.bytes_match ||
-      runtime.layout.machine !== profileLayout.machine
+      !textAgreement.bytes_match
     ) {
       throw new QualificationError(
         'profile_pair_layout_mismatch',
-        'The matched profile must preserve Build ID, ELF machine, .text VMA, .text size, and .text bytes.',
-        `Profile pair agreement failed: build_id=${buildIdsMatch}, machine=${runtime.layout.machine === profileLayout.machine}, text_vma=${textAgreement.virtual_address_matches}, text_size=${textAgreement.size_matches}, text_bytes=${textAgreement.bytes_match}`
+        'The matched profile must preserve Build ID plus .text VMA, size, and bytes.',
+        `Profile pair agreement failed: build_id=${buildIdsMatch}, text_vma=${textAgreement.virtual_address_matches}, text_size=${textAgreement.size_matches}, text_bytes=${textAgreement.bytes_match}`
       );
     }
 
@@ -1333,16 +1332,14 @@ async function symbolizeSavedFrames(
       frame.file_offset,
       frame.id
     );
-    const profileMapping = mapFileOffset(
-      pair.profileLayout,
-      frame.file_offset,
-      frame.id
-    );
-    if (runtimeMapping.virtual_address !== profileMapping.virtual_address) {
+    const vma = runtimeMapping.virtual_address;
+    const profileText = pair.profileLayout.text;
+    const profileTextEnd = profileText.virtual_address + profileText.size;
+    if (vma < profileText.virtual_address || vma >= profileTextEnd) {
       throw new QualificationError(
-        'profile_load_mapping_mismatch',
-        `The runtime and matched profile must map ${frame.id} to the same VMA.`,
-        `${frame.id} maps to ${hex(runtimeMapping.virtual_address)} in runtime and ${hex(profileMapping.virtual_address)} in profile`
+        'runtime_vma_outside_profile_text',
+        `The runtime-mapped VMA for ${frame.id} must lie within matched profile .text.`,
+        `${frame.id} runtime VMA ${hex(vma)} is outside profile .text [${hex(profileText.virtual_address)}, ${hex(profileTextEnd)})`
       );
     }
 
@@ -1350,11 +1347,11 @@ async function symbolizeSavedFrames(
     if (frame.exported_symbol && frame.exported_symbol_offset !== undefined) {
       const symbolVma = readDynsymValue(pair.dynsym, frame.exported_symbol);
       const expectedVma = symbolVma + frame.exported_symbol_offset;
-      if (expectedVma !== profileMapping.virtual_address) {
+      if (expectedVma !== vma) {
         throw new QualificationError(
           'dynsym_offset_mismatch',
-          `Dynamic-symbol arithmetic must resolve ${frame.id} to its mapped VMA.`,
-          `${frame.exported_symbol}+${hex(frame.exported_symbol_offset)} = ${hex(expectedVma)}, mapped VMA is ${hex(profileMapping.virtual_address)}`
+          `Dynamic-symbol arithmetic must resolve ${frame.id} to its runtime-mapped VMA.`,
+          `${frame.exported_symbol}+${hex(frame.exported_symbol_offset)} = ${hex(expectedVma)}, runtime-mapped VMA is ${hex(vma)}`
         );
       }
       dynsym = {
@@ -1365,7 +1362,6 @@ async function symbolizeSavedFrames(
       };
     }
 
-    const vma = profileMapping.virtual_address;
     const vmaMinusOne = vma - 1n;
     const vmaResult = await captureCommand(
       `${frame.id}-vma`,
@@ -1401,9 +1397,10 @@ async function symbolizeSavedFrames(
         executable_pt_load: serializeSegment(runtimeMapping.segment),
         vma: hex(runtimeMapping.virtual_address),
       },
-      profile_mapping: {
-        executable_pt_load: serializeSegment(profileMapping.segment),
-        vma: hex(profileMapping.virtual_address),
+      profile_text: {
+        section: serializeSection(profileText),
+        contains_runtime_mapped_vma: true,
+        vma: hex(vma),
       },
       dynsym,
       addr2line: {
@@ -1424,7 +1421,7 @@ async function symbolizeSavedFrames(
   }
   receipt.symbolization = {
     trace_address_interpretation:
-      'strace -k bracket addresses are preserved as ELF file offsets and mapped only through the containing executable PT_LOAD: VMA = p_vaddr + (file_offset - p_offset).',
+      'strace -k bracket addresses are runtime ELF file offsets. Each is mapped only through the runtime executable PT_LOAD: VMA = p_vaddr + (file_offset - p_offset). That VMA is passed directly to matched-profile addr2line; profile file offsets never translate the trace offset.',
     source_trace: HISTORICAL_RUN,
     excluded_frames: {
       kind: 'anonymous JSJITCode',
