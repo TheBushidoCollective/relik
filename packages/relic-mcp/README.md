@@ -174,6 +174,8 @@ and sucrase for offline document rendering in local Chrome. Releases carry npm
 provenance, a cryptographic attestation binding the tarball to a specific commit
 and workflow.
 
+The manual release workflow requires an exact SemVer 2.0.0 version, accepts prerelease and build metadata, validates it before release metadata changes, and passes it as environment data rather than executable shell source.
+
 ### Cover rendering and local Chrome requirement
 
 By default, publishing or republishing renders a 1200x630 cover image in an
