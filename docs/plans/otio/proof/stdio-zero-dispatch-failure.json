@@ -29,6 +29,6 @@
       "loopbackReceipts": []
     }
   },
-  "interpretation": "New relative to stdio-untapped-failure.json: the parent-only HTTP observer (f963bad) recorded zero loopback requests for this call. relic_read_comments must fetch from the loopback service, so the child never dispatched the tool before exiting 0. Same signature as before: Bun write reported 178 bytes, end() resolved to an EBADF error object, no stdout, no stderr. This supports, but does not prove, loss of the request before the child's handler: no child-side receipt of received bytes exists in this unmodified path. No retry, no transport change, no assertion relaxed.",
+  "interpretation": "New relative to stdio-untapped-failure.json: the parent-only HTTP observer (f963bad) recorded zero loopback requests for this call, so no HTTP dispatch was observed. That is consistent with failure before the expected HTTP request, including input delivery or startup; the exact child boundary (stdin receipt, parsing, handler or tool entry) is unknown, because a tool can enter and stop before any HTTP call. Same signature as before: Bun write reported 178 bytes and end() resolved to an EBADF error object (established); delivered bytes remain unproved. No stdout, no stderr. No retry, no transport change, no assertion relaxed, no product fix follows.",
   "notCleared": "Decoder stages are green in this run; this failure is the separate open producer gate."
 }
