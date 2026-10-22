@@ -253,10 +253,7 @@ describe('OTIO packet presentation windows', () => {
 
     const additionPacket = { timestamp: 0.6, duration: 0.3 };
     const addition = windows(
-      windowsFromOtioVideoPackets(
-        [additionPacket],
-        presentationEdit(10, 10)
-      )
+      windowsFromOtioVideoPackets([additionPacket], presentationEdit(10, 10))
     );
     expect(addition.ends[0]).toBe(
       additionPacket.timestamp + additionPacket.duration
@@ -312,10 +309,7 @@ describe('OTIO packet presentation windows', () => {
       0.5
     );
     expect(
-      windowsFromOtioVideoPackets(
-        [largePacket],
-        presentationEdit(huge, 1)
-      )
+      windowsFromOtioVideoPackets([largePacket], presentationEdit(huge, 1))
     ).toEqual({ kind: 'unknown', reason: 'unsupported-edit-list' });
 
     const cancellationPacket = { timestamp: -huge, duration: huge };

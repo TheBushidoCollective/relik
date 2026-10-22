@@ -255,10 +255,7 @@ function validateEditExtent(
 
   const minimumPacketEndTicks = edit.endMovieTicks - 1;
   if (packetEndTicks >= minimumPacketEndTicks) return;
-  if (
-    minimumPacketEndTicks > 0 &&
-    packetEndTicks < minimumPacketEndTicks / 2
-  ) {
+  if (minimumPacketEndTicks > 0 && packetEndTicks < minimumPacketEndTicks / 2) {
     scanFailure('edit-window-mismatch');
   }
 
