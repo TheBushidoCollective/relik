@@ -30,7 +30,7 @@
 
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { cp, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -61,7 +61,13 @@ const fixtureDir = fileURLToPath(
     import.meta.url
   )
 );
-
+const decoderFixtureDir = fileURLToPath(
+  new URL(
+    '../../relic-format/test/fixtures/otio/decoder-boundary.otiod/',
+    import.meta.url
+  )
+);
+const decoderMediaDir = join(decoderFixtureDir, 'media');
 // Resolve the harness-owned temporary parent, never an input bundle or its entries.
 const scratch = await mkdtemp(
   join(await realpath(tmpdir()), 'relic-otio-path-')
@@ -100,6 +106,12 @@ const REQUIRED = [
   'state-sequence-black',
   'network-block',
   'no-mail',
+  'decoder-timing-windows',
+  'decoder-webm-quantization',
+  'decoder-near-zero',
+  'decoder-edit-diagnostics',
+  'decoder-no-duration',
+  'decoder-worker-csp',
   'screenshots',
 ] as const;
 
@@ -1273,6 +1285,158 @@ async function frameRowCenter(
   };
 }
 
+interface FfprobePacket {
+  readonly pts?: number;
+  readonly duration?: number;
+}
+
+interface FfprobeFrame {
+  readonly best_effort_timestamp?: number;
+}
+
+interface FfprobeTimingFile {
+  readonly stream?: { readonly time_base?: string };
+  readonly packets?: readonly FfprobePacket[];
+  readonly frames?: readonly FfprobeFrame[];
+}
+
+interface FfprobeTimingOracle {
+  readonly files?: Readonly<Record<string, FfprobeTimingFile>>;
+}
+
+interface PacketWindow {
+  readonly start: number;
+  readonly end: number;
+  readonly frame: number;
+}
+
+let decoderTimingOracle: Promise<FfprobeTimingOracle> | undefined;
+
+async function readDecoderTimingOracle(): Promise<FfprobeTimingOracle> {
+  decoderTimingOracle ??= readFile(
+    join(decoderMediaDir, 'timing-oracle.json'),
+    'utf8'
+  ).then((text) => JSON.parse(text) as FfprobeTimingOracle);
+  return decoderTimingOracle;
+}
+
+function ffprobeTimeBase(value: string | undefined, label: string): number {
+  assert.ok(value, `${label} has no ffprobe time_base`);
+  const [numerator, denominator, extra] = value.split('/');
+  assert.equal(extra, undefined, `${label} has malformed time_base ${value}`);
+  const seconds = Number(numerator) / Number(denominator);
+  assert.ok(
+    Number.isFinite(seconds) && seconds > 0,
+    `${label} has invalid time_base ${value}`
+  );
+  return seconds;
+}
+
+async function packetWindows(
+  fileName: string,
+  includeFinal: boolean
+): Promise<readonly PacketWindow[]> {
+  const oracle = await readDecoderTimingOracle();
+  const file = oracle.files?.[fileName];
+  assert.ok(file, `ffprobe oracle has no ${fileName}`);
+  const timeBase = ffprobeTimeBase(file.stream?.time_base, fileName);
+  const frames = (file.frames ?? [])
+    .map((frame) => frame.best_effort_timestamp)
+    .filter((tick): tick is number => Number.isSafeInteger(tick))
+    .sort((a, b) => a - b);
+  assert.ok(frames.length > 0, `${fileName} has no presentation frame PTS`);
+  const frameByTick = new Map<number, number>();
+  for (const [index, tick] of frames.entries()) {
+    assert.equal(
+      frameByTick.has(tick),
+      false,
+      `${fileName} has duplicate presentation frame PTS ${tick}`
+    );
+    frameByTick.set(tick, index);
+  }
+  const packets = (file.packets ?? [])
+    .map((packet) => ({
+      pts: packet.pts,
+      duration: packet.duration,
+    }))
+    .filter(
+      (packet): packet is { readonly pts: number; readonly duration?: number } =>
+        Number.isSafeInteger(packet.pts)
+    )
+    .sort((a, b) => a.pts - b.pts);
+  assert.ok(packets.length > 0, `${fileName} has no packet PTS`);
+  const windows: PacketWindow[] = [];
+  // Nonterminal membership follows adjacent encoded PTS, not a nominal frame
+  // rate or ffprobe's inferred duration field. The terminal duration is the
+  // only duration used here, and the no-DefaultDuration proof omits it.
+  for (const [index, packet] of packets.entries()) {
+    const next = packets[index + 1]?.pts;
+    assert.notEqual(next, packet.pts, `${fileName} has duplicate packet PTS`);
+    if (next !== undefined) {
+      const frame = frameByTick.get(packet.pts);
+      assert.notEqual(
+        frame,
+        undefined,
+        `${fileName} packet PTS ${packet.pts} has no ffprobe presentation frame`
+      );
+      windows.push({
+        start: packet.pts * timeBase,
+        end: next * timeBase,
+        frame: frame as number,
+      });
+      continue;
+    }
+    if (!includeFinal) continue;
+    assert.ok(
+      Number.isSafeInteger(packet.duration) && (packet.duration ?? 0) > 0,
+      `${fileName} has no certified final packet duration`
+    );
+    const frame = frameByTick.get(packet.pts);
+    assert.notEqual(
+      frame,
+      undefined,
+      `${fileName} packet PTS ${packet.pts} has no ffprobe presentation frame`
+    );
+    windows.push({
+      start: packet.pts * timeBase,
+      end: (packet.pts + (packet.duration ?? 0)) * timeBase,
+      frame: frame as number,
+    });
+  }
+  return windows;
+}
+
+async function finalPacketStartSeconds(fileName: string): Promise<number> {
+  const oracle = await readDecoderTimingOracle();
+  const file = oracle.files?.[fileName];
+  assert.ok(file, `ffprobe oracle has no ${fileName}`);
+  const timeBase = ffprobeTimeBase(file.stream?.time_base, fileName);
+  const starts = (file.packets ?? [])
+    .map((packet) => packet.pts)
+    .filter((tick): tick is number => Number.isSafeInteger(tick))
+    .sort((a, b) => a - b);
+  const last = starts.at(-1);
+  assert.ok(last !== undefined, `${fileName} has no final packet PTS`);
+  return last * timeBase;
+}
+
+function windowForSeconds(
+  windows: readonly PacketWindow[],
+  seconds: number,
+  label: string
+): PacketWindow {
+  const epsilon = 1e-9;
+  const match = windows.find(
+    (window) =>
+      seconds >= window.start - epsilon && seconds < window.end - epsilon
+  );
+  assert.ok(
+    match,
+    `${label} source seconds ${seconds} are not inside an ffprobe packet window`
+  );
+  return match;
+}
+
 interface ChromeSession {
   evaluate<T>(expression: string): Promise<T>;
   send(
@@ -1280,9 +1444,18 @@ interface ChromeSession {
     params?: Record<string, unknown>
   ): Promise<Record<string, unknown>>;
   screenshot(label: string): Promise<void>;
+  mediaSeekTargets(): Promise<number[]>;
+  waitForWorkerHooks(): Promise<void>;
   close(): Promise<void>;
   blocked: string[];
   continuedNonLoopback: string[];
+  cspHeaders: string[];
+  workerUrls: string[];
+}
+
+interface OpenBrowserOptions {
+  readonly recordMediaSeekTargets?: boolean;
+  readonly blockWebCodecs?: boolean;
 }
 
 function loopbackUrl(value: string): boolean {
@@ -1302,7 +1475,8 @@ function loopbackUrl(value: string): boolean {
 
 async function openBrowser(
   url: string,
-  sessionToken: string
+  sessionToken: string,
+  options: OpenBrowserOptions = {}
 ): Promise<ChromeSession> {
   const named =
     process.env['RELIC_OTIO_CHROME_PATH'] ?? process.env['RELIC_CHROME_PATH'];
@@ -1356,6 +1530,12 @@ async function openBrowser(
   const cdp = connectPipe(toChrome, fromChrome);
   const blocked: string[] = [];
   const continuedNonLoopback: string[] = [];
+  const cspHeaders: string[] = [];
+  const workerUrls: string[] = [];
+  const workerHookErrors: Error[] = [];
+  const workerHooks = new Set<Promise<void>>();
+  let stopWorkerAttach: (() => void) | undefined;
+  const documentUrl = url.split('#')[0] ?? url;
   const version = await cdp.send('Browser.getVersion');
   const product = String(version['product'] ?? '');
   assert.ok(
@@ -1378,6 +1558,24 @@ async function openBrowser(
     { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
     sessionId
   );
+  const stopResponses = cdp.onEvent((event) => {
+    if (
+      event.method !== 'Network.responseReceived' ||
+      event.sessionId !== sessionId
+    )
+      return;
+    const params = event.params as {
+      response?: {
+        url?: string;
+        headers?: Record<string, string | number | boolean>;
+      };
+    };
+    if (params.response?.url !== documentUrl) return;
+    for (const [name, value] of Object.entries(params.response.headers ?? {})) {
+      if (name.toLowerCase() === 'content-security-policy')
+        cspHeaders.push(String(value));
+    }
+  });
   const stopEvents = cdp.onEvent((event) => {
     if (event.method !== 'Fetch.requestPaused' || event.sessionId !== sessionId)
       return;
@@ -1403,6 +1601,108 @@ async function openBrowser(
       )
       .catch(() => {});
   });
+  const webCodecsTrap = String.raw`(() => {
+    for (const name of ['VideoDecoder', 'AudioDecoder']) {
+      const constructor = Reflect.get(globalThis, name);
+      if (typeof constructor !== 'function') continue;
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        get() {
+          throw new Error('__RELIC_OTIO_WEB_CODECS__ ' + name);
+        },
+      });
+    }
+  })()`;
+  const pagePrelude = [
+    options.recordMediaSeekTargets
+      ? String.raw`(() => {
+          const key = '__relicOtioMediaSeekTargets';
+          const descriptor = Object.getOwnPropertyDescriptor(
+            HTMLMediaElement.prototype,
+            'currentTime'
+          );
+          if (!descriptor?.get || !descriptor.set || !descriptor.configurable) return;
+          Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+            configurable: true,
+            enumerable: descriptor.enumerable,
+            get() {
+              return descriptor.get.call(this);
+            },
+            set(value) {
+              const targets = Reflect.get(globalThis, key) ?? [];
+              targets.push(Number(value));
+              Reflect.set(globalThis, key, targets);
+              descriptor.set.call(this, value);
+            },
+          });
+        })()`
+      : '',
+    options.blockWebCodecs ? webCodecsTrap : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (pagePrelude) {
+    await cdp.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      { source: pagePrelude },
+      sessionId
+    );
+  }
+  if (options.blockWebCodecs) {
+    stopWorkerAttach = cdp.onEvent((event) => {
+      if (event.method !== 'Target.attachedToTarget') return;
+      const params = event.params as {
+        sessionId?: string;
+        targetInfo?: { type?: string; url?: string };
+      };
+      const workerSessionId = params.sessionId;
+      if (!workerSessionId) return;
+      if (params.targetInfo?.type !== 'worker') {
+        void cdp
+          .send('Runtime.runIfWaitingForDebugger', {}, workerSessionId)
+          .catch(() => {});
+        return;
+      }
+      workerUrls.push(params.targetInfo.url ?? '');
+      const hook = (async () => {
+        try {
+          await cdp.send('Runtime.enable', {}, workerSessionId);
+          const patched = await cdp.send(
+            'Runtime.evaluate',
+            { expression: webCodecsTrap, returnByValue: true },
+            workerSessionId
+          );
+          if (patched['exceptionDetails'])
+            throw new Error(
+              `could not trap WebCodecs in worker ${params.targetInfo?.url ?? ''}`
+            );
+        } catch (error) {
+          workerHookErrors.push(
+            error instanceof Error ? error : new Error(String(error))
+          );
+        } finally {
+          await cdp
+            .send('Runtime.runIfWaitingForDebugger', {}, workerSessionId)
+            .catch((error) => {
+              workerHookErrors.push(
+                error instanceof Error ? error : new Error(String(error))
+              );
+            });
+        }
+      })();
+      workerHooks.add(hook);
+      void hook.then(() => workerHooks.delete(hook));
+    });
+    await cdp.send(
+      'Target.setAutoAttach',
+      {
+        autoAttach: true,
+        waitForDebuggerOnStart: true,
+        flatten: true,
+      },
+      sessionId
+    );
+  }
   await cdp.send(
     'Network.setCookie',
     {
@@ -1441,6 +1741,8 @@ async function openBrowser(
   return {
     blocked,
     continuedNonLoopback,
+    cspHeaders,
+    workerUrls,
     send: (method, params) => cdp.send(method, params, sessionId),
     async evaluate<T>(expression: string): Promise<T> {
       const res = await cdp.send(
@@ -1462,6 +1764,30 @@ async function openBrowser(
       );
       const inner = res['result'] as { value?: T } | undefined;
       return inner?.value as T;
+    },
+    async mediaSeekTargets(): Promise<number[]> {
+      const result = await cdp.send(
+        'Runtime.evaluate',
+        {
+          expression:
+            "Array.isArray(globalThis.__relicOtioMediaSeekTargets) ? globalThis.__relicOtioMediaSeekTargets : []",
+          returnByValue: true,
+        },
+        sessionId
+      );
+      const value = (result['result'] as { value?: unknown } | undefined)
+        ?.value;
+      return Array.isArray(value)
+        ? value.filter((entry): entry is number => typeof entry === 'number')
+        : [];
+    },
+    async waitForWorkerHooks(): Promise<void> {
+      await Promise.all([...workerHooks]);
+      assert.deepEqual(
+        workerHookErrors,
+        [],
+        `could not install the WebCodecs trap: ${workerHookErrors.map((error) => error.message).join('; ')}`
+      );
     },
     async screenshot(label: string): Promise<void> {
       const shot = (await cdp.send(
@@ -1492,6 +1818,19 @@ async function openBrowser(
         )
         .catch(() => {});
       stopEvents();
+      stopResponses();
+      stopWorkerAttach?.();
+      await cdp
+        .send(
+          'Target.setAutoAttach',
+          {
+            autoAttach: false,
+            waitForDebuggerOnStart: false,
+            flatten: true,
+          },
+          sessionId
+        )
+        .catch(() => {});
       await cdp.send('Browser.close').catch(() => {});
       child.kill('SIGKILL');
       children.delete(child);
@@ -1700,6 +2039,48 @@ async function postComposer(
   );
 }
 
+async function openComposer(browser: ChromeSession): Promise<void> {
+  const opened = await browser.evaluate<string>(`(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    document.querySelector('button.otio-comment-selection')?.click();
+    const started = Date.now();
+    const tick = () => {
+      if (document.querySelector('.popover-composer textarea.popover-field')) {
+        resolve('open');
+      } else if (Date.now() - started > 4000) {
+        resolve('timeout');
+      } else {
+        setTimeout(tick, 50);
+      }
+    };
+    tick();
+    return promise;
+  })()`);
+  assert.equal(opened, 'open', `native composer did not open: ${opened}`);
+}
+
+async function dismissComposer(browser: ChromeSession): Promise<void> {
+  const dismissed = await browser.evaluate<string>(`(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    const cancel = [...document.querySelectorAll('.popover-composer button')]
+      .find((button) => button.textContent === 'Cancel');
+    cancel?.click();
+    const started = Date.now();
+    const tick = () => {
+      if (!document.querySelector('.popover-composer')) {
+        resolve('closed');
+      } else if (Date.now() - started > 4000) {
+        resolve('timeout');
+      } else {
+        setTimeout(tick, 50);
+      }
+    };
+    tick();
+    return promise;
+  })()`);
+  assert.equal(dismissed, 'closed', `native composer did not close: ${dismissed}`);
+}
+
 function asRange(value: unknown): TimeRange | null {
   if (!value || typeof value !== 'object') return null;
   const range = value as { start_time?: Rational; duration?: Rational };
@@ -1739,6 +2120,560 @@ function resolvedOf(comment: Record<string, unknown>): Record<string, unknown> {
     'MCP comment has no resolved source context'
   );
   return resolved as Record<string, unknown>;
+}
+
+interface DecoderClip {
+  readonly id: string;
+  readonly media: string;
+  readonly source: TimeRange;
+  readonly available: TimeRange;
+}
+
+function decoderTime(value: number, rate: number): Rational {
+  return { value, rate };
+}
+
+function decoderRange(
+  startValue: number,
+  startRate: number,
+  durationValue: number,
+  durationRate = startRate
+): TimeRange {
+  return {
+    start_time: decoderTime(startValue, startRate),
+    duration: decoderTime(durationValue, durationRate),
+  };
+}
+
+function decoderClip(
+  id: string,
+  media: string,
+  source: TimeRange,
+  available: TimeRange
+): DecoderClip {
+  return { id, media, source, available };
+}
+
+function otioRational(value: Rational): Record<string, unknown> {
+  return {
+    OTIO_SCHEMA: 'RationalTime.1',
+    value: value.value,
+    rate: value.rate,
+  };
+}
+
+function otioRange(value: TimeRange): Record<string, unknown> {
+  return {
+    OTIO_SCHEMA: 'TimeRange.1',
+    start_time: otioRational(value.start_time),
+    duration: otioRational(value.duration),
+  };
+}
+
+function decoderDocument(name: string, clips: readonly DecoderClip[]): string {
+  return `${JSON.stringify(
+    {
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: `timeline-${name}` } },
+      name: `Decoder timing ${name}`,
+      global_start_time: null,
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        metadata: { relic: { id: `stack-${name}` } },
+        name: 'tracks',
+        source_range: null,
+        effects: [],
+        markers: [],
+        enabled: true,
+        color: null,
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: `track-${name}` } },
+            name: 'Packet timing',
+            source_range: null,
+            effects: [],
+            markers: [],
+            enabled: true,
+            color: null,
+            children: clips.map((clip) => ({
+              OTIO_SCHEMA: 'Clip.2',
+              metadata: { relic: { id: clip.id } },
+              name: clip.id,
+              source_range: otioRange(clip.source),
+              effects: [],
+              markers: [],
+              enabled: true,
+              color: null,
+              media_references: {
+                DEFAULT_MEDIA: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  metadata: {},
+                  name: '',
+                  available_range: otioRange(clip.available),
+                  available_image_bounds: null,
+                  target_url: `media/${clip.media}`,
+                },
+              },
+              active_media_reference_key: 'DEFAULT_MEDIA',
+            })),
+          },
+        ],
+      },
+    },
+    null,
+    2
+  )}\n`;
+}
+
+async function publishDecoderDirectory(
+  name: string,
+  directory: string
+): Promise<string> {
+  const published = await callMcp('relic_publish', {
+    path: directory,
+    title: `OTIO timing proof ${name}`,
+    cover: false,
+  });
+  const shareUrl = String(published['url'] ?? published['link'] ?? '');
+  assert.ok(shareUrl.includes('#'), `${name} publish returned no keyed URL`);
+  assert.ok(
+    shareUrl.startsWith(origin),
+    `${name} publish URL left loopback: ${shareUrl}`
+  );
+  return shareUrl;
+}
+
+async function publishDecoderCase(
+  name: string,
+  clips: readonly DecoderClip[]
+): Promise<string> {
+  const directory = join(scratch, `decoder-${name}.otiod`);
+  await cp(decoderFixtureDir, directory, { recursive: true });
+  await writeFile(join(directory, 'content.otio'), decoderDocument(name, clips));
+  return publishDecoderDirectory(name, directory);
+}
+
+async function timingDiagnostics(browser: ChromeSession): Promise<string> {
+  return browser.evaluate<string>(
+    `document.querySelector('.otio-diagnostics')?.textContent ?? ''`
+  );
+}
+
+async function assertPacketCanvas(
+  browser: ChromeSession,
+  label: string,
+  fileName: string,
+  sourceSeconds: number,
+  includeFinal = true
+): Promise<PacketWindow> {
+  const windows = await packetWindows(fileName, includeFinal);
+  const expected = windowForSeconds(windows, sourceSeconds, label);
+  const canvas = await sampleCanvas(browser, width, height);
+  const correct = await extractFrame(
+    join(decoderMediaDir, fileName),
+    expected.frame,
+    width,
+    height
+  );
+  const neighbor =
+    windows.find((window) => window.frame === expected.frame + 1) ??
+    windows.find((window) => window.frame === expected.frame - 1);
+  assert.ok(
+    neighbor,
+    `${label} needs an adjacent ffprobe presentation frame`
+  );
+  const wrong = await extractFrame(
+    join(decoderMediaDir, fileName),
+    neighbor.frame,
+    width,
+    height
+  );
+  const toCorrect = rmse(canvas, correct);
+  const toWrong = rmse(canvas, wrong);
+  assert.ok(
+    rmse(correct, wrong) > 4,
+    `${label} fixture frames ${expected.frame} and ${neighbor.frame} are not distinct`
+  );
+  assert.ok(
+    toCorrect + 2 < toWrong,
+    `${label} canvas is not ffprobe frame ${expected.frame} (correct ${toCorrect}, adjacent ${toWrong})`
+  );
+  assert.equal(
+    (await timingDiagnostics(browser)).includes('invalid-timing'),
+    false,
+    `${label} used a diagnostic fallback instead of a certified packet window`
+  );
+  return expected;
+}
+
+async function assertInvalidTiming(
+  browser: ChromeSession,
+  label: string,
+  reason?: RegExp
+): Promise<string> {
+  const text = await timingDiagnostics(browser);
+  assert.match(text, /invalid-timing/, `${label} hid invalid timing`);
+  if (reason) assert.match(text, reason, `${label} lost its timing reason`);
+  return text;
+}
+
+async function clearMediaSeekTargets(browser: ChromeSession): Promise<void> {
+  await browser.evaluate<void>(
+    `globalThis.__relicOtioMediaSeekTargets = []`
+  );
+}
+
+async function assertExactMediaTarget(
+  browser: ChromeSession,
+  expected: number,
+  label: string
+): Promise<void> {
+  const targets = await browser.mediaSeekTargets();
+  assert.ok(
+    targets.some((target) => Math.abs(target - expected) < 1e-9),
+    `${label} did not assign exact source seconds ${expected}: ${targets.join(', ')}`
+  );
+}
+
+async function runDecoderTimingProof(sessionToken: string): Promise<void> {
+  const knownUrl = await publishDecoderDirectory('known', decoderFixtureDir);
+  const knownBrowser = await openBrowser(knownUrl, sessionToken, {
+    blockWebCodecs: true,
+  });
+  try {
+    assert.equal(
+      await waitReady(knownBrowser),
+      'true',
+      'known packet-window fixture did not reach decoded ready state'
+    );
+    await knownBrowser.waitForWorkerHooks();
+    const csp = knownBrowser.cspHeaders.find(
+      (value) =>
+        value.includes("default-src 'none'") &&
+        value.includes("script-src 'self'") &&
+        value.includes("media-src 'self' blob: data:")
+    );
+    assert.ok(csp, 'production viewer did not run under its real CSP');
+    assert.deepEqual(
+      knownBrowser.blocked,
+      [],
+      `decoder proof attempted non-loopback media: ${knownBrowser.blocked.join(', ')}`
+    );
+    assert.deepEqual(
+      knownBrowser.continuedNonLoopback,
+      [],
+      `decoder proof continued non-loopback media: ${knownBrowser.continuedNonLoopback.join(', ')}`
+    );
+    assert.ok(
+      knownBrowser.workerUrls.some((url) =>
+        url.includes('/assets/otio-video-timing-worker.js')
+      ),
+      `production timing worker did not load: ${knownBrowser.workerUrls.join(', ')}`
+    );
+    pass('decoder-worker-csp');
+
+    for (const item of [
+      {
+        label: '24fps MP4',
+        frame: 4,
+        file: 'fr24.mp4',
+        seconds: 4 / 24,
+      },
+      {
+        label: '60fps MP4 with 24-rate source',
+        frame: 52,
+        file: 'fr60.mp4',
+        seconds: 4 / 24,
+      },
+      {
+        label: 'rate-one source',
+        frame: 100,
+        file: 'fr24.mp4',
+        seconds: 1 / 6,
+      },
+      {
+        label: '29.97-rate source',
+        frame: 148,
+        file: 'fr24.mp4',
+        seconds: 1 / 6,
+      },
+      {
+        label: 'B-frame MP4',
+        frame: 196,
+        file: 'fr24b.mp4',
+        seconds: 4 / 24,
+      },
+      {
+        label: 'B-frame MOV',
+        frame: 244,
+        file: 'fr24b.mov',
+        seconds: 4 / 24,
+      },
+      {
+        label: 'VFR MP4',
+        frame: 291,
+        file: 'vfr.mp4',
+        seconds: 3 / 24,
+      },
+    ] as const) {
+      await seekTo(knownBrowser, item.frame);
+      await assertPacketCanvas(
+        knownBrowser,
+        item.label,
+        item.file,
+        item.seconds
+      );
+    }
+    pass('decoder-timing-windows');
+  } finally {
+    await knownBrowser.close();
+  }
+
+  const webmUrl = await publishDecoderCase('quantized-webm', [
+    decoderClip(
+      'quantized-webm',
+      'fr30.webm',
+      decoderRange(0, 30, 90),
+      decoderRange(0, 30, 90)
+    ),
+  ]);
+  const webmBrowser = await openBrowser(webmUrl, sessionToken);
+  try {
+    assert.equal(await waitReady(webmBrowser), 'true');
+    const webmWindows = await packetWindows('fr30.webm', true);
+    assert.deepEqual(
+      webmWindows.slice(0, 3).map((window) => Number(window.start.toFixed(3))),
+      [0, 0.033, 0.067],
+      'quantized WebM ffprobe PTS changed'
+    );
+    await seekTo(webmBrowser, 2);
+    const selected = await assertPacketCanvas(
+      webmBrowser,
+      'quantized WebM 2/30',
+      'fr30.webm',
+      2 / 30
+    );
+    assert.equal(
+      selected.frame,
+      1,
+      '2/30 must remain inside the actual [0.033, 0.067) WebM window'
+    );
+    pass('decoder-webm-quantization');
+  } finally {
+    await webmBrowser.close();
+  }
+
+  const r2398 = 24000 / 1001;
+  const r2997 = 30000 / 1001;
+  const nearZeroUrl = await publishDecoderCase('near-zero', [
+    decoderClip(
+      'near-zero',
+      'fr24.mp4',
+      decoderRange(4, r2398, 24),
+      decoderRange(5, r2997, 60)
+    ),
+  ]);
+  const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken);
+  try {
+    assert.equal(await waitReady(nearZeroBrowser), 'true');
+    await seekTo(nearZeroBrowser, 0);
+    const first = await assertPacketCanvas(
+      nearZeroBrowser,
+      'representational zero first frame',
+      'fr24.mp4',
+      0
+    );
+    assert.equal(first.frame, 0);
+    assert.equal(
+      (await timingDiagnostics(nearZeroBrowser)).includes('missing-handles'),
+      false,
+      'representational zero was withheld as missing handles'
+    );
+  } finally {
+    await nearZeroBrowser.close();
+  }
+
+  const strictNegativeUrl = await publishDecoderCase('strict-negative', [
+    decoderClip(
+      'strict-negative',
+      'fr24.mp4',
+      decoderRange(3, r2398, 24),
+      decoderRange(5, r2997, 60)
+    ),
+  ]);
+  const strictNegativeBrowser = await openBrowser(
+    strictNegativeUrl,
+    sessionToken
+  );
+  try {
+    assert.equal(await waitReady(strictNegativeBrowser), 'diagnostic');
+    await seekTo(strictNegativeBrowser, 0);
+    assert.match(
+      await timingDiagnostics(strictNegativeBrowser),
+      /missing-handles/,
+      'truly negative source time was decoded instead of withheld'
+    );
+    assert.equal(
+      isOpaqueBlack(await sampleCanvas(strictNegativeBrowser, width, height)),
+      true,
+      'truly negative source time painted media'
+    );
+  } finally {
+    await strictNegativeBrowser.close();
+  }
+
+  const driftUrl = await publishDecoderCase('drift-cut', [
+    decoderClip(
+      'drift-a',
+      'fr24.mp4',
+      decoderRange(0, 24, 24),
+      decoderRange(0, 24, 48)
+    ),
+    decoderClip(
+      'drift-b',
+      'fr24.mp4',
+      decoderRange(0, 30, 40),
+      decoderRange(0, 30, 60)
+    ),
+    decoderClip(
+      'drift-c',
+      'fr24.mp4',
+      decoderRange(0, 24, 24),
+      decoderRange(0, 24, 48)
+    ),
+  ]);
+  const driftBrowser = await openBrowser(driftUrl, sessionToken);
+  try {
+    assert.equal(await waitReady(driftBrowser), 'true');
+    await seekTo(driftBrowser, 56);
+    assert.equal(
+      (await assertPacketCanvas(
+        driftBrowser,
+        'mixed-rate drift-cut first frame',
+        'fr24.mp4',
+        0
+      )).frame,
+      0
+    );
+    await seekTo(driftBrowser, 57);
+    assert.equal(
+      (await assertPacketCanvas(
+        driftBrowser,
+        'mixed-rate drift-cut second frame',
+        'fr24.mp4',
+        1 / 24
+      )).frame,
+      1
+    );
+    pass('decoder-near-zero');
+  } finally {
+    await driftBrowser.close();
+  }
+
+  const editUrl = await publishDecoderCase('unsupported-edits', [
+    decoderClip(
+      'short-edit',
+      'short-edit.mp4',
+      decoderRange(0, 24, 48),
+      decoderRange(0, 24, 48)
+    ),
+    decoderClip(
+      'rate-edit',
+      'rate-edit.mp4',
+      decoderRange(0, 24, 48),
+      decoderRange(0, 24, 48)
+    ),
+    decoderClip(
+      'loop-edit',
+      'loop-edit.mp4',
+      decoderRange(0, 24, 48),
+      decoderRange(0, 24, 48)
+    ),
+  ]);
+  const editBrowser = await openBrowser(editUrl, sessionToken, {
+    recordMediaSeekTargets: true,
+  });
+  try {
+    assert.equal(await waitReady(editBrowser), 'diagnostic');
+    await clearMediaSeekTargets(editBrowser);
+    await seekTo(editBrowser, 30);
+    await assertInvalidTiming(
+      editBrowser,
+      'shortened rate-one edit',
+      /edit-window-mismatch/
+    );
+    await assertExactMediaTarget(editBrowser, 30 / 24, 'shortened edit');
+    for (const item of [
+      { label: 'rate-two edit', frame: 48 },
+      { label: 'multi-edit list', frame: 96 },
+    ]) {
+      await seekTo(editBrowser, item.frame);
+      await assertInvalidTiming(
+        editBrowser,
+        item.label,
+        /unsupported-edit-list|demux-warning/
+      );
+    }
+    pass('decoder-edit-diagnostics');
+  } finally {
+    await editBrowser.close();
+  }
+
+  const noDurationUrl = await publishDecoderCase('no-duration', [
+    decoderClip(
+      'no-duration',
+      'no-duration.webm',
+      decoderRange(0, 1000, 3000),
+      decoderRange(0, 1000, 3000)
+    ),
+  ]);
+  const noDurationBrowser = await openBrowser(noDurationUrl, sessionToken, {
+    recordMediaSeekTargets: true,
+  });
+  try {
+    assert.equal(await waitReady(noDurationBrowser), 'true');
+    const priorWindows = await packetWindows('no-duration.webm', false);
+    await seekTo(noDurationBrowser, 65);
+    assert.equal(
+      (await assertPacketCanvas(
+        noDurationBrowser,
+        'no-DefaultDuration earlier window',
+        'no-duration.webm',
+        65 / 1000,
+        false
+      )).frame,
+      1
+    );
+    const finalSeconds = await finalPacketStartSeconds('no-duration.webm');
+    const finalFrame = Math.round(finalSeconds * 1000);
+    assert.ok(
+      Math.abs(finalFrame / 1000 - finalSeconds) < 1e-9,
+      `final no-duration PTS ${finalSeconds} cannot be addressed exactly`
+    );
+    assert.equal(
+      priorWindows.some(
+        (window) =>
+          finalSeconds >= window.start && finalSeconds < window.end
+      ),
+      false,
+      'no-DefaultDuration final packet was reconstructed into a timing window'
+    );
+    await clearMediaSeekTargets(noDurationBrowser);
+    await seekTo(noDurationBrowser, finalFrame);
+    await assertInvalidTiming(
+      noDurationBrowser,
+      'no-DefaultDuration final tail'
+    );
+    await assertExactMediaTarget(
+      noDurationBrowser,
+      finalSeconds,
+      'no-DefaultDuration final tail'
+    );
+    pass('decoder-no-duration');
+  } finally {
+    await noDurationBrowser.close();
+  }
 }
 
 try {
@@ -2272,11 +3207,16 @@ try {
         features: [{ name: 'prefers-color-scheme', value: scheme }],
       });
       await browser.screenshot(`${shotWidth}-${scheme}`);
+      await openComposer(browser);
+      await browser.screenshot(`${shotWidth}-${scheme}-composer-open`);
+      await dismissComposer(browser);
     }
     pass('screenshots');
   } finally {
     await browser.close();
   }
+
+  await runDecoderTimingProof(sessionToken);
 
   const listed = (await (
     await fetch(`${origin}/api/relics/${relicId}/comments`)

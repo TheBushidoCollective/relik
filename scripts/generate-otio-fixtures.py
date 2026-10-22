@@ -589,6 +589,119 @@ def build_duplicate_tracks_timeline() -> Timeline:
     tl.tracks.extend([t1, t2, a1, a2])
     return tl
 
+# -----------------------------------------------------------------------------
+# Fixture 9: Decoder timing boundary media
+# -----------------------------------------------------------------------------
+def build_decoder_boundary_timeline() -> Timeline:
+    """Stable archive shell for the independently ffprobe-derived media proof."""
+    tl = Timeline(name="Decoder Timing Boundary")
+    track = Track(name="Actual Packet Timing", kind=TrackKind.Video)
+    track.metadata["relic"] = {"id": "track-decoder-boundary"}
+
+    def clip(
+        identifier,
+        name,
+        target,
+        source_start,
+        source_duration,
+        available_start,
+        available_duration,
+    ):
+        node = Clip(
+            name=name,
+            source_range=TimeRange(
+                RationalTime(*source_start), RationalTime(*source_duration)
+            ),
+            media_reference=ExternalReference(
+                target_url=target,
+                available_range=TimeRange(
+                    RationalTime(*available_start), RationalTime(*available_duration)
+                ),
+            ),
+        )
+        node.metadata["relic"] = {"id": identifier}
+        return node
+
+    r2997 = 30000 / 1001
+    track.extend(
+        [
+            clip(
+                "decoder-mp4-24",
+                "24fps MP4",
+                "media/fr24.mp4",
+                (0, 24),
+                (48, 24),
+                (0, 24),
+                (48, 24),
+            ),
+            clip(
+                "decoder-mp4-60",
+                "60fps MP4 through 24-rate source",
+                "media/fr60.mp4",
+                (0, 24),
+                (48, 24),
+                (0, 60),
+                (120, 60),
+            ),
+            clip(
+                "decoder-rate-one",
+                "Rate-one source",
+                "media/fr24.mp4",
+                (0, 1),
+                (2, 1),
+                (0, 1),
+                (2, 1),
+            ),
+            clip(
+                "decoder-mixed-rate",
+                "29.97-rate source",
+                "media/fr24.mp4",
+                (0, r2997),
+                (60000 / 1001, r2997),
+                (0, r2997),
+                (60000 / 1001, r2997),
+            ),
+            clip(
+                "decoder-bframe-mp4",
+                "B-frame MP4",
+                "media/fr24b.mp4",
+                (0, 24),
+                (48, 24),
+                (0, 24),
+                (48, 24),
+            ),
+            clip(
+                "decoder-bframe-mov",
+                "B-frame MOV",
+                "media/fr24b.mov",
+                (0, 24),
+                (48, 24),
+                (0, 24),
+                (48, 24),
+            ),
+            clip(
+                "decoder-vfr",
+                "VFR MP4",
+                "media/vfr.mp4",
+                (0, 24),
+                (47, 24),
+                (0, 24),
+                (47, 24),
+            ),
+            clip(
+                "decoder-webm",
+                "Quantized WebM",
+                "media/fr30.webm",
+                (0, 30),
+                (90, 30),
+                (0, 30),
+                (90, 30),
+            ),
+        ]
+    )
+    tl.tracks.append(track)
+    return tl
+
 
 
 # -----------------------------------------------------------------------------
@@ -1247,6 +1360,7 @@ def build_oracle():
     images = build_image_sequence_timeline()
     missing = build_missing_unsupported_timeline()
     duplicate = build_duplicate_tracks_timeline()
+    decoder = build_decoder_boundary_timeline()
     oracle = {
         "version": 1,
         "provenance": {
@@ -1308,6 +1422,7 @@ def build_oracle():
         "image-sequence": images,
         "missing-unsupported": missing,
         "duplicate-tracks": duplicate,
+        "decoder-boundary": decoder,
     }
 
 
@@ -1398,11 +1513,14 @@ def write_outputs(root: Path, oracle, timelines, check: bool) -> int:
     fixtures = root / "packages" / "relic-format" / "test" / "fixtures" / "otio"
     edge = fixtures / "edge-cases"
     standard_dir = fixtures / "standard-sample.otiod"
+    decoder_dir = fixtures / "decoder-boundary.otiod"
     expected_oracle = oracle_text(oracle)
     files = {
         fixtures / "expected-oracle.json": expected_oracle,
         standard_dir / "content.otio": serialize_timeline(timelines["standard-sample"]),
         standard_dir / "version.txt": "1.0.0\n",
+        decoder_dir / "content.otio": serialize_timeline(timelines["decoder-boundary"]),
+        decoder_dir / "version.txt": "1.0.0\n",
     }
     missing_text = serialize_timeline(timelines["missing-unsupported"])
     files[edge / "missing-unsupported.otio"] = missing_text
