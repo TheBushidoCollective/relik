@@ -8,11 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MEDIA_DIR="$REPO_ROOT/packages/relic-format/test/fixtures/otio/standard-sample.otiod/media"
 MEASURED="$MEDIA_DIR/media-measured.json"
+DECODER_DIR="$REPO_ROOT/packages/relic-format/test/fixtures/otio/decoder-boundary.otiod/media"
+DECODER_TIMING="$DECODER_DIR/timing-oracle.json"
 CHECK=0
-if [[ "${1:-}" == "--check" ]]; then
-  CHECK=1
-fi
-
+BOUNDARY_ONLY=0
+case "${1:-}" in
+  "") ;;
+  --check) CHECK=1 ;;
+  --decoder-boundary) BOUNDARY_ONLY=1 ;;
+  *)
+    echo "usage: $0 [--check|--decoder-boundary]" >&2
+    exit 2
+    ;;
+esac
 if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
   echo "ffmpeg and ffprobe are required" >&2
   exit 1
@@ -110,13 +118,196 @@ check_all() {
   echo "OTIO media check passed."
 }
 
+frame_code_filter() {
+  printf "format=yuv420p,geq=lum='if(lt(X,8),235,16+219*mod(floor(N/pow(2,floor(X/8)-1)),2))':cb=128:cr=128"
+}
+
+write_decoder_timing() {
+  local mode="$1"
+  python3 - "$DECODER_DIR" "$DECODER_TIMING" "$mode" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+media = Path(sys.argv[1])
+target = Path(sys.argv[2])
+mode = sys.argv[3]
+names = (
+    "fr24.mp4",
+    "fr60.mp4",
+    "fr24b.mp4",
+    "fr24b.mov",
+    "fr30.webm",
+    "vfr.mp4",
+    "short-edit.mp4",
+    "rate-edit.mp4",
+    "loop-edit.mp4",
+    "no-duration.webm",
+)
+codecs = {
+    "fr24.mp4": "h264",
+    "fr60.mp4": "h264",
+    "fr24b.mp4": "h264",
+    "fr24b.mov": "h264",
+    "fr30.webm": "vp9",
+    "vfr.mp4": "h264",
+    "short-edit.mp4": "h264",
+    "rate-edit.mp4": "h264",
+    "loop-edit.mp4": "h264",
+    "no-duration.webm": "vp9",
+}
+report = {"provenance": {
+    "producer": "ffprobe packet and frame timestamps",
+    "command": "ffprobe -v error -select_streams v:0 -show_packets -show_frames -show_entries stream=codec_name,time_base,r_frame_rate,avg_frame_rate:packet=pts,dts,duration,pts_time,dts_time,duration_time:frame=best_effort_timestamp,best_effort_timestamp_time,pkt_dts,pkt_dts_time,pict_type,coded_picture_number -of json",
+    "notes": {
+        "fr30.webm": "Packet PTS are millisecond-quantized. 2/30 seconds is inside [0.033, 0.067), frame 1.",
+        "no-duration.webm": "DefaultDuration is replaced in the synthetic bytes. Its terminal packet has no certified browser-reader interval.",
+    },
+}, "files": {}}
+for name in names:
+    path = media / name
+    if not path.is_file():
+        raise SystemExit(f"missing decoder timing fixture {path}")
+    raw = json.loads(subprocess.check_output([
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_packets", "-show_frames", "-show_entries",
+        "stream=codec_name,time_base,r_frame_rate,avg_frame_rate:packet=pts,dts,duration,pts_time,dts_time,duration_time:frame=best_effort_timestamp,best_effort_timestamp_time,pkt_dts,pkt_dts_time,pict_type,coded_picture_number",
+        "-of", "json", str(path),
+    ]))
+    streams = raw.get("streams") or []
+    if len(streams) != 1 or streams[0].get("codec_name") != codecs[name]:
+        raise SystemExit(f"{name} is not one {codecs[name]} video stream")
+    rows = raw.get("packets_and_frames") or []
+    packets = [row for row in rows if row.get("type") == "packet"]
+    frames = [row for row in rows if row.get("type") == "frame"]
+    if not packets or not frames:
+        raise SystemExit(f"{name} has no ffprobe packet/frame timestamps")
+    report["files"][name] = {
+        "stream": {
+            "codec_name": streams[0]["codec_name"],
+            "time_base": streams[0]["time_base"],
+        },
+        "packets": [
+            {"pts": row.get("pts"), "duration": row.get("duration")}
+            for row in packets
+        ],
+        "frames": [
+            {
+                "best_effort_timestamp": row.get("best_effort_timestamp"),
+                "pict_type": row.get("pict_type"),
+            }
+            for row in frames
+        ],
+    }
+for name in ("fr24b.mp4", "fr24b.mov"):
+    if not any(frame.get("pict_type") == "B" for frame in report["files"][name]["frames"]):
+        raise SystemExit(f"{name} lost its B-frame control")
+if bytes.fromhex("23e383") in (media / "no-duration.webm").read_bytes():
+    raise SystemExit("no-duration.webm still contains WebM DefaultDuration")
+text = json.dumps(report, indent=2) + "\n"
+if mode == "check":
+    if not target.is_file() or target.read_text() != text:
+        raise SystemExit(f"timing oracle differs {target}; regenerate with scripts/generate-otio-media.sh")
+else:
+    target.write_text(text)
+PY
+}
+
+check_decoder() {
+  local required=(
+    fr24.mp4 fr60.mp4 fr24b.mp4 fr24b.mov fr30.webm vfr.mp4
+    short-edit.mp4 rate-edit.mp4 loop-edit.mp4 no-duration.webm timing-oracle.json
+  )
+  local name
+  for name in "${required[@]}"; do
+    if [[ ! -f "$DECODER_DIR/$name" ]]; then
+      echo "missing $DECODER_DIR/$name" >&2
+      exit 1
+    fi
+  done
+  assert_codec "$DECODER_DIR/fr24.mp4" h264
+  assert_codec "$DECODER_DIR/fr60.mp4" h264
+  assert_codec "$DECODER_DIR/fr24b.mp4" h264
+  assert_codec "$DECODER_DIR/fr24b.mov" h264
+  assert_codec "$DECODER_DIR/fr30.webm" vp9
+  assert_codec "$DECODER_DIR/vfr.mp4" h264
+  frames_differ "$DECODER_DIR/fr24.mp4"
+  frames_differ "$DECODER_DIR/fr60.mp4"
+  frames_differ "$DECODER_DIR/fr24b.mp4"
+  frames_differ "$DECODER_DIR/fr30.webm"
+  write_decoder_timing check
+  echo "OTIO decoder timing media check passed."
+}
+
+generate_decoder() {
+  mkdir -p "$DECODER_DIR"
+  rm -f "$DECODER_DIR"/{fr24.mp4,fr60.mp4,fr24b.mp4,fr24b.mov,fr30.webm,vfr.mp4,short-edit.mp4,rate-edit.mp4,loop-edit.mp4,no-duration.webm,timing-oracle.json}
+  local coded
+  coded="$(frame_code_filter)"
+  ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=24:d=2" \
+    -vf "$coded" -c:v libx264 -preset ultrafast -pix_fmt yuv420p "$DECODER_DIR/fr24.mp4"
+  ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=60:d=2" \
+    -vf "$coded" -c:v libx264 -preset ultrafast -pix_fmt yuv420p "$DECODER_DIR/fr60.mp4"
+  ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=24:d=2" \
+    -vf "$coded" -c:v libx264 -preset medium -pix_fmt yuv420p "$DECODER_DIR/fr24b.mp4"
+  ffmpeg -y -hide_banner -loglevel error -i "$DECODER_DIR/fr24b.mp4" -c copy "$DECODER_DIR/fr24b.mov"
+  ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=30:d=3" \
+    -vf "$coded" -c:v libvpx-vp9 -b:v 200k -pix_fmt yuv420p "$DECODER_DIR/fr30.webm"
+  local vfr
+  vfr="format=yuv420p,geq=lum='if(lt(X,8),235,16+219*mod(floor(N/pow(2,floor(X/8)-1)),2))':cb=128:cr=128,select='not(mod(n,2))+eq(mod(n,7),3)'"
+  ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=24:d=2" \
+    -vf "$vfr" -fps_mode vfr -c:v libx264 -preset medium -pix_fmt yuv420p "$DECODER_DIR/vfr.mp4"
+  python3 - "$DECODER_DIR" <<'PY'
+import pathlib
+import struct
+import sys
+
+media = pathlib.Path(sys.argv[1])
+source = bytearray((media / "fr24b.mp4").read_bytes())
+positions = {kind: source.index(kind) - 4 for kind in (b"moov", b"trak", b"edts", b"elst")}
+edit = positions[b"elst"]
+assert source[edit + 8] == 0
+assert struct.unpack_from(">I", source, edit + 12)[0] == 1
+assert struct.unpack_from(">I", source, edit)[0] == 28
+
+short = bytearray(source)
+struct.pack_into(">I", short, edit + 16, 1000)
+(media / "short-edit.mp4").write_bytes(short)
+
+rate = bytearray(source)
+struct.pack_into(">h", rate, edit + 24, 2)
+(media / "rate-edit.mp4").write_bytes(rate)
+
+entry = bytearray(source[edit + 16:edit + 28])
+struct.pack_into(">I", entry, 0, 1000)
+loop = bytearray(source[:edit + 12]) + struct.pack(">I", 2) + entry + entry + source[edit + 28:]
+for position in positions.values():
+    struct.pack_into(">I", loop, position, struct.unpack_from(">I", source, position)[0] + 12)
+(media / "loop-edit.mp4").write_bytes(loop)
+
+webm = bytearray((media / "fr30.webm").read_bytes())
+default_duration = webm.index(bytes.fromhex("23e383"))
+assert webm[default_duration + 3] == 0x84
+webm[default_duration:default_duration + 8] = bytes.fromhex("ec86") + bytes(6)
+(media / "no-duration.webm").write_bytes(webm)
+PY
+  write_decoder_timing write
+}
+
 if [[ "$CHECK" == 1 ]]; then
   check_all
+  check_decoder
   exit 0
 fi
 
 need_encoder libx264
 need_encoder libvpx-vp9
+if [[ "$BOUNDARY_ONLY" == 1 ]]; then
+  generate_decoder
+  check_decoder
+  exit 0
+fi
 need_encoder prores_ks
 mkdir -p "$MEDIA_DIR"
 rm -rf "$MEDIA_DIR/vfx_plates"
@@ -224,5 +415,7 @@ out.write_text(json.dumps(rows, indent=2) + "\n")
 print(f"measured {len(rows)} files")
 PY
 
+generate_decoder
 check_all
-echo "Media generation complete in $MEDIA_DIR"
+check_decoder
+echo "Media generation complete in $MEDIA_DIR and $DECODER_DIR"
