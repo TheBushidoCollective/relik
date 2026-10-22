@@ -1,0 +1,219 @@
+name: OTIO duration oracle proof
+
+on:
+  push:
+    branches:
+      - agent/otio-container-duration-oracle
+
+permissions:
+  contents: read
+
+jobs:
+  duration-oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare proof artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          : > artifacts/otio-duration-proof.log
+          {
+            echo "OTIO duration oracle proof"
+            echo "workflow_sha=${GITHUB_SHA}"
+          } > artifacts/otio-duration-proof-summary.txt
+
+      - name: Install ffmpeg
+        run: |
+          set -euo pipefail
+          {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          } 2>&1 | tee -a artifacts/otio-duration-proof.log
+
+      - name: Prove timing oracle rejects each semantic mutation
+        run: |
+          set -euo pipefail
+          {
+            python3 -u - \
+              packages/relic-format/test/fixtures/otio/decoder-boundary.otiod/media/timing-oracle.json \
+              "$RUNNER_TEMP/timing-oracle.before.json" \
+              artifacts/otio-duration-proof-summary.txt <<'PY'
+          import hashlib
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+
+          fixture = Path(sys.argv[1])
+          backup = Path(sys.argv[2])
+          summary = Path(sys.argv[3])
+          repo = Path.cwd()
+          command = ["bash", "scripts/generate-otio-media.sh", "--check"]
+
+
+          def record(line):
+              print(line)
+              with summary.open("a", encoding="utf-8") as handle:
+                  handle.write(f"{line}\n")
+
+
+          def run_check(label):
+              print(f"\n=== {label}: {' '.join(command)} ===")
+              completed = subprocess.run(
+                  command,
+                  cwd=repo,
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  check=False,
+              )
+              print(completed.stdout, end="")
+              print(f"=== {label}: exit {completed.returncode} ===")
+              return completed
+
+
+          def fail_if(condition, message, failures):
+              if condition:
+                  failures.append(message)
+
+
+          before = fixture.read_bytes()
+          backup.write_bytes(before)
+          before_sha = hashlib.sha256(before).hexdigest()
+          ffprobe_version = subprocess.run(
+              ["ffprobe", "-version"],
+              cwd=repo,
+              text=True,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT,
+              check=True,
+          ).stdout.splitlines()[0]
+          head = subprocess.run(
+              ["git", "rev-parse", "HEAD"],
+              cwd=repo,
+              text=True,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT,
+              check=True,
+          ).stdout.strip()
+          record(f"ffprobe_version={ffprobe_version}")
+          record(f"head={head}")
+          record(f"fixture_before_sha256={before_sha}")
+
+          failures = []
+          baseline = run_check("baseline")
+          if baseline.returncode != 0:
+              failures.append("baseline timing-oracle check failed")
+              record("baseline=failed")
+          else:
+              record("baseline=passed")
+
+              cases = (
+                  ("vfr_packet_25_duration", "vfr.mp4", "packets", 25, "duration", 1024, 512),
+                  ("vfr_packet_3_pts", "vfr.mp4", "packets", 3, "pts", 1536, 1537),
+                  (
+                      "vfr_frame_2_best_effort_timestamp",
+                      "vfr.mp4",
+                      "frames",
+                      2,
+                      "best_effort_timestamp",
+                      1536,
+                      1537,
+                  ),
+                  ("fr30_webm_packet_0_duration", "fr30.webm", "packets", 0, "duration", 33, 34),
+              )
+              for label, filename, collection, index, field, expected, replacement in cases:
+                  case_failures = []
+                  try:
+                      fixture.write_bytes(before)
+                      payload = json.loads(before.decode("utf-8"))
+                      item = payload["files"][filename][collection][index]
+                      fail_if(
+                          item.get(field) != expected,
+                          f"{label}: expected {field}={expected}, got {item.get(field)!r}",
+                          case_failures,
+                      )
+                      fail_if(
+                          expected == replacement,
+                          f"{label}: replacement does not change {field}",
+                          case_failures,
+                      )
+                      if not case_failures:
+                          item[field] = replacement
+                          fixture.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+                          persisted = json.loads(fixture.read_text(encoding="utf-8"))
+                          persisted_value = persisted["files"][filename][collection][index][field]
+                          fail_if(
+                              persisted_value != replacement,
+                              f"{label}: JSON serialization did not retain {field}={replacement}",
+                              case_failures,
+                          )
+                          fail_if(
+                              fixture.read_bytes() == before,
+                              f"{label}: JSON serialization did not change the fixture bytes",
+                              case_failures,
+                          )
+                      if not case_failures:
+                          print(f"=== {label}: JSON readable and semantic mutation confirmed ===")
+                          mutant = run_check(label)
+                          fail_if(
+                              mutant.returncode == 0,
+                              f"{label}: mutated timing oracle check unexpectedly passed",
+                              case_failures,
+                          )
+                          fail_if(
+                              "timing oracle differs" not in mutant.stdout,
+                              f"{label}: mutation did not fail with timing oracle differs",
+                              case_failures,
+                          )
+                  except Exception as error:
+                      print(f"=== {label}: unexpected exception {error!r} ===")
+                      case_failures.append(f"{label}: unexpected exception {error!r}")
+                  finally:
+                      fixture.write_bytes(before)
+                      fail_if(
+                          fixture.read_bytes() != backup.read_bytes(),
+                          f"{label}: byte-exact restore failed",
+                          case_failures,
+                      )
+                      restored = run_check(f"{label} restored")
+                      fail_if(
+                          restored.returncode != 0,
+                          f"{label}: restored timing-oracle check failed",
+                          case_failures,
+                      )
+                  if case_failures:
+                      failures.extend(case_failures)
+                      record(f"{label}=failed")
+                      for failure in case_failures:
+                          record(f"failure={failure}")
+                  else:
+                      record(f"{label}=passed")
+
+          fixture.write_bytes(before)
+          final_sha = hashlib.sha256(fixture.read_bytes()).hexdigest()
+          cmp = subprocess.run(["cmp", "-s", str(fixture), str(backup)], check=False)
+          record(f"fixture_final_sha256={final_sha}")
+          record(f"fixture_final_cmp={'passed' if cmp.returncode == 0 else 'failed'}")
+          if final_sha != before_sha or cmp.returncode != 0:
+              failures.append("final fixture was not restored byte-exactly")
+          if failures:
+              record("result=failed")
+              raise SystemExit("; ".join(failures))
+          record("result=passed")
+          PY
+          } 2>&1 | tee -a artifacts/otio-duration-proof.log
+
+      - name: Upload duration proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otio-duration-proof-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
