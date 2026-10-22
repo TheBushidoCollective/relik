@@ -1,0 +1,286 @@
+name: OTIO image proof
+
+on:
+  push:
+    branches:
+      - agent/otio-container-gate
+
+# This is intentionally a branch-only diagnostic. It reads source, builds
+# local images, and talks only to loopback containers.
+permissions:
+  contents: read
+
+jobs:
+  image-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Prepare proof receipt
+        run: mkdir -p "$RUNNER_TEMP/otio-image-proof"
+
+      # Each case has its own clean checkout. No case can inherit a generated
+      # viewer dist from one of the others.
+      - name: Checkout DP0 main
+        uses: actions/checkout@v4
+        with:
+          ref: 5ac668a89daea0217f1bd042f28712faa18282d5
+          path: proof-context/dp0-main
+          fetch-depth: 1
+
+      - name: Checkout DP1 pre-fix source
+        uses: actions/checkout@v4
+        with:
+          ref: 702a5bb033ad0155c77842085642450d0106a39c
+          path: proof-context/dp1-prefix
+          fetch-depth: 1
+
+      - name: Checkout DP2 fixed source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: proof-context/dp2-fixed
+          fetch-depth: 1
+
+      - name: Checkout DP3 mutation source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: proof-context/dp3-mutant
+          fetch-depth: 1
+
+      - name: Run DP0 through DP3
+        env:
+          MAIN_SHA: 5ac668a89daea0217f1bd042f28712faa18282d5
+          PREFIX_SHA: 702a5bb033ad0155c77842085642450d0106a39c
+        run: |
+          set -euo pipefail
+          PROOF="$RUNNER_TEMP/otio-image-proof"
+          DP0="$GITHUB_WORKSPACE/proof-context/dp0-main"
+          DP1="$GITHUB_WORKSPACE/proof-context/dp1-prefix"
+          DP2="$GITHUB_WORKSPACE/proof-context/dp2-fixed"
+          DP3="$GITHUB_WORKSPACE/proof-context/dp3-mutant"
+          ASSETS='
+            /assets/viewer.js
+            /assets/home.js
+            /assets/styles.css
+            /assets/register-sw.js
+            /manifest.webmanifest
+            /sw.js
+            /assets/icon.svg
+            /assets/otio-video-timing-worker.js'
+
+          record_context() {
+            local label="$1"
+            local dir="$2"
+            local expected_sha="$3"
+            local actual_sha
+            local status_file="$PROOF/$label/git-status.txt"
+
+            mkdir -p "$PROOF/$label"
+            actual_sha="$(git -C "$dir" rev-parse HEAD)"
+            {
+              printf '%s commit %s\n' "$label" "$actual_sha"
+              printf '%s dockerfile-git %s\n' "$label" \
+                "$(git -C "$dir" rev-parse HEAD:deploy/docker/server/Dockerfile)"
+              printf '%s dockerfile-sha256 ' "$label"
+              sha256sum "$dir/deploy/docker/server/Dockerfile"
+            } >> "$PROOF/source-shas.txt"
+            git -C "$dir" status --porcelain > "$status_file"
+
+            test "$actual_sha" = "$expected_sha"
+            test ! -s "$status_file"
+            test ! -e "$dir/packages/relic-viewer/dist"
+          }
+
+          build_image() {
+            local label="$1"
+            local dir="$2"
+            local image="$3"
+            local out="$PROOF/$label"
+            local status
+
+            mkdir -p "$out"
+            printf '%s\n' 'docker build -f deploy/docker/server/Dockerfile -t <local-image> .' \
+              > "$out/build-command.txt"
+            if (cd "$dir" && docker build -f deploy/docker/server/Dockerfile -t "$image" .) \
+              > "$out/build.log" 2>&1; then
+              status=0
+              docker image inspect --format '{{.Id}}' "$image" > "$out/image-id.txt"
+            else
+              status=$?
+            fi
+            printf '%s\n' "$status" > "$out/build.status"
+            return "$status"
+          }
+
+          cleanup_container() {
+            local label="$1"
+            local name="otio-image-proof-$label"
+            local out="$PROOF/$label"
+
+            mkdir -p "$out"
+            docker inspect "$name" > "$out/container-inspect.json" 2>&1 || true
+            docker logs "$name" > "$out/container.log" 2>&1 || true
+            docker rm -f "$name" > "$out/container-remove.log" 2>&1 || true
+          }
+
+          smoke_image() {
+            local label="$1"
+            local image="$2"
+            local name="otio-image-proof-$label"
+            local out="$PROOF/$label"
+            local responses="$out/responses"
+            local base='http://127.0.0.1:18080'
+            local attempt code path safe missing=0 healthy=0
+
+            mkdir -p "$responses"
+            : > "$out/missing-assets.txt"
+            docker rm -f "$name" > "$out/container-preclean.log" 2>&1 || true
+            if ! docker run --detach --name "$name" --env NODE_ENV=development \
+              --publish 127.0.0.1:18080:8080 "$image" \
+              > "$out/container-id.txt" 2>&1; then
+              cleanup_container "$label"
+              return 10
+            fi
+
+            for attempt in $(seq 1 30); do
+              code="$(curl -sS \
+                --dump-header "$responses/health-$attempt.headers" \
+                --output "$responses/health-$attempt.body" \
+                --write-out '%{http_code}' "$base/health" \
+                2> "$responses/health-$attempt.stderr" || true)"
+              printf '%s %s\n' "$attempt" "$code" >> "$out/health-statuses.txt"
+              if [ "$code" = 200 ] && grep -q '"ok"' "$responses/health-$attempt.body"; then
+                cp "$responses/health-$attempt.headers" "$responses/health.headers"
+                cp "$responses/health-$attempt.body" "$responses/health.body"
+                healthy=1
+                break
+              fi
+              sleep 1
+            done
+
+            if [ "$healthy" -ne 1 ]; then
+              cleanup_container "$label"
+              return 20
+            fi
+
+            for path in $ASSETS; do
+              safe="${path#/}"
+              safe="${safe//\//_}"
+              code="$(curl -sS \
+                --dump-header "$responses/$safe.headers" \
+                --output "$responses/$safe.body" \
+                --write-out '%{http_code}' "$base$path" \
+                2> "$responses/$safe.stderr" || true)"
+              printf '%s %s\n' "$path" "$code" >> "$out/asset-statuses.txt"
+              sha256sum "$responses/$safe.body" >> "$out/asset-shas.txt"
+              if [ "$code" != 200 ]; then
+                printf '%s\n' "$path" >> "$out/missing-assets.txt"
+                missing=1
+              fi
+            done
+
+            cleanup_container "$label"
+            if [ "$missing" -ne 0 ]; then
+              return 30
+            fi
+          }
+
+          record_context dp0-main "$DP0" "$MAIN_SHA"
+          record_context dp1-prefix "$DP1" "$PREFIX_SHA"
+          record_context dp2-fixed "$DP2" "$GITHUB_SHA"
+          record_context dp3-mutant "$DP3" "$GITHUB_SHA"
+
+          # DP0: the pinned current main image build must succeed.
+          if ! build_image dp0-main "$DP0" relic-otio-image-proof:dp0-main; then
+            echo 'DP0 failed: main image did not build. Stopping before the fix proof.' >&2
+            exit 1
+          fi
+
+          # DP1: the known pre-fix image must fail at the documented Node-header
+          # guard. Any other failure is a different diagnosis and stops the run.
+          if build_image dp1-prefix "$DP1" relic-otio-image-proof:dp1-prefix; then
+            echo 'DP1 unexpectedly built. Stopping before the fix proof.' >&2
+            exit 1
+          fi
+          if ! grep -F 'error: Node headers are missing at /usr/local/include/node' \
+            "$PROOF/dp1-prefix/build.log" > "$PROOF/dp1-prefix/expected-error.txt"; then
+            echo 'DP1 failed for something other than the Node-header guard.' >&2
+            exit 1
+          fi
+
+          # DP2: the candidate image must boot on an owned loopback port and
+          # serve the complete deploy asset list plus the timing worker.
+          if ! build_image dp2-fixed "$DP2" relic-otio-image-proof:dp2-fixed; then
+            echo 'DP2 failed: fixed image did not build.' >&2
+            exit 1
+          fi
+          if ! smoke_image dp2-fixed relic-otio-image-proof:dp2-fixed; then
+            echo 'DP2 failed: fixed image health or asset smoke did not pass.' >&2
+            exit 1
+          fi
+
+          # DP3: mutate only the viewer build instruction. A fresh context means
+          # an ignored dist cannot conceal the missing build.
+          cp "$DP3/deploy/docker/server/Dockerfile" \
+            "$PROOF/dp3-mutant/Dockerfile.before"
+          replaced=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            if [ "$line" = "RUN bun run --filter '@relic/viewer' build" ]; then
+              printf '%s\n' 'RUN true'
+              replaced=$((replaced + 1))
+            else
+              printf '%s\n' "$line"
+            fi
+          done < "$DP3/deploy/docker/server/Dockerfile" \
+            > "$DP3/deploy/docker/server/Dockerfile.mutant"
+          test "$replaced" -eq 1
+          mv "$DP3/deploy/docker/server/Dockerfile.mutant" \
+            "$DP3/deploy/docker/server/Dockerfile"
+          sha256sum "$DP3/deploy/docker/server/Dockerfile" \
+            > "$PROOF/dp3-mutant/Dockerfile.after.sha256"
+
+          if ! build_image dp3-mutant "$DP3" relic-otio-image-proof:dp3-mutant; then
+            echo 'DP3 failed: the mutation should still build an image.' >&2
+            exit 1
+          fi
+          if smoke_image dp3-mutant relic-otio-image-proof:dp3-mutant; then
+            echo 'DP3 unexpectedly passed the smoke test.' >&2
+            exit 1
+          fi
+          grep -Fx '/assets/viewer.js' "$PROOF/dp3-mutant/missing-assets.txt"
+          # Skipping the viewer build removes its shell entrypoint. Other
+          # viewer-produced assets can also be absent; the discriminating proof
+          # is that the deploy's required viewer.js is one of them.
+
+          {
+            echo '### OTIO image proof'
+            echo 'DP0 main build passed.'
+            echo 'DP1 pre-fix build failed at the Node-header guard.'
+            echo 'DP2 fixed image health and asset smoke passed.'
+            echo 'DP3 missing viewer asset was detected.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect container logs and remove containers
+        if: always()
+        run: |
+          set +e
+          PROOF="$RUNNER_TEMP/otio-image-proof/final-cleanup"
+          mkdir -p "$PROOF"
+          for name in \
+            otio-image-proof-dp0-main \
+            otio-image-proof-dp1-prefix \
+            otio-image-proof-dp2-fixed \
+            otio-image-proof-dp3-mutant; do
+            docker logs "$name" > "$PROOF/$name.log" 2>&1
+            docker rm -f "$name" > "$PROOF/$name.remove.log" 2>&1
+          done
+
+      - name: Upload image proof receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otio-image-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/otio-image-proof
+          if-no-files-found: warn
