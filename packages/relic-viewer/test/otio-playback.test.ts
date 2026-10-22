@@ -501,6 +501,129 @@ function sampledMediaDocument(options: {
   );
 }
 
+function mixedHandleDocument(): OtioDocumentV1 {
+  const time = (value: number, rate = 24): Record<string, number | string> => ({
+    OTIO_SCHEMA: 'RationalTime.1',
+    value,
+    rate,
+  });
+  const clip = (
+    id: string,
+    sourceStart: OtioRationalTime,
+    availableStart: OtioRationalTime,
+    targetUrl: string
+  ) => ({
+    OTIO_SCHEMA: 'Clip.1',
+    name: 'Shared handle',
+    metadata: { relic: { id } },
+    source_range: {
+      OTIO_SCHEMA: 'TimeRange.1',
+      start_time: time(sourceStart.value, sourceStart.rate),
+      duration: time(48),
+    },
+    media_reference: {
+      OTIO_SCHEMA: 'ExternalReference.1',
+      target_url: targetUrl,
+      available_range: {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: time(availableStart.value, availableStart.rate),
+        duration: time(48),
+      },
+    },
+  });
+  return readOtioDocument(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline_1' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        metadata: { relic: { id: 'stack_1' } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_qualified' } },
+            kind: 'Video',
+            children: [
+              clip(
+                'clip_qualified',
+                { value: 4, rate: 24000 / 1001 },
+                { value: 5, rate: 30000 / 1001 },
+                'media/qualified.mp4'
+              ),
+            ],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_unqualified' } },
+            kind: 'Video',
+            children: [
+              clip(
+                'clip_unqualified',
+                { value: 0, rate: 24 },
+                { value: 24, rate: 24 },
+                'media/unqualified.mp4'
+              ),
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
+function reverseNearZeroDocument(): OtioDocumentV1 {
+  const time = (value: number): Record<string, number | string> => ({
+    OTIO_SCHEMA: 'RationalTime.1',
+    value,
+    rate: 24,
+  });
+  return readOtioDocument(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline_1' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        metadata: { relic: { id: 'stack_1' } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_v' } },
+            kind: 'Video',
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: 'clip_v' } },
+                source_range: {
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: time(-47.00000005),
+                  duration: time(48),
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: 'media/reverse.mp4',
+                  available_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(48),
+                  },
+                },
+                effects: [
+                  {
+                    OTIO_SCHEMA: 'LinearTimeWarp.1',
+                    effect_name: 'LinearTimeWarp',
+                    time_scalar: -1,
+                    enabled: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
 interface TimingReadCall {
   readonly blob: Blob;
   readonly mime: string;
@@ -1283,6 +1406,7 @@ describe('otio playback controller', () => {
         'near-zero video sample is missing its handle diagnostic'
       );
     }
+    const originalVideoContribution = structuredClone(videoContribution);
     expect(sourceTime.value).toBeLessThan(0);
     expect(
       compareRationalTimes(sourceTime, { value: 0, rate: sourceTime.rate })
@@ -1304,14 +1428,55 @@ describe('otio playback controller', () => {
         .getState()
         .diagnostics.some((issue) => issue.code === 'invalid-timing')
     ).toBe(false);
-    expect(video.getState().diagnostics).toContainEqual(videoHandle);
-    expect(
-      evaluateOtioAt(videoDocument, 'timeline_1', {
-        value: 0,
-        rate: 24,
-      }).video_contributions[0]
-    ).toEqual(videoContribution);
+    expect(video.getState().diagnostics).not.toContainEqual(videoHandle);
+    const afterVideoContribution = evaluateOtioAt(videoDocument, 'timeline_1', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    expect(afterVideoContribution).toEqual(originalVideoContribution);
+    expect(afterVideoContribution?.source_time).toEqual(
+      originalVideoContribution.source_time
+    );
+    expect(afterVideoContribution?.diagnostics).toEqual(
+      originalVideoContribution.diagnostics
+    );
+    expect(afterVideoContribution?.diagnostics).toContainEqual(videoHandle);
     video.dispose();
+
+    const timingFailureFixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', videoBlob]]),
+      timings: new Map<Blob, OtioVideoTiming>([
+        [
+          videoBlob,
+          {
+            kind: 'windows',
+            starts: new Float64Array([1]),
+            ends: new Float64Array([2]),
+          },
+        ],
+      ]),
+    });
+    const timingFailure = createOtioPlayback({
+      document: videoDocument,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: timingFailureFixture.resolver,
+      readVideoTiming: timingFailureFixture.readVideoTiming,
+    });
+    await timingFailure.seek({ value: 0, rate: 24 });
+    expect(timingFailure.getState().diagnostics).not.toContainEqual(
+      videoHandle
+    );
+    expect(
+      timingFailure
+        .getState()
+        .diagnostics.some(
+          (issue) =>
+            issue.code === 'invalid-timing' &&
+            issue.message.includes('outside certified packet timing')
+        )
+    ).toBe(true);
+    timingFailure.dispose();
 
     const firstAudio = created.length;
     const audioDocument = sampledMediaDocument({
@@ -1337,6 +1502,7 @@ describe('otio playback controller', () => {
         'near-zero audio sample is missing its handle diagnostic'
       );
     }
+    const originalAudioContribution = structuredClone(audioContribution);
     expect(audioSourceTime.value).toBeLessThan(0);
     expect(
       compareRationalTimes(audioSourceTime, {
@@ -1358,14 +1524,152 @@ describe('otio playback controller', () => {
     expect(voice?.currentTime).toBe(0);
     expect(voice?.paused).toBe(false);
     expect(voice?.attrs.get('data-active')).toBe('true');
-    expect(audio.getState().diagnostics).toContainEqual(audioHandle);
-    expect(
-      evaluateOtioAt(audioDocument, 'timeline_1', {
-        value: 0,
-        rate: 30,
-      }).audio_contributions[0]
-    ).toEqual(audioContribution);
+    expect(audio.getState().diagnostics).not.toContainEqual(audioHandle);
+    const afterAudioContribution = evaluateOtioAt(audioDocument, 'timeline_1', {
+      value: 0,
+      rate: 30,
+    }).audio_contributions[0];
+    expect(afterAudioContribution).toEqual(originalAudioContribution);
+    expect(afterAudioContribution?.source_time).toEqual(
+      originalAudioContribution.source_time
+    );
+    expect(afterAudioContribution?.diagnostics).toEqual(
+      originalAudioContribution.diagnostics
+    );
+    expect(afterAudioContribution?.diagnostics).toContainEqual(audioHandle);
     audio.dispose();
+  });
+
+  test('projects only qualified active handle diagnostics from decoder state', async () => {
+    const document = mixedHandleDocument();
+    const evaluation = evaluateOtioAt(document, 'timeline_1', {
+      value: 0,
+      rate: 24,
+    });
+    const qualified = evaluation.video_contributions.find(
+      (contribution) => contribution.node_id === 'clip_qualified'
+    );
+    const unqualified = evaluation.video_contributions.find(
+      (contribution) => contribution.node_id === 'clip_unqualified'
+    );
+    if (!qualified || !unqualified) {
+      throw new Error('mixed handle contributions are missing');
+    }
+    const qualifiedHandle = qualified.diagnostics.find(
+      (issue) => issue.code === 'missing-handles'
+    );
+    const unqualifiedHandle = unqualified.diagnostics.find(
+      (issue) => issue.code === 'missing-handles'
+    );
+    if (!qualifiedHandle || !unqualifiedHandle) {
+      throw new Error('mixed handle diagnostics are missing');
+    }
+    expect(
+      compareRationalTimes(qualified.source_time, {
+        value: 0,
+        rate: qualified.source_time.rate,
+      })
+    ).toBeLessThan(0);
+    expect(
+      compareRationalTimes(unqualified.source_time, {
+        value: 0,
+        rate: unqualified.source_time.rate,
+      })
+    ).toBeLessThan(0);
+    expect(qualifiedHandle.message).toBe(unqualifiedHandle.message);
+    const blob = new Blob(['mixed handle timing marker'], {
+      type: 'video/mp4',
+    });
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/qualified.mp4', blob],
+        ['media/unqualified.mp4', blob],
+      ]),
+      timings: new Map<Blob, OtioVideoTiming>([
+        [
+          blob,
+          {
+            kind: 'windows',
+            starts: new Float64Array([0]),
+            ends: new Float64Array([1 / 60]),
+          },
+        ],
+      ]),
+    });
+    const playback = createOtioPlayback({
+      document,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    await playback.seek({ value: 0, rate: 24 });
+
+    const diagnostics = playback.getState().diagnostics;
+    expect(diagnostics).not.toContainEqual(qualifiedHandle);
+    expect(diagnostics).toContainEqual(unqualifiedHandle);
+    expect(
+      diagnostics.filter((issue) => issue.code === 'missing-handles')
+    ).toEqual([unqualifiedHandle]);
+    playback.dispose();
+  });
+
+  test('recomputes decoder handle qualification for later samples of the same node', async () => {
+    const document = reverseNearZeroDocument();
+    const startContribution = evaluateOtioAt(document, 'timeline_1', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    if (!startContribution) {
+      throw new Error('reverse near-zero start contribution is missing');
+    }
+    const startHandle = startContribution.diagnostics.find(
+      (issue) => issue.code === 'missing-handles'
+    );
+    if (!startHandle) {
+      throw new Error('reverse near-zero start handle is missing');
+    }
+    expect(
+      compareRationalTimes(startContribution.source_time, {
+        value: 0,
+        rate: startContribution.source_time.rate,
+      })
+    ).toBeLessThan(0);
+    const playback = createOtioPlayback({
+      document,
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:reverse',
+    });
+
+    await playback.seek({ value: 0, rate: 24 });
+
+    expect(playback.getState().diagnostics).not.toContainEqual(startHandle);
+
+    await playback.seek({ value: 1, rate: 24 });
+
+    const laterContribution = evaluateOtioAt(document, 'timeline_1', {
+      value: 1,
+      rate: 24,
+    }).video_contributions[0];
+    if (!laterContribution) {
+      throw new Error('reverse near-zero later contribution is missing');
+    }
+    const laterHandle = laterContribution.diagnostics.find(
+      (issue) => issue.code === 'missing-handles'
+    );
+    if (!laterHandle) {
+      throw new Error('reverse near-zero later handle is missing');
+    }
+    expect(
+      compareRationalTimes(laterContribution.source_time, {
+        value: 0,
+        rate: laterContribution.source_time.rate,
+      })
+    ).toBeLessThan(0);
+    expect(playback.getState().diagnostics).toContainEqual(laterHandle);
+    playback.dispose();
   });
 
   test('withholds tiny negative samples without known media availability', async () => {
@@ -1711,9 +2015,14 @@ describe('otio playback controller', () => {
         rate: unavailable.source_time.rate,
       })
     ).toBeLessThan(0);
-    expect(
-      unavailable.diagnostics.some((issue) => issue.code === 'missing-handles')
-    ).toBe(true);
+    const unavailableHandle = unavailable.diagnostics.find(
+      (issue) => issue.code === 'missing-handles'
+    );
+    if (!unavailableHandle) {
+      throw new Error(
+        'unavailable audio sample is missing its handle diagnostic'
+      );
+    }
     const playback = createOtioPlayback({
       document: doc,
       timelineId: 'timeline_1',
@@ -1734,6 +2043,7 @@ describe('otio playback controller', () => {
 
     expect(voice?.paused).toBe(true);
     expect(voice?.attrs.get('data-active')).toBe('false');
+    expect(playback.getState().diagnostics).toContainEqual(unavailableHandle);
     expect(
       evaluateOtioAt(doc, 'timeline_1', {
         value: 0,
