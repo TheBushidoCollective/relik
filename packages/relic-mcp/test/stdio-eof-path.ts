@@ -365,8 +365,8 @@ const app = createApp({
 });
 
 let gatedRelicId: string | undefined;
-let commentsAccepted: Promise<void>;
-let commentsRelease: Promise<void>;
+let commentsAccepted!: Promise<void>;
+let commentsRelease!: Promise<void>;
 
 function resetCommentsGate(): void {
   commentsGetAccepted = false;
