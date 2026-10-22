@@ -151,9 +151,7 @@
         "usableRight": 548,
         "hitId": "ZtNO9habtWdr5DZDXlXJqA",
         "hitOwned": true,
-        "activeIds": [
-          "ZtNO9habtWdr5DZDXlXJqA"
-        ],
+        "activeIds": ["ZtNO9habtWdr5DZDXlXJqA"],
         "cardId": "ZtNO9habtWdr5DZDXlXJqA",
         "cardVisible": true,
         "bodyPresent": true,
@@ -297,9 +295,7 @@
         "usableRight": 548,
         "hitId": "2Bie1j9iPe5a0e8uzY9KPA",
         "hitOwned": true,
-        "activeIds": [
-          "2Bie1j9iPe5a0e8uzY9KPA"
-        ],
+        "activeIds": ["2Bie1j9iPe5a0e8uzY9KPA"],
         "cardId": "2Bie1j9iPe5a0e8uzY9KPA",
         "cardVisible": true,
         "bodyPresent": true,
