@@ -1,0 +1,14 @@
+{
+  "sourceHead": "eadf85a",
+  "rootVerification": {
+    "passed": 2076,
+    "failed": 0,
+    "expectations": 61023,
+    "files": 98,
+    "durationSeconds": 6.5
+  },
+  "viewerShellHash": "2d322d462c092d06",
+  "sourceOutcome": "Failed unchanged 320px native control ownership assertion",
+  "cause": "Integration cherry-picked branch head e96f772 but omitted intermediate approved sampler f096b34; this run did not exercise the sampler correction.",
+  "originalTimeout": "Did not recur; initiating cause remains unknown."
+}
