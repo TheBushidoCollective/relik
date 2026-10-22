@@ -1886,7 +1886,7 @@ async function openBrowser(
         | undefined;
       assert.ok(
         !exception,
-        `page evaluation failed: ${exception?.text ?? exception?.exception?.description ?? JSON.stringify(res)}`
+        `page evaluation failed: ${exception?.exception?.description ?? exception?.text ?? JSON.stringify(res)}`
       );
       const inner = res['result'] as { value?: T } | undefined;
       return inner?.value as T;
