@@ -1568,7 +1568,7 @@ async function callMcp(fixture: Fixture): Promise<TargetReceipt> {
     if (options.targetStderr === 'pipe') {
       const [stdout, stderr, exit, inputSettlements] = await Promise.all([
         new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
+        new Response(child.stderr as ReadableStream<Uint8Array>).text(),
         child.exited,
         Promise.allSettled([writeResult, endResult]),
       ]);
