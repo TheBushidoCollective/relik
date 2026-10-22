@@ -163,92 +163,78 @@ async function oracle(): Promise<TimingOracle> {
 }
 
 describe('released Mediabunny scanner against independent synthetic ffprobe timing', () => {
-  test(
-    'certifies actual packet windows for ordinary MP4, MOV, B-frame, and VFR media',
-    async () => {
-      const timingOracle = await oracle();
-      for (const name of [
-        'fr24.mp4',
-        'fr60.mp4',
-        'fr24b.mp4',
-        'fr24b.mov',
-        'vfr.mp4',
-      ]) {
-        const file = timingOracle.files[name];
-        if (!file) throw new Error(`missing ffprobe oracle for ${name}`);
-        expectOrdinaryWindows(certifiedWindows(await timingFor(name)), file);
-      }
+  test('certifies actual packet windows for ordinary MP4, MOV, B-frame, and VFR media', async () => {
+    const timingOracle = await oracle();
+    for (const name of [
+      'fr24.mp4',
+      'fr60.mp4',
+      'fr24b.mp4',
+      'fr24b.mov',
+      'vfr.mp4',
+    ]) {
+      const file = timingOracle.files[name];
+      if (!file) throw new Error(`missing ffprobe oracle for ${name}`);
+      expectOrdinaryWindows(certifiedWindows(await timingFor(name)), file);
     }
-  );
+  });
 
-  test(
-    'keeps the released WebM packet duration only where the next PTS permits it',
-    async () => {
-      const timingOracle = await oracle();
-      const file = timingOracle.files['fr30.webm'];
-      if (!file) throw new Error('missing ffprobe oracle for fr30.webm');
-      const ffprobePacket = oraclePackets(file).find(
-        (packet) => Math.abs(packet.pts - 0.033) < 1e-10
-      );
-      if (!ffprobePacket || ffprobePacket.duration === null) {
-        throw new Error('missing 33ms WebM packet');
-      }
-
-      // ffprobe's coarse 33ms duration is evidence, not a replacement for the
-      // released reader's measured .034. The next actual PTS still makes 2/30
-      // belong to [.033, .067).
-      expect(ffprobePacket.duration).toBeCloseTo(0.033, 10);
-      const target = 2 / 30;
-      const matching = certifiedWindows(await timingFor('fr30.webm')).find(
-        ([start, end]) => start <= target && target < end
-      );
-      if (!matching) {
-        throw new Error('2/30 is not covered by a certified WebM window');
-      }
-      expect(matching[0]).toBeCloseTo(0.033, 10);
-      expect(matching[1]).toBeCloseTo(0.067, 10);
+  test('keeps the released WebM packet duration only where the next PTS permits it', async () => {
+    const timingOracle = await oracle();
+    const file = timingOracle.files['fr30.webm'];
+    if (!file) throw new Error('missing ffprobe oracle for fr30.webm');
+    const ffprobePacket = oraclePackets(file).find(
+      (packet) => Math.abs(packet.pts - 0.033) < 1e-10
+    );
+    if (!ffprobePacket || ffprobePacket.duration === null) {
+      throw new Error('missing 33ms WebM packet');
     }
-  );
 
-  test(
-    'rejects the shortened rate-one edit rather than selecting past its declared end',
-    async () => {
-      await expect(timingFor('short-edit.mp4')).resolves.toEqual({
-        kind: 'unknown',
-        reason: 'edit-window-mismatch',
-      });
+    // ffprobe's coarse 33ms duration is evidence, not a replacement for the
+    // released reader's measured .034. The next actual PTS still makes 2/30
+    // belong to [.033, .067).
+    expect(ffprobePacket.duration).toBeCloseTo(0.033, 10);
+    const target = 2 / 30;
+    const matching = certifiedWindows(await timingFor('fr30.webm')).find(
+      ([start, end]) => start <= target && target < end
+    );
+    if (!matching) {
+      throw new Error('2/30 is not covered by a certified WebM window');
     }
-  );
+    expect(matching[0]).toBeCloseTo(0.033, 10);
+    expect(matching[1]).toBeCloseTo(0.067, 10);
+  });
 
-  test(
-    'does not certify multi-edit or rate-changed ISO files after a warning',
-    async () => {
-      for (const name of ['rate-edit.mp4', 'loop-edit.mp4']) {
-        const timing = await timingFor(name);
-        expect(timing.kind).toBe('unknown');
-      }
+  test('rejects the shortened rate-one edit rather than selecting past its declared end', async () => {
+    await expect(timingFor('short-edit.mp4')).resolves.toEqual({
+      kind: 'unknown',
+      reason: 'edit-window-mismatch',
+    });
+  });
+
+  test('does not certify multi-edit or rate-changed ISO files after a warning', async () => {
+    for (const name of ['rate-edit.mp4', 'loop-edit.mp4']) {
+      const timing = await timingFor(name);
+      expect(timing.kind).toBe('unknown');
     }
-  );
+  });
 
-  test(
-    'keeps an earlier no-duration WebM interval and leaves terminal PTS 2.967 uncovered',
-    async () => {
-      const timingOracle = await oracle();
-      const file = timingOracle.files['no-duration.webm'];
-      if (!file) throw new Error('missing ffprobe oracle for no-duration.webm');
-      const actual = certifiedWindows(await timingFor('no-duration.webm'));
-      expectWindowsNear(actual, adjacentPtsWindows(file));
+  test('keeps an earlier no-duration WebM interval and leaves terminal PTS 2.967 uncovered', async () => {
+    const timingOracle = await oracle();
+    const file = timingOracle.files['no-duration.webm'];
+    if (!file) throw new Error('missing ffprobe oracle for no-duration.webm');
+    const actual = certifiedWindows(await timingFor('no-duration.webm'));
+    expectWindowsNear(actual, adjacentPtsWindows(file));
 
-      const packets = oraclePackets(file);
-      const terminalPacket = packets[packets.length - 1];
-      if (!terminalPacket) throw new Error('missing no-duration terminal packet');
-      expect(terminalPacket.pts).toBeCloseTo(2.967, 10);
-      expect(actual.length).toBeGreaterThan(0);
-      expect(
-        actual.some(
-          ([start, end]) => start <= terminalPacket.pts && terminalPacket.pts < end
-        )
-      ).toBe(false);
-    }
-  );
+    const packets = oraclePackets(file);
+    const terminalPacket = packets[packets.length - 1];
+    if (!terminalPacket) throw new Error('missing no-duration terminal packet');
+    expect(terminalPacket.pts).toBeCloseTo(2.967, 10);
+    expect(actual.length).toBeGreaterThan(0);
+    expect(
+      actual.some(
+        ([start, end]) =>
+          start <= terminalPacket.pts && terminalPacket.pts < end
+      )
+    ).toBe(false);
+  });
 });
