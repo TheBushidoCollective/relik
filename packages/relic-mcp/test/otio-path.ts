@@ -141,24 +141,29 @@ const mails: { to: string; mail: OutboundMail }[] = [];
 const children = new Set<ChildProcess>();
 const packetCanvasMeasurements: Array<Record<string, unknown>> = [];
 
-interface McpLoopbackReceipt {
+interface PendingMcpLoopbackReceipt {
   readonly callOrdinal: number;
   readonly tool: string;
   readonly relicId: string | null;
   readonly pid: number;
-  readonly requestHash: string;
   readonly method: string;
   readonly pathname: string;
   readonly event: 'entry' | 'response';
   readonly status: number | null;
+}
+interface McpLoopbackReceipt extends PendingMcpLoopbackReceipt {
+  readonly requestHash: string;
+}
+interface PersistedMcpLoopbackReceipts {
+  readonly requestHash: string;
+  readonly receipts: readonly McpLoopbackReceipt[];
 }
 interface ActiveMcpCall {
   readonly callOrdinal: number;
   readonly tool: string;
   readonly relicId: string | null;
   readonly pid: number;
-  readonly requestHash: string;
-  readonly pendingReceipts: McpLoopbackReceipt[];
+  readonly pendingReceipts: PendingMcpLoopbackReceipt[];
 }
 const mcpLoopbackReceipts: McpLoopbackReceipt[] = [];
 let activeMcpCall: ActiveMcpCall | undefined;
@@ -167,7 +172,7 @@ let nextMcpCallOrdinal = 0;
 function recordMcpLoopbackReceipt(
   method: string,
   pathname: string,
-  event: McpLoopbackReceipt['event'],
+  event: PendingMcpLoopbackReceipt['event'],
   status: number | null
 ): void {
   const call = activeMcpCall;
@@ -177,7 +182,6 @@ function recordMcpLoopbackReceipt(
     tool: call.tool,
     relicId: call.relicId,
     pid: call.pid,
-    requestHash: call.requestHash,
     method,
     pathname,
     event,
@@ -185,13 +189,17 @@ function recordMcpLoopbackReceipt(
   });
 }
 
-function persistMcpLoopbackReceipts(
-  call: ActiveMcpCall
-): readonly McpLoopbackReceipt[] {
-  mcpLoopbackReceipts.push(...call.pendingReceipts);
-  return mcpLoopbackReceipts.filter(
-    (receipt) => receipt.callOrdinal === call.callOrdinal
-  );
+async function persistMcpLoopbackReceipts(
+  call: ActiveMcpCall,
+  packet: string
+): Promise<PersistedMcpLoopbackReceipts> {
+  const requestHash = await sha256Hex(packet);
+  const receipts = call.pendingReceipts.map((receipt) => ({
+    ...receipt,
+    requestHash,
+  }));
+  mcpLoopbackReceipts.push(...receipts);
+  return { requestHash, receipts };
 }
 
 let handler: ((request: Request) => Promise<Response>) | undefined;
@@ -424,14 +432,9 @@ async function callMcp(
   toolName: string,
   args: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const packet = `${JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'tools/call',
-    params: { name: toolName, arguments: args },
-  })}\n`;
-  const requestHash = await sha256Hex(packet);
-  const relicId = args['relic_id'];
+  let call: ActiveMcpCall | undefined;
+  let packetForReceipt: string | undefined;
+  let receiptsPersisted = false;
   const child = Bun.spawn(resolveCommand(), {
     cwd: scratch,
     env: {
@@ -445,20 +448,26 @@ async function callMcp(
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  const call: ActiveMcpCall = {
-    callOrdinal: ++nextMcpCallOrdinal,
-    tool: toolName,
-    relicId: typeof relicId === 'string' ? relicId : null,
-    pid: child.pid,
-    requestHash,
-    pendingReceipts: [],
-  };
-  activeMcpCall = call;
   const timer = setTimeout(() => {
     child.kill();
   }, 45000);
-  let receiptsPersisted = false;
   try {
+    const packet = `${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: toolName, arguments: args },
+    })}\n`;
+    packetForReceipt = packet;
+    const relicId = args['relic_id'];
+    call = {
+      callOrdinal: ++nextMcpCallOrdinal,
+      tool: toolName,
+      relicId: typeof relicId === 'string' ? relicId : null,
+      pid: child.pid,
+      pendingReceipts: [],
+    };
+    activeMcpCall = call;
     const writeResult = child.stdin.write(packet);
     const endResult = child.stdin.end();
     const [stdout, stderr, exit, inputOutcomes] = await Promise.all([
@@ -467,21 +476,22 @@ async function callMcp(
       child.exited,
       Promise.allSettled([writeResult, endResult]),
     ]);
-    const loopbackReceipts = persistMcpLoopbackReceipts(call);
+    if (activeMcpCall === call) activeMcpCall = undefined;
+    const persistedReceipts = await persistMcpLoopbackReceipts(call, packet);
     receiptsPersisted = true;
     const transport =
       exit !== 0 || stdout.trim().length === 0
         ? JSON.stringify({
             pid: child.pid,
             packetBytes: Buffer.byteLength(packet),
-            packetSha256: requestHash,
+            packetSha256: persistedReceipts.requestHash,
             inputOutcomes,
             stdoutBytes: Buffer.byteLength(stdout),
             stdoutSha256: await sha256Hex(stdout),
             exit,
             signal: child.signalCode,
             stderr,
-            loopbackReceipts,
+            loopbackReceipts: persistedReceipts.receipts,
           })
         : '';
     assert.equal(exit, 0, `relic-mcp exited ${exit}: ${transport}`);
@@ -508,10 +518,12 @@ async function callMcp(
     );
     return (result['structuredContent'] ?? {}) as Record<string, unknown>;
   } finally {
-    if (!receiptsPersisted) persistMcpLoopbackReceipts(call);
     clearTimeout(timer);
     child.kill();
     if (activeMcpCall === call) activeMcpCall = undefined;
+    if (!receiptsPersisted && call && packetForReceipt) {
+      await persistMcpLoopbackReceipts(call, packetForReceipt);
+    }
   }
 }
 
