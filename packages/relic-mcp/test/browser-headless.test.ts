@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import {
   CdpClosedError,
-  CdpError,
   type CdpConnection,
+  CdpError,
 } from '../src/cover/cdp.ts';
 import {
   attestBrowserHeadless,
+  type BrowserHeadlessGuardCode,
   BrowserHeadlessGuardError,
   cleanupOwnedBrowserStartup,
   createBrowserHeadlessLaunch,
-  type BrowserHeadlessGuardCode,
   type OwnedBrowserChild,
   validateBrowserHeadlessCommandLine,
 } from './browser-headless.ts';
