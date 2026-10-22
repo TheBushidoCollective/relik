@@ -230,7 +230,7 @@ body {
   max-width: calc(100% - 1.4rem);
   padding: 0.35rem 0.7rem;
   background: var(--patina);
-  color: #fff;
+  color: var(--surface);
   font-family: var(--sans);
   font-size: 0.76rem;
   border-radius: 0 0 0.35rem 0.35rem;
@@ -270,6 +270,7 @@ body {
 
 .popover-card {
   width: min(22rem, calc(100vw - 2rem));
+  max-width: calc(100% - 1rem);
   padding: 0.55rem 0.7rem 0.5rem;
 }
 
@@ -320,7 +321,7 @@ body {
 .popover-card .popover-action.is-primary {
   background: var(--patina);
   border-color: var(--patina);
-  color: #fff;
+  color: var(--surface);
 }
 
 .popover-card .popover-action.is-quiet {
@@ -664,7 +665,7 @@ body {
 
 .action.primary {
   background: var(--patina);
-  color: #fff;
+  color: var(--surface);
   border: 0;
   padding: 0.55rem 1rem;
   align-self: flex-start;
@@ -672,7 +673,7 @@ body {
 
 .action.primary:hover {
   background: var(--patina-ink);
-  color: #fff;
+  color: var(--surface);
 }
 
 .icon {
@@ -1259,7 +1260,7 @@ body {
 
 .timeline-hover-comment-btn:hover {
   background: var(--patina);
-  color: #fff;
+  color: var(--surface);
 }
 
 .timeline-hover-comment-btn .media-icon {
@@ -1934,7 +1935,7 @@ canvas.relic-page {
 
 .compare-layout .action[aria-pressed='true'] {
   background: var(--patina);
-  color: #fff;
+  color: var(--surface);
 }
 
 /*
@@ -2482,9 +2483,9 @@ canvas.relic-page {
 /* The entry that survives every width, including the floor where the taskbar
    control leaves the row. */
 .thread-tab {
-  position: absolute;
-  top: 50%;
-  right: 0;
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
   z-index: 5;
   padding: 0.85rem 0.4rem;
   color: var(--ink);
@@ -2498,7 +2499,6 @@ canvas.relic-page {
   border: 1px solid var(--rule-strong);
   border-right: 0;
   cursor: pointer;
-  transform: translateY(-50%);
 }
 
 .diff-row {
@@ -2645,7 +2645,7 @@ canvas.relic-page {
    reader's next click on the document does something different because of it. */
 .mark-mode[aria-pressed="true"] {
   background: var(--patina);
-  color: #fff;
+  color: var(--surface);
   border-color: var(--patina);
 }
 
@@ -2678,7 +2678,7 @@ canvas.relic-page {
 
 .mark-quote-action:hover {
   background: var(--patina);
-  color: #fff;
+  color: var(--surface);
 }
 
 .mark-quote-action:focus-visible {
@@ -3498,7 +3498,7 @@ canvas.relic-page {
   border: 2px solid #fff;
   border-radius: 999px;
   background: var(--patina);
-  color: #fff;
+  color: var(--surface);
   font-family: var(--sans);
   font-size: 0.7rem;
   font-weight: 600;
