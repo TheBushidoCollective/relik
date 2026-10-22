@@ -1,0 +1,91 @@
+{
+  "sourceHead": "c6d9475",
+  "runtime": "Bun 1.3.14 (0d9b296a)",
+  "source": "packages/relic-viewer/src/otio-playback.ts",
+  "sourceSha256BeforeAndAfter": "9f374584825ff9c5501c62277cbefae32a3eec78ccb3e037d66cfecb3414b5aa",
+  "command": "mise exec -- bun test packages/relic-viewer/test/otio-playback.test.ts -t 'near-zero|tiny negative|positive fractional|certified presentation|WebM packet|unavailable -24|unavailable Video 2|unknown and uncovered|qualified active handle|later samples'",
+  "baselineAndEachRestoredRun": {
+    "exit": 0,
+    "pass": 10,
+    "fail": 0,
+    "assertions": 68
+  },
+  "mutations": [
+    {
+      "change": "Publish all evaluation diagnostics instead of excluding qualified handled objects",
+      "exit": 1,
+      "pass": 7,
+      "fail": 3,
+      "assertions": 48,
+      "failures": [
+        "Near-zero video warning remained in playback state",
+        "Qualified mixed-contribution warning remained",
+        "Qualified reverse start warning remained"
+      ]
+    },
+    {
+      "change": "Filter every missing-handles diagnostic by code instead of exact eligible object reference",
+      "exit": 1,
+      "pass": 7,
+      "fail": 3,
+      "assertions": 66,
+      "failures": [
+        "Genuine mixed-contribution warning disappeared",
+        "Same-node later genuine-negative warning disappeared",
+        "Unavailable audio warning disappeared"
+      ]
+    },
+    {
+      "change": "Bypass qualification only in decoder-status projection; leave decoder admission unchanged",
+      "exit": 1,
+      "pass": 7,
+      "fail": 3,
+      "assertions": 66,
+      "failures": [
+        "Genuine mixed-contribution warning disappeared",
+        "Same-node later genuine-negative warning disappeared",
+        "Unavailable audio warning disappeared"
+      ],
+      "scope": "These genuine-unavailable status assertions discriminate this mutation; this is not a claim that unknown-availability diagnostics use missing-handles."
+    },
+    {
+      "change": "Return original source time instead of decoder-local near-zero copy",
+      "exit": 1,
+      "pass": 9,
+      "fail": 1,
+      "assertions": 50,
+      "failure": {
+        "line": 1425,
+        "expectedDecoderTime": 0.008333333333333333,
+        "receivedDecoder": "undefined"
+      }
+    },
+    {
+      "change": "Allow locally near-zero samples without positive known availability and sampling-map start evidence",
+      "exit": 1,
+      "pass": 9,
+      "fail": 1,
+      "assertions": 62,
+      "failure": {
+        "line": 1735,
+        "expectedUnknownAvailabilityVideoDecoder": false,
+        "received": true
+      },
+      "scope": "The first unknown-availability video assertion fails before the later audio assertions in that test."
+    },
+    {
+      "change": "Accept every negative source value as decoder-local zero rather than only near-zero residuals",
+      "exit": 1,
+      "pass": 6,
+      "fail": 4,
+      "assertions": 63,
+      "failures": [
+        "Genuine mixed-contribution warning disappeared",
+        "Same-node later genuine-negative warning disappeared",
+        "Unavailable Video 2 primary decoder count was 2 instead of 1",
+        "Unavailable audio decoder remained playing"
+      ]
+    }
+  ],
+  "scope": "Every mutation was applied separately to imported TypeScript source using anchored edits, observed failing on behavioral assertions, restored from the exact pre-mutation copy, and followed by the ten passing controls. Core source coordinates and diagnostics remain covered by before/after assertions. Shared-object co-owner retention is statically reviewed defensive behavior: current parsed/indexed missing-handles producers allocate fresh own-node diagnostic objects, so no shared-object producer fixture or mutation proof is claimed. Full rendered SOURCE and release gates remain separate."
+}
