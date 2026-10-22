@@ -40,7 +40,7 @@ jobs:
       - name: EOF probe direct runs
         shell: bash
         run: |
-          set -u
+          set -u +e
           mkdir -p diag
           for mode in 0 1 0 1; do
             n=$(ls diag | wc -l)
@@ -55,7 +55,7 @@ jobs:
       - name: Build-stamp test repeated
         shell: bash
         run: |
-          set -u
+          set -u +e
           for i in 1 2 3 4 5; do
             start=$(date +%s%N)
             timeout 120 bun test packages/relic-mcp/test/protocol.test.ts -t 'stamps bundle and plugin launch config' \
