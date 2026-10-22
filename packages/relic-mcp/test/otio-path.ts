@@ -3104,6 +3104,244 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
     };
   })()`);
 }
+async function logComposerHitBoundaryDiagnostic(
+  browser: ChromeSession,
+  label: string,
+  probe: ComposerProbe
+): Promise<void> {
+  const failedControls = probe.nativeControls.filter(
+    (control) => !control.hitOwned
+  );
+  if (failedControls.length === 0) return;
+  const layoutMetrics = await browser.send('Page.getLayoutMetrics');
+  const receipt = await browser.evaluate<Record<string, unknown>>(
+    String.raw`(async () => {
+      const controls = ${JSON.stringify(failedControls)};
+      const stage = document.querySelector('.stage-wrap');
+      const timeline = document.querySelector('.otio-timeline-scroll');
+      const rect = (node) => {
+        if (!(node instanceof Element)) return null;
+        const value = node.getBoundingClientRect();
+        return {
+          left: value.left,
+          top: value.top,
+          right: value.right,
+          bottom: value.bottom,
+          width: value.width,
+          height: value.height,
+        };
+      };
+      const intersect = (a, b) => {
+        if (!a || !b) return null;
+        const left = Math.max(a.left, b.left);
+        const right = Math.min(a.right, b.right);
+        const top = Math.max(a.top, b.top);
+        const bottom = Math.min(a.bottom, b.bottom);
+        return {
+          left,
+          right,
+          top,
+          bottom,
+          width: Math.max(0, right - left),
+          height: Math.max(0, bottom - top),
+        };
+      };
+      const describe = (node) => {
+        if (!(node instanceof Element)) return null;
+        return {
+          tag: node.tagName,
+          id: node.id || null,
+          className: node.getAttribute('class'),
+          label:
+            node.getAttribute('aria-label') ??
+            node.closest('[aria-label]')?.getAttribute('aria-label') ??
+            null,
+          commentId: node.closest('[data-comment-id]')?.getAttribute('data-comment-id') ?? null,
+        };
+      };
+      const hitAt = (x, y) => ({
+        x,
+        y,
+        element: describe(document.elementFromPoint(x, y)),
+        stack: document.elementsFromPoint(x, y).map(describe),
+      });
+      const stageRect = rect(stage);
+      const stageContent =
+        stage instanceof HTMLElement && stageRect
+          ? {
+              left: stageRect.left + stage.clientLeft,
+              top: stageRect.top + stage.clientTop,
+              right: stageRect.left + stage.clientLeft + stage.clientWidth,
+              bottom: stageRect.top + stage.clientTop + stage.clientHeight,
+              width: stage.clientWidth,
+              height: stage.clientHeight,
+            }
+          : null;
+      const viewport = {
+        left: 0,
+        top: 0,
+        right: window.innerWidth,
+        bottom: window.innerHeight,
+        width: window.innerWidth,
+        height: window.innerHeight,
+      };
+      const nativeNodes = [
+        ...document.querySelectorAll(
+          '.otio-transport button, .otio-transport input, .otio-timeline-heading button, .otio-timeline-heading select, .otio-track-row button, .otio-selection-readout button, .otio-selection-readout input, .otio-inspector button, .otio-inspector input, .otio-inspector select, .otio-preview-block, .otio-preview-base, .thread-tab'
+        ),
+      ];
+      const original = controls.map((control) => {
+        const candidate =
+          nativeNodes.find((node) => {
+            const value = rect(node);
+            return (
+              value &&
+              Math.abs(value.left - control.rect.left) < 0.01 &&
+              Math.abs(value.top - control.rect.top) < 0.01 &&
+              Math.abs(value.right - control.rect.right) < 0.01 &&
+              Math.abs(value.bottom - control.rect.bottom) < 0.01
+            );
+          }) ?? null;
+        const recomputed = rect(candidate);
+        const inStage = intersect(recomputed, stageContent);
+        const inViewport = intersect(inStage, viewport);
+        const y = control.sample.y;
+        const samplePoints = [
+          { x: control.sample.x, y: Math.floor(y) - 1 },
+          { x: control.sample.x, y: Math.floor(y) },
+          { x: control.sample.x, y },
+          { x: control.sample.x, y: Math.ceil(y) - 0.001 },
+          { x: control.sample.x, y: Math.ceil(y) },
+        ];
+        return {
+          label: control.label,
+          existing: {
+            rect: control.rect,
+            sample: control.sample,
+          },
+          candidate: describe(candidate),
+          recomputed: {
+            rect: recomputed,
+            stageIntersection: inStage,
+            viewportIntersection: inViewport,
+          },
+          samples: samplePoints.map(({ x, y }) => hitAt(x, y)),
+        };
+      });
+      const post = document.querySelector(
+        '.popover-card .popover-action.is-primary'
+      );
+      const postRect = rect(post);
+      const postCenter =
+        postRect === null
+          ? null
+          : {
+              x: postRect.left + postRect.width / 2,
+              y: postRect.top + postRect.height / 2,
+            };
+      const postOriginal =
+        postCenter === null ? null : hitAt(postCenter.x, postCenter.y);
+      const witness = document.createElement('div');
+      witness.setAttribute('aria-hidden', 'true');
+      witness.setAttribute('data-otio-hit-boundary-witness', 'true');
+      Object.assign(witness.style, {
+        position: 'fixed',
+        inset: '0px',
+        zIndex: '2147483647',
+        pointerEvents: 'auto',
+        opacity: '0',
+        background: 'transparent',
+      });
+      let witnessReceipt = null;
+      try {
+        document.documentElement.append(witness);
+        const { promise, resolve } = Promise.withResolvers();
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+        await promise;
+        const witnessRect = rect(witness);
+        const contains = (point) =>
+          witnessRect !== null &&
+          point.x >= witnessRect.left &&
+          point.x <= witnessRect.right &&
+          point.y >= witnessRect.top &&
+          point.y <= witnessRect.bottom;
+        const witnessHit = (point) => ({
+          ...hitAt(point.x, point.y),
+          isWitness: document.elementFromPoint(point.x, point.y) === witness,
+        });
+        witnessReceipt = {
+          rect: witnessRect,
+          originalCoordinatesInside: original.map((entry) => ({
+            label: entry.label,
+            inside: contains(entry.existing.sample),
+          })),
+          samples: original.map((entry) => ({
+            label: entry.label,
+            hits: entry.samples.map((sample) => witnessHit(sample)),
+          })),
+          post:
+            postCenter === null
+              ? null
+              : {
+                  center: postCenter,
+                  original: postOriginal,
+                  witness: witnessHit(postCenter),
+                },
+        };
+      } finally {
+        witness.remove();
+      }
+      return {
+        viewport: {
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          documentClientWidth: document.documentElement.clientWidth,
+          documentClientHeight: document.documentElement.clientHeight,
+          devicePixelRatio: window.devicePixelRatio,
+          visualViewport: window.visualViewport
+            ? {
+                offsetLeft: window.visualViewport.offsetLeft,
+                offsetTop: window.visualViewport.offsetTop,
+                pageLeft: window.visualViewport.pageLeft,
+                pageTop: window.visualViewport.pageTop,
+                width: window.visualViewport.width,
+                height: window.visualViewport.height,
+                scale: window.visualViewport.scale,
+              }
+            : null,
+        },
+        stage:
+          stage instanceof HTMLElement
+            ? {
+                rect: stageRect,
+                clientLeft: stage.clientLeft,
+                clientTop: stage.clientTop,
+                clientWidth: stage.clientWidth,
+                clientHeight: stage.clientHeight,
+                scrollTop: stage.scrollTop,
+              }
+            : null,
+        timelineScrollLeft:
+          timeline instanceof HTMLElement ? timeline.scrollLeft : null,
+        stageContent,
+        viewportBounds: viewport,
+        controls: original,
+        post: {
+          center: postCenter,
+          original: postOriginal,
+        },
+        witness: witnessReceipt,
+      };
+    })()`
+  );
+  console.log(
+    `OTIO_COMPOSER_HIT_BOUNDARY ${JSON.stringify({
+      label,
+      layoutMetrics,
+      receipt,
+    })}`
+  );
+}
 
 async function hoverComposerPost(browser: ChromeSession): Promise<void> {
   const point = await browser.evaluate<{
@@ -5247,6 +5485,12 @@ try {
       await openComposer(browser);
       const normalComposer = await measureComposer(browser);
       await browser.screenshot(`native-controls-320-${scheme}-composer-open`);
+      if (normalComposer.nativeControls.some((control) => !control.hitOwned))
+        await logComposerHitBoundaryDiagnostic(
+          browser,
+          `320px ${scheme} composer`,
+          normalComposer
+        );
       assertComposerProbe(normalComposer, `320px ${scheme} composer`, false);
       nativeControlMeasurements.push({
         state: 'supplemental-composer-normal',
