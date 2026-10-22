@@ -6187,14 +6187,300 @@
         "function": "Thread.PosixThreadImpl.spawn__anon_537970252.Instance.entryFn",
         "location": "/var/lib/buildkite-agent/build/vendor/zig/lib/std/Thread.zig:781:30"
       }
+    ],
+    "0x3ec30d3": [
+      {
+        "function": "us_internal_socket_close_raw",
+        "location": "./build/release/../../packages/bun-usockets/src/socket.c:301:28"
+      }
+    ],
+    "0x4189c5e": [
+      {
+        "function": "runtime.socket.socket.NewSocket(false).endBuffered",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/socket/socket.zig:1010:72"
+      },
+      {
+        "function": "jsc.host_fn.toJSHostCall",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/host_fn.zig:96:5"
+      },
+      {
+        "function": "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered",
+        "location": "/var/lib/buildkite-agent/build/build/release/codegen/ZigGeneratedClasses.zig:22244:95"
+      },
+      {
+        "function": "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*)",
+        "location": "./build/release/codegen/ZigGeneratedClasses.cpp:67124:10"
+      }
+    ],
+    "0x3ec606d": [
+      {
+        "function": "us_internal_dispatch_ready_poll",
+        "location": "./build/release/../../packages/bun-usockets/src/loop.c:782:1"
+      }
+    ],
+    "0x3ec44fc": [
+      {
+        "function": "us_internal_dispatch_ready_polls",
+        "location": "./build/release/../../packages/bun-usockets/src/eventing/epoll_kqueue.c:0:17"
+      },
+      {
+        "function": "us_loop_run_bun_tick",
+        "location": "./build/release/../../packages/bun-usockets/src/eventing/epoll_kqueue.c:406:5"
+      }
+    ],
+    "0x2bfe597": [
+      {
+        "function": "jsc.event_loop.autoTick",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/event_loop.zig:405:13"
+      }
+    ],
+    "0x31d3bb1": [
+      {
+        "function": "cli.test_command.TestCommand.run",
+        "location": "/var/lib/buildkite-agent/build/src/cli/test_command.zig:2200:32"
+      }
+    ],
+    "0x31c7c96": [
+      {
+        "function": "cli.test_command.TestCommand.runAllTests.Context.begin",
+        "location": "/var/lib/buildkite-agent/build/src/cli/test_command.zig:2053:40"
+      },
+      {
+        "function": "jsc.jsc.OpaqueWrap__anon_537867286__struct_537922859.callback",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/jsc.zig:234:21"
+      }
+    ],
+    "0x42d88b4": [
+      {
+        "function": "JSC__VM__holdAPILock",
+        "location": "./build/release/../../src/jsc/bindings/bindings.cpp:4900:1"
+      }
+    ],
+    "0x2761f9f": [
+      {
+        "function": "cli.test_command.TestCommand.exec",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/VM.zig:0:29"
+      }
+    ],
+    "0x41895f4": [
+      {
+        "function": "uws_sys.socket.InternalSocket.detach",
+        "location": "/var/lib/buildkite-agent/build/src/uws_sys/socket.zig:461:9"
+      },
+      {
+        "function": "uws_sys.socket.NewSocketHandler(false).detach",
+        "location": "/var/lib/buildkite-agent/build/src/uws_sys/socket.zig:35:31"
+      },
+      {
+        "function": "runtime.socket.socket.NewSocket(false).close",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/socket/socket.zig:1359:31"
+      },
+      {
+        "function": "jsc.host_fn.toJSHostCall",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/host_fn.zig:96:5"
+      },
+      {
+        "function": "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__close",
+        "location": "/var/lib/buildkite-agent/build/build/release/codegen/ZigGeneratedClasses.zig:22207:95"
+      },
+      {
+        "function": "WebCore::TCPSocketPrototype__closeCallback(JSC::JSGlobalObject*, JSC::CallFrame*)",
+        "location": "./build/release/codegen/ZigGeneratedClasses.cpp:66948:10"
+      }
+    ],
+    "0x26318e7": [
+      {
+        "function": "op_call_ignore_result_return_location",
+        "location": "ld-temp.o:0:0"
+      }
+    ],
+    "0x2c0782a": [
+      {
+        "function": "jsc.event_loop.exit",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/event_loop.zig:89:9"
+      },
+      {
+        "function": "runtime.timer.TimerObjectInternals.fire",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/timer/TimerObjectInternals.zig:268:24"
+      }
+    ],
+    "0x2bff66e": [
+      {
+        "function": "atomic.Value(u32).fetchOr",
+        "location": "/var/lib/buildkite-agent/build/vendor/zig/lib/std/atomic.zig:74:39"
+      },
+      {
+        "function": "atomic.Value(u32).bitSet",
+        "location": "/var/lib/buildkite-agent/build/vendor/zig/lib/std/atomic.zig:93:39"
+      },
+      {
+        "function": "threading.Mutex.FutexImpl.tryLock",
+        "location": "/var/lib/buildkite-agent/build/src/threading/Mutex.zig:155:37"
+      },
+      {
+        "function": "threading.Mutex.FutexImpl.lock",
+        "location": "/var/lib/buildkite-agent/build/src/threading/Mutex.zig:145:26"
+      },
+      {
+        "function": "threading.Mutex.lock",
+        "location": "/var/lib/buildkite-agent/build/src/threading/Mutex.zig:42:19"
+      },
+      {
+        "function": "runtime.timer.Timer.All.next",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/timer/Timer.zig:327:23"
+      },
+      {
+        "function": "runtime.timer.Timer.All.drainTimers",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/timer/Timer.zig:352:25"
+      }
+    ],
+    "0x2bfe5b5": [
+      {
+        "function": "jsc.VirtualMachine.onAfterEventLoop",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/VirtualMachine.zig:374:13"
+      },
+      {
+        "function": "jsc.event_loop.autoTick",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/event_loop.zig:419:25"
+      }
+    ],
+    "0x30d2452": [
+      {
+        "function": "jsc.RuntimeTranspilerCache.RuntimeTranspilerCache.Entry.save",
+        "location": "/var/lib/buildkite-agent/build/vendor/zig/lib/std/os/linux/x86_64.zig:0:5"
+      },
+      {
+        "function": "jsc.RuntimeTranspilerCache.RuntimeTranspilerCache.toFile",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/RuntimeTranspilerCache.zig:617:23"
+      },
+      {
+        "function": "jsc.RuntimeTranspilerCache.RuntimeTranspilerCache.put",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/RuntimeTranspilerCache.zig:694:15"
+      }
+    ],
+    "0x30cdad1": [
+      {
+        "function": "array_list.AlignedManaged(u8,null).deinit",
+        "location": "/var/lib/buildkite-agent/build/vendor/zig/lib/std/array_list.zig:62:40"
+      },
+      {
+        "function": "js_printer.js_printer.printAst__anon_538024837",
+        "location": "/var/lib/buildkite-agent/build/src/js_printer/js_printer.zig:6103:30"
+      },
+      {
+        "function": "bundler.transpiler.Transpiler.printWithSourceMapMaybe__anon_537726802",
+        "location": "/var/lib/buildkite-agent/build/src/bundler/transpiler.zig:635:64"
+      },
+      {
+        "function": "bundler.transpiler.Transpiler.printWithSourceMap__anon_537726784",
+        "location": "/var/lib/buildkite-agent/build/src/bundler/transpiler.zig:718:50"
+      }
+    ],
+    "0x3ec32fc": [
+      {
+        "function": "us_poll_start_rc",
+        "location": "./build/release/../../packages/bun-usockets/src/eventing/epoll_kqueue.c:514:14"
+      },
+      {
+        "function": "us_socket_from_fd",
+        "location": "./build/release/../../packages/bun-usockets/src/socket.c:406:14"
+      }
+    ],
+    "0x37877be": [
+      {
+        "function": "runtime.socket.socket.NewSocket(false).doConnect",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/socket/socket.zig:160:43"
+      },
+      {
+        "function": "runtime.socket.Listener.connectInner",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/socket/Listener.zig:865:29"
+      }
+    ],
+    "0x3856675": [
+      {
+        "function": "runtime.node.node_net_binding.doConnect",
+        "location": "/var/lib/buildkite-agent/build/src/runtime/node/node_net_binding.zig:100:5"
+      },
+      {
+        "function": "jsc.host_fn.toJSHostFn__struct_537740628.function",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/host_fn.zig:19:63"
+      },
+      {
+        "function": "JS2Zig___src_runtime_node_node_net_binding_zig__doConnect",
+        "location": "/var/lib/buildkite-agent/build/src/jsc/bindings/GeneratedJS2Native.zig:167:52"
+      }
+    ],
+    "0x263077c": [
+      {
+        "function": "op_call_return_location",
+        "location": "ld-temp.o:0:0"
+      }
+    ],
+    "0x31d3bd0": [
+      {
+        "function": "cli.test_command.TestCommand.run",
+        "location": "/var/lib/buildkite-agent/build/src/cli/test_command.zig:2203:53"
+      }
+    ],
+    "0x3ec551c": [
+      {
+        "function": "us_poll_change",
+        "location": "./build/release/../../packages/bun-usockets/src/eventing/epoll_kqueue.c:542:18"
+      },
+      {
+        "function": "us_internal_dispatch_ready_poll",
+        "location": "./build/release/../../packages/bun-usockets/src/loop.c:490:21"
+      }
+    ],
+    "0x3ec304d": [
+      {
+        "function": "us_poll_stop",
+        "location": "./build/release/../../packages/bun-usockets/src/eventing/epoll_kqueue.c:559:14"
+      },
+      {
+        "function": "us_internal_socket_close_raw",
+        "location": "./build/release/../../packages/bun-usockets/src/socket.c:289:13"
+      }
+    ],
+    "0x542d590": [
+      {
+        "function": "JSC::GetterSetter::callGetter(JSC::JSGlobalObject*, JSC::JSValue)",
+        "location": "/webkitbuild/vendor/WebKit/Source/JavaScriptCore/runtime/GetterSetter.cpp:61:1"
+      }
+    ],
+    "0x51c58ef": [
+      {
+        "function": "std::_Optional_payload_base<JSC::DisallowVMEntryImpl<JSC::VM>>::_M_reset()",
+        "location": "/usr/include/c++/13/optional:317:6"
+      },
+      {
+        "function": "std::_Optional_payload<JSC::DisallowVMEntryImpl<JSC::VM>, false, false, false>::~_Optional_payload()",
+        "location": "/usr/include/c++/13/optional:439:57"
+      },
+      {
+        "function": "std::_Optional_base<JSC::DisallowVMEntryImpl<JSC::VM>, false, false>::~_Optional_base()",
+        "location": "/usr/include/c++/13/optional:510:12"
+      },
+      {
+        "function": "JSC::PropertySlot::~PropertySlot()",
+        "location": "/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/PropertySlot.h:103:7"
+      },
+      {
+        "function": "std::invoke_result<operationGetByIdOptimize::$_0, bool, JSC::PropertySlot&>::type JSC::JSValue::getPropertySlot<operationGetByIdOptimize::$_0>(JSC::JSGlobalObject*, JSC::PropertyName, operationGetByIdOptimize::$_0) const",
+        "location": "/webkitbuild/.JavaScriptCore/PrivateHeaders/JavaScriptCore/JSCJSValuePropertyInlines.h:63:1"
+      },
+      {
+        "function": "operationGetByIdOptimize",
+        "location": "/webkitbuild/vendor/WebKit/Source/JavaScriptCore/jit/JITOperations.cpp:564:5"
+      }
     ]
   },
   "symbolizer": {
     "tool": "/opt/homebrew/opt/llvm/bin/llvm-symbolizer",
     "version": "Homebrew LLVM version 22.1.8",
     "command": "llvm-symbolizer --inlines --obj=<bun-linux-x64-profile/bun-profile> <unique vmas>",
-    "unique_vmas": 31,
-    "blocks": 31,
+    "unique_vmas": 56,
+    "blocks": 56,
     "stderr": "",
     "raw_output_file": "docs/plans/otio/proof/stdio-linux-symbolized-39723814228.llvm-symbolizer.txt",
     "reproduces_earlier_run": true,
@@ -6205,7 +6491,7 @@
     "Frames with object [anon:JSJITCode] are anonymous JIT memory, not file-backed by the bun ELF. They are listed and not symbolized. Pre-exec git-child frames and libc frames are not bun frames.",
     "Some DWARF locations are line 0 (Subspace.cpp:0:21), and llint frames resolve to ld-temp.o:0:0. Those are DWARF artifacts, not attributions.",
     "The successful close of 219 at line 304458 closes the socket created at line 303592 (UNIX-STREAM:[28784->28785]). That socket is the child's stdout pipe: dup2 at line 303829 makes its child end (220) fd 1. The same socket identity appears at creation and at this close.",
-    "No frame in any window names child_process, net, a socket, or connect (checked over all symbolized functions and locations).",
+    "Within the spec windows and the additional events, no frame names child_process, net, a socket, or connect. The net path appears elsewhere in the trace, at the extra-pipe registration of the three dead children (see mechanism_amendment).",
     "Trace size: 412,792 lines; 373,636 of them are stack lines. Frame lines naming a bun object: 118,693, all with the single path above."
   ],
   "conclusion": "attributed under inference (binary identity of run 39723814228)",
@@ -6227,9 +6513,19 @@
     },
     {
       "kind": "mechanism-level",
-      "planner_statement": "node:child_process passes extra stdio pipes (index 3 and up) to net.connect({fd}), and the native Subprocess keeps ownership of those same fds.",
-      "observed": "The fds closed and then registered in this trace are the parent ends of the stdout (child fd 1, via dup2 at line 303829) and stderr (child fd 2, via dup2 at line 303891) pipes of a Bun.spawn/spawnSync child (spawnMaybeSync -> spawnProcessPosix -> SubprocessPipeReader). No frame names child_process, net, or connect. The planner's stdout/stderr reading matches this trace; the index-3-and-up net.connect mechanism is not on this path.",
-      "consequence": "The finalizeStreams double close and the EBADF registrations are observed here. Whether the upstream fix (#32520, child_process socket-fd mapping) covers the Bun.spawn stdout/stderr path observed here is not established by this receipt."
+      "status": "resolved by the amendment",
+      "planner_statement_now_supported": "The closer is the owned_fd arm of finalizeStreams for extra pipes (index >= 3) of the three dead fake-Chrome children, whose parent ends were adopted by NetModule.connect({ fd }). The victim is git 4059's stdout and stderr (Bun.spawn, SubprocessPipeReader).",
+      "earlier_disagreement_withdrawn": true,
+      "see": "mechanism_amendment.corrections_to_earlier_text_in_this_receipt"
+    },
+    {
+      "kind": "not_verified",
+      "items": [
+        "upstream fix attribution (oven-sh/bun#32520, 1.4.0)",
+        "1.4.x source lines",
+        "control script and outputs"
+      ],
+      "note": "outside this trace and the 1.3.14 source"
     }
   ],
   "reproduce": [
@@ -6239,5 +6535,801 @@
     "gunzip -c docs/plans/otio/proof/stdio-linux-full-test-39723814228.strace.gz > <scratch>/raw-trace-39723814228.strace",
     "llvm-readobj -hlnSW <bun>; llvm-readobj --dyn-syms -W <bun>; llvm-readobj --symbols -W <bun-profile>",
     "llvm-symbolizer --inlines --obj=<bun-profile> <vma> ...   (vma = bracket + 0x460000)"
-  ]
+  ],
+  "amendment": "Mechanism statement amended from the planner's adjudication; verified against the trace and the bun-v1.3.14 source. Conclusion unchanged.",
+  "mechanism_amendment": {
+    "scope": "Amendment to the mechanism statement. Every line number below was read from the raw trace (/tmp scratch copy, sha e5b22f5d...), and every frame name from the llvm-symbolizer output in this file. bun-v1.3.14 source (tag commit 0d9b296a...) was read from GitHub for the source citations.",
+    "victim_git_pid_4059": {
+      "description": "Bun.spawn child (vfork from pid 3697, exec /usr/bin/git -C /tmp/cover-publish-test-6moRSf rev-parse --show-toplevel). stdout and stderr are the 219 and 221 parent ends.",
+      "socketpairs": {
+        "stdin_217_218": 303505,
+        "stdout_219_220": 303592,
+        "stderr_221_222": 303679
+      },
+      "vfork_completion": 303985,
+      "child_dup2": {
+        "217_to_0": 303767,
+        "220_to_1_stdout": 303829,
+        "222_to_2_stderr": 303891
+      },
+      "child_exec": {
+        "line": 304016,
+        "result": "0",
+        "argv": [
+          "git",
+          "-C",
+          "/tmp/cover-publish-test-6moRSf",
+          "rev-parse",
+          "--show-toplevel"
+        ]
+      },
+      "parent_closes_child_ends": {
+        "close_220_in_spawnProcessPosix": 304106,
+        "close_222_in_spawnProcessPosix": 304148
+      },
+      "readers_registered_epoll_add_EBADF": {
+        "fd219": {
+          "line": 304720,
+          "start": 304718,
+          "frames_top": "bit_set.IntegerBitSet(23).set <- FilePoll.registerWithFd (posix_event_loop.zig:866:30) <- PosixBufferedReader.registerPoll (PipeReader.zig:291:17) <- SubprocessPipeReader.start (SubprocessPipeReader.zig:80:25) <- spawnMaybeSync (js_bun_spawn_bindings.zig:930:71)"
+        },
+        "fd221": {
+          "line": 304762,
+          "result": "-1 EBADF"
+        }
+      },
+      "thread_EBADF_closes": {
+        "fd219": {
+          "completion": 304796,
+          "start": 304794,
+          "pid": 3717,
+          "chain": "posix_event_loop.Closer.onClose @posix_event_loop.zig:1404:24 <- ThreadPool.Thread.run @ThreadPool.zig:581:32"
+        },
+        "fd221": {
+          "completion": 304813,
+          "start": 304811,
+          "pid": 3719
+        }
+      }
+    },
+    "dead_owner_children": {
+      "3995": {
+        "pid": 3995,
+        "exec": {
+          "line": 228743,
+          "path": "/tmp/fake-chrome-1792644232465.mjs",
+          "result": "0",
+          "argv_has_remote_debugging_pipe": true,
+          "node_exec_line": 229832,
+          "node_result": "0"
+        },
+        "stdio_layout": "stdin and stdout /dev/null (ignore); stderr pipe child end 218 -> fd 2; index-3 pipe child end 220 -> fd 3; index-4 pipe child end 222 -> fd 4",
+        "socketpairs": {
+          "index2_217_218": 228230,
+          "index3_219_220": 228293,
+          "index4_221_222": 228356
+        },
+        "vfork_completion": 228720,
+        "child_dup2_index3_index4": [
+          228604,
+          228650
+        ],
+        "node_net_registration_epoll_ops": [
+          {
+            "op": "229016:ADD:219:0",
+            "chain_key_functions": [
+              "us_poll_start_rc @epoll_kqueue.c:514:14",
+              "us_socket_from_fd @socket.c:406:14",
+              "runtime.socket.socket.NewSocket(false).doConnect @socket.zig:160:43",
+              "runtime.node.node_net_binding.doConnect @node_net_binding.zig:100:5",
+              "JS2Zig___src_runtime_node_node_net_binding_zig__doConnect @GeneratedJS2Native.zig:167:52"
+            ]
+          },
+          {
+            "op": "229237:ADD:221:0",
+            "chain_key_functions": [
+              "us_poll_start_rc @epoll_kqueue.c:514:14",
+              "us_socket_from_fd @socket.c:406:14",
+              "runtime.socket.socket.NewSocket(false).doConnect @socket.zig:160:43",
+              "runtime.node.node_net_binding.doConnect @node_net_binding.zig:100:5",
+              "JS2Zig___src_runtime_node_node_net_binding_zig__doConnect @GeneratedJS2Native.zig:167:52"
+            ]
+          },
+          {
+            "op": "229622:MOD:219:0",
+            "chain_key_functions": [
+              "us_poll_change @epoll_kqueue.c:542:18",
+              "us_internal_dispatch_ready_poll @loop.c:490:21",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          },
+          {
+            "op": "229642:MOD:221:0",
+            "chain_key_functions": [
+              "us_poll_change @epoll_kqueue.c:542:18",
+              "us_internal_dispatch_ready_poll @loop.c:490:21",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          },
+          {
+            "op": "231440:DEL:221:0",
+            "chain_key_functions": [
+              "us_poll_stop @epoll_kqueue.c:559:14",
+              "us_internal_socket_close_raw @socket.c:289:13",
+              "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+              "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+            ]
+          },
+          {
+            "op": "231448:DEL:219:0",
+            "chain_key_functions": [
+              "us_poll_stop @epoll_kqueue.c:559:14",
+              "us_internal_socket_close_raw @socket.c:289:13",
+              "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+              "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+            ]
+          }
+        ],
+        "first_usockets_closes": [
+          {
+            "line": 231444,
+            "fd": 221,
+            "result": "0",
+            "chain_key_functions": [
+              "us_internal_socket_close_raw @socket.c:301:28",
+              "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+              "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+            ]
+          },
+          {
+            "line": 231452,
+            "fd": 219,
+            "result": "0",
+            "chain_key_functions": [
+              "us_internal_socket_close_raw @socket.c:301:28",
+              "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+              "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+            ]
+          }
+        ]
+      },
+      "4006": {
+        "pid": 4006,
+        "exec": {
+          "line": 232048,
+          "path": "/tmp/fake-crash-chrome-1792644234033.mjs",
+          "result": "0",
+          "argv_has_remote_debugging_pipe": true,
+          "node_exec_line": 233180,
+          "node_result": "0"
+        },
+        "stdio_layout": "stdin and stdout /dev/null (ignore); stderr pipe child end 218 -> fd 2; index-3 pipe child end 220 -> fd 3; index-4 pipe child end 222 -> fd 4",
+        "socketpairs": {
+          "index2_217_218": 231535,
+          "index3_219_220": 231598,
+          "index4_221_222": 231661
+        },
+        "vfork_completion": 232025,
+        "child_dup2_index3_index4": [
+          231909,
+          231955
+        ],
+        "node_net_registration_epoll_ops": [
+          {
+            "op": "232288:ADD:219:0",
+            "chain_key_functions": [
+              "us_poll_start_rc @epoll_kqueue.c:514:14",
+              "us_socket_from_fd @socket.c:406:14",
+              "runtime.socket.socket.NewSocket(false).doConnect @socket.zig:160:43",
+              "runtime.node.node_net_binding.doConnect @node_net_binding.zig:100:5",
+              "JS2Zig___src_runtime_node_node_net_binding_zig__doConnect @GeneratedJS2Native.zig:167:52"
+            ]
+          },
+          {
+            "op": "232484:ADD:221:0",
+            "chain_key_functions": [
+              "us_poll_start_rc @epoll_kqueue.c:514:14",
+              "us_socket_from_fd @socket.c:406:14",
+              "runtime.socket.socket.NewSocket(false).doConnect @socket.zig:160:43",
+              "runtime.node.node_net_binding.doConnect @node_net_binding.zig:100:5",
+              "JS2Zig___src_runtime_node_node_net_binding_zig__doConnect @GeneratedJS2Native.zig:167:52"
+            ]
+          },
+          {
+            "op": "232830:MOD:219:0",
+            "chain_key_functions": [
+              "us_poll_change @epoll_kqueue.c:542:18",
+              "us_internal_dispatch_ready_poll @loop.c:490:21",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          },
+          {
+            "op": "232859:MOD:221:0",
+            "chain_key_functions": [
+              "us_poll_change @epoll_kqueue.c:542:18",
+              "us_internal_dispatch_ready_poll @loop.c:490:21",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          },
+          {
+            "op": "234755:DEL:221:0",
+            "chain_key_functions": [
+              "us_poll_stop @epoll_kqueue.c:559:14",
+              "us_internal_socket_close_raw @socket.c:289:13",
+              "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+              "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+            ]
+          },
+          {
+            "op": "234763:DEL:219:0",
+            "chain_key_functions": [
+              "us_poll_stop @epoll_kqueue.c:559:14",
+              "us_internal_socket_close_raw @socket.c:289:13",
+              "us_internal_dispatch_ready_poll @loop.c:782:1",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          }
+        ],
+        "first_usockets_closes": [
+          {
+            "line": 234759,
+            "fd": 221,
+            "result": "0",
+            "chain_key_functions": [
+              "us_internal_socket_close_raw @socket.c:301:28",
+              "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+              "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+            ]
+          },
+          {
+            "line": 234773,
+            "fd": 219,
+            "result": "0",
+            "chain_key_functions": [
+              "us_internal_socket_close_raw @socket.c:301:28",
+              "us_internal_dispatch_ready_poll @loop.c:782:1",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          }
+        ]
+      },
+      "4014": {
+        "pid": 4014,
+        "exec": {
+          "line": 235388,
+          "path": "/tmp/fake-slow-chrome-1792644235616.sh",
+          "result": "0",
+          "argv_has_remote_debugging_pipe": true,
+          "then_sleep_exec_line": 236458,
+          "sleep_result": "0"
+        },
+        "stdio_layout": "stdin and stdout /dev/null (ignore); stderr pipe child end 218 -> fd 2; index-3 pipe child end 220 -> fd 3; index-4 pipe child end 222 -> fd 4",
+        "socketpairs": {
+          "index2_217_218": 234862,
+          "index3_219_220": 234925,
+          "index4_221_222": 234988
+        },
+        "vfork_completion": 235365,
+        "child_dup2_index3_index4": [
+          235249,
+          235295
+        ],
+        "node_net_registration_epoll_ops": [
+          {
+            "op": "235617:ADD:219:0",
+            "chain_key_functions": [
+              "us_poll_start_rc @epoll_kqueue.c:514:14",
+              "us_socket_from_fd @socket.c:406:14",
+              "runtime.socket.socket.NewSocket(false).doConnect @socket.zig:160:43",
+              "runtime.node.node_net_binding.doConnect @node_net_binding.zig:100:5",
+              "JS2Zig___src_runtime_node_node_net_binding_zig__doConnect @GeneratedJS2Native.zig:167:52"
+            ]
+          },
+          {
+            "op": "235804:ADD:221:0",
+            "chain_key_functions": [
+              "us_poll_start_rc @epoll_kqueue.c:514:14",
+              "us_socket_from_fd @socket.c:406:14",
+              "runtime.socket.socket.NewSocket(false).doConnect @socket.zig:160:43",
+              "runtime.node.node_net_binding.doConnect @node_net_binding.zig:100:5",
+              "JS2Zig___src_runtime_node_node_net_binding_zig__doConnect @GeneratedJS2Native.zig:167:52"
+            ]
+          },
+          {
+            "op": "236028:MOD:219:0",
+            "chain_key_functions": [
+              "us_poll_change @epoll_kqueue.c:542:18",
+              "us_internal_dispatch_ready_poll @loop.c:490:21",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          },
+          {
+            "op": "236064:MOD:221:0",
+            "chain_key_functions": [
+              "us_poll_change @epoll_kqueue.c:542:18",
+              "us_internal_dispatch_ready_poll @loop.c:490:21",
+              "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+              "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+            ]
+          },
+          {
+            "op": "236517:DEL:219:0",
+            "chain_key_functions": [
+              "us_poll_stop @epoll_kqueue.c:559:14",
+              "us_internal_socket_close_raw @socket.c:289:13",
+              "uws_sys.socket.InternalSocket.detach @socket.zig:461:9",
+              "uws_sys.socket.NewSocketHandler(false).detach @socket.zig:35:31",
+              "runtime.socket.socket.NewSocket(false).close @socket.zig:1359:31",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__close @ZigGeneratedClasses.zig:22207:95"
+            ]
+          },
+          {
+            "op": "236579:DEL:221:0",
+            "chain_key_functions": [
+              "us_poll_stop @epoll_kqueue.c:559:14",
+              "us_internal_socket_close_raw @socket.c:289:13",
+              "uws_sys.socket.InternalSocket.detach @socket.zig:461:9",
+              "uws_sys.socket.NewSocketHandler(false).detach @socket.zig:35:31",
+              "runtime.socket.socket.NewSocket(false).close @socket.zig:1359:31",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__close @ZigGeneratedClasses.zig:22207:95"
+            ]
+          }
+        ],
+        "first_usockets_closes": [
+          {
+            "line": 236548,
+            "fd": 219,
+            "result": "0",
+            "chain_key_functions": [
+              "us_internal_socket_close_raw @socket.c:301:28",
+              "uws_sys.socket.InternalSocket.detach @socket.zig:461:9",
+              "uws_sys.socket.NewSocketHandler(false).detach @socket.zig:35:31",
+              "runtime.socket.socket.NewSocket(false).close @socket.zig:1359:31",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__close @ZigGeneratedClasses.zig:22207:95",
+              "WebCore::TCPSocketPrototype__closeCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:66948:10"
+            ]
+          },
+          {
+            "line": 236610,
+            "fd": 221,
+            "result": "0",
+            "chain_key_functions": [
+              "us_internal_socket_close_raw @socket.c:301:28",
+              "uws_sys.socket.InternalSocket.detach @socket.zig:461:9",
+              "uws_sys.socket.NewSocketHandler(false).detach @socket.zig:35:31",
+              "runtime.socket.socket.NewSocket(false).close @socket.zig:1359:31",
+              "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__close @ZigGeneratedClasses.zig:22207:95",
+              "WebCore::TCPSocketPrototype__closeCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:66948:10"
+            ]
+          }
+        ]
+      }
+    },
+    "finalizer_closes_at_line_781": [
+      {
+        "completion": 304458,
+        "start": 304458,
+        "pid": "3697",
+        "fd": 219,
+        "result": "0",
+        "chain_key_functions": [
+          "sys.fd.FD.closeAllowingBadFileDescriptor @fd.zig:250:9",
+          "sys.fd.FD.close @fd.zig:237:54",
+          "runtime.api.bun.subprocess.finalizeStreams @subprocess.zig:781:39",
+          "ZigGeneratedClasses.JSSubprocess.JavaScriptCoreBindings.SubprocessClass__finalize @ZigGeneratedClasses.zig:21738:47"
+        ]
+      },
+      {
+        "completion": 304493,
+        "start": 304493,
+        "pid": "3697",
+        "fd": 221,
+        "result": "0",
+        "chain_key_functions": [
+          "sys.fd.FD.closeAllowingBadFileDescriptor @fd.zig:250:9",
+          "sys.fd.FD.close @fd.zig:237:54",
+          "runtime.api.bun.subprocess.finalizeStreams @subprocess.zig:781:39",
+          "ZigGeneratedClasses.JSSubprocess.JavaScriptCoreBindings.SubprocessClass__finalize @ZigGeneratedClasses.zig:21738:47"
+        ]
+      },
+      {
+        "completion": 304530,
+        "start": 304528,
+        "pid": "3697",
+        "fd": 219,
+        "result": "-1 EBADF (Bad file des",
+        "chain_key_functions": [
+          "sys.fd.FD.closeAllowingBadFileDescriptor @fd.zig:250:9",
+          "sys.fd.FD.close @fd.zig:237:54",
+          "runtime.api.bun.subprocess.finalizeStreams @subprocess.zig:781:39",
+          "ZigGeneratedClasses.JSSubprocess.JavaScriptCoreBindings.SubprocessClass__finalize @ZigGeneratedClasses.zig:21738:47"
+        ]
+      },
+      {
+        "completion": 304576,
+        "start": 304574,
+        "pid": "3697",
+        "fd": 221,
+        "result": "-1 EBADF (Bad file des",
+        "chain_key_functions": [
+          "sys.fd.FD.closeAllowingBadFileDescriptor @fd.zig:250:9",
+          "sys.fd.FD.close @fd.zig:237:54",
+          "runtime.api.bun.subprocess.finalizeStreams @subprocess.zig:781:39",
+          "ZigGeneratedClasses.JSSubprocess.JavaScriptCoreBindings.SubprocessClass__finalize @ZigGeneratedClasses.zig:21738:47"
+        ]
+      },
+      {
+        "completion": 304618,
+        "start": 304618,
+        "pid": "3697",
+        "fd": 219,
+        "result": "-1 EBADF (Bad file des",
+        "chain_key_functions": [
+          "sys.fd.FD.closeAllowingBadFileDescriptor @fd.zig:250:9",
+          "sys.fd.FD.close @fd.zig:237:54",
+          "runtime.api.bun.subprocess.finalizeStreams @subprocess.zig:781:39",
+          "ZigGeneratedClasses.JSSubprocess.JavaScriptCoreBindings.SubprocessClass__finalize @ZigGeneratedClasses.zig:21738:47"
+        ]
+      },
+      {
+        "completion": 304653,
+        "start": 304653,
+        "pid": "3697",
+        "fd": 221,
+        "result": "-1 EBADF (Bad file des",
+        "chain_key_functions": [
+          "sys.fd.FD.closeAllowingBadFileDescriptor @fd.zig:250:9",
+          "sys.fd.FD.close @fd.zig:237:54",
+          "runtime.api.bun.subprocess.finalizeStreams @subprocess.zig:781:39",
+          "ZigGeneratedClasses.JSSubprocess.JavaScriptCoreBindings.SubprocessClass__finalize @ZigGeneratedClasses.zig:21738:47"
+        ]
+      }
+    ],
+    "usockets_first_closes": [
+      {
+        "line": 231444,
+        "fd": 221,
+        "pid": "3697",
+        "result": "0",
+        "caller": "TCPSocket endBuffered (NewSocket.endBuffered socket.zig:1010:72)",
+        "chain_key_functions": [
+          "us_internal_socket_close_raw @socket.c:301:28",
+          "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+          "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+          "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+        ]
+      },
+      {
+        "line": 231452,
+        "fd": 219,
+        "pid": "3697",
+        "result": "0",
+        "caller": "TCPSocket endBuffered (NewSocket.endBuffered socket.zig:1010:72)",
+        "chain_key_functions": [
+          "us_internal_socket_close_raw @socket.c:301:28",
+          "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+          "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+          "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+        ]
+      },
+      {
+        "line": 234759,
+        "fd": 221,
+        "pid": "3697",
+        "result": "0",
+        "caller": "TCPSocket endBuffered (NewSocket.endBuffered socket.zig:1010:72)",
+        "chain_key_functions": [
+          "us_internal_socket_close_raw @socket.c:301:28",
+          "runtime.socket.socket.NewSocket(false).endBuffered @socket.zig:1010:72",
+          "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__endBuffered @ZigGeneratedClasses.zig:22244:95",
+          "WebCore::TCPSocketPrototype__endBufferedCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:67124:10"
+        ]
+      },
+      {
+        "line": 234773,
+        "fd": 219,
+        "pid": "3697",
+        "result": "0",
+        "caller": "us_internal_dispatch_ready_poll (loop.c:782:1)",
+        "chain_key_functions": [
+          "us_internal_socket_close_raw @socket.c:301:28",
+          "us_internal_dispatch_ready_poll @loop.c:782:1",
+          "us_internal_dispatch_ready_polls @epoll_kqueue.c:0:17",
+          "us_loop_run_bun_tick @epoll_kqueue.c:406:5"
+        ]
+      },
+      {
+        "line": 236548,
+        "fd": 219,
+        "pid": "3697",
+        "result": "0",
+        "caller": "TCPSocket close (NewSocket.close socket.zig:1359:31 via InternalSocket.detach socket.zig:461:9)",
+        "chain_key_functions": [
+          "us_internal_socket_close_raw @socket.c:301:28",
+          "uws_sys.socket.InternalSocket.detach @socket.zig:461:9",
+          "uws_sys.socket.NewSocketHandler(false).detach @socket.zig:35:31",
+          "runtime.socket.socket.NewSocket(false).close @socket.zig:1359:31",
+          "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__close @ZigGeneratedClasses.zig:22207:95",
+          "WebCore::TCPSocketPrototype__closeCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:66948:10"
+        ]
+      },
+      {
+        "line": 236610,
+        "fd": 221,
+        "pid": "3697",
+        "result": "0",
+        "caller": "TCPSocket close (NewSocket.close socket.zig:1359:31 via InternalSocket.detach socket.zig:461:9)",
+        "chain_key_functions": [
+          "us_internal_socket_close_raw @socket.c:301:28",
+          "uws_sys.socket.InternalSocket.detach @socket.zig:461:9",
+          "uws_sys.socket.NewSocketHandler(false).detach @socket.zig:35:31",
+          "runtime.socket.socket.NewSocket(false).close @socket.zig:1359:31",
+          "ZigGeneratedClasses.JSTCPSocket.JavaScriptCoreBindings.TCPSocketPrototype__close @ZigGeneratedClasses.zig:22207:95",
+          "WebCore::TCPSocketPrototype__closeCallback(JSC::JSGlobalObject*, JSC::CallFrame*) @ZigGeneratedClasses.cpp:66948:10"
+        ]
+      }
+    ],
+    "reuse_closes": {
+      "window": "238110..303325",
+      "pairs_in_window": {
+        "total": 78,
+        "pair_219_220": 26,
+        "pair_221_222": 26,
+        "pair_217_218": 26
+      },
+      "reuse_slots_219_221": 52,
+      "closes_per_slot": {
+        "1": 52
+      },
+      "closes_of_in_window_slots_in_window": 51,
+      "close_after_window_for_in_window_slot": {
+        "line": 303337,
+        "slot": 302123,
+        "fd": 219
+      },
+      "closes_of_fd219_221_in_window": 53,
+      "closes_of_pre_window_slots": [
+        "238110(fd221,3719)",
+        "238137(fd219,3718)"
+      ],
+      "closer_chain_check": {
+        "in_window_closes": 53,
+        "with_posix_event_loop_Closer_onClose": 53,
+        "pids": {
+          "3717": 8,
+          "3718": 13,
+          "3719": 16,
+          "3720": 16
+        }
+      },
+      "slot_lines": [
+        "238372:fd219:n1:[239565]",
+        "238459:fd221:n1:[239633]",
+        "239815:fd219:n1:[241058]",
+        "239902:fd221:n1:[241030]",
+        "241295:fd219:n1:[242516]",
+        "241382:fd221:n1:[242488]",
+        "242726:fd219:n1:[244010]",
+        "242813:fd221:n1:[243982]",
+        "244220:fd219:n1:[245453]",
+        "244316:fd221:n1:[245425]",
+        "245681:fd219:n1:[246947]",
+        "245768:fd221:n1:[246919]",
+        "247167:fd219:n1:[248397]",
+        "247254:fd221:n1:[248369]",
+        "248611:fd219:n1:[249862]",
+        "248698:fd221:n1:[249834]",
+        "250076:fd219:n1:[251297]",
+        "250163:fd221:n1:[251280]",
+        "251520:fd219:n1:[252741]",
+        "251607:fd221:n1:[252725]",
+        "252980:fd219:n1:[254196]",
+        "253067:fd221:n1:[254253]",
+        "254435:fd219:n1:[255689]",
+        "254522:fd221:n1:[255661]",
+        "255911:fd219:n1:[257165]",
+        "255998:fd221:n1:[257137]",
+        "257391:fd219:n1:[258622]",
+        "257478:fd221:n1:[258606]",
+        "258843:fd219:n1:[260071]",
+        "258930:fd221:n1:[260043]",
+        "260297:fd219:n1:[261529]",
+        "260384:fd221:n1:[261501]",
+        "261773:fd219:n1:[263013]",
+        "261860:fd221:n1:[262985]",
+        "263249:fd219:n1:[264482]",
+        "263336:fd221:n1:[264466]",
+        "282789:fd219:n1:[284006]",
+        "282876:fd221:n1:[283978]",
+        "284283:fd219:n1:[285500]",
+        "284370:fd221:n1:[285472]",
+        "285728:fd219:n1:[286993]",
+        "285815:fd221:n1:[286965]",
+        "287286:fd219:n1:[288478]",
+        "287373:fd221:n1:[288546]",
+        "297744:fd219:n1:[298950]",
+        "297831:fd221:n1:[298933]",
+        "299189:fd219:n1:[300392]",
+        "299276:fd221:n1:[300376]",
+        "300627:fd219:n1:[301888]",
+        "300714:fd221:n1:[301871]",
+        "302123:fd219:n1:[303337]",
+        "302210:fd221:n1:[303309]"
+      ]
+    },
+    "file_closes_on_reused_numbers": {
+      "example_line_236765": {
+        "close": 236765,
+        "fd": 219,
+        "pid": 3697,
+        "chain_key_functions": [
+          "jsc.RuntimeTranspilerCache.RuntimeTranspilerCache.Entry.save @x86_64.zig:0:5",
+          "jsc.RuntimeTranspilerCache.RuntimeTranspilerCache.toFile @RuntimeTranspilerCache.zig:617:23",
+          "jsc.RuntimeTranspilerCache.RuntimeTranspilerCache.put @RuntimeTranspilerCache.zig:694:15"
+        ],
+        "preceded_by_openat": 236762
+      },
+      "thread_openat_reuses_fd219_221": {
+        "counts": {
+          "fd219_openat": 18,
+          "fd221_openat": 6,
+          "fd221_pidfd_open": 1
+        },
+        "note": "each such number was closed as a file or pidfd, not as a socket"
+      }
+    },
+    "scan_totals": {
+      "closes_total": 12004,
+      "ebadf_closes": 6,
+      "ebadf_list_completion_and_start": [
+        [
+          304530,
+          304528
+        ],
+        [
+          304576,
+          304574
+        ],
+        [
+          304618,
+          304618
+        ],
+        [
+          304653,
+          304653
+        ],
+        [
+          304796,
+          304794
+        ],
+        [
+          304813,
+          304811
+        ]
+      ],
+      "finalizeStreams_closes_all_lines": 6,
+      "finalizeStreams_closes_at_line_781": 6,
+      "finalizeStreams_line_781_list": [
+        [
+          304458,
+          "2 succeeded"
+        ],
+        [
+          304493,
+          "succeeded"
+        ],
+        [
+          304530,
+          "EBADF"
+        ],
+        [
+          304576,
+          "EBADF"
+        ],
+        [
+          304618,
+          "EBADF"
+        ],
+        [
+          304653,
+          "EBADF"
+        ]
+      ],
+      "closeIO_772_773_closes": 0
+    },
+    "planner_claims_check": [
+      {
+        "claim": "Victim: git pid 4059 stdout/stderr (Bun.spawn) at reused numbers 219/221",
+        "status": "verified",
+        "evidence": "dup2 220->1 at 303829, 222->2 at 303891; socketpairs 303592 and 303679; execve of /usr/bin/git at 304016"
+      },
+      {
+        "claim": "Closer: finalizeStreams:781, owned_fd arm, index >= 3 only, bun-v1.3.14 subprocess.zig:775-784",
+        "status": "verified",
+        "evidence": "subprocess.zig at tag bun-v1.3.14: loop at 775-784, `.owned_fd => |fd| fd.close()` at 781; stdio_pipes is spawned.extra_pipes (js_bun_spawn_bindings.zig:713); process.zig:1217 'Entry in extra_pipes for a stdio slot at index >= 3'; process.zig:1562 loop over options.extra_fds with fileno 3 + i"
+      },
+      {
+        "claim": "Closing stdout or stderr goes through closeIO at lines 772-773",
+        "status": "verified",
+        "evidence": "subprocess.zig:772 closeIO(.stdout), 773 closeIO(.stderr); line 771 is closeIO(.stdin); no close in the trace has a frame at subprocess.zig:772 or 773"
+      },
+      {
+        "claim": "Dead owners: pids 3995, 4006, 4014 are fake Chrome stand-ins started with --remote-debugging-pipe",
+        "status": "verified (argv and exec); 'dead' not observable in the trace",
+        "evidence": "execve 228743 (3995, /tmp/fake-chrome-*.mjs), 232048 (4006, /tmp/fake-crash-chrome-*.mjs), 235388 (4014, /tmp/fake-slow-chrome-*.sh), each argv includes --remote-debugging-pipe. The trace does not name the JS Subprocess objects, so which object each finalizer closed is inferred from fd ownership."
+      },
+      {
+        "claim": "Each child moved socket 220 to fd 3 and 222 to fd 4 (228604/228650, 231909/231955, 235249/235295)",
+        "status": "verified",
+        "evidence": "dup2 lines 228604 (220->3), 228650 (222->4); 231909, 231955; 235249, 235295 (pids 3995, 4006, 4014)"
+      },
+      {
+        "claim": "Parent fds 219 and 221 were extra-pipe fds of each child",
+        "status": "verified",
+        "evidence": "socketpairs 228293/228356, 231598/231661, 234925/234988 precede the vforks 228720, 232025, 235365; the children's dup2 lines follow them"
+      },
+      {
+        "claim": "First closes at 231444/231452, 234759/234773, 236548/236610 are usockets closes (us_internal_socket_close_raw socket.c:301 from TCPSocket.endBuffered, TCPSocket.close or the event loop)",
+        "status": "verified, with exact callers",
+        "evidence": "231444, 231452, 234759: endBuffered (socket.zig:1010:72); 234773: us_internal_dispatch_ready_poll (loop.c:782:1); 236548, 236610: NewSocket.close (socket.zig:1359:31) via InternalSocket.detach"
+      },
+      {
+        "claim": "That socket is the one 1.3.14 builds with NetModule.connect({ fd })",
+        "status": "verified",
+        "evidence": "child_process.ts:1219 `return NetModule.connect({ fd });` sits in the switch default (index >= 3, line 1213-1219; called from line 1257). The trace shows the same fds registered by us_socket_from_fd <- NewSocket.doConnect <- node:net binding doConnect at 229016, 229237, 232288, 232484, 235617, 235804."
+      },
+      {
+        "claim": "About 30 later children reused 219/221 for stdout/stderr, each closed exactly once",
+        "status": "mismatch in count; 'exactly once' verified",
+        "evidence": "78 socketpairs in [238110, 303325] = 26 spawns (217/218, 219/220, 221/222 each 26). 52 reuse slots for fds 219/221, each with exactly one close (52 of 52). Their closes are Closer.onClose on threads 3717-3720; one slot's close (302123, fd 219) is at 303337, just past 303325. The window also holds 2 closes of slots created before 238110 (238110 fd 221, 238137 fd 219)."
+      },
+      {
+        "claim": "At 304458 a GC sweep inside the next Bun.spawn finalized all three dead children",
+        "status": "partly verified",
+        "evidence": "the sweep frames at 304459-304466 are verified (JSSubprocess::destroy <- finishSweep <- allocateSlowCase <- JSSubprocess::create <- Subprocess__create <- JSSubprocess.toJS <- spawnMaybeSync). Three finalized objects is consistent with six finalizer closes (3 x 2 owned fds), but the trace does not name the objects."
+      },
+      {
+        "claim": "Six closes from line 781: two succeeded and killed git 4059's stdout/stderr, four returned EBADF",
+        "status": "verified",
+        "evidence": "304458 (fd 219, ok), 304493 (fd 221, ok), 304530, 304576, 304618, 304653 (EBADF)"
+      },
+      {
+        "claim": "Exactly six closes issued by finalizers and exactly six EBADF closes, and this event accounts for all of them",
+        "status": "verified",
+        "evidence": "classifier over all 12004 closes: 6 with finalizeStreams in the stack (all at 781); 6 EBADF closes, of which 4 are the finalizer closes and 2 are thread closes of the same two git slots (304796, 304813)."
+      },
+      {
+        "claim": "Line 304811 is the thread-pool EBADF close",
+        "status": "mismatch in line label (start line)",
+        "evidence": "304811 is the start (unfinished) line; the completion is 304813 (pid 3719). 304794 is also a start line; its completion is 304796 (pid 3717)."
+      },
+      {
+        "claim": "fd 219 closed twice by usockets or finalizer (double close)",
+        "status": "not supported; extra close at 236765 is a file close",
+        "evidence": "236762 openat returns 219 (RuntimeTranspilerCache save); 236765 closes that file. Same pattern for 313453/313456 and the Relic source-versioning openats on threads 3717-3720."
+      },
+      {
+        "claim": "Upstream: the closer is the extra-pipe path that oven-sh/bun#32520 fixed in 1.4.0; 1.4.x subprocess.rs lines 1293-1299 and 925-935",
+        "status": "not verified by this receipt",
+        "evidence": "this receipt reads only the 1.3.14 source and the trace; the 1.4.x source was not read"
+      }
+    ],
+    "corrections_to_earlier_text_in_this_receipt": [
+      "Earlier notes said the index-3-and-up net.connect path is not on this path. That is correct for the victim (git's stdout and stderr use SubprocessPipeReader), but wrong for the closer: the three dead children's index-3 and index-4 pipes do go through NetModule.connect({ fd }) (registration lines 229016 through 235804). That disagreement is withdrawn.",
+      "Earlier notes said no frame names child_process, net, or connect. That was checked only over the spec windows and the additional events. The full trace has node:net doConnect frames at the extra-pipe registrations of the three dead children."
+    ]
+  }
 }
