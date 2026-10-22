@@ -6098,6 +6098,7 @@ export function buildThread(
     }
     layer.show(panel, options.reanchor?.() ?? box, placement);
     composing = state;
+    reanchor = options.reanchor;
     // Held open against hover, because a composer that vanished when the
     // pointer wandered would take the sentence being typed with it.
     stickyId = COMPOSING;

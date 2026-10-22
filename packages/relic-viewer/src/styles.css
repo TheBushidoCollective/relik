@@ -4097,7 +4097,7 @@ canvas.relic-page {
 .otio-item.is-unplaced, .otio-item.is-trimmed-out { position: relative; display: block; left: auto; top: auto; bottom: auto; width: auto; margin: .2rem; border-style: dashed; color: var(--oxide); white-space: normal; }
 .otio-item.is-trimmed-out { color: var(--ink-soft); opacity: .6; }
 .otio-timeline-marker { position: absolute; top: 0; height: 5px; min-width: 7px; z-index: 4; padding: 0; border: 1px solid var(--ink); border-radius: 0; background: var(--otio-marker-color, var(--patina)); cursor: pointer; }
-.otio-timeline-marker.is-point { top: 1px; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); }
+.otio-timeline-marker.is-point { top: 1px; width: 7px; height: 7px; z-index: 5; transform: translateX(-50%) rotate(45deg); }
 .otio-selection { position: absolute; top: 1px; bottom: 1px; z-index: 3; min-width: 4px; border: 2px dashed var(--patina); background: color-mix(in srgb, var(--patina) 22%, transparent); pointer-events: none; }
 .otio-selection.is-point { width: 4px; transform: translateX(-50%); }
 .otio-comment-mark { position: absolute; bottom: 1px; height: 14px; min-width: 5px; z-index: 4; padding: 0; border: 1px solid var(--patina); border-left-width: 2px; border-right-width: 2px; border-radius: 0; background: color-mix(in srgb, var(--patina) 35%, var(--surface)); cursor: pointer; }
