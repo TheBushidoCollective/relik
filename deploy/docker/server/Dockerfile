@@ -23,7 +23,10 @@ COPY packages/relic-viewer/package.json packages/relic-viewer/
 RUN bun install --frozen-lockfile
 
 COPY . .
-RUN bun run build
+# The root build also prepares the MCP native helper for tests. It requires
+# Node headers and a manylinux Docker build, while this server only needs the
+# viewer dist it serves.
+RUN bun run --filter '@relic/viewer' build
 
 # --- runtime ---------------------------------------------------------------
 # Pinned for the same reason, one step weaker: this stage only runs the

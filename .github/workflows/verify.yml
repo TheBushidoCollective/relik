@@ -138,3 +138,101 @@ jobs:
             fi
           fi
           bun packages/relic-mcp/test/otio-path.ts
+
+  # Builds exactly what deploy builds, but never pushes the local image. The
+  # smoke is the image boundary that unit tests and a runner-side viewer build
+  # cannot see.
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE: relic-server:verify-${{ github.sha }}
+      CONTAINER: relic-image-smoke
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare image smoke receipt
+        run: |
+          SMOKE_DIR="$RUNNER_TEMP/relic-image-smoke"
+          echo "SMOKE_DIR=$SMOKE_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$SMOKE_DIR"
+
+      - name: Build the deploy image without pushing it
+        run: |
+          set -euo pipefail
+          docker build -f deploy/docker/server/Dockerfile -t "$IMAGE" .
+
+      - name: Boot the image and smoke its served assets
+        run: |
+          set -euo pipefail
+          mkdir -p "$SMOKE_DIR"
+          BASE='http://127.0.0.1:18080'
+          docker rm -f "$CONTAINER" > "$SMOKE_DIR/preclean.log" 2>&1 || true
+          docker run --detach --name "$CONTAINER" --env NODE_ENV=development \
+            --publish 127.0.0.1:18080:8080 "$IMAGE" \
+            > "$SMOKE_DIR/container-id.txt"
+
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS "$BASE/health" \
+              > "$SMOKE_DIR/health-$attempt.json" \
+              2> "$SMOKE_DIR/health-$attempt.stderr"; then
+              if grep -q '"status":"ok"' "$SMOKE_DIR/health-$attempt.json"; then
+                cp "$SMOKE_DIR/health-$attempt.json" "$SMOKE_DIR/health.json"
+                healthy=1
+                break
+              fi
+            fi
+            sleep 1
+          done
+          test "$healthy" -eq 1
+
+          for P in \
+            /assets/viewer.js \
+            /assets/home.js \
+            /assets/styles.css \
+            /assets/register-sw.js \
+            /manifest.webmanifest \
+            /sw.js \
+            /assets/icon.svg \
+            /assets/otio-video-timing-worker.js; do
+            FILE="${P#/}"
+            FILE="${FILE//\//_}"
+            if ! curl -fsS "$BASE$P" -o "$SMOKE_DIR/$FILE"; then
+              echo "MISSING $P" >&2
+              exit 1
+            fi
+          done
+
+      - name: Collect image logs and remove the container
+        if: always()
+        run: |
+          set +e
+          mkdir -p "$SMOKE_DIR"
+          docker logs "$CONTAINER" > "$SMOKE_DIR/container.log" 2>&1 || true
+          cat "$SMOKE_DIR/container.log"
+          docker rm -f "$CONTAINER" > "$SMOKE_DIR/container-remove.log" 2>&1 || true
+
+      # This happens after the Docker build on purpose. A runner-built dist in
+      # the checkout would otherwise become Docker build context and conceal an
+      # image that never ran the viewer build.
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Record image and runner viewer hashes
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run --filter '@relic/viewer' build
+          IMAGE_SHA="$(sha256sum "$SMOKE_DIR/assets_viewer.js" | cut -d ' ' -f 1)"
+          RUNNER_SHA="$(sha256sum packages/relic-viewer/dist/viewer.js | cut -d ' ' -f 1)"
+          {
+            echo '### Image viewer asset hashes'
+            echo '| source | SHA-256 |'
+            echo '| --- | --- |'
+            printf '| image `/assets/viewer.js` | `%s` |\n' "$IMAGE_SHA"
+            printf '| runner `packages/relic-viewer/dist/viewer.js` | `%s` |\n' "$RUNNER_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
