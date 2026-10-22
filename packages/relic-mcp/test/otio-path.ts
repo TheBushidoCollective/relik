@@ -2353,9 +2353,7 @@ async function measureClosedNativeControls(
   })()`);
 }
 
-async function measureSidebar(
-  browser: ChromeSession
-): Promise<SidebarProbe> {
+async function measureSidebar(browser: ChromeSession): Promise<SidebarProbe> {
   return browser.evaluate<SidebarProbe>(String.raw`(async () => {
     const row = document.querySelector('.relic-row');
     const stage = document.querySelector('.stage-wrap');
@@ -2667,7 +2665,10 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
 }
 
 async function hoverComposerPost(browser: ChromeSession): Promise<void> {
-  const point = await browser.evaluate<{ readonly x: number; readonly y: number } | null>(
+  const point = await browser.evaluate<{
+    readonly x: number;
+    readonly y: number;
+  } | null>(
     `(() => {
       const post = document.querySelector('.popover-card .popover-action.is-primary');
       if (!(post instanceof HTMLElement)) return null;
@@ -2769,7 +2770,11 @@ async function restorePreviewBase(browser: ChromeSession): Promise<void> {
     }
     return 'timeout';
   })()`);
-  assert.equal(restored, 'restored', `base preview did not restore: ${restored}`);
+  assert.equal(
+    restored,
+    'restored',
+    `base preview did not restore: ${restored}`
+  );
 }
 
 async function exposeSelectionControl(
@@ -4027,11 +4032,7 @@ try {
       await clearPointerHover(browser);
       await openComposer(browser);
       const normalComposer = await measureComposer(browser);
-      assertComposerProbe(
-        normalComposer,
-        `320px ${scheme} composer`,
-        false
-      );
+      assertComposerProbe(normalComposer, `320px ${scheme} composer`, false);
       nativeControlMeasurements.push({
         state: 'supplemental-composer-normal',
         width: 320,
@@ -4062,10 +4063,7 @@ try {
         probe: sidebar,
       });
       const previewBase = await exposePreviewBase(browser);
-      assertStageControlExposure(
-        previewBase,
-        `320px ${scheme} base preview`
-      );
+      assertStageControlExposure(previewBase, `320px ${scheme} base preview`);
       nativeControlMeasurements.push({
         state: 'supplemental-preview-base',
         width: 320,
