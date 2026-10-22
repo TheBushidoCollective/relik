@@ -143,6 +143,7 @@ function pass(stage: (typeof REQUIRED)[number]): void {
 }
 
 const fakeNow = Date.now();
+let loopbackNow = fakeNow;
 const store = new MemoryStore();
 const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 const mails: { to: string; mail: OutboundMail }[] = [];
@@ -226,7 +227,7 @@ const app = createApp({
   config: { serviceOrigin: origin },
   store,
   storage,
-  now: () => fakeNow,
+  now: () => loopbackNow,
   operatorTokens,
   assets: diskAssets(viewerDist),
   mailer: {
@@ -4834,7 +4835,6 @@ async function waitForAuxiliaryReveal(
   })()`);
 }
 async function runAuxiliaryCoincidentCommentRevealScenario(
-  sessionToken: string,
   plan: Plan
 ): Promise<void> {
   const published = await callMcp('relic_publish', {
@@ -4851,7 +4851,31 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
     shareUrl.startsWith(origin),
     `auxiliary publish URL left loopback: ${shareUrl}`
   );
-  const browser = await openBrowser(shareUrl, sessionToken);
+  const windowMilliseconds = app.config.commentRateLimit.windowSeconds * 1000;
+  const initialClockBefore = loopbackNow;
+  loopbackNow += windowMilliseconds;
+  const clockReceipt = {
+    configuredLimit: app.config.commentRateLimit.limit,
+    configuredWindowSeconds: app.config.commentRateLimit.windowSeconds,
+    initialBoundary: {
+      before: initialClockBefore,
+      after: loopbackNow,
+    },
+    boundaries: [] as Array<{
+      before: number;
+      after: number;
+      completedUiPosts: number;
+    }>,
+    completedUiPosts: 0,
+  };
+  const auxiliaryToken = `otio-auxiliary-token-${Math.random().toString(16).slice(2)}`;
+  await store.putSession({
+    tokenHash: await sha256Hex(auxiliaryToken),
+    email: 'reader@example.test',
+    createdAt: loopbackNow,
+    expiresAt: loopbackNow + app.config.sessionTtlSeconds * 1000,
+  });
+  const browser = await openBrowser(shareUrl, auxiliaryToken);
   const measurements: Array<Record<string, unknown>> = [];
   try {
     assert.equal(
@@ -4882,7 +4906,16 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
       { length: 40 },
       (_, index) => `Coincident duplicate-point reveal ${index + 1}.`
     );
-    for (const body of bodies) {
+    for (const [index, body] of bodies.entries()) {
+      if (index > 0 && index % app.config.commentRateLimit.limit === 0) {
+        const before = loopbackNow;
+        loopbackNow += windowMilliseconds;
+        clockReceipt.boundaries.push({
+          before,
+          after: loopbackNow,
+          completedUiPosts: clockReceipt.completedUiPosts,
+        });
+      }
       await selectTrack(
         browser,
         plan.duplicate_track_id,
@@ -4891,6 +4924,7 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
         plan.duplicate_frame
       );
       await postComposer(browser, body);
+      clockReceipt.completedUiPosts += 1;
     }
     const fresh = await readComments(relicId);
     const cases = bodies.map((body, index) =>
@@ -5127,6 +5161,10 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
         {
           relic_id: relicId,
           viewport: { width: 900, height: 900 },
+          clock: {
+            ...clockReceipt,
+            finalNow: loopbackNow,
+          },
           measurements,
         },
         null,
@@ -8220,7 +8258,7 @@ try {
   } finally {
     await stateBrowser.close();
   }
-  await runAuxiliaryCoincidentCommentRevealScenario(sessionToken, plan);
+  await runAuxiliaryCoincidentCommentRevealScenario(plan);
 
   assert.equal(
     mails.length,
