@@ -115,6 +115,27 @@ jobs:
             echo "proof arm=polling mode=1 i=$i rc=$rc accepted=$(grep -c comments_get_accepted $e) armed=$(grep -c response_suppression_armed $e) nomatch=$(grep -c 'matching JSON-RPC response' $e) ms=$(( (end - start) / 1000000 ))" | tee -a diag/summary.txt
           done
 
+      - name: Capture ffprobe timing oracle on runner
+        shell: bash
+        run: |
+          set -u +e
+          mkdir -p diag
+          sudo apt-get update >/dev/null && sudo apt-get install -y --no-install-recommends ffmpeg >/dev/null
+          ffprobe -version | head -3 | tee diag/ffprobe-version.txt
+          python3 - <<'EOP'
+          import pathlib
+          p = pathlib.Path("scripts/generate-otio-media.sh")
+          s = p.read_text()
+          needle = 'raise SystemExit(f"timing oracle differs {target}; regenerate with scripts/generate-otio-media.sh")'
+          assert s.count(needle) == 1
+          s = s.replace(needle, 'pathlib.Path("diag/timing-oracle.computed.json").write_text(text); ' + needle)
+          s = s.replace("import json", "import json, pathlib", 1)
+          pathlib.Path("diag/generate-otio-media.patched.sh").write_text(s)
+          EOP
+          bash diag/generate-otio-media.patched.sh --check > diag/media-check.txt 2>&1; echo "media check rc=$?" | tee -a diag/summary.txt
+          cp packages/relic-format/test/fixtures/otio/decoder-boundary.otiod/media/timing-oracle.json diag/timing-oracle.committed.json
+          diff <(python3 -m json.tool diag/timing-oracle.committed.json) <(python3 -m json.tool diag/timing-oracle.computed.json) > diag/timing-oracle.diff; echo "oracle diff lines=$(wc -l < diag/timing-oracle.diff)" | tee -a diag/summary.txt
+
       - name: Show summary
         if: always()
         run: cat diag/summary.txt || true
