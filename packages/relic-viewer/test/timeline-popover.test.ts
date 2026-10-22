@@ -263,7 +263,10 @@ describe('a bounded OTIO composer', () => {
     expect(panel.style.top).toBe('214px');
     const preview = new Node('div');
     mounted.stage.appendChild(preview);
-    const doc = Reflect.get(globalThis, 'document') as Record<string, unknown>;
+    const doc = Reflect.get(globalThis, 'document') as unknown as Record<
+      string,
+      unknown
+    >;
     doc['fullscreenElement'] = preview;
     documentNode.dispatch('fullscreenchange');
     expect(panel.parent).toBe(preview);

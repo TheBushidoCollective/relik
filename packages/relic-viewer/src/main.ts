@@ -4951,8 +4951,11 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           : undefined;
         if (
           box !== undefined &&
-          deps.compose?.(detail.anchor, box, { focus, reanchor, bounds }) ===
-            true
+          deps.compose?.(detail.anchor, box, {
+            focus,
+            reanchor,
+            ...(bounds ? { bounds } : {}),
+          }) === true
         ) {
           dismiss();
           return;
@@ -5999,6 +6002,7 @@ export function buildThread(
     const opener = cipher;
     if (layer === undefined || opener === undefined) return;
     const focus = options.focus ?? true;
+    const placement = options.bounds ? { bounds: options.bounds } : undefined;
 
     const held = composing;
     if (
@@ -6009,7 +6013,7 @@ export function buildThread(
     ) {
       held.anchor = anchor;
       held.target.textContent = markTargetLabel(anchor);
-      layer.show(held.panel, box, { bounds: options.bounds });
+      layer.show(held.panel, box, placement);
       reanchor = options.reanchor;
       if (focus) held.field.focus();
       return;
@@ -6092,7 +6096,7 @@ export function buildThread(
         }
       }
     }
-    layer.show(panel, options.reanchor?.() ?? box, { bounds: options.bounds });
+    layer.show(panel, options.reanchor?.() ?? box, placement);
     composing = state;
     // Held open against hover, because a composer that vanished when the
     // pointer wandered would take the sentence being typed with it.
