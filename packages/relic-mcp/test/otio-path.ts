@@ -2426,6 +2426,73 @@ interface CommentMarkPopoverProbe {
   readonly visible: boolean;
   readonly bodyPresent: boolean;
 }
+interface AuxiliarySpatialMark {
+  readonly id: string;
+  readonly rect: DomRectProbe;
+  readonly commentLane: number | null;
+}
+
+interface AuxiliaryCoincidentMarksProbe {
+  readonly missing: readonly string[];
+  readonly marks: readonly AuxiliarySpatialMark[];
+  readonly bandHeight: number | null;
+  readonly stageClientHeight: number | null;
+  readonly spatialTopId: string | null;
+  readonly spatialBottomId: string | null;
+}
+
+interface AuxiliaryStageSnapshot {
+  readonly stageScrollTop: number | null;
+  readonly timelineScrollLeft: number | null;
+  readonly stageContent: DomRectProbe | null;
+  readonly bodyRect: DomRectProbe | null;
+  readonly markRect: DomRectProbe | null;
+  readonly bodySpansStage: boolean;
+  readonly markOffscreen: boolean;
+  readonly direction: 'above' | 'below' | null;
+}
+
+interface AuxiliarySidebarPrecondition {
+  readonly missing: readonly string[];
+  readonly blocker: string | null;
+  readonly before: AuxiliaryStageSnapshot;
+  readonly after: AuxiliaryStageSnapshot;
+}
+
+interface AuxiliarySidebarRowProbe {
+  readonly missing: readonly string[];
+  readonly rowRect: DomRectProbe | null;
+  readonly center: { readonly x: number; readonly y: number } | null;
+  readonly visible: boolean;
+  readonly hitOwned: boolean;
+  readonly stageBefore: number | null;
+  readonly stageAfter: number | null;
+  readonly timelineBefore: number | null;
+  readonly timelineAfter: number | null;
+}
+
+interface AuxiliarySidebarClickCapture {
+  readonly commentId: string | null;
+  readonly trusted: boolean | null;
+}
+
+interface AuxiliaryRevealProbe {
+  readonly missing: readonly string[];
+  readonly markRect: DomRectProbe | null;
+  readonly stageContent: DomRectProbe | null;
+  readonly center: { readonly x: number; readonly y: number } | null;
+  readonly usableLeft: number | null;
+  readonly usableRight: number | null;
+  readonly hitId: string | null;
+  readonly hitOwned: boolean;
+  readonly activeIds: readonly string[];
+  readonly cardId: string | null;
+  readonly cardVisible: boolean;
+  readonly bodyPresent: boolean;
+  readonly anchor: CommentMarkAnchor | null;
+  readonly stageScrollTop: number | null;
+  readonly timelineScrollLeft: number | null;
+}
 
 interface NativeControlProbe {
   readonly label: string;
@@ -3844,6 +3911,877 @@ async function assertCommentMarkPointerClick(
       })()`
     );
     await clearCommentMarkClickCapture(browser);
+  }
+}
+async function openCommentsSidebarWithPointer(
+  browser: ChromeSession
+): Promise<void> {
+  const tab = await browser.evaluate<{
+    readonly center: { readonly x: number; readonly y: number } | null;
+    readonly hitOwned: boolean;
+  }>(`(() => {
+    const tab = document.querySelector('.thread-tab');
+    if (!(tab instanceof HTMLElement)) return { center: null, hitOwned: false };
+    const rect = tab.getBoundingClientRect();
+    const center = {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+    const hit = document.elementFromPoint(center.x, center.y);
+    return {
+      center,
+      hitOwned: hit === tab || tab.contains(hit),
+    };
+  })()`);
+  assert.ok(tab.center, 'auxiliary Comments tab has no pointer center');
+  assert.equal(
+    tab.hitOwned,
+    true,
+    'auxiliary Comments tab does not own its hit'
+  );
+  await clickWithRealPointer(browser, tab.center.x, tab.center.y);
+  const opened = await browser.evaluate<boolean>(`(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    const started = Date.now();
+    const tick = () => {
+      const thread = document.querySelector('.thread');
+      const list = document.querySelector('.thread-list');
+      if (
+        thread instanceof HTMLElement &&
+        thread.classList.contains('is-open') &&
+        list instanceof HTMLElement
+      ) {
+        resolve(true);
+      } else if (Date.now() - started > 4000) {
+        resolve(false);
+      } else {
+        setTimeout(tick, 50);
+      }
+    };
+    tick();
+    return promise;
+  })()`);
+  assert.equal(opened, true, 'auxiliary Comments sidebar did not open');
+}
+
+async function waitForAuxiliaryCoincidentMarks(
+  browser: ChromeSession,
+  expectedIds: readonly string[]
+): Promise<AuxiliaryCoincidentMarksProbe> {
+  return browser.evaluate<AuxiliaryCoincidentMarksProbe>(String.raw`(() => {
+    const expectedIds = ${JSON.stringify(expectedIds)};
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const snapshot = () => {
+      const stage = document.querySelector('.stage-wrap');
+      const thread = document.querySelector('.thread');
+      const list = document.querySelector('.thread-list');
+      const missing = [];
+      if (!(stage instanceof HTMLElement)) missing.push('.stage-wrap');
+      if (!(thread instanceof HTMLElement)) missing.push('.thread');
+      if (!(list instanceof HTMLElement)) missing.push('.thread-list');
+      const matched = expectedIds
+        .map((id) => {
+          const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
+            (node) => node.getAttribute('data-comment-id') === id
+          );
+          return mark instanceof HTMLElement ? { id, mark } : null;
+        })
+        .filter((entry) => entry !== null);
+      if (matched.length !== expectedIds.length)
+        missing.push('.otio-comment-mark[data-comment-id]');
+      if (
+        list instanceof HTMLElement &&
+        !matched.every(({ id }) =>
+          [...list.querySelectorAll('[data-comment-id]')].some(
+            (row) => row.getAttribute('data-comment-id') === id
+          )
+        )
+      )
+        missing.push('.thread-list [data-comment-id]');
+      if (thread instanceof HTMLElement && !thread.classList.contains('is-open'))
+        missing.push('.thread.is-open');
+      const marks = matched.map(({ id, mark }) => {
+        const laneValue = mark.style.getPropertyValue('--otio-comment-lane');
+        const lane = Number(laneValue);
+        return {
+          id,
+          rect: rect(mark),
+          commentLane:
+            laneValue.trim().length > 0 && Number.isFinite(lane)
+              ? lane
+              : null,
+        };
+      });
+      const band = matched[0]?.mark.closest('.otio-comment-band');
+      const spatialTop = [...marks].sort(
+        (a, b) =>
+          a.rect.top - b.rect.top ||
+          a.rect.left - b.rect.left ||
+          a.id.localeCompare(b.id)
+      )[0];
+      const spatialBottom = [...marks].sort(
+        (a, b) =>
+          b.rect.bottom - a.rect.bottom ||
+          b.rect.right - a.rect.right ||
+          a.id.localeCompare(b.id)
+      )[0];
+      return {
+        missing,
+        marks,
+        bandHeight:
+          band instanceof HTMLElement ? band.getBoundingClientRect().height : null,
+        stageClientHeight:
+          stage instanceof HTMLElement ? stage.clientHeight : null,
+        spatialTopId: spatialTop?.id ?? null,
+        spatialBottomId: spatialBottom?.id ?? null,
+      };
+    };
+    const { promise, resolve } = Promise.withResolvers();
+    const started = Date.now();
+    const tick = () => {
+      const current = snapshot();
+      if (current.missing.length === 0) {
+        resolve(current);
+      } else if (Date.now() - started > 10000) {
+        resolve(current);
+      } else {
+        setTimeout(tick, 50);
+      }
+    };
+    tick();
+    return promise;
+  })()`);
+}
+
+async function arrangeAuxiliarySidebarActivation(
+  browser: ChromeSession,
+  expectedId: string
+): Promise<AuxiliarySidebarPrecondition> {
+  return browser.evaluate<AuxiliarySidebarPrecondition>(String.raw`(async () => {
+    const empty = {
+      stageScrollTop: null,
+      timelineScrollLeft: null,
+      stageContent: null,
+      bodyRect: null,
+      markRect: null,
+      bodySpansStage: false,
+      markOffscreen: false,
+      direction: null,
+    };
+    const stage = document.querySelector('.stage-wrap');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
+      (node) => node.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}
+    );
+    const body = mark?.closest('.otio-track-body');
+    const missing = [];
+    if (!(stage instanceof HTMLElement)) missing.push('.stage-wrap');
+    if (!(timeline instanceof HTMLElement)) missing.push('.otio-timeline-scroll');
+    if (!(mark instanceof HTMLElement)) missing.push('.otio-comment-mark[data-comment-id]');
+    if (!(body instanceof HTMLElement)) missing.push('.otio-track-body');
+    if (missing.length > 0)
+      return {
+        missing,
+        blocker: 'auxiliary reveal precondition is missing ' + missing.join(', '),
+        before: empty,
+        after: empty,
+      };
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return {
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      };
+    };
+    const stageContent = () => {
+      const value = stage.getBoundingClientRect();
+      const left = value.left + stage.clientLeft;
+      const top = value.top + stage.clientTop;
+      return {
+        left,
+        top,
+        right: left + stage.clientWidth,
+        bottom: top + stage.clientHeight,
+        width: stage.clientWidth,
+        height: stage.clientHeight,
+      };
+    };
+    const snapshot = (direction) => {
+      const content = stageContent();
+      const bodyRect = rect(body);
+      const markRect = rect(mark);
+      return {
+        stageScrollTop: stage.scrollTop,
+        timelineScrollLeft: timeline.scrollLeft,
+        stageContent: content,
+        bodyRect,
+        markRect,
+        bodySpansStage:
+          bodyRect.top < content.top && bodyRect.bottom > content.bottom,
+        markOffscreen:
+          markRect.bottom <= content.top || markRect.top >= content.bottom,
+        direction,
+      };
+    };
+    const before = snapshot(null);
+    const maximum = Math.max(0, stage.scrollHeight - stage.clientHeight);
+    const epsilon = 0.5;
+    const bodySpanMin = Math.max(
+      0,
+      stage.scrollTop + before.bodyRect.top - before.stageContent.top + epsilon
+    );
+    const bodySpanMax = Math.min(
+      maximum,
+      stage.scrollTop + before.bodyRect.bottom - before.stageContent.bottom - epsilon
+    );
+    const aboveMin =
+      stage.scrollTop + before.markRect.bottom - before.stageContent.top + epsilon;
+    const belowMax =
+      stage.scrollTop + before.markRect.top - before.stageContent.bottom - epsilon;
+    const candidates = [
+      {
+        direction: 'above',
+        min: Math.max(bodySpanMin, aboveMin),
+        max: bodySpanMax,
+      },
+      {
+        direction: 'below',
+        min: bodySpanMin,
+        max: Math.min(bodySpanMax, belowMax),
+      },
+    ].filter((candidate) => candidate.min <= candidate.max);
+    const candidate = candidates[0];
+    if (!candidate)
+      return {
+        missing,
+        blocker:
+          'no stage scroll position keeps the whole track body spanning both edges while the chosen mark is offscreen: ' +
+          JSON.stringify(before),
+        before,
+        after: empty,
+      };
+    stage.scrollTop = (candidate.min + candidate.max) / 2;
+    const { promise, resolve } = Promise.withResolvers();
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+    await promise;
+    const after = snapshot(candidate.direction);
+    const blocker =
+      after.bodySpansStage && after.markOffscreen
+        ? null
+        : 'auxiliary reveal precondition did not survive stage scroll: ' +
+          JSON.stringify(after);
+    return { missing, blocker, before, after };
+  })()`);
+}
+
+async function scrollAuxiliarySidebarRowIntoView(
+  browser: ChromeSession,
+  expectedId: string
+): Promise<AuxiliarySidebarRowProbe> {
+  return browser.evaluate<AuxiliarySidebarRowProbe>(String.raw`(async () => {
+    const stage = document.querySelector('.stage-wrap');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    const list = document.querySelector('.thread-list');
+    const row =
+      list instanceof HTMLElement
+        ? [...list.querySelectorAll('[data-comment-id]')].find(
+            (node) =>
+              node.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}
+          )
+        : null;
+    const missing = [];
+    if (!(stage instanceof HTMLElement)) missing.push('.stage-wrap');
+    if (!(timeline instanceof HTMLElement)) missing.push('.otio-timeline-scroll');
+    if (!(list instanceof HTMLElement)) missing.push('.thread-list');
+    if (!(row instanceof HTMLElement)) missing.push('.thread-list [data-comment-id]');
+    if (missing.length > 0)
+      return {
+        missing,
+        rowRect: null,
+        center: null,
+        visible: false,
+        hitOwned: false,
+        stageBefore: null,
+        stageAfter: null,
+        timelineBefore: null,
+        timelineAfter: null,
+      };
+    const stageBefore = stage.scrollTop;
+    const timelineBefore = timeline.scrollLeft;
+    row.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    const { promise, resolve } = Promise.withResolvers();
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+    await promise;
+    const rowRectValue = row.getBoundingClientRect();
+    const rowRect = {
+      left: rowRectValue.left,
+      top: rowRectValue.top,
+      right: rowRectValue.right,
+      bottom: rowRectValue.bottom,
+      width: rowRectValue.width,
+      height: rowRectValue.height,
+    };
+    const listRect = list.getBoundingClientRect();
+    const center = {
+      x: rowRect.left + rowRect.width / 2,
+      y: rowRect.top + rowRect.height / 2,
+    };
+    const hit = document.elementFromPoint(center.x, center.y);
+    const style = getComputedStyle(row);
+    return {
+      missing,
+      rowRect,
+      center,
+      visible:
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        rowRect.width > 0 &&
+        rowRect.height > 0 &&
+        rowRect.left >= listRect.left &&
+        rowRect.right <= listRect.right &&
+        rowRect.top >= listRect.top &&
+        rowRect.bottom <= listRect.bottom,
+      hitOwned: hit === row || row.contains(hit),
+      stageBefore,
+      stageAfter: stage.scrollTop,
+      timelineBefore,
+      timelineAfter: timeline.scrollLeft,
+    };
+  })()`);
+}
+
+async function installAuxiliarySidebarClickCapture(
+  browser: ChromeSession,
+  expectedId: string
+): Promise<boolean> {
+  return browser.evaluate<boolean>(String.raw`(() => {
+    const prior = window.__otioAuxiliarySidebarClick;
+    prior?.controller?.abort();
+    const list = document.querySelector('.thread-list');
+    const row =
+      list instanceof HTMLElement
+        ? [...list.querySelectorAll('[data-comment-id]')].find(
+            (node) =>
+              node.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}
+          )
+        : null;
+    if (!(row instanceof HTMLElement)) return false;
+    const controller = new AbortController();
+    const capture = {
+      commentId: null,
+      trusted: null,
+      controller,
+    };
+    row.addEventListener(
+      'click',
+      (event) => {
+        capture.commentId = row.dataset.commentId ?? null;
+        capture.trusted = event.isTrusted;
+      },
+      { capture: true, once: true, signal: controller.signal }
+    );
+    window.__otioAuxiliarySidebarClick = capture;
+    return true;
+  })()`);
+}
+
+async function readAuxiliarySidebarClickCapture(
+  browser: ChromeSession
+): Promise<AuxiliarySidebarClickCapture> {
+  return browser.evaluate<AuxiliarySidebarClickCapture>(`(() => {
+    const capture = window.__otioAuxiliarySidebarClick;
+    return {
+      commentId: capture?.commentId ?? null,
+      trusted: capture?.trusted ?? null,
+    };
+  })()`);
+}
+
+async function clearAuxiliarySidebarClickCapture(
+  browser: ChromeSession
+): Promise<void> {
+  await browser.evaluate<void>(`(() => {
+    const capture = window.__otioAuxiliarySidebarClick;
+    capture?.controller?.abort();
+    delete window.__otioAuxiliarySidebarClick;
+  })()`);
+}
+
+async function waitForAuxiliaryReveal(
+  browser: ChromeSession,
+  expectedId: string,
+  body: string
+): Promise<AuxiliaryRevealProbe> {
+  return browser.evaluate<AuxiliaryRevealProbe>(String.raw`(() => {
+    const expectedId = ${JSON.stringify(expectedId)};
+    const expectedBody = ${JSON.stringify(body)};
+    const empty = {
+      missing: [],
+      markRect: null,
+      stageContent: null,
+      center: null,
+      usableLeft: null,
+      usableRight: null,
+      hitId: null,
+      hitOwned: false,
+      activeIds: [],
+      cardId: null,
+      cardVisible: false,
+      bodyPresent: false,
+      anchor: null,
+      stageScrollTop: null,
+      timelineScrollLeft: null,
+    };
+    const snapshot = () => {
+      const stage = document.querySelector('.stage-wrap');
+      const timeline = document.querySelector('.otio-timeline-scroll');
+      const mark = [...document.querySelectorAll('.otio-comment-mark')].find(
+        (node) => node.getAttribute('data-comment-id') === expectedId
+      );
+      const label = mark
+        ?.closest('.otio-track-row')
+        ?.querySelector('.otio-track-label');
+      const card = document.querySelector('.popover-card');
+      const missing = [];
+      if (!(stage instanceof HTMLElement)) missing.push('.stage-wrap');
+      if (!(timeline instanceof HTMLElement)) missing.push('.otio-timeline-scroll');
+      if (!(mark instanceof HTMLElement)) missing.push('.otio-comment-mark[data-comment-id]');
+      if (!(label instanceof HTMLElement)) missing.push('.otio-track-label');
+      if (missing.length > 0) return { ...empty, missing };
+      const rect = (node) => {
+        const value = node.getBoundingClientRect();
+        return {
+          left: value.left,
+          top: value.top,
+          right: value.right,
+          bottom: value.bottom,
+          width: value.width,
+          height: value.height,
+        };
+      };
+      const clientBounds = (node) => {
+        const value = rect(node);
+        return {
+          left: value.left + node.clientLeft,
+          top: value.top + node.clientTop,
+          right: value.left + node.clientLeft + node.clientWidth,
+          bottom: value.top + node.clientTop + node.clientHeight,
+          width: node.clientWidth,
+          height: node.clientHeight,
+        };
+      };
+      const markRect = rect(mark);
+      const center = {
+        x: markRect.left + markRect.width / 2,
+        y: markRect.top + markRect.height / 2,
+      };
+      const stageBounds = clientBounds(stage);
+      const timelineBounds = clientBounds(timeline);
+      const labelRect = rect(label);
+      const usableLeft = Math.max(
+        stageBounds.left,
+        timelineBounds.left,
+        labelRect.right
+      );
+      const usableRight = Math.min(
+        stageBounds.right,
+        timelineBounds.right,
+        window.innerWidth
+      );
+      const hit = document.elementFromPoint(center.x, center.y);
+      const hitId =
+        hit?.closest('.otio-comment-mark')?.getAttribute('data-comment-id') ?? null;
+      const fields = [
+        Number(mark.dataset.start),
+        Number(mark.dataset.duration),
+        Number(mark.dataset.rate),
+        Number(mark.dataset.durationRate),
+      ];
+      const anchor =
+        mark.dataset.trackId && fields.every(Number.isFinite)
+          ? {
+              trackId: mark.dataset.trackId,
+              start: fields[0],
+              duration: fields[1],
+              rate: fields[2],
+              durationRate: fields[3],
+            }
+          : null;
+      const cardRect =
+        card instanceof HTMLElement ? card.getBoundingClientRect() : null;
+      const cardStyle =
+        card instanceof HTMLElement ? getComputedStyle(card) : null;
+      return {
+        missing,
+        markRect,
+        stageContent: stageBounds,
+        center,
+        usableLeft,
+        usableRight,
+        hitId,
+        hitOwned: hit === mark || mark.contains(hit),
+        activeIds: [...document.querySelectorAll('.otio-comment-mark.is-active')]
+          .map((node) => node.getAttribute('data-comment-id'))
+          .filter((id) => id !== null),
+        cardId: card?.getAttribute('data-comment-id') ?? null,
+        cardVisible:
+          cardRect !== null &&
+          cardStyle !== null &&
+          cardStyle.display !== 'none' &&
+          cardStyle.visibility !== 'hidden' &&
+          cardRect.width > 0 &&
+          cardRect.height > 0,
+        bodyPresent: card?.textContent?.includes(expectedBody) ?? false,
+        anchor,
+        stageScrollTop: stage.scrollTop,
+        timelineScrollLeft: timeline.scrollLeft,
+      };
+    };
+    const { promise, resolve } = Promise.withResolvers();
+    const started = Date.now();
+    const tick = () => {
+      const current = snapshot();
+      if (
+        current.missing.length === 0 &&
+        current.hitOwned &&
+        current.hitId === expectedId &&
+        current.center !== null &&
+        current.usableLeft !== null &&
+        current.usableRight !== null &&
+        current.center.x >= current.usableLeft &&
+        current.center.x <= current.usableRight &&
+        current.activeIds.length === 1 &&
+        current.activeIds[0] === expectedId &&
+        current.cardId === expectedId &&
+        current.cardVisible &&
+        current.bodyPresent
+      ) {
+        resolve(current);
+      } else if (Date.now() - started > 10000) {
+        resolve(current);
+      } else {
+        setTimeout(tick, 50);
+      }
+    };
+    tick();
+    return promise;
+  })()`);
+}
+async function runAuxiliaryCoincidentCommentRevealScenario(
+  sessionToken: string,
+  plan: Plan
+): Promise<void> {
+  const published = await callMcp('relic_publish', {
+    path: fixtureDir,
+    title: 'OTIO coincident comment reveal proof',
+    cover: false,
+  });
+  const relicId = String(published['relic_id']);
+  const shareUrl = String(published['url'] ?? published['link'] ?? '');
+  assert.ok(relicId, 'auxiliary publish returned no relic_id');
+  assert.ok(shareUrl.includes('#'), 'auxiliary publish returned no keyed link');
+  assert.ok(
+    shareUrl.startsWith(origin),
+    `auxiliary publish URL left loopback: ${shareUrl}`
+  );
+  const browser = await openBrowser(shareUrl, sessionToken);
+  const measurements: Array<Record<string, unknown>> = [];
+  try {
+    assert.equal(
+      await waitReady(browser),
+      'true',
+      'auxiliary coincident-comment relic did not become ready'
+    );
+    await browser.send('Emulation.setDeviceMetricsOverride', {
+      width: 900,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await browser.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: 'light' }],
+    });
+    const pointRange: TimeRange = {
+      start_time: {
+        value: plan.duplicate_frame,
+        rate: plan.timeline_rate,
+      },
+      duration: {
+        value: 0,
+        rate: plan.timeline_rate,
+      },
+    };
+    const bodies = Array.from(
+      { length: 40 },
+      (_, index) => `Coincident duplicate-point reveal ${index + 1}.`
+    );
+    for (const body of bodies) {
+      await selectTrack(
+        browser,
+        plan.duplicate_track_id,
+        'point',
+        plan.duplicate_frame,
+        plan.duplicate_frame
+      );
+      await postComposer(browser, body);
+    }
+    const fresh = await readComments(relicId);
+    const cases = bodies.map((body, index) =>
+      pointerCommentCase(
+        fresh,
+        `coincident-point-${index + 1}`,
+        body,
+        plan.duplicate_track_id,
+        pointRange
+      )
+    );
+    assert.equal(
+      new Set(cases.map((pointerCase) => pointerCase.expectedId)).size,
+      cases.length,
+      'auxiliary fresh readback reused a comment_id across coincident points'
+    );
+    await openCommentsSidebarWithPointer(browser);
+    const coincident = await waitForAuxiliaryCoincidentMarks(
+      browser,
+      cases.map((pointerCase) => pointerCase.expectedId)
+    );
+    assert.deepEqual(
+      coincident.missing,
+      [],
+      `auxiliary coincident marks are missing: ${JSON.stringify(coincident)}`
+    );
+    assert.equal(
+      coincident.marks.length,
+      cases.length,
+      `auxiliary rendered ${coincident.marks.length}, not ${cases.length}, coincident marks`
+    );
+    assert.ok(
+      coincident.bandHeight !== null &&
+        coincident.stageClientHeight !== null &&
+        coincident.bandHeight > coincident.stageClientHeight,
+      `auxiliary comment band does not exceed the stage viewport: ${JSON.stringify(coincident)}`
+    );
+    assert.ok(
+      coincident.spatialTopId && coincident.spatialBottomId,
+      `auxiliary spatial mark selection is incomplete: ${JSON.stringify(coincident)}`
+    );
+    assert.notEqual(
+      coincident.spatialTopId,
+      coincident.spatialBottomId,
+      `auxiliary spatial extremes resolved to one mark: ${JSON.stringify(coincident)}`
+    );
+    const casesById = new Map(
+      cases.map((pointerCase) => [pointerCase.expectedId, pointerCase])
+    );
+    const activations = [
+      ['spatial-top', coincident.spatialTopId],
+      ['spatial-bottom', coincident.spatialBottomId],
+    ] as const;
+    for (const [position, expectedId] of activations) {
+      const pointerCase = casesById.get(expectedId ?? '');
+      assert.ok(
+        pointerCase,
+        `auxiliary ${position} mark is absent from fresh readback: ${expectedId}`
+      );
+      const beforeScreenshot = `auxiliary-coincident-${position}-sidebar-before`;
+      const afterScreenshot = `auxiliary-coincident-${position}-sidebar-after`;
+      const receipt: Record<string, unknown> = {
+        state: 'auxiliary-coincident-sidebar-reveal',
+        position,
+        expectedId: pointerCase.expectedId,
+        expectedAnchor: pointerCase.expectedAnchor,
+        beforeScreenshot,
+        afterScreenshot,
+      };
+      try {
+        await closePopoverWithEscape(browser);
+        await clearPointerHover(browser);
+        const precondition = await arrangeAuxiliarySidebarActivation(
+          browser,
+          pointerCase.expectedId
+        );
+        const row = await scrollAuxiliarySidebarRowIntoView(
+          browser,
+          pointerCase.expectedId
+        );
+        Object.assign(receipt, { precondition, row });
+        await browser.screenshot(beforeScreenshot);
+        const preEvidence = JSON.stringify(receipt);
+        assert.deepEqual(
+          precondition.missing,
+          [],
+          `auxiliary ${position} reveal precondition is missing: ${preEvidence}`
+        );
+        assert.equal(
+          precondition.blocker,
+          null,
+          `auxiliary ${position} reveal could not span the body and hide the mark: ${preEvidence}`
+        );
+        assert.equal(
+          precondition.after.bodySpansStage,
+          true,
+          `auxiliary ${position} whole track body does not span both stage edges: ${preEvidence}`
+        );
+        assert.equal(
+          precondition.after.markOffscreen,
+          true,
+          `auxiliary ${position} mark is still visible before sidebar activation: ${preEvidence}`
+        );
+        assert.deepEqual(
+          row.missing,
+          [],
+          `auxiliary ${position} sidebar row is missing: ${preEvidence}`
+        );
+        assert.equal(
+          row.stageBefore,
+          precondition.after.stageScrollTop,
+          `auxiliary ${position} sidebar row pre-scroll moved the stage: ${preEvidence}`
+        );
+        assert.equal(
+          row.stageAfter,
+          row.stageBefore,
+          `auxiliary ${position} row.scrollIntoView moved the stage: ${preEvidence}`
+        );
+        assert.equal(
+          row.timelineAfter,
+          row.timelineBefore,
+          `auxiliary ${position} row.scrollIntoView moved timeline time: ${preEvidence}`
+        );
+        assert.equal(
+          row.visible,
+          true,
+          `auxiliary ${position} sidebar row is not visible: ${preEvidence}`
+        );
+        assert.equal(
+          row.hitOwned,
+          true,
+          `auxiliary ${position} sidebar row does not own its pointer center: ${preEvidence}`
+        );
+        assert.ok(
+          row.center,
+          `auxiliary ${position} sidebar row has no pointer center: ${preEvidence}`
+        );
+        const captureInstalled = await installAuxiliarySidebarClickCapture(
+          browser,
+          pointerCase.expectedId
+        );
+        assert.equal(
+          captureInstalled,
+          true,
+          `auxiliary ${position} sidebar click listener was not installed: ${preEvidence}`
+        );
+        await clickWithRealPointer(browser, row.center.x, row.center.y);
+        const capture = await readAuxiliarySidebarClickCapture(browser);
+        const after = await waitForAuxiliaryReveal(
+          browser,
+          pointerCase.expectedId,
+          pointerCase.body
+        );
+        Object.assign(receipt, {
+          captureInstalled,
+          trustedClickId: capture.commentId,
+          trusted: capture.trusted,
+          after,
+        });
+        await browser.screenshot(afterScreenshot);
+        measurements.push(receipt);
+        console.log(`OTIO_AUXILIARY_REVEAL ${JSON.stringify(receipt)}`);
+        const evidence = JSON.stringify(receipt);
+        assert.equal(
+          capture.commentId,
+          pointerCase.expectedId,
+          `auxiliary ${position} sidebar click reached the wrong comment: ${evidence}`
+        );
+        assert.equal(
+          capture.trusted,
+          true,
+          `auxiliary ${position} sidebar click was not trusted: ${evidence}`
+        );
+        assert.deepEqual(
+          after.missing,
+          [],
+          `auxiliary ${position} reveal is missing geometry: ${evidence}`
+        );
+        assert.ok(
+          after.center && after.stageContent,
+          `auxiliary ${position} reveal has no mark center or stage content: ${evidence}`
+        );
+        assert.ok(
+          after.center.x >= (after.usableLeft ?? Infinity) &&
+            after.center.x <= (after.usableRight ?? -Infinity) &&
+            after.center.y >= after.stageContent.top &&
+            after.center.y <= after.stageContent.bottom,
+          `auxiliary ${position} exact mark center is outside usable stage/time content: ${evidence}`
+        );
+        assert.equal(
+          after.hitOwned,
+          true,
+          `auxiliary ${position} exact mark center does not own elementFromPoint: ${evidence}`
+        );
+        assert.equal(
+          after.hitId,
+          pointerCase.expectedId,
+          `auxiliary ${position} post-reveal hit belongs to another comment: ${evidence}`
+        );
+        assert.deepEqual(
+          after.activeIds,
+          [pointerCase.expectedId],
+          `auxiliary ${position} active mark id differs from sidebar target: ${evidence}`
+        );
+        assert.equal(
+          after.cardId,
+          pointerCase.expectedId,
+          `auxiliary ${position} card id differs from sidebar target: ${evidence}`
+        );
+        assert.equal(
+          after.cardVisible,
+          true,
+          `auxiliary ${position} sidebar click did not leave a visible card: ${evidence}`
+        );
+        assert.equal(
+          after.bodyPresent,
+          true,
+          `auxiliary ${position} card omitted the fresh readback body: ${evidence}`
+        );
+        assert.deepEqual(
+          after.anchor,
+          pointerCase.expectedAnchor,
+          `auxiliary ${position} reveal changed track or time fields: ${evidence}`
+        );
+      } finally {
+        await closePopoverWithEscape(browser);
+        await clearPointerHover(browser);
+        await clearAuxiliarySidebarClickCapture(browser);
+      }
+    }
+    await writeFile(
+      join(shotDir, 'auxiliary-coincident-comment-reveal-measurements.json'),
+      `${JSON.stringify(
+        {
+          relic_id: relicId,
+          viewport: { width: 900, height: 900 },
+          measurements,
+        },
+        null,
+        2
+      )}\n`
+    );
+  } finally {
+    await browser.close();
   }
 }
 
@@ -6934,6 +7872,7 @@ try {
   } finally {
     await stateBrowser.close();
   }
+  await runAuxiliaryCoincidentCommentRevealScenario(sessionToken, plan);
 
   assert.equal(
     mails.length,
