@@ -90,6 +90,40 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .frame-burn { position: absolute; left: 18px; bottom: 14px; color: #fff; padding: .25rem .45rem; background: #080a0bd9; font-size: 11px; border: 1px solid #ffffff38; }
 .preview-scope { position: absolute; top: 12px; left: 14px; color: #f1f2f0; font: 10px var(--mono); background: #080a0bbf; padding: .25rem .4rem; }
 .preview-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #080a0be8; color: #e6e9e7; text-align: center; padding: 1.5rem; gap: .75rem; }
+.composition:has(> .preview-state:not([hidden])) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(min-content, 1fr);
+  place-items: stretch;
+  height: auto;
+  overflow: visible;
+}
+.composition:has(> .preview-state:not([hidden])) > .preview-art {
+  grid-area: 1 / 1 / 3 / 2;
+  align-self: center;
+  justify-self: center;
+}
+.composition:has(> .preview-state:not([hidden])) > .preview-scope {
+  position: relative;
+  inset: auto;
+  grid-area: 1 / 1;
+  align-self: start;
+  justify-self: start;
+  min-width: 0;
+  max-width: calc(100% - 28px);
+  margin: 12px 14px 0;
+  overflow-wrap: anywhere;
+}
+.composition:has(> .preview-state:not([hidden])) > .preview-state {
+  position: relative;
+  inset: auto;
+  grid-area: 2 / 1;
+  align-self: stretch;
+  justify-self: stretch;
+  min-width: 0;
+  margin-top: .75rem;
+  overflow: visible;
+}
 .preview-state h2 { font: 18px var(--sans); font-weight: 500; margin: 0; }
 .preview-state p { margin: 0; max-width: 34rem; font: 11px/1.7 var(--mono); color: #b9c0be; overflow-wrap: anywhere; }
 .preview-state .primary { max-width: 26rem; font-size: 12px; }
@@ -362,7 +396,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     <div class="monitor-row" id="monitor-row" data-inspector-open="false">
       <section class="composition" id="composition-preview" aria-label="Composition preview">
         <svg class="preview-art" viewBox="0 0 960 540" role="img" aria-label="Primary Grade A with Picture-in-Picture Alpha fixture imagery"><use id="preview-base" href="#frame-primary"/><use id="preview-overlay" href="#frame-overlay"/></svg>
-        <div class="preview-scope">Composition · browser-managed SDR</div>
+        <div class="preview-scope" id="preview-scope">Composition · browser-managed SDR</div>
         <output id="frame-burn" class="frame-burn">01:00:01:12</output>
         <div id="base-preview-note" class="base-preview-note" hidden>unsupported-effect · base media preview</div>
         <div class="preview-state" id="preview-state-panel" hidden role="status" aria-live="polite"></div>
@@ -699,6 +733,9 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     $('#preview-overlay').style.display = state.enabled['video-2-overlay'] && state.frame < 48 ? '' : 'none';
     const autoEffect = state.frame >= 144 && state.frame < 192 && state.enabled['video-2-overlay'];
     const issue = state.preview !== 'supported' ? state.preview : autoEffect && !state.baseMedia ? 'unsupported-effect' : 'supported';
+    $('#preview-scope').textContent = issue === 'unsupported-effect' || state.baseMedia && autoEffect
+      ? 'Incomplete preview · base media without unsupported effects · browser-managed SDR'
+      : 'Composition · browser-managed SDR';
     const panel = $('#preview-state-panel'); panel.replaceChildren(); panel.hidden = issue === 'supported';
     $('#base-preview-note').hidden = !(state.baseMedia && autoEffect);
     if (issue === 'supported') return;
