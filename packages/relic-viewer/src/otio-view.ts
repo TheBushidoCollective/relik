@@ -306,6 +306,8 @@ export async function mountOtioView(
   let timelineSettled = false;
   const collapsed = new Set<string>();
   const rails = new Map<string | null, HTMLElement>();
+  const commentBands = new Map<string | null, HTMLElement>();
+  let repackQueued = false;
   const rows = new Map<string, HTMLElement>();
   const projections = new Map<string, OtioAnchorResolution>();
   const originals = new Map<string, Promise<OtioDocumentV1>>();
@@ -787,6 +789,70 @@ export async function mountOtioView(
     if (range.duration.value > 0)
       mark.style.width = `${(timeToSeconds(range.duration) / total) * 100}%`;
   }
+  function repackCommentBands(): void {
+    const measured: {
+      band: HTMLElement;
+      width: number;
+      entries: {
+        mark: HTMLElement;
+        left: number;
+        right: number;
+        id: string;
+        index: number;
+      }[];
+    }[] = [];
+    // Capture horizontal geometry before changing any lane or track height.
+    for (const band of commentBands.values()) {
+      const width = band.getBoundingClientRect().width;
+      const entries: (typeof measured)[number]['entries'] = [];
+      if (width > 0) {
+        for (const child of band.children) {
+          if (!child.classList.contains('otio-comment-mark')) continue;
+          const mark = child as HTMLElement;
+          const box = mark.getBoundingClientRect();
+          entries.push({
+            mark,
+            left: box.left,
+            right: box.right,
+            id: mark.dataset['commentId'] ?? '',
+            index: Number(mark.dataset['rangeIndex'] ?? 0),
+          });
+        }
+      }
+      measured.push({ band, width, entries });
+    }
+    for (const { band, width, entries } of measured) {
+      if (width <= 0) {
+        band.style.height = '0px';
+        continue;
+      }
+      entries.sort(
+        (a, b) =>
+          a.left - b.left ||
+          b.right - a.right ||
+          a.id.localeCompare(b.id) ||
+          a.index - b.index
+      );
+      const laneEnds: number[] = [];
+      for (const { mark, left, right } of entries) {
+        let lane = 0;
+        while (lane < laneEnds.length && left < laneEnds[lane]! + 8) lane++;
+        laneEnds[lane] = right;
+        mark.style.setProperty('--otio-comment-lane', String(lane));
+      }
+      band.style.height = `${laneEnds.length * 22}px`;
+    }
+  }
+
+  function queueCommentRepack(): void {
+    if (repackQueued || disposed) return;
+    repackQueued = true;
+    queueMicrotask(() => {
+      repackQueued = false;
+      if (!disposed) repackCommentBands();
+    });
+  }
+
   function expandTrack(trackId: string | null): void {
     const lane = lanes.find((value) => value.node.id === trackId);
     if (!lane) return;
@@ -805,9 +871,11 @@ export async function mountOtioView(
         'aria-expanded',
         String(!collapsed.has(control.dataset['disclose'] ?? ''))
       );
+    queueCommentRepack();
   }
   function paintTracks(): void {
     rails.clear();
+    commentBands.clear();
     rows.clear();
     marks.clear();
     trackRows.replaceChildren();
@@ -907,6 +975,9 @@ export async function mountOtioView(
           ? `${lane.code} · ${node?.name} · ${node?.json_pointer}`
           : 'Composition'
       );
+      const body = element('div', 'otio-track-body');
+      const band = element('div', 'otio-comment-band');
+      commentBands.set(id, band);
       rails.set(id, rail);
       if (node) {
         for (const childId of node.children_ids) {
@@ -1036,7 +1107,8 @@ export async function mountOtioView(
         paintModes();
         emitAim(false);
       });
-      row.append(label, rail);
+      body.append(rail, band);
+      row.append(label, body);
       trackRows.append(row);
       if (id) rows.set(id, row);
     };
@@ -1628,25 +1700,8 @@ export async function mountOtioView(
         positionMark(mark, range);
         const projection = projections.get(projectionsKey(anchor));
         if (projection) mark.dataset['projection'] = projection.status;
-        const rail = rails.get(target.track);
-        if (rail) {
-          const duration = timeToSeconds(range.duration);
-          let before: Element | null = null;
-          for (const child of rail.children) {
-            if (!child.classList.contains('otio-comment-mark')) continue;
-            const sibling = child as HTMLElement;
-            if (
-              Number(sibling.dataset['duration']) /
-                Number(sibling.dataset['durationRate']) <
-              duration
-            ) {
-              before = sibling;
-              break;
-            }
-          }
-          if (before) rail.insertBefore(mark, before);
-          else rail.append(mark);
-        }
+        commentBands.get(target.track)?.append(mark);
+        queueCommentRepack();
         painted.push(mark);
       }
       marks.set(id, painted);
@@ -1672,7 +1727,10 @@ export async function mountOtioView(
       if (!target || !first) return;
       expandTrack(target.track);
       const rail = rails.get(target.track);
-      rail?.scrollIntoView({ block: 'nearest', inline: 'center' });
+      rail?.parentElement?.scrollIntoView({
+        block: 'nearest',
+        inline: 'center',
+      });
       if (
         anchor.relic_version === options.revision &&
         anchor.document_sha256 === doc.document_sha256
@@ -1699,6 +1757,8 @@ export async function mountOtioView(
       for (const pieces of marks.values())
         for (const mark of pieces) mark.remove();
       marks.clear();
+      for (const band of commentBands.values()) band.style.height = '0px';
+      queueCommentRepack();
     },
     async project(anchor, content) {
       const projectionKey = projectionsKey(anchor);
@@ -1757,6 +1817,17 @@ export async function mountOtioView(
   const pagehide = (): void => controller.dispose();
   window.addEventListener('pagehide', pagehide);
   cleanup.push(() => window.removeEventListener('pagehide', pagehide));
+  if (typeof ResizeObserver !== 'undefined') {
+    let gridWidth = grid.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const width = grid.getBoundingClientRect().width;
+      if (width === gridWidth) return;
+      gridWidth = width;
+      queueCommentRepack();
+    });
+    observer.observe(grid);
+    cleanup.push(() => observer.disconnect());
+  }
   if (typeof MutationObserver !== 'undefined') {
     const observer = new MutationObserver(() => {
       if (!root.isConnected) controller.dispose();

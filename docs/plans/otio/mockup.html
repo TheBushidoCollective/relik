@@ -187,7 +187,9 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .track-row[data-child="true"] .track-label { padding-left: 1.65rem; background: var(--ground); }
 .track-row[data-child="true"] { min-height: 38px; }
 .track-row[data-child="true"] .track-rail { min-height: 38px; }
-.track-rail { position: relative; min-width: 0; min-height: 48px; cursor: crosshair; touch-action: pan-y; user-select: none; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--rule) calc(10% - 1px), var(--rule) 10%); }
+.track-body { display: flex; flex-direction: column; min-width: 0; }
+.comment-band { position: relative; flex: none; min-width: 0; height: 0; }
+.track-rail { position: relative; flex: 1 0 auto; min-width: 0; min-height: 48px; cursor: crosshair; touch-action: pan-y; user-select: none; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--rule) calc(10% - 1px), var(--rule) 10%); }
 .track-rail:focus-visible { outline-offset: -2px; }
 .track-rail[data-selected="true"] { background-color: color-mix(in srgb, var(--patina) 6%, transparent); }
 .clip { position: absolute; top: 5px; bottom: 6px; border: 1px solid var(--rule-strong); overflow: hidden; min-width: 1px; background: var(--surface); color: var(--ink); }
@@ -212,6 +214,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .editorial-marker { position: absolute; top: 3px; height: 7px; min-width: 5px; padding: 0; border: 0; background: var(--marker-color); z-index: 3; }
 .editorial-marker.point { width: 5px; transform: translateX(-50%) rotate(45deg); }
 .otio-comment-mark { position: absolute; height: 14px; bottom: 2px; z-index: 4; padding: 0; border: 1px solid var(--patina); border-left-width: 2px; border-right-width: 2px; background: color-mix(in srgb, var(--patina) 28%, var(--surface)); min-width: 5px; }
+.comment-band .otio-comment-mark { bottom: calc(4px + var(--comment-lane, 0) * 22px); }
 .otio-comment-mark.point { width: 5px; transform: translateX(-50%); background: var(--ink); border-color: var(--surface); }
 .otio-comment-mark span { position: absolute; left: 0; top: -12px; background: var(--patina); color: var(--surface); padding: 1px 3px; font: 8px var(--mono); }
 .otio-comment-mark.is-active { outline: 2px solid var(--patina); outline-offset: 2px; z-index: 8; }
@@ -524,7 +527,11 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     comments: [
       { id: 'c1', number: 1, version: 2, track: 'video-1', start: 36, end: 48, body: 'Clipping in highlights around actor edge', author: 'publisher', resolved: false, replies: [] },
       { id: 'c2', number: 2, version: 2, track: 'dialogue-dx', start: 180, end: 180, body: 'Check boom mic cable crackle', author: 'publisher', resolved: false, replies: [] },
-      { id: 'c3', number: 3, version: 1, track: 'video-2-duplicate', start: 120, end: 144, body: 'Replace with final 4K composite plate', author: 'publisher', resolved: false, replies: [] }
+      { id: 'c3', number: 3, version: 1, track: 'video-2-duplicate', start: 120, end: 144, body: 'Replace with final 4K composite plate', author: 'publisher', resolved: false, replies: [] },
+      { id: 'c4', number: 4, version: 2, track: 'video-2-duplicate', start: 0, end: 0, body: 'Duplicate Video 2 point, not the other track.', author: 'publisher', resolved: false, replies: [] },
+      { id: 'c5', number: 5, version: 2, track: 'video-2-duplicate', start: 8, end: 16, body: 'Duplicate Video 2 range stays on this id.', author: 'publisher', resolved: false, replies: [] },
+      { id: 'c6', number: 6, version: 2, track: 'video-2-duplicate', start: 9, end: 13, body: 'Duplicate Video 2 edit stays on the same range.', author: 'publisher', resolved: false, replies: [] },
+      { id: 'c7', number: 7, version: 2, track: 'video-2-duplicate', start: 0, end: 240, body: 'Duplicate Video 2 whole-track note, stable id.', author: 'publisher', resolved: false, replies: [] }
     ]
   });
   let state = initial();
@@ -564,6 +571,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     $('#thread').classList.toggle('is-open', open);
     $('#comments-toggle').setAttribute('aria-expanded', String(open));
     $('#comments-edge').setAttribute('aria-expanded', String(open));
+    packMockComments();
   }
   function setTheme(theme) { state.theme = theme; document.documentElement.dataset.theme = theme; $('#theme-select').value = theme; save(); }
   function setMode(mode) {
@@ -653,16 +661,44 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
       }
       rail.addEventListener('pointerdown', startSelection);
       rail.addEventListener('keydown', keyboardSelection);
-      row.append(label, rail); rows.append(row);
+      const body = make('div', 'track-body');
+      const band = make('div', 'comment-band');
+      band.dataset.trackId = track.id;
+      body.append(rail, band);
+      row.append(label, body); rows.append(row);
     });
     renderMarks(); highlightActive(); updatePlayhead();
   }
+  function packMockComments() {
+    const measured = $$('.comment-band').map(band => ({
+      band,
+      width: band.getBoundingClientRect().width,
+      entries: [...band.children].filter(node => node.classList.contains('otio-comment-mark')).map(mark => {
+        const box = mark.getBoundingClientRect();
+        return { mark, left: box.left, right: box.right, id: mark.dataset.commentId || '', index: Number(mark.dataset.rangeIndex || 0) };
+      })
+    }));
+    for (const { band, width, entries } of measured) {
+      if (width <= 0) { band.style.height = '0px'; continue; }
+      entries.sort((a, b) => a.left - b.left || b.right - a.right ||
+        a.id.localeCompare(b.id) || a.index - b.index);
+      const ends = [];
+      for (const { mark, left, right } of entries) {
+        let lane = 0;
+        while (lane < ends.length && left < ends[lane] + 8) lane++;
+        ends[lane] = right;
+        mark.style.setProperty('--comment-lane', String(lane));
+      }
+      band.style.height = (ends.length * 22) + 'px';
+    }
+  }
+
   function renderMarks() {
     $$('.otio-comment-mark').forEach(mark => mark.remove());
     state.comments.forEach(comment => {
       const projection = projectionFor(comment);
       if (!projection.track) return;
-      const rail = $('.track-rail[data-track-id="' + projection.track + '"]'); if (!rail) return;
+      const band = $('.comment-band[data-track-id="' + projection.track + '"]'); if (!band) return;
       const mark = action('', (event) => { event.stopPropagation(); revealComment(comment.id); openPopover(comment.id, mark, true); }, 'otio-comment-mark' + (projection.start === projection.end ? ' point' : '') + (comment.resolved ? ' is-resolved' : ''));
       mark.dataset.commentId = comment.id; mark.dataset.projection = projection.status;
       mark.style.left = (projection.start / TOTAL * 100) + '%'; if (projection.end > projection.start) mark.style.width = ((projection.end - projection.start) / TOTAL * 100) + '%';
@@ -671,8 +707,9 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
       mark.addEventListener('pointerenter', () => { clearTimeout(closeTimer); if (!popoverPinned) openPopover(comment.id, mark, false); });
       mark.addEventListener('pointerleave', scheduleClose);
       mark.addEventListener('focus', () => { if (!popoverPinned) openPopover(comment.id, mark, false); });
-      rail.append(mark);
+      band.append(mark);
     });
+    packMockComments();
   }
   function paintSelection() {
     $$('.otio-selection').forEach(node => node.remove());
@@ -823,6 +860,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
         const point = (projection.start / TOTAL) * rail.clientWidth;
         scroller.scrollLeft = Math.max(0, point - (scroller.clientWidth - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-width'))) / 2);
       }
+      rail?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'center' });
     } else {
       state.selection = null; paintSelection();
       announce('v' + comment.version + ' · ' + projection.status + ' · View original');
@@ -1029,7 +1067,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   $('#reset-mock').addEventListener('click', () => { pause(); closePopover(); closeForegroundComposer(); state = initial(); composeMode = { kind: 'new' }; inspected = { track: 'video-1', clip: 'primary-a' }; tab = 'inspector'; filter = 'all'; $('#comment-body').value = ''; $('#compose-outcome').textContent = ''; setCommentsOpen(false); save(); render(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { closePopover(); closeForegroundComposer(); } if (e.code === 'Space' && !e.target.closest('input, textarea, select, button, [tabindex="0"]')) { e.preventDefault(); play(); } });
   document.addEventListener('pointerdown', e => { if (popover && !e.target.closest('.popover, .otio-comment-mark')) closePopover(); if (foregroundComposer && !e.target.closest('.foreground-popover, #comment-selection')) closeForegroundComposer(); });
-  window.addEventListener('resize', () => { closePopover(); positionForegroundComposer(); }); window.addEventListener('pagehide', pause);
+  window.addEventListener('resize', () => { closePopover(); packMockComments(); positionForegroundComposer(); }); window.addEventListener('pagehide', pause);
   $('.workbench').addEventListener('scroll', positionForegroundComposer);
   function render() {
     setCommentsOpen($('#viewer').dataset.commentsOpen === 'true');
