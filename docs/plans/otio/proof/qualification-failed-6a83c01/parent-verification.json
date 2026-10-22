@@ -1,0 +1,13 @@
+{
+  "schema": "otio-qualification-parent-verification-v1",
+  "verificationPerformedBy": "Main (parent agent)",
+  "workerChecksPerformed": false,
+  "scope": "original packet, copied raw packet, and committed Git blobs",
+  "fileCount": 512,
+  "aggregateByteLength": 48830534,
+  "treeSha256": "dac2b8a6607f05aed03ff1327f3977ffbf7497c8081cf933cfe22784094bfe96",
+  "result": "originalEqualsCopyEqualsCommittedGitBlobs=true",
+  "receipt": "OTIO_FAILED_PACKET_BYTE_EXACT_OK",
+  "observedAt": "2026-10-22T22:25:42.211Z",
+  "recoveryCommit": "2eb35260bf6912f67696f2b427f79263cefe42a0"
+}
