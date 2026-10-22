@@ -580,6 +580,7 @@ async function runObservedCommand(
   environment: Record<string, string | undefined>,
   commandName: string
 ): Promise<CommandResult> {
+  process.env['RELIC_SUITE_OBSERVATION_DIR'] = paths.events;
   const child = Bun.spawn([...command], {
     cwd: ROOT,
     env: environment,
