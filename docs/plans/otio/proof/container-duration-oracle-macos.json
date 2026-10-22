@@ -1,0 +1,43 @@
+{
+  "sourceHead": "6129db4 (970c9db integrated)",
+  "command": "bash scripts/generate-otio-media.sh --check",
+  "platform": "macOS arm64",
+  "ffprobe": "8.1.2",
+  "baseline": {
+    "exit": 0,
+    "messages": [
+      "OTIO media check passed.",
+      "OTIO decoder timing media check passed."
+    ]
+  },
+  "fixture": "packages/relic-format/test/fixtures/otio/decoder-boundary.otiod/media/timing-oracle.json",
+  "fixtureSha256BeforeAndAfter": "9ecdafb3644451021ab67627939a1803458180f14b8f471501f5493fb2dc9dba",
+  "mutations": [
+    {
+      "field": "files.vfr.mp4.packets[25].duration",
+      "before": 1024,
+      "after": 512,
+      "exit": 1
+    },
+    {
+      "field": "files.vfr.mp4.packets[3].pts",
+      "before": 1536,
+      "after": 1537,
+      "exit": 1
+    },
+    {
+      "field": "files.vfr.mp4.frames[2].best_effort_timestamp",
+      "before": 1536,
+      "after": 1537,
+      "exit": 1
+    },
+    {
+      "field": "files.fr30.webm.packets[0].duration",
+      "before": 33,
+      "after": 34,
+      "exit": 1
+    }
+  ],
+  "mutationFailure": "Every readable-JSON mutation failed specifically with 'timing oracle differs ... timing-oracle.json; regenerate with scripts/generate-otio-media.sh', after ordinary media checks passed.",
+  "restoration": "Each mutation was independent, restored from an exact byte copy, cmp verified, followed by exit0 original check. No fixture, consumer assertion, or media bytes changed. Linux6.1.1 proof is separate and not yet claimed."
+}

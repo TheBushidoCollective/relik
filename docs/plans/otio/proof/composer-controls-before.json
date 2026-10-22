@@ -1,0 +1,35 @@
+{
+  "sourceProductHead": "702a5bb",
+  "negativeProofHead": "1909afb (old product plus independent gate 2ff5a1c, syntax correction 9e139aa, failure-only CDP error observer)",
+  "branch": "agent/otio-composer-negative (pushed)",
+  "runtime": "Bun 1.4.3, Node 24.15.0, owned headless-shell 1228 on macOS arm64",
+  "viewerShellHash": "5410c3b8c8afee7b",
+  "command": "mise exec -- bun run --filter '@relic/viewer' build && mise exec -- bun run --cwd packages/relic-mcp build && RELIC_OTIO_PATH_CLIENT=source RELIC_OTIO_CHROME_PATH=<owned headless-shell1228> mise exec node@24.15.0 -- bun packages/relic-mcp/test/otio-path.ts",
+  "failure": {
+    "exit": 1,
+    "viewport": "1440 x 900 light",
+    "assertion": "composer/native-control intersection (assertComposerProbe line2643)",
+    "card": {
+      "left": 384.609375,
+      "top": 310.375,
+      "right": 736.609375,
+      "bottom": 576.8125,
+      "width": 352,
+      "height": 266.4375
+    },
+    "control": {
+      "label": "Timeline frame",
+      "rect": {
+        "left": 326.59375,
+        "top": 449.5625,
+        "right": 1397.21875,
+        "bottom": 465.5625,
+        "width": 1070.625,
+        "height": 16
+      },
+      "intersectionArea": 5632
+    }
+  },
+  "earlierProbeFailure": "The first gate version redeclared resolve inside its evaluated script and failed with SyntaxError before measuring geometry. That run was not counted as negative proof. The isolated 9e139aa correction renamed the second scroll resolver; the next run reached and failed the intended geometry assertion above.",
+  "scope": "The gate independently measured the actual old card and actual native controls. No product placement code or fixture was changed for this negative proof."
+}
