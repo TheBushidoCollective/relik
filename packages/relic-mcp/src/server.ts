@@ -1000,10 +1000,17 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'resolve anchors against the actual content (source context runs for quotes, ' +
     'crops and annotated views for image regions, extracted video frames, and ' +
     'for OTIO the original revision\u2019s source intervals plus a separate ' +
-    'current-revision projection). Historical OTIO comments are fetched by ' +
-    'their service-stamped revision only after it matches the sealed anchor, ' +
-    'and the decrypted original must match the sealed document digest. A ' +
-    'mismatch is unresolvable and carries no artifact-derived context. ' +
+    'current-revision projection). An OTIO source location must identify an ' +
+    'actual Timeline.1 and, when selected, Track.1 within its original exposed ' +
+    'range; ' +
+    'that source validation happens before any current-revision request. An ' +
+    'invalid source location stays a readable unresolvable comment with no ' +
+    'artifact-derived source context or current projection. An explicit Gap or ' +
+    'an exposed timeline tail can be valid even when it has no media or source ' +
+    'span. Historical OTIO comments are fetched by their service-stamped ' +
+    'revision only after it matches the sealed anchor, and the decrypted original ' +
+    'must match the sealed document digest. A mismatch is unresolvable and ' +
+    'carries no artifact-derived context. ' +
     'This defaults to false because content resolution spends a signed download ' +
     'URL mint and download quota. ' +
     COMMENT_MACHINE_BOUNDARY +
