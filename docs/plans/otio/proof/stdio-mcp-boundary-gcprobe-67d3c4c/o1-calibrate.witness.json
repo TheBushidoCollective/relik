@@ -1,0 +1,179 @@
+{
+  "kind": "stdio-mcp-boundary-path-v3",
+  "record_kind": "final",
+  "status": "PASS",
+  "options": {
+    "context": "none",
+    "count": 0,
+    "seed": "otio-mcp-boundary-v1",
+    "corruptNonce": false,
+    "targetStderr": "pipe",
+    "calibrateStderrSink": true,
+    "gcProbe": "off",
+    "out": "/tmp/otio-gcprobe-CbBM6I/o1-calibrate"
+  },
+  "target_stderr_mode": "pipe",
+  "started_at": 1792686507901,
+  "recorded_at": 1792686507945,
+  "scratch": "/tmp/otio-gcprobe-CbBM6I/o1-calibrate",
+  "witness_path": "/tmp/otio-gcprobe-CbBM6I/o1-calibrate/stdio-mcp-boundary-witness-1792686507900-7ec7c7e7-a003-4bc4-b5c1-485d1e1ac5dd.json",
+  "record_path": "/tmp/otio-gcprobe-CbBM6I/o1-calibrate/stdio-mcp-boundary-witness-1792686507900-7ec7c7e7-a003-4bc4-b5c1-485d1e1ac5dd.json",
+  "checkpoint_reason": "invocation:final",
+  "diagnostic_regime": {
+    "checkpoint_io_enabled": true,
+    "checkpoint_io_changes_parent_fd_history": true,
+    "all_green_is_nondiscriminating": true,
+    "note": "Checkpoint I/O occurs before non-target phases and changes the parent FD history. Results from this SHA are a changed diagnostic regime; all-green results are nondiscriminating.",
+    "fd_census": {
+      "method": "fstatSync bigint, fd in [0,256), allocates no descriptors",
+      "census_points": [
+        "bootstrap: fd_census.self_test, after bundle.read",
+        "context: browser.spawn, immediately before spawn()",
+        "context: browser.gc_probe, after browser.connect_pipe and before browser.get_version",
+        "non-target phase failure: fail(), before its checkpoint",
+        "context: browser.retire catch, only when a browser phase fails after browser.gc_probe",
+        "trial failure: before its checkpoint, only when the trial is not pass"
+      ]
+    },
+    "gc_probe": {
+      "mode": "off",
+      "point": "browser.gc_probe phase, after browser.connect_pipe and before browser.get_version",
+      "note": "phase and censuses run in both modes; only Bun.gc(true) differs"
+    }
+  },
+  "bundle": {
+    "path": "/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/dist/relic-mcp.js",
+    "sha256": null,
+    "bytes": null
+  },
+  "runtimes": {
+    "process_versions": {
+      "node": "24.3.0",
+      "bun": "1.3.14",
+      "boringssl": "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1",
+      "openssl": "1.1.0",
+      "llhttp": "9.3.0",
+      "libarchive": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+      "mimalloc": "f15aecb94fc8096008bf87b90c53ed682026914a",
+      "picohttpparser": "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
+      "uwebsockets": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+      "webkit": "5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b",
+      "zig": "04e7f6ac1e009525bc00934f20199c68f04e0a24",
+      "zlib": "12731092979c6d07f42da27da673a9f6c7b13586",
+      "tinycc": "12882eee073cfe5c7621bcfadf679e1372d4537b",
+      "lolhtml": "77127cd2b8545998756e8d64e36ee2313c4bb312",
+      "ares": "3ac47ee46edd8ea40370222f91613fc16c434853",
+      "libdeflate": "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+      "usockets": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+      "lshpack": "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
+      "zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+      "v8": "13.6.233.10-node.18",
+      "uv": "1.48.0",
+      "napi": "10",
+      "icu": "74.2",
+      "unicode": "15.1",
+      "modules": "137"
+    },
+    "bun_version": "1.3.14",
+    "bun_revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+    "node": {
+      "command": "node",
+      "resolved_path": "/Users/jwaldrip/.local/share/mise/installs/node/24.15.0/bin/node",
+      "version": null,
+      "version_exit": null,
+      "version_stderr": null
+    }
+  },
+  "metadata": {
+    "optional": true,
+    "node_status": "skipped_for_calibration_isolation"
+  },
+  "origin": "calibration-no-loopback",
+  "phase_history": [
+    {
+      "name": "stderr_sink_calibration.spawn",
+      "scope": "bootstrap",
+      "trial_ordinal": null,
+      "started_at": 1792686507903,
+      "elapsed_ms": 2,
+      "outcome": "fulfilled"
+    },
+    {
+      "name": "stderr_sink_calibration.exit",
+      "scope": "bootstrap",
+      "trial_ordinal": null,
+      "started_at": 1792686507905,
+      "elapsed_ms": 39,
+      "outcome": "fulfilled",
+      "process": {
+        "pid": 12230,
+        "exit_code": 0,
+        "signal_code": null,
+        "killed": true,
+        "kill_attempted": false,
+        "kill_result": null
+      }
+    },
+    {
+      "name": "stderr_sink_calibration.read",
+      "scope": "bootstrap",
+      "trial_ordinal": null,
+      "started_at": 1792686507944,
+      "elapsed_ms": 1,
+      "outcome": "fulfilled",
+      "process": {
+        "pid": 12230,
+        "exit_code": 0,
+        "signal_code": null,
+        "killed": true,
+        "kill_attempted": false,
+        "kill_result": null
+      }
+    }
+  ],
+  "last_known_phase": {
+    "name": "stderr_sink_calibration.read",
+    "scope": "bootstrap",
+    "trial_ordinal": null,
+    "started_at": 1792686507944,
+    "elapsed_ms": 1,
+    "outcome": "fulfilled",
+    "process": {
+      "pid": 12230,
+      "exit_code": 0,
+      "signal_code": null,
+      "killed": true,
+      "kill_attempted": false,
+      "kill_result": null
+    }
+  },
+  "trials": [],
+  "in_progress_trial": null,
+  "all_loopback_receipts": [],
+  "calibrate_stderr_sink": {
+    "marker": {
+      "text": "stdio-mcp-boundary-stderr-sink-1792686507900-7ec7c7e7-a003-4bc4-b5c1-485d1e1ac5dd\n",
+      "bytes": 82,
+      "sha256": "2dcfe450e9592ff6ad3e5445140ef2539a7ef070393573262fd1787b184177b5",
+      "base64": "c3RkaW8tbWNwLWJvdW5kYXJ5LXN0ZGVyci1zaW5rLTE3OTI2ODY1MDc5MDAtN2VjN2M3ZTctYTAwMy00YmM0LWI1YzEtNDg1ZDFlMWFjNWRkCg=="
+    },
+    "stderr_path": "/tmp/otio-gcprobe-CbBM6I/o1-calibrate/stderr-sink-calibration.stderr",
+    "child_pid": 12230,
+    "exact_match": true,
+    "exit": 0,
+    "signal_code": null,
+    "raw_file": {
+      "bytes": 82,
+      "sha256": "2dcfe450e9592ff6ad3e5445140ef2539a7ef070393573262fd1787b184177b5",
+      "base64": "c3RkaW8tbWNwLWJvdW5kYXJ5LXN0ZGVyci1zaW5rLTE3OTI2ODY1MDc5MDAtN2VjN2M3ZTctYTAwMy00YmM0LWI1YzEtNDg1ZDFlMWFjNWRkCg=="
+    }
+  },
+  "fd_census_self_test": null,
+  "checkpoint_files": [
+    "/tmp/otio-gcprobe-CbBM6I/o1-calibrate/stdio-mcp-boundary-checkpoint-1792686507900-7ec7c7e7-a003-4bc4-b5c1-485d1e1ac5dd-0001.json",
+    "/tmp/otio-gcprobe-CbBM6I/o1-calibrate/stdio-mcp-boundary-checkpoint-1792686507900-7ec7c7e7-a003-4bc4-b5c1-485d1e1ac5dd-0002.json",
+    "/tmp/otio-gcprobe-CbBM6I/o1-calibrate/stdio-mcp-boundary-checkpoint-1792686507900-7ec7c7e7-a003-4bc4-b5c1-485d1e1ac5dd-0003.json",
+    "/tmp/otio-gcprobe-CbBM6I/o1-calibrate/stdio-mcp-boundary-checkpoint-1792686507900-7ec7c7e7-a003-4bc4-b5c1-485d1e1ac5dd-0004.json"
+  ],
+  "finalization_failures": []
+}

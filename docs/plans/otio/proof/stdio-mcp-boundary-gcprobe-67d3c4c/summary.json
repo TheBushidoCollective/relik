@@ -1,0 +1,38 @@
+{
+  "probeSha": "67d3c4c (Slice A 6bab263 integrated; callMcp identical to the reviewed ccd5658 baseline)",
+  "spec": "OtioWedgePlanner Slice A/R: Bun.gc(true) once per trial between browser.connect_pipe and browser.get_version, fstat-only fd census before spawn, after connect, after GC, and on failure",
+  "shared": {
+    "bundleSha256": "f0ca19764ab8b0983758f8f9ad89b25464e3342baf61f2a6f857f59cd598d424 (not rebuilt)",
+    "node": "24.15.0",
+    "chrome": "ms-playwright chromium_headless_shell-1228",
+    "seed": "otio-mcp-boundary-v1",
+    "targetStderr": "pipe",
+    "context": "browser-retired-then-helper, count 16, fresh parent per line, 900 s outer kill"
+  },
+  "oracles": "Bun 1.3.14 (0d9b296a) and 1.4.3 (c6da4a4d): calibrate PASS, none1 PASS, corrupt-nonce FAIL at decrypted-nonce assertion. fd_census.self_test detected the test file open and close in every target run.",
+  "runs": [
+    {
+      "id": "T1-1..3",
+      "bun": "1.3.14",
+      "gc": "post-connect",
+      "result": "each run: trial 1 no_change_bracket_blind (negative control); trial 2 verdict closed_current_browser_fds, across-GC closed fds [11,13], then fixture_failure browser.get_version did not settle within 30000 ms"
+    },
+    {
+      "id": "B1-1",
+      "bun": "1.3.14",
+      "gc": "off",
+      "result": "trials 1-8 pass; trial 9 fixture_failure browser.get_version unsettled; failure census born_missing_at_failure = current Chrome fds [9,11,13]"
+    },
+    {
+      "id": "T2-1..3",
+      "bun": "1.4.3",
+      "gc": "post-connect",
+      "result": "16/16 each, every trial no_change after trial 1"
+    },
+    { "id": "B2-1", "bun": "1.4.3", "gc": "off", "result": "16/16" }
+  ],
+  "ownershipRule": "Every fd closed across a forced GC ([11,13]) is in an earlier trial's Chrome born set ([9,11,13]); no closure of a number no earlier Chrome owned, so outcome D is excluded.",
+  "outcomes": "A (T1) + E (T2) form the discriminating pair; B1 is outcome G (natural in-situ observation of the same victim class). Together with the Linux frames resolving to finalizeStreams:781 and the standalone repro, this ties the boundary wedge and the Linux EBADF to the Bun <= 1.3.14 extra-stdio double close (oven-sh/bun#30443, fixed by #32520 in 1.4.0).",
+  "inference": "[INFERENCE] The original PATH failure (fulfilled EBADF end, exit 0, no HTTP) is the same mechanism with a different victim (the target's stdin). Not directly observed.",
+  "notAuthorized": "No product change follows from this evidence alone. Pinning Bun >= 1.4.0 and rerunning the full PATH and Linux suite is a separate decision."
+}
