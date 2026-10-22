@@ -1,0 +1,39 @@
+{
+  "probeSha": "ccd5658 (e406bde stderr control plus a type-only cast in pipe mode)",
+  "runtime": "Bun 1.3.14 (0d9b296a), Node 24.15.0 via mise, macOS arm64",
+  "order": [
+    "calibrate",
+    "none1",
+    "corrupt",
+    "combined-pipe16",
+    "combined-file16"
+  ],
+  "results": {
+    "calibrate": "PASS: marker child through Bun.file stderr sink, exact bytes verified",
+    "none1": "PASS",
+    "corrupt": "FAIL as required at decrypted-nonce assertion",
+    "combined-pipe16": "trial 11 fixture_failure: in-process fixture.publish (parent loopback fetch) did not settle within 30000 ms; the deadline fired. Finalization then entered node_metadata.collect with child pid 22502; neither its exit nor its 30000 ms deadline was observed; the process idled until the 900 s outer kill. See combined-pipe16.last-checkpoint.json.",
+    "combined-file16": "trial 12 fixture_failure: browser.get_version over the fresh Chrome CDP pipe did not settle within 30000 ms; target never ran, so the stderr-file channel was not exercised on a failing target."
+  },
+  "crossRunPattern": {
+    "runs": [
+      {
+        "sha": "2fec659",
+        "trial": 11,
+        "observed": "target exit 1 after GET comments response 200 constructed; parent captured 0 stdout and 0 stderr bytes"
+      },
+      {
+        "sha": "ccd5658 pipe",
+        "trial": 11,
+        "observed": "parent in-process loopback fetch unsettled; later spawned child's exit and timer unobserved"
+      },
+      {
+        "sha": "ccd5658 file",
+        "trial": 12,
+        "observed": "parent read of fresh Chrome CDP pipe unsettled"
+      }
+    ],
+    "inference": "INFERENCE ONLY: after about 11 browser-retired-then-helper cycles (about 33 child processes), the Bun parent stops completing I/O on newly created pipes/sockets, and in one run also timers. This is consistent with the Linux trace's parent closing current-child pipe descriptors before event-loop registration, but nothing here observes descriptor state or the caller."
+  },
+  "verdict": "The stderr-file treatment is not interpretable (target never reached). The combined context reproduces a parent-side wedge within about 30 s, which is a much smaller witness than the full PATH. No cause claimed; no product, producer or assertion change."
+}
