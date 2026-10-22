@@ -1,10 +1,22 @@
 {
   "baseSha": "97593f9a743b0b22330e2662eabcb19f09cd57c0",
+  "captureStatus": "All eight images in this audit were captured at baseSha before the CSS and mock repair. Their defects remain historical evidence until the integrated native viewer is rebuilt and recaptured.",
   "scope": "Eight actual native path screenshots at 1440x900 and 390x900, light and dark, composer closed and open. Older mock screenshots excluded. No browser DOM measurement, build, test or live write was made for this review.",
   "method": {
     "pixels": "Opened every PNG, inspected original images and 2x crops, counted RGB pixels in control regions, and computed WCAG 2.2 relative-luminance contrast from representative opaque foreground and background pixels. Antialiased edge pixels are excluded from the representative color pairs.",
     "geometry": "Bounding coordinates are approximate screenshot pixel bounds, not DOM getBoundingClientRect values. Observations about visibility and overlap are by eye against the captured pixels.",
-    "cssCrossReference": "packages/relic-viewer/src/styles.css:665-668, 3987-4002, 4021-4034, 4078-4083, 4096-4111"
+    "cssCrossReference": "packages/relic-viewer/src/styles.css:320-324, 665-676, 2484-2502, 3987-4002, 4021-4034, 4078-4083, 4096-4111"
+  },
+  "mockPreviewOnly": {
+    "provenance": "Separate local clickable mock rendered in private HeadlessChrome over 127.0.0.1; these DOM measurements are not evidence about the actual native viewer.",
+    "desktop1440Closed": "Viewport 1440px, document scrollWidth 1425px, stage right 1396.22px equals closed tab left 1396.22px; select right 1382.63px, leaving 13.59px before the tab.",
+    "mobile390Closed": "Viewport 390px, document scrollWidth 375px, stage right 346.22px equals closed tab left 346.22px; select right 336.63px; timeline scrollWidth 760px inside clientWidth 346px.",
+    "mobile320Closed": "Viewport 320px, document scrollWidth 305px, stage right 276.22px equals closed tab left 276.22px; wrapped selection tools keep select right 164.59px inside the stage; timeline scrollWidth 760px inside clientWidth 276px.",
+    "mobile320Foreground": "With Comments closed, selection Comment opens the foreground card at x8..268.22px within stage x0..276.22px and y333.41..656.61px; context, textarea, Post, Cancel and disclosure remain visible at 320x900.",
+    "mobile320Sidebar": "Opening the edge tab closes the foreground card, gives the 305px row to the thread, hides the tab, and keeps collapsed workbench ink and scrollbars out of the thread. Closing restores the stage and select.",
+    "desktop1440Sidebar": "Open thread begins where the stage ends at x1093px; the closed edge tab is absent and the main document does not overflow.",
+    "darkForegroundPost": "Mock computed Post text rgb(23,27,28) on rgb(79,179,166) gives 6.885:1. This is mock DOM and does not replace the native recapture.",
+    "localOnlyInteractions": "A new comment posted from the closed-sidebar foreground card, persisted in local mock state, and appeared when the edge tab opened. Reply, edit and historical projection remained usable after the layout change."
   },
   "captures": [
     {
@@ -137,7 +149,7 @@
         "background": "#4fb3a6",
         "ratio": 2.521
       },
-      "basis": "Opaque colors counted in mobile open composer PNG x42..88,y347..375 and dark desktop composer PNG x415..452,y461..490; CSS .action.primary uses #fff in both themes."
+      "basis": "Opaque colors counted in mobile open composer PNG x42..88,y347..375 and dark desktop composer PNG x415..452,y461..490. The captured Post is .popover-card .popover-action.is-primary, which originally used white on patina at styles.css:320-324. The light 6.277:1 is white on patina; surface on patina is 6.062:1."
     }
   ],
   "defects": [
@@ -151,7 +163,7 @@
       ],
       "severity": "actionable",
       "evidence": "By eye and pixel coordinates: select roughly x1238..1439,y493..517 while closed COMMENTS edge tab covers x1411..1439 across that y range. The final 29 px and native dropdown indicator are concealed. CSS reserves inline-end 1.5rem within the select, but does not reserve space from the overlaid tab.",
-      "appCodeEdited": false
+      "capturePredatesSourceRepair": true
     },
     {
       "id": "dark-post-contrast",
@@ -160,8 +172,8 @@
         "path-390-dark-composer-open.png"
       ],
       "severity": "actionable",
-      "evidence": "Rendered white Post text (#ffffff) on teal #4fb3a6 measures 2.521:1, below 4.5:1 for small text. styles.css:665-668 hardcodes white for .action.primary regardless of theme; the OTIO Play control instead uses dark surface text and measures 6.885:1.",
-      "appCodeEdited": false
+      "evidence": "Rendered white Post text (#ffffff) on teal #4fb3a6 measures 2.521:1, below 4.5:1 for small text. The captured foreground composer uses .popover-card .popover-action.is-primary, which originally hardcoded white in styles.css:320-324; .action.primary is a separate shared primary control. The OTIO Play uses dark surface text and measures 6.885:1.",
+      "capturePredatesSourceRepair": true
     }
   ],
   "unverifiedFromTheseCaptures": [
