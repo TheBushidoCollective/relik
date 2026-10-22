@@ -844,13 +844,16 @@ export async function mountOtioView(
     }
   }
 
+  function flushCommentRepack(): void {
+    if (!repackQueued || disposed) return;
+    repackQueued = false;
+    repackCommentBands();
+  }
+
   function queueCommentRepack(): void {
     if (repackQueued || disposed) return;
     repackQueued = true;
-    queueMicrotask(() => {
-      repackQueued = false;
-      if (!disposed) repackCommentBands();
-    });
+    queueMicrotask(flushCommentRepack);
   }
 
   function expandTrack(trackId: string | null): void {
@@ -1726,6 +1729,7 @@ export async function mountOtioView(
       const first = target?.ranges[0];
       if (!target || !first) return;
       expandTrack(target.track);
+      flushCommentRepack();
       const rail = rails.get(target.track);
       rail?.parentElement?.scrollIntoView({
         block: 'nearest',
