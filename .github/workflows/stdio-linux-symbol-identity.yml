@@ -1,13 +1,13 @@
-name: stdio Linux symbol identity
+name: stdio Linux identity-coupled trace
 
 on:
   push:
     branches:
       - agent/stdio-linux-symbol-identity
 
-# This workflow is deliberately branch-scoped and read-only. It captures an
-# executable identity and symbolizes saved offsets offline; it never runs the
-# full suite, strace, a downloaded Bun profile, or a release/deploy action.
+# This exact-branch diagnostic has no PR trigger, secrets, write permissions,
+# deploy action, or runtime replacement. It records one timing-changing trace
+# experiment and retains evidence even when the suite itself fails.
 permissions:
   actions: read
   contents: read
@@ -16,7 +16,7 @@ jobs:
   collect:
     if: github.repository == 'TheBushidoCollective/relik' && github.ref == 'refs/heads/agent/stdio-linux-symbol-identity'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v4
@@ -26,29 +26,44 @@ jobs:
 
       - uses: jdx/mise-action@v2
         with:
-          # Keep the fresh-main setup convention, then invoke the saved-run
-          # Bun version explicitly below without changing mise.toml.
           install: true
           cache: true
 
-      - name: Require offline symbolization tools and exact Bun runtime
+      - name: Install trace and offline symbolization tools
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v readelf >/dev/null 2>&1 || ! command -v addr2line >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends binutils
-          fi
-          if ! command -v unzip >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends unzip
-          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils ffmpeg strace unzip
           mise install bun@1.3.14
-          mise exec bun@1.3.14 -- bun --version
 
-      # The saved trace artifact may retain a receipt, but the original Bun
-      # executable was not retained. This read-only recovery attempt lets the
-      # helper prove that boundary rather than treating a fresh cache as old.
+      - name: Pin the traced Bun executable and record job environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRACE_ROOT="$RUNNER_TEMP/stdio-linux-identity-trace"
+          PINNED_BUN="$(mise where bun@1.3.14)/bin/bun"
+          PINNED_BUN_DIR="$(dirname "$PINNED_BUN")"
+          test -x "$PINNED_BUN"
+          test "$("$PINNED_BUN" --version)" = '1.3.14'
+          mkdir -p "$TRACE_ROOT"
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          SOURCE_SHA="$SOURCE_SHA" "$PINNED_BUN" -e 'const os = require("node:os"); console.log(JSON.stringify({ runner_os: process.env.RUNNER_OS ?? process.platform, platform: process.platform, architecture: process.arch, kernel_release: os.release(), kernel_version: os.version(), bun_version: Bun.version, bun_revision: Bun.revision, node_compat_version: process.version, source_sha: process.env.SOURCE_SHA }))' > "$TRACE_ROOT/environment.json"
+          printf '%s\n' "$SOURCE_SHA" > "$TRACE_ROOT/source-sha.txt"
+          strace --version > "$TRACE_ROOT/strace-version.txt"
+          {
+            printf 'STDIO_LINUX_TRACE_ROOT=%s\n' "$TRACE_ROOT"
+            printf 'STDIO_LINUX_IDENTITY_ROOT=%s\n' "$TRACE_ROOT/identity"
+            printf 'STDIO_LINUX_TEST_IDENTITY_DIR=%s\n' "$TRACE_ROOT/test-processes"
+            printf 'STDIO_LINUX_TEST_PRELOAD=%s\n' "$GITHUB_WORKSPACE/.github/scripts/stdio-linux-test-identity-preload.ts"
+            printf 'STDIO_LINUX_PINNED_BUN=%s\n' "$PINNED_BUN"
+            printf 'STDIO_LINUX_PINNED_BUN_DIR=%s\n' "$PINNED_BUN_DIR"
+            printf 'STDIO_LINUX_TRACE_FILE=%s\n' "$TRACE_ROOT/bun-run-test.strace"
+          } >> "$GITHUB_ENV"
+          printf '%s\n' "$PINNED_BUN_DIR" >> "$GITHUB_PATH"
+
+      # The historical artifact is read-only evidence. Its mise shim receipt
+      # remains explicitly non-Bun identity evidence.
       - name: Prepare historical provenance directory
         shell: bash
         run: mkdir -p "$RUNNER_TEMP/stdio-linux-historical-provenance"
@@ -73,17 +88,77 @@ jobs:
             '${{ steps.historical-artifact.outcome }}' \
             > "$RUNNER_TEMP/stdio-linux-historical-provenance/download-status.json"
 
-      - name: Collect runtime identity and symbolize saved native frames
+      # This must pass before dependencies or workload execution. The helper
+      # captures its own kernel executable, verifies it against the official
+      # standard asset, validates the paired profile, and proves a discovered
+      # current-runtime dynsym round trip through the standard PT_LOAD.
+      - name: Verify pinned runtime and positive symbolization demo
+        shell: bash
         env:
-          STDIO_LINUX_SYMBOL_IDENTITY_OUT: .artifacts/stdio-linux-symbol-identity
+          STDIO_LINUX_SYMBOL_IDENTITY_MODE: preflight
+          STDIO_LINUX_SYMBOL_IDENTITY_OUT: ${{ runner.temp }}/stdio-linux-identity-trace/identity
           STDIO_LINUX_HISTORICAL_PROVENANCE_DIR: ${{ runner.temp }}/stdio-linux-historical-provenance
-        run: mise exec bun@1.3.14 -- bun .github/scripts/stdio-linux-symbol-identity.ts
+        run: |
+          set -euo pipefail
+          "$STDIO_LINUX_PINNED_BUN" .github/scripts/stdio-linux-symbol-identity.ts
+          test -f "$STDIO_LINUX_IDENTITY_ROOT/preflight.env"
+          cat "$STDIO_LINUX_IDENTITY_ROOT/preflight.env" >> "$GITHUB_ENV"
+          set -a
+          . "$STDIO_LINUX_IDENTITY_ROOT/preflight.env"
+          set +a
+          test "$STDIO_LINUX_VERIFIED_BUN_SHA256" = "$(sha256sum "$STDIO_LINUX_PINNED_BUN" | cut -d ' ' -f 1)"
 
-      - name: Retain identity and offline symbolization receipt
+      - name: Install dependencies with verified Bun
+        run: "$STDIO_LINUX_PINNED_BUN" install --frozen-lockfile
+
+      # The preload has no child process, protocol, stdout, timer, GC, or
+      # keepalive behavior. Its deliberate startup file copy and hashing are
+      # recorded as timing-changing instrumentation before test modules load.
+      - name: Trace full package build and test with process identity preload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$STDIO_LINUX_TEST_IDENTITY_DIR"
+          RUNNER="$STDIO_LINUX_TRACE_ROOT/run-pinned-suite.sh"
+          cat > "$RUNNER" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export PATH="$STDIO_LINUX_PINNED_BUN_DIR:$PATH"
+          "$STDIO_LINUX_PINNED_BUN" run build && "$STDIO_LINUX_PINNED_BUN" test --preload "$STDIO_LINUX_TEST_PRELOAD"
+          EOF
+          chmod +x "$RUNNER"
+          set +e
+          strace -f -ttt -yy -k -o "$STDIO_LINUX_TRACE_FILE" \
+            -e trace=close,close_range,dup,dup2,dup3,fcntl,epoll_create,epoll_create1,epoll_ctl,pidfd_open,pidfd_getfd,execve,execveat,wait4,waitid,clone,clone3,fork,vfork,pipe,pipe2,socket,socketpair,open,openat,openat2,eventfd,eventfd2,timerfd_create,signalfd,signalfd4,accept,accept4 \
+            "$RUNNER"
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$STDIO_LINUX_TRACE_ROOT/test-exit-status.txt"
+          exit "$status"
+
+      - name: Analyze identity-coupled trace offline
+        if: always()
+        shell: bash
+        env:
+          STDIO_LINUX_SYMBOL_IDENTITY_MODE: posttrace
+          STDIO_LINUX_SYMBOL_IDENTITY_OUT: ${{ runner.temp }}/stdio-linux-identity-trace/identity
+        run: |
+          set -euo pipefail
+          if [ ! -f "$STDIO_LINUX_IDENTITY_ROOT/preflight.env" ] || [ ! -f "$STDIO_LINUX_TRACE_FILE" ]; then
+            printf '{"status":"blocked","prerequisite":"preflight identity and raw trace must exist before post-trace analysis"}\n' > "$STDIO_LINUX_TRACE_ROOT/posttrace-precondition.json"
+            exit 0
+          fi
+          set -a
+          . "$STDIO_LINUX_IDENTITY_ROOT/preflight.env"
+          set +a
+          "$STDIO_LINUX_PINNED_BUN" .github/scripts/stdio-linux-symbol-identity.ts
+
+      - name: Retain identity-coupled trace evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stdio-linux-symbol-identity-${{ github.run_id }}
-          path: .artifacts/stdio-linux-symbol-identity
+          name: stdio-linux-identity-trace-${{ github.run_id }}
+          path: ${{ runner.temp }}/stdio-linux-identity-trace
           if-no-files-found: warn
           retention-days: 30
+          compression-level: 6

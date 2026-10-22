@@ -937,8 +937,9 @@ function parseDynamicFunctions(output: string): DynamicFunction[] {
 }
 
 function readDynsymValue(output: string, symbol: string): bigint {
+  const canonicalSymbol = canonicalDynamicName(symbol);
   const candidates = parseDynamicFunctions(output).filter(
-    (candidate) => candidate.name === symbol
+    (candidate) => canonicalDynamicName(candidate.name) === canonicalSymbol
   );
   if (candidates.length !== 1) {
     throw new QualificationError(
@@ -1490,24 +1491,17 @@ async function runPositivePreflight(
       .split(/\r?\n/)
       .map((line) => line.trim())
       .find(Boolean);
-    const sourceMatchesAlias =
-      sourceFunction !== undefined &&
-      profileAliases.some((alias) => {
-        const canonicalAlias = canonicalDynamicName(alias);
-        return (
-          canonicalAlias === sourceFunction ||
-          sourceFunction.includes(canonicalAlias) ||
-          canonicalAlias.includes(sourceFunction)
-        );
-      });
-    if (!isUsableSourceInfo(sourceOutput) || !sourceMatchesAlias) {
+    const matchingProfileAlias = profileAliases.find(
+      (alias) => canonicalDynamicName(alias) === canonicalName
+    );
+    if (!isUsableSourceInfo(sourceOutput) || !matchingProfileAlias) {
       rejected.push({
         runtime_dynsym: candidate.name,
         profile_aliases: profileAliases,
         addr2line_function: sourceFunction ?? null,
         reason: !isUsableSourceInfo(sourceOutput)
           ? 'addr2line did not resolve function and file:line'
-          : 'addr2line function did not match the runtime/profile dynamic alias',
+          : 'profile has no matching dynamic alias at the runtime symbol VMA',
       });
       continue;
     }
@@ -1531,6 +1525,7 @@ async function runPositivePreflight(
       profile: {
         text: serializeSection(profileText),
         matching_dynsym_aliases: profileAliases,
+        matching_dynsym_alias: matchingProfileAlias,
         addr2line_function: sourceFunction,
         addr2line_output: relativeArtifactPath(
           join(preflightDirectory, `${label}.stdout.txt`)
@@ -1712,6 +1707,11 @@ async function symbolizeSavedFrames(
     trace_address_interpretation:
       'strace -k bracket addresses are runtime ELF file offsets. Each is mapped only through the runtime executable PT_LOAD: VMA = p_vaddr + (file_offset - p_offset). That VMA is passed directly to matched-profile addr2line; profile file offsets never translate the trace offset.',
     source_trace: HISTORICAL_RUN,
+    historical_frame_mapping: {
+      status: 'candidate_layout_only_unattributed',
+      dynsym_missing_interpretation:
+        'A missing or inconsistent candidate dynsym label leaves the historical frame mapping unverified. It does not prove the historical Bun ELF differed because the original ELF was not retained and libunwind labels may be stale.',
+    },
     excluded_frames: {
       kind: 'anonymous JSJITCode',
       reason:
@@ -2083,10 +2083,18 @@ async function analyzeTraceExperiment(): Promise<void> {
     const unmatchedBunImages = execveRecords.filter(
       (record) => record.bun_candidate && record.path !== verifiedBunPath
     );
+    const testPidExecveMappings = testProcesses.map((testProcess) => ({
+      pid: testProcess.pid,
+      verified_elf_sha256: testProcess.identity.actual_elf.sha256,
+      execve_records: execveRecords.filter(
+        (record) => record.pid === testProcess.pid
+      ),
+    }));
     traceReceipt.execve_provenance = {
       verified_bun_path: verifiedBunPath,
       records: execveRecords,
       test_pid_execve_matches: [...matchedTestExecvePids],
+      test_pid_execve_mappings: testPidExecveMappings,
       unmatched_bun_images: unmatchedBunImages,
     };
     writeJson(
@@ -2104,9 +2112,10 @@ async function analyzeTraceExperiment(): Promise<void> {
       );
     }
 
-    const byPid = new Map(
-      testProcesses.map((testProcess) => [testProcess.pid, testProcess])
-    );
+    const byPid = new Map<number, VerifiedTestProcess>();
+    for (const testProcess of testProcesses) {
+      byPid.set(testProcess.pid, testProcess);
+    }
     const witnesses = findPrematureCloseWitnesses(trace, testPids);
     const outputDirectory = join(traceDirectory, 'symbols');
     const profilePath = join(OUTPUT_ROOT, 'profile', 'bun-profile.elf');
@@ -2139,11 +2148,15 @@ async function analyzeTraceExperiment(): Promise<void> {
         caller,
       });
     }
-    const attributed = witnessResults.filter(
-      (witness) =>
-        (witness.caller as { status?: string }).status ===
-        'attributed_new_witness'
-    );
+    const attributed = witnessResults.filter((witness) => {
+      const caller = witness.caller;
+      return (
+        caller !== null &&
+        typeof caller === 'object' &&
+        'status' in caller &&
+        caller.status === 'attributed_new_witness'
+      );
+    });
     traceReceipt.test_processes = testProcesses.map((testProcess) => ({
       pid: testProcess.pid,
       identity: testProcess.identity,
