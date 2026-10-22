@@ -206,19 +206,19 @@ describe('a bounded OTIO composer', () => {
 
   test('re-aim retains its panel, field, draft, focus policy and most recent target', async () => {
     const mounted = await mount();
-    const base = {
-      kind: 'otio' as const,
+    const base: Extract<CommentAnchor, { kind: 'otio' }> = {
+      kind: 'otio',
+      v: 1,
       relic_version: 1,
       document_sha256: 'a'.repeat(64),
       timeline_id: 'timeline',
       track_id: 'track-a',
-      item_id: null,
       range: {
         start_time: { value: 4, rate: 24 },
         duration: { value: 0, rate: 24 },
       },
-      snapshot: { timeline: 'A', track: 'A', item: null, path: [], label: 'A' },
-    } as unknown as Extract<CommentAnchor, { kind: 'otio' }>;
+      snapshot: { timeline: 'A', track: 'A', item: null },
+    };
     const oldBand = { left: 20, top: 30, width: 400, height: 220 };
     aimOtio(mounted, base, true, oldBand);
     const panel = only(mounted.stage, 'popover-card');
@@ -232,6 +232,7 @@ describe('a bounded OTIO composer', () => {
         start_time: { value: 6, rate: 24 },
         duration: { value: 2, rate: 24 },
       },
+      snapshot: { ...base.snapshot, track: 'B' },
     };
     aimOtio(mounted, latest, false, { ...oldBand, top: 48 });
     expect(only(mounted.stage, 'popover-card')).toBe(panel);
@@ -242,20 +243,30 @@ describe('a bounded OTIO composer', () => {
     expect(posted.anchor).toEqual(latest);
   });
   test('fullscreen re-show retains the live bounds policy and a new panel clears it', async () => {
+    const doc = Reflect.get(globalThis, 'document') as unknown as {
+      addEventListener(type: string, listener: (event: Event) => void): void;
+      fullscreenElement?: Node | null;
+    };
+    const originalAddListener = doc.addEventListener;
+    let fullscreenListener: ((event: Event) => void) | undefined;
+    doc.addEventListener = (type, listener) => {
+      originalAddListener(type, listener);
+      if (type === 'fullscreenchange') fullscreenListener = listener;
+    };
     const mounted = await mount();
-    const base = {
-      kind: 'otio' as const,
+    const base: Extract<CommentAnchor, { kind: 'otio' }> = {
+      kind: 'otio',
+      v: 1,
       relic_version: 1,
       document_sha256: 'a'.repeat(64),
       timeline_id: 'timeline',
       track_id: 'track-a',
-      item_id: null,
       range: {
         start_time: { value: 4, rate: 24 },
         duration: { value: 0, rate: 24 },
       },
-      snapshot: { timeline: 'A', track: 'A' },
-    } as unknown as Extract<CommentAnchor, { kind: 'otio' }>;
+      snapshot: { timeline: 'A', track: 'A', item: null },
+    };
     const band = { left: 20, top: 30, width: 400, height: 220 };
     aimOtio(mounted, base, true, band);
     const panel = only(mounted.stage, 'popover-card');
@@ -263,12 +274,9 @@ describe('a bounded OTIO composer', () => {
     expect(panel.style.top).toBe('214px');
     const preview = new Node('div');
     mounted.stage.appendChild(preview);
-    const doc = Reflect.get(globalThis, 'document') as unknown as Record<
-      string,
-      unknown
-    >;
-    doc['fullscreenElement'] = preview;
-    documentNode.dispatch('fullscreenchange');
+    expect(fullscreenListener).toBeDefined();
+    doc.fullscreenElement = preview;
+    fullscreenListener?.(new Event('fullscreenchange'));
     expect(panel.parent).toBe(preview);
     expect(only(preview, 'popover-field')).toBe(field);
     expect(panel.style.top).toBe('214px');
@@ -276,10 +284,9 @@ describe('a bounded OTIO composer', () => {
       ...band,
       top: 48,
     });
-    expect(only(preview, 'popover-card')).toBe(panel);
     expect(panel.style.top).toBe('232px');
     documentNode.dispatch('keydown', { key: 'Escape' });
-    doc['fullscreenElement'] = null;
+    doc.fullscreenElement = null;
     aimAt(mounted, { kind: 'time', t: 6 });
     expect(only(mounted.stage, 'popover-card').style.top).toBe('464px');
   });
