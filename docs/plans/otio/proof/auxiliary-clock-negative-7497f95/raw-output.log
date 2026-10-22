@@ -1,0 +1,56 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+PUBLISHED relic_id=2cxz6d33rsgfqhkk7e7fqqetfm
+STAGE published
+STAGE decrypted
+OFFICIAL nested=media/plate_1009.png dissolve=72 audio=48
+STAGE official-archive
+STAGE network-block
+STAGE pixels-offset
+STAGE default-view-negative-head
+STAGE nested-200
+STAGE nested-no-spill
+STAGE dissolve-pixels
+STAGE audio-signal
+STAGE state-gap-black
+STAGE state-effect
+STAGE ui-point-nested
+STAGE ui-range-nested
+STAGE ui-point-duplicate
+STAGE ui-range-duplicate
+STAGE ui-range-dissolve
+STAGE ui-track-duplicate
+STAGE screenshots
+STAGE decoder-worker-csp
+STAGE decoder-timing-windows
+STAGE decoder-webm-quantization
+STAGE decoder-near-zero
+STAGE decoder-edit-diagnostics
+STAGE decoder-no-duration
+STAGE ciphertext
+STAGE mcp-original
+STAGE revision-insert
+STAGE revision-trim
+STAGE revision-ambiguous
+STAGE state-hold
+STAGE state-sequence-black
+STAGE state-codec
+OTIO_AUXILIARY_REVEAL {"state":"auxiliary-coincident-sidebar-reveal","position":"spatial-top","expectedId":"ynJqm1q3emk3nZrH53bfdw","expectedAnchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"beforeScreenshot":"auxiliary-coincident-spatial-top-sidebar-before","afterScreenshot":"auxiliary-coincident-spatial-top-sidebar-after","precondition":{"missing":[],"blocker":null,"before":{"stageScrollTop":0,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":824.953125,"right":760,"bottom":1758.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":882.953125,"right":176.5,"bottom":896.953125,"width":5,"height":14},"bodySpansStage":false,"markOffscreen":false,"direction":null},"after":{"stageScrollTop":851,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":-26.046875,"right":760,"bottom":907.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":31.953125,"right":176.5,"bottom":45.953125,"width":5,"height":14},"bodySpansStage":true,"markOffscreen":true,"direction":"above"}},"row":{"missing":[],"rowRect":{"left":569,"top":743.9375,"right":880,"bottom":900.484375,"width":311,"height":156.546875},"center":{"x":724.5,"y":822.2109375},"visible":true,"hitOwned":true,"stageBefore":851,"stageAfter":851,"timelineBefore":0,"timelineAfter":0},"captureInstalled":true,"trustedClickId":"ynJqm1q3emk3nZrH53bfdw","trusted":true,"after":{"missing":[],"markRect":{"left":-21.5,"top":31.953125,"right":-16.5,"bottom":45.953125,"width":5,"height":14},"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"center":{"x":-19,"y":38.953125},"usableLeft":174,"usableRight":548,"hitId":null,"hitOwned":false,"activeIds":["ynJqm1q3emk3nZrH53bfdw"],"cardId":"ynJqm1q3emk3nZrH53bfdw","cardVisible":true,"bodyPresent":true,"anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"stageScrollTop":851,"timelineScrollLeft":193}}
+SHOTS /Users/jwaldrip/.omp/wt/otio-identity-reveal-negative/otio-path-shots
+5105 |         );
+5106 |         assert.ok(
+5107 |           after.center && after.stageContent,
+5108 |           `auxiliary ${position} reveal has no mark center or stage content: ${evidence}`
+5109 |         );
+5110 |         assert.ok(
+                      ^
+AssertionError: auxiliary spatial-top exact mark center is outside usable stage/time content: {"state":"auxiliary-coincident-sidebar-reveal","position":"spatial-top","expectedId":"ynJqm1q3emk3nZrH53bfdw","expectedAnchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"beforeScreenshot":"auxiliary-coincident-spatial-top-sidebar-before","afterScreenshot":"auxiliary-coincident-spatial-top-sidebar-after","precondition":{"missing":[],"blocker":null,"before":{"stageScrollTop":0,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":824.953125,"right":760,"bottom":1758.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":882.953125,"right":176.5,"bottom":896.953125,"width":5,"height":14},"bodySpansStage":false,"markOffscreen":false,"direction":null},"after":{"stageScrollTop":851,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":-26.046875,"right":760,"bottom":907.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":31.953125,"right":176.5,"bottom":45.953125,"width":5,"height":14},"bodySpansStage":true,"markOffscreen":true,"direction":"above"}},"row":{"missing":[],"rowRect":{"left":569,"top":743.9375,"right":880,"bottom":900.484375,"width":311,"height":156.546875},"center":{"x":724.5,"y":822.2109375},"visible":true,"hitOwned":true,"stageBefore":851,"stageAfter":851,"timelineBefore":0,"timelineAfter":0},"captureInstalled":true,"trustedClickId":"ynJqm1q3emk3nZrH53bfdw","trusted":true,"after":{"missing":[],"markRect":{"left":-21.5,"top":31.953125,"right":-16.5,"bottom":45.953125,"width":5,"height":14},"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"center":{"x":-19,"y":38.953125},"usableLeft":174,"usableRight":548,"hitId":null,"hitOwned":false,"activeIds":["ynJqm1q3emk3nZrH53bfdw"],"cardId":"ynJqm1q3emk3nZrH53bfdw","cardVisible":true,"bodyPresent":true,"anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"stageScrollTop":851,"timelineScrollLeft":193}}
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at runAuxiliaryCoincidentCommentRevealScenario (/Users/jwaldrip/.omp/wt/otio-identity-reveal-negative/packages/relic-mcp/test/otio-path.ts:5110:16)
+
+Bun v1.4.3 (macOS arm64)
