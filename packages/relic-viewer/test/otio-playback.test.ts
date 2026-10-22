@@ -1807,6 +1807,121 @@ describe('otio playback controller', () => {
     audio.dispose();
   });
 
+  test('keeps parsed black sequence policy frames out of withheld diagnostics', async () => {
+    const time = (value: number) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate: 24,
+    });
+    const range = (start: number, duration: number) => ({
+      OTIO_SCHEMA: 'TimeRange.1',
+      start_time: time(start),
+      duration: time(duration),
+    });
+    const document = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_sequence_policy' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_sequence_policy' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track_sequence_lower' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_sequence_lower' } },
+                  source_range: range(0, 1),
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    target_url_base: 'media',
+                    name_prefix: 'lower_',
+                    name_suffix: '.png',
+                    start_frame: 1001,
+                    frame_step: 1,
+                    rate: 24,
+                    frame_zero_padding: 4,
+                    missing_frame_policy: 'error',
+                    available_range: range(0, 1),
+                  },
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track_sequence_policy' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_sequence_policy' } },
+                  source_range: range(-5e-8, 1),
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    target_url_base: 'media',
+                    name_prefix: 'policy_',
+                    name_suffix: '.png',
+                    start_frame: 1001,
+                    frame_step: 1,
+                    rate: 24,
+                    frame_zero_padding: 4,
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const atZero = { value: 0, rate: 24 };
+    const policyFrame = evaluateOtioAt(
+      document,
+      'timeline_sequence_policy',
+      atZero
+    ).video_contributions.find(
+      (contribution) => contribution.node_id === 'clip_sequence_policy'
+    );
+    if (!policyFrame) {
+      throw new Error('black sequence policy contribution is missing');
+    }
+    expect(policyFrame.sample_kind).toBe('black');
+    expect(policyFrame.bundle_path).toBeNull();
+    expect(policyFrame.diagnostics).toEqual([]);
+    expect(
+      compareRationalTimes(policyFrame.source_time, {
+        value: 0,
+        rate: policyFrame.source_time.rate,
+      })
+    ).toBeLessThan(0);
+
+    const output = new SoftCanvas();
+    const resolved: string[] = [];
+    const playback = createOtioPlayback({
+      document,
+      timelineId: 'timeline_sequence_policy',
+      canvas: canvas(output),
+      resolveMedia: async (path) => {
+        resolved.push(path);
+        return `blob:${path}`;
+      },
+    });
+    await playback.seek(atZero);
+
+    expect(resolved).toEqual(['media/lower_1001.png']);
+    expect(output.pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+    expect(
+      playback
+        .getState()
+        .diagnostics.some((issue) => issue.message.includes('was withheld'))
+    ).toBe(false);
+    playback.dispose();
+  });
+
   test('keeps positive fractional audio timing exact', async () => {
     const playback = createOtioPlayback({
       document: sampledMediaDocument({
