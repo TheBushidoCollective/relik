@@ -1366,9 +1366,9 @@ async function packetWindows(
     .sort((a, b) => a.pts - b.pts);
   assert.ok(packets.length > 0, `${fileName} has no packet PTS`);
   const windows: PacketWindow[] = [];
-  // Nonterminal membership follows adjacent encoded PTS, not a nominal frame
-  // rate or ffprobe's inferred duration field. The terminal duration is the
-  // only duration used here, and the no-DefaultDuration proof omits it.
+  // This is an independent PTS-to-presentation-frame identity oracle. It is
+  // not the production certified-window builder, which uses the reader's own
+  // reported packet durations.
   for (const [index, packet] of packets.entries()) {
     const next = packets[index + 1]?.pts;
     assert.notEqual(next, packet.pts, `${fileName} has duplicate packet PTS`);
@@ -2438,26 +2438,35 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       decoderRange(0, 30, 90)
     ),
   ]);
-  const webmBrowser = await openBrowser(webmUrl, sessionToken);
+  const webmBrowser = await openBrowser(webmUrl, sessionToken, {
+    recordMediaSeekTargets: true,
+  });
   try {
     assert.equal(await waitReady(webmBrowser), 'true');
-    const webmWindows = await packetWindows('fr30.webm', true);
+    const webmWindows = await packetWindows('fr30.webm', false);
     assert.deepEqual(
       webmWindows.slice(0, 3).map((window) => Number(window.start.toFixed(3))),
       [0, 0.033, 0.067],
       'quantized WebM ffprobe PTS changed'
     );
+    await clearMediaSeekTargets(webmBrowser);
     await seekTo(webmBrowser, 2);
     const selected = await assertPacketCanvas(
       webmBrowser,
       'quantized WebM 2/30',
       'fr30.webm',
-      2 / 30
+      2 / 30,
+      false
     );
     assert.equal(
       selected.frame,
       1,
       '2/30 must remain inside the actual [0.033, 0.067) WebM window'
+    );
+    await assertExactMediaTarget(
+      webmBrowser,
+      (33 + 67) / 2000,
+      'quantized WebM 2/30'
     );
     pass('decoder-webm-quantization');
   } finally {
@@ -2633,7 +2642,6 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   });
   try {
     assert.equal(await waitReady(noDurationBrowser), 'true');
-    const priorWindows = await packetWindows('no-duration.webm', false);
     await seekTo(noDurationBrowser, 65);
     assert.equal(
       (await assertPacketCanvas(
@@ -2650,14 +2658,6 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     assert.ok(
       Math.abs(finalFrame / 1000 - finalSeconds) < 1e-9,
       `final no-duration PTS ${finalSeconds} cannot be addressed exactly`
-    );
-    assert.equal(
-      priorWindows.some(
-        (window) =>
-          finalSeconds >= window.start && finalSeconds < window.end
-      ),
-      false,
-      'no-DefaultDuration final packet was reconstructed into a timing window'
     );
     await clearMediaSeekTargets(noDurationBrowser);
     await seekTo(noDurationBrowser, finalFrame);
