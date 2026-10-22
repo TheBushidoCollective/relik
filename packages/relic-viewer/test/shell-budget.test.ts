@@ -105,12 +105,8 @@ describe('the app shell', () => {
     expect(built.exitCode).toBe(0);
 
     const shell = Bun.file(`${pkgDir}dist/viewer.js`);
-    const timingWorker = Bun.file(
-      `${pkgDir}dist/otio-video-timing-worker.js`
-    );
-    const distributedLicense = Bun.file(
-      `${pkgDir}dist/mediabunny-license.txt`
-    );
+    const timingWorker = Bun.file(`${pkgDir}dist/otio-video-timing-worker.js`);
+    const distributedLicense = Bun.file(`${pkgDir}dist/mediabunny-license.txt`);
     const installedLicense = Bun.file(
       `${pkgDir}node_modules/mediabunny/LICENSE`
     );
@@ -150,14 +146,16 @@ describe('the app shell', () => {
     };
     new Function('self', 'caches', sw)(workerScope, caches);
     const install = listeners.get('install');
-    if (!install) throw new Error('built service worker has no install listener');
+    if (!install)
+      throw new Error('built service worker has no install listener');
     let installation: Promise<unknown> | undefined;
     install({
       waitUntil(work: Promise<unknown>) {
         installation = work;
       },
     });
-    if (!installation) throw new Error('install handler did not schedule cache work');
+    if (!installation)
+      throw new Error('install handler did not schedule cache work');
     await installation;
 
     expect(requests).toContain('/assets/viewer.js');

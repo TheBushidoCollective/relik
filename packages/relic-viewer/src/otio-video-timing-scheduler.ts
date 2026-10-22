@@ -32,7 +32,10 @@ export interface OtioVideoTimingWorkerLike {
   postMessage(message: unknown): void;
   terminate(): void;
   addEventListener(type: 'message', listener: WorkerMessageListener): void;
-  addEventListener(type: 'error' | 'messageerror', listener: WorkerErrorListener): void;
+  addEventListener(
+    type: 'error' | 'messageerror',
+    listener: WorkerErrorListener
+  ): void;
   removeEventListener(type: 'message', listener: WorkerMessageListener): void;
   removeEventListener(
     type: 'error' | 'messageerror',
@@ -93,10 +96,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function isCertifiedWindows(value: unknown): value is Extract<
-  OtioVideoTiming,
-  { kind: 'windows' }
-> {
+function isCertifiedWindows(
+  value: unknown
+): value is Extract<OtioVideoTiming, { kind: 'windows' }> {
   if (!isObject(value) || value.kind !== 'windows') return false;
   if (
     !(value.starts instanceof Float64Array) ||
@@ -143,7 +145,11 @@ function decodeWorkerTiming(value: unknown): OtioVideoTiming {
 function isResultFor(
   value: unknown,
   id: number
-): value is { readonly type: 'result'; readonly id: number; readonly timing: unknown } {
+): value is {
+  readonly type: 'result';
+  readonly id: number;
+  readonly timing: unknown;
+} {
   return (
     isObject(value) &&
     value.type === 'result' &&

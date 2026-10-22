@@ -22,10 +22,14 @@ class FakeWorker {
 
   addEventListener(
     type: 'message' | 'error' | 'messageerror',
-    listener: ((event: MessageEvent<unknown>) => void) | ((event: Event) => void)
+    listener:
+      | ((event: MessageEvent<unknown>) => void)
+      | ((event: Event) => void)
   ): void {
     if (type === 'message') {
-      this.messageListeners.add(listener as (event: MessageEvent<unknown>) => void);
+      this.messageListeners.add(
+        listener as (event: MessageEvent<unknown>) => void
+      );
     } else if (type === 'error') {
       this.errorListeners.add(listener as (event: Event) => void);
     } else {
@@ -35,7 +39,9 @@ class FakeWorker {
 
   removeEventListener(
     type: 'message' | 'error' | 'messageerror',
-    listener: ((event: MessageEvent<unknown>) => void) | ((event: Event) => void)
+    listener:
+      | ((event: MessageEvent<unknown>) => void)
+      | ((event: Event) => void)
   ): void {
     if (type === 'message') {
       this.messageListeners.delete(
@@ -97,13 +103,20 @@ describe('OTIO timing worker scheduler', () => {
       createWorker: workerFactory(workers),
     });
     const controller = new AbortController();
-    const result = scheduler.read(new Blob(['abort']), 'video/webm', controller.signal);
+    const result = scheduler.read(
+      new Blob(['abort']),
+      'video/webm',
+      controller.signal
+    );
     const worker = workers[0];
     if (!worker) throw new Error('scheduler did not create a worker');
 
     controller.abort();
 
-    await expect(result).resolves.toEqual({ kind: 'unknown', reason: 'cancelled' });
+    await expect(result).resolves.toEqual({
+      kind: 'unknown',
+      reason: 'cancelled',
+    });
     expect(worker.terminated).toBe(1);
   });
 
@@ -126,7 +139,10 @@ describe('OTIO timing worker scheduler', () => {
     queuedController.abort();
     first.result(1, certified());
 
-    await expect(queued).resolves.toEqual({ kind: 'unknown', reason: 'cancelled' });
+    await expect(queued).resolves.toEqual({
+      kind: 'unknown',
+      reason: 'cancelled',
+    });
     await expect(active).resolves.toEqual(certified());
     const second = workers[1];
     if (!second) throw new Error('scheduler did not advance queued work');
@@ -167,7 +183,10 @@ describe('OTIO timing worker scheduler', () => {
     });
     const result = scheduler.read(new Blob(['slow']), 'video/webm');
 
-    await expect(result).resolves.toEqual({ kind: 'unknown', reason: 'timeout' });
+    await expect(result).resolves.toEqual({
+      kind: 'unknown',
+      reason: 'timeout',
+    });
     const worker = workers[0];
     if (!worker) throw new Error('scheduler did not create a worker');
     expect(worker.terminated).toBe(1);

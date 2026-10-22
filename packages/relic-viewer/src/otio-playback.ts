@@ -26,8 +26,8 @@ import {
 } from '@relic/format';
 import { inferMediaMimeType, type OtioMediaResolver } from './otio-media.ts';
 import {
-  readOtioVideoTiming,
   type OtioVideoTiming,
+  readOtioVideoTiming,
 } from './otio-video-timing.ts';
 
 export const OTIO_MAX_IMAGE_EDGE = 4096;
@@ -436,8 +436,7 @@ function decoderLocalSourceTime(
   sourceTime: OtioRationalTime
 ): OtioRationalTime {
   const zero = { value: 0, rate: sourceTime.rate };
-  return sourceTime.value < 0 &&
-    compareRationalTimes(sourceTime, zero) === 0
+  return sourceTime.value < 0 && compareRationalTimes(sourceTime, zero) === 0
     ? zero
     : sourceTime;
 }
@@ -620,18 +619,12 @@ export function createOtioPlayback(
 
   const listeners = new Set<OtioPlaybackListener>();
   const mediaFailures = new Map<string, OtioDiagnostic>();
-  const urlPromises = new Map<
-    OtioBundleEntryName,
-    Promise<string | null>
-  >();
+  const urlPromises = new Map<OtioBundleEntryName, Promise<string | null>>();
   const callbackMediaPromises = new Map<
     OtioBundleEntryName,
     Promise<string | Blob | null>
   >();
-  const blobPromises = new Map<
-    OtioBundleEntryName,
-    Promise<Blob | null>
-  >();
+  const blobPromises = new Map<OtioBundleEntryName, Promise<Blob | null>>();
   const videoTimingPromises = new Map<
     OtioBundleEntryName,
     Promise<OtioVideoTiming | null>

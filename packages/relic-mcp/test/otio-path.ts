@@ -30,7 +30,14 @@
 
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { cp, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -1360,8 +1367,12 @@ async function packetWindows(
       duration: packet.duration,
     }))
     .filter(
-      (packet): packet is { readonly pts: number; readonly duration?: number } =>
-        Number.isSafeInteger(packet.pts)
+      (
+        packet
+      ): packet is {
+        readonly pts: number;
+        readonly duration: number | undefined;
+      } => Number.isSafeInteger(packet.pts)
     )
     .sort((a, b) => a.pts - b.pts);
   assert.ok(packets.length > 0, `${fileName} has no packet PTS`);
@@ -1770,7 +1781,7 @@ async function openBrowser(
         'Runtime.evaluate',
         {
           expression:
-            "Array.isArray(globalThis.__relicOtioMediaSeekTargets) ? globalThis.__relicOtioMediaSeekTargets : []",
+            'Array.isArray(globalThis.__relicOtioMediaSeekTargets) ? globalThis.__relicOtioMediaSeekTargets : []',
           returnByValue: true,
         },
         sessionId
@@ -2078,7 +2089,11 @@ async function dismissComposer(browser: ChromeSession): Promise<void> {
     tick();
     return promise;
   })()`);
-  assert.equal(dismissed, 'closed', `native composer did not close: ${dismissed}`);
+  assert.equal(
+    dismissed,
+    'closed',
+    `native composer did not close: ${dismissed}`
+  );
 }
 
 function asRange(value: unknown): TimeRange | null {
@@ -2250,7 +2265,10 @@ async function publishDecoderCase(
 ): Promise<string> {
   const directory = join(scratch, `decoder-${name}.otiod`);
   await cp(decoderFixtureDir, directory, { recursive: true });
-  await writeFile(join(directory, 'content.otio'), decoderDocument(name, clips));
+  await writeFile(
+    join(directory, 'content.otio'),
+    decoderDocument(name, clips)
+  );
   return publishDecoderDirectory(name, directory);
 }
 
@@ -2279,10 +2297,7 @@ async function assertPacketCanvas(
   const neighbor =
     windows.find((window) => window.frame === expected.frame + 1) ??
     windows.find((window) => window.frame === expected.frame - 1);
-  assert.ok(
-    neighbor,
-    `${label} needs an adjacent ffprobe presentation frame`
-  );
+  assert.ok(neighbor, `${label} needs an adjacent ffprobe presentation frame`);
   const wrong = await extractFrame(
     join(decoderMediaDir, fileName),
     neighbor.frame,
@@ -2319,9 +2334,7 @@ async function assertInvalidTiming(
 }
 
 async function clearMediaSeekTargets(browser: ChromeSession): Promise<void> {
-  await browser.evaluate<void>(
-    `globalThis.__relicOtioMediaSeekTargets = []`
-  );
+  await browser.evaluate<void>(`globalThis.__relicOtioMediaSeekTargets = []`);
 }
 
 async function assertExactMediaTarget(
@@ -2557,22 +2570,26 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     assert.equal(await waitReady(driftBrowser), 'true');
     await seekTo(driftBrowser, 56);
     assert.equal(
-      (await assertPacketCanvas(
-        driftBrowser,
-        'mixed-rate drift-cut first frame',
-        'fr24.mp4',
-        0
-      )).frame,
+      (
+        await assertPacketCanvas(
+          driftBrowser,
+          'mixed-rate drift-cut first frame',
+          'fr24.mp4',
+          0
+        )
+      ).frame,
       0
     );
     await seekTo(driftBrowser, 57);
     assert.equal(
-      (await assertPacketCanvas(
-        driftBrowser,
-        'mixed-rate drift-cut second frame',
-        'fr24.mp4',
-        1 / r2398
-      )).frame,
+      (
+        await assertPacketCanvas(
+          driftBrowser,
+          'mixed-rate drift-cut second frame',
+          'fr24.mp4',
+          1 / r2398
+        )
+      ).frame,
       1
     );
     pass('decoder-near-zero');
@@ -2644,13 +2661,15 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     assert.equal(await waitReady(noDurationBrowser), 'true');
     await seekTo(noDurationBrowser, 65);
     assert.equal(
-      (await assertPacketCanvas(
-        noDurationBrowser,
-        'no-DefaultDuration earlier window',
-        'no-duration.webm',
-        65 / 1000,
-        false
-      )).frame,
+      (
+        await assertPacketCanvas(
+          noDurationBrowser,
+          'no-DefaultDuration earlier window',
+          'no-duration.webm',
+          65 / 1000,
+          false
+        )
+      ).frame,
       1
     );
     const finalSeconds = await finalPacketStartSeconds('no-duration.webm');

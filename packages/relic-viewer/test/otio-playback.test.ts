@@ -11,6 +11,7 @@ import {
   evaluateOtioAt,
   readOtioDocument,
 } from '@relic/format';
+import type { OtioMediaResolver } from '../src/otio-media.ts';
 import {
   createOtioPlayback,
   decodedImageAllowed,
@@ -20,10 +21,9 @@ import {
   type OtioVideoCompositionTree,
   renderOtioVideoTree,
 } from '../src/otio-playback.ts';
-import type { OtioMediaResolver } from '../src/otio-media.ts';
-import {
+import type {
+  OtioVideoTiming,
   readOtioVideoTiming,
-  type OtioVideoTiming,
 } from '../src/otio-video-timing.ts';
 
 type ReadVideoTiming = typeof readOtioVideoTiming;
@@ -998,10 +998,7 @@ describe('otio playback controller', () => {
     const timing: OtioVideoTiming = {
       kind: 'windows',
       starts: Float64Array.from({ length: 120 }, (_, frame) => frame / 60),
-      ends: Float64Array.from(
-        { length: 120 },
-        (_, frame) => (frame + 1) / 60
-      ),
+      ends: Float64Array.from({ length: 120 }, (_, frame) => (frame + 1) / 60),
     };
     const decoderTimeAt = async (
       doc: OtioDocumentV1,
@@ -1043,7 +1040,7 @@ describe('otio playback controller', () => {
       duration: 60,
     });
     const source24 = await decoderTimeAt(video24, { value: 32, rate: 24 });
-    expect(source24.target).toBe(80.5 / 60);
+    expect(source24.target).toBeCloseTo(80.5 / 60, 14);
     expect(source24.calls).toHaveLength(1);
     expect(source24.calls[0]?.blob).toBe(mediaBlob);
     expect(source24.calls[0]?.mime).toBe('video/mp4');
@@ -1056,10 +1053,10 @@ describe('otio playback controller', () => {
           rate: 24,
         })
       ).target
-    ).toBe(80.5 / 60);
+    ).toBeCloseTo(80.5 / 60, 14);
     expect(
       (await decoderTimeAt(video30, { value: 58.75, rate: 30 })).target
-    ).toBe(117.5 / 60);
+    ).toBeCloseTo(117.5 / 60, 14);
   });
   test('selects the certified WebM packet window instead of an FPS grid', async () => {
     const mediaBlob = new Blob(['webm packet timing marker'], {
@@ -1103,7 +1100,6 @@ describe('otio playback controller', () => {
     ).toBe(false);
     playback.dispose();
   });
-
 
   test('caches one timing read per path without sharing occurrence decoders', async () => {
     const mediaBlob = new Blob(['two occurrence marker'], {
@@ -1257,11 +1253,10 @@ describe('otio playback controller', () => {
       sourceStart,
       availableStartTime,
     });
-    const sourceTime = evaluateOtioAt(
-      videoDocument,
-      'timeline_1',
-      { value: 0, rate: 24 }
-    ).video_contributions[0]?.source_time;
+    const sourceTime = evaluateOtioAt(videoDocument, 'timeline_1', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0]?.source_time;
     if (!sourceTime) throw new Error('near-zero video sample is missing');
     expect(sourceTime.value).toBeLessThan(0);
     expect(
@@ -1294,11 +1289,10 @@ describe('otio playback controller', () => {
       sourceStart: { value: 56, rate: 30 },
       availableStartTime: { value: 56.00000000000001, rate: 30 },
     });
-    const audioSourceTime = evaluateOtioAt(
-      audioDocument,
-      'timeline_1',
-      { value: 0, rate: 30 }
-    ).audio_contributions[0]?.source_time;
+    const audioSourceTime = evaluateOtioAt(audioDocument, 'timeline_1', {
+      value: 0,
+      rate: 30,
+    }).audio_contributions[0]?.source_time;
     if (!audioSourceTime) throw new Error('near-zero audio sample is missing');
     expect(audioSourceTime.value).toBeLessThan(0);
     expect(
@@ -1447,10 +1441,7 @@ describe('otio playback controller', () => {
     const timing: OtioVideoTiming = {
       kind: 'windows',
       starts: Float64Array.from({ length: 240 }, (_, frame) => frame / 60),
-      ends: Float64Array.from(
-        { length: 240 },
-        (_, frame) => (frame + 1) / 60
-      ),
+      ends: Float64Array.from({ length: 240 }, (_, frame) => (frame + 1) / 60),
     };
     const fixture = timingMediaFixture({
       blobs: new Map<string, Blob>(

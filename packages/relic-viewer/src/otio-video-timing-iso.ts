@@ -17,7 +17,12 @@ export interface IsoPresentationEdit {
 }
 
 export class IsoEditGateFailure extends Error {
-  constructor(readonly reason: Extract<OtioVideoTimingReason, 'read-budget' | 'unsupported-edit-list'>) {
+  constructor(
+    readonly reason: Extract<
+      OtioVideoTimingReason,
+      'read-budget' | 'unsupported-edit-list'
+    >
+  ) {
     super(reason);
     this.name = 'IsoEditGateFailure';
   }
@@ -126,9 +131,11 @@ async function readBoxHeader(
     size = shortSize;
   }
 
-  if (!safeInteger(size) || size < headerSize) return fail('unsupported-edit-list');
+  if (!safeInteger(size) || size < headerSize)
+    return fail('unsupported-edit-list');
   const end = start + size;
-  if (!safeInteger(end) || end > parentEnd) return fail('unsupported-edit-list');
+  if (!safeInteger(end) || end > parentEnd)
+    return fail('unsupported-edit-list');
 
   return { type, start, end, contentStart: start + headerSize };
 }

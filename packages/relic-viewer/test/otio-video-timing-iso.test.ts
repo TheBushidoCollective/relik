@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  IsoEditGateFailure,
+  type IsoEditGateFailure,
   MAX_ISO_BOX_HEADERS,
-  readSafeIsoPresentationEdit,
   type OtioVideoTimingByteReader,
+  readSafeIsoPresentationEdit,
 } from '../src/otio-video-timing-iso.ts';
 
 type Edit = {
@@ -91,13 +91,15 @@ function elst(entries: readonly Edit[], version: 0 | 1): Uint8Array {
   return box('elst', payload);
 }
 
-function isoMovie(options: {
-  readonly trackId?: number;
-  readonly timescale?: number;
-  readonly edits?: readonly Edit[];
-  readonly version?: 0 | 1;
-  readonly extendedMoov?: boolean;
-} = {}): Uint8Array {
+function isoMovie(
+  options: {
+    readonly trackId?: number;
+    readonly timescale?: number;
+    readonly edits?: readonly Edit[];
+    readonly version?: 0 | 1;
+    readonly extendedMoov?: boolean;
+  } = {}
+): Uint8Array {
   const version = options.version ?? 0;
   const trackId = options.trackId ?? 7;
   const timescale = options.timescale ?? 1000;
@@ -109,7 +111,9 @@ function isoMovie(options: {
     mvhd(timescale, version),
     box('trak', concatenate(trackChildren)),
   ]);
-  return options.extendedMoov ? wideBox('moov', moovPayload) : box('moov', moovPayload);
+  return options.extendedMoov
+    ? wideBox('moov', moovPayload)
+    : box('moov', moovPayload);
 }
 
 function reader(bytes: Uint8Array): OtioVideoTimingByteReader {
@@ -163,9 +167,9 @@ describe('narrow ISO edit safety gate', () => {
   });
 
   test('accepts an absent selected-track edit list', async () => {
-    await expect(readSafeIsoPresentationEdit(reader(isoMovie()), 7)).resolves.toBe(
-      null
-    );
+    await expect(
+      readSafeIsoPresentationEdit(reader(isoMovie()), 7)
+    ).resolves.toBe(null);
   });
 
   test('rejects rate changes, empty-only lists, and ambiguous selected tracks', async () => {
@@ -174,10 +178,12 @@ describe('narrow ISO edit safety gate', () => {
       isoMovie({ edits: [{ duration: 1000, mediaTime: -1 }] }),
       isoMovie({ trackId: 8, edits: [{ duration: 1000, mediaTime: 0 }] }),
     ]) {
-      await expect(readSafeIsoPresentationEdit(reader(bytes), 7)).rejects.toEqual(
-        expect.objectContaining<IsoEditGateFailure>({
+      await expect(
+        readSafeIsoPresentationEdit(reader(bytes), 7)
+      ).rejects.toEqual(
+        expect.objectContaining({
           reason: 'unsupported-edit-list',
-        })
+        } satisfies Pick<IsoEditGateFailure, 'reason'>)
       );
     }
   });
@@ -189,7 +195,9 @@ describe('narrow ISO edit safety gate', () => {
     await expect(
       readSafeIsoPresentationEdit(reader(concatenate(boxes)), 7)
     ).rejects.toEqual(
-      expect.objectContaining<IsoEditGateFailure>({ reason: 'read-budget' })
+      expect.objectContaining({
+        reason: 'read-budget',
+      } satisfies Pick<IsoEditGateFailure, 'reason'>)
     );
   });
 });

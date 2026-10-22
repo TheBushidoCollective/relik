@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import type { OtioVideoTiming } from '../src/otio-video-timing.ts';
 import {
   OTIO_VIDEO_TIMING_LIMITS,
-  scanOtioVideoTimingWithApi,
-  windowsFromOtioVideoPackets,
   type OtioVideoTimingDemuxApi,
   type OtioVideoTimingPacket,
+  scanOtioVideoTimingWithApi,
+  windowsFromOtioVideoPackets,
 } from '../src/otio-video-timing-scanner.ts';
-import type { OtioVideoTiming } from '../src/otio-video-timing.ts';
 
 type FakeDemuxOptions = {
   readonly format?: unknown;
@@ -28,7 +28,10 @@ type FakeDemuxState = {
     | undefined;
   inputDisposals: number;
   packetOptions: unknown[];
-  readonly listeners: Record<'warn' | 'error', Set<(args: unknown[]) => unknown>>;
+  readonly listeners: Record<
+    'warn' | 'error',
+    Set<(args: unknown[]) => unknown>
+  >;
 };
 
 function fakeDemux(options: FakeDemuxOptions = {}): {
@@ -58,7 +61,10 @@ function fakeDemux(options: FakeDemuxOptions = {}): {
 
     async getFormat(): Promise<unknown> {
       if (options.read) {
-        await this.options.source.options.read(options.read[0], options.read[1]);
+        await this.options.source.options.read(
+          options.read[0],
+          options.read[1]
+        );
       }
       return options.format ?? webm;
     }
@@ -98,9 +104,11 @@ function fakeDemux(options: FakeDemuxOptions = {}): {
   }
 
   const api: OtioVideoTimingDemuxApi = {
-    CustomSource: FakeSource as unknown as OtioVideoTimingDemuxApi['CustomSource'],
+    CustomSource:
+      FakeSource as unknown as OtioVideoTimingDemuxApi['CustomSource'],
     Input: FakeInput as unknown as OtioVideoTimingDemuxApi['Input'],
-    EncodedPacketSink: FakeSink as unknown as OtioVideoTimingDemuxApi['EncodedPacketSink'],
+    EncodedPacketSink:
+      FakeSink as unknown as OtioVideoTimingDemuxApi['EncodedPacketSink'],
     Logging: {
       on(event, listener) {
         state.listeners[event].add(listener);
@@ -118,7 +126,8 @@ function windows(timing: OtioVideoTiming): {
   readonly starts: number[];
   readonly ends: number[];
 } {
-  if (timing.kind !== 'windows') throw new Error(`expected windows: ${timing.reason}`);
+  if (timing.kind !== 'windows')
+    throw new Error(`expected windows: ${timing.reason}`);
   return { starts: [...timing.starts], ends: [...timing.ends] };
 }
 
@@ -229,7 +238,9 @@ describe('OTIO metadata scanner budgets and cleanup', () => {
   });
 
   test('fails explicit scanner caps and warnings without returning partial windows', async () => {
-    const tooLarge = { size: OTIO_VIDEO_TIMING_LIMITS.maxFileBytes + 1 } as Blob;
+    const tooLarge = {
+      size: OTIO_VIDEO_TIMING_LIMITS.maxFileBytes + 1,
+    } as Blob;
     await expect(
       scanOtioVideoTimingWithApi(tooLarge, 'video/webm', fakeDemux().api)
     ).resolves.toEqual({ kind: 'unknown', reason: 'file-too-large' });
