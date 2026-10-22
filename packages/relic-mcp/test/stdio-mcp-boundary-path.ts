@@ -10,7 +10,8 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -28,7 +29,7 @@ import { loadPublishState } from '../src/state.ts';
 
 const MAX_TRIALS = 16;
 const TARGET_DEADLINE_MS = 45_000;
-const HELPER_DEADLINE_MS = 15_000;
+const NON_TARGET_PHASE_TIMEOUT_MS = 30_000;
 const NODE_COMMAND = 'node';
 const bundlePath = fileURLToPath(
   new URL('../dist/relic-mcp.js', import.meta.url)
@@ -40,7 +41,7 @@ type ContextName =
   | 'browser-retired'
   | 'browser-retired-then-helper';
 
-type TrialStatus = 'pass' | 'fixture_failure' | 'discrepancy';
+type TrialStatus = 'running' | 'pass' | 'fixture_failure' | 'discrepancy';
 
 interface Options {
   readonly context: ContextName;
@@ -57,6 +58,54 @@ interface ErrorReceipt {
   errno?: string | number | undefined;
   syscall?: string | undefined;
   stack?: string | undefined;
+}
+type NonTargetPhaseScope = 'bootstrap' | 'fixture' | 'context' | 'finalization';
+
+type NonTargetPhaseOutcome = 'entered' | 'fulfilled' | 'rejected' | 'timed_out';
+
+interface ContextProcessReceipt {
+  pid: number | null;
+  exit_code: number | null;
+  signal_code: string | number | null;
+  killed: boolean | null;
+  kill_attempted: boolean;
+  kill_result: boolean | null;
+  kill_error?: ErrorReceipt | undefined;
+}
+
+interface KillableContextProcess {
+  readonly pid: number;
+  readonly exitCode?: number | null;
+  readonly signalCode?: string | number | null;
+  readonly killed?: boolean;
+  kill(signal?: string | number): unknown;
+}
+
+interface ContextProcessOwnership {
+  readonly receipt: ContextProcessReceipt;
+  readonly child: WeakRef<KillableContextProcess>;
+}
+
+interface NonTargetPhaseReceipt {
+  readonly name: string;
+  readonly scope: NonTargetPhaseScope;
+  readonly trial_ordinal: number | null;
+  readonly started_at: number;
+  elapsed_ms: number | null;
+  outcome: NonTargetPhaseOutcome;
+  process?: ContextProcessReceipt | undefined;
+  classification?: 'probe_fixture' | 'probe_fixture_unclassified' | undefined;
+  error?: ErrorReceipt | undefined;
+}
+
+class NonTargetPhaseTimeoutError extends Error {
+  readonly phase: string;
+
+  constructor(phase: string, timeoutMs: number) {
+    super(`${phase} did not settle within ${timeoutMs}ms`);
+    this.name = 'NonTargetPhaseTimeoutError';
+    this.phase = phase;
+  }
 }
 
 interface BytesReceipt {
@@ -145,6 +194,7 @@ interface Fixture extends FixtureRuntime {
 interface HelperReceipt {
   readonly nonce: string;
   readonly input: BytesReceipt;
+  readonly process: ContextProcessReceipt;
   stdout?: TextReceipt | undefined;
   stderr?: TextReceipt | undefined;
   exit?: number | undefined;
@@ -161,6 +211,7 @@ interface BrowserCloseReceipt {
 interface BrowserReceipt {
   readonly requested_path: string | null;
   executable: string | null;
+  readonly process: ContextProcessReceipt;
   product: string | null;
   browser_close_request: 'fulfilled' | 'rejected' | 'not_attempted';
   browser_close_error?: ErrorReceipt | undefined;
@@ -475,21 +526,37 @@ function persistMcpLoopbackReceipts(
 }
 
 const options = parseOptions(process.argv.slice(2));
+const runId = `${Date.now()}-${randomUUID()}`;
 const scratch =
   options.out === undefined
-    ? await mkdtemp(join(tmpdir(), 'relic-stdio-mcp-boundary-'))
+    ? mkdtempSync(join(tmpdir(), 'relic-stdio-mcp-boundary-'))
     : resolve(options.out);
-if (options.out !== undefined) await mkdir(scratch, { recursive: true });
-const witnessPath = join(
-  scratch,
-  `stdio-mcp-boundary-witness-${Date.now()}-${randomUUID()}.json`
-);
+if (options.out !== undefined) mkdirSync(scratch, { recursive: true });
+const witnessPath = join(scratch, `stdio-mcp-boundary-witness-${runId}.json`);
+const checkpointStem = join(scratch, `stdio-mcp-boundary-checkpoint-${runId}`);
 const previousPublishState = process.env['RELIC_PUBLISH_STATE'];
 const helperChildren = new Set<ChildProcess>();
 const mcpLoopbackReceipts: McpLoopbackReceipt[] = [];
+const trials: TrialReceipt[] = [];
+const phaseHistory: NonTargetPhaseReceipt[] = [];
+const checkpointPaths: string[] = [];
+const finalizationFailures: NonTargetPhaseReceipt[] = [];
+const startedAt = Date.now();
 let activeFixture: FixtureRuntime | undefined;
 let activeMcpCall: ActiveMcpCall | undefined;
 let nextMcpCallOrdinal = 0;
+let nextCheckpointOrdinal = 0;
+let inProgressTrial: TrialReceipt | undefined;
+let lastKnownPhase: NonTargetPhaseReceipt | undefined;
+let bundle: BytesReceipt | null = null;
+let fatal: ErrorReceipt | undefined;
+let runtimeNode: NodeMetadata = {
+  command: NODE_COMMAND,
+  resolved_path: Bun.which(NODE_COMMAND) ?? NODE_COMMAND,
+  version: null,
+  version_exit: null,
+  version_stderr: null,
+};
 
 const service = Bun.serve({
   hostname: '127.0.0.1',
@@ -499,6 +566,300 @@ const service = Bun.serve({
   },
 });
 const origin = `http://127.0.0.1:${service.port}`;
+function emptyContextProcessReceipt(): ContextProcessReceipt {
+  return {
+    pid: null,
+    exit_code: null,
+    signal_code: null,
+    killed: null,
+    kill_attempted: false,
+    kill_result: null,
+  };
+}
+
+function refreshContextProcess(owner: ContextProcessOwnership): void {
+  const child = owner.child.deref();
+  if (child === undefined) return;
+
+  owner.receipt.pid = child.pid;
+  owner.receipt.exit_code =
+    typeof child.exitCode === 'number' ? child.exitCode : null;
+  owner.receipt.signal_code =
+    typeof child.signalCode === 'string' || typeof child.signalCode === 'number'
+      ? child.signalCode
+      : null;
+  owner.receipt.killed =
+    typeof child.killed === 'boolean' ? child.killed : null;
+}
+
+function snapshotContextProcess(
+  owner: ContextProcessOwnership | undefined
+): ContextProcessReceipt | undefined {
+  if (owner === undefined) return undefined;
+  refreshContextProcess(owner);
+  return {
+    ...owner.receipt,
+    ...(owner.receipt.kill_error === undefined
+      ? {}
+      : { kill_error: owner.receipt.kill_error }),
+  };
+}
+
+function ownContextProcess(
+  child: unknown,
+  receipt: ContextProcessReceipt
+): ContextProcessOwnership {
+  const process = child as KillableContextProcess;
+  const owner: ContextProcessOwnership = {
+    receipt,
+    child: new WeakRef(process),
+  };
+  refreshContextProcess(owner);
+  return owner;
+}
+
+function killOwnedContextProcess(
+  owner: ContextProcessOwnership | undefined
+): void {
+  if (owner === undefined) return;
+  const child = owner.child.deref();
+  refreshContextProcess(owner);
+  owner.receipt.kill_attempted = true;
+  if (child === undefined) return;
+
+  try {
+    const result = child.kill('SIGKILL');
+    owner.receipt.kill_result = typeof result === 'boolean' ? result : null;
+  } catch (error) {
+    owner.receipt.kill_error = errorReceipt(error);
+  }
+  refreshContextProcess(owner);
+}
+
+function phaseClassification(
+  scope: NonTargetPhaseScope
+): NonTargetPhaseReceipt['classification'] {
+  return scope === 'context' || scope === 'fixture'
+    ? 'probe_fixture'
+    : 'probe_fixture_unclassified';
+}
+
+function witnessStatus(): 'RUNNING' | 'PASS' | 'FAIL' {
+  if (
+    fatal !== undefined ||
+    finalizationFailures.length > 0 ||
+    phaseHistory.some((phase) => phase.outcome === 'timed_out') ||
+    trials.some((trial) => trial.status !== 'pass') ||
+    (inProgressTrial !== undefined &&
+      inProgressTrial.status !== 'running' &&
+      inProgressTrial.status !== 'pass')
+  ) {
+    return 'FAIL';
+  }
+  if (lastKnownPhase?.outcome === 'entered') return 'RUNNING';
+  if (
+    inProgressTrial === undefined &&
+    trials.length === options.count &&
+    trials.every((trial) => trial.status === 'pass')
+  ) {
+    return 'PASS';
+  }
+  return 'RUNNING';
+}
+
+function witnessPayload(
+  recordKind: 'checkpoint' | 'final',
+  reason: string,
+  recordPath: string,
+  sequence: number | null
+): Record<string, unknown> {
+  return {
+    kind: 'stdio-mcp-boundary-path-v2',
+    record_kind: recordKind,
+    status: witnessStatus(),
+    options,
+    started_at: startedAt,
+    recorded_at: Date.now(),
+    scratch,
+    witness_path: witnessPath,
+    record_path: recordPath,
+    ...(sequence === null ? {} : { checkpoint_sequence: sequence }),
+    checkpoint_reason: reason,
+    diagnostic_regime: {
+      checkpoint_io_enabled: true,
+      checkpoint_io_changes_parent_fd_history: true,
+      all_green_is_nondiscriminating: true,
+      note: 'Checkpoint I/O occurs before non-target phases and changes the parent FD history. Results from this SHA are a changed diagnostic regime; all-green results are nondiscriminating.',
+    },
+    bundle: {
+      path: bundlePath,
+      sha256: bundle?.sha256 ?? null,
+      bytes: bundle?.bytes ?? null,
+    },
+    runtimes: {
+      process_versions: process.versions,
+      bun_version: Bun.version,
+      node: runtimeNode,
+    },
+    metadata: {
+      optional: true,
+      node_status:
+        runtimeNode.version === null
+          ? recordKind === 'final'
+            ? 'unavailable'
+            : 'pending'
+          : 'captured',
+    },
+    origin,
+    phase_history: phaseHistory,
+    last_known_phase: lastKnownPhase ?? null,
+    trials,
+    in_progress_trial: inProgressTrial ?? null,
+    all_loopback_receipts: mcpLoopbackReceipts,
+    checkpoint_files: [
+      ...checkpointPaths,
+      ...(recordKind === 'checkpoint' ? [recordPath] : []),
+    ],
+    finalization_failures: finalizationFailures,
+    ...(fatal === undefined ? {} : { fatal }),
+  };
+}
+
+function writeImmutableWitness(
+  path: string,
+  payload: Record<string, unknown>
+): void {
+  const temporaryPath = `${path}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+  });
+  renameSync(temporaryPath, path);
+}
+
+function persistCheckpoint(reason: string): string {
+  const sequence = ++nextCheckpointOrdinal;
+  const path = `${checkpointStem}-${String(sequence).padStart(4, '0')}.json`;
+  writeImmutableWitness(
+    path,
+    witnessPayload('checkpoint', reason, path, sequence)
+  );
+  checkpointPaths.push(path);
+  return path;
+}
+
+function persistFinalWitness(reason: string): void {
+  writeImmutableWitness(
+    witnessPath,
+    witnessPayload('final', reason, witnessPath, null)
+  );
+}
+
+function isNonTargetPhaseTimeout(
+  error: unknown
+): error is NonTargetPhaseTimeoutError {
+  return error instanceof NonTargetPhaseTimeoutError;
+}
+
+function runNonTargetPhase<T>(
+  scope: NonTargetPhaseScope,
+  name: string,
+  operation: () => T | Promise<T>,
+  owner?: ContextProcessOwnership
+): Promise<T> {
+  const phase: NonTargetPhaseReceipt = {
+    name,
+    scope,
+    trial_ordinal: inProgressTrial?.ordinal ?? null,
+    started_at: Date.now(),
+    elapsed_ms: null,
+    outcome: 'entered',
+    ...(owner === undefined ? {} : { process: snapshotContextProcess(owner) }),
+  };
+  phaseHistory.push(phase);
+  lastKnownPhase = phase;
+  persistCheckpoint(`${scope}:${name}:entered`);
+
+  const {
+    promise,
+    resolve: resolvePhase,
+    reject: rejectPhase,
+  } = Promise.withResolvers<T>();
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  function complete(value: T): void {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    phase.elapsed_ms = Date.now() - phase.started_at;
+    phase.outcome = 'fulfilled';
+    phase.process = snapshotContextProcess(owner);
+    resolvePhase(value);
+  }
+
+  function fail(
+    error: unknown,
+    outcome: Extract<NonTargetPhaseOutcome, 'rejected' | 'timed_out'>
+  ): void {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    phase.elapsed_ms = Date.now() - phase.started_at;
+    phase.outcome = outcome;
+    phase.error = errorReceipt(error);
+    phase.classification = phaseClassification(scope);
+    phase.process = snapshotContextProcess(owner);
+    if (scope === 'finalization') finalizationFailures.push(phase);
+    persistCheckpoint(`${scope}:${name}:${outcome}:before_cleanup`);
+    if (outcome === 'timed_out') {
+      killOwnedContextProcess(owner);
+      phase.process = snapshotContextProcess(owner);
+      persistCheckpoint(`${scope}:${name}:${outcome}:after_sigkill`);
+    }
+    rejectPhase(error);
+  }
+
+  timer = setTimeout(() => {
+    fail(
+      new NonTargetPhaseTimeoutError(name, NON_TARGET_PHASE_TIMEOUT_MS),
+      'timed_out'
+    );
+  }, NON_TARGET_PHASE_TIMEOUT_MS);
+
+  try {
+    const result = operation();
+    Promise.resolve(result).then(
+      (value) => complete(value as T),
+      (error) => fail(error, 'rejected')
+    );
+  } catch (error) {
+    fail(error, 'rejected');
+  }
+  return promise;
+}
+function persistDirectPhaseFailure(
+  scope: NonTargetPhaseScope,
+  name: string,
+  error: unknown,
+  owner?: ContextProcessOwnership
+): void {
+  const phase: NonTargetPhaseReceipt = {
+    name,
+    scope,
+    trial_ordinal: inProgressTrial?.ordinal ?? null,
+    started_at: Date.now(),
+    elapsed_ms: 0,
+    outcome: 'rejected',
+    classification: phaseClassification(scope),
+    ...(owner === undefined ? {} : { process: snapshotContextProcess(owner) }),
+    error: errorReceipt(error),
+  };
+  phaseHistory.push(phase);
+  lastKnownPhase = phase;
+  if (scope === 'finalization') finalizationFailures.push(phase);
+  persistCheckpoint(`${scope}:${name}:rejected:before_cleanup`);
+}
 
 async function handleLoopback(request: Request): Promise<Response> {
   const fixture = activeFixture;
@@ -573,9 +934,14 @@ async function createFixture(ordinal: number): Promise<Fixture> {
     stored_comment_count: null,
     mails_after_seed: null,
   };
+  if (inProgressTrial !== undefined) inProgressTrial.fixture = receipt;
 
-  await mkdir(directory, { recursive: true });
-  await writeFile(fixturePath, `# stdio MCP boundary trial ${ordinal}\n`);
+  await runNonTargetPhase('fixture', 'fixture.mkdir', () =>
+    mkdir(directory, { recursive: true })
+  );
+  await runNonTargetPhase('fixture', 'fixture.write_source', () =>
+    writeFile(fixturePath, `# stdio MCP boundary trial ${ordinal}\n`)
+  );
 
   const store = new MemoryStore();
   const mails: CapturedMail[] = [];
@@ -608,40 +974,61 @@ async function createFixture(ordinal: number): Promise<Fixture> {
       detail: 'stdio MCP boundary probe',
     }),
   };
-  const published = await publish({ path: fixturePath, cover: false }, deps);
+  const published = await runNonTargetPhase('fixture', 'fixture.publish', () =>
+    publish({ path: fixturePath, cover: false }, deps)
+  );
   receipt.relic_id = published.relic_id;
   receipt.publish_version = published.version;
 
-  const localState = await loadPublishState(published.relic_id);
+  const localState = await runNonTargetPhase(
+    'fixture',
+    'fixture.load_publish_state',
+    () => loadPublishState(published.relic_id)
+  );
   receipt.local_state_present = localState !== undefined;
   assert.ok(
     localState,
     'publish did not leave local state for the fresh child'
   );
 
-  const commentKey = await deriveCommentKey(decodeKey(localState.key));
-  const ciphertext = await encryptComment(commentKey, {
-    body: storedNonce,
-    display_name: 'stdio MCP boundary probe',
-    anchor: null,
-  });
+  const commentKey = await runNonTargetPhase(
+    'fixture',
+    'fixture.derive_comment_key',
+    () => deriveCommentKey(decodeKey(localState.key))
+  );
+  const ciphertext = await runNonTargetPhase(
+    'fixture',
+    'fixture.encrypt_comment',
+    () =>
+      encryptComment(commentKey, {
+        body: storedNonce,
+        display_name: 'stdio MCP boundary probe',
+        anchor: null,
+      })
+  );
   receipt.ciphertext = bytesReceipt(Buffer.from(ciphertext, 'utf8'));
 
-  const commentResponse = await fetch(
-    `${origin}/api/relics/${published.relic_id}/comments`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        publish_token: localState.publish_token,
-        ciphertext,
-      }),
-    }
+  const commentResponse = await runNonTargetPhase(
+    'fixture',
+    'fixture.seed_comment',
+    () =>
+      fetch(`${origin}/api/relics/${published.relic_id}/comments`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          publish_token: localState.publish_token,
+          ciphertext,
+        }),
+      })
   );
   receipt.seed_status = commentResponse.status;
   assert.equal(commentResponse.status, 201, 'encrypted comment seed failed');
 
-  const storedRows = await store.listComments(published.relic_id);
+  const storedRows = await runNonTargetPhase(
+    'fixture',
+    'fixture.list_comments',
+    () => store.listComments(published.relic_id)
+  );
   receipt.stored_comment_count = storedRows.length;
   assert.equal(storedRows.length, 1, 'comment seed did not create one row');
   assert.equal(storedRows[0]?.ciphertext, ciphertext);
@@ -669,14 +1056,15 @@ async function runChild(
     readonly cwd?: string;
     readonly env?: NodeJS.ProcessEnv;
     readonly input?: Uint8Array;
-    readonly timeoutMs: number;
-  }
+  },
+  processReceipt: ContextProcessReceipt
 ): Promise<{ stdout: Buffer; stderr: string; exit: number }> {
   const child = spawn(cmd[0] ?? '', cmd.slice(1), {
     cwd: runOptions.cwd,
     env: runOptions.env ?? process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  const owner = ownContextProcess(child, processReceipt);
   helperChildren.add(child);
   const chunks: Buffer[] = [];
   const errors: Buffer[] = [];
@@ -692,23 +1080,25 @@ async function runChild(
     resolve: resolveExit,
     reject: rejectExit,
   } = Promise.withResolvers<number>();
-  const timer = setTimeout(() => {
-    child.kill('SIGKILL');
-    rejectExit(
-      new Error(`timed out after ${runOptions.timeoutMs}ms: ${cmd.join(' ')}`)
-    );
-  }, runOptions.timeoutMs);
   child.once('error', (error) => {
-    clearTimeout(timer);
+    refreshContextProcess(owner);
     rejectExit(error);
   });
-  child.once('close', (code) => {
-    clearTimeout(timer);
+  child.once('close', (code, signal) => {
+    processReceipt.exit_code = code;
+    processReceipt.signal_code = signal;
+    refreshContextProcess(owner);
     resolveExit(code ?? 1);
   });
-  const exit = await close.finally(() => {
-    helperChildren.delete(child);
-  });
+  const exit = await runNonTargetPhase(
+    'context',
+    'helper.close',
+    () =>
+      close.finally(() => {
+        helperChildren.delete(child);
+      }),
+    owner
+  );
   return {
     stdout: Buffer.concat(chunks),
     stderr: Buffer.concat(errors).toString('utf8'),
@@ -730,20 +1120,28 @@ process.stdin.once('end', () => {
 process.stdin.resume();
 `;
 
-async function runHelper(ordinal: number): Promise<HelperReceipt> {
+async function runHelper(
+  ordinal: number,
+  onReceipt?: (receipt: HelperReceipt) => void
+): Promise<HelperReceipt> {
   const nonce = nonceFor(options.seed, ordinal, 'helper');
   const input = Buffer.from(`${JSON.stringify({ nonce })}\n`, 'utf8');
   const receipt: HelperReceipt = {
     nonce,
     input: bytesReceipt(input),
+    process: emptyContextProcessReceipt(),
     validated: false,
   };
-  const result = await runChild([NODE_COMMAND, '-e', HELPER_SOURCE], {
-    cwd: scratch,
-    env: process.env,
-    input,
-    timeoutMs: HELPER_DEADLINE_MS,
-  });
+  onReceipt?.(receipt);
+  const result = await runChild(
+    [NODE_COMMAND, '-e', HELPER_SOURCE],
+    {
+      cwd: scratch,
+      env: process.env,
+      input,
+    },
+    receipt.process
+  );
   receipt.stdout = textReceipt(result.stdout.toString('utf8'));
   receipt.stderr = textReceipt(result.stderr);
   receipt.exit = result.exit;
@@ -763,13 +1161,65 @@ async function runHelper(ordinal: number): Promise<HelperReceipt> {
   return receipt;
 }
 
+async function cleanupBrowserAfterFailure(
+  receipt: BrowserReceipt,
+  profile: string | undefined,
+  owner: ContextProcessOwnership | undefined,
+  cdp: CdpConnection | undefined
+): Promise<void> {
+  if (owner !== undefined) {
+    try {
+      const killed = await runNonTargetPhase(
+        'context',
+        'browser.cleanup.sigkill',
+        () => {
+          killOwnedContextProcess(owner);
+          return owner.receipt.kill_result;
+        },
+        owner
+      );
+      receipt.sigkill_sent = killed;
+    } catch {
+      // The phase checkpoint already records this cleanup failure.
+    }
+  }
+  if (cdp !== undefined) {
+    try {
+      await runNonTargetPhase(
+        'context',
+        'browser.cleanup.cdp_dispose',
+        () => cdp.dispose(),
+        owner
+      );
+      receipt.cdp_disposed = true;
+    } catch {
+      // The phase checkpoint already records this cleanup failure.
+    }
+  }
+  if (profile !== undefined) {
+    try {
+      await runNonTargetPhase(
+        'context',
+        'browser.cleanup.profile_remove',
+        () => rm(profile, { recursive: true, force: true }),
+        owner
+      );
+      receipt.profile_removed = true;
+    } catch {
+      // The phase checkpoint already records this cleanup failure.
+    }
+  }
+}
+
 async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
   const requested = process.env['RELIC_OTIO_CHROME_PATH'];
   assert.ok(
     requested && requested !== 'none' && requested !== 'disabled',
     'RELIC_OTIO_CHROME_PATH must name the owned headless Chrome executable'
   );
-  const found = await discoverChrome(requested);
+  const found = await runNonTargetPhase('context', 'browser.discover', () =>
+    discoverChrome(requested)
+  );
   assert.equal(
     found.kind,
     'found',
@@ -778,35 +1228,59 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
   if (found.kind !== 'found') throw new Error('unreachable');
 
   receipt.executable = found.path;
-  const profile = await mkdtemp(join(tmpdir(), 'relic-stdio-mcp-chrome-'));
-  let child: ChildProcess | undefined;
+  let profile: string | undefined;
+  let owner: ContextProcessOwnership | undefined;
   let cdp: CdpConnection | undefined;
-  let weakChild: WeakRef<ChildProcess> | undefined;
 
   try {
-    child = spawn(found.path, chromeArgs(found.path, profile), {
-      stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
-    });
-    weakChild = new WeakRef(child);
+    const createdProfile = await runNonTargetPhase(
+      'context',
+      'browser.profile_create',
+      () => mkdtemp(join(tmpdir(), 'relic-stdio-mcp-chrome-'))
+    );
+    profile = createdProfile;
+    const child = await runNonTargetPhase('context', 'browser.spawn', () =>
+      spawn(found.path, chromeArgs(found.path, createdProfile), {
+        stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
+      })
+    );
+    const browserOwner = ownContextProcess(child, receipt.process);
+    owner = browserOwner;
     child.once('close', (code, signal) => {
       receipt.close.observed = true;
       receipt.close.code = code;
       receipt.close.signal = signal;
       receipt.close.observed_at = Date.now();
+      receipt.process.exit_code = code;
+      receipt.process.signal_code = signal;
+      refreshContextProcess(browserOwner);
     });
 
     const toChrome = child.stdio[3];
     const fromChrome = child.stdio[4];
-    assert.ok(
-      toChrome instanceof Writable,
-      'Chrome fd 3 did not expose a writable debug pipe'
+    const connection = await runNonTargetPhase(
+      'context',
+      'browser.connect_pipe',
+      () => {
+        assert.ok(
+          toChrome instanceof Writable,
+          'Chrome fd 3 did not expose a writable debug pipe'
+        );
+        assert.ok(
+          fromChrome instanceof Readable,
+          'Chrome fd 4 did not expose a readable debug pipe'
+        );
+        return connectPipe(toChrome, fromChrome);
+      },
+      browserOwner
     );
-    assert.ok(
-      fromChrome instanceof Readable,
-      'Chrome fd 4 did not expose a readable debug pipe'
+    cdp = connection;
+    const version = await runNonTargetPhase(
+      'context',
+      'browser.get_version',
+      () => connection.send('Browser.getVersion'),
+      browserOwner
     );
-    cdp = connectPipe(toChrome, fromChrome);
-    const version = await cdp.send('Browser.getVersion');
     const product = String(version['product'] ?? '');
     receipt.product = product;
     assert.ok(
@@ -815,52 +1289,61 @@ async function retireBrowser(receipt: BrowserReceipt): Promise<() => void> {
     );
 
     try {
-      await cdp.send('Browser.close');
+      await runNonTargetPhase(
+        'context',
+        'browser.close_send',
+        () => connection.send('Browser.close'),
+        browserOwner
+      );
       receipt.browser_close_request = 'fulfilled';
     } catch (error) {
       receipt.browser_close_request = 'rejected';
       receipt.browser_close_error = errorReceipt(error);
+      if (isNonTargetPhaseTimeout(error)) throw error;
     }
 
-    receipt.sigkill_sent = child.kill('SIGKILL');
-    cdp.dispose();
+    const killed = await runNonTargetPhase(
+      'context',
+      'browser.sigkill',
+      () => {
+        killOwnedContextProcess(browserOwner);
+        return browserOwner.receipt.kill_result;
+      },
+      browserOwner
+    );
+    receipt.sigkill_sent = killed;
+    await runNonTargetPhase(
+      'context',
+      'browser.cdp_dispose',
+      () => connection.dispose(),
+      browserOwner
+    );
     receipt.cdp_disposed = true;
-    await rm(profile, { recursive: true, force: true });
+    await runNonTargetPhase(
+      'context',
+      'browser.profile_remove',
+      () => rm(createdProfile, { recursive: true, force: true }),
+      browserOwner
+    );
     receipt.profile_removed = true;
 
     return () => {
-      const remaining = weakChild?.deref();
-      if (remaining === undefined) return;
-      try {
-        receipt.reap_sigkill_sent = remaining.kill('SIGKILL');
-      } catch (error) {
-        receipt.reap_error = errorReceipt(error);
+      killOwnedContextProcess(browserOwner);
+      receipt.reap_sigkill_sent = browserOwner.receipt.kill_result;
+      if (browserOwner.receipt.kill_error !== undefined) {
+        receipt.reap_error = browserOwner.receipt.kill_error;
       }
     };
   } catch (error) {
-    if (child !== undefined) {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // The original fixture failure remains the meaningful error.
-      }
-    }
-    if (cdp !== undefined) {
-      try {
-        cdp.dispose();
-        receipt.cdp_disposed = true;
-      } catch {
-        // The original fixture failure remains the meaningful error.
-      }
-    }
-    await rm(profile, { recursive: true, force: true }).catch(() => {});
-    receipt.profile_removed = true;
+    persistDirectPhaseFailure('context', 'browser.retire', error, owner);
+    await cleanupBrowserAfterFailure(receipt, profile, owner, cdp);
     throw error;
   }
 }
 
 async function establishContext(ordinal: number): Promise<ContextArm> {
   const receipt: ContextReceipt = { name: options.context, status: 'ready' };
+  if (inProgressTrial !== undefined) inProgressTrial.context = receipt;
   let reap = (): void => {};
 
   try {
@@ -868,12 +1351,15 @@ async function establishContext(ordinal: number): Promise<ContextArm> {
       case 'none':
         break;
       case 'helper':
-        receipt.helper = await runHelper(ordinal);
+        receipt.helper = await runHelper(ordinal, (helper) => {
+          receipt.helper = helper;
+        });
         break;
       case 'browser-retired': {
         const browser: BrowserReceipt = {
           requested_path: process.env['RELIC_OTIO_CHROME_PATH'] ?? null,
           executable: null,
+          process: emptyContextProcessReceipt(),
           product: null,
           browser_close_request: 'not_attempted',
           sigkill_sent: null,
@@ -895,6 +1381,7 @@ async function establishContext(ordinal: number): Promise<ContextArm> {
         const browser: BrowserReceipt = {
           requested_path: process.env['RELIC_OTIO_CHROME_PATH'] ?? null,
           executable: null,
+          process: emptyContextProcessReceipt(),
           product: null,
           browser_close_request: 'not_attempted',
           sigkill_sent: null,
@@ -910,13 +1397,16 @@ async function establishContext(ordinal: number): Promise<ContextArm> {
         };
         receipt.browser = browser;
         reap = await retireBrowser(browser);
-        receipt.helper = await runHelper(ordinal);
+        receipt.helper = await runHelper(ordinal, (helper) => {
+          receipt.helper = helper;
+        });
         break;
       }
     }
   } catch (error) {
     receipt.status = 'fixture_failure';
     receipt.failure = errorReceipt(error);
+    persistDirectPhaseFailure('context', 'context.establish', error);
   }
 
   return { receipt, reap };
@@ -1128,8 +1618,9 @@ async function runTrial(ordinal: number): Promise<TrialReceipt> {
   const trial: TrialReceipt = {
     ordinal,
     started_at: Date.now(),
-    status: 'discrepancy',
+    status: 'running',
   };
+  inProgressTrial = trial;
   let fixture: Fixture | undefined;
   let arm: ContextArm | undefined;
 
@@ -1139,8 +1630,11 @@ async function runTrial(ordinal: number): Promise<TrialReceipt> {
   } catch (error) {
     trial.status = 'fixture_failure';
     trial.discrepancy = errorReceipt(error);
-    activeFixture = undefined;
+    persistDirectPhaseFailure('fixture', 'fixture.complete', error);
     trial.finished_at = Date.now();
+    persistCheckpoint('trial:fixture_failure:before_cleanup');
+    activeFixture = undefined;
+    inProgressTrial = undefined;
     return trial;
   }
 
@@ -1150,49 +1644,62 @@ async function runTrial(ordinal: number): Promise<TrialReceipt> {
     if (arm.receipt.status === 'fixture_failure') {
       trial.status = 'fixture_failure';
       trial.discrepancy = arm.receipt.failure;
-      return trial;
+    } else {
+      persistCheckpoint('trial:before_target');
+      const target = await callMcp(fixture);
+      trial.target = target;
+      assertTarget(fixture, target);
+      trial.status = 'pass';
     }
-
-    const target = await callMcp(fixture);
-    trial.target = target;
-    assertTarget(fixture, target);
-    trial.status = 'pass';
   } catch (error) {
     trial.status = 'discrepancy';
     trial.discrepancy = errorReceipt(error);
   } finally {
+    if (trial.status !== 'pass') {
+      persistCheckpoint('trial:failure:before_cleanup');
+    }
     arm?.reap();
     activeFixture = undefined;
     trial.finished_at = Date.now();
   }
 
+  inProgressTrial = undefined;
   return trial;
 }
 
 async function nodeMetadata(): Promise<NodeMetadata> {
   const resolvedPath = Bun.which(NODE_COMMAND) ?? NODE_COMMAND;
+  let owner: ContextProcessOwnership | undefined;
   try {
-    const child = Bun.spawn([resolvedPath, '--version'], {
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    try {
-      const [stdout, stderr, exit] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]);
-      return {
-        command: NODE_COMMAND,
-        resolved_path: resolvedPath,
-        version: stdout.trim().length === 0 ? null : stdout.trim(),
-        version_exit: exit,
-        version_stderr: stderr.length === 0 ? null : stderr,
-      };
-    } finally {
-      child.kill();
-    }
+    const child = await runNonTargetPhase(
+      'finalization',
+      'node_metadata.spawn',
+      () =>
+        Bun.spawn([resolvedPath, '--version'], {
+          stdin: 'ignore',
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+    );
+    owner = ownContextProcess(child, emptyContextProcessReceipt());
+    const [stdout, stderr, exit] = await runNonTargetPhase(
+      'finalization',
+      'node_metadata.collect',
+      () =>
+        Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]),
+      owner
+    );
+    return {
+      command: NODE_COMMAND,
+      resolved_path: resolvedPath,
+      version: stdout.trim().length === 0 ? null : stdout.trim(),
+      version_exit: exit,
+      version_stderr: stderr.length === 0 ? null : stderr,
+    };
   } catch {
     return {
       command: NODE_COMMAND,
@@ -1201,32 +1708,47 @@ async function nodeMetadata(): Promise<NodeMetadata> {
       version_exit: null,
       version_stderr: null,
     };
+  } finally {
+    killOwnedContextProcess(owner);
   }
 }
 
-const startedAt = Date.now();
-const trials: TrialReceipt[] = [];
-let bundle: BytesReceipt | null = null;
-let fatal: ErrorReceipt | undefined;
-
+persistCheckpoint('invocation:started');
 try {
+  const bundleExists = await runNonTargetPhase(
+    'bootstrap',
+    'bundle.exists',
+    () => Bun.file(bundlePath).exists()
+  );
   assert.ok(
-    await Bun.file(bundlePath).exists(),
+    bundleExists,
     `built Node bundle is missing at ${bundlePath}; run bun run --cwd packages/relic-mcp build first`
   );
-  bundle = bytesReceipt(await readFile(bundlePath));
+  bundle = bytesReceipt(
+    await runNonTargetPhase('bootstrap', 'bundle.read', () =>
+      readFile(bundlePath)
+    )
+  );
 
   for (let ordinal = 1; ordinal <= options.count; ordinal += 1) {
     const trial = await runTrial(ordinal);
     trials.push(trial);
+    persistCheckpoint('trial:completed');
     if (trial.status !== 'pass') break;
   }
 } catch (error) {
   fatal = errorReceipt(error);
+  persistCheckpoint('invocation:fatal');
 } finally {
   for (const child of helperChildren) child.kill('SIGKILL');
   activeFixture = undefined;
-  await service.stop(true);
+  try {
+    await runNonTargetPhase('finalization', 'service.stop', () =>
+      service.stop(true)
+    );
+  } catch {
+    // The phase checkpoint is the durable finalization failure record.
+  }
   if (previousPublishState === undefined) {
     delete process.env['RELIC_PUBLISH_STATE'];
   } else {
@@ -1234,35 +1756,13 @@ try {
   }
 }
 
-const metadata = await nodeMetadata();
+runtimeNode = await nodeMetadata();
 const passed =
   fatal === undefined &&
+  finalizationFailures.length === 0 &&
   trials.length === options.count &&
   trials.every((trial) => trial.status === 'pass');
-const witness = {
-  kind: 'stdio-mcp-boundary-path-v1',
-  status: passed ? 'PASS' : 'FAIL',
-  options,
-  started_at: startedAt,
-  finished_at: Date.now(),
-  scratch,
-  witness_path: witnessPath,
-  bundle: {
-    path: bundlePath,
-    sha256: bundle?.sha256 ?? null,
-    bytes: bundle?.bytes ?? null,
-  },
-  runtimes: {
-    process_versions: process.versions,
-    bun_version: Bun.version,
-    node: metadata,
-  },
-  origin,
-  trials,
-  all_loopback_receipts: mcpLoopbackReceipts,
-  ...(fatal === undefined ? {} : { fatal }),
-};
-await writeFile(witnessPath, `${JSON.stringify(witness, null, 2)}\n`);
+persistFinalWitness('invocation:final');
 
 console.log(
   `STDIO_MCP_BOUNDARY_${passed ? 'PASS' : 'FAIL'} context=${options.context} trials=${trials.length}/${options.count} witness=${witnessPath}`
