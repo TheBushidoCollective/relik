@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync, cpSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, renameSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -11,7 +11,9 @@ const sourceHead = head.stdout.trim();
 const evidenceRoot = process.argv[3];
 if (!evidenceRoot) throw new Error('Expected external evidence root');
 const dir = join(evidenceRoot, `qualification-${sourceHead.slice(0, 7)}`);
-mkdirSync(dir, { recursive: true });
+mkdirSync(evidenceRoot, { recursive: true });
+mkdirSync(dir);
+if (statSync(cwd).dev !== statSync(dir).dev) throw new Error('Evidence root must share the integration filesystem');
 const chrome = '/Users/jwaldrip/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 const summary = {
   sourceHead,
@@ -25,6 +27,7 @@ function save() { writeFileSync(join(dir, 'summary.json'), `${JSON.stringify(sum
 for (const version of ['24.15.0', '18.20.8']) {
   for (let round = 1; round <= 5; round++) {
     const name = `node${version}-r${round}`;
+    if (existsSync(join(cwd, 'otio-path-shots'))) throw new Error('Preserve existing SOURCE captures before qualification');
     const logPath = join(dir, `${name}.log`);
     if (existsSync(logPath)) throw new Error(`Refusing to overwrite ${logPath}`);
     writeFileSync(logPath, `SOURCE_HEAD ${sourceHead}\nNODE ${version}\nROUND ${round}\n`);
@@ -45,6 +48,13 @@ for (const version of ['24.15.0', '18.20.8']) {
         env: { ...process.env, NO_COLOR: '1', RELIC_OTIO_PATH_CLIENT: 'source', RELIC_OTIO_CHROME_PATH: chrome },
       });
       appendFileSync(logPath, `STDOUT\n${result.stdout ?? ''}\nSTDERR\n${result.stderr ?? ''}\nEXIT ${result.status}\n`);
+      if (index === 3) {
+        const capture = join(cwd, 'otio-path-shots');
+        const destination = join(dir, `${name}-shots`);
+        if (existsSync(destination)) throw new Error(`Refusing to overwrite ${destination}`);
+        if (existsSync(capture)) renameSync(capture, destination);
+        else if (!result.error && result.status === 0) throw new Error('Successful SOURCE produced no capture directory');
+      }
       if (result.error || result.status !== 0) {
         summary.rounds.push({ log: `${name}.log`, mcpNode: version, round, failedStage: index, exit: result.status, error: result.error?.message });
         save();
@@ -62,7 +72,6 @@ for (const version of ['24.15.0', '18.20.8']) {
     summary.rounds.push(receipt);
     save();
     if (!testsPassed || !zeroFailed || !pathOk || stagesObserved < 33) throw new Error(`Missing positive qualification evidence: ${JSON.stringify(receipt)}`);
-    cpSync(join(cwd, 'otio-path-shots'), join(dir, `${name}-shots`), { recursive: true, errorOnExist: true, force: false });
     console.log(`QUALIFICATION_PASS ${name} tests=${testsPassed} stages=${stagesObserved}`);
   }
 }

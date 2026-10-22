@@ -1,0 +1,9 @@
+{
+  "sourceHead": "7c17eaf9feb9a7bec97c3050018d05dfaad025c1",
+  "files": {
+    "docs/plans/otio/proof/auxiliary-clock-positive-5a4bd6d/receipt.json": "f317f26c806a0b025e1d6fb051c04344d34607c8e8ba2e1f61e59161356575e8",
+    "docs/plans/otio/proof/auxiliary-clock-positive-5a4bd6d/shots/auxiliary-coincident-comment-reveal-measurements.json": "88d424664136fe1152fc0e42fd69172eada9806717e0ac5492f5f425bd958efa",
+    "otio-path-shots/auxiliary-coincident-comment-reveal-measurements.json": "88d424664136fe1152fc0e42fd69172eada9806717e0ac5492f5f425bd958efa"
+  },
+  "positiveRawLog": "5e93522b2bebd96cbfe172cc0fe3c121b160bae7a09b1518ff3002f7a3eabf53"
+}

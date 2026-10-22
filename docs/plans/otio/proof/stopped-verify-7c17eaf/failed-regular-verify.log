@@ -1,0 +1,334 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+$ bun run lint && bun run typecheck && bun run test
+$ biome check .
+docs/plans/otio/proof/auxiliary-clock-positive-5a4bd6d/shots/native-controls-measurements.json check ━━━━━━━━━━
+
+  i The size of the file is 1.6 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+docs/plans/otio/proof/auxiliary-seed-eleven-83dec3e/native-controls-measurements.json check ━━━━━━━━━━
+
+  i The size of the file is 1.4 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+docs/plans/otio/proof/context-allocation-auto-747591e/native-controls-measurements.json check ━━━━━━━━━━
+
+  i The size of the file is 1.6 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+docs/plans/otio/proof/source-original-15cae60/native-controls-measurements.json check ━━━━━━━━━━━━━━
+
+  i The size of the file is 1.4 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+otio-path-shots/native-controls-measurements.json check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The size of the file is 1.6 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+packages/relic-format/src/otio-json.ts:426:16 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    424 │       if (val.length === 0) return '[]';
+    425 │       if (!isPretty) {
+  > 426 │         return '[' + val.map((item) => serialize(item, '')).join(',') + ']';
+        │                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    427 │       }
+    428 │       const nextIndent = currentIndent + indentStr;
+  
+  i Unsafe fix: Use a template literal.
+  
+    424 424 │         if (val.length === 0) return '[]';
+    425 425 │         if (!isPretty) {
+    426     │ - ········return·'['·+·val.map((item)·=>·serialize(item,·'')).join(',')·+·']';
+        426 │ + ········return·`[${val.map((item)·=>·serialize(item,·'')).join(',')}]`;
+    427 427 │         }
+    428 428 │         const nextIndent = currentIndent + indentStr;
+  
+
+packages/relic-format/src/otio-json.ts:432:14 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    430 │         .map((item) => nextIndent + serialize(item, nextIndent))
+    431 │         .join(',\n');
+  > 432 │       return '[\n' + items + '\n' + currentIndent + ']';
+        │              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    433 │     }
+    434 │     if (typeof val === 'object') {
+  
+  i Unsafe fix: Use a template literal.
+  
+    430 430 │           .map((item) => nextIndent + serialize(item, nextIndent))
+    431 431 │           .join(',\n');
+    432     │ - ······return·'[\n'·+·items·+·'\n'·+·currentIndent·+·']';
+        432 │ + ······return·`[\n${items}\n${currentIndent}]`;
+    433 433 │       }
+    434 434 │       if (typeof val === 'object') {
+  
+
+packages/relic-format/src/otio-json.ts:444:16 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    442 │             serialize((val as Record<string, unknown>)[k], '')
+    443 │         );
+  > 444 │         return '{' + entries.join(',') + '}';
+        │                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    445 │       }
+    446 │       const nextIndent = currentIndent + indentStr;
+  
+  i Unsafe fix: Use a template literal.
+  
+    442 442 │               serialize((val as Record<string, unknown>)[k], '')
+    443 443 │           );
+    444     │ - ········return·'{'·+·entries.join(',')·+·'}';
+        444 │ + ········return·`{${entries.join(',')}}`;
+    445 445 │         }
+    446 446 │         const nextIndent = currentIndent + indentStr;
+  
+
+packages/relic-format/src/otio-json.ts:456:14 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    454 │         )
+    455 │         .join(',\n');
+  > 456 │       return '{\n' + entries + '\n' + currentIndent + '}';
+        │              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    457 │     }
+    458 │     return JSON.stringify(val);
+  
+  i Unsafe fix: Use a template literal.
+  
+    454 454 │           )
+    455 455 │           .join(',\n');
+    456     │ - ······return·'{\n'·+·entries·+·'\n'·+·currentIndent·+·'}';
+        456 │ + ······return·`{\n${entries}\n${currentIndent}}`;
+    457 457 │       }
+    458 458 │       return JSON.stringify(val);
+  
+
+packages/relic-format/src/otio-identity.ts:1389:9 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    1387 │     .filter((node): node is OtioNode =>
+    1388 │       Boolean(
+  > 1389 │         node && node.fingerprint && node.fingerprint === source.fingerprint
+         │         ^^^^^^^^^^^^^^^^^^^^^^^^
+    1390 │       )
+    1391 │     );
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    1387 1387 │       .filter((node): node is OtioNode =>
+    1388 1388 │         Boolean(
+    1389      │ - ········node·&&·node.fingerprint·&&·node.fingerprint·===·source.fingerprint
+         1389 │ + ········node?.fingerprint·&&·node.fingerprint·===·source.fingerprint
+    1390 1390 │         )
+    1391 1391 │       );
+  
+
+packages/relic-format/src/otio-json.ts:412:11 lint/suspicious/noGlobalIsNan  FIXABLE  ━━━━━━━━━━━━━━
+
+  ! isNaN is unsafe. It attempts a type coercion. Use Number.isNaN instead.
+  
+    410 │     }
+    411 │     if (typeof val === 'number') {
+  > 412 │       if (isNaN(val)) return 'NaN';
+        │           ^^^^^
+    413 │       if (val === Infinity) return 'Infinity';
+    414 │       if (val === -Infinity) return '-Infinity';
+  
+  i See the MDN documentation for more details.
+  
+  i Unsafe fix: Use Number.isNaN instead.
+  
+    410 410 │       }
+    411 411 │       if (typeof val === 'number') {
+    412     │ - ······if·(isNaN(val))·return·'NaN';
+        412 │ + ······if·(Number.isNaN(val))·return·'NaN';
+    413 413 │         if (val === Infinity) return 'Infinity';
+    414 414 │         if (val === -Infinity) return '-Infinity';
+  
+
+packages/relic-format/src/otio-timing.ts:16:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    14 │   OtioDiagnostic,
+    15 │   OtioDocumentV1,
+  > 16 │   OtioEffect,
+       │   ^^^^^^^^^^
+    17 │   OtioEvaluationResult,
+    18 │   OtioMediaReference,
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+      14   14 │     OtioDiagnostic,
+      15   15 │     OtioDocumentV1,
+      16      │ - ··OtioEffect,
+      17   16 │     OtioEvaluationResult,
+      18   17 │     OtioMediaReference,
+  
+
+packages/relic-format/src/otio-timing.ts:930:3 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━
+
+  ! This parameter is unused.
+  
+    929 │ function buildAudioContribution(
+  > 930 │   document: OtioDocumentV1,
+        │   ^^^^^^^^
+    931 │   node: OtioNode,
+    932 │   ancestry: readonly string[],
+  
+  i Unused parameters might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: If this is intentional, prepend document with an underscore.
+  
+     928  928 │   
+     929  929 │   function buildAudioContribution(
+     930      │ - ··document:·OtioDocumentV1,
+          930 │ + ··_document:·OtioDocumentV1,
+     931  931 │     node: OtioNode,
+     932  932 │     ancestry: readonly string[],
+  
+
+packages/relic-format/src/otio-zip.ts:800:22 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    798 │   extents.sort((a, b) => a.start - b.start || a.end - b.end);
+    799 │   for (let i = 1; i < extents.length; i++) {
+  > 800 │     const previous = extents[i - 1]!;
+        │                      ^^^^^^^^^^^^^^^
+    801 │     const current = extents[i]!;
+    802 │     if (current.start < previous.end) {
+  
+
+packages/relic-format/src/otio-zip.ts:801:21 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    799 │   for (let i = 1; i < extents.length; i++) {
+    800 │     const previous = extents[i - 1]!;
+  > 801 │     const current = extents[i]!;
+        │                     ^^^^^^^^^^^
+    802 │     if (current.start < previous.end) {
+    803 │       throw new OtioZipError(
+  
+
+packages/relic-mcp/src/otio-bundle.ts:226:18 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    224 │   let centralCursor = centralDirectoryOffset;
+    225 │   for (let index = 0; index < prepared.length; index++) {
+  > 226 │     const item = prepared[index]!;
+        │                  ^^^^^^^^^^^^^^^^
+    227 │     const localOffset = localHeaderOffsets[index]!;
+    228 │     view.setUint32(centralCursor + 0, 0x02014b50, true);
+  
+
+packages/relic-mcp/src/otio-bundle.ts:227:25 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    225 │   for (let index = 0; index < prepared.length; index++) {
+    226 │     const item = prepared[index]!;
+  > 227 │     const localOffset = localHeaderOffsets[index]!;
+        │                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    228 │     view.setUint32(centralCursor + 0, 0x02014b50, true);
+    229 │     view.setUint16(centralCursor + 4, 0x0014, true);
+  
+
+docs/plans/otio/proof/auxiliary-clock-positive-5a4bd6d/receipt.json format ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     53  53 │           "hitId": "ZtNO9habtWdr5DZDXlXJqA",
+     54  54 │           "hitOwned": true,
+     55     │ - ········"activeIds":·[
+     56     │ - ··········"ZtNO9habtWdr5DZDXlXJqA"
+     57     │ - ········],
+         55 │ + ········"activeIds":·["ZtNO9habtWdr5DZDXlXJqA"],
+     58  56 │           "cardId": "ZtNO9habtWdr5DZDXlXJqA",
+     59  57 │           "cardVisible": true,
+    ······· │ 
+    101  99 │           "hitId": "2Bie1j9iPe5a0e8uzY9KPA",
+    102 100 │           "hitOwned": true,
+    103     │ - ········"activeIds":·[
+    104     │ - ··········"2Bie1j9iPe5a0e8uzY9KPA"
+    105     │ - ········],
+        101 │ + ········"activeIds":·["2Bie1j9iPe5a0e8uzY9KPA"],
+    106 102 │           "cardId": "2Bie1j9iPe5a0e8uzY9KPA",
+    107 103 │           "cardVisible": true,
+  
+
+docs/plans/otio/proof/auxiliary-clock-positive-5a4bd6d/shots/auxiliary-coincident-comment-reveal-measurements.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    152 152 │           "hitId": "ZtNO9habtWdr5DZDXlXJqA",
+    153 153 │           "hitOwned": true,
+    154     │ - ········"activeIds":·[
+    155     │ - ··········"ZtNO9habtWdr5DZDXlXJqA"
+    156     │ - ········],
+        154 │ + ········"activeIds":·["ZtNO9habtWdr5DZDXlXJqA"],
+    157 155 │           "cardId": "ZtNO9habtWdr5DZDXlXJqA",
+    158 156 │           "cardVisible": true,
+    ······· │ 
+    298 296 │           "hitId": "2Bie1j9iPe5a0e8uzY9KPA",
+    299 297 │           "hitOwned": true,
+    300     │ - ········"activeIds":·[
+    301     │ - ··········"2Bie1j9iPe5a0e8uzY9KPA"
+    302     │ - ········],
+        298 │ + ········"activeIds":·["2Bie1j9iPe5a0e8uzY9KPA"],
+    303 299 │           "cardId": "2Bie1j9iPe5a0e8uzY9KPA",
+    304 300 │           "cardVisible": true,
+  
+
+otio-path-shots/auxiliary-coincident-comment-reveal-measurements.json format ━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    152 152 │           "hitId": "ZtNO9habtWdr5DZDXlXJqA",
+    153 153 │           "hitOwned": true,
+    154     │ - ········"activeIds":·[
+    155     │ - ··········"ZtNO9habtWdr5DZDXlXJqA"
+    156     │ - ········],
+        154 │ + ········"activeIds":·["ZtNO9habtWdr5DZDXlXJqA"],
+    157 155 │           "cardId": "ZtNO9habtWdr5DZDXlXJqA",
+    158 156 │           "cardVisible": true,
+    ······· │ 
+    298 296 │           "hitId": "2Bie1j9iPe5a0e8uzY9KPA",
+    299 297 │           "hitOwned": true,
+    300     │ - ········"activeIds":·[
+    301     │ - ··········"2Bie1j9iPe5a0e8uzY9KPA"
+    302     │ - ········],
+        298 │ + ········"activeIds":·["2Bie1j9iPe5a0e8uzY9KPA"],
+    303 299 │           "cardId": "2Bie1j9iPe5a0e8uzY9KPA",
+    304 300 │           "cardVisible": true,
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 44.
+Checked 373 files in 144ms. No fixes applied.
+Found 3 errors.
+Found 29 warnings.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+error: script "lint" exited with code 1
+error: script "verify" exited with code 1
