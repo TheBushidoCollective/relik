@@ -245,6 +245,49 @@ function projectionContent(): Uint8Array {
   );
 }
 
+function nestedSelectionContent(): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      source_range: range(0, 96),
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            kind: 'Video',
+            metadata: { relic: { id: 'outer-track' } },
+            children: [
+              {
+                OTIO_SCHEMA: 'Gap.1',
+                metadata: { relic: { id: 'leading-gap' } },
+                source_range: range(0, 48),
+              },
+              {
+                OTIO_SCHEMA: 'Stack.1',
+                source_range: range(0, 24),
+                children: [
+                  {
+                    OTIO_SCHEMA: 'Track.1',
+                    kind: 'Video',
+                    metadata: { relic: { id: 'nested-track' } },
+                    children: [clip('nested-clip', 'Nested clip')],
+                  },
+                ],
+              },
+              {
+                OTIO_SCHEMA: 'Gap.1',
+                metadata: { relic: { id: 'trailing-gap' } },
+                source_range: range(0, 24),
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
 function structuralContent(): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
@@ -278,7 +321,7 @@ class ViewElement {
   parentElement: ViewElement | null = null;
   readonly children: ViewElement[] = [];
   readonly dataset: Record<string, string> = {};
-  readonly attributes = new Map<string, string>();
+  readonly listeners = new Map<string, Set<(event: Event) => void>>();
   readonly style = {
     setProperty: (): void => {},
     position: '',
@@ -348,11 +391,22 @@ class ViewElement {
     this.parentElement = null;
   }
 
-  addEventListener(): void {}
+  addEventListener(type: string, listener: (event: Event) => void): void {
+    let listeners = this.listeners.get(type);
+    if (!listeners) {
+      listeners = new Set();
+      this.listeners.set(type, listeners);
+    }
+    listeners.add(listener);
+  }
 
-  removeEventListener(): void {}
+  removeEventListener(type: string, listener: (event: Event) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
 
-  dispatchEvent(): boolean {
+  dispatchEvent(event: Event): boolean {
+    for (const listener of this.listeners.get(event.type) ?? [])
+      listener(event);
     return true;
   }
 
@@ -397,6 +451,18 @@ class ViewElement {
   play(): Promise<void> {
     return Promise.resolve();
   }
+}
+
+function findViewElement(
+  root: ViewElement,
+  matches: (element: ViewElement) => boolean
+): ViewElement | undefined {
+  if (matches(root)) return root;
+  for (const child of root.children) {
+    const found = findViewElement(child, matches);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 class ViewCanvas extends ViewElement {
@@ -644,6 +710,105 @@ describe('OTIO archive projection reader', () => {
         controller.dispose();
       }
     });
+
+    test('validates original anchor semantics before corrupt current media', async () => {
+      const content = projectionContent();
+      const original = otioz(content, [
+        {
+          name: 'media/clip.mp4',
+          bytes: new Uint8Array([1, 2, 3, 4]),
+        },
+      ]);
+      const unused = new Uint8Array([8, 6, 7, 5]);
+      const current = otioz(content, [
+        {
+          name: 'media/unused.mp4',
+          bytes: unused,
+          crc: crc32(unused) ^ 1,
+        },
+      ]);
+      const originalDocument = readOtioDocument(content);
+      const timelineId = originalDocument.timeline_ids[0];
+      if (!timelineId) throw new Error('expected projection timeline');
+      const validAnchor = createOtioSelection(
+        originalDocument,
+        timelineId,
+        'projection-track',
+        1,
+        range(0, 12)
+      );
+      const invalidAnchor = {
+        ...validAnchor,
+        track_id: 'projection-clip',
+      };
+      const root = new ViewElement('div');
+
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: current,
+        revision: 3,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected OTIO controller');
+
+      try {
+        const invalid = await controller.project(invalidAnchor, original);
+        expect(invalid.status).toBe('changed');
+        expect(invalid.diagnostics[0]?.code).toBe('invalid-timing');
+        expect(Object.hasOwn(invalid, 'mapped_range')).toBe(false);
+
+        const cached = await controller.project(invalidAnchor, original);
+        expect(cached).toBe(invalid);
+      } finally {
+        controller.dispose();
+      }
+    });
+
+    test('clears a stale anchor when a nested track rejects the selection', async () => {
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: nestedSelectionContent(),
+        revision: 1,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      const trackSelect = findViewElement(
+        root,
+        (element) => element.getAttribute('aria-label') === 'Comment track'
+      );
+      const comment = findViewElement(root, (element) =>
+        element.className.split(/\s+/).includes('otio-comment-selection')
+      );
+      if (!controller || !trackSelect || !comment)
+        throw new Error('expected nested selection controls');
+
+      const emitted: OtioAnchorV1[] = [];
+      root.addEventListener('relic:otio-aim', (event) => {
+        emitted.push(
+          (event as CustomEvent<{ readonly anchor: OtioAnchorV1 }>).detail
+            .anchor
+        );
+      });
+
+      try {
+        trackSelect.value = 'outer-track';
+        trackSelect.dispatchEvent(new Event('change'));
+        comment.dispatchEvent(new Event('click'));
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0]?.track_id).toBe('outer-track');
+
+        trackSelect.value = 'nested-track';
+        trackSelect.dispatchEvent(new Event('change'));
+        comment.dispatchEvent(new Event('click'));
+        expect(emitted).toHaveLength(1);
+
+        trackSelect.value = 'outer-track';
+        trackSelect.dispatchEvent(new Event('change'));
+        comment.dispatchEvent(new Event('click'));
+        expect(emitted).toHaveLength(2);
+        expect(emitted[1]?.track_id).toBe('outer-track');
+      } finally {
+        controller.dispose();
+      }
+    });
   });
 });
 
@@ -690,6 +855,25 @@ describe('OTIO track selection contract', () => {
     expect(
       createOtioSelection(document, 'timeline', null, 1, mixed).range
     ).toEqual(mixed);
+  });
+
+  test('rejects an out-of-scope nested selection before valid recovery', () => {
+    expect(() =>
+      createOtioSelection(document, 'timeline', 'plate-track', 1, range(47, 1))
+    ).toThrow('Selection unavailable.');
+    expect(() =>
+      createOtioSelection(document, 'timeline', 'plate-track', 1, range(72, 0))
+    ).toThrow('Selection unavailable.');
+
+    const recovered = createOtioSelection(
+      document,
+      'timeline',
+      'plate-track',
+      1,
+      range(48, 24)
+    );
+    expect(recovered.track_id).toBe('plate-track');
+    expect(recovered.range).toEqual(range(48, 24));
   });
 
   test('a range across clips retains the range without claiming one item', () => {

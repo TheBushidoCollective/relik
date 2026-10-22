@@ -1466,6 +1466,90 @@ function sameTargets(
   });
 }
 
+function anchorFitsExposure(
+  anchor: OtioAnchorV1,
+  exposure: OtioTimeRange
+): boolean {
+  const durationOrder = compareRationalTimes(anchor.range.duration, {
+    value: 0,
+    rate: anchor.range.duration.rate,
+  });
+  if (durationOrder < 0) return false;
+  const start = anchor.range.start_time;
+  const end = rangeEndTime(anchor.range);
+  const exposureEnd = rangeEndTime(exposure);
+  if (compareRationalTimes(start, exposure.start_time) < 0) return false;
+  if (durationOrder === 0) return compareRationalTimes(start, exposureEnd) < 0;
+  return compareRationalTimes(end, exposureEnd) <= 0;
+}
+
+function originalAnchorSelectionError(
+  anchor: OtioAnchorV1,
+  document: OtioDocumentV1
+): string | null {
+  const timeline = nodeOf(document, anchor.timeline_id);
+  if (
+    !timeline ||
+    timeline.schema !== 'Timeline.1' ||
+    !document.timeline_ids.includes(anchor.timeline_id)
+  ) {
+    return 'Anchor timeline, track, or item is not in the selected timeline';
+  }
+
+  const track =
+    anchor.track_id === null ? null : nodeOf(document, anchor.track_id);
+  if (
+    anchor.track_id !== null &&
+    (!track ||
+      track.schema !== 'Track.1' ||
+      !inTimeline(document, anchor.timeline_id, anchor.track_id))
+  ) {
+    return 'Anchor timeline, track, or item is not in the selected timeline';
+  }
+
+  if (
+    anchor.item_id !== undefined &&
+    (!inTimeline(document, anchor.timeline_id, anchor.item_id) ||
+      (anchor.track_id !== null &&
+        !inTimeline(document, anchor.track_id, anchor.item_id)))
+  ) {
+    return 'Anchor timeline, track, or item is not in the selected timeline';
+  }
+
+  const timelineExposure =
+    timeline.visible_timeline_range ?? timeline.timeline_range ?? null;
+  if (
+    !timelineExposure ||
+    compareRationalTimes(timelineExposure.duration, {
+      value: 0,
+      rate: timelineExposure.duration.rate,
+    }) <= 0
+  ) {
+    return 'Anchor timeline has no positive exposed range';
+  }
+  if (!anchorFitsExposure(anchor, timelineExposure)) {
+    return 'Anchor range is outside the selected timeline or track exposure';
+  }
+
+  if (track) {
+    const trackExposure =
+      track.visible_timeline_range ?? track.timeline_range ?? null;
+    if (
+      !trackExposure ||
+      compareRationalTimes(trackExposure.duration, {
+        value: 0,
+        rate: trackExposure.duration.rate,
+      }) <= 0
+    ) {
+      return 'Anchor track has no positive exposed range';
+    }
+    if (!anchorFitsExposure(anchor, trackExposure)) {
+      return 'Anchor range is outside the selected timeline or track exposure';
+    }
+  }
+  return null;
+}
+
 function invalidAnchorResolution(
   anchor: OtioAnchorV1,
   sourceSpans: readonly OtioSourceSpan[],
@@ -1572,25 +1656,16 @@ export function resolveOtioAnchor(
     anchor.track_id,
     anchor.range
   );
-  const membership =
-    originalDocument.timeline_ids.includes(anchor.timeline_id) &&
-    (anchor.track_id === null ||
-      inTimeline(originalDocument, anchor.timeline_id, anchor.track_id)) &&
-    (anchor.item_id === undefined ||
-      inTimeline(originalDocument, anchor.timeline_id, anchor.item_id)) &&
-    (anchor.item_id === undefined ||
-      anchor.track_id === null ||
-      inTimeline(originalDocument, anchor.track_id, anchor.item_id));
+  const selectionError = originalAnchorSelectionError(anchor, originalDocument);
   if (
     anchor.document_sha256 !== originalDocument.document_sha256 ||
-    !membership
+    selectionError
   ) {
     return invalidAnchorResolution(
       anchor,
       sourceSpans,
-      membership
-        ? 'Anchor document digest does not match the original document'
-        : 'Anchor timeline, track, or item is not in the selected timeline'
+      selectionError ??
+        'Anchor document digest does not match the original document'
     );
   }
   const selection = prepareOriginalAnchorSelection(

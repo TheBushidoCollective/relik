@@ -205,6 +205,159 @@ function d3Anchor(
   };
 }
 
+function originalAnchor(
+  documentSha: string,
+  timelineId: string,
+  trackId: string | null,
+  start: number,
+  duration: number,
+  itemId?: string
+): OtioAnchorV1 {
+  return {
+    kind: 'otio',
+    v: 1,
+    relic_version: 1,
+    document_sha256: documentSha,
+    timeline_id: timelineId,
+    track_id: trackId,
+    ...(itemId === undefined ? {} : { item_id: itemId }),
+    range: {
+      start_time: { value: start, rate: 24 },
+      duration: { value: duration, rate: 24 },
+    },
+    snapshot: { timeline: timelineId, track: trackId, item: itemId ?? null },
+  };
+}
+
+function geometryTimeline(): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    name: 'Geometry',
+    metadata: { relic: { id: 'geometry-timeline' } },
+    source_range: span(0, 96),
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          kind: 'Video',
+          metadata: { relic: { id: 'geometry-track' } },
+          children: [
+            clip('geometry-clip', 0, 24),
+            {
+              OTIO_SCHEMA: 'Gap.1',
+              metadata: { relic: { id: 'geometry-gap' } },
+              source_range: span(0, 36),
+            },
+            {
+              OTIO_SCHEMA: 'Stack.1',
+              metadata: { relic: { id: 'geometry-stack' } },
+              source_range: span(0, 12),
+              children: [
+                {
+                  OTIO_SCHEMA: 'Track.1',
+                  kind: 'Video',
+                  metadata: { relic: { id: 'geometry-nested-track' } },
+                  children: [clip('geometry-nested-clip', 0, 12)],
+                },
+              ],
+            },
+            clip('geometry-tail', 0, 24),
+          ],
+        },
+      ],
+    },
+  });
+}
+
+function nestedExposureTimeline(): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    metadata: { relic: { id: 'nested-timeline' } },
+    source_range: span(0, 96),
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          kind: 'Video',
+          metadata: { relic: { id: 'nested-outer-track' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Gap.1',
+              metadata: { relic: { id: 'nested-leading-gap' } },
+              source_range: span(0, 48),
+            },
+            {
+              OTIO_SCHEMA: 'Stack.1',
+              metadata: { relic: { id: 'nested-stack' } },
+              source_range: span(0, 24),
+              children: [
+                {
+                  OTIO_SCHEMA: 'Track.1',
+                  kind: 'Video',
+                  metadata: { relic: { id: 'nested-track' } },
+                  children: [clip('nested-clip', 0, 24)],
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Gap.1',
+              metadata: { relic: { id: 'nested-trailing-gap' } },
+              source_range: span(0, 24),
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+function nonTrackTargetTimeline(): string {
+  return JSON.stringify({
+    OTIO_SCHEMA: 'Timeline.1',
+    metadata: { relic: { id: 'target-timeline' } },
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.1',
+          kind: 'Video',
+          metadata: { relic: { id: 'target-track' } },
+          children: [
+            clip('target-clip', 0, 24),
+            {
+              OTIO_SCHEMA: 'Stack.1',
+              metadata: { relic: { id: 'target-stack' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Track.1',
+                  kind: 'Video',
+                  metadata: { relic: { id: 'target-inner-track' } },
+                  children: [clip('target-nested-clip', 0, 12)],
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Gap.1',
+              metadata: { relic: { id: 'target-gap' } },
+              source_range: span(0, 12),
+            },
+            {
+              OTIO_SCHEMA: 'Transition.1',
+              metadata: { relic: { id: 'target-transition' } },
+              transition_type: 'SMPTE_Dissolve',
+              in_offset: { value: 1, rate: 24 },
+              out_offset: { value: 1, rate: 24 },
+            },
+            clip('target-tail', 0, 24),
+          ],
+        },
+      ],
+    },
+  });
+}
+
 function mediaIndex(sha256?: string) {
   return {
     'media/primary_a.mp4': {
@@ -876,6 +1029,193 @@ describe('OTIO identity and projection', () => {
       resolveOtioAnchor(anchor(24, 0, original.document_sha256), original)
         .status
     ).toBe('same');
+  });
+
+  test('rejects non-Track nodes selected as tracks before either same path', () => {
+    const doc = readOtioDocument(nonTrackTargetTimeline());
+
+    for (const current of [undefined, doc]) {
+      for (const trackId of [
+        'target-clip',
+        'target-stack',
+        'target-gap',
+        'target-transition',
+      ]) {
+        for (const itemId of [undefined, trackId]) {
+          const resolved = resolveOtioAnchor(
+            originalAnchor(
+              doc.document_sha256,
+              'target-timeline',
+              trackId,
+              0,
+              0,
+              itemId
+            ),
+            doc,
+            current
+          );
+          expect(resolved.status).toBe('changed');
+          expect(resolved.diagnostics[0]?.code).toBe('invalid-timing');
+          expectNoMappedIdentityFields(resolved);
+        }
+      }
+    }
+
+    const resolved = resolveOtioAnchor(
+      originalAnchor(doc.document_sha256, 'target-clip', null, 0, 0),
+      doc,
+      doc
+    );
+    expect(resolved.status).toBe('changed');
+    expect(resolved.diagnostics[0]?.code).toBe('invalid-timing');
+    expectNoMappedIdentityFields(resolved);
+  });
+
+  test('contains anchors in the selected Timeline and Track exposures', () => {
+    const doc = readOtioDocument(geometryTimeline());
+    const endingAtOuterEnd = originalAnchor(
+      doc.document_sha256,
+      'geometry-timeline',
+      'geometry-track',
+      84,
+      12
+    );
+    for (const current of [undefined, doc]) {
+      expect(resolveOtioAnchor(endingAtOuterEnd, doc, current).status).toBe(
+        'same'
+      );
+
+      for (const invalid of [
+        originalAnchor(
+          doc.document_sha256,
+          'geometry-timeline',
+          'geometry-track',
+          -1,
+          0
+        ),
+        originalAnchor(
+          doc.document_sha256,
+          'geometry-timeline',
+          'geometry-track',
+          96,
+          0
+        ),
+        originalAnchor(
+          doc.document_sha256,
+          'geometry-timeline',
+          'geometry-track',
+          97,
+          0
+        ),
+        originalAnchor(
+          doc.document_sha256,
+          'geometry-timeline',
+          'geometry-track',
+          90,
+          12
+        ),
+      ]) {
+        const resolved = resolveOtioAnchor(invalid, doc, current);
+        expect(resolved.status).toBe('changed');
+        expect(resolved.diagnostics[0]?.code).toBe('invalid-timing');
+        expectNoMappedIdentityFields(resolved);
+      }
+    }
+
+    const nested = readOtioDocument(nestedExposureTimeline());
+    expect(
+      resolveOtioAnchor(
+        originalAnchor(
+          nested.document_sha256,
+          'nested-timeline',
+          'nested-track',
+          48,
+          24
+        ),
+        nested
+      ).status
+    ).toBe('same');
+    for (const invalid of [
+      originalAnchor(
+        nested.document_sha256,
+        'nested-timeline',
+        'nested-track',
+        47,
+        0
+      ),
+      originalAnchor(
+        nested.document_sha256,
+        'nested-timeline',
+        'nested-track',
+        72,
+        0
+      ),
+      originalAnchor(
+        nested.document_sha256,
+        'nested-timeline',
+        'nested-track',
+        60,
+        13
+      ),
+    ]) {
+      const resolved = resolveOtioAnchor(invalid, nested);
+      expect(resolved.status).toBe('changed');
+      expect(resolved.diagnostics[0]?.code).toBe('invalid-timing');
+      expectNoMappedIdentityFields(resolved);
+    }
+
+    const empty = readOtioDocument(timeline([]));
+    const emptyResolved = resolveOtioAnchor(
+      originalAnchor(empty.document_sha256, 'timeline', 'track', 0, 0),
+      empty
+    );
+    expect(emptyResolved.status).toBe('changed');
+    expect(emptyResolved.diagnostics[0]?.code).toBe('invalid-timing');
+    expectNoMappedIdentityFields(emptyResolved);
+  });
+
+  test('keeps valid gaps, empty timeline tails, and partial Stack overlap', () => {
+    const doc = readOtioDocument(geometryTimeline());
+    const gap = resolveOtioAnchor(
+      originalAnchor(
+        doc.document_sha256,
+        'geometry-timeline',
+        'geometry-track',
+        30,
+        0,
+        'geometry-gap'
+      ),
+      doc
+    );
+    expect(gap.status).toBe('same');
+
+    const stackPartial = resolveOtioAnchor(
+      originalAnchor(
+        doc.document_sha256,
+        'geometry-timeline',
+        'geometry-track',
+        60,
+        24,
+        'geometry-stack'
+      ),
+      doc
+    );
+    expect(stackPartial.status).toBe('same');
+
+    const tail = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'empty-tail-timeline' } },
+        source_range: span(0, 96),
+        tracks: { OTIO_SCHEMA: 'Stack.1', children: [] },
+      })
+    );
+    const tailResolved = resolveOtioAnchor(
+      originalAnchor(tail.document_sha256, 'empty-tail-timeline', null, 84, 12),
+      tail
+    );
+    expect(tailResolved.status).toBe('same');
+    expect(tailResolved.source_spans).toEqual([]);
   });
 
   test('omits unestablished optional OTIO fields without dropping meaningful zero or null values', () => {
