@@ -1,0 +1,1285 @@
+{
+  "schema": "relic-stdio-linux-symbol-identity-v1",
+  "status": "preflight_verified_candidate_layout_only",
+  "mode": "preflight",
+  "started_at": "2026-10-22T07:29:14.715Z",
+  "saved_native_frame_inputs": [
+    {
+      "id": "close-219-01",
+      "source_trace_line": 304459,
+      "file_offset": "0x3197d67",
+      "exported_symbol": "napi_internal_suppress_crash_on_abort_if_desired",
+      "exported_symbol_offset": "0x78377"
+    },
+    {
+      "id": "close-219-02",
+      "source_trace_line": 304460,
+      "file_offset": "0x3d26a5b",
+      "exported_symbol": "napi_remove_async_cleanup_hook",
+      "exported_symbol_offset": "0x44636b"
+    },
+    {
+      "id": "close-219-03",
+      "source_trace_line": 304461,
+      "file_offset": "0x50961ef",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xe658af"
+    },
+    {
+      "id": "close-219-04",
+      "source_trace_line": 304462,
+      "file_offset": "0x4c6eb85",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xa3e245"
+    },
+    {
+      "id": "close-219-05",
+      "source_trace_line": 304463,
+      "file_offset": "0x4c6d07f",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xa3c73f"
+    },
+    {
+      "id": "close-219-06",
+      "source_trace_line": 304464,
+      "file_offset": "0x361e8cd",
+      "exported_symbol": "napi_internal_enqueue_finalizer",
+      "exported_symbol_offset": "0x11d0ed"
+    },
+    {
+      "id": "close-219-07",
+      "source_trace_line": 304465,
+      "file_offset": "0x3d28b3b",
+      "exported_symbol": "napi_remove_async_cleanup_hook",
+      "exported_symbol_offset": "0x44844b"
+    },
+    {
+      "id": "close-219-08",
+      "source_trace_line": 304466,
+      "file_offset": "0x33704b4",
+      "exported_symbol": "napi_internal_suppress_crash_on_abort_if_desired",
+      "exported_symbol_offset": "0x250ac4"
+    },
+    {
+      "id": "close-219-09",
+      "source_trace_line": 304467,
+      "file_offset": "0x336a6eb",
+      "exported_symbol": "napi_internal_suppress_crash_on_abort_if_desired",
+      "exported_symbol_offset": "0x24acfb"
+    },
+    {
+      "id": "close-219-10",
+      "source_trace_line": 304480,
+      "file_offset": "0x21b16c4",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    },
+    {
+      "id": "close-219-11",
+      "source_trace_line": 304481,
+      "file_offset": "0x5130082",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xeff742"
+    },
+    {
+      "id": "close-219-12",
+      "source_trace_line": 304482,
+      "file_offset": "0x512e5bf",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xefdc7f"
+    },
+    {
+      "id": "close-219-13",
+      "source_trace_line": 304483,
+      "file_offset": "0x5398233",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0x11678f3"
+    },
+    {
+      "id": "close-219-14",
+      "source_trace_line": 304484,
+      "file_offset": "0x38c83dd",
+      "exported_symbol": "napi_internal_enqueue_finalizer",
+      "exported_symbol_offset": "0x3c6bfd"
+    },
+    {
+      "id": "close-219-15",
+      "source_trace_line": 304487,
+      "file_offset": "0x21b16c4",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    },
+    {
+      "id": "close-219-16",
+      "source_trace_line": 304488,
+      "file_offset": "0x4cf40b9",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xac3779"
+    },
+    {
+      "id": "close-219-17",
+      "source_trace_line": 304489,
+      "file_offset": "0x4f7cca0",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xd4c360"
+    },
+    {
+      "id": "close-219-18",
+      "source_trace_line": 304490,
+      "file_offset": "0x388f503",
+      "exported_symbol": "napi_internal_enqueue_finalizer",
+      "exported_symbol_offset": "0x38dd23"
+    },
+    {
+      "id": "close-219-19",
+      "source_trace_line": 304491,
+      "file_offset": "0x2340dae",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    },
+    {
+      "id": "close-219-20",
+      "source_trace_line": 304492,
+      "file_offset": "0x24521ad",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    }
+  ],
+  "policy": {
+    "no_profile_execution": true,
+    "no_runtime_replacement": true,
+    "no_external_private_stack_upload": true,
+    "no_bun_crash_address_normalization": true,
+    "release_signature_existence_checked": false,
+    "release_signature_verified": false
+  },
+  "historical_elf_identity": {
+    "status": "not_retained",
+    "old_stack_attribution": "candidate_layout_only",
+    "historical_run": {
+      "url": "https://github.com/TheBushidoCollective/relik/actions/runs/39723814228",
+      "id": 39723814228,
+      "job_id": 119643075857,
+      "head": "d6c3c2712ff360b354a9c03a51aec0ce521aba30",
+      "raw_trace_sha256": "e5b22f5d00cb66bbca400d7965d69c45a2093d8cbb57f084e468794fc03d7bf1",
+      "raw_trace_artifact": "stdio-linux-full-test-trace-39723814228",
+      "first_successful_close": {
+        "trace_line": 304458,
+        "tid": 3697,
+        "child_pid": 4059,
+        "fd": 219,
+        "stream": "stdout"
+      }
+    },
+    "mise_witness": {
+      "recorded_command_path": "/home/runner/.local/share/mise/shims/bun",
+      "recorded_resolved_path": "/home/runner/.local/share/mise/bin/mise",
+      "recorded_sha256": "8d48bc510b7d844fad0bc7156c0855c2a1e7230c51e498a7f6b63b021f8b57c5",
+      "recorded_elf_build_id": "e10fabbdbcbca867551315a571682226eb7d7b94",
+      "identity_subject": "mise executable",
+      "relationship_to_bun": "wrong_bun_identity",
+      "wrong_bun": true,
+      "preserved_historical_receipt": true
+    },
+    "inspected_directory": "/home/runner/work/_temp/stdio-linux-historical-provenance",
+    "copied_metadata": [
+      "historical-provenance/bun-binary-identity.txt",
+      "historical-provenance/source-sha.txt",
+      "historical-provenance/environment.json",
+      "historical-provenance/download-status.json",
+      "historical-provenance/strace-version.txt",
+      "historical-provenance/bun-build-id.txt",
+      "historical-provenance/test-exit-status.txt"
+    ],
+    "original_elf": null,
+    "claim_boundary": "A newly captured runtime ELF proves only the new job. It is never treated as the historical run ELF.",
+    "reason": "Historical metadata was inspected, but it contains no process-self Bun ELF with a matching immutable identity receipt."
+  },
+  "runtime": {
+    "schema": "relic-stdio-linux-bun-runtime-identity-v1",
+    "subject": "process-self",
+    "observed_in_process": {
+      "bun_version": "1.3.14",
+      "bun_revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+      "node_compat_version": "v24.3.0",
+      "process_exec_path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+      "process_exec_realpath": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+      "proc_self_exe_readlink": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+      "proc_self_exe_realpath": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun"
+    },
+    "actual_elf": {
+      "artifact_filename": "bun.runtime.elf",
+      "magic": "7f454c46",
+      "sha256": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74",
+      "bytes": 92752752,
+      "dynsym": "runtime/runtime-readelf-dynsym.stdout.txt",
+      "elf_layout": {
+        "bits": 64,
+        "little_endian": true,
+        "machine": 62,
+        "executable_load_segments": [
+          {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          }
+        ],
+        "text": {
+          "name": ".text",
+          "file_offset": "0x2067e00",
+          "virtual_address": "0x24c7e00",
+          "size": "0x37cb10a"
+        }
+      },
+      "readelf": {
+        "header": "runtime/runtime-readelf-hW.stdout.txt",
+        "program_headers": "runtime/runtime-readelf-lW.stdout.txt",
+        "section_headers": "runtime/runtime-readelf-SW.stdout.txt",
+        "notes": "runtime/runtime-readelf-nW.stdout.txt",
+        "build_id": "a9a0d18db4f98a86ad4778800c5fa46943f81b2e"
+      }
+    }
+  },
+  "release_metadata": {
+    "artifact": "release/bun-v1.3.14.release-metadata.json",
+    "tag_name": "bun-v1.3.14",
+    "target_commitish": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+    "signature_verified": false,
+    "trust_boundary": "ZIP SHA-256 values come from official release asset metadata. No release signature claim is made."
+  },
+  "standard_variant_candidates": [
+    {
+      "id": 418773972,
+      "name": "bun-linux-x64.zip",
+      "browser_download_url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip",
+      "metadata_digest": "sha256:951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+      "expected_sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+      "observed_sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+      "metadata_size": 35969274,
+      "observed_size": 35969274,
+      "signature_verified": false,
+      "digest_source": "official GitHub release asset metadata",
+      "archive_entry": "bun-linux-x64/bun",
+      "inner_bun_sha256": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74",
+      "inner_bun_magic": "7f454c46",
+      "matches_runtime_elf_sha256": true
+    }
+  ],
+  "profile_download": {
+    "asset": {
+      "id": 418773912,
+      "name": "bun-linux-x64-profile.zip",
+      "browser_download_url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-profile.zip",
+      "metadata_digest": "sha256:f51a04e19e59a256fc82e8612c2996e0fefef6c16dbb7f9395cbd5dad9bdbf3e",
+      "expected_sha256": "f51a04e19e59a256fc82e8612c2996e0fefef6c16dbb7f9395cbd5dad9bdbf3e",
+      "observed_sha256": "f51a04e19e59a256fc82e8612c2996e0fefef6c16dbb7f9395cbd5dad9bdbf3e",
+      "metadata_size": 201016139,
+      "observed_size": 201016139,
+      "signature_verified": false,
+      "digest_source": "official GitHub release asset metadata"
+    },
+    "retained_archive": "profile/bun-linux-x64-profile.zip",
+    "signature_verified": false
+  },
+  "official_pair": {
+    "standard_asset": {
+      "id": 418773972,
+      "name": "bun-linux-x64.zip",
+      "browser_download_url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip",
+      "metadata_digest": "sha256:951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+      "expected_sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+      "observed_sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+      "metadata_size": 35969274,
+      "observed_size": 35969274,
+      "signature_verified": false,
+      "digest_source": "official GitHub release asset metadata",
+      "archive_entry": "bun-linux-x64/bun",
+      "inner_bun_sha256": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74"
+    },
+    "profile_asset": {
+      "asset": {
+        "id": 418773912,
+        "name": "bun-linux-x64-profile.zip",
+        "browser_download_url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-profile.zip",
+        "metadata_digest": "sha256:f51a04e19e59a256fc82e8612c2996e0fefef6c16dbb7f9395cbd5dad9bdbf3e",
+        "expected_sha256": "f51a04e19e59a256fc82e8612c2996e0fefef6c16dbb7f9395cbd5dad9bdbf3e",
+        "observed_sha256": "f51a04e19e59a256fc82e8612c2996e0fefef6c16dbb7f9395cbd5dad9bdbf3e",
+        "metadata_size": 201016139,
+        "observed_size": 201016139,
+        "signature_verified": false,
+        "digest_source": "official GitHub release asset metadata"
+      },
+      "retained_archive": "profile/bun-linux-x64-profile.zip",
+      "archive_entry": "bun-linux-x64-profile/bun-profile",
+      "archive_inner_sha256": "60a1d0bb2af4cc34e32d8536d3d2e8b6f484a76a3b24b30927e5b0a093e4b406",
+      "build_id": "a9a0d18db4f98a86ad4778800c5fa46943f81b2e",
+      "runtime_build_id": "a9a0d18db4f98a86ad4778800c5fa46943f81b2e",
+      "build_id_matches_runtime": true,
+      "text_agreement": {
+        "runtime": {
+          "name": ".text",
+          "file_offset": "0x2067e00",
+          "virtual_address": "0x24c7e00",
+          "size": "0x37cb10a"
+        },
+        "profile": {
+          "name": ".text",
+          "file_offset": "0x22c6e00",
+          "virtual_address": "0x24c7e00",
+          "size": "0x37cb10a"
+        },
+        "virtual_address_matches": true,
+        "size_matches": true,
+        "bytes_match": true,
+        "runtime_sha256": "6202ab436475428b740d1b12a3482aea8ccdba815b8feb374a810789d0b78212",
+        "profile_sha256": "6202ab436475428b740d1b12a3482aea8ccdba815b8feb374a810789d0b78212"
+      },
+      "readelf": {
+        "header": "profile/profile-readelf-hW.stdout.txt",
+        "program_headers": "profile/profile-readelf-lW.stdout.txt",
+        "section_headers": "profile/profile-readelf-SW.stdout.txt",
+        "notes": "profile/profile-readelf-nW.stdout.txt",
+        "build_id": "a9a0d18db4f98a86ad4778800c5fa46943f81b2e"
+      },
+      "dynsym": "profile/profile-readelf-dynsym.stdout.txt",
+      "signature_verified": false
+    },
+    "pair_status": "qualified_for_offline_candidate_layout_symbolization",
+    "scope": "This pairs the current job runtime to an official release profile. It does not prove the historical run used these retained runtime bytes."
+  },
+  "preflight_positive_demo": {
+    "status": "passed",
+    "runtime_dynsym": {
+      "name": "napi_cancel_async_work@@BUN_1.2",
+      "vma": "0x357bb20",
+      "section_index": "16"
+    },
+    "standard_equivalent_file_offset": {
+      "file_offset": "0x311bb20",
+      "executable_pt_load": {
+        "file_offset": "0x2067e00",
+        "virtual_address": "0x24c7e00",
+        "file_size": "0x37ccb10",
+        "memory_size": "0x37ccb10",
+        "flags": 5
+      }
+    },
+    "runtime_round_trip": {
+      "file_offset": "0x311bb20",
+      "vma": "0x357bb20",
+      "executable_pt_load": {
+        "file_offset": "0x2067e00",
+        "virtual_address": "0x24c7e00",
+        "file_size": "0x37ccb10",
+        "memory_size": "0x37ccb10",
+        "flags": 5
+      }
+    },
+    "profile": {
+      "text": {
+        "name": ".text",
+        "file_offset": "0x22c6e00",
+        "virtual_address": "0x24c7e00",
+        "size": "0x37cb10a"
+      },
+      "matching_dynsym_aliases": ["napi_cancel_async_work@@BUN_1.2"],
+      "matching_dynsym_alias": "napi_cancel_async_work@@BUN_1.2",
+      "addr2line_function": "napi.napi.napi_cancel_async_work",
+      "addr2line_output": "preflight/positive-demo-4.stdout.txt"
+    }
+  },
+  "symbolization": {
+    "trace_address_interpretation": "strace -k bracket addresses are runtime ELF file offsets. Each is mapped only through the runtime executable PT_LOAD: VMA = p_vaddr + (file_offset - p_offset). That VMA is passed directly to matched-profile addr2line; profile file offsets never translate the trace offset.",
+    "source_trace": {
+      "url": "https://github.com/TheBushidoCollective/relik/actions/runs/39723814228",
+      "id": 39723814228,
+      "job_id": 119643075857,
+      "head": "d6c3c2712ff360b354a9c03a51aec0ce521aba30",
+      "raw_trace_sha256": "e5b22f5d00cb66bbca400d7965d69c45a2093d8cbb57f084e468794fc03d7bf1",
+      "raw_trace_artifact": "stdio-linux-full-test-trace-39723814228",
+      "first_successful_close": {
+        "trace_line": 304458,
+        "tid": 3697,
+        "child_pid": 4059,
+        "fd": 219,
+        "stream": "stdout"
+      }
+    },
+    "historical_frame_mapping": {
+      "status": "candidate_layout_only_unattributed",
+      "dynsym_missing_interpretation": "A missing or inconsistent candidate dynsym label leaves the historical frame mapping unverified. It does not prove the historical Bun ELF differed because the original ELF was not retained and libunwind labels may be stale."
+    },
+    "excluded_frames": {
+      "kind": "anonymous JSJITCode",
+      "reason": "No anonymous JIT frame is symbolicated by this offline ELF/profile receipt."
+    },
+    "frame_count": 20,
+    "frames": [
+      {
+        "id": "close-219-01",
+        "source_trace_line": 304459,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x3197d67",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x35f7d67"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x35f7d67"
+        },
+        "dynsym": {
+          "name": "napi_internal_suppress_crash_on_abort_if_desired",
+          "symbol_vma": "0x357f9f0",
+          "trace_symbol_offset": "0x78377",
+          "computed_vma": "0x35f7d67"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x35f7d67",
+            "output": "symbols/close-219-01-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x35f7d66",
+            "output": "symbols/close-219-01-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-02",
+        "source_trace_line": 304460,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x3d26a5b",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x4186a5b"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x4186a5b"
+        },
+        "dynsym": {
+          "name": "napi_remove_async_cleanup_hook",
+          "symbol_vma": "0x3d406f0",
+          "trace_symbol_offset": "0x44636b",
+          "computed_vma": "0x4186a5b"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x4186a5b",
+            "output": "symbols/close-219-02-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x4186a5a",
+            "output": "symbols/close-219-02-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-03",
+        "source_trace_line": 304461,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x50961ef",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x54f61ef"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x54f61ef"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0xe658af",
+          "computed_vma": "0x54f61ef"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x54f61ef",
+            "output": "symbols/close-219-03-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x54f61ee",
+            "output": "symbols/close-219-03-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-04",
+        "source_trace_line": 304462,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x4c6eb85",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x50ceb85"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x50ceb85"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0xa3e245",
+          "computed_vma": "0x50ceb85"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x50ceb85",
+            "output": "symbols/close-219-04-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x50ceb84",
+            "output": "symbols/close-219-04-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-05",
+        "source_trace_line": 304463,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x4c6d07f",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x50cd07f"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x50cd07f"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0xa3c73f",
+          "computed_vma": "0x50cd07f"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x50cd07f",
+            "output": "symbols/close-219-05-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x50cd07e",
+            "output": "symbols/close-219-05-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-06",
+        "source_trace_line": 304464,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x361e8cd",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x3a7e8cd"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x3a7e8cd"
+        },
+        "dynsym": {
+          "name": "napi_internal_enqueue_finalizer",
+          "symbol_vma": "0x39617e0",
+          "trace_symbol_offset": "0x11d0ed",
+          "computed_vma": "0x3a7e8cd"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x3a7e8cd",
+            "output": "symbols/close-219-06-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x3a7e8cc",
+            "output": "symbols/close-219-06-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-07",
+        "source_trace_line": 304465,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x3d28b3b",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x4188b3b"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x4188b3b"
+        },
+        "dynsym": {
+          "name": "napi_remove_async_cleanup_hook",
+          "symbol_vma": "0x3d406f0",
+          "trace_symbol_offset": "0x44844b",
+          "computed_vma": "0x4188b3b"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x4188b3b",
+            "output": "symbols/close-219-07-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x4188b3a",
+            "output": "symbols/close-219-07-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-08",
+        "source_trace_line": 304466,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x33704b4",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x37d04b4"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x37d04b4"
+        },
+        "dynsym": {
+          "name": "napi_internal_suppress_crash_on_abort_if_desired",
+          "symbol_vma": "0x357f9f0",
+          "trace_symbol_offset": "0x250ac4",
+          "computed_vma": "0x37d04b4"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x37d04b4",
+            "output": "symbols/close-219-08-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x37d04b3",
+            "output": "symbols/close-219-08-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-09",
+        "source_trace_line": 304467,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x336a6eb",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x37ca6eb"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x37ca6eb"
+        },
+        "dynsym": {
+          "name": "napi_internal_suppress_crash_on_abort_if_desired",
+          "symbol_vma": "0x357f9f0",
+          "trace_symbol_offset": "0x24acfb",
+          "computed_vma": "0x37ca6eb"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x37ca6eb",
+            "output": "symbols/close-219-09-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x37ca6ea",
+            "output": "symbols/close-219-09-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-10",
+        "source_trace_line": 304480,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x21b16c4",
+        "historical_mapping_status": "candidate_layout_without_named_dynsym",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x26116c4"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x26116c4"
+        },
+        "dynsym": null,
+        "addr2line": {
+          "vma": {
+            "input": "0x26116c4",
+            "output": "symbols/close-219-10-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x26116c3",
+            "output": "symbols/close-219-10-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-11",
+        "source_trace_line": 304481,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x5130082",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x5590082"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x5590082"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0xeff742",
+          "computed_vma": "0x5590082"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x5590082",
+            "output": "symbols/close-219-11-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x5590081",
+            "output": "symbols/close-219-11-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-12",
+        "source_trace_line": 304482,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x512e5bf",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x558e5bf"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x558e5bf"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0xefdc7f",
+          "computed_vma": "0x558e5bf"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x558e5bf",
+            "output": "symbols/close-219-12-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x558e5be",
+            "output": "symbols/close-219-12-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-13",
+        "source_trace_line": 304483,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x5398233",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x57f8233"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x57f8233"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0x11678f3",
+          "computed_vma": "0x57f8233"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x57f8233",
+            "output": "symbols/close-219-13-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x57f8232",
+            "output": "symbols/close-219-13-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-14",
+        "source_trace_line": 304484,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x38c83dd",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x3d283dd"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x3d283dd"
+        },
+        "dynsym": {
+          "name": "napi_internal_enqueue_finalizer",
+          "symbol_vma": "0x39617e0",
+          "trace_symbol_offset": "0x3c6bfd",
+          "computed_vma": "0x3d283dd"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x3d283dd",
+            "output": "symbols/close-219-14-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x3d283dc",
+            "output": "symbols/close-219-14-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-15",
+        "source_trace_line": 304487,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x21b16c4",
+        "historical_mapping_status": "candidate_layout_without_named_dynsym",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x26116c4"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x26116c4"
+        },
+        "dynsym": null,
+        "addr2line": {
+          "vma": {
+            "input": "0x26116c4",
+            "output": "symbols/close-219-15-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x26116c3",
+            "output": "symbols/close-219-15-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-16",
+        "source_trace_line": 304488,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x4cf40b9",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x51540b9"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x51540b9"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0xac3779",
+          "computed_vma": "0x51540b9"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x51540b9",
+            "output": "symbols/close-219-16-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x51540b8",
+            "output": "symbols/close-219-16-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-17",
+        "source_trace_line": 304489,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x4f7cca0",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x53dcca0"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x53dcca0"
+        },
+        "dynsym": {
+          "name": "uv_wtf8_to_utf16",
+          "symbol_vma": "0x4690940",
+          "trace_symbol_offset": "0xd4c360",
+          "computed_vma": "0x53dcca0"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x53dcca0",
+            "output": "symbols/close-219-17-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x53dcc9f",
+            "output": "symbols/close-219-17-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-18",
+        "source_trace_line": 304490,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x388f503",
+        "historical_mapping_status": "candidate_layout_checked",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x3cef503"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x3cef503"
+        },
+        "dynsym": {
+          "name": "napi_internal_enqueue_finalizer",
+          "symbol_vma": "0x39617e0",
+          "trace_symbol_offset": "0x38dd23",
+          "computed_vma": "0x3cef503"
+        },
+        "addr2line": {
+          "vma": {
+            "input": "0x3cef503",
+            "output": "symbols/close-219-18-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x3cef502",
+            "output": "symbols/close-219-18-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-19",
+        "source_trace_line": 304491,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x2340dae",
+        "historical_mapping_status": "candidate_layout_without_named_dynsym",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x27a0dae"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x27a0dae"
+        },
+        "dynsym": null,
+        "addr2line": {
+          "vma": {
+            "input": "0x27a0dae",
+            "output": "symbols/close-219-19-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x27a0dad",
+            "output": "symbols/close-219-19-vma-minus-one.stdout.txt"
+          }
+        }
+      },
+      {
+        "id": "close-219-20",
+        "source_trace_line": 304492,
+        "source_trace_kind": "Bun native frame",
+        "file_offset": "0x24521ad",
+        "historical_mapping_status": "candidate_layout_without_named_dynsym",
+        "historical_attribution": "unattributed",
+        "runtime_mapping": {
+          "executable_pt_load": {
+            "file_offset": "0x2067e00",
+            "virtual_address": "0x24c7e00",
+            "file_size": "0x37ccb10",
+            "memory_size": "0x37ccb10",
+            "flags": 5
+          },
+          "vma": "0x28b21ad"
+        },
+        "profile_text": {
+          "section": {
+            "name": ".text",
+            "file_offset": "0x22c6e00",
+            "virtual_address": "0x24c7e00",
+            "size": "0x37cb10a"
+          },
+          "contains_runtime_mapped_vma": true,
+          "vma": "0x28b21ad"
+        },
+        "dynsym": null,
+        "addr2line": {
+          "vma": {
+            "input": "0x28b21ad",
+            "output": "symbols/close-219-20-vma.stdout.txt"
+          },
+          "vma_minus_one": {
+            "input": "0x28b21ac",
+            "output": "symbols/close-219-20-vma-minus-one.stdout.txt"
+          }
+        }
+      }
+    ],
+    "caller_attribution": "No historical caller is asserted. These are candidate-layout interpretations only because the original historical Bun ELF bytes were not retained."
+  },
+  "completed_at": "2026-10-22T07:38:55.435Z",
+  "conclusion": "The current job runtime passed the offline positive demo and is paired with an official profile. Historical frames remain un-attributed because the original historical Bun ELF was not retained."
+}

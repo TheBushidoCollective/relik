@@ -1,0 +1,11 @@
+{
+  "run": "https://github.com/TheBushidoCollective/relik/actions/runs/39740743534",
+  "workflowSha": "400c4a9185f4ecbf9e85ef32f115c81d7a2e9678 (agent/stdio-linux-symbol-identity; b45e6cd plus parent fix of an install-step YAML scalar that had prevented job creation in run 39740549862)",
+  "preflight": "PASS: positive symbolization demo on a FUNC present in the verified runtime .dynsym (runtime VMA to standard ELF file offset to PT_LOAD round trip, profile addr2line match)",
+  "identity": "Test PID 4100 read /proc/self/exe in-process: official Bun 1.3.14 (0d9b296a) at the mise install path; all 12 traced Bun execve records matched the verified binary, 0 unmatched",
+  "suite": "Pinned absolute Bun build+test under strace -f -ttt -yy -k: 1799 pass, 10 fail, exit 1. The ten failures are listed in failed-tests.txt; each is a child-process-spawning test (Chrome, git, built sandbox) running near the default timeout under trace overhead. None is the EBADF/epoll_ctl protocol failure.",
+  "verdict": "nondiscriminating: no new premature-close-before-registration witness occurred, so nothing was attributed. Historical frames remain unattributed.",
+  "instrumentation": "Identity preload is timing-changing startup instrumentation; this was a pinned diagnostic measurement, not an unchanged historical launcher or a fix.",
+  "rawTrace": "Not committed (size in raw-trace.bytes, hash in raw-trace.sha256); retained in the run artifact stdio-linux-identity-trace-39740743534.",
+  "notCleared": "Linux EBADF rail and PR116 remain open."
+}

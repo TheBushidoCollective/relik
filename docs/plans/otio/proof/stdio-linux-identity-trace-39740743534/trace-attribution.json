@@ -1,0 +1,1222 @@
+{
+  "schema": "relic-stdio-linux-identity-coupled-trace-v1",
+  "status": "nondiscriminating",
+  "instrumentation": "timing-changing-startup-instrumentation",
+  "trace": "../../bun-run-test.strace",
+  "execve_provenance": {
+    "verified_bun_path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+    "records": [
+      {
+        "trace_line": 1,
+        "pid": 4083,
+        "path": "/home/runner/work/_temp/stdio-linux-identity-trace/run-pinned-suite.sh",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 458,
+        "pid": 4083,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 465,
+        "pid": 4083,
+        "path": "/home/runner/.local/share/mise/shims/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 472,
+        "pid": 4083,
+        "path": "/home/runner/.local/share/mise/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 479,
+        "pid": 4083,
+        "path": "/snap/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 486,
+        "pid": 4083,
+        "path": "/home/runner/.local/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 493,
+        "pid": 4083,
+        "path": "/opt/pipx_bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 500,
+        "pid": 4083,
+        "path": "/home/runner/.cargo/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 507,
+        "pid": 4083,
+        "path": "/home/runner/.config/composer/vendor/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 514,
+        "pid": 4083,
+        "path": "/usr/local/.ghcup/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 521,
+        "pid": 4083,
+        "path": "/home/runner/.dotnet/tools/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 528,
+        "pid": 4083,
+        "path": "/usr/local/sbin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 535,
+        "pid": 4083,
+        "path": "/usr/local/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 542,
+        "pid": 4083,
+        "path": "/usr/sbin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 549,
+        "pid": 4083,
+        "path": "/usr/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 1157,
+        "pid": 4084,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 1491,
+        "pid": 4085,
+        "path": "/usr/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 2040,
+        "pid": 4085,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 2503,
+        "pid": 4088,
+        "path": "/usr/bin/bash",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 3083,
+        "pid": 4088,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 7211,
+        "pid": 4100,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 8917,
+        "pid": 4110,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 18970,
+        "pid": 4128,
+        "path": "/usr/bin/google-chrome",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 19805,
+        "pid": 4129,
+        "path": "/usr/bin/readlink",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 20535,
+        "pid": 4162,
+        "path": "/usr/bin/dirname",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 21150,
+        "pid": 4190,
+        "path": "/usr/bin/mkdir",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 21798,
+        "pid": 4191,
+        "path": "/usr/bin/touch",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 22897,
+        "pid": 4192,
+        "path": "/usr/bin/cat",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 23262,
+        "pid": 4128,
+        "path": "/opt/google/chrome/chrome",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 23295,
+        "pid": 4193,
+        "path": "/usr/bin/cat",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 27037,
+        "pid": 4197,
+        "path": "/opt/google/chrome/chrome_crashpad_handler",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 27305,
+        "pid": 4199,
+        "path": "/opt/google/chrome/chrome_crashpad_handler",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 28295,
+        "pid": 4204,
+        "path": "/opt/google/chrome/chrome",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 28394,
+        "pid": 4205,
+        "path": "/opt/google/chrome/chrome",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 46162,
+        "pid": 4226,
+        "path": "/proc/self/exe",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 133418,
+        "pid": 4335,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 150643,
+        "pid": 4345,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 155810,
+        "pid": 4358,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 160237,
+        "pid": 4369,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 163723,
+        "pid": 4380,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 168012,
+        "pid": 4391,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 172768,
+        "pid": 4405,
+        "path": "/opt/homebrew/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 173150,
+        "pid": 4406,
+        "path": "/usr/local/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 173550,
+        "pid": 4407,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 177610,
+        "pid": 4408,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 182156,
+        "pid": 4409,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 183611,
+        "pid": 4410,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 185102,
+        "pid": 4411,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 186544,
+        "pid": 4412,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 188028,
+        "pid": 4413,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 189530,
+        "pid": 4414,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 190982,
+        "pid": 4415,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 192425,
+        "pid": 4416,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 193907,
+        "pid": 4417,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 195415,
+        "pid": 4418,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 196970,
+        "pid": 4419,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 198438,
+        "pid": 4420,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 199891,
+        "pid": 4421,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 201332,
+        "pid": 4422,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 202817,
+        "pid": 4423,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 204308,
+        "pid": 4424,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 205758,
+        "pid": 4425,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 207206,
+        "pid": 4426,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 208654,
+        "pid": 4427,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 210096,
+        "pid": 4428,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 211607,
+        "pid": 4429,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 213070,
+        "pid": 4431,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 214505,
+        "pid": 4432,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 215973,
+        "pid": 4433,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 217426,
+        "pid": 4434,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 218876,
+        "pid": 4435,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 220348,
+        "pid": 4436,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 221799,
+        "pid": 4437,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 223252,
+        "pid": 4438,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 224705,
+        "pid": 4439,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 226192,
+        "pid": 4440,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 227647,
+        "pid": 4441,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 229137,
+        "pid": 4442,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 230631,
+        "pid": 4443,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 231867,
+        "pid": 4444,
+        "path": "/opt/homebrew/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 232210,
+        "pid": 4445,
+        "path": "/usr/local/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 232579,
+        "pid": 4446,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 236619,
+        "pid": 4447,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 240718,
+        "pid": 4449,
+        "path": "/opt/homebrew/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 241061,
+        "pid": 4450,
+        "path": "/usr/local/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 241422,
+        "pid": 4451,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 245495,
+        "pid": 4452,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 249775,
+        "pid": 4453,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 251249,
+        "pid": 4454,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 252697,
+        "pid": 4455,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 254206,
+        "pid": 4456,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 255370,
+        "pid": 4457,
+        "path": "/opt/homebrew/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 255713,
+        "pid": 4458,
+        "path": "/usr/local/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 256074,
+        "pid": 4459,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 260163,
+        "pid": 4460,
+        "path": "/usr/bin/ffmpeg",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 264451,
+        "pid": 4462,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 265908,
+        "pid": 4463,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 267349,
+        "pid": 4464,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 268844,
+        "pid": 4465,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 270318,
+        "pid": 4466,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 271767,
+        "pid": 4467,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 273243,
+        "pid": 4468,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 274690,
+        "pid": 4469,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 276144,
+        "pid": 4470,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 277594,
+        "pid": 4471,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 279049,
+        "pid": 4472,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 280508,
+        "pid": 4474,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 282067,
+        "pid": 4476,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 283670,
+        "pid": 4477,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 285192,
+        "pid": 4478,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 286675,
+        "pid": 4479,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 288295,
+        "pid": 4481,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 289826,
+        "pid": 4482,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 291365,
+        "pid": 4483,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 292887,
+        "pid": 4484,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 294487,
+        "pid": 4485,
+        "path": "/tmp/fake-chrome-1792654845052.mjs",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 295545,
+        "pid": 4485,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/node",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 295552,
+        "pid": 4485,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/node",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 295559,
+        "pid": 4485,
+        "path": "/home/runner/.local/share/mise/shims/node",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 299334,
+        "pid": 4485,
+        "path": "/home/runner/.local/share/mise/installs/node/24.21.0/bin/node",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 300832,
+        "pid": 4500,
+        "path": "/tmp/fake-crash-chrome-1792654848494.mjs",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 301877,
+        "pid": 4500,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/node",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 301884,
+        "pid": 4500,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/node",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 301891,
+        "pid": 4500,
+        "path": "/home/runner/.local/share/mise/shims/node",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306109,
+        "pid": 4509,
+        "path": "/tmp/fake-slow-chrome-1792654851161.sh",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306859,
+        "pid": 4509,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306872,
+        "pid": 4509,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306885,
+        "pid": 4509,
+        "path": "/home/runner/.local/share/mise/shims/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306898,
+        "pid": 4509,
+        "path": "/home/runner/.local/share/mise/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306911,
+        "pid": 4509,
+        "path": "/snap/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306924,
+        "pid": 4509,
+        "path": "/home/runner/.local/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306937,
+        "pid": 4509,
+        "path": "/opt/pipx_bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306950,
+        "pid": 4509,
+        "path": "/home/runner/.cargo/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306963,
+        "pid": 4509,
+        "path": "/home/runner/.config/composer/vendor/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306976,
+        "pid": 4509,
+        "path": "/usr/local/.ghcup/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 306989,
+        "pid": 4509,
+        "path": "/home/runner/.dotnet/tools/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 307014,
+        "pid": 4509,
+        "path": "/usr/local/sbin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 307027,
+        "pid": 4509,
+        "path": "/usr/local/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 307040,
+        "pid": 4509,
+        "path": "/usr/sbin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 307053,
+        "pid": 4509,
+        "path": "/usr/bin/sleep",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 308144,
+        "pid": 4510,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 309755,
+        "pid": 4511,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 311247,
+        "pid": 4512,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 313284,
+        "pid": 4513,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 314746,
+        "pid": 4514,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 316192,
+        "pid": 4515,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 320443,
+        "pid": 4517,
+        "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "bun_candidate": true
+      },
+      {
+        "trace_line": 326138,
+        "pid": 4528,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 327702,
+        "pid": 4529,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 330923,
+        "pid": 4530,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 332666,
+        "pid": 4531,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 334282,
+        "pid": 4532,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 336299,
+        "pid": 4533,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 338464,
+        "pid": 4534,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 340913,
+        "pid": 4536,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 342527,
+        "pid": 4537,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 344388,
+        "pid": 4538,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 347351,
+        "pid": 4539,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 348948,
+        "pid": 4540,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 351123,
+        "pid": 4541,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 352633,
+        "pid": 4543,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 355908,
+        "pid": 4544,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 357618,
+        "pid": 4545,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 359205,
+        "pid": 4546,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 361233,
+        "pid": 4547,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 363519,
+        "pid": 4548,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 365867,
+        "pid": 4550,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 367982,
+        "pid": 4551,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 369593,
+        "pid": 4552,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 371476,
+        "pid": 4553,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 374412,
+        "pid": 4554,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 375875,
+        "pid": 4560,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 377282,
+        "pid": 4561,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 378653,
+        "pid": 4562,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 381921,
+        "pid": 4564,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 383633,
+        "pid": 4565,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 385235,
+        "pid": 4566,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 387264,
+        "pid": 4567,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 389583,
+        "pid": 4568,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 391911,
+        "pid": 4570,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 394006,
+        "pid": 4571,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 395627,
+        "pid": 4572,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 397491,
+        "pid": 4573,
+        "path": "/usr/lib/git-core/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 400440,
+        "pid": 4574,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 402090,
+        "pid": 4576,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 403486,
+        "pid": 4577,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 405037,
+        "pid": 4579,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 406554,
+        "pid": 4581,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 408047,
+        "pid": 4582,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 409619,
+        "pid": 4583,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 411128,
+        "pid": 4584,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      },
+      {
+        "trace_line": 412646,
+        "pid": 4585,
+        "path": "/usr/bin/git",
+        "bun_candidate": false
+      }
+    ],
+    "test_pid_execve_matches": [4100],
+    "test_pid_execve_mappings": [
+      {
+        "pid": 4100,
+        "verified_elf_sha256": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74",
+        "execve_records": [
+          {
+            "trace_line": 7211,
+            "pid": 4100,
+            "path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+            "bun_candidate": true
+          }
+        ]
+      }
+    ],
+    "unmatched_bun_images": []
+  },
+  "test_processes": [
+    {
+      "pid": 4100,
+      "identity": {
+        "schema": "relic-stdio-linux-test-process-identity-v1",
+        "instrumentation": "timing-changing-startup-instrumentation",
+        "process_pid": 4100,
+        "bun_version": "1.3.14",
+        "bun_revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+        "node_compat_version": "v24.3.0",
+        "process_exec_path": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "process_exec_realpath": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "proc_self_exe_readlink": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "proc_self_exe_realpath": "/home/runner/.local/share/mise/installs/bun/1.3.14/bin/bun",
+        "actual_elf": {
+          "artifact_filename": "bun.elf",
+          "sha256": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74",
+          "bytes": 92752752,
+          "magic": "7f454c46"
+        }
+      },
+      "binary_path": "/home/runner/work/_temp/stdio-linux-identity-trace/test-processes/pid-4100/bun.elf",
+      "readelf": {
+        "header": "test-process-readelf/pid-4100/pid-4100-readelf-hW.stdout.txt",
+        "program_headers": "test-process-readelf/pid-4100/pid-4100-readelf-lW.stdout.txt",
+        "section_headers": "test-process-readelf/pid-4100/pid-4100-readelf-SW.stdout.txt",
+        "notes": "test-process-readelf/pid-4100/pid-4100-readelf-nW.stdout.txt",
+        "build_id": "a9a0d18db4f98a86ad4778800c5fa46943f81b2e"
+      },
+      "executable_pt_load": [
+        {
+          "file_offset": "0x2067e00",
+          "virtual_address": "0x24c7e00",
+          "file_size": "0x37ccb10",
+          "memory_size": "0x37ccb10",
+          "flags": 5
+        }
+      ]
+    }
+  ],
+  "witnesses": [],
+  "conclusion": "No new identity-qualified caller was usable. This experiment is nondiscriminating and asserts no runtime cause.",
+  "completed_at": "2026-10-22T07:41:23.379Z"
+}

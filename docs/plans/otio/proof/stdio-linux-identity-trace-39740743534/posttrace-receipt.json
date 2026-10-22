@@ -1,0 +1,157 @@
+{
+  "schema": "relic-stdio-linux-symbol-identity-v1",
+  "status": "trace_analysis_completed",
+  "mode": "posttrace",
+  "started_at": "2026-10-22T07:41:22.685Z",
+  "saved_native_frame_inputs": [
+    {
+      "id": "close-219-01",
+      "source_trace_line": 304459,
+      "file_offset": "0x3197d67",
+      "exported_symbol": "napi_internal_suppress_crash_on_abort_if_desired",
+      "exported_symbol_offset": "0x78377"
+    },
+    {
+      "id": "close-219-02",
+      "source_trace_line": 304460,
+      "file_offset": "0x3d26a5b",
+      "exported_symbol": "napi_remove_async_cleanup_hook",
+      "exported_symbol_offset": "0x44636b"
+    },
+    {
+      "id": "close-219-03",
+      "source_trace_line": 304461,
+      "file_offset": "0x50961ef",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xe658af"
+    },
+    {
+      "id": "close-219-04",
+      "source_trace_line": 304462,
+      "file_offset": "0x4c6eb85",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xa3e245"
+    },
+    {
+      "id": "close-219-05",
+      "source_trace_line": 304463,
+      "file_offset": "0x4c6d07f",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xa3c73f"
+    },
+    {
+      "id": "close-219-06",
+      "source_trace_line": 304464,
+      "file_offset": "0x361e8cd",
+      "exported_symbol": "napi_internal_enqueue_finalizer",
+      "exported_symbol_offset": "0x11d0ed"
+    },
+    {
+      "id": "close-219-07",
+      "source_trace_line": 304465,
+      "file_offset": "0x3d28b3b",
+      "exported_symbol": "napi_remove_async_cleanup_hook",
+      "exported_symbol_offset": "0x44844b"
+    },
+    {
+      "id": "close-219-08",
+      "source_trace_line": 304466,
+      "file_offset": "0x33704b4",
+      "exported_symbol": "napi_internal_suppress_crash_on_abort_if_desired",
+      "exported_symbol_offset": "0x250ac4"
+    },
+    {
+      "id": "close-219-09",
+      "source_trace_line": 304467,
+      "file_offset": "0x336a6eb",
+      "exported_symbol": "napi_internal_suppress_crash_on_abort_if_desired",
+      "exported_symbol_offset": "0x24acfb"
+    },
+    {
+      "id": "close-219-10",
+      "source_trace_line": 304480,
+      "file_offset": "0x21b16c4",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    },
+    {
+      "id": "close-219-11",
+      "source_trace_line": 304481,
+      "file_offset": "0x5130082",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xeff742"
+    },
+    {
+      "id": "close-219-12",
+      "source_trace_line": 304482,
+      "file_offset": "0x512e5bf",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xefdc7f"
+    },
+    {
+      "id": "close-219-13",
+      "source_trace_line": 304483,
+      "file_offset": "0x5398233",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0x11678f3"
+    },
+    {
+      "id": "close-219-14",
+      "source_trace_line": 304484,
+      "file_offset": "0x38c83dd",
+      "exported_symbol": "napi_internal_enqueue_finalizer",
+      "exported_symbol_offset": "0x3c6bfd"
+    },
+    {
+      "id": "close-219-15",
+      "source_trace_line": 304487,
+      "file_offset": "0x21b16c4",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    },
+    {
+      "id": "close-219-16",
+      "source_trace_line": 304488,
+      "file_offset": "0x4cf40b9",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xac3779"
+    },
+    {
+      "id": "close-219-17",
+      "source_trace_line": 304489,
+      "file_offset": "0x4f7cca0",
+      "exported_symbol": "uv_wtf8_to_utf16",
+      "exported_symbol_offset": "0xd4c360"
+    },
+    {
+      "id": "close-219-18",
+      "source_trace_line": 304490,
+      "file_offset": "0x388f503",
+      "exported_symbol": "napi_internal_enqueue_finalizer",
+      "exported_symbol_offset": "0x38dd23"
+    },
+    {
+      "id": "close-219-19",
+      "source_trace_line": 304491,
+      "file_offset": "0x2340dae",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    },
+    {
+      "id": "close-219-20",
+      "source_trace_line": 304492,
+      "file_offset": "0x24521ad",
+      "exported_symbol": null,
+      "exported_symbol_offset": null
+    }
+  ],
+  "policy": {
+    "no_profile_execution": true,
+    "no_runtime_replacement": true,
+    "no_external_private_stack_upload": true,
+    "no_bun_crash_address_normalization": true,
+    "release_signature_existence_checked": false,
+    "release_signature_verified": false
+  },
+  "completed_at": "2026-10-22T07:41:23.380Z"
+}
