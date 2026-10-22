@@ -50,8 +50,34 @@
       "pass": 3,
       "fail": 0,
       "assertions": 28,
-      "interpretation": "Nondiscriminating. These three cases do not prove that literal range-payload preservation branch. Owner and original planner were notified; a reachable mixed-clock control or a decision removing unnecessary behavior is required before claiming this guard proven."
+      "interpretation": "Nondiscriminating against the first three cases alone. Superseded by literalPayloadFollowup below; this original count is retained as historical evidence."
     }
   ],
-  "scope": "Every mutation was restored immediately and followed by the original three passing cases. No mutation survives. This focused evidence does not clear full SOURCE, playback status, process boundaries, or release gates."
+  "literalPayloadFollowup": {
+    "sourceHead": "integration of df8dde1 onto 9cb9615",
+    "sourceSha256BeforeAndAfter": "9a90190bfc8aec6c75373cd42774f844d934d3767f42a21f749bb682007ee63d",
+    "fixture": "Public readOtioDocument parse of a 24 fps Timeline whose Stack.source_range trims to 1 + 2^-52, containing a 2^-53 Gap and a two-frame Clip; distinct original/current Timeline names; track-scoped anchor without item_id. Same clock: descendant exposures inherit the root clock, so no mixed-clock exposure is required.",
+    "command": "mise exec -- bun test packages/relic-format/test/otio-identity.test.ts -t 'round-to-even|fractional|rounded forward|reverse projection|shorter|nearby'",
+    "baselineAndRestoredRun": {
+      "exit": 0,
+      "pass": 9,
+      "fail": 0,
+      "assertions": 71
+    },
+    "mutation": {
+      "change": "Disable only the full opposite-boundary literal exposed-range return (boundary comparison replaced by an impossible value), retaining exact endpoint reuse",
+      "exit": 1,
+      "pass": 8,
+      "fail": 1,
+      "assertions": 70,
+      "failure": {
+        "line": 1932,
+        "expectedDuration": 1,
+        "receivedDuration": 0.9999999999999999,
+        "statusStillMapped": true
+      }
+    },
+    "interpretation": "Parser exposure, both exact source-witness correspondences, and the immutable original anchor passed before the payload assertion failed. The literal-payload branch is now load-bearing under real parser construction."
+  },
+  "scope": "Every mutation was restored immediately from an exact copy and followed by passing controls. No mutation survives. This focused evidence does not clear full SOURCE, playback status, process boundaries, or release gates."
 }

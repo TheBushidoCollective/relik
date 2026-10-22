@@ -1867,7 +1867,7 @@ describe('OTIO original selection and reverse projection edges', () => {
     expectNoMappedIdentityFields(resolved);
   });
 
-  test('preserves literal round-to-even mixed-clock clip exposure payloads', () => {
+  test('preserves literal round-to-even same-clock clip exposure payloads', () => {
     const gap = 2 ** -53;
     const expected = {
       start_time: { value: gap, rate: 24 },
