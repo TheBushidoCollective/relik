@@ -1590,6 +1590,7 @@ interface ChromeSession {
   cspHeaders: string[];
   workerUrls: string[];
   captureDecoderTrace: boolean;
+  decoderTraceLabel: string | null;
 }
 
 interface DecoderTraceCanvasRead {
@@ -1615,11 +1616,11 @@ interface DecoderTraceCanvasRead {
   readonly trace: Record<string, unknown> | null;
 }
 
-const decoderTraceSamples = new WeakMap<ChromeSession, DecoderTraceCanvasRead>();
 
 interface OpenBrowserOptions {
   readonly recordMediaSeekTargets?: boolean;
   readonly captureDecoderTrace?: boolean;
+  readonly decoderTraceLabel?: string;
   readonly blockWebCodecs?: boolean;
 }
 
@@ -1865,6 +1866,13 @@ async function openBrowser(
         ...fields,
       });
     };
+    const recordSafely = (event, fields = {}) => {
+      try {
+        record(event, fields);
+      } catch (error) {
+        state.runtimeErrors.push(errorText(error));
+      }
+    };
     const mediaError = (video) => {
       const error = safe(() => video.error);
       if (!error) return null;
@@ -1954,7 +1962,7 @@ async function openBrowser(
       } catch (error) {
         const message = name + ': ' + errorText(error);
         state.installationErrors.push(message);
-        record('instrumentation_install_error', { name, error: message });
+        recordSafely('instrumentation_install_error', { name, error: message });
       }
     };
     const wrapCanvasMethod = (name) => {
@@ -1977,29 +1985,36 @@ async function openBrowser(
             state.runtimeErrors.push(message);
             operation = { trace_error: message };
           }
+          let result;
           try {
-            const result = Reflect.apply(original, this, args);
-            record('canvas_' + name, { ...operation, outcome: 'returned' });
-            return result;
+            result = Reflect.apply(original, this, args);
           } catch (error) {
-            record('canvas_' + name, {
+            recordSafely('canvas_' + name, {
               ...operation,
               outcome: 'thrown',
               error: errorText(error),
             });
             throw error;
           }
+          recordSafely('canvas_' + name, { ...operation, outcome: 'returned' });
+          return result;
         },
       });
     };
     const api = {
       beginSeek(frame) {
+        const discarded_events = state.events.length;
+        const prior_overflow = { ...state.overflow };
         state.events.length = 0;
         state.overflow = { dropped: 0, firstDroppedSequence: null };
-        record('seek_before_input_dispatch', { frame });
+        recordSafely('seek_before_input_dispatch', {
+          frame,
+          discarded_events,
+          prior_overflow,
+        });
       },
       mark(event, fields = {}) {
-        record(event, fields);
+        recordSafely(event, fields);
       },
       canvasId(canvas) {
         return stableId(canvas, 'canvas');
@@ -2038,18 +2053,20 @@ async function openBrowser(
             return descriptor.set.call(this, value);
           }
           const before = videoSnapshot(this);
+          const input =
+            typeof value === 'number'
+              ? Number.isFinite(value)
+                ? value
+                : String(value)
+              : null;
+          const input_type = typeof value;
+          let result;
           try {
-            const result = descriptor.set.call(this, value);
-            record('native_video_current_time', {
-              input: numberOrNull(Number(value)),
-              before,
-              after: videoSnapshot(this),
-              outcome: 'returned',
-            });
-            return result;
+            result = descriptor.set.call(this, value);
           } catch (error) {
-            record('native_video_current_time', {
-              input: numberOrNull(Number(value)),
+            recordSafely('native_video_current_time', {
+              input,
+              input_type,
               before,
               after: videoSnapshot(this),
               outcome: 'thrown',
@@ -2057,6 +2074,14 @@ async function openBrowser(
             });
             throw error;
           }
+          recordSafely('native_video_current_time', {
+            input,
+            input_type,
+            before,
+            after: videoSnapshot(this),
+            outcome: 'returned',
+          });
+          return result;
         },
       });
     });
@@ -2067,7 +2092,7 @@ async function openBrowser(
           (event) => {
             const target = event.target;
             if (!(target instanceof HTMLVideoElement)) return;
-            record('native_video_event', {
+            recordSafely('native_video_event', {
               event_type: eventType,
               video: videoSnapshot(target),
             });
@@ -2079,7 +2104,7 @@ async function openBrowser(
     for (const name of ['fillRect', 'clearRect', 'drawImage']) {
       install('canvas-' + name, () => wrapCanvasMethod(name));
     }
-    record('instrumentation_ready', { capacity });
+    recordSafely('instrumentation_ready', { capacity });
   })()`;
     const pagePrelude = [
       options.recordMediaSeekTargets
@@ -2106,6 +2131,7 @@ async function openBrowser(
         })()`
         : '',
       options.blockWebCodecs ? webCodecsTrap : '',
+      options.captureDecoderTrace ? decoderTracePrelude : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -2211,6 +2237,8 @@ async function openBrowser(
       continuedNonLoopback,
       cspHeaders,
       workerUrls,
+      captureDecoderTrace: options.captureDecoderTrace === true,
+      decoderTraceLabel: options.decoderTraceLabel ?? null,
       send: (method, params) => cdp.send(method, params, sessionId),
       async evaluate<T>(expression: string): Promise<T> {
         const res = await cdp.send(
@@ -2268,6 +2296,37 @@ async function openBrowser(
         await writeFile(join(shotDir, `${label}.png`), bytes);
       },
       async close(): Promise<void> {
+        if (options.captureDecoderTrace) {
+          try {
+            let trace: Record<string, unknown> | null = null;
+            let flush_error: string | null = null;
+            try {
+              const evalResult = await cdp.send(
+                'Runtime.evaluate',
+                {
+                  expression:
+                    'globalThis.__relicOtioDecoderTrace?.snapshot() ?? null',
+                  returnByValue: true,
+                },
+                sessionId
+              );
+              const inner = evalResult['result'] as
+                | { value?: unknown }
+                | undefined;
+              trace = (inner?.value as Record<string, unknown> | null) ?? null;
+            } catch (error) {
+              flush_error =
+                error instanceof Error ? error.message : String(error);
+            }
+            await persistDecoderTraceObservation(
+              options.decoderTraceLabel,
+              'teardown',
+              { trace, flush_error }
+            );
+          } catch {
+            // Teardown raw CDP flush errors captured never prevents close.
+          }
+        }
         await cdp
           .send(
             'Runtime.evaluate',
@@ -2341,16 +2400,25 @@ async function waitReady(browser: ChromeSession): Promise<string> {
 }
 
 async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
+  const before = browser.captureDecoderTrace
+    ? `globalThis.__relicOtioDecoderTrace?.beginSeek(${frame}); `
+    : '';
+  const after = browser.captureDecoderTrace
+    ? ` globalThis.__relicOtioDecoderTrace?.mark('seek_after_input_dispatch', { frame: ${frame} });`
+    : '';
+  const terminal = browser.captureDecoderTrace
+    ? `globalThis.__relicOtioDecoderTrace?.mark('seek_terminal_predicate_true', { frame: ${frame}, root_frame: root.dataset.frame ?? null, buffering: root.dataset.buffering ?? null }), `
+    : '';
   const landed = await browser.evaluate<boolean>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
     const seek = document.querySelector('input.otio-seek');
     if (!seek) { resolve(false); return promise; }
     seek.value = '${frame}';
-    seek.dispatchEvent(new Event('input', { bubbles: true }));
+    ${before}seek.dispatchEvent(new Event('input', { bubbles: true }));${after}
     const start = Date.now();
     const tick = () => {
       const root = document.querySelector('.otio-view');
-      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) resolve(true);
+      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) ${terminal}resolve(true);
       else if (Date.now() - start > 12000) resolve(false);
       else setTimeout(tick, 50);
     };
@@ -2369,7 +2437,8 @@ async function sampleCanvas(
   width: number,
   height: number
 ): Promise<Uint8Array> {
-  const values = await browser.evaluate<number[]>(`(() => {
+  if (!browser.captureDecoderTrace) {
+    const values = await browser.evaluate<number[]>(`(() => {
     const canvas = document.querySelector('canvas.otio-canvas');
     if (!canvas) return null;
     const src = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
@@ -2384,11 +2453,96 @@ async function sampleCanvas(
     }
     return out;
   })()`);
+    assert.ok(
+      values && values.length === width * height * 3,
+      'canvas sample missing'
+    );
+    return Uint8Array.from(values);
+  }
+
+  const read = await browser.evaluate<DecoderTraceCanvasRead>(`(() => {
+    const trace = globalThis.__relicOtioDecoderTrace;
+    const rootEl = document.querySelector('.otio-view');
+    const root = rootEl ? {
+      frame: rootEl.dataset.frame ?? null,
+      buffering: rootEl.dataset.buffering ?? null,
+      ready: rootEl.dataset.ready ?? null,
+      preview_state: rootEl.dataset.previewState ?? null,
+      preview_blocked: rootEl.dataset.previewBlocked ?? null,
+    } : null;
+    const diagnostics = Array.from(
+      document.querySelectorAll('.otio-diagnostics'),
+      (element) => element.textContent ?? ''
+    );
+    const videoElements = Array.from(
+      document.querySelectorAll('.otio-video-decoders video')
+    );
+    const native_videos = videoElements
+      .map((video) => trace?.snapshotVideo(video) ?? null)
+      .filter((entry) => entry !== null);
+    const canvas = document.querySelector('canvas.otio-canvas');
+    if (!canvas) {
+      return {
+        rgb: null,
+        alpha: null,
+        root,
+        diagnostics,
+        selected_canvas_id: null,
+        native_videos,
+        trace: trace?.snapshot() ?? null,
+      };
+    }
+    const src = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const out = [];
+    let alphaMin = 255;
+    let alphaMax = 0;
+    let alphaSum = 0;
+    let alphaZeroCount = 0;
+    let alphaOpaqueCount = 0;
+    for (let y = 0; y < ${height}; y++) {
+      const sy = Math.min(canvas.height - 1, Math.floor(y * canvas.height / ${height}));
+      for (let x = 0; x < ${width}; x++) {
+        const sx = Math.min(canvas.width - 1, Math.floor(x * canvas.width / ${width}));
+        const i = (sy * canvas.width + sx) * 4;
+        out.push(src[i], src[i + 1], src[i + 2]);
+        const a = src[i + 3];
+        if (a < alphaMin) alphaMin = a;
+        if (a > alphaMax) alphaMax = a;
+        alphaSum += a;
+        if (a === 0) alphaZeroCount++;
+        if (a === 255) alphaOpaqueCount++;
+      }
+    }
+    const sample_count = ${width} * ${height};
+    const alpha = {
+      sample_count,
+      min: sample_count > 0 ? alphaMin : 0,
+      max: sample_count > 0 ? alphaMax : 0,
+      mean: sample_count > 0 ? alphaSum / sample_count : 0,
+      zero_count: alphaZeroCount,
+      opaque_count: alphaOpaqueCount,
+    };
+    return {
+      rgb: out,
+      alpha,
+      root,
+      diagnostics,
+      selected_canvas_id: trace?.canvasId(canvas) ?? null,
+      native_videos,
+      trace: trace?.snapshot() ?? null,
+    };
+  })()`);
+
+  await persistDecoderTraceObservation(
+    browser.decoderTraceLabel,
+    'sample',
+    read as unknown as Record<string, unknown>
+  );
   assert.ok(
-    values && values.length === width * height * 3,
+    read?.rgb && read.rgb.length === width * height * 3,
     'canvas sample missing'
   );
-  return Uint8Array.from(values);
+  return Uint8Array.from(read.rgb);
 }
 
 async function canvasRowCenter(browser: ChromeSession): Promise<number> {
@@ -6301,6 +6455,24 @@ async function recordPacketCanvasMeasurement(
   );
 }
 
+async function persistDecoderTraceObservation(
+  label: string | null | undefined,
+  phase: string,
+  data?: Record<string, unknown> | null
+): Promise<void> {
+  const observation: Record<string, unknown> = {
+    label: label ?? null,
+    phase,
+    recorded_at: new Date().toISOString(),
+    ...(data ?? {}),
+  };
+  decoderTraceObservations.push(observation);
+  await writeFile(
+    join(shotDir, 'decoder-trace.json'),
+    `${JSON.stringify({ format: 'relic-otio-decoder-trace/v1', observations: decoderTraceObservations }, null, 2)}\n`
+  );
+}
+
 async function assertPacketCanvas(
   browser: ChromeSession,
   label: string,
@@ -6556,7 +6728,10 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     'near-zero',
     nearZeroDocument
   );
-  const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken);
+  const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken, {
+    captureDecoderTrace,
+    decoderTraceLabel: 'near-zero-control',
+  });
   try {
     const nearZeroReady = await waitReady(nearZeroBrowser);
     assert.equal(
@@ -6679,7 +6854,11 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   );
   const availableOriginCutBrowser = await openBrowser(
     availableOriginCutUrl,
-    sessionToken
+    sessionToken,
+    {
+      captureDecoderTrace,
+      decoderTraceLabel: 'available-origin-cut-witness',
+    }
   );
   try {
     assert.equal(await waitReady(availableOriginCutBrowser), 'true');
