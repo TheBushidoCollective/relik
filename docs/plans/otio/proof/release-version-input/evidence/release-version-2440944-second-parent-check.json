@@ -1,0 +1,12 @@
+{
+  "format": "otio-release-version-parent-integrity/v1",
+  "packetCommit": "3fc66d6",
+  "packetPath": "docs/plans/otio/proof/release-version-input/evidence/release-version-2440944-second",
+  "regularFilesComparedAgainstOriginalAndGit": 5522,
+  "regularFileBytes": 11727320,
+  "symlinkTargetsComparedAgainstGit": 7,
+  "comparison": "Every regular file from the preserved manifest matched the original source bytes and its committed Git blob; every symbolic-link target matched its committed Git blob.",
+  "receiptSuccess": true,
+  "toolchainCommandExitCodes": [0, 0, 0],
+  "scope": "Offline execution of extracted committed workflow scripts. No live CI release or native runtime qualification is claimed."
+}
