@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "verification": {
+    "performed_by": "parent",
+    "performed_at": "2026-10-23T05:40:45.454Z",
+    "result": "OTIO_CI_EVIDENCE_INTEGRITY_OK",
+    "verified_commit": "023c768",
+    "scope": "publish-mcp-run-39860172891 preservation directory",
+    "findings": {
+      "jobs": 10,
+      "artifacts": 6,
+      "zip_archives_crc_validated": 7,
+      "manifest_objects": 14,
+      "manifest_byte_and_sha256_matches": true,
+      "committed_git_blob_matches": true,
+      "parent_cli_capture_artifact_3814_byte_exact": true,
+      "missing_objects": 0
+    }
+  },
+  "provenance": {
+    "source": "Parent independent verification report",
+    "notes": "The verification probe was corrected to recognize reused_downloaded and generated provenance states. This file records verification only and makes no causal claim about the cancelled workflow or black-frame report."
+  }
+}
