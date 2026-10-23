@@ -1,0 +1,29 @@
+0 verbose cli /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/bin/node /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@11.12.1
+2 info using node@v24.15.0
+3 silly config load:file:/Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-0-0-0/runtime/runner-temp/contents-probe/.npmrc
+5 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-0-0-0/runtime/npmrc
+6 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-0-0-0/runtime/global-npmrc
+7 verbose title npm init
+8 verbose argv "init" "--yes"
+9 verbose logfile logs-max:10 dir:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-0-0-0/runtime/npm-cache/_logs/2026-10-23T23_15_23_287Z-
+10 verbose logfile /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-0-0-0/runtime/npm-cache/_logs/2026-10-23T23_15_23_287Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly package data {
+12 silly package data   name: 'contents-probe',
+12 silly package data   version: '1.0.0',
+12 silly package data   description: '',
+12 silly package data   main: 'index.js',
+12 silly package data   scripts: { test: 'echo "Error: no test specified" && exit 1' },
+12 silly package data   keywords: [],
+12 silly package data   author: '',
+12 silly package data   license: 'ISC',
+12 silly package data   type: 'commonjs'
+12 silly package data }
+13 verbose cwd /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-0-0-0/runtime/runner-temp/contents-probe
+14 verbose os Darwin 27.0.0
+15 verbose node v24.15.0
+16 verbose npm  v11.12.1
+17 verbose exit 0
+18 info ok

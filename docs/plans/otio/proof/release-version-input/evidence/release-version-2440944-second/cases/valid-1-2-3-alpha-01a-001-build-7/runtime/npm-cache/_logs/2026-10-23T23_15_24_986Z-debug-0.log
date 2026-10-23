@@ -1,0 +1,52 @@
+0 verbose cli /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/bin/node /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@11.12.1
+2 info using node@v24.15.0
+3 silly config load:file:/Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-alpha-01a-001-build-7/workspace/packages/relic-mcp/.npmrc
+5 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-alpha-01a-001-build-7/runtime/npmrc
+6 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-alpha-01a-001-build-7/runtime/global-npmrc
+7 verbose title npm pack
+8 verbose argv "pack" "--pack-destination" "/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-alpha-01a-001-build-7/runtime/runner-temp" "--loglevel" "silent" "--no-workspaces"
+9 verbose logfile logs-max:10 dir:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-alpha-01a-001-build-7/runtime/npm-cache/_logs/2026-10-23T23_15_24_986Z-
+10 verbose logfile /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-alpha-01a-001-build-7/runtime/npm-cache/_logs/2026-10-23T23_15_24_986Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 notice
+14 notice package: relic-mcp@1.2.3-alpha.01a+001.build-7
+15 notice Tarball Contents
+16 notice 148B .claude-plugin/marketplace.json
+16 notice 85B .claude-plugin/plugin.json
+16 notice 20B README.md
+16 notice 36B dist/native-secure-open.d.ts
+16 notice 11B dist/native-secure-open.js
+16 notice 11B dist/relic-mcp.js
+16 notice 232B mcp-servers.json
+16 notice 11B native/build.mjs
+16 notice 42B native/secure-open.c
+16 notice 416B package.json
+16 notice 50B prebuilds/darwin-arm64/build-info.json
+16 notice 44B prebuilds/darwin-arm64/secure_open.node
+16 notice 48B prebuilds/darwin-x64/build-info.json
+16 notice 42B prebuilds/darwin-x64/secure_open.node
+16 notice 53B prebuilds/linux-arm64-gnu/build-info.json
+16 notice 47B prebuilds/linux-arm64-gnu/secure_open.node
+16 notice 51B prebuilds/linux-x64-gnu/build-info.json
+16 notice 45B prebuilds/linux-x64-gnu/secure_open.node
+16 notice 11B scripts/prove-packed-native.mjs
+16 notice 16B skills/relic/SKILL.md
+17 notice Tarball Details
+18 notice name: relic-mcp
+19 notice version: 1.2.3-alpha.01a+001.build-7
+20 notice filename: relic-mcp-1.2.3-alpha.01a+001.build-7.tgz
+21 notice package size: 1.1 kB
+22 notice unpacked size: 1.4 kB
+23 notice shasum: 6c02a30388883e2cfeb2def47fcc656cb6342de5
+24 notice integrity: sha512-Mae6JoyXcn4R/[...]tYpBGw2CWOK6w==
+25 notice total files: 20
+26 notice
+27 verbose cwd /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-alpha-01a-001-build-7/workspace/packages/relic-mcp
+28 verbose os Darwin 27.0.0
+29 verbose node v24.15.0
+30 verbose npm  v11.12.1
+31 verbose exit 0
+32 info ok

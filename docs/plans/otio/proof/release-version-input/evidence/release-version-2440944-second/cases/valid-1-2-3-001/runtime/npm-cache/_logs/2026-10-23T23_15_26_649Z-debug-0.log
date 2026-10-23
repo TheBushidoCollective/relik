@@ -1,0 +1,19 @@
+0 verbose cli /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/bin/node /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@11.12.1
+2 info using node@v24.15.0
+3 silly config load:file:/Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/workspace/packages/relic-mcp/.npmrc
+5 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/npmrc
+6 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/global-npmrc
+7 verbose title npm pack
+8 verbose argv "pack" "--dry-run" "--json" "--no-workspaces"
+9 verbose logfile logs-max:10 dir:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/npm-cache/_logs/2026-10-23T23_15_26_649Z-
+10 verbose logfile /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/npm-cache/_logs/2026-10-23T23_15_26_649Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 verbose cwd /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/workspace/packages/relic-mcp
+14 verbose os Darwin 27.0.0
+15 verbose node v24.15.0
+16 verbose npm  v11.12.1
+17 verbose exit 0
+18 info ok

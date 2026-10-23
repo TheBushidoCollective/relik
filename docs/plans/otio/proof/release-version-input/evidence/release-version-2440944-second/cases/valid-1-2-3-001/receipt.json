@@ -1,0 +1,199 @@
+{
+  "id": "valid-1-2-3-001",
+  "directory": "cases/valid-1-2-3-001",
+  "versionProvided": true,
+  "version": "1.2.3+001",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Validate release version",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Validate release version>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3-001/raw/validate-release-version.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3-001/raw/validate-release-version.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Set release version",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Set release version>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3-001/raw/set-release-version.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3-001/raw/set-release-version.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Check generated plugin manifests and launch config",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Check generated plugin manifests and launch config>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3-001/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3-001/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Pack the release tarball",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Pack the release tarball>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3-001/raw/pack-the-release-tarball.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3-001/raw/pack-the-release-tarball.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Check packed contents with trusted local tarball",
+      "command": [
+        "bash",
+        "-c",
+        "<executed:Check packed contents with trusted local tarball>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3-001/raw/check-packed-contents-with-trusted-local-tarball.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3-001/raw/check-packed-contents-with-trusted-local-tarball.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Summarize packed artifact",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Summarize packed artifact>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3-001/raw/summarize-packed-artifact.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3-001/raw/summarize-packed-artifact.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    }
+  ],
+  "assertions": [
+    "actual validator accepted the exact version string",
+    "release-copy package.json retains the exact requested string",
+    "actual generated manifest check accepted exact package and manifest versions",
+    "actual packed content check installed the local tarball offline and accepted exact versions"
+  ],
+  "errors": [],
+  "tarball": {
+    "file": "cases/valid-1-2-3-001/runtime/runner-temp/relic-mcp-1.2.3+001.tgz",
+    "sha256": "be160a14c60d2dc7c376ee41315b72ee97097efd48f39e36a7eb22fdbf2c89bb",
+    "bytes": 1061
+  },
+  "transforms": [
+    {
+      "step": "Check packed contents",
+      "replacement": "trusted local tarball path",
+      "expression": "${{ steps.package.outputs.tarball }}",
+      "count": 1
+    },
+    {
+      "step": "Check packed contents",
+      "file": "cases/valid-1-2-3-001/executed-scripts/check-packed-contents-with-trusted-local-tarball.sh",
+      "originalHash": "481fdecba1c27d9641dd21531e5e201dd936cda4032c72756bc835d9065b2fcc",
+      "executedHash": "7b0ad9a8cf3d2a2ccf15ebc3a43f00b35cbbfaaa728aa60fe0eb70283ef9ba15"
+    }
+  ],
+  "summary": {
+    "file": "cases/valid-1-2-3-001/runtime/github-step-summary.md",
+    "sha256": "5833c6425e92ebf2433b0f71b1b5e93cd3e8ba34085961950f9e659c2a61d5fb",
+    "heading": "### relic-mcp 1.2.3+001"
+  },
+  "states": {
+    "before": {
+      "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+      "bytes": 394,
+      "version": "0.0.0",
+      "hasDevDependencies": false
+    },
+    "afterSet": {
+      "sha256": "dff1b07726f3a600af2b4678fb4c143369afcd2fa5dabde08f02d7a76740c09d",
+      "bytes": 398,
+      "version": "1.2.3+001",
+      "hasDevDependencies": false
+    },
+    "seededManifests": {
+      "pluginVersion": "1.2.3+001",
+      "marketplacePluginVersion": "1.2.3+001",
+      "marketplaceMetadataVersion": "1.2.3+001",
+      "mcpPackageArgument": "relic-mcp@1.2.3+001",
+      "mcpClientName": "relic-plugin/1.2.3+001"
+    },
+    "afterAll": {
+      "sha256": "dff1b07726f3a600af2b4678fb4c143369afcd2fa5dabde08f02d7a76740c09d",
+      "bytes": 398,
+      "version": "1.2.3+001",
+      "hasDevDependencies": false
+    }
+  }
+}

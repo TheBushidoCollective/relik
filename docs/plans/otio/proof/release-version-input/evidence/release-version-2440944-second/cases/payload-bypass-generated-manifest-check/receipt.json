@@ -1,0 +1,54 @@
+{
+  "id": "payload-bypass-generated-manifest-check",
+  "directory": "cases/payload-bypass-generated-manifest-check",
+  "versionProvided": true,
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Check generated plugin manifests and launch config",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Check generated plugin manifests and launch config>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/payload-bypass-generated-manifest-check/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/payload-bypass-generated-manifest-check/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    }
+  ],
+  "assertions": [
+    "generated manifest check received the payload as environment data and did not execute it"
+  ],
+  "errors": [],
+  "states": {
+    "releaseCopy": {
+      "sha256": "1fd8cef829cb52f1e4e364531e12e6b551a98b2284633d714ab30d9047d2fb82",
+      "bytes": 440,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "hasDevDependencies": false
+    },
+    "manifests": {
+      "pluginVersion": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "marketplacePluginVersion": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "marketplaceMetadataVersion": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "mcpPackageArgument": "relic-mcp@0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "mcpClientName": "relic-plugin/0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")"
+    },
+    "sentinel": {
+      "exists": false
+    }
+  },
+  "consumerExitMayBeNonzero": 0
+}

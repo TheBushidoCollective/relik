@@ -1,0 +1,15 @@
+[eval]:11
+    throw new Error(`packed plugin manifests disagree with ${want}: package=${pkg.version}, manifests=${found.join(", ")}`);
+    ^
+
+Error: packed plugin manifests disagree with 0.13.0$(printf exploited > "$INJECTION_SENTINEL"): package=0.13.0, manifests=0.13.0, 0.13.0, 0.13.0
+    at [eval]:11:11
+    at runScriptInThisContext (node:internal/vm:219:10)
+    at node:internal/process/execution:451:12
+    at [eval]-wrapper:6:24
+    at runScriptInContext (node:internal/process/execution:449:60)
+    at evalFunction (node:internal/process/execution:283:30)
+    at evalTypeScript (node:internal/process/execution:295:3)
+    at node:internal/main/eval_string:71:3
+
+Node.js v24.15.0

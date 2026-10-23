@@ -1,0 +1,25 @@
+0 verbose cli /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/bin/node /Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@11.12.1
+2 info using node@v24.15.0
+3 silly config load:file:/Users/jwaldrip/.local/share/mise/installs/node/24.15.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/runner-temp/contents-probe/.npmrc
+5 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/npmrc
+6 silly config load:file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/global-npmrc
+7 verbose title npm install /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/runner-temp/relic-mcp-1.2.3+001.tgz
+8 verbose argv "install" "--ignore-scripts" "--no-audit" "--no-fund" "--offline" "/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/runner-temp/relic-mcp-1.2.3+001.tgz"
+9 verbose logfile logs-max:10 dir:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/npm-cache/_logs/2026-10-23T23_15_26_431Z-
+10 verbose logfile /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/npm-cache/_logs/2026-10-23T23_15_26_431Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 silly idealTree buildDeps
+14 silly fetch manifest relic-mcp@file:../relic-mcp-1.2.3+001.tgz
+15 silly placeDep ROOT relic-mcp@1.2.3+001 OK for: contents-probe@1.0.0 want: file:../relic-mcp-1.2.3+001.tgz
+16 silly reify moves {}
+17 http cache relic-mcp@file:/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/runner-temp/relic-mcp-1.2.3+001.tgz 0ms (cache hit)
+18 silly ADD node_modules/relic-mcp
+19 verbose cwd /Users/jwaldrip/.omp/otio-evidence/release-version-2440944-second/cases/valid-1-2-3-001/runtime/runner-temp/contents-probe
+20 verbose os Darwin 27.0.0
+21 verbose node v24.15.0
+22 verbose npm  v11.12.1
+23 verbose exit 0
+24 info ok

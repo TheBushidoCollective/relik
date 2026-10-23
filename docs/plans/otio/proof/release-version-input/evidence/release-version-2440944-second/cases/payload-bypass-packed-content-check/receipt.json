@@ -1,0 +1,78 @@
+{
+  "id": "payload-bypass-packed-content-check",
+  "directory": "cases/payload-bypass-packed-content-check",
+  "versionProvided": true,
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Pack local fixture tarball for payload bypass",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Pack the release tarball>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/payload-bypass-packed-content-check/raw/pack-local-fixture-tarball-for-payload-bypass.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/payload-bypass-packed-content-check/raw/pack-local-fixture-tarball-for-payload-bypass.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Check packed contents with payload bypassed validator",
+      "command": [
+        "bash",
+        "-c",
+        "<executed:Check packed contents with payload bypassed validator>"
+      ],
+      "exitCode": 1,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/payload-bypass-packed-content-check/raw/check-packed-contents-with-payload-bypassed-validator.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/payload-bypass-packed-content-check/raw/check-packed-contents-with-payload-bypassed-validator.stderr",
+        "sha256": "e46abff4cde0c7a5d87e0078914f41dc3bbf61216df228dc6af0802f2fd83066",
+        "bytes": 687
+      },
+      "stdoutText": "",
+      "stderrText": "[eval]:11\n    throw new Error(`packed plugin manifests disagree with ${want}: package=${pkg.version}, manifests=${found.join(\", \")}`);\n    ^\n\nError: packed plugin manifests disagree with 0.13.0$(printf exploited > \"$INJECTION_SENTINEL\"): package=0.13.0, manifests=0.13.0, 0.13.0, 0.13.0\n    at [eval]:11:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [eval]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_string:71:3\n\nNode.js v24.15.0\n"
+    }
+  ],
+  "assertions": [
+    "packed content check received the payload as environment data and did not execute it"
+  ],
+  "errors": [],
+  "transforms": [
+    {
+      "step": "Check packed contents",
+      "replacement": "trusted local tarball path",
+      "expression": "${{ steps.package.outputs.tarball }}",
+      "count": 1
+    },
+    {
+      "step": "Check packed contents",
+      "file": "cases/payload-bypass-packed-content-check/executed-scripts/check-packed-contents-with-payload-bypassed-validator.sh",
+      "originalHash": "481fdecba1c27d9641dd21531e5e201dd936cda4032c72756bc835d9065b2fcc",
+      "executedHash": "9a09e64404c008c7f419a83cf319530bef01de7f7b5015de2e112b117eedee9d"
+    }
+  ],
+  "states": {
+    "trustedTarball": "cases/payload-bypass-packed-content-check/runtime/runner-temp/relic-mcp-0.13.0.tgz",
+    "sentinel": {
+      "exists": false
+    }
+  },
+  "consumerExitMayBeNonzero": 1
+}

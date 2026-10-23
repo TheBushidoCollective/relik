@@ -1,0 +1,4 @@
+{
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "mcpServers": "./mcp-servers.json"
+}

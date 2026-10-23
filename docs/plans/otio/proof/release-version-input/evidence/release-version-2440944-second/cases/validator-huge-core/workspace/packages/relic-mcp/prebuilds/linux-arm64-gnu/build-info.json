@@ -1,0 +1,4 @@
+{
+  "fixture": true,
+  "target": "linux-arm64-gnu"
+}

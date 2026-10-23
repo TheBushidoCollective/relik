@@ -1,0 +1,56 @@
+{
+  "id": "old-github-substitution-injection",
+  "directory": "cases/old-github-substitution-injection",
+  "versionProvided": true,
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "base Set release version after GitHub substitution",
+      "command": [
+        "bash",
+        "-c",
+        "<executed:base Set release version after GitHub substitution>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/old-github-substitution-injection/raw/base-set-release-version-after-github-substitution.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/old-github-substitution-injection/raw/base-set-release-version-after-github-substitution.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    }
+  ],
+  "assertions": [
+    "literal payload was substituted into old shell source and created its owned sentinel"
+  ],
+  "errors": [],
+  "transforms": [
+    {
+      "step": "Set release version",
+      "file": "cases/old-github-substitution-injection/executed-scripts/base-set-release-version-after-github-substitution.sh",
+      "originalHash": "b5fb8be153e82abff6d72b4914057e05af57352b9472bcbd49c21c2d0d9e6d91",
+      "executedHash": "eaaba79c5c24487096709406deacdb3e644676ca578292bdf7ad2c7dce831e22"
+    }
+  ],
+  "states": {
+    "sentinel": {
+      "file": "cases/old-github-substitution-injection/old-injection-sentinel",
+      "exists": true
+    },
+    "releaseCopy": {
+      "sha256": "c5e05143548b1b4bffc3bf09bbcc3ea71f36e9b6b9e0df776686a4c83099b820",
+      "bytes": 395,
+      "version": "0.13.0",
+      "hasDevDependencies": false
+    }
+  },
+  "baseExitCodeMayBeZero": 0
+}

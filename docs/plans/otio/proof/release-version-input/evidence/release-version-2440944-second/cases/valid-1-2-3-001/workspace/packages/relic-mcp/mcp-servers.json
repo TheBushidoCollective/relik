@@ -1,0 +1,13 @@
+{
+  "relic": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "relic-mcp@1.2.3+001"
+    ],
+    "env": {
+      "RELIC_CLIENT_NAME": "relic-plugin/1.2.3+001"
+    }
+  }
+}

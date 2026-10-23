@@ -1,0 +1,45 @@
+{
+  "id": "payload-bypass-summary",
+  "directory": "cases/payload-bypass-summary",
+  "versionProvided": true,
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Summarize packed artifact",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Summarize packed artifact>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/payload-bypass-summary/raw/summarize-packed-artifact.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/payload-bypass-summary/raw/summarize-packed-artifact.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    }
+  ],
+  "assertions": [
+    "summary printed the payload literally from environment data and did not execute it"
+  ],
+  "errors": [],
+  "states": {
+    "summary": {
+      "file": "cases/payload-bypass-summary/runtime/github-step-summary.md",
+      "sha256": "53b97ae5d0325ce516312b0fc83092cdade00ceb81b85302b8685c90d0ae1021"
+    },
+    "sentinel": {
+      "exists": false
+    }
+  },
+  "consumerExitMayBeNonzero": 0
+}
