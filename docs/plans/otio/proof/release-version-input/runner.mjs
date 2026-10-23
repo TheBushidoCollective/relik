@@ -289,6 +289,7 @@ async function createRuntime(caseDirectory) {
   const npmCache = path.join(runtime, "npm-cache");
   const npmPrefix = path.join(runtime, "npm-prefix");
   const npmrc = path.join(runtime, "npmrc");
+  const globalNpmrc = path.join(runtime, "global-npmrc");
   const summary = path.join(runtime, "github-step-summary.md");
   const output = path.join(runtime, "github-output.txt");
   await Promise.all([home, tmp, runnerTemp, npmCache, npmPrefix].map((target) => mkdir(target, { recursive: true })));
@@ -304,9 +305,10 @@ async function createRuntime(caseDirectory) {
       "",
     ].join("\n"),
   );
+  await writeText(globalNpmrc, "");
   await writeText(summary, "");
   await writeText(output, "");
-  return { runtime, home, tmp, runnerTemp, npmCache, npmPrefix, npmrc, summary, output };
+  return { runtime, home, tmp, runnerTemp, npmCache, npmPrefix, npmrc, globalNpmrc, summary, output };
 }
 
 function isolatedEnvironment(runtime, { releaseVersion, injectionSentinel } = {}) {
@@ -321,7 +323,7 @@ function isolatedEnvironment(runtime, { releaseVersion, injectionSentinel } = {}
     GITHUB_OUTPUT: runtime.output,
     npm_config_cache: runtime.npmCache,
     npm_config_userconfig: runtime.npmrc,
-    npm_config_globalconfig: runtime.npmrc,
+    npm_config_globalconfig: runtime.globalNpmrc,
     npm_config_prefix: runtime.npmPrefix,
     npm_config_offline: "true",
     npm_config_ignore_scripts: "true",
@@ -560,7 +562,10 @@ async function collectToolchain(evidence) {
       stderrText: undefined,
     });
   }
-  return { bunVersion: Bun.version, bunPath: process.execPath, commands: results };
+    const failures = results
+      .filter(({ exitCode }) => exitCode !== 0)
+      .map(({ command, exitCode, stderr }) => `toolchain command "${command.join(" ")}" exited ${String(exitCode)} before any case ran; stderr: ${stderr.file}`);
+    return { bunVersion: Bun.version, bunPath: process.execPath, commands: results, failures };
 }
 
 async function executeCase(evidence, cases, id, version, body) {
@@ -927,6 +932,7 @@ async function main() {
       globalFailures.push(...structuralFailures);
     } else {
       toolchain = await collectToolchain(evidence);
+      assert(toolchain.failures.length === 0, toolchain.failures.join("; "));
       for (const version of validVersions) {
         await runValidVersion(evidence, cases, repairedSteps, version);
       }

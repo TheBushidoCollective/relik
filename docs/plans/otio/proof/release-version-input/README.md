@@ -78,7 +78,7 @@ The proof exercises 28 structured test cases:
 Every test case runs inside an isolated subprocess environment:
 - Isolated temporary directories for `HOME`, `TMPDIR`, and `RUNNER_TEMP`.
 - Isolated GitHub Actions simulation files for `GITHUB_STEP_SUMMARY` and `GITHUB_OUTPUT`.
-- Isolated npm cache, user config, and global prefix (`npm_config_cache`, `npm_config_userconfig`, `npm_config_prefix`).
+- Isolated npm cache, user config, global config, and global prefix (`npm_config_cache`; `npm_config_userconfig` set to `runtime/npmrc`; `npm_config_globalconfig` set to a separate, empty `runtime/global-npmrc`; `npm_config_prefix`). The two config paths must differ: npm exits before resolving configuration when one file is loaded as both user and global config.
 - Offline npm execution pointing to a dummy loopback registry `http://127.0.0.1:9/` with `--offline` enforcement.
 - Per-case sentinel file path `INJECTION_SENTINEL` established inside the case temporary directory to record any command execution attempts.
 - Native build artifacts/placeholders are verified or packaged as data without executing untrusted native code.
@@ -86,9 +86,9 @@ Every test case runs inside an isolated subprocess environment:
 ## Output Structure and Acceptance
 
 When executed, the runner populates the evidence directory with:
-- `packet-manifest.json`: Cryptographic hashes (SHA-256) of input workflows, extracted scripts, runner harness, and toolchain components.
+- `packet-manifest.json`: Paths, SHA-256 hashes, and byte counts of the two input workflows; SHA-256 hashes of every extracted `run` script; the supplied git SHAs; the planned case IDs; and the isolation policy.
 - `sources/`: Materialized workflow sources and extracted step scripts.
-- `provenance/toolchain/`: Captured Node, Bun, npm, and OS environment details.
+- `provenance/toolchain/`: Raw stdout and stderr of `node --version`, `npm --version`, and `bash --version`, each run in an isolated runtime built the same way as a case's; `receipt.json` `toolchain` also records the Bun version and path. All three commands must exit 0 before any case runs; otherwise `toolchain.failures` and `globalFailures` name the failing command, no case runs, and the runner exits 1.
 - `cases/<id>/`: Per-case artifacts, including step exit codes, raw stdout/stderr logs, executed scripts, and sentinel status.
 - `receipt.json`: Root receipt summarizing case verdicts, input SHAs, and missing cases.
 
