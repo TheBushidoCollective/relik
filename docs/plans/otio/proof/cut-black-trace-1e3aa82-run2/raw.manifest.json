@@ -1,0 +1,463 @@
+{
+  "source": "/Users/jwaldrip/.omp/otio-evidence/cut-black-trace-1e3aa82-run2",
+  "files": [
+    {
+      "path": "source.stdout.log",
+      "bytes": 5263,
+      "sha256": "1c9e42bac698e17cc7e4f9d082b31790a1a37a9d8c3c049c7d77156a3bc08edd"
+    },
+    {
+      "path": "preflight.json",
+      "bytes": 572,
+      "sha256": "aa75c5b141d34717a5bffbcddb5b76b7e9ee912f1917513c30ef5d7c0a37b8f4"
+    },
+    {
+      "path": "source.stderr.log",
+      "bytes": 129,
+      "sha256": "b6835f4bfd4911558aeec31ef9a0e4969d17e51be5012162c4958c5353974ff7"
+    },
+    {
+      "path": "shots/390-dark.png",
+      "bytes": 50863,
+      "sha256": "3ae9e435158dad9879a7dc2a5d7834efd5789df9d57693d360d5a1372cabbb3b"
+    },
+    {
+      "path": "shots/native-controls-320-dark-composer-open.png",
+      "bytes": 55721,
+      "sha256": "2b245cf3ab9ea361c51af7f72a3e5695260978f8a9c54e6b25568fcc0214f08f"
+    },
+    {
+      "path": "shots/native-controls-320-dark-preview-base.png",
+      "bytes": 57046,
+      "sha256": "49cd103ea61b52d431a9e362548e932259e7cc0fc8e6c941d10e97ffa53f77df"
+    },
+    {
+      "path": "shots/otio-comment-mark-pointer-duplicate-point.png",
+      "bytes": 124983,
+      "sha256": "e08679fb26f8f1aec21a73c6c4c4d4513d740dc47fcb97d0be34621eb023974b"
+    },
+    {
+      "path": "shots/320x480-light-resize-held-draft.png",
+      "bytes": 33910,
+      "sha256": "16658451c83e4ef42ee9517dbaed40e3eba141af075b2253cab198113620fe6c"
+    },
+    {
+      "path": "shots/1440x600-light-track-composer.png",
+      "bytes": 105614,
+      "sha256": "e0665418484f2ba01af7f4daaef4a0d900fc05ea7b562c76e54af52350071501"
+    },
+    {
+      "path": "shots/native-controls-320-dark-selection-controls.png",
+      "bytes": 55811,
+      "sha256": "406e23b09d80559055064b3fdb141f5dbaa58dc6016de8a4521aab9829157dcc"
+    },
+    {
+      "path": "shots/auxiliary-coincident-comment-reveal-measurements.json",
+      "bytes": 8057,
+      "sha256": "d36f7a5d43b0b5f789dbb3f9b34ddde0fbb10816673f2a5cf182d3519a198c84"
+    },
+    {
+      "path": "shots/1440-dark-track-composer.png",
+      "bytes": 144525,
+      "sha256": "ba457251fa2c5449f56cc4ff71381e994cfbe44c2a4462a4b0d35df6b4b40a20"
+    },
+    {
+      "path": "shots/390-light-composer-hover.png",
+      "bytes": 62171,
+      "sha256": "dead1e2b33f28a6faf1e3aa28e3129a1c9ff1f5e75d788bf3035d8b47070f70a"
+    },
+    {
+      "path": "shots/390-dark-track-composer.png",
+      "bytes": 62157,
+      "sha256": "08992cabaee481f2682945c2421ddf04e70aebbd7783a949c0114b4d0ff2ef9b"
+    },
+    {
+      "path": "shots/1440-light-point-composer.png",
+      "bytes": 142777,
+      "sha256": "bd9f01fcf1c68643b4f87c304972fc5550361a134dc1a39dca1c51ae435fb546"
+    },
+    {
+      "path": "shots/390-light.png",
+      "bytes": 50681,
+      "sha256": "8d3570b1bb72cd3a4900fa757de051829e6dc56de3cefcabbce7912557bb2876"
+    },
+    {
+      "path": "shots/390-light-range-composer.png",
+      "bytes": 60957,
+      "sha256": "cb3e7369ca539575cb207611b28a597100eae9d5b6c249b31d1763c68d9382b3"
+    },
+    {
+      "path": "shots/1440-light-range-composer.png",
+      "bytes": 143945,
+      "sha256": "54c983eda8939a131b40caf80e32f43f8362f4c46233435fe52ce9f9703e0d30"
+    },
+    {
+      "path": "shots/390-light-point-composer.png",
+      "bytes": 63740,
+      "sha256": "899aed079657e4b622fa2c042f6f611cbd27628285ecd8a6c73905fcd7521245"
+    },
+    {
+      "path": "shots/320-dark.png",
+      "bytes": 47516,
+      "sha256": "c551489e22a8cf9324d8ab8b4ae6e5bc4d20cd0992f7450ff30ea4d8f1cda717"
+    },
+    {
+      "path": "shots/1440-light-composer-hover.png",
+      "bytes": 144531,
+      "sha256": "f3b14b65a1cf07d1040fc7bcf1f4fd748dd036e425b5a9cb105419d521ed2183"
+    },
+    {
+      "path": "shots/390-light-composer-open.png",
+      "bytes": 62171,
+      "sha256": "dead1e2b33f28a6faf1e3aa28e3129a1c9ff1f5e75d788bf3035d8b47070f70a"
+    },
+    {
+      "path": "shots/auxiliary-coincident-spatial-bottom-sidebar-before.png",
+      "bytes": 90227,
+      "sha256": "afee5583279bf615e3803a3f1584e1695e18aabdd95f4dcc47044634728e8dfb"
+    },
+    {
+      "path": "shots/1440x600-light-range-composer.png",
+      "bytes": 106811,
+      "sha256": "ec7e8e1fab961b6911392f3c90838e59da038e7356a044a7040b443c5d556d28"
+    },
+    {
+      "path": "shots/1440-light-composer-open.png",
+      "bytes": 144531,
+      "sha256": "f3b14b65a1cf07d1040fc7bcf1f4fd748dd036e425b5a9cb105419d521ed2183"
+    },
+    {
+      "path": "shots/1440x900-light-resize-held-draft.png",
+      "bytes": 138446,
+      "sha256": "2d49b8d35ba6ae10aac3915fb162979b93151be426b00ccf2f66d84c179e4288"
+    },
+    {
+      "path": "shots/1440-light.png",
+      "bytes": 117312,
+      "sha256": "2cb9d598859e2b1d93322372d76a71f94ed436d5c59bf8891986f3b8b952bfa0"
+    },
+    {
+      "path": "shots/native-controls-320-light-selection-controls.png",
+      "bytes": 55930,
+      "sha256": "846b3e0a7fe3e9ea4f414aa6b6d00f968c4ae4cda593480d3507138a6e0df566"
+    },
+    {
+      "path": "shots/native-controls-measurements.json",
+      "bytes": 1696164,
+      "sha256": "2c2925052cb3059f029c5962090ff9c409e45aed4c5cb84e9552ac8eb14685f6"
+    },
+    {
+      "path": "shots/native-controls-320-light-composer-hover.png",
+      "bytes": 56007,
+      "sha256": "cecd7b17e4a4304a9923b5bd7e47e8e6b6193e73d6882ff743956639ff45cf11"
+    },
+    {
+      "path": "shots/native-controls-390-dark-blocked-preview.png",
+      "bytes": 63155,
+      "sha256": "a342be92daf503fe271109e77cc4d782592fe382c0ed1556ccf92c3e587231e7"
+    },
+    {
+      "path": "shots/native-controls-320-dark-composer-hover.png",
+      "bytes": 55721,
+      "sha256": "2b245cf3ab9ea361c51af7f72a3e5695260978f8a9c54e6b25568fcc0214f08f"
+    },
+    {
+      "path": "shots/1440x600-light-point-composer.png",
+      "bytes": 105645,
+      "sha256": "e32a7ebace13d6a729e13421a2f502225ef9599f8ad75d2fa601aa8264425063"
+    },
+    {
+      "path": "shots/390-dark-composer-open.png",
+      "bytes": 62157,
+      "sha256": "08992cabaee481f2682945c2421ddf04e70aebbd7783a949c0114b4d0ff2ef9b"
+    },
+    {
+      "path": "shots/390-dark-point-composer.png",
+      "bytes": 63795,
+      "sha256": "beeef0def42445d5fa31e5cb270a03860a5577d3608c5cb8cb66d26d0ffee8af"
+    },
+    {
+      "path": "shots/1440-light-track-composer.png",
+      "bytes": 144531,
+      "sha256": "f3b14b65a1cf07d1040fc7bcf1f4fd748dd036e425b5a9cb105419d521ed2183"
+    },
+    {
+      "path": "shots/1440-dark-point-composer.png",
+      "bytes": 143181,
+      "sha256": "b7eee74212c8d86f6b24c3cd76175d6d9466ac3286b01f365a3afa898986b141"
+    },
+    {
+      "path": "shots/native-controls-320-light-composer-open.png",
+      "bytes": 56007,
+      "sha256": "cecd7b17e4a4304a9923b5bd7e47e8e6b6193e73d6882ff743956639ff45cf11"
+    },
+    {
+      "path": "shots/390-dark-composer-hover.png",
+      "bytes": 62157,
+      "sha256": "08992cabaee481f2682945c2421ddf04e70aebbd7783a949c0114b4d0ff2ef9b"
+    },
+    {
+      "path": "shots/1440-dark-range-composer.png",
+      "bytes": 144430,
+      "sha256": "74dce36e964cdec2e94a09aaf53ef6b695ddc2e0635f21d87f5c056ff02f70f6"
+    },
+    {
+      "path": "shots/390-dark-range-composer.png",
+      "bytes": 60897,
+      "sha256": "456c8e4bafb7f1e844d12a3470fcbe52a02b58f5bf1b925215097a99f53b9399"
+    },
+    {
+      "path": "shots/1440-dark-composer-hover.png",
+      "bytes": 144525,
+      "sha256": "ba457251fa2c5449f56cc4ff71381e994cfbe44c2a4462a4b0d35df6b4b40a20"
+    },
+    {
+      "path": "shots/320-dark-composer-open.png",
+      "bytes": 55785,
+      "sha256": "8e2ad14120f5be7bf89a45829a4cfe9f1b694e6b7074c52cd0eca81634bc56c2"
+    },
+    {
+      "path": "shots/390-light-track-composer.png",
+      "bytes": 62171,
+      "sha256": "dead1e2b33f28a6faf1e3aa28e3129a1c9ff1f5e75d788bf3035d8b47070f70a"
+    },
+    {
+      "path": "shots/390x568-light-resize-held-draft.png",
+      "bytes": 43448,
+      "sha256": "9fa67f4c78dd55214efb46cfaa249119d659e3708655c937a8f37e66cc4e444f"
+    },
+    {
+      "path": "shots/320x480-dark-range-composer.png",
+      "bytes": 33197,
+      "sha256": "f4f513f6f79ab5f65deec4aae86ad7a69b53f3d6a2d71ada28c4f26e58bd9c11"
+    },
+    {
+      "path": "shots/320-light-point-composer.png",
+      "bytes": 55719,
+      "sha256": "2d2a45c1a8389529c5f6cb43758ab650d1d980fecefa4936dcea08b55abd6a07"
+    },
+    {
+      "path": "shots/auxiliary-coincident-spatial-bottom-sidebar-after.png",
+      "bytes": 107359,
+      "sha256": "8636659cc354bb7ccb97fea9d5a57638cc70abde93cd7b39d93c6d8d458a0fc7"
+    },
+    {
+      "path": "shots/320-dark-track-composer.png",
+      "bytes": 55785,
+      "sha256": "8e2ad14120f5be7bf89a45829a4cfe9f1b694e6b7074c52cd0eca81634bc56c2"
+    },
+    {
+      "path": "shots/auxiliary-coincident-spatial-top-sidebar-after.png",
+      "bytes": 105069,
+      "sha256": "76b5d79f08dc0b1ac25bf6e268d67d7d6de5755812a0017ea1df43057da12d3f"
+    },
+    {
+      "path": "shots/1440-dark.png",
+      "bytes": 117802,
+      "sha256": "4a77b95ca2da71aac5c7fad434c79f3e9009d67bb2e3f9b8d8bd29d81da0ad91"
+    },
+    {
+      "path": "shots/native-controls-1440-light-blocked-preview.png",
+      "bytes": 129964,
+      "sha256": "b1d7e77311afc36c0ff2146c573fe6199c42c841a30431c1bdbf0beb4cbd0218"
+    },
+    {
+      "path": "shots/390x568-light-track-composer.png",
+      "bytes": 41562,
+      "sha256": "72d9762352543491c3a46881731d30af489d66bb4021055fdc8937768276b55f"
+    },
+    {
+      "path": "shots/320-light-composer-hover.png",
+      "bytes": 56048,
+      "sha256": "80c87de9e5c002df34c15b9ab8c769009119455393057df2d3dd7be5cb8f2263"
+    },
+    {
+      "path": "shots/1440-dark-composer-open.png",
+      "bytes": 144525,
+      "sha256": "ba457251fa2c5449f56cc4ff71381e994cfbe44c2a4462a4b0d35df6b4b40a20"
+    },
+    {
+      "path": "shots/320x480-dark-point-composer.png",
+      "bytes": 33410,
+      "sha256": "b13665ef1cf15a77ce086897bdc131f0be1c6f3dc158ff1533d04fcf2af0c3de"
+    },
+    {
+      "path": "shots/320-light-range-composer.png",
+      "bytes": 55742,
+      "sha256": "9d8cd81b31bb26b73a80a491c41d26af0f419cc63920234925fd279c310801c9"
+    },
+    {
+      "path": "shots/320x480-light-range-composer.png",
+      "bytes": 33502,
+      "sha256": "af7760e1ff25f08ecc2d914fd3d080541fe0cf1e2ddc1b655a627447b0d66215"
+    },
+    {
+      "path": "shots/390x568-dark-point-composer.png",
+      "bytes": 44014,
+      "sha256": "fb3d4f65321de3a9e11eadd10a6e59bc28e5ba068a84a72a761b4bd5fa6dc2f8"
+    },
+    {
+      "path": "shots/native-controls-320-light-closed.png",
+      "bytes": 47435,
+      "sha256": "b6c2f3a50dadf45d9a48f5a684860bd48a73fc13141bba56a9051d1a0a1d1247"
+    },
+    {
+      "path": "shots/1440x600-dark-range-composer.png",
+      "bytes": 106681,
+      "sha256": "9e3d7840ac2340206b9495710acfd4afe3add1d125e2417995298327bce5138b"
+    },
+    {
+      "path": "shots/otio-comment-mark-pointer-primary-range.png",
+      "bytes": 131191,
+      "sha256": "81346c6c3c96e6c14afba6725aa628836e2aac413f4bbe21cc4088fa23030aed"
+    },
+    {
+      "path": "shots/320x480-light-point-composer.png",
+      "bytes": 33651,
+      "sha256": "bbae2385b178f7c6954fafb6cfca6c9ae1c70b0c5e9879f1b32fa6ed230d0289"
+    },
+    {
+      "path": "shots/390x568-dark-range-composer.png",
+      "bytes": 41012,
+      "sha256": "644d73d2029d5aae9710233d1d51fa2e24ced9d7cd9b706ac8d6529c8730e6f4"
+    },
+    {
+      "path": "shots/1440x600-dark-point-composer.png",
+      "bytes": 105509,
+      "sha256": "b700ee585f4cb6f05c38fffc63abc693433a328da7020ca5cc05759c671ed2e2"
+    },
+    {
+      "path": "shots/otio-comment-mark-pointer-pointer-reaim.png",
+      "bytes": 132873,
+      "sha256": "74f56c7f3925623fdbb3de7641523514b4e32b68afe23cf70bba11f6eb909153"
+    },
+    {
+      "path": "shots/native-controls-320-light-blocked-preview.png",
+      "bytes": 56954,
+      "sha256": "5dd9bcf1cf280b58c4672ac43116d07865b8655a0e3e67fe571e11982e469c10"
+    },
+    {
+      "path": "shots/320-dark-point-composer.png",
+      "bytes": 55448,
+      "sha256": "31ba00e748d7631587102989188d9f8e5aacf2eb0bc596881287f77fb14f0fee"
+    },
+    {
+      "path": "shots/390x568-light-range-composer.png",
+      "bytes": 40989,
+      "sha256": "5a762b324855b6aff0022a6fc313504e3ad77df8939afab354292aba9ead58ca"
+    },
+    {
+      "path": "shots/320-light-track-composer.png",
+      "bytes": 56048,
+      "sha256": "80c87de9e5c002df34c15b9ab8c769009119455393057df2d3dd7be5cb8f2263"
+    },
+    {
+      "path": "shots/320-dark-composer-hover.png",
+      "bytes": 55785,
+      "sha256": "8e2ad14120f5be7bf89a45829a4cfe9f1b694e6b7074c52cd0eca81634bc56c2"
+    },
+    {
+      "path": "shots/320x480-dark-track-composer.png",
+      "bytes": 33180,
+      "sha256": "0b96f8d0d04b265b8cc4b66c7f51c476342af700ac6aa85f06ec7f8609c3df66"
+    },
+    {
+      "path": "shots/320-dark-range-composer.png",
+      "bytes": 55430,
+      "sha256": "c2a3e5ace61ce72d846ec5771b68bae8d22d0230ae82649a38645b40a5361d4d"
+    },
+    {
+      "path": "shots/390x568-light-point-composer.png",
+      "bytes": 43947,
+      "sha256": "e947f85005314fb1b07149d8e34993e66de59f0acfaf5b0fbaabb8693d515830"
+    },
+    {
+      "path": "shots/320-light.png",
+      "bytes": 47470,
+      "sha256": "411a8b7f26167bb80c11d099850fd0c9cb413b610f6cb1c4867854f8ab96bb1b"
+    },
+    {
+      "path": "shots/320-light-composer-open.png",
+      "bytes": 56048,
+      "sha256": "80c87de9e5c002df34c15b9ab8c769009119455393057df2d3dd7be5cb8f2263"
+    },
+    {
+      "path": "shots/native-controls-320-light-preview-base.png",
+      "bytes": 56954,
+      "sha256": "5dd9bcf1cf280b58c4672ac43116d07865b8655a0e3e67fe571e11982e469c10"
+    },
+    {
+      "path": "shots/390x568-dark-track-composer.png",
+      "bytes": 41582,
+      "sha256": "f6a3b2bd5c946d692da5ee54ba3bbb1cc44e376aeba0c3bdb68177dfc10e904a"
+    },
+    {
+      "path": "shots/native-controls-1440-dark-blocked-preview.png",
+      "bytes": 130177,
+      "sha256": "c95eca5bfc0e230c3cac3aa43a5ba631d5e35abdca9ffaa40258f35591214283"
+    },
+    {
+      "path": "shots/native-controls-320-dark-blocked-preview.png",
+      "bytes": 57046,
+      "sha256": "49cd103ea61b52d431a9e362548e932259e7cc0fc8e6c941d10e97ffa53f77df"
+    },
+    {
+      "path": "shots/decoder-trace.json",
+      "bytes": 1988326,
+      "sha256": "fadecba957fe56adbf5936ed69def6ea7b4fc245bb148944021bdf71e6a95f76"
+    },
+    {
+      "path": "shots/1440-light-lower-track-composer-open.png",
+      "bytes": 144742,
+      "sha256": "2a532512cd16283238919a79e4c1ec4394669e35bd22c9a1ba7c51b2ef932d4b"
+    },
+    {
+      "path": "shots/auxiliary-coincident-spatial-top-sidebar-before.png",
+      "bytes": 87020,
+      "sha256": "b6c4dcfc5844133b995814c522a40d1126558b4921ed4fd988aeec9c9a121831"
+    },
+    {
+      "path": "shots/packet-canvas-measurements.json",
+      "bytes": 4665,
+      "sha256": "b99f2bb8cc08872a3d10a02644c894cf2950e1fa75f613b15aaf69c64260ad33"
+    },
+    {
+      "path": "shots/320x480-light-track-composer.png",
+      "bytes": 33497,
+      "sha256": "28b8ee7c457dc4e22b66027699dac54592691e52e1eb37f60b77bfd8ddf030b4"
+    },
+    {
+      "path": "shots/native-controls-320-dark-closed.png",
+      "bytes": 47453,
+      "sha256": "84f0ee2038e7c135f9bbd0750892a30edb258505de4ed47aeff7362fc1f894cf"
+    },
+    {
+      "path": "shots/native-controls-390-light-blocked-preview.png",
+      "bytes": 62933,
+      "sha256": "7f449d4b19871e5104c705f96fac624e938c5578762b86f172df4c55bb7592d1"
+    },
+    {
+      "path": "shots/1440x600-dark-track-composer.png",
+      "bytes": 105204,
+      "sha256": "7a2336325d3d06b040db8712f7d017cf99775b1e3ebdb56372330b5706e48b9d"
+    },
+    {
+      "path": "shots/otio-comment-mark-pointer-whole-track.png",
+      "bytes": 138527,
+      "sha256": "36cbe34061eb3df1cb4159a447d0f6e55e8dda31b6803f7aac6c12588dc22813"
+    },
+    {
+      "path": "receipt.json",
+      "bytes": 888,
+      "sha256": "cb08316e93d6a85ad801db63212947b1f02d4126179bd82522ef10ab5d73186c"
+    }
+  ],
+  "directories": [
+    ".",
+    "shots"
+  ],
+  "symlinks": [],
+  "fileCount": 90,
+  "totalBytes": 10168536,
+  "preservedAt": "2026-10-23T23:52:17.924Z"
+}
