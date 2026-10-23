@@ -1616,7 +1616,6 @@ interface DecoderTraceCanvasRead {
   readonly trace: Record<string, unknown> | null;
 }
 
-
 interface OpenBrowserOptions {
   readonly recordMediaSeekTargets?: boolean;
   readonly captureDecoderTrace?: boolean;
