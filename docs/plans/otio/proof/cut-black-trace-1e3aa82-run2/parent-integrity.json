@@ -1,0 +1,10 @@
+{
+  "format": "otio-decoder-trace-parent-integrity/v1",
+  "packetCommit": "7f9121d",
+  "regularFilesComparedAgainstOriginalAndGit": 90,
+  "regularFileBytes": 10168536,
+  "comparison": "Every regular file matched its original source bytes and committed Git blob, including the full decoder trace, screenshots, preflight, receipt, and raw logs.",
+  "sourceExitCode": 0,
+  "qualification": false,
+  "originalBlackFrameCause": "unknown"
+}
