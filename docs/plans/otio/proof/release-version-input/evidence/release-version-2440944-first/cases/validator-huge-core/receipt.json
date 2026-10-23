@@ -1,0 +1,49 @@
+{
+  "id": "validator-huge-core",
+  "directory": "cases/validator-huge-core",
+  "versionProvided": true,
+  "version": "9007199254740992.0.0",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Validate release version",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Validate release version>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/validator-huge-core/raw/validate-release-version.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/validator-huge-core/raw/validate-release-version.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    }
+  ],
+  "assertions": [
+    "A core numeric identifier larger than JavaScript's safe integer range remains valid SemVer."
+  ],
+  "errors": [],
+  "states": {
+    "before": {
+      "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+      "bytes": 394,
+      "version": "0.0.0",
+      "hasDevDependencies": false
+    },
+    "after": {
+      "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+      "bytes": 394,
+      "version": "0.0.0",
+      "hasDevDependencies": false
+    }
+  }
+}

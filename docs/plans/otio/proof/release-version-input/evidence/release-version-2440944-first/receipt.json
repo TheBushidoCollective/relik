@@ -1,0 +1,1994 @@
+{
+  "format": "otio-release-version-input-proof/v1",
+  "finishedAt": "2026-10-23T23:00:12.669Z",
+  "success": false,
+  "source": {
+    "base": {
+      "argument": "/Users/jwaldrip/.omp/agent/sessions/-dev-src-github.com-thebushidocollective-artifacts/2026-10-23T20-16-20-766Z_01a16a68-451e-7144-bd2a-34ffb759ce77/local/otio-release-version-base-workflow.yml",
+      "sha256": "01d1d4b3492249e502531b4d2509f45a25ad9c241e1883aff4162efafc9a2214",
+      "bytes": 25598
+    },
+    "repaired": {
+      "argument": "/Users/jwaldrip/.omp/agent/sessions/-dev-src-github.com-thebushidocollective-artifacts/2026-10-23T20-16-20-766Z_01a16a68-451e-7144-bd2a-34ffb759ce77/local/otio-release-version-repaired-workflow.yml",
+      "sha256": "aec61ab8a93f75b72b767fd499159bb3d93a843d7de642ed6a964dfafe46981b",
+      "bytes": 26473
+    },
+    "scripts": {
+      "base": {
+        "Set release version": {
+          "hash": "b5fb8be153e82abff6d72b4914057e05af57352b9472bcbd49c21c2d0d9e6d91",
+          "file": "sources/base/set-release-version.sh",
+          "workingDirectory": "packages/relic-mcp"
+        }
+      },
+      "repaired": {
+        "Validate release version": {
+          "hash": "ecda4ea6b2028772144c8021a37c491433586ac7212acb3d0b0adde8f14f0a88",
+          "file": "sources/repaired/validate-release-version.sh",
+          "workingDirectory": null
+        },
+        "Set release version": {
+          "hash": "d51c94573d23d599ce77bb3606d4508b5447969f4478081beb29054110c97104",
+          "file": "sources/repaired/set-release-version.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Check generated plugin manifests and launch config": {
+          "hash": "968763b445d5765444e40fbe017759370ce86a60f83c364abd1a405913db5e68",
+          "file": "sources/repaired/check-generated-plugin-manifests-and-launch-config.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Pack the release tarball": {
+          "hash": "68c63015c8fa2ff8f6e4a8bb2b4019cd708cd990cfc57c6343e6278b77be9f9f",
+          "file": "sources/repaired/pack-the-release-tarball.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Check packed contents": {
+          "hash": "481fdecba1c27d9641dd21531e5e201dd936cda4032c72756bc835d9065b2fcc",
+          "file": "sources/repaired/check-packed-contents.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Summarize packed artifact": {
+          "hash": "4f5b50703f808ab17aa31f0505c5f34bb196445e84d7fdffc6aa2fd5a6d4b55c",
+          "file": "sources/repaired/summarize-packed-artifact.sh",
+          "workingDirectory": "packages/relic-mcp"
+        }
+      },
+      "allRepairedRunValues": [
+        {
+          "location": "workflow.jobs.native-build.steps[2].run",
+          "hash": "e835fb044f81c2853a7aee7d5d122f7104af1b217f52e62db4c3f297046577b0",
+          "file": "sources/repaired-run-values/001.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[3].run",
+          "hash": "f09e25b959be570008ac3e2b9f4013967a713a284148e04909e2bbc380bbdd2b",
+          "file": "sources/repaired-run-values/002.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[4].run",
+          "hash": "0a9070dcc47ac4ba313032237185294b09df186844d9400440866495e62441bf",
+          "file": "sources/repaired-run-values/003.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[5].run",
+          "hash": "972f15a3e0abd5e94e41c4f1ed32b75b4c4b076bcfd8f29e13911969fa2c0517",
+          "file": "sources/repaired-run-values/004.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[6].run",
+          "hash": "5273f8057c6b52f34f88a36d79ab6cf7abe48a63d440f4a9d000f475e14d8d1d",
+          "file": "sources/repaired-run-values/005.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[7].run",
+          "hash": "a7f91ffe31d08a54c6c74e3fac6980ed9e99ea67c8c25bf91488668c7123d6d3",
+          "file": "sources/repaired-run-values/006.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[8].run",
+          "hash": "8ee7fe2e33e6a0fed095f681ddf58a611a99a44e1497eb1fa2995841d10d5939",
+          "file": "sources/repaired-run-values/007.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[3].run",
+          "hash": "ecda4ea6b2028772144c8021a37c491433586ac7212acb3d0b0adde8f14f0a88",
+          "file": "sources/repaired-run-values/008.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[4].run",
+          "hash": "0a4166598f1a7101e4e82bbe2898b7506f3726f83920b2098035b65f34c7d763",
+          "file": "sources/repaired-run-values/009.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[5].run",
+          "hash": "ed6ae2ba19763eb56c4691c7113c556bc1dc78a2b5868187f418bcb53ecd3ffd",
+          "file": "sources/repaired-run-values/010.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[10].run",
+          "hash": "398a846553ea79c619d128eb0b836abd9eed704695527f111e79cf99b73c5d96",
+          "file": "sources/repaired-run-values/011.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[11].run",
+          "hash": "216c65f9555a4ba788865cbe2c323f2bd1639676c37ea12e049747c13fc4ec24",
+          "file": "sources/repaired-run-values/012.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[12].run",
+          "hash": "d51c94573d23d599ce77bb3606d4508b5447969f4478081beb29054110c97104",
+          "file": "sources/repaired-run-values/013.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[13].run",
+          "hash": "5209384471aee0e3249d7b83b70db1830bf9bd65b8ab4bd1ca714a11772679cb",
+          "file": "sources/repaired-run-values/014.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[14].run",
+          "hash": "968763b445d5765444e40fbe017759370ce86a60f83c364abd1a405913db5e68",
+          "file": "sources/repaired-run-values/015.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[15].run",
+          "hash": "68c63015c8fa2ff8f6e4a8bb2b4019cd708cd990cfc57c6343e6278b77be9f9f",
+          "file": "sources/repaired-run-values/016.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[16].run",
+          "hash": "794dc1b46eb552ad02864c4c5c44a885eafcf4bea63bea3bd0ad0da6959b48c3",
+          "file": "sources/repaired-run-values/017.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[17].run",
+          "hash": "481fdecba1c27d9641dd21531e5e201dd936cda4032c72756bc835d9065b2fcc",
+          "file": "sources/repaired-run-values/018.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[19].run",
+          "hash": "4f5b50703f808ab17aa31f0505c5f34bb196445e84d7fdffc6aa2fd5a6d4b55c",
+          "file": "sources/repaired-run-values/019.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[3].run",
+          "hash": "8cabeaa6cba9cfe7f5b2ea7e54eadc28c6a7ea1a3b25a9b0ec067afbd1b16671",
+          "file": "sources/repaired-run-values/020.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[4].run",
+          "hash": "b9f2714b639600898015d4941ce8a4ed071a6b2222548eacec21adf4e3eb1ec7",
+          "file": "sources/repaired-run-values/021.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[5].run",
+          "hash": "63b491e86a24dfc87b508ebec0ca25037deb53ff8c311096b611cf73b4920b89",
+          "file": "sources/repaired-run-values/022.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[6].run",
+          "hash": "b603c3e6d887710e4477e6b7fc781867aa543563fd93b00945b6fb65a0caa499",
+          "file": "sources/repaired-run-values/023.sh"
+        },
+        {
+          "location": "workflow.jobs.publish.steps[1].run",
+          "hash": "62737f475babc06ed5d3aa2569921c92f2c66ed9a564023c85d36ee083ede935",
+          "file": "sources/repaired-run-values/024.sh"
+        },
+        {
+          "location": "workflow.jobs.publish.steps[3].run",
+          "hash": "0d5949798a645d32c44cf6f14defa9fc02e63f91077b7fe587472c12d7ae449c",
+          "file": "sources/repaired-run-values/025.sh"
+        }
+      ]
+    }
+  },
+  "structuralFailures": [],
+  "toolchain": {
+    "bunVersion": "1.4.3",
+    "bunPath": "/Users/jwaldrip/.local/share/mise/installs/bun/1.4.3/bin/bun",
+    "commands": [
+      {
+        "label": "node---version",
+        "command": [
+          "node",
+          "--version"
+        ],
+        "exitCode": 0,
+        "signalCode": null,
+        "stdout": {
+          "file": "provenance/toolchain/raw/node-version.stdout",
+          "sha256": "c642a0de246dcdc6c51318fe449646fc5067b981a8d09e9ccdb8141a5756339a",
+          "bytes": 9
+        },
+        "stderr": {
+          "file": "provenance/toolchain/raw/node-version.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        }
+      },
+      {
+        "label": "npm---version",
+        "command": [
+          "npm",
+          "--version"
+        ],
+        "exitCode": 1,
+        "signalCode": null,
+        "stdout": {
+          "file": "provenance/toolchain/raw/npm-version.stdout",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        "stderr": {
+          "file": "provenance/toolchain/raw/npm-version.stderr",
+          "sha256": "439f5aab0bd10a130fd27764a333e0f9831c203ec8fd719611da1abb17a8b65a",
+          "bytes": 207
+        }
+      },
+      {
+        "label": "bash---version",
+        "command": [
+          "bash",
+          "--version"
+        ],
+        "exitCode": 0,
+        "signalCode": null,
+        "stdout": {
+          "file": "provenance/toolchain/raw/bash-version.stdout",
+          "sha256": "c27f23d3c7cd5b0b4dd41ab416b7fe331af7a8aa588a7cbd9b00d6fd83ce0266",
+          "bytes": 315
+        },
+        "stderr": {
+          "file": "provenance/toolchain/raw/bash-version.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "valid-0-13-0",
+      "directory": "cases/valid-0-13-0",
+      "versionProvided": true,
+      "version": "0.13.0",
+      "state": "failed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-13-0/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-13-0/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Set release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Set release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-13-0/raw/set-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-13-0/raw/set-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Check generated plugin manifests and launch config",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Check generated plugin manifests and launch config>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-13-0/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-13-0/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Pack the release tarball",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Pack the release tarball>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-13-0/raw/pack-the-release-tarball.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-13-0/raw/pack-the-release-tarball.stderr",
+            "sha256": "d6eeda884a68b32bfcb3abee2ae720afd806a6b63d693439bed89e3d5ffae947",
+            "bytes": 205
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/valid-0-13-0/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+        }
+      ],
+      "assertions": [
+        "actual validator accepted the exact version string",
+        "release-copy package.json retains the exact requested string",
+        "actual generated manifest check accepted exact package and manifest versions"
+      ],
+      "errors": [
+        {
+          "name": "Error",
+          "message": "Pack the release tarball: expected exit 0, received 1"
+        }
+      ]
+    },
+    {
+      "id": "valid-0-0-0",
+      "directory": "cases/valid-0-0-0",
+      "versionProvided": true,
+      "version": "0.0.0",
+      "state": "failed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-0-0/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-0-0/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Set release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Set release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-0-0/raw/set-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-0-0/raw/set-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Check generated plugin manifests and launch config",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Check generated plugin manifests and launch config>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-0-0/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-0-0/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Pack the release tarball",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Pack the release tarball>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-0-0-0/raw/pack-the-release-tarball.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-0-0-0/raw/pack-the-release-tarball.stderr",
+            "sha256": "668153c9430bb1b0bb3a7bd6824c5e02a1ec8a93dc78da03eab02f82bd4ca9fb",
+            "bytes": 204
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/valid-0-0-0/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+        }
+      ],
+      "assertions": [
+        "actual validator accepted the exact version string",
+        "release-copy package.json retains the exact requested string",
+        "actual generated manifest check accepted exact package and manifest versions"
+      ],
+      "errors": [
+        {
+          "name": "Error",
+          "message": "Pack the release tarball: expected exit 0, received 1"
+        }
+      ]
+    },
+    {
+      "id": "valid-1-2-3-rc-1",
+      "directory": "cases/valid-1-2-3-rc-1",
+      "versionProvided": true,
+      "version": "1.2.3-rc.1",
+      "state": "failed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-rc-1/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-rc-1/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Set release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Set release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-rc-1/raw/set-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-rc-1/raw/set-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Check generated plugin manifests and launch config",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Check generated plugin manifests and launch config>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-rc-1/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-rc-1/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Pack the release tarball",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Pack the release tarball>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-rc-1/raw/pack-the-release-tarball.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-rc-1/raw/pack-the-release-tarball.stderr",
+            "sha256": "844c91800e6406f7363b49a76a480b757b256d2e04bc7ec2f20f3ae96b51f7a1",
+            "bytes": 209
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/valid-1-2-3-rc-1/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+        }
+      ],
+      "assertions": [
+        "actual validator accepted the exact version string",
+        "release-copy package.json retains the exact requested string",
+        "actual generated manifest check accepted exact package and manifest versions"
+      ],
+      "errors": [
+        {
+          "name": "Error",
+          "message": "Pack the release tarball: expected exit 0, received 1"
+        }
+      ]
+    },
+    {
+      "id": "valid-1-2-3-alpha-01a-001-build-7",
+      "directory": "cases/valid-1-2-3-alpha-01a-001-build-7",
+      "versionProvided": true,
+      "version": "1.2.3-alpha.01a+001.build-7",
+      "state": "failed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Set release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Set release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/set-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/set-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Check generated plugin manifests and launch config",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Check generated plugin manifests and launch config>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Pack the release tarball",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Pack the release tarball>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/pack-the-release-tarball.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-alpha-01a-001-build-7/raw/pack-the-release-tarball.stderr",
+            "sha256": "bc4bc8b15ce304984b73ff9f85422d941cc64970c30e996d099ca1a27d54eda4",
+            "bytes": 226
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/valid-1-2-3-alpha-01a-001-build-7/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+        }
+      ],
+      "assertions": [
+        "actual validator accepted the exact version string",
+        "release-copy package.json retains the exact requested string",
+        "actual generated manifest check accepted exact package and manifest versions"
+      ],
+      "errors": [
+        {
+          "name": "Error",
+          "message": "Pack the release tarball: expected exit 0, received 1"
+        }
+      ]
+    },
+    {
+      "id": "valid-1-2-3-001",
+      "directory": "cases/valid-1-2-3-001",
+      "versionProvided": true,
+      "version": "1.2.3+001",
+      "state": "failed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-001/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-001/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Set release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Set release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-001/raw/set-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-001/raw/set-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Check generated plugin manifests and launch config",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Check generated plugin manifests and launch config>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-001/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-001/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Pack the release tarball",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Pack the release tarball>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3-001/raw/pack-the-release-tarball.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3-001/raw/pack-the-release-tarball.stderr",
+            "sha256": "6080cc516f1a15c0c36ab9994f3fb1566e07686abe573dce9ee8674e1b2da41f",
+            "bytes": 208
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/valid-1-2-3-001/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+        }
+      ],
+      "assertions": [
+        "actual validator accepted the exact version string",
+        "release-copy package.json retains the exact requested string",
+        "actual generated manifest check accepted exact package and manifest versions"
+      ],
+      "errors": [
+        {
+          "name": "Error",
+          "message": "Pack the release tarball: expected exit 0, received 1"
+        }
+      ]
+    },
+    {
+      "id": "valid-1-2-3",
+      "directory": "cases/valid-1-2-3",
+      "versionProvided": true,
+      "version": "1.2.3--",
+      "state": "failed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Set release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Set release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3/raw/set-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3/raw/set-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Check generated plugin manifests and launch config",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Check generated plugin manifests and launch config>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        },
+        {
+          "label": "Pack the release tarball",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Pack the release tarball>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/valid-1-2-3/raw/pack-the-release-tarball.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/valid-1-2-3/raw/pack-the-release-tarball.stderr",
+            "sha256": "9e1e2426cb08be607390d747fa60d4ead914f661776cfaeca6ee72f6205b247e",
+            "bytes": 204
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/valid-1-2-3/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+        }
+      ],
+      "assertions": [
+        "actual validator accepted the exact version string",
+        "release-copy package.json retains the exact requested string",
+        "actual generated manifest check accepted exact package and manifest versions"
+      ],
+      "errors": [
+        {
+          "name": "Error",
+          "message": "Pack the release tarball: expected exit 0, received 1"
+        }
+      ]
+    },
+    {
+      "id": "validator-huge-core",
+      "directory": "cases/validator-huge-core",
+      "versionProvided": true,
+      "version": "9007199254740992.0.0",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/validator-huge-core/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/validator-huge-core/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        }
+      ],
+      "assertions": [
+        "A core numeric identifier larger than JavaScript's safe integer range remains valid SemVer."
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      }
+    },
+    {
+      "id": "validator-long-version",
+      "directory": "cases/validator-long-version",
+      "versionProvided": true,
+      "version": "1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/validator-long-version/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/validator-long-version/raw/validate-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        }
+      ],
+      "assertions": [
+        "A valid SemVer longer than 256 characters remains valid."
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      }
+    },
+    {
+      "id": "reject-missing",
+      "directory": "cases/reject-missing",
+      "versionProvided": false,
+      "version": null,
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-missing/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-missing/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-empty",
+      "directory": "cases/reject-empty",
+      "versionProvided": true,
+      "version": "",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-empty/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-empty/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-prefixed-v",
+      "directory": "cases/reject-prefixed-v",
+      "versionProvided": true,
+      "version": "v1.2.3",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-prefixed-v/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-prefixed-v/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-leading-zero",
+      "directory": "cases/reject-leading-zero",
+      "versionProvided": true,
+      "version": "01.2.3",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-leading-zero/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-leading-zero/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-prerelease-leading-zero",
+      "directory": "cases/reject-prerelease-leading-zero",
+      "versionProvided": true,
+      "version": "1.2.3-01",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-prerelease-leading-zero/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-prerelease-leading-zero/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-dangling-prerelease",
+      "directory": "cases/reject-dangling-prerelease",
+      "versionProvided": true,
+      "version": "1.2.3-",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-dangling-prerelease/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-dangling-prerelease/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-dangling-build",
+      "directory": "cases/reject-dangling-build",
+      "versionProvided": true,
+      "version": "1.2.3+",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-dangling-build/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-dangling-build/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-empty-prerelease-identifier",
+      "directory": "cases/reject-empty-prerelease-identifier",
+      "versionProvided": true,
+      "version": "1.2.3-alpha..1",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-empty-prerelease-identifier/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-empty-prerelease-identifier/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-empty-build-identifier",
+      "directory": "cases/reject-empty-build-identifier",
+      "versionProvided": true,
+      "version": "1.2.3+build..1",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-empty-build-identifier/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-empty-build-identifier/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-leading-whitespace",
+      "directory": "cases/reject-leading-whitespace",
+      "versionProvided": true,
+      "version": " 1.2.3",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-leading-whitespace/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-leading-whitespace/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-trailing-whitespace",
+      "directory": "cases/reject-trailing-whitespace",
+      "versionProvided": true,
+      "version": "1.2.3 ",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-trailing-whitespace/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-trailing-whitespace/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-trailing-lf",
+      "directory": "cases/reject-trailing-lf",
+      "versionProvided": true,
+      "version": "1.2.3\n",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-trailing-lf/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-trailing-lf/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-trailing-crlf",
+      "directory": "cases/reject-trailing-crlf",
+      "versionProvided": true,
+      "version": "1.2.3\r\n",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-trailing-crlf/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-trailing-crlf/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "reject-trailing-line-separator",
+      "directory": "cases/reject-trailing-line-separator",
+      "versionProvided": true,
+      "version": "1.2.3 ",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/reject-trailing-line-separator/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/reject-trailing-line-separator/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        }
+      },
+      "consumerExecution": "not-run because the validator rejected this input"
+    },
+    {
+      "id": "old-github-substitution-injection",
+      "directory": "cases/old-github-substitution-injection",
+      "versionProvided": true,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "base Set release version after GitHub substitution",
+          "command": [
+            "bash",
+            "-c",
+            "<executed:base Set release version after GitHub substitution>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/old-github-substitution-injection/raw/base-set-release-version-after-github-substitution.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/old-github-substitution-injection/raw/base-set-release-version-after-github-substitution.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        }
+      ],
+      "assertions": [
+        "literal payload was substituted into old shell source and created its owned sentinel"
+      ],
+      "errors": [],
+      "transforms": [
+        {
+          "step": "Set release version",
+          "file": "cases/old-github-substitution-injection/executed-scripts/base-set-release-version-after-github-substitution.sh",
+          "originalHash": "b5fb8be153e82abff6d72b4914057e05af57352b9472bcbd49c21c2d0d9e6d91",
+          "executedHash": "eaaba79c5c24487096709406deacdb3e644676ca578292bdf7ad2c7dce831e22"
+        }
+      ],
+      "states": {
+        "sentinel": {
+          "file": "cases/old-github-substitution-injection/old-injection-sentinel",
+          "exists": true
+        },
+        "releaseCopy": {
+          "sha256": "c5e05143548b1b4bffc3bf09bbcc3ea71f36e9b6b9e0df776686a4c83099b820",
+          "bytes": 395,
+          "version": "0.13.0",
+          "hasDevDependencies": false
+        }
+      },
+      "baseExitCodeMayBeZero": 0
+    },
+    {
+      "id": "repaired-validator-rejects-injection",
+      "directory": "cases/repaired-validator-rejects-injection",
+      "versionProvided": true,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Validate release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Validate release version>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/repaired-validator-rejects-injection/raw/validate-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/repaired-validator-rejects-injection/raw/validate-release-version.stderr",
+            "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+            "bytes": 662
+          },
+          "stdoutText": "",
+          "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "payload stayed environment data, did not create a sentinel, and did not mutate package.json"
+      ],
+      "errors": [],
+      "states": {
+        "before": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "after": {
+          "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+          "bytes": 394,
+          "version": "0.0.0",
+          "hasDevDependencies": false
+        },
+        "sentinel": {
+          "exists": false
+        }
+      },
+      "consumerExecution": "not-run because the repaired validator rejected the payload"
+    },
+    {
+      "id": "payload-bypass-set-release-version",
+      "directory": "cases/payload-bypass-set-release-version",
+      "versionProvided": true,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Set release version",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Set release version>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/payload-bypass-set-release-version/raw/set-release-version.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/payload-bypass-set-release-version/raw/set-release-version.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        }
+      ],
+      "assertions": [
+        "Set release version received the payload as environment data and did not execute it"
+      ],
+      "errors": [],
+      "states": {
+        "releaseCopy": {
+          "sha256": "1fd8cef829cb52f1e4e364531e12e6b551a98b2284633d714ab30d9047d2fb82",
+          "bytes": 440,
+          "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+          "hasDevDependencies": false
+        },
+        "sentinel": {
+          "exists": false
+        }
+      },
+      "consumerExitMayBeNonzero": 0
+    },
+    {
+      "id": "payload-bypass-generated-manifest-check",
+      "directory": "cases/payload-bypass-generated-manifest-check",
+      "versionProvided": true,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Check generated plugin manifests and launch config",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Check generated plugin manifests and launch config>"
+          ],
+          "exitCode": 0,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/payload-bypass-generated-manifest-check/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/payload-bypass-generated-manifest-check/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stdoutText": "",
+          "stderrText": ""
+        }
+      ],
+      "assertions": [
+        "generated manifest check received the payload as environment data and did not execute it"
+      ],
+      "errors": [],
+      "states": {
+        "releaseCopy": {
+          "sha256": "1fd8cef829cb52f1e4e364531e12e6b551a98b2284633d714ab30d9047d2fb82",
+          "bytes": 440,
+          "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+          "hasDevDependencies": false
+        },
+        "manifests": {
+          "pluginVersion": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+          "marketplacePluginVersion": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+          "marketplaceMetadataVersion": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+          "mcpPackageArgument": "relic-mcp@0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+          "mcpClientName": "relic-plugin/0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")"
+        },
+        "sentinel": {
+          "exists": false
+        }
+      },
+      "consumerExitMayBeNonzero": 0
+    },
+    {
+      "id": "payload-bypass-packed-content-check",
+      "directory": "cases/payload-bypass-packed-content-check",
+      "versionProvided": true,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "state": "failed",
+      "steps": [
+        {
+          "label": "Pack local fixture tarball for payload bypass",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Pack the release tarball>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/payload-bypass-packed-content-check/raw/pack-local-fixture-tarball-for-payload-bypass.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/payload-bypass-packed-content-check/raw/pack-local-fixture-tarball-for-payload-bypass.stderr",
+            "sha256": "3c9142cad52fb7abfb6b9ab2c150aa4efd4f72320a6e0c99d8b9427a1f126404",
+            "bytes": 228
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/payload-bypass-packed-content-check/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+        }
+      ],
+      "assertions": [],
+      "errors": [
+        {
+          "name": "Error",
+          "message": "payload-bypass fixture pack: expected exit 0, received 1"
+        }
+      ]
+    },
+    {
+      "id": "payload-bypass-summary",
+      "directory": "cases/payload-bypass-summary",
+      "versionProvided": true,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "state": "passed",
+      "steps": [
+        {
+          "label": "Summarize packed artifact",
+          "command": [
+            "bash",
+            "-c",
+            "<sources:Summarize packed artifact>"
+          ],
+          "exitCode": 1,
+          "signalCode": null,
+          "stdout": {
+            "file": "cases/payload-bypass-summary/raw/summarize-packed-artifact.stdout",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "stderr": {
+            "file": "cases/payload-bypass-summary/raw/summarize-packed-artifact.stderr",
+            "sha256": "22742a19f2441734573c6efda9d91b09e76471895c836022a68468f1cab3a7bf",
+            "bytes": 555
+          },
+          "stdoutText": "",
+          "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/payload-bypass-summary/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n<anonymous_script>:1\n\n\nSyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at Socket.<anonymous> ([eval]:5:27)\n    at Socket.emit (node:events:521:24)\n    at endReadableNT (node:internal/streams/readable:1729:12)\n    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)\n\nNode.js v24.15.0\n"
+        }
+      ],
+      "assertions": [
+        "summary printed the payload literally from environment data and did not execute it"
+      ],
+      "errors": [],
+      "states": {
+        "summary": {
+          "file": "cases/payload-bypass-summary/runtime/github-step-summary.md",
+          "sha256": "2cf24eb30caafba17843ee10e03155d5f1aa0d0c7f8d4f1bdea58ab0d68f14b8"
+        },
+        "sentinel": {
+          "exists": false
+        }
+      },
+      "consumerExitMayBeNonzero": 1
+    }
+  ],
+  "missingCases": [],
+  "globalFailures": [
+    "failed cases: valid-0-13-0, valid-0-0-0, valid-1-2-3-rc-1, valid-1-2-3-alpha-01a-001-build-7, valid-1-2-3-001, valid-1-2-3, payload-bypass-packed-content-check"
+  ]
+}

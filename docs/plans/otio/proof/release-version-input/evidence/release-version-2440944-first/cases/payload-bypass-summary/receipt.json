@@ -1,0 +1,45 @@
+{
+  "id": "payload-bypass-summary",
+  "directory": "cases/payload-bypass-summary",
+  "versionProvided": true,
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Summarize packed artifact",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Summarize packed artifact>"
+      ],
+      "exitCode": 1,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/payload-bypass-summary/raw/summarize-packed-artifact.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/payload-bypass-summary/raw/summarize-packed-artifact.stderr",
+        "sha256": "22742a19f2441734573c6efda9d91b09e76471895c836022a68468f1cab3a7bf",
+        "bytes": 555
+      },
+      "stdoutText": "",
+      "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/payload-bypass-summary/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n<anonymous_script>:1\n\n\nSyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at Socket.<anonymous> ([eval]:5:27)\n    at Socket.emit (node:events:521:24)\n    at endReadableNT (node:internal/streams/readable:1729:12)\n    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)\n\nNode.js v24.15.0\n"
+    }
+  ],
+  "assertions": [
+    "summary printed the payload literally from environment data and did not execute it"
+  ],
+  "errors": [],
+  "states": {
+    "summary": {
+      "file": "cases/payload-bypass-summary/runtime/github-step-summary.md",
+      "sha256": "2cf24eb30caafba17843ee10e03155d5f1aa0d0c7f8d4f1bdea58ab0d68f14b8"
+    },
+    "sentinel": {
+      "exists": false
+    }
+  },
+  "consumerExitMayBeNonzero": 1
+}

@@ -1,0 +1,224 @@
+{
+  "format": "otio-release-version-input-proof/v1",
+  "createdAt": "2026-10-23T23:00:10.205Z",
+  "source": {
+    "base": {
+      "argument": "/Users/jwaldrip/.omp/agent/sessions/-dev-src-github.com-thebushidocollective-artifacts/2026-10-23T20-16-20-766Z_01a16a68-451e-7144-bd2a-34ffb759ce77/local/otio-release-version-base-workflow.yml",
+      "sha256": "01d1d4b3492249e502531b4d2509f45a25ad9c241e1883aff4162efafc9a2214",
+      "bytes": 25598
+    },
+    "repaired": {
+      "argument": "/Users/jwaldrip/.omp/agent/sessions/-dev-src-github.com-thebushidocollective-artifacts/2026-10-23T20-16-20-766Z_01a16a68-451e-7144-bd2a-34ffb759ce77/local/otio-release-version-repaired-workflow.yml",
+      "sha256": "aec61ab8a93f75b72b767fd499159bb3d93a843d7de642ed6a964dfafe46981b",
+      "bytes": 26473
+    },
+    "scripts": {
+      "base": {
+        "Set release version": {
+          "hash": "b5fb8be153e82abff6d72b4914057e05af57352b9472bcbd49c21c2d0d9e6d91",
+          "file": "sources/base/set-release-version.sh",
+          "workingDirectory": "packages/relic-mcp"
+        }
+      },
+      "repaired": {
+        "Validate release version": {
+          "hash": "ecda4ea6b2028772144c8021a37c491433586ac7212acb3d0b0adde8f14f0a88",
+          "file": "sources/repaired/validate-release-version.sh",
+          "workingDirectory": null
+        },
+        "Set release version": {
+          "hash": "d51c94573d23d599ce77bb3606d4508b5447969f4478081beb29054110c97104",
+          "file": "sources/repaired/set-release-version.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Check generated plugin manifests and launch config": {
+          "hash": "968763b445d5765444e40fbe017759370ce86a60f83c364abd1a405913db5e68",
+          "file": "sources/repaired/check-generated-plugin-manifests-and-launch-config.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Pack the release tarball": {
+          "hash": "68c63015c8fa2ff8f6e4a8bb2b4019cd708cd990cfc57c6343e6278b77be9f9f",
+          "file": "sources/repaired/pack-the-release-tarball.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Check packed contents": {
+          "hash": "481fdecba1c27d9641dd21531e5e201dd936cda4032c72756bc835d9065b2fcc",
+          "file": "sources/repaired/check-packed-contents.sh",
+          "workingDirectory": "packages/relic-mcp"
+        },
+        "Summarize packed artifact": {
+          "hash": "4f5b50703f808ab17aa31f0505c5f34bb196445e84d7fdffc6aa2fd5a6d4b55c",
+          "file": "sources/repaired/summarize-packed-artifact.sh",
+          "workingDirectory": "packages/relic-mcp"
+        }
+      },
+      "allRepairedRunValues": [
+        {
+          "location": "workflow.jobs.native-build.steps[2].run",
+          "hash": "e835fb044f81c2853a7aee7d5d122f7104af1b217f52e62db4c3f297046577b0",
+          "file": "sources/repaired-run-values/001.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[3].run",
+          "hash": "f09e25b959be570008ac3e2b9f4013967a713a284148e04909e2bbc380bbdd2b",
+          "file": "sources/repaired-run-values/002.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[4].run",
+          "hash": "0a9070dcc47ac4ba313032237185294b09df186844d9400440866495e62441bf",
+          "file": "sources/repaired-run-values/003.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[5].run",
+          "hash": "972f15a3e0abd5e94e41c4f1ed32b75b4c4b076bcfd8f29e13911969fa2c0517",
+          "file": "sources/repaired-run-values/004.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[6].run",
+          "hash": "5273f8057c6b52f34f88a36d79ab6cf7abe48a63d440f4a9d000f475e14d8d1d",
+          "file": "sources/repaired-run-values/005.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[7].run",
+          "hash": "a7f91ffe31d08a54c6c74e3fac6980ed9e99ea67c8c25bf91488668c7123d6d3",
+          "file": "sources/repaired-run-values/006.sh"
+        },
+        {
+          "location": "workflow.jobs.native-build.steps[8].run",
+          "hash": "8ee7fe2e33e6a0fed095f681ddf58a611a99a44e1497eb1fa2995841d10d5939",
+          "file": "sources/repaired-run-values/007.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[3].run",
+          "hash": "ecda4ea6b2028772144c8021a37c491433586ac7212acb3d0b0adde8f14f0a88",
+          "file": "sources/repaired-run-values/008.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[4].run",
+          "hash": "0a4166598f1a7101e4e82bbe2898b7506f3726f83920b2098035b65f34c7d763",
+          "file": "sources/repaired-run-values/009.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[5].run",
+          "hash": "ed6ae2ba19763eb56c4691c7113c556bc1dc78a2b5868187f418bcb53ecd3ffd",
+          "file": "sources/repaired-run-values/010.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[10].run",
+          "hash": "398a846553ea79c619d128eb0b836abd9eed704695527f111e79cf99b73c5d96",
+          "file": "sources/repaired-run-values/011.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[11].run",
+          "hash": "216c65f9555a4ba788865cbe2c323f2bd1639676c37ea12e049747c13fc4ec24",
+          "file": "sources/repaired-run-values/012.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[12].run",
+          "hash": "d51c94573d23d599ce77bb3606d4508b5447969f4478081beb29054110c97104",
+          "file": "sources/repaired-run-values/013.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[13].run",
+          "hash": "5209384471aee0e3249d7b83b70db1830bf9bd65b8ab4bd1ca714a11772679cb",
+          "file": "sources/repaired-run-values/014.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[14].run",
+          "hash": "968763b445d5765444e40fbe017759370ce86a60f83c364abd1a405913db5e68",
+          "file": "sources/repaired-run-values/015.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[15].run",
+          "hash": "68c63015c8fa2ff8f6e4a8bb2b4019cd708cd990cfc57c6343e6278b77be9f9f",
+          "file": "sources/repaired-run-values/016.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[16].run",
+          "hash": "794dc1b46eb552ad02864c4c5c44a885eafcf4bea63bea3bd0ad0da6959b48c3",
+          "file": "sources/repaired-run-values/017.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[17].run",
+          "hash": "481fdecba1c27d9641dd21531e5e201dd936cda4032c72756bc835d9065b2fcc",
+          "file": "sources/repaired-run-values/018.sh"
+        },
+        {
+          "location": "workflow.jobs.pack.steps[19].run",
+          "hash": "4f5b50703f808ab17aa31f0505c5f34bb196445e84d7fdffc6aa2fd5a6d4b55c",
+          "file": "sources/repaired-run-values/019.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[3].run",
+          "hash": "8cabeaa6cba9cfe7f5b2ea7e54eadc28c6a7ea1a3b25a9b0ec067afbd1b16671",
+          "file": "sources/repaired-run-values/020.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[4].run",
+          "hash": "b9f2714b639600898015d4941ce8a4ed071a6b2222548eacec21adf4e3eb1ec7",
+          "file": "sources/repaired-run-values/021.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[5].run",
+          "hash": "63b491e86a24dfc87b508ebec0ca25037deb53ff8c311096b611cf73b4920b89",
+          "file": "sources/repaired-run-values/022.sh"
+        },
+        {
+          "location": "workflow.jobs.packed-native-probe.steps[6].run",
+          "hash": "b603c3e6d887710e4477e6b7fc781867aa543563fd93b00945b6fb65a0caa499",
+          "file": "sources/repaired-run-values/023.sh"
+        },
+        {
+          "location": "workflow.jobs.publish.steps[1].run",
+          "hash": "62737f475babc06ed5d3aa2569921c92f2c66ed9a564023c85d36ee083ede935",
+          "file": "sources/repaired-run-values/024.sh"
+        },
+        {
+          "location": "workflow.jobs.publish.steps[3].run",
+          "hash": "0d5949798a645d32c44cf6f14defa9fc02e63f91077b7fe587472c12d7ae449c",
+          "file": "sources/repaired-run-values/025.sh"
+        }
+      ]
+    }
+  },
+  "suppliedGitShas": {
+    "base": "6a83c011fe9ef4b40204a1ca0ed46744103fba49",
+    "repaired": "2440944cc4db7d5912de0bb6fb5f1e14aebe5697"
+  },
+  "plannedCaseIds": [
+    "valid-0-13-0",
+    "valid-0-0-0",
+    "valid-1-2-3-rc-1",
+    "valid-1-2-3-alpha-01a-001-build-7",
+    "valid-1-2-3-001",
+    "valid-1-2-3",
+    "validator-huge-core",
+    "validator-long-version",
+    "reject-missing",
+    "reject-empty",
+    "reject-prefixed-v",
+    "reject-leading-zero",
+    "reject-prerelease-leading-zero",
+    "reject-dangling-prerelease",
+    "reject-dangling-build",
+    "reject-empty-prerelease-identifier",
+    "reject-empty-build-identifier",
+    "reject-leading-whitespace",
+    "reject-trailing-whitespace",
+    "reject-trailing-lf",
+    "reject-trailing-crlf",
+    "reject-trailing-line-separator",
+    "old-github-substitution-injection",
+    "repaired-validator-rejects-injection",
+    "payload-bypass-set-release-version",
+    "payload-bypass-generated-manifest-check",
+    "payload-bypass-packed-content-check",
+    "payload-bypass-summary"
+  ],
+  "policy": {
+    "sourceReads": "only the two supplied workflow YAML files",
+    "fixture": "credential-free relic-mcp package with no dependencies or lifecycle scripts",
+    "npm": "offline with isolated HOME, cache, config, temp, and loopback registry setting",
+    "nativeContents": "placeholders are packed and checked but never executed"
+  }
+}

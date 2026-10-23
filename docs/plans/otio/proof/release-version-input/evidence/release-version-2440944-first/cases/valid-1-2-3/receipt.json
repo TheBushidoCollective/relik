@@ -1,0 +1,108 @@
+{
+  "id": "valid-1-2-3",
+  "directory": "cases/valid-1-2-3",
+  "versionProvided": true,
+  "version": "1.2.3--",
+  "state": "failed",
+  "steps": [
+    {
+      "label": "Validate release version",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Validate release version>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3/raw/validate-release-version.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3/raw/validate-release-version.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Set release version",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Set release version>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3/raw/set-release-version.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3/raw/set-release-version.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Check generated plugin manifests and launch config",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Check generated plugin manifests and launch config>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3/raw/check-generated-plugin-manifests-and-launch-config.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3/raw/check-generated-plugin-manifests-and-launch-config.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    },
+    {
+      "label": "Pack the release tarball",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Pack the release tarball>"
+      ],
+      "exitCode": 1,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/valid-1-2-3/raw/pack-the-release-tarball.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/valid-1-2-3/raw/pack-the-release-tarball.stderr",
+        "sha256": "9e1e2426cb08be607390d747fa60d4ead914f661776cfaeca6ee72f6205b247e",
+        "bytes": 204
+      },
+      "stdoutText": "",
+      "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/valid-1-2-3/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+    }
+  ],
+  "assertions": [
+    "actual validator accepted the exact version string",
+    "release-copy package.json retains the exact requested string",
+    "actual generated manifest check accepted exact package and manifest versions"
+  ],
+  "errors": [
+    {
+      "name": "Error",
+      "message": "Pack the release tarball: expected exit 0, received 1"
+    }
+  ]
+}

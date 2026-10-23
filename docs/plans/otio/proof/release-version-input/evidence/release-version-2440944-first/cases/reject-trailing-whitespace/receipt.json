@@ -1,0 +1,50 @@
+{
+  "id": "reject-trailing-whitespace",
+  "directory": "cases/reject-trailing-whitespace",
+  "versionProvided": true,
+  "version": "1.2.3 ",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Validate release version",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Validate release version>"
+      ],
+      "exitCode": 1,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/reject-trailing-whitespace/raw/validate-release-version.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/reject-trailing-whitespace/raw/validate-release-version.stderr",
+        "sha256": "6b8c34a0b0bb8efbf9ad7717d0036b5457b116895378590538b0a8f033a36367",
+        "bytes": 662
+      },
+      "stdoutText": "",
+      "stderrText": "[stdin]:5\n    throw new Error(\"RELEASE_VERSION must be an exact SemVer 2.0.0 version\");\n    ^\n\nError: RELEASE_VERSION must be an exact SemVer 2.0.0 version\n    at [stdin]:5:11\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at Socket.<anonymous> (node:internal/process/execution:205:5)\n    at Socket.emit (node:events:521:24)\n\nNode.js v24.15.0\n"
+    }
+  ],
+  "assertions": [
+    "validator returned nonzero and package.json stayed byte-for-byte unchanged"
+  ],
+  "errors": [],
+  "states": {
+    "before": {
+      "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+      "bytes": 394,
+      "version": "0.0.0",
+      "hasDevDependencies": false
+    },
+    "after": {
+      "sha256": "fb4a6851632e02a0835b945c87995d47d7638348ca04ad777be086c311a5d2ed",
+      "bytes": 394,
+      "version": "0.0.0",
+      "hasDevDependencies": false
+    }
+  },
+  "consumerExecution": "not-run because the validator rejected this input"
+}

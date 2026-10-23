@@ -1,0 +1,38 @@
+{
+  "id": "payload-bypass-packed-content-check",
+  "directory": "cases/payload-bypass-packed-content-check",
+  "versionProvided": true,
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "state": "failed",
+  "steps": [
+    {
+      "label": "Pack local fixture tarball for payload bypass",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Pack the release tarball>"
+      ],
+      "exitCode": 1,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/payload-bypass-packed-content-check/raw/pack-local-fixture-tarball-for-payload-bypass.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/payload-bypass-packed-content-check/raw/pack-local-fixture-tarball-for-payload-bypass.stderr",
+        "sha256": "3c9142cad52fb7abfb6b9ab2c150aa4efd4f72320a6e0c99d8b9427a1f126404",
+        "bytes": 228
+      },
+      "stdoutText": "",
+      "stderrText": "Exit prior to config file resolving\ncause\ndouble-loading config \"/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/payload-bypass-packed-content-check/runtime/npmrc\" as \"global\", previously loaded as \"user\"\n"
+    }
+  ],
+  "assertions": [],
+  "errors": [
+    {
+      "name": "Error",
+      "message": "payload-bypass fixture pack: expected exit 0, received 1"
+    }
+  ]
+}

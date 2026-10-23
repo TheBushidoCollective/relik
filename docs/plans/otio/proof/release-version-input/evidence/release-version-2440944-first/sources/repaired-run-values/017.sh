@@ -1,0 +1,16 @@
+set -euo pipefail
+TARBALL="${{ steps.package.outputs.tarball }}"
+EXTRACT="$RUNNER_TEMP/native-prebuild-extract"
+mkdir -p "$EXTRACT"
+tar -xzf "$TARBALL" -C "$EXTRACT"
+test -d "$EXTRACT/package"
+while IFS= read -r LINE; do
+  EXPECTED="${LINE%% *}"
+  PATHNAME="${LINE#*  }"
+  RELATIVE="${PATHNAME#packages/relic-mcp/}"
+  ACTUAL_PATH="$EXTRACT/package/$RELATIVE"
+  test -f "$ACTUAL_PATH"
+  ACTUAL="$(sha256sum "$ACTUAL_PATH")"
+  ACTUAL="${ACTUAL%% *}"
+  test "$ACTUAL" = "$EXPECTED"
+done < "$RUNNER_TEMP/native-prebuilds.sha256"

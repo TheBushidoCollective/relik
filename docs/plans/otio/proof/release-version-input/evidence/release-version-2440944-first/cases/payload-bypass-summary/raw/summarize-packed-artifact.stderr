@@ -1,0 +1,14 @@
+Exit prior to config file resolving
+cause
+double-loading config "/Users/jwaldrip/.omp/otio-evidence/release-version-2440944-first/cases/payload-bypass-summary/runtime/npmrc" as "global", previously loaded as "user"
+<anonymous_script>:1
+
+
+SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Socket.<anonymous> ([eval]:5:27)
+    at Socket.emit (node:events:521:24)
+    at endReadableNT (node:internal/streams/readable:1729:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+
+Node.js v24.15.0

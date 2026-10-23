@@ -1,0 +1,47 @@
+{
+  "id": "payload-bypass-set-release-version",
+  "directory": "cases/payload-bypass-set-release-version",
+  "versionProvided": true,
+  "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+  "state": "passed",
+  "steps": [
+    {
+      "label": "Set release version",
+      "command": [
+        "bash",
+        "-c",
+        "<sources:Set release version>"
+      ],
+      "exitCode": 0,
+      "signalCode": null,
+      "stdout": {
+        "file": "cases/payload-bypass-set-release-version/raw/set-release-version.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "file": "cases/payload-bypass-set-release-version/raw/set-release-version.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stdoutText": "",
+      "stderrText": ""
+    }
+  ],
+  "assertions": [
+    "Set release version received the payload as environment data and did not execute it"
+  ],
+  "errors": [],
+  "states": {
+    "releaseCopy": {
+      "sha256": "1fd8cef829cb52f1e4e364531e12e6b551a98b2284633d714ab30d9047d2fb82",
+      "bytes": 440,
+      "version": "0.13.0$(printf exploited > \"$INJECTION_SENTINEL\")",
+      "hasDevDependencies": false
+    },
+    "sentinel": {
+      "exists": false
+    }
+  },
+  "consumerExitMayBeNonzero": 0
+}

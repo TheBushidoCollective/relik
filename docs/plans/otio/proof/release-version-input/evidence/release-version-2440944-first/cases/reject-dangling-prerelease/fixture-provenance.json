@@ -1,0 +1,7 @@
+{
+  "packageName": "relic-mcp",
+  "dependencies": [],
+  "lifecycleScripts": [],
+  "nativePlaceholders": "present for packed-file assertions and never executed",
+  "network": "npm offline with an isolated loopback registry setting"
+}

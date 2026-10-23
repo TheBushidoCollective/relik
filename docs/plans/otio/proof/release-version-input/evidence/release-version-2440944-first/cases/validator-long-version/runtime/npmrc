@@ -1,0 +1,6 @@
+offline=true
+ignore-scripts=true
+audit=false
+fund=false
+update-notifier=false
+registry=http://127.0.0.1:9/
