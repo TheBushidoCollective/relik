@@ -1,0 +1,26 @@
+{
+  "source": "/Users/jwaldrip/.omp/otio-evidence/cut-black-trace-1e3aa82-once",
+  "sourceHead": "1e3aa82ff2c39e7737f776ebefa3885e9b654344",
+  "files": [
+    {
+      "path": "source.stdout.log",
+      "bytes": 231,
+      "sha256": "247f644e7ed05e547262bd3b867f50e0110d185e70f13b6c781725c21bcac0fa"
+    },
+    {
+      "path": "source.stderr.log",
+      "bytes": 978,
+      "sha256": "ba4369aaadac34a353b0846defad8a6c463acad212f7ee7a3324acdd9c257d2f"
+    },
+    {
+      "path": "receipt.json",
+      "bytes": 373,
+      "sha256": "87938b775ab872df1252bee24837a5bab459cbb21b58ae8384cd7dbd929bf4ad"
+    }
+  ],
+  "emptyDirectories": [
+    "shots"
+  ],
+  "failure": "Headless shell 1228 path was not executable; no browser session, trace control, or witness ran.",
+  "qualification": false
+}

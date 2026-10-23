@@ -1,0 +1,24 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+1646 |   const named =
+1647 |     process.env['RELIC_OTIO_CHROME_PATH'] ?? process.env['RELIC_CHROME_PATH'];
+1648 |   const found = await discoverChrome(
+1649 |     named && named !== 'none' && named !== 'disabled' ? named : undefined
+1650 |   );
+1651 |   assert.equal(
+                ^
+AssertionError: no Chrome: RELIC_CHROME_PATH points at /Users/jwaldrip/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell, which is not an executable file
++ actual - expected
+
++ 'not_found'
+- 'found'
+
+ generatedMessage: false,
+     actual: "not_found",
+   expected: "found",
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at openBrowser (/Users/jwaldrip/.omp/wt/otio-cut-black-parent-run/packages/relic-mcp/test/otio-path.ts:1651:10)
+
+Bun v1.4.3 (macOS arm64)

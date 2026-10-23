@@ -1,0 +1,18 @@
+{
+  "head": "1e3aa82ff2c39e7737f776ebefa3885e9b654344",
+  "startedAt": "2026-10-23T23:15:38.528Z",
+  "finishedAt": "2026-10-23T23:15:39.166Z",
+  "command": [
+    "mise",
+    "exec",
+    "node@18.20.8",
+    "--",
+    "bun",
+    "packages/relic-mcp/test/otio-path.ts"
+  ],
+  "exit": 1,
+  "signal": null,
+  "error": null,
+  "qualification": false,
+  "diagnosticRunCount": 1
+}
