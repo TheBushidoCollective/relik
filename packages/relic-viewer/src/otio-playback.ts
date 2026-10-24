@@ -776,6 +776,26 @@ export function createOtioPlayback(
   const surfacePool: HTMLCanvasElement[] = [];
   let graphicsLost = false;
   let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
+  let priorCanvasVisibility: string | null = null;
+  let canvasHidden = false;
+
+  function hideVisibleCanvas(): void {
+    if (canvasHidden) return;
+    canvasHidden = true;
+    priorCanvasVisibility = canvas.style?.visibility ?? '';
+    if (canvas.style) {
+      canvas.style.visibility = 'hidden';
+    }
+  }
+
+  function restoreVisibleCanvas(): void {
+    if (!canvasHidden) return;
+    canvasHidden = false;
+    if (canvas.style) {
+      canvas.style.visibility = priorCanvasVisibility ?? '';
+    }
+    priorCanvasVisibility = null;
+  }
   const pooledSurfaceListeners = new Map<
     HTMLCanvasElement,
     (e: Event) => void
@@ -847,6 +867,7 @@ export function createOtioPlayback(
 
   function onVisibleContextLost(): void {
     if (isDisposed) return;
+    hideVisibleCanvas();
     graphicsLost = true;
     isBuffering = true;
     for (const surface of surfacePool) {
@@ -866,7 +887,7 @@ export function createOtioPlayback(
         diagnostic(
           'error',
           'unsupported-browser',
-          'Preview graphics context was lost and the browser did not restore it'
+          'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.'
         )
       );
       isBuffering = false;
@@ -1854,7 +1875,12 @@ export function createOtioPlayback(
     tree: OtioVideoCompositionTree | null,
     leaves: readonly (OtioPreparedLeaf | null)[]
   ): boolean {
-    if (graphicsLost || isCanvasContextLost(canvas)) return false;
+    if (graphicsLost || isCanvasContextLost(canvas)) {
+      if (isCanvasContextLost(canvas)) {
+        hideVisibleCanvas();
+      }
+      return false;
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) return false;
     const { width, height } = outputSize();
@@ -1887,7 +1913,12 @@ export function createOtioPlayback(
       },
       (nodeId, ancestry) => videoHidden(nodeId, ancestry) || blocked.has(nodeId)
     );
-    if (graphicsLost || isCanvasContextLost(canvas)) return false;
+    if (graphicsLost || isCanvasContextLost(canvas)) {
+      if (isCanvasContextLost(canvas)) {
+        hideVisibleCanvas();
+      }
+      return false;
+    }
     return true;
   }
 
@@ -1923,6 +1954,7 @@ export function createOtioPlayback(
       await reconcileAudio(evaluation, gen);
       if (stale(gen)) return;
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
+        restoreVisibleCanvas();
         isBuffering = false;
       }
       notify();
@@ -2158,6 +2190,7 @@ export function createOtioPlayback(
 
     dispose(): void {
       if (isDisposed) return;
+      restoreVisibleCanvas();
       isDisposed = true;
       clearTimeout(restoreTimeout);
       restoreTimeout = undefined;

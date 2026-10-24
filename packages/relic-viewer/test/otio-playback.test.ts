@@ -46,6 +46,7 @@ class SoftCanvas {
   width = 1;
   height = 1;
   pixel: Pixel = { r: 0, g: 0, b: 0, a: 0 };
+  readonly style = { visibility: '' };
   readonly ctx = new SoftContext(this);
 
   isContextLost(): boolean {
@@ -3039,7 +3040,7 @@ describe('otio playback controller', () => {
           severity: 'error',
           code: 'unsupported-browser',
           message:
-            'Preview graphics context was lost and the browser did not restore it',
+            'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.',
         },
       ]);
 
@@ -3130,6 +3131,106 @@ describe('otio playback controller', () => {
       expect(timerCleared).toBe(true);
     } finally {
       globalThis.clearTimeout = origClearTimeout;
+    }
+  });
+
+  test('visible canvas element is hidden during context loss and restored on present or dispose', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_visibility' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_1' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const visibleCanvas = new LossyCanvas();
+    visibleCanvas.width = 960;
+    visibleCanvas.height = 540;
+    visibleCanvas.style.visibility = 'inherit';
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_visibility',
+      canvas: visibleCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: async () => null,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 24 });
+      expect(visibleCanvas.style.visibility).toBe('inherit');
+
+      // 1. lost -> hidden
+      visibleCanvas.loseContext();
+      expect(visibleCanvas.style.visibility).toBe('hidden');
+
+      // 2. restore+present -> visible (restored to prior value)
+      const { promise: reRenderPromise, resolve: onReRender } =
+        Promise.withResolvers<void>();
+      playback.subscribe((state) => {
+        if (!state.buffering) {
+          onReRender();
+        }
+      });
+      visibleCanvas.restoreContext();
+      await reRenderPromise;
+
+      expect(visibleCanvas.style.visibility).toBe('inherit');
+
+      // 3. failed-restore deadline keeps hidden
+      let timerCallback: (() => void) | null = null;
+      const origSetTimeout = globalThis.setTimeout;
+      globalThis.setTimeout = ((
+        fn: (...args: unknown[]) => void,
+        _ms?: number
+      ) => {
+        timerCallback = fn as () => void;
+        return 999 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout;
+
+      try {
+        visibleCanvas.loseContext();
+        expect(visibleCanvas.style.visibility).toBe('hidden');
+
+        const executeTimer = timerCallback as (() => void) | null;
+        if (!executeTimer) throw new Error('deadline timer not scheduled');
+        executeTimer();
+
+        expect(playback.getState().buffering).toBe(false);
+        expect(visibleCanvas.style.visibility).toBe('hidden');
+      } finally {
+        globalThis.setTimeout = origSetTimeout;
+      }
+
+      // 4. dispose restores prior inline value
+      playback.dispose();
+      expect(visibleCanvas.style.visibility).toBe('inherit');
+    } finally {
+      playback.dispose();
     }
   });
 });
