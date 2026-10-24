@@ -379,6 +379,26 @@ async function startLoopbackServer(
         headers: { 'content-type': 'application/octet-stream' },
       });
     }
+    if (url.pathname === '/__noise' && request.method === 'GET') {
+      const html = `<!DOCTYPE html><html><body style="margin:0;background:#000;">
+<canvas id="c" width="960" height="540"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let f = 0;
+function draw() {
+  f++;
+  ctx.fillStyle = (f % 2 === 0) ? '#ff0000' : '#00ff00';
+  ctx.fillRect(0, 0, 960, 540);
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script></body></html>`;
+      return new Response(html, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
 
     const response = await app.fetch(request);
     if (response.status >= 400) {
@@ -412,6 +432,80 @@ async function startLoopbackServer(
       service.stop();
     },
     createSessionToken,
+  };
+}
+
+interface NoiseHarness {
+  readonly stop: () => Promise<void>;
+}
+
+async function startNoiseBrowser(
+  chromePath: string,
+  servicePort: number,
+  serviceOrigin: string
+): Promise<NoiseHarness> {
+  const profile = await mkdtemp(join(tmpdir(), 'relic-otio-noise-chrome-'));
+  const shared = chromeArgs(chromePath, profile);
+  const launch = createBrowserHeadlessLaunch(
+    [
+      ...shared.map((arg) =>
+        arg === '--proxy-bypass-list=<-loopback>'
+          ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${servicePort}`
+          : arg === '--host-resolver-rules=MAP * ~NOTFOUND'
+            ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
+            : arg
+      ),
+    ],
+    profile
+  );
+
+  const child = spawn(chromePath, launch.args, {
+    stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
+  });
+
+  const toChrome = child.stdio[3] as Writable;
+  const fromChrome = child.stdio[4] as Readable;
+  const cdp = connectPipe(toChrome, fromChrome);
+
+  let running = true;
+  let timer: Timer | number | null = null;
+  try {
+    const created = (await cdp.send('Target.createTarget', { url: `${serviceOrigin}/__noise` })) as {
+      targetId: string;
+    };
+    const attached = (await cdp.send('Target.attachToTarget', {
+      targetId: created.targetId,
+      flatten: true,
+    })) as { sessionId: string };
+    const sessionId = attached.sessionId;
+
+    await cdp.send('Page.enable', {}, sessionId);
+
+    timer = setInterval(() => {
+      if (!running) return;
+      cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId).catch(() => {});
+    }, 30);
+  } catch (err) {
+    running = false;
+    clearInterval(timer!);
+    try { cdp.dispose(); } catch {}
+    try { child.kill('SIGKILL'); } catch {}
+    await rm(profile, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+
+  return {
+    async stop() {
+      running = false;
+      clearInterval(timer!);
+      try {
+        cdp.dispose();
+      } catch {}
+      try {
+        child.kill('SIGTERM');
+      } catch {}
+      await rm(profile, { recursive: true, force: true }).catch(() => {});
+    },
   };
 }
 
@@ -2654,6 +2748,365 @@ export async function runOfficialRepeat(
   }
 }
 
+export interface R1RepeatArmStats {
+  total: number;
+  opaqueCount: number;
+  transparentCount: number;
+  m1Count: number;
+  m2Count: number;
+  sigOnlyCount: number;
+  otherCount: number;
+}
+
+export async function runR1Repeat(
+  baselineConfigPath: string,
+  candidateConfigPath: string,
+  outDir: string,
+  maxRounds = 30,
+  noiseEnabled = false,
+  e1aVerdict = ''
+): Promise<void> {
+  assert.ok(isAbsolute(baselineConfigPath), `baselineConfigPath must be absolute: ${baselineConfigPath}`);
+  assert.ok(isAbsolute(candidateConfigPath), `candidateConfigPath must be absolute: ${candidateConfigPath}`);
+  assert.ok(isAbsolute(outDir), `outDir must be absolute: ${outDir}`);
+
+  console.log('[r1-repeat] Validating configs...');
+  const baselineVal = validateConfig(baselineConfigPath);
+  const candidateVal = validateConfig(candidateConfigPath);
+
+  mkdirSync(outDir, { recursive: true });
+  mkdirSync(join(outDir, 'rounds'), { recursive: true });
+  mkdirSync(join(outDir, 'fixtures'), { recursive: true });
+
+  const r1Bytes = buildOtioz(generateR1FixtureContent());
+  const r1Path = join(outDir, 'fixtures/R1.otioz');
+  writeFileSync(r1Path, r1Bytes);
+
+  const armDefs = [
+    { product: 'baseline' as const, observer: 'official' as const, key: 'baseline-official' },
+    { product: 'baseline' as const, observer: 'passive' as const, key: 'baseline-passive' },
+    { product: 'candidate' as const, observer: 'official' as const, key: 'candidate-official' },
+    { product: 'candidate' as const, observer: 'passive' as const, key: 'candidate-passive' },
+  ];
+
+  const armStats: Record<string, R1RepeatArmStats> = {
+    'baseline-official': { total: 0, opaqueCount: 0, transparentCount: 0, m1Count: 0, m2Count: 0, sigOnlyCount: 0, otherCount: 0 },
+    'baseline-passive': { total: 0, opaqueCount: 0, transparentCount: 0, m1Count: 0, m2Count: 0, sigOnlyCount: 0, otherCount: 0 },
+    'candidate-official': { total: 0, opaqueCount: 0, transparentCount: 0, m1Count: 0, m2Count: 0, sigOnlyCount: 0, otherCount: 0 },
+    'candidate-passive': { total: 0, opaqueCount: 0, transparentCount: 0, m1Count: 0, m2Count: 0, sigOnlyCount: 0, otherCount: 0 },
+  };
+
+  let quietFailures = 0;
+  let noiseFailures = 0;
+  let baselinePassiveM1 = 0;
+  let candidatePassiveM1 = 0;
+  let stopped = false;
+  let stopReason: string | null = null;
+  let verdict: string | null = null;
+  const runsDetail: Array<Record<string, unknown>> = [];
+
+  for (let round = 0; round < maxRounds && !stopped; round++) {
+    const totalFailuresSoFar = quietFailures + noiseFailures;
+    const isNoiseRound = noiseEnabled || (round >= 10 && totalFailuresSoFar === 0 && round % 2 === 1);
+
+    console.log(`\n[r1-repeat] === Round ${round + 1}/${maxRounds} (${isNoiseRound ? 'NOISE' : 'QUIET'}) ===`);
+
+    for (let stepIndex = 0; stepIndex < 4; stepIndex++) {
+      if (stopped) break;
+      const arm = armDefs[(stepIndex + round) % 4]!;
+      const config = arm.product === 'baseline' ? baselineVal.config : candidateVal.config;
+      const runDir = join(
+        outDir,
+        'rounds',
+        `round-${String(round).padStart(2, '0')}-run-${stepIndex}-${arm.key}`
+      );
+      mkdirSync(runDir, { recursive: true });
+      mkdirSync(join(runDir, 'pixels'), { recursive: true });
+      mkdirSync(join(runDir, 'screenshots'), { recursive: true });
+      mkdirSync(join(runDir, 'stderr'), { recursive: true });
+
+      const loopbackStderrPath = join(runDir, 'stderr/loopback.stderr');
+      const server = await startLoopbackServer(config.viewerDist, loopbackStderrPath);
+      const sessionToken = await server.createSessionToken();
+
+      let noiseHarness: NoiseHarness | null = null;
+      if (isNoiseRound) {
+        noiseHarness = await startNoiseBrowser(config.chromePath, server.port, server.origin);
+      }
+
+      const preSnapshot = takeSystemSnapshot();
+      const startTime = Date.now();
+
+      try {
+        const pub = await publishFixture(
+          config.nodePath,
+          config.mcpBundle,
+          server.origin,
+          join(runDir, 'state.json'),
+          r1Path,
+          join(runDir, 'stderr/mcp.stderr')
+        );
+
+        const browser = await openBrowserSession(
+          config.chromePath,
+          server.port,
+          server.origin,
+          pub.url,
+          sessionToken,
+          join(runDir, 'stderr/browser.stderr'),
+          join(runDir, 'browser-attestation.json')
+        );
+
+        const ready = await waitReady(browser);
+
+        let pixels1Sha = '';
+        let isLost1: boolean | null = null;
+
+        if (arm.observer === 'passive') {
+          const r1 = await browser.readVisibleWithState();
+          pixels1Sha = r1.pixelsSha256 ?? '';
+          isLost1 = r1.isContextLost;
+          if (r1.pixels) writeFileSync(join(runDir, 'pixels/R1_settled.rgba'), r1.pixels);
+        } else {
+          const p1 = await browser.captureCanvasPixels();
+          pixels1Sha = sha256Hex(p1);
+          writeFileSync(join(runDir, 'pixels/R1_settled.rgba'), p1);
+        }
+
+        const shot1 = await browser.screenshot('R1_settled');
+        writeFileSync(join(runDir, 'screenshots/R1_settled.png'), shot1);
+
+        await seekTo(browser, 0);
+
+        let pixels2Sha = '';
+        let isLost2: boolean | null = null;
+
+        if (arm.observer === 'passive') {
+          const r2 = await browser.readVisibleWithState();
+          pixels2Sha = r2.pixelsSha256 ?? '';
+          isLost2 = r2.isContextLost;
+          if (r2.pixels) writeFileSync(join(runDir, 'pixels/R1_seek2.rgba'), r2.pixels);
+        } else {
+          const p2 = await browser.captureCanvasPixels();
+          pixels2Sha = sha256Hex(p2);
+          writeFileSync(join(runDir, 'pixels/R1_seek2.rgba'), p2);
+        }
+
+        const events = await browser.getContextEvents();
+
+        let lateRan = false;
+        let lateRead1Sha: string | null = null;
+        let lateRead2Sha: string | null = null;
+        let lateEvents: Array<{ type: string; timestamp: number }> = [];
+        let lateState: { ready?: string; buffering?: string } = {};
+
+        const nonOpaque = pixels1Sha !== OPAQUE_EXACT_SHA || pixels2Sha !== OPAQUE_EXACT_SHA;
+        if (nonOpaque) {
+          lateRan = true;
+          console.log(`[r1-repeat] Non-OPAQUE readback detected in ${arm.key}; running late window (3000ms delay)...`);
+          const { promise: delayPromise, resolve: resolveDelay } = Promise.withResolvers<void>();
+          setTimeout(resolveDelay, 3000);
+          await delayPromise;
+
+          lateEvents = await browser.getContextEvents();
+          lateState = await browser.evaluate<{ ready?: string; buffering?: string }>(
+            "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+          );
+
+          const lateRead1 = await browser.readVisibleWithState();
+          lateRead1Sha = lateRead1.pixelsSha256;
+          if (lateRead1.pixels) {
+            writeFileSync(join(runDir, 'pixels/R1_late1.rgba'), lateRead1.pixels);
+          }
+
+          await seekTo(browser, 0);
+          const lateRead2 = await browser.readVisibleWithState();
+          lateRead2Sha = lateRead2.pixelsSha256;
+          if (lateRead2.pixels) {
+            writeFileSync(join(runDir, 'pixels/R1_late2.rgba'), lateRead2.pixels);
+          }
+        }
+
+        await browser.close();
+
+        const durationMs = Date.now() - startTime;
+        const postSnapshot = takeSystemSnapshot();
+
+        const stderrFile = join(runDir, 'stderr/browser.stderr');
+        let mappableSharedImageR1 = 0;
+        let readbackWarningR1 = 0;
+        if (existsSync(stderrFile)) {
+          const lines = readFileSync(stderrFile, 'utf8').split('\n');
+          for (const line of lines) {
+            if (/Creation of MappableSharedImage failed/i.test(line) || /MappableSharedImage/i.test(line)) {
+              mappableSharedImageR1++;
+            }
+            if (/Canvas2D: Multiple readback operations/i.test(line) || /Multiple readback operations/i.test(line)) {
+              readbackWarningR1++;
+            }
+          }
+        }
+
+        const settledClass = classifyReadbackSha(pixels1Sha);
+        const seek2Class = classifyReadbackSha(pixels2Sha);
+        const isTransparent = settledClass === 'TRANSPARENT' || seek2Class === 'TRANSPARENT';
+        const isOther = settledClass === 'OTHER' || seek2Class === 'OTHER';
+
+        let label = 'OTHER';
+        if (isOther) {
+          label = 'OTHER';
+        } else if (isTransparent) {
+          if (arm.observer === 'passive') {
+            const hadLossEvent = events.some((e) => e.type === 'contextlost');
+            if (hadLossEvent || isLost1 || isLost2) {
+              label = 'M1';
+              if (arm.product === 'baseline') baselinePassiveM1++;
+              else candidatePassiveM1++;
+            } else {
+              label = 'M2';
+            }
+          } else {
+            if (mappableSharedImageR1 > 0 && readbackWarningR1 === 0) {
+              label = 'signature-only';
+            } else {
+              label = 'TRANSPARENT';
+            }
+          }
+          if (isNoiseRound) noiseFailures++;
+          else quietFailures++;
+        } else {
+          label = 'OPAQUE_EXACT';
+        }
+
+        const stats = armStats[arm.key]!;
+        stats.total++;
+        if (label === 'OPAQUE_EXACT') stats.opaqueCount++;
+        else if (label === 'M1') { stats.transparentCount++; stats.m1Count++; }
+        else if (label === 'M2') { stats.transparentCount++; stats.m2Count++; }
+        else if (label === 'signature-only') { stats.transparentCount++; stats.sigOnlyCount++; }
+        else if (label === 'TRANSPARENT') stats.transparentCount++;
+        else stats.otherCount++;
+
+        const runInfo = {
+          round,
+          stepIndex,
+          arm: arm.key,
+          product: arm.product,
+          observer: arm.observer,
+          isNoiseRound,
+          durationMs,
+          label,
+          settledSha: pixels1Sha,
+          seek2Sha: pixels2Sha,
+          settledClass,
+          seek2Class,
+          contextEvents: events,
+          isLost1,
+          isLost2,
+          mappableSharedImageR1,
+          readbackWarningR1,
+          lateRan,
+          lateRead1Sha,
+          lateRead2Sha,
+          lateEvents,
+          lateState,
+          preSnapshot,
+          postSnapshot,
+        };
+        runsDetail.push(runInfo);
+
+        appendFileSync(join(runDir, 'observations.jsonl'), JSON.stringify(runInfo) + '\n');
+
+        console.log(
+          `[r1-repeat] Round ${round + 1} Run ${stepIndex + 1} (${arm.key}, ${isNoiseRound ? 'NOISE' : 'QUIET'}): ` +
+          `label=${label} settled=${settledClass} seek2=${seek2Class}`
+        );
+
+        if (label === 'OTHER') {
+          stopped = true;
+          verdict = 'other';
+          stopReason = `Observed OTHER readback in ${arm.key}`;
+        } else if (label === 'M2') {
+          stopped = true;
+          verdict = 'm2_observed';
+          stopReason = `Observed M2 (transparent with no context loss signal in passive arm ${arm.key})`;
+        } else if (baselinePassiveM1 >= 1 && candidatePassiveM1 >= 1) {
+          stopped = true;
+          verdict = 'passive_m1_both_products';
+          stopReason = 'Passive M1 observed in both baseline and candidate';
+        } else if (e1aVerdict === 'arm-independent' && (baselinePassiveM1 + candidatePassiveM1 >= 1)) {
+          stopped = true;
+          verdict = 'arm-independent';
+          stopReason = 'Passive M1 observed and E1a was arm-independent';
+        }
+      } catch (err) {
+        stopped = true;
+        verdict = 'infrastructure_failure';
+        stopReason = `Infrastructure failure in ${arm.key}: ${(err as Error).message}`;
+      } finally {
+        if (noiseHarness) {
+          await noiseHarness.stop();
+        }
+        await server.stop();
+      }
+
+      const summary = {
+        experiment: 'E1b',
+        subcommand: 'r1-repeat',
+        status: stopped ? 'completed' : 'running',
+        verdict: verdict ?? 'running',
+        stopReason: stopReason ?? null,
+        roundsCompleted: round + 1,
+        totalRuns: runsDetail.length,
+        arms: armStats,
+        quietFailures,
+        noiseFailures,
+        runsDetail,
+      };
+      writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
+    }
+  }
+
+  if (!stopped) {
+    stopped = true;
+    if (noiseFailures > 0 && quietFailures === 0) {
+      verdict = 'noise_only';
+      stopReason = 'Failures appeared only in noise rounds: concurrent headless GPU use is trigger';
+    } else if (quietFailures === 0 && noiseFailures === 0) {
+      verdict = 'none';
+      stopReason = 'Cap reached: zero failures observed across all rounds';
+    } else {
+      verdict = 'inconclusive';
+      stopReason = 'Cap reached';
+    }
+
+    const finalSummary = {
+      experiment: 'E1b',
+      subcommand: 'r1-repeat',
+      status: 'completed',
+      verdict,
+      stopReason,
+      roundsCompleted: maxRounds,
+      totalRuns: runsDetail.length,
+      arms: armStats,
+      quietFailures,
+      noiseFailures,
+      runsDetail,
+    };
+    writeFileSync(join(outDir, 'summary.json'), JSON.stringify(finalSummary, null, 2), 'utf8');
+  }
+
+  console.log('\n[r1-repeat] Experiment finished.');
+  console.log(`Verdict: ${verdict}`);
+  console.log(`Stop reason: ${stopReason}`);
+  console.log(`Summary written to: ${join(outDir, 'summary.json')}`);
+
+  if (verdict === 'infrastructure_failure' || verdict === 'other') {
+    process.exit(1);
+  }
+}
+
+
 
 // CLI Entrypoint
 async function main(): Promise<void> {
@@ -2733,8 +3186,41 @@ async function main(): Promise<void> {
     }
 
     await runOfficialRepeat(checkout, baselineConfig, candidateConfig, outDir, maxBlocks, maxRuns);
+  } else if (command === 'r1-repeat') {
+    let baselineConfig = '';
+    let candidateConfig = '';
+    let outDir = '';
+    let rounds = 30;
+    let noise = false;
+    let e1aVerdict = '';
+
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if ((arg === '--baseline-config' || arg === '--baseline') && i + 1 < args.length) {
+        baselineConfig = resolve(args[++i] ?? '');
+      } else if ((arg === '--candidate-config' || arg === '--candidate') && i + 1 < args.length) {
+        candidateConfig = resolve(args[++i] ?? '');
+      } else if (arg === '--out' && i + 1 < args.length) {
+        outDir = resolve(args[++i] ?? '');
+      } else if ((arg === '--rounds' || arg === '--max-rounds') && i + 1 < args.length) {
+        rounds = parseInt(args[++i] ?? '30', 10);
+      } else if (arg === '--noise') {
+        noise = true;
+      } else if (arg === '--e1a-verdict' && i + 1 < args.length) {
+        e1aVerdict = args[++i] ?? '';
+      }
+    }
+
+    if (!baselineConfig || !candidateConfig || !outDir) {
+      console.error(
+        'Usage: otio-resource-browser.ts r1-repeat --baseline-config <config.json> --candidate-config <config.json> --out <outDir> [--rounds <N>] [--noise] [--e1a-verdict <verdict>]'
+      );
+      process.exit(1);
+    }
+
+    await runR1Repeat(baselineConfig, candidateConfig, outDir, rounds, noise, e1aVerdict);
   } else {
-    console.error('Unknown command. Available commands: record, compare, official-repeat');
+    console.error('Unknown command. Available commands: record, compare, official-repeat, r1-repeat');
     process.exit(1);
   }
 }
