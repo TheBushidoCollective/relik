@@ -59,6 +59,7 @@ export interface OtioPlaybackState {
   readonly tracks: Readonly<Record<string, OtioTrackState>>;
   readonly baseMediaPreviewAllowed: boolean;
   readonly previewBlocked: boolean;
+  readonly graphicsFailed: boolean;
 }
 
 export type OtioPlaybackListener = (state: OtioPlaybackState) => void;
@@ -775,6 +776,7 @@ export function createOtioPlayback(
   const imageElements = new Map<string, LoadedImage>();
   const surfacePool: HTMLCanvasElement[] = [];
   let graphicsLost = false;
+  let graphicsFailed = false;
   let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
   let priorCanvasVisibility: string | null = null;
   let canvasHidden = false;
@@ -878,29 +880,28 @@ export function createOtioPlayback(
       }
     }
     surfacePool.length = 0;
-    clearTimeout(restoreTimeout);
-    restoreTimeout = setTimeout(() => {
-      restoreTimeout = undefined;
-      if (isDisposed) return;
-      mediaFailures.set(
-        'graphics-context-lost',
-        diagnostic(
-          'error',
-          'unsupported-browser',
-          'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.'
-        )
-      );
-      isBuffering = false;
-      notify();
-    }, OTIO_GRAPHICS_RESTORE_MS);
+    if (restoreTimeout === undefined) {
+      restoreTimeout = setTimeout(() => {
+        restoreTimeout = undefined;
+        if (isDisposed) return;
+        graphicsFailed = true;
+        mediaFailures.set(
+          'graphics-context-lost',
+          diagnostic(
+            'error',
+            'unsupported-browser',
+            'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.'
+          )
+        );
+        isBuffering = false;
+        notify();
+      }, OTIO_GRAPHICS_RESTORE_MS);
+    }
     notify();
   }
 
   function onVisibleContextRestored(): void {
     if (isDisposed) return;
-    clearTimeout(restoreTimeout);
-    restoreTimeout = undefined;
-    mediaFailures.delete('graphics-context-lost');
     graphicsLost = false;
     const gen = ++renderGeneration;
     clockAnchor = null;
@@ -1955,6 +1956,10 @@ export function createOtioPlayback(
       if (stale(gen)) return;
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
         restoreVisibleCanvas();
+        clearTimeout(restoreTimeout);
+        restoreTimeout = undefined;
+        graphicsFailed = false;
+        mediaFailures.delete('graphics-context-lost');
         isBuffering = false;
       }
       notify();
@@ -2074,6 +2079,7 @@ export function createOtioPlayback(
       baseMediaPreviewAllowed,
       previewBlocked:
         !baseMediaPreviewAllowed && contributionIssues(evaluation).length > 0,
+      graphicsFailed,
     };
   }
 
@@ -2192,6 +2198,7 @@ export function createOtioPlayback(
       if (isDisposed) return;
       restoreVisibleCanvas();
       isDisposed = true;
+      graphicsFailed = false;
       clearTimeout(restoreTimeout);
       restoreTimeout = undefined;
       if (typeof canvas.removeEventListener === 'function') {

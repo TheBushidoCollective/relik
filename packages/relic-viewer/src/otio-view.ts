@@ -1521,6 +1521,9 @@ export async function mountOtioView(
     );
     const blocking = incomplete.filter(
       (issue) =>
+        (state.graphicsFailed &&
+          issue.code === 'unsupported-browser' &&
+          !issue.target) ||
         !state.baseMediaPreviewAllowed ||
         !['unsupported-effect', 'unsupported-browser'].includes(issue.code)
     );
