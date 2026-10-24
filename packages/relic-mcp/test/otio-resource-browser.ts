@@ -27,7 +27,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { loadavg, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
@@ -1983,6 +1983,590 @@ async function executeCompareChecks(baselineDir: string, candidateDir: string): 
   assert.deepStrictEqual(r6BaseEval, r6CandEval, 'R6 evaluator output mismatch between baseline and candidate');
 }
 
+export const OPAQUE_EXACT_SHA = '7b1fcc441fd6c2518b2a0f818b1982eba6287d23712be4a8c7c51e4b281f719b';
+export const TRANSPARENT_SHA = '11283ef755895422e6f28b93f3d78cad7539891cf2893c9fdccefb923c5bf70b';
+
+export type ReadbackClass = 'OPAQUE_EXACT' | 'TRANSPARENT' | 'OTHER';
+
+export function classifyReadbackSha(sha: string): ReadbackClass {
+  if (sha === OPAQUE_EXACT_SHA) return 'OPAQUE_EXACT';
+  if (sha === TRANSPARENT_SHA) return 'TRANSPARENT';
+  return 'OTHER';
+}
+
+function bigIntNcr(n: number, r: number): bigint {
+  if (r < 0 || r > n) return 0n;
+  if (r === 0 || r === n) return 1n;
+  if (r > n / 2) r = n - r;
+  let res = 1n;
+  for (let i = 1n; i <= BigInt(r); i++) {
+    res = (res * (BigInt(n) - i + 1n)) / i;
+  }
+  return res;
+}
+
+export function fisherExactOneSided(a: number, b: number, c: number, d: number): number {
+  const n1 = a + b;
+  const n2 = c + d;
+  const k = a + c;
+  const n = n1 + n2;
+  if (n1 === 0 || n2 === 0 || k === 0) return 1.0;
+
+  const denom = bigIntNcr(n, k);
+  if (denom === 0n) return 1.0;
+
+  let sum = 0n;
+  const maxA = Math.min(n1, k);
+  for (let x = a; x <= maxA; x++) {
+    const term = bigIntNcr(n1, x) * bigIntNcr(n2, k - x);
+    sum += term;
+  }
+  const scale = 1_000_000_000_000n;
+  const scaled = (sum * scale) / denom;
+  return Number(scaled) / Number(scale);
+}
+
+function logGamma(x: number): number {
+  const p = [
+    676.5203681287135,
+    -1259.1392167224028,
+    771.32342877765313,
+    -176.61502916214059,
+    12.507343278686905,
+    -0.13857109526572012,
+    9.9843695780195716e-6,
+    1.5056327351493116e-7,
+  ];
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - logGamma(1 - x);
+  x -= 1;
+  let a = 0.99999999999980993;
+  for (let i = 0; i < p.length; i++) a += p[i] / (x + i + 1);
+  const t = x + p.length - 0.5;
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+
+function logBinomial(n: number, k: number): number {
+  if (k < 0 || k > n) return -Infinity;
+  if (k === 0 || k === n) return 0;
+  return logGamma(n + 1) - logGamma(k + 1) - logGamma(n - k + 1);
+}
+
+function binomialPmfd(n: number, k: number, p: number): number {
+  if (k < 0 || k > n) return 0;
+  if (p === 0) return k === 0 ? 1 : 0;
+  if (p === 1) return k === n ? 1 : 0;
+  return Math.exp(logBinomial(n, k) + k * Math.log(p) + (n - k) * Math.log(1 - p));
+}
+
+export function computeBinomialCi(k: number, n: number, alpha = 0.05): [number, number] {
+  if (n <= 0) return [0, 0];
+  let lowerBound = 0;
+  let upperBound = 1;
+  if (k <= 0) {
+    lowerBound = 0;
+    upperBound = 1 - Math.pow(alpha / 2, 1 / n);
+  } else if (k >= n) {
+    lowerBound = Math.pow(alpha / 2, 1 / n);
+    upperBound = 1;
+  } else {
+    let low = 0;
+    let high = k / n;
+    for (let iter = 0; iter < 50; iter++) {
+      const mid = (low + high) / 2;
+      let sum = 0;
+      for (let j = k; j <= n; j++) sum += binomialPmfd(n, j, mid);
+      if (sum < alpha / 2) low = mid;
+      else high = mid;
+    }
+    lowerBound = (low + high) / 2;
+
+    low = k / n;
+    high = 1;
+    for (let iter = 0; iter < 50; iter++) {
+      const mid = (low + high) / 2;
+      let sum = 0;
+      for (let j = 0; j <= k; j++) sum += binomialPmfd(n, j, mid);
+      if (sum < alpha / 2) high = mid;
+      else low = mid;
+    }
+    upperBound = (low + high) / 2;
+  }
+  return [lowerBound, upperBound];
+}
+
+export interface AgxStatistics {
+  readonly [key: string]: unknown;
+}
+
+export interface SystemSnapshot {
+  readonly timestamp: number;
+  readonly isoDate: string;
+  readonly loadavg: [number, number, number];
+  readonly foreignChromeCount: number;
+  readonly memoryPressure: {
+    readonly raw: string;
+    readonly freePercentage: number | null;
+  };
+  readonly agxPerformanceStatistics: AgxStatistics;
+}
+
+export function takeSystemSnapshot(knownChildPids: readonly number[] = []): SystemSnapshot {
+  const timestamp = Date.now();
+  const isoDate = new Date(timestamp).toISOString();
+  const loads = loadavg() as [number, number, number];
+
+  let foreignChromeCount = 0;
+  try {
+    const pgrepOut = execFileSync('pgrep', ['-x', 'chrome-headless-shell'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const pids = pgrepOut
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => parseInt(s, 10))
+      .filter((pid) => !isNaN(pid) && !knownChildPids.includes(pid));
+    foreignChromeCount = pids.length;
+  } catch {
+    foreignChromeCount = 0;
+  }
+
+  let memRaw = '';
+  let freePercentage: number | null = null;
+  try {
+    memRaw = execFileSync('memory_pressure', [], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const m = memRaw.match(/System-wide memory free percentage:\s*(\d+)%/i);
+    if (m && m[1]) {
+      freePercentage = parseInt(m[1], 10);
+    }
+  } catch {
+    memRaw = '';
+  }
+
+  let agx: AgxStatistics = {};
+  try {
+    const rawIoreg = execFileSync(
+      '/bin/sh',
+      ['-c', 'ioreg -r -c IOAccelerator -a | plutil -extract "0.PerformanceStatistics" json -o - -'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }
+    );
+    agx = JSON.parse(rawIoreg) as AgxStatistics;
+  } catch {
+    agx = {};
+  }
+
+  return {
+    timestamp,
+    isoDate,
+    loadavg: loads,
+    foreignChromeCount,
+    memoryPressure: {
+      raw: memRaw,
+      freePercentage,
+    },
+    agxPerformanceStatistics: agx,
+  };
+}
+
+export async function runOfficialRepeat(
+  checkoutPath: string,
+  baselineConfigPath: string,
+  candidateConfigPath: string,
+  outDir: string,
+  maxBlocks = 15,
+  maxRuns = 60
+): Promise<void> {
+  assert.ok(isAbsolute(checkoutPath), `checkout path must be absolute: ${checkoutPath}`);
+  assert.ok(existsSync(checkoutPath), `checkout directory does not exist: ${checkoutPath}`);
+  const scriptPath = join(checkoutPath, 'packages/relic-mcp/test/otio-resource-browser.ts');
+  assert.ok(existsSync(scriptPath), `official otio-resource-browser.ts not found in checkout: ${scriptPath}`);
+
+  assert.ok(isAbsolute(baselineConfigPath), `baselineConfigPath must be absolute: ${baselineConfigPath}`);
+  assert.ok(isAbsolute(candidateConfigPath), `candidateConfigPath must be absolute: ${candidateConfigPath}`);
+  assert.ok(isAbsolute(outDir), `outDir must be absolute: ${outDir}`);
+
+  // Preflight hashes and config validation
+  console.log('[official-repeat] Validating configs and checking preflight hashes...');
+  const baselineVal = validateConfig(baselineConfigPath);
+  const candidateVal = validateConfig(candidateConfigPath);
+  const scriptSha = sha256File(scriptPath);
+
+  mkdirSync(outDir, { recursive: true });
+  const runsDir = join(outDir, 'runs');
+  mkdirSync(runsDir, { recursive: true });
+
+  let baselineTotal = 0;
+  let baselineTransparent = 0;
+  let baselineOpaque = 0;
+  let baselineOther = 0;
+
+  let candidateTotal = 0;
+  let candidateTransparent = 0;
+  let candidateOpaque = 0;
+  let candidateOther = 0;
+
+  let stopped = false;
+  let stopReason: string | null = null;
+  let verdict: string | null = null;
+
+  const runsDetail: Array<Record<string, unknown>> = [];
+
+  let runIndex = 0;
+  for (let blockIndex = 0; blockIndex < maxBlocks && runIndex < maxRuns && !stopped; blockIndex++) {
+    const blockPattern: ReadonlyArray<{ readonly arm: 'baseline' | 'candidate'; readonly pos: 'A' | 'B' }> = [
+      { arm: 'baseline', pos: 'A' },
+      { arm: 'candidate', pos: 'B' },
+      { arm: 'candidate', pos: 'B' },
+      { arm: 'baseline', pos: 'A' },
+    ];
+
+    for (const step of blockPattern) {
+      if (runIndex >= maxRuns || stopped) break;
+
+      const arm = step.arm;
+      const pos = step.pos;
+      const configPath = arm === 'baseline' ? baselineConfigPath : candidateConfigPath;
+      const runDir = join(runsDir, `run-${String(runIndex).padStart(3, '0')}-${arm}`);
+
+      console.log(`[official-repeat] Run ${runIndex + 1}/${maxRuns} (Block ${blockIndex + 1}, Pos ${pos}, Arm: ${arm})`);
+
+      const preSnapshot = takeSystemSnapshot();
+      const startTime = Date.now();
+
+      let exitCode = 0;
+      try {
+        const child = spawn(process.execPath, [scriptPath, 'record', '--config', configPath, '--out', runDir], {
+          stdio: 'inherit',
+        });
+        const { promise: exitPromise, resolve: resolveExit } = Promise.withResolvers<number>();
+        child.on('close', (code) => resolveExit(code ?? 1));
+        child.on('error', () => resolveExit(1));
+        exitCode = await exitPromise;
+      } catch (err) {
+        exitCode = 1;
+      }
+
+      const durationMs = Date.now() - startTime;
+      const postSnapshot = takeSystemSnapshot();
+
+      if (exitCode !== 0) {
+        stopped = true;
+        stopReason = `Infrastructure failure: run ${runIndex} exited with code ${exitCode}`;
+        verdict = 'infrastructure_failure';
+        runsDetail.push({
+          runIndex,
+          blockIndex,
+          blockPosition: pos,
+          arm,
+          runDir,
+          exitCode,
+          durationMs,
+          preSnapshot,
+          postSnapshot,
+          error: `Process exited with code ${exitCode}`,
+        });
+        break;
+      }
+
+      let settledSha = '';
+      let seek2Sha = '';
+      const settledRgbaPath = join(runDir, 'pixels/R1_settled.rgba');
+      if (existsSync(settledRgbaPath)) {
+        settledSha = sha256Hex(readFileSync(settledRgbaPath));
+      }
+      const seek2RgbaPath = join(runDir, 'pixels/R1_seek2.rgba');
+      if (existsSync(seek2RgbaPath)) {
+        seek2Sha = sha256Hex(readFileSync(seek2RgbaPath));
+      }
+
+      if (!settledSha || !seek2Sha) {
+        const obsPath = join(runDir, 'observations.jsonl');
+        if (existsSync(obsPath)) {
+          const obsLines = readFileSync(obsPath, 'utf8').split('\n').filter(Boolean);
+          for (const line of obsLines) {
+            try {
+              const obs = JSON.parse(line);
+              if (obs.case === 'R1' && obs.step === 'settled' && typeof obs.pixelsSha256 === 'string') {
+                settledSha = obs.pixelsSha256;
+              } else if (obs.case === 'R1' && obs.step === 'seek2' && typeof obs.pixelsSha256 === 'string') {
+                seek2Sha = obs.pixelsSha256;
+              }
+            } catch {}
+          }
+        }
+      }
+
+      if (!settledSha || !seek2Sha) {
+        stopped = true;
+        stopReason = `Infrastructure failure: missing R1 readbacks in ${runDir}`;
+        verdict = 'infrastructure_failure';
+        runsDetail.push({
+          runIndex,
+          blockIndex,
+          blockPosition: pos,
+          arm,
+          runDir,
+          exitCode,
+          durationMs,
+          preSnapshot,
+          postSnapshot,
+          error: 'Missing R1 readbacks',
+        });
+        break;
+      }
+
+      const settledClass = classifyReadbackSha(settledSha);
+      const seek2Class = classifyReadbackSha(seek2Sha);
+      const isTransparent = settledClass === 'TRANSPARENT' || seek2Class === 'TRANSPARENT';
+      const isOther = settledClass === 'OTHER' || seek2Class === 'OTHER';
+
+      const stderrFile = join(runDir, 'stderr/browser.stderr');
+      let mappableSharedImageR1 = 0;
+      let readbackWarningR1 = 0;
+      let mappableSharedImageLater = 0;
+
+      if (existsSync(stderrFile)) {
+        const stderrText = readFileSync(stderrFile, 'utf8');
+        const lines = stderrText.split('\n');
+        const termIdx = lines.findIndex((l) => l.includes('Connection terminated while reading from pipe'));
+        const r1Lines = termIdx >= 0 ? lines.slice(0, termIdx + 1) : lines;
+        const laterLines = termIdx >= 0 ? lines.slice(termIdx + 1) : [];
+
+        for (const line of r1Lines) {
+          if (/Creation of MappableSharedImage failed/i.test(line) || /MappableSharedImage/i.test(line)) {
+            mappableSharedImageR1++;
+          }
+          if (/Canvas2D: Multiple readback operations/i.test(line) || /Multiple readback operations/i.test(line)) {
+            readbackWarningR1++;
+          }
+        }
+
+        for (const line of laterLines) {
+          if (/Creation of MappableSharedImage failed/i.test(line) || /MappableSharedImage/i.test(line)) {
+            mappableSharedImageLater++;
+          }
+        }
+      }
+
+      let signature = 'n/a';
+      if (isTransparent) {
+        if (mappableSharedImageR1 > 0 && readbackWarningR1 === 0) {
+          signature = 'signature-only';
+        } else {
+          signature = 'other';
+        }
+      }
+
+      if (arm === 'baseline') {
+        baselineTotal++;
+        if (isTransparent) baselineTransparent++;
+        else if (isOther) baselineOther++;
+        else baselineOpaque++;
+      } else {
+        candidateTotal++;
+        if (isTransparent) candidateTransparent++;
+        else if (isOther) candidateOther++;
+        else candidateOpaque++;
+      }
+
+      runsDetail.push({
+        runIndex,
+        blockIndex,
+        blockPosition: pos,
+        arm,
+        runDir,
+        exitCode,
+        durationMs,
+        preSnapshot,
+        postSnapshot,
+        r1: {
+          settledSha,
+          seek2Sha,
+          settledClass,
+          seek2Class,
+          isTransparent,
+          signature,
+          mappableSharedImageR1,
+          readbackWarningR1,
+          mappableSharedImageLater,
+        },
+      });
+
+      console.log(
+        `[official-repeat] Result ${arm}: settled=${settledClass} seek2=${seek2Class} sig=${signature} ` +
+        `(baseline: ${baselineTransparent}/${baselineTotal}, candidate: ${candidateTransparent}/${candidateTotal})`
+      );
+
+      // Stop conditions (E1a)
+      if (isOther) {
+        stopReason = `R1 readback was OTHER (settled: ${settledClass}, seek2: ${seek2Class})`;
+        verdict = 'other';
+        stopped = true;
+      } else if (baselineTransparent >= 1 && candidateTransparent >= 1) {
+        stopReason = 'Baseline >= 1 and candidate >= 1 TRANSPARENT';
+        verdict = 'arm-independent';
+        stopped = true;
+      } else if (candidateTransparent >= 5 && baselineTransparent === 0) {
+        stopReason = 'Candidate >= 5 TRANSPARENT and baseline 0';
+        verdict = 'candidate-associated';
+        stopped = true;
+      } else if (runIndex + 1 >= maxRuns) {
+        stopped = true;
+        if (candidateTransparent >= 1 && candidateTransparent <= 4 && baselineTransparent === 0) {
+          stopReason = 'Cap reached: candidate 1-4, baseline 0';
+          verdict = 'inconclusive';
+        } else if (candidateTransparent === 0 && baselineTransparent >= 1) {
+          stopReason = 'Cap reached: baseline only observed transparent';
+          verdict = 'arm-independent';
+        } else if (candidateTransparent === 0 && baselineTransparent === 0) {
+          stopReason = 'Cap reached: zero transparent runs';
+          verdict = 'none';
+        } else if (baselineTransparent >= 1 && candidateTransparent >= 1) {
+          stopReason = 'Cap reached: both arms observed transparent';
+          verdict = 'arm-independent';
+        } else {
+          stopReason = 'Cap reached';
+          verdict = baselineTransparent > 0 ? 'arm-independent' : 'inconclusive';
+        }
+      }
+
+      const summary = {
+        experiment: 'E1a',
+        subcommand: 'official-repeat',
+        status: stopped ? 'completed' : 'running',
+        verdict: verdict ?? 'running',
+        stopReason: stopReason ?? null,
+        preflight: {
+          checkoutPath,
+          baselineConfigPath,
+          candidateConfigPath,
+          baselineConfig: baselineVal.config,
+          candidateConfig: candidateVal.config,
+          baselineHashes: baselineVal.hashes,
+          candidateHashes: candidateVal.hashes,
+          officialScriptSha: scriptSha,
+        },
+        blocksCompleted: blockIndex + 1,
+        totalRuns: runIndex + 1,
+        arms: {
+          baseline: {
+            total: baselineTotal,
+            transparentCount: baselineTransparent,
+            opaqueCount: baselineOpaque,
+            otherCount: baselineOther,
+            rate: baselineTotal > 0 ? baselineTransparent / baselineTotal : 0,
+            ci95: computeBinomialCi(baselineTransparent, baselineTotal),
+          },
+          candidate: {
+            total: candidateTotal,
+            transparentCount: candidateTransparent,
+            opaqueCount: candidateOpaque,
+            otherCount: candidateOther,
+            rate: candidateTotal > 0 ? candidateTransparent / candidateTotal : 0,
+            ci95: computeBinomialCi(candidateTransparent, candidateTotal),
+          },
+        },
+        fisherPValue: fisherExactOneSided(
+          candidateTransparent,
+          candidateTotal - candidateTransparent,
+          baselineTransparent,
+          baselineTotal - baselineTransparent
+        ),
+        runsDetail,
+      };
+      writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
+
+      runIndex++;
+    }
+  }
+
+  if (!stopped) {
+    stopped = true;
+    if (candidateTransparent >= 1 && candidateTransparent <= 4 && baselineTransparent === 0) {
+      stopReason = 'Cap reached: candidate 1-4, baseline 0';
+      verdict = 'inconclusive';
+    } else if (candidateTransparent === 0 && baselineTransparent >= 1) {
+      stopReason = 'Cap reached: baseline only observed transparent';
+      verdict = 'arm-independent';
+    } else if (candidateTransparent === 0 && baselineTransparent === 0) {
+      stopReason = 'Cap reached: zero transparent runs';
+      verdict = 'none';
+    } else if (baselineTransparent >= 1 && candidateTransparent >= 1) {
+      stopReason = 'Cap reached: both arms observed transparent';
+      verdict = 'arm-independent';
+    } else {
+      stopReason = 'Cap reached';
+      verdict = baselineTransparent > 0 ? 'arm-independent' : 'inconclusive';
+    }
+
+    const finalSummary = {
+      experiment: 'E1a',
+      subcommand: 'official-repeat',
+      status: 'completed',
+      verdict,
+      stopReason,
+      preflight: {
+        checkoutPath,
+        baselineConfigPath,
+        candidateConfigPath,
+        baselineConfig: baselineVal.config,
+        candidateConfig: candidateVal.config,
+        baselineHashes: baselineVal.hashes,
+        candidateHashes: candidateVal.hashes,
+        officialScriptSha: scriptSha,
+      },
+      blocksCompleted: maxBlocks,
+      totalRuns: runIndex,
+      arms: {
+        baseline: {
+          total: baselineTotal,
+          transparentCount: baselineTransparent,
+          opaqueCount: baselineOpaque,
+          otherCount: baselineOther,
+          rate: baselineTotal > 0 ? baselineTransparent / baselineTotal : 0,
+          ci95: computeBinomialCi(baselineTransparent, baselineTotal),
+        },
+        candidate: {
+          total: candidateTotal,
+          transparentCount: candidateTransparent,
+          opaqueCount: candidateOpaque,
+          otherCount: candidateOther,
+          rate: candidateTotal > 0 ? candidateTransparent / candidateTotal : 0,
+          ci95: computeBinomialCi(candidateTransparent, candidateTotal),
+        },
+      },
+      fisherPValue: fisherExactOneSided(
+        candidateTransparent,
+        candidateTotal - candidateTransparent,
+        baselineTransparent,
+        baselineTotal - baselineTransparent
+      ),
+      runsDetail,
+    };
+    writeFileSync(join(outDir, 'summary.json'), JSON.stringify(finalSummary, null, 2), 'utf8');
+  }
+
+  console.log('\n[official-repeat] Experiment finished.');
+  console.log(`Verdict: ${verdict}`);
+  console.log(`Stop reason: ${stopReason}`);
+  console.log(`Baseline transparent: ${baselineTransparent}/${baselineTotal} (${((baselineTotal > 0 ? baselineTransparent / baselineTotal : 0) * 100).toFixed(1)}%, 95% CI: [${computeBinomialCi(baselineTransparent, baselineTotal).map((v) => v.toFixed(4)).join(', ')}])`);
+  console.log(`Candidate transparent: ${candidateTransparent}/${candidateTotal} (${((candidateTotal > 0 ? candidateTransparent / candidateTotal : 0) * 100).toFixed(1)}%, 95% CI: [${computeBinomialCi(candidateTransparent, candidateTotal).map((v) => v.toFixed(4)).join(', ')}])`);
+  console.log(`Fisher exact one-sided p-value: ${fisherExactOneSided(candidateTransparent, candidateTotal - candidateTransparent, baselineTransparent, baselineTotal - baselineTransparent).toFixed(6)}`);
+  console.log(`Full summary written to: ${join(outDir, 'summary.json')}`);
+
+  if (verdict === 'infrastructure_failure' || verdict === 'other') {
+    process.exit(1);
+  }
+}
+
+
 // CLI Entrypoint
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -2027,8 +2611,42 @@ async function main(): Promise<void> {
     }
 
     await runCompare(baselineDir, candidateDir, selfTestSubstitution);
+  } else if (command === 'official-repeat') {
+    let checkout = '';
+    let baselineConfig = '';
+    let candidateConfig = '';
+    let outDir = '';
+    let maxBlocks = 15;
+    let maxRuns = 60;
+
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if ((arg === '--checkout' || arg === '--h0-checkout') && i + 1 < args.length) {
+        checkout = resolve(args[++i] ?? '');
+      } else if ((arg === '--baseline-config' || arg === '--baseline') && i + 1 < args.length) {
+        baselineConfig = resolve(args[++i] ?? '');
+      } else if ((arg === '--candidate-config' || arg === '--candidate') && i + 1 < args.length) {
+        candidateConfig = resolve(args[++i] ?? '');
+      } else if (arg === '--out' && i + 1 < args.length) {
+        outDir = resolve(args[++i] ?? '');
+      } else if ((arg === '--blocks' || arg === '--max-blocks') && i + 1 < args.length) {
+        maxBlocks = parseInt(args[++i] ?? '15', 10);
+        maxRuns = maxBlocks * 4;
+      } else if ((arg === '--runs' || arg === '--max-runs') && i + 1 < args.length) {
+        maxRuns = parseInt(args[++i] ?? '60', 10);
+      }
+    }
+
+    if (!checkout || !baselineConfig || !candidateConfig || !outDir) {
+      console.error(
+        'Usage: otio-resource-browser.ts official-repeat --checkout <checkout-dir> --baseline-config <config.json> --candidate-config <config.json> --out <outDir> [--blocks <N>] [--runs <N>]'
+      );
+      process.exit(1);
+    }
+
+    await runOfficialRepeat(checkout, baselineConfig, candidateConfig, outDir, maxBlocks, maxRuns);
   } else {
-    console.error('Unknown command. Available commands: record, compare');
+    console.error('Unknown command. Available commands: record, compare, official-repeat');
     process.exit(1);
   }
 }
