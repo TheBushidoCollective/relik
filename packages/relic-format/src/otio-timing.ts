@@ -25,7 +25,7 @@ import type {
   OtioVideoComposition,
   OtioVideoContribution,
 } from './otio-types.ts';
-import { otioBundleEntry } from './otio-zip.ts';
+import { MAX_OTIO_BUNDLE_MEDIA_ENTRIES, otioBundleEntry } from './otio-zip.ts';
 
 interface Binary64Dyadic {
   readonly significand: bigint;
@@ -382,6 +382,117 @@ interface SequenceChoice {
   readonly diagnostics: OtioDiagnostic[];
 }
 
+interface DocumentSequenceState {
+  readonly indexHasEntries: boolean;
+  held?: ReadonlySet<object>;
+  readonly heldImages: Map<object, Int32Array>;
+}
+
+const documentSequences = new WeakMap<OtioDocumentV1, DocumentSequenceState>();
+
+function getDocumentSequenceState(
+  document: OtioDocumentV1
+): DocumentSequenceState {
+  let state = documentSequences.get(document);
+  if (!state) {
+    state = {
+      indexHasEntries: Object.keys(document.media).length > 0,
+      heldImages: new Map<object, Int32Array>(),
+    };
+    documentSequences.set(document, state);
+  }
+  return state;
+}
+
+function sequenceRecord(ref: OtioMediaReference): object {
+  const raw = ref.raw;
+  if (typeof raw === 'object' && raw !== null) {
+    return raw;
+  }
+  return ref;
+}
+
+/**
+ * Admitted held sequence records for a document, bounded by MAX_OTIO_BUNDLE_MEDIA_ENTRIES.
+ * Bundles produced by the bundler (relic-mcp MediaCollector) refuse any document exceeding
+ * MAX_OTIO_BUNDLE_MEDIA_ENTRIES (65,532) media entries. Bounding held sequences per document
+ * prevents crafted timelines from causing unbounded path construction or descriptor scans.
+ */
+function heldRecords(
+  document: OtioDocumentV1,
+  state: DocumentSequenceState
+): ReadonlySet<object> {
+  if (state.held) return state.held;
+  const admitted = new Set<object>();
+  const seen = new Set<object>();
+  let images = 0;
+  for (const key of Object.keys(document.nodes)) {
+    const node = document.nodes[key];
+    if (!node) continue;
+    const ref = activeReference(node);
+    if (!ref || !isSequence(ref) || ref.missing_frame_policy !== 'hold') {
+      continue;
+    }
+    const record = sequenceRecord(ref);
+    if (seen.has(record)) continue;
+    seen.add(record);
+    const read = readOtioImageSequence(record);
+    if (!read.ok || read.sequence.count <= 0) continue;
+    const count = read.sequence.count;
+    if (images > MAX_OTIO_BUNDLE_MEDIA_ENTRIES - count) continue;
+    images += count;
+    admitted.add(record);
+  }
+  state.held = admitted;
+  return admitted;
+}
+
+function heldImages(
+  document: OtioDocumentV1,
+  state: DocumentSequenceState,
+  record: object,
+  sequence: {
+    readonly count: number;
+    entry(index: number): OtioBundleEntryName | null;
+  }
+): Int32Array {
+  const cached = state.heldImages.get(record);
+  if (cached) return cached;
+  const count = sequence.count;
+  const indices = new Int32Array(count);
+  let n = 0;
+  for (let i = 0; i < count; i += 1) {
+    const entry = sequence.entry(i);
+    if (
+      entry !== null &&
+      (!state.indexHasEntries || Object.hasOwn(document.media, entry))
+    ) {
+      indices[n] = i;
+      n += 1;
+    }
+  }
+  const result = indices.subarray(0, n);
+  state.heldImages.set(record, result);
+  return result;
+}
+
+function lastAtOrBefore(images: Int32Array, target: number): number {
+  let low = 0;
+  let high = images.length - 1;
+  let result = -1;
+  while (low <= high) {
+    const mid = (low + high) >>> 1;
+    const value = images[mid];
+    if (value !== undefined && value <= target) {
+      result = value;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return result;
+}
+
 function chooseSequenceFrame(
   document: OtioDocumentV1,
   node: OtioNode,
@@ -415,7 +526,8 @@ function chooseSequenceFrame(
   const imageIndex = Math.floor(offset / sequence.frameStep);
   const outside = imageIndex < 0 || imageIndex >= sequence.count;
   const policy = ref.missing_frame_policy ?? 'error';
-  const indexHasEntries = Object.keys(document.media).length > 0;
+  const state = getDocumentSequenceState(document);
+  const indexHasEntries = state.indexHasEntries;
   const resolve = (
     index: number
   ): { path: OtioBundleEntryName; frame: number } | null => {
@@ -456,18 +568,30 @@ function chooseSequenceFrame(
   }
 
   if (policy === 'hold' && sequence.count > 0) {
-    const preStart = imageIndex < 0;
-    const startIndex = preStart
-      ? 0
-      : Math.min(
-          outside ? sequence.count - 1 : imageIndex - 1,
-          sequence.count - 1
-        );
-    const boundary = preStart ? sequence.count : -1;
-    const direction = preStart ? 1 : -1;
-    for (let index = startIndex; index !== boundary; index += direction) {
-      const built = resolve(index);
-      if (built && (!indexHasEntries || inIndex(built.path))) {
+    const record = sequenceRecord(ref);
+    const admitted = heldRecords(document, state);
+    if (!admitted.has(record)) {
+      const mediaKey = node.active_media_reference_key;
+      diagnostics.push({
+        severity: 'warning',
+        code: 'missing-media',
+        message: `Image sequence hold for ${node.name || node.id} was not searched: held sequences exceed ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} images`,
+        target: {
+          node_id: node.id,
+          ...(typeof mediaKey === 'string' ? { media_key: mediaKey } : {}),
+        },
+      });
+      return { path: null, frame: undefined, kind: 'media', diagnostics };
+    }
+
+    const images = heldImages(document, state, record, sequence);
+    const chosenIndex =
+      imageIndex < 0
+        ? (images[0] ?? -1)
+        : lastAtOrBefore(images, outside ? sequence.count - 1 : imageIndex - 1);
+    if (chosenIndex >= 0) {
+      const built = resolve(chosenIndex);
+      if (built) {
         return {
           path: built.path,
           frame: built.frame,

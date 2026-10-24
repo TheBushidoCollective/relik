@@ -23,6 +23,7 @@ import type {
   OtioTimeRange,
   OtioVideoComposition,
 } from '../src/otio-types.ts';
+import { MAX_OTIO_BUNDLE_MEDIA_ENTRIES } from '../src/otio-zip.ts';
 
 describe('otio-timing rational arithmetic and mixed rates', () => {
   test('timeToSeconds throws on zero or non-finite rate', () => {
@@ -1748,6 +1749,793 @@ describe('OTIO nested exposure, reverse intervals, and track availability', () =
           }
         )[0]?.bundle_path
       ).toBe(entry);
+    }
+  });
+});
+
+describe('OTIO held image sequence resource bounds and evaluation memoization', () => {
+  const mediaEntry = (name: string): Record<string, OtioMediaEntry> => ({
+    [name]: { key: name, bundle_path: name, size: 1 },
+  });
+
+  const imageRange = (start: number, duration: number, rate = 24) => ({
+    OTIO_SCHEMA: 'TimeRange.1',
+    start_time: { OTIO_SCHEMA: 'RationalTime.1', value: start, rate },
+    duration: { OTIO_SCHEMA: 'RationalTime.1', value: duration, rate },
+  });
+
+  const makeSequenceDoc = (
+    reference: Record<string, unknown>,
+    mediaIndex: Record<string, OtioMediaEntry> = {}
+  ): OtioDocumentV1 =>
+    readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-test' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-test' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'test-clip',
+                  metadata: { relic: { id: 'clip-test' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 48, rate: 24 },
+                  },
+                  media_reference: reference,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      { mediaIndex }
+    );
+
+  test('equivalence guards hold exact bundle_path, source_frame, and diagnostics across edge cases', () => {
+    // 1. Hold before start of range: available_range starts at 24 (frames 1001-1004). Sample at time 0 (pre-start).
+    // Should hold the first available frame (1001).
+    const preStartDoc = makeSequenceDoc(
+      {
+        OTIO_SCHEMA: 'ImageSequenceReference.1',
+        target_url_base: 'frames',
+        name_prefix: 'plate_',
+        name_suffix: '.png',
+        start_frame: 1001,
+        frame_step: 1,
+        rate: 24,
+        frame_zero_padding: 4,
+        missing_frame_policy: 'hold',
+        available_range: imageRange(24, 4),
+      },
+      mediaEntry('media/frames/plate_1001.png')
+    );
+    const preStartEval = evaluateOtioAt(preStartDoc, 'timeline-test', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    expect<string | null | undefined>(preStartEval?.bundle_path).toBe(
+      'media/frames/plate_1001.png'
+    );
+    expect(preStartEval?.source_frame).toBe(1001);
+    expect(preStartEval?.sample_kind).toBe('media');
+    expect(
+      preStartEval?.diagnostics.some((d) => d.code === 'missing-handles')
+    ).toBe(true);
+    expect(
+      preStartEval?.diagnostics.some((d) => d.code === 'missing-media')
+    ).toBe(false);
+
+    // 2. Hold after the end, held backward: available_range starts at 0, duration 4 (frames 1001-1004).
+    // Frame 1004 is missing, 1003 is present. Sample at time 10 (after end).
+    // Should hold backward to the last available frame (1003).
+    const postEndDoc = makeSequenceDoc(
+      {
+        OTIO_SCHEMA: 'ImageSequenceReference.1',
+        target_url_base: 'frames',
+        name_prefix: 'plate_',
+        name_suffix: '.png',
+        start_frame: 1001,
+        frame_step: 1,
+        rate: 24,
+        frame_zero_padding: 4,
+        missing_frame_policy: 'hold',
+        available_range: imageRange(0, 4),
+      },
+      {
+        ...mediaEntry('media/frames/plate_1001.png'),
+        ...mediaEntry('media/frames/plate_1002.png'),
+        ...mediaEntry('media/frames/plate_1003.png'),
+      }
+    );
+    const postEndEval = evaluateOtioAt(postEndDoc, 'timeline-test', {
+      value: 10,
+      rate: 24,
+    }).video_contributions[0];
+    expect<string | null | undefined>(postEndEval?.bundle_path).toBe(
+      'media/frames/plate_1003.png'
+    );
+    expect(postEndEval?.source_frame).toBe(1003);
+    expect(postEndEval?.sample_kind).toBe('media');
+    expect(
+      postEndEval?.diagnostics.some((d) => d.code === 'missing-handles')
+    ).toBe(true);
+    expect(
+      postEndEval?.diagnostics.some((d) => d.code === 'missing-media')
+    ).toBe(false);
+
+    // 3. Missing frame inside range: 1002 is missing, 1001 and 1003 are present. Sample at time 1 (frame 1002).
+    // Holds 1001.
+    const gapDoc = makeSequenceDoc(
+      {
+        OTIO_SCHEMA: 'ImageSequenceReference.1',
+        target_url_base: 'frames',
+        name_prefix: 'plate_',
+        name_suffix: '.png',
+        start_frame: 1001,
+        frame_step: 1,
+        rate: 24,
+        frame_zero_padding: 4,
+        missing_frame_policy: 'hold',
+        available_range: imageRange(0, 4),
+      },
+      {
+        ...mediaEntry('media/frames/plate_1001.png'),
+        ...mediaEntry('media/frames/plate_1003.png'),
+        ...mediaEntry('media/frames/plate_1004.png'),
+      }
+    );
+    const gapEval = evaluateOtioAt(gapDoc, 'timeline-test', {
+      value: 1,
+      rate: 24,
+    }).video_contributions[0];
+    expect<string | null | undefined>(gapEval?.bundle_path).toBe(
+      'media/frames/plate_1001.png'
+    );
+    expect(gapEval?.source_frame).toBe(1001);
+    expect(gapEval?.sample_kind).toBe('media');
+    expect(gapEval?.diagnostics).toEqual([]);
+
+    // 4. Missing frame at index 0 (frame 1001): only 1002 and 1003 are present. Sample at time 0.
+    // Backward hold has no predecessor -> gives the missing-media warning.
+    const missingZeroDoc = makeSequenceDoc(
+      {
+        OTIO_SCHEMA: 'ImageSequenceReference.1',
+        target_url_base: 'frames',
+        name_prefix: 'plate_',
+        name_suffix: '.png',
+        start_frame: 1001,
+        frame_step: 1,
+        rate: 24,
+        frame_zero_padding: 4,
+        missing_frame_policy: 'hold',
+        available_range: imageRange(0, 4),
+      },
+      {
+        ...mediaEntry('media/frames/plate_1002.png'),
+        ...mediaEntry('media/frames/plate_1003.png'),
+      }
+    );
+    const missingZeroEval = evaluateOtioAt(missingZeroDoc, 'timeline-test', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    expect(missingZeroEval?.bundle_path).toBeNull();
+    expect(missingZeroEval?.source_frame).toBeUndefined();
+    expect(missingZeroEval?.sample_kind).toBe('media');
+    expect(missingZeroEval?.diagnostics).toEqual([
+      {
+        severity: 'warning',
+        code: 'missing-media',
+        message: 'Image sequence frame for test-clip is not in the bundle',
+        target: { node_id: 'clip-test', media_key: 'DEFAULT_MEDIA' },
+      },
+    ]);
+
+    // 5. Empty-index raw document (document.media is empty): any resolvable path is admitted.
+    // Sample at time 0 (pre-start for range starting at 24) gives entry 0 (plate_1001.png).
+    const rawDoc = makeSequenceDoc(
+      {
+        OTIO_SCHEMA: 'ImageSequenceReference.1',
+        target_url_base: 'frames',
+        name_prefix: 'plate_',
+        name_suffix: '.png',
+        start_frame: 1001,
+        frame_step: 1,
+        rate: 24,
+        frame_zero_padding: 4,
+        missing_frame_policy: 'hold',
+        available_range: imageRange(24, 4),
+      },
+      {}
+    );
+    const rawEval = evaluateOtioAt(rawDoc, 'timeline-test', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    expect<string | null | undefined>(rawEval?.bundle_path).toBe(
+      'media/frames/plate_1001.png'
+    );
+    expect(rawEval?.source_frame).toBe(1001);
+    expect(rawEval?.sample_kind).toBe('media');
+    expect(rawEval?.diagnostics.some((d) => d.code === 'missing-handles')).toBe(
+      true
+    );
+    expect(rawEval?.diagnostics.some((d) => d.code === 'missing-media')).toBe(
+      false
+    );
+
+    // 6. Refused `../` base: path traversal fails otioBundleEntry, so no entry can resolve.
+    // Gives missing-media warning.
+    const traversalDoc = makeSequenceDoc(
+      {
+        OTIO_SCHEMA: 'ImageSequenceReference.1',
+        target_url_base: '../frames',
+        name_prefix: 'plate_',
+        name_suffix: '.png',
+        start_frame: 1001,
+        frame_step: 1,
+        rate: 24,
+        frame_zero_padding: 4,
+        missing_frame_policy: 'hold',
+        available_range: imageRange(24, 4),
+      },
+      mediaEntry('media/frames/plate_1001.png')
+    );
+    const traversalEval = evaluateOtioAt(traversalDoc, 'timeline-test', {
+      value: 0,
+      rate: 24,
+    }).video_contributions[0];
+    expect(traversalEval?.bundle_path).toBeNull();
+    expect(traversalEval?.source_frame).toBeUndefined();
+    expect(traversalEval?.sample_kind).toBe('media');
+    expect(
+      traversalEval?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            'Image sequence frame for test-clip is not in the bundle'
+      )
+    ).toBe(true);
+  });
+
+  test('bounds held image sequence scan to MAX_OTIO_BUNDLE_MEDIA_ENTRIES and memoizes across evaluations', () => {
+    const tracks = Array.from({ length: 100 }, (_, i) => {
+      const pad = String(i).padStart(3, '0');
+      return {
+        OTIO_SCHEMA: 'Track.1',
+        name: `track-${pad}`,
+        kind: 'Video',
+        metadata: { relic: { id: `track-${pad}` } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Clip.1',
+            name: `clip-${pad}`,
+            metadata: { relic: { id: `clip-${pad}` } },
+            source_range: {
+              start_time: { value: 0, rate: 24 },
+              duration: { value: 1000, rate: 24 },
+            },
+            media_reference: {
+              OTIO_SCHEMA: 'ImageSequenceReference.1',
+              name: `seq-${pad}`,
+              target_url_base: 'media',
+              name_prefix: `p${pad}_`,
+              name_suffix: '.png',
+              start_frame: 1,
+              frame_step: 1,
+              rate: 24,
+              frame_zero_padding: 4,
+              missing_frame_policy: 'hold',
+              available_range: imageRange(100, 1000),
+            },
+          },
+        ],
+      };
+    });
+
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-scan' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: tracks,
+        },
+      }),
+      {
+        mediaIndex: {
+          'media/unrelated.png': {
+            key: 'media/unrelated.png',
+            bundle_path: 'media/unrelated.png',
+            size: 1,
+          },
+        },
+      }
+    );
+
+    let getOwnPropertyDescriptorCalls = 0;
+    const mediaProxy = new Proxy(doc.media, {
+      getOwnPropertyDescriptor(target, prop) {
+        if (typeof prop === 'string' && prop.startsWith('media/p')) {
+          getOwnPropertyDescriptorCalls += 1;
+        }
+        return Reflect.getOwnPropertyDescriptor(target, prop);
+      },
+    });
+
+    const proxyDoc: OtioDocumentV1 = {
+      ...doc,
+      media: mediaProxy,
+    };
+
+    // First evaluation: exactly 65 sequences admitted (65,000 images <= 65,532), each scans 1,000 entries
+    getOwnPropertyDescriptorCalls = 0;
+    const eval1 = evaluateOtioAt(proxyDoc, 'timeline-scan', {
+      value: 0,
+      rate: 24,
+    });
+    expect(getOwnPropertyDescriptorCalls).toBe(65000);
+
+    // Second evaluation: memoized Int32Array indices, zero scans
+    getOwnPropertyDescriptorCalls = 0;
+    const eval2 = evaluateOtioAt(proxyDoc, 'timeline-scan', {
+      value: 0,
+      rate: 24,
+    });
+    expect(getOwnPropertyDescriptorCalls).toBe(0);
+    expect(eval2.video_contributions).toEqual(eval1.video_contributions);
+
+    // Third evaluation: still memoized, zero scans
+    getOwnPropertyDescriptorCalls = 0;
+    const eval3 = evaluateOtioAt(proxyDoc, 'timeline-scan', {
+      value: 0,
+      rate: 24,
+    });
+    expect(getOwnPropertyDescriptorCalls).toBe(0);
+    expect(eval3.video_contributions).toEqual(eval1.video_contributions);
+
+    // Verify consumer-visible diagnostics on the first 65 vs last 35 clips
+    expect(eval1.video_contributions).toHaveLength(100);
+    for (let i = 0; i < 65; i += 1) {
+      const pad = String(i).padStart(3, '0');
+      const contrib = eval1.video_contributions[i];
+      expect(contrib?.bundle_path).toBeNull();
+      expect(contrib?.sample_kind).toBe('media');
+      expect(
+        contrib?.diagnostics.some(
+          (d) =>
+            d.code === 'missing-media' &&
+            d.severity === 'warning' &&
+            d.message ===
+              `Image sequence frame for clip-${pad} is not in the bundle`
+        )
+      ).toBe(true);
+    }
+
+    for (let i = 65; i < 100; i += 1) {
+      const pad = String(i).padStart(3, '0');
+      const contrib = eval1.video_contributions[i];
+      expect(contrib?.bundle_path).toBeNull();
+      expect(contrib?.sample_kind).toBe('media');
+      expect(
+        contrib?.diagnostics.some(
+          (d) =>
+            d.code === 'missing-media' &&
+            d.severity === 'warning' &&
+            d.message ===
+              `Image sequence hold for clip-${pad} was not searched: held sequences exceed ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} images`
+        )
+      ).toBe(true);
+    }
+  });
+
+  test('caches media index presence so ownKeys across 10 error-policy records is queried once rather than 30 times', () => {
+    const errorTracks = Array.from({ length: 10 }, (_, i) => {
+      const pad = String(i).padStart(2, '0');
+      return {
+        OTIO_SCHEMA: 'Track.1',
+        name: `track-err-${pad}`,
+        kind: 'Video',
+        metadata: { relic: { id: `track-err-${pad}` } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Clip.1',
+            name: `clip-err-${pad}`,
+            metadata: { relic: { id: `clip-err-${pad}` } },
+            source_range: {
+              start_time: { value: 0, rate: 24 },
+              duration: { value: 48, rate: 24 },
+            },
+            media_reference: {
+              OTIO_SCHEMA: 'ImageSequenceReference.1',
+              name: `seq-err-${pad}`,
+              target_url_base: 'media',
+              name_prefix: `err_${pad}_`,
+              name_suffix: '.png',
+              start_frame: 1,
+              frame_step: 1,
+              rate: 24,
+              frame_zero_padding: 4,
+              missing_frame_policy: 'error',
+              available_range: imageRange(0, 48),
+            },
+          },
+        ],
+      };
+    });
+
+    const mediaIndex: Record<string, OtioMediaEntry> = {};
+    for (let i = 0; i < 10; i += 1) {
+      const pad = String(i).padStart(2, '0');
+      const path = `media/err_${pad}_0011.png`;
+      mediaIndex[path] = { key: path, bundle_path: path, size: 1 };
+    }
+
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-keys' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: errorTracks,
+        },
+      }),
+      { mediaIndex }
+    );
+
+    let ownKeysCalls = 0;
+    const mediaProxy = new Proxy(doc.media, {
+      ownKeys(target) {
+        ownKeysCalls += 1;
+        return Reflect.ownKeys(target);
+      },
+    });
+
+    const proxyDoc: OtioDocumentV1 = {
+      ...doc,
+      media: mediaProxy,
+    };
+
+    // Evaluated 3 times: count is 1 on slice A (computed once per document), whereas 6a was 30 (10 tracks * 3 evals)
+    const eval1 = evaluateOtioAt(proxyDoc, 'timeline-keys', {
+      value: 10,
+      rate: 24,
+    });
+    const eval2 = evaluateOtioAt(proxyDoc, 'timeline-keys', {
+      value: 10,
+      rate: 24,
+    });
+    const eval3 = evaluateOtioAt(proxyDoc, 'timeline-keys', {
+      value: 10,
+      rate: 24,
+    });
+
+    expect(ownKeysCalls).toBe(1);
+    expect(eval2.video_contributions).toEqual(eval1.video_contributions);
+    expect(eval3.video_contributions).toEqual(eval1.video_contributions);
+    expect(eval1.video_contributions).toHaveLength(10);
+    for (let i = 0; i < 10; i += 1) {
+      const pad = String(i).padStart(2, '0');
+      const contrib = eval1.video_contributions[i];
+      expect<string | null | undefined>(contrib?.bundle_path).toBe(
+        `media/err_${pad}_0011.png`
+      );
+      expect(contrib?.source_frame).toBe(11);
+      expect(contrib?.sample_kind).toBe('media');
+      expect(contrib?.diagnostics).toEqual([]);
+    }
+  });
+
+  test('boundary hold records of 32766, 32766, and 1 admit the first two and refuse the third', () => {
+    // 32766 + 32766 = 65532 (exactly MAX_OTIO_BUNDLE_MEDIA_ENTRIES).
+    // The first two must be admitted; the third (1 image) exceeds the budget and must be refused.
+    // If the comparison is mutated to `>=` (images >= MAX_OTIO_BUNDLE_MEDIA_ENTRIES - count),
+    // record 2 will be rejected because 32766 >= 32766 is true. This test proves that mutant fails.
+    const boundDoc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-bound' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              name: 'track-bound-1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-bound-1' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'clip-bound-1',
+                  metadata: { relic: { id: 'clip-bound-1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 32766, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    name: 'seq-bound-1',
+                    target_url_base: 'media',
+                    name_prefix: 'b1_',
+                    name_suffix: '.png',
+                    start_frame: 1,
+                    frame_step: 1,
+                    rate: 24,
+                    frame_zero_padding: 5,
+                    missing_frame_policy: 'hold',
+                    available_range: imageRange(10, 32766),
+                  },
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              name: 'track-bound-2',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-bound-2' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'clip-bound-2',
+                  metadata: { relic: { id: 'clip-bound-2' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 32766, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    name: 'seq-bound-2',
+                    target_url_base: 'media',
+                    name_prefix: 'b2_',
+                    name_suffix: '.png',
+                    start_frame: 1,
+                    frame_step: 1,
+                    rate: 24,
+                    frame_zero_padding: 5,
+                    missing_frame_policy: 'hold',
+                    available_range: imageRange(10, 32766),
+                  },
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              name: 'track-bound-3',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-bound-3' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'clip-bound-3',
+                  metadata: { relic: { id: 'clip-bound-3' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 1, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    name: 'seq-bound-3',
+                    target_url_base: 'media',
+                    name_prefix: 'b3_',
+                    name_suffix: '.png',
+                    start_frame: 1,
+                    frame_step: 1,
+                    rate: 24,
+                    frame_zero_padding: 5,
+                    missing_frame_policy: 'hold',
+                    available_range: imageRange(10, 1),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      {
+        mediaIndex: {
+          'media/unrelated.png': {
+            key: 'media/unrelated.png',
+            bundle_path: 'media/unrelated.png',
+            size: 1,
+          },
+        },
+      }
+    );
+
+    // Sample at time 0 (pre-start for all 3 since available_range starts at 10)
+    const result = evaluateOtioAt(boundDoc, 'timeline-bound', {
+      value: 0,
+      rate: 24,
+    });
+    expect(result.video_contributions).toHaveLength(3);
+
+    const c1 = result.video_contributions[0];
+    const c2 = result.video_contributions[1];
+    const c3 = result.video_contributions[2];
+
+    // Clip 1 was admitted -> gets standard missing-media not-found warning, NOT budget refusal
+    expect(c1?.bundle_path).toBeNull();
+    expect(
+      c1?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            'Image sequence frame for clip-bound-1 is not in the bundle'
+      )
+    ).toBe(true);
+    expect(
+      c1?.diagnostics.some((d) => d.message.includes('was not searched'))
+    ).toBe(false);
+
+    // Clip 2 was admitted (32,766 + 32,766 = 65,532) -> gets standard missing-media not-found warning
+    // A `>=` mutant rejects clip 2 here, so this assertion strictly discriminates that mutant
+    expect(c2?.bundle_path).toBeNull();
+    expect(
+      c2?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            'Image sequence frame for clip-bound-2 is not in the bundle'
+      )
+    ).toBe(true);
+    expect(
+      c2?.diagnostics.some((d) => d.message.includes('was not searched'))
+    ).toBe(false);
+
+    // Clip 3 was refused (65,532 + 1 > 65,532) -> gets explicit over-budget hold warning
+    expect(c3?.bundle_path).toBeNull();
+    expect(
+      c3?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            `Image sequence hold for clip-bound-3 was not searched: held sequences exceed ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} images`
+      )
+    ).toBe(true);
+    expect(
+      c3?.diagnostics.some((d) => d.message.includes('is not in the bundle'))
+    ).toBe(false);
+  });
+
+  test('deduplicates identical sequence records across multiple clips so shared images are counted once', () => {
+    const sharedRef = {
+      OTIO_SCHEMA: 'ImageSequenceReference.1',
+      name: 'shared-seq',
+      target_url_base: 'media',
+      name_prefix: 'shared_',
+      name_suffix: '.png',
+      start_frame: 1,
+      frame_step: 1,
+      rate: 24,
+      frame_zero_padding: 5,
+      missing_frame_policy: 'hold' as const,
+      available_range: imageRange(10, 40000),
+    };
+
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline-dedup' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              name: 'track-d1',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-d1' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'clip-d1',
+                  metadata: { relic: { id: 'clip-d1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 40000, rate: 24 },
+                  },
+                  media_reference: sharedRef,
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              name: 'track-d2',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-d2' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'clip-d2',
+                  metadata: { relic: { id: 'clip-d2' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 40000, rate: 24 },
+                  },
+                  media_reference: sharedRef,
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              name: 'track-d3',
+              kind: 'Video',
+              metadata: { relic: { id: 'track-d3' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'clip-d3',
+                  metadata: { relic: { id: 'clip-d3' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 20000, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    name: 'unique-seq',
+                    target_url_base: 'media',
+                    name_prefix: 'unique_',
+                    name_suffix: '.png',
+                    start_frame: 1,
+                    frame_step: 1,
+                    rate: 24,
+                    frame_zero_padding: 5,
+                    missing_frame_policy: 'hold',
+                    available_range: imageRange(10, 20000),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      {
+        mediaIndex: {
+          'media/unrelated.png': {
+            key: 'media/unrelated.png',
+            bundle_path: 'media/unrelated.png',
+            size: 1,
+          },
+        },
+      }
+    );
+
+    // Point clip-d2's media reference to the identical object as clip-d1
+    const clip1Node = Object.values(doc.nodes).find(
+      (n) => n.name === 'clip-d1'
+    );
+    const clip2Node = Object.values(doc.nodes).find(
+      (n) => n.name === 'clip-d2'
+    );
+    if (clip1Node && clip2Node && clip1Node.media_references) {
+      Object.assign(clip2Node, {
+        media_references: clip1Node.media_references,
+      });
+    }
+
+    const evalDedup = evaluateOtioAt(doc, 'timeline-dedup', {
+      value: 0,
+      rate: 24,
+    });
+    expect(evalDedup.video_contributions).toHaveLength(3);
+    // All 3 clips admitted -> none get the budget warning
+    for (const contrib of evalDedup.video_contributions) {
+      expect(
+        contrib.diagnostics.some(
+          (d) =>
+            d.code === 'missing-media' &&
+            d.message.endsWith('is not in the bundle')
+        )
+      ).toBe(true);
+      expect(
+        contrib.diagnostics.some((d) => d.message.includes('was not searched'))
+      ).toBe(false);
     }
   });
 });

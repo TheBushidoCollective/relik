@@ -37,6 +37,7 @@ export const OTIO_MAX_IMAGE_PIXELS = 4096 * 4096;
 export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
 const HAVE_CURRENT_DATA = 2;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
+export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
 const DECODER_LOCAL_ZERO_SOURCE_VALUE_TOLERANCE = 1e-7;
 export interface OtioTrackState {
@@ -234,7 +235,7 @@ export function renderOtioVideoTree(
   height: number,
   tree: OtioVideoCompositionTree | null,
   leaves: readonly (OtioPreparedLeaf | null)[],
-  checkout: () => HTMLCanvasElement,
+  checkout: (depth: number) => HTMLCanvasElement,
   hidden?: (nodeId: string, ancestry: readonly string[]) => boolean
 ): void {
   output.globalCompositeOperation = 'source-over';
@@ -242,7 +243,7 @@ export function renderOtioVideoTree(
   output.fillStyle = '#000000';
   output.fillRect(0, 0, width, height);
   if (!tree) return;
-  const root = paintNode(tree, width, height, leaves, checkout, hidden);
+  const root = paintNode(tree, 0, width, height, leaves, checkout, hidden);
   if (!root) return;
   output.globalCompositeOperation = 'source-over';
   output.globalAlpha = 1;
@@ -251,10 +252,11 @@ export function renderOtioVideoTree(
 
 function paintNode(
   node: OtioVideoCompositionTree,
+  depth: number,
   width: number,
   height: number,
   leaves: readonly (OtioPreparedLeaf | null)[],
-  checkout: () => HTMLCanvasElement,
+  checkout: (depth: number) => HTMLCanvasElement,
   hidden?: (nodeId: string, ancestry: readonly string[]) => boolean
 ): HTMLCanvasElement | null {
   if (node.kind !== 'leaf' && hidden?.(node.node_id, node.ancestry)) {
@@ -263,7 +265,7 @@ function paintNode(
   if (node.kind === 'leaf') {
     const leaf = leaves[node.contribution_index] ?? null;
     if (!leaf || leaf.kind === 'empty') return null;
-    const surface = checkout();
+    const surface = checkout(depth);
     const ctx = surface.getContext('2d');
     if (!ctx) return null;
     ctx.clearRect(0, 0, width, height);
@@ -280,16 +282,27 @@ function paintNode(
     return surface;
   }
 
-  const surface = checkout();
-  const ctx = surface.getContext('2d');
-  if (!ctx) return null;
-  ctx.clearRect(0, 0, width, height);
-  ctx.globalAlpha = 1;
   if (node.kind === 'stack') {
-    ctx.globalCompositeOperation = 'source-over';
+    let surface: HTMLCanvasElement | null = null;
+    let ctx: CanvasRenderingContext2D | null = null;
     for (const child of node.children) {
-      const painted = paintNode(child, width, height, leaves, checkout, hidden);
+      const painted = paintNode(
+        child,
+        depth + 1,
+        width,
+        height,
+        leaves,
+        checkout,
+        hidden
+      );
       if (!painted) continue;
+      if (!surface || !ctx) {
+        surface = checkout(depth);
+        ctx = surface.getContext('2d');
+        if (!ctx) return null;
+        ctx.clearRect(0, 0, width, height);
+        ctx.globalAlpha = 1;
+      }
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
       ctx.drawImage(painted, 0, 0, width, height);
@@ -297,10 +310,13 @@ function paintNode(
     return surface;
   }
 
+  let surface: HTMLCanvasElement | null = null;
+  let ctx: CanvasRenderingContext2D | null = null;
   for (const branch of node.branches) {
     if (!branch.child || !(branch.weight > 0)) continue;
     const painted = paintNode(
       branch.child,
+      depth + 1,
       width,
       height,
       leaves,
@@ -308,12 +324,21 @@ function paintNode(
       hidden
     );
     if (!painted) continue;
+    if (!surface || !ctx) {
+      surface = checkout(depth);
+      ctx = surface.getContext('2d');
+      if (!ctx) return null;
+      ctx.clearRect(0, 0, width, height);
+      ctx.globalAlpha = 1;
+    }
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = clamp01(branch.weight);
     ctx.drawImage(painted, 0, 0, width, height);
   }
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
+  if (ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
   return surface;
 }
 
@@ -749,7 +774,129 @@ export function createOtioPlayback(
   const images = new ImageFrameCache(OTIO_RETAINED_IMAGE_PIXELS);
   const imageElements = new Map<string, LoadedImage>();
   const surfacePool: HTMLCanvasElement[] = [];
-  let surfaceCursor = 0;
+  let graphicsLost = false;
+  let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
+  const pooledSurfaceListeners = new Map<
+    HTMLCanvasElement,
+    (e: Event) => void
+  >();
+
+  function isCanvasContextLost(target: HTMLCanvasElement): boolean {
+    const anyTarget = target as HTMLCanvasElement & {
+      isContextLost?: () => boolean;
+    };
+    if (
+      typeof anyTarget.isContextLost === 'function' &&
+      anyTarget.isContextLost()
+    ) {
+      return true;
+    }
+    if (typeof target.getContext !== 'function') return false;
+    const ctx = target.getContext('2d');
+    if (!ctx) return true;
+    const anyCtx = ctx as CanvasRenderingContext2D & {
+      isContextLost?: () => boolean;
+    };
+    if (typeof anyCtx.isContextLost === 'function') {
+      return anyCtx.isContextLost();
+    }
+    return false;
+  }
+
+  function attachSurfaceListener(
+    surface: HTMLCanvasElement,
+    depth: number
+  ): void {
+    if (typeof surface.addEventListener === 'function') {
+      const listener = (): void => {
+        onPooledSurfaceContextLost(surface, depth);
+      };
+      pooledSurfaceListeners.set(surface, listener);
+      surface.addEventListener('contextlost', listener);
+    }
+  }
+
+  function removeSurfaceListener(surface: HTMLCanvasElement): void {
+    const listener = pooledSurfaceListeners.get(surface);
+    if (listener) {
+      pooledSurfaceListeners.delete(surface);
+      if (typeof surface.removeEventListener === 'function') {
+        surface.removeEventListener('contextlost', listener);
+      }
+    }
+  }
+
+  function onPooledSurfaceContextLost(
+    surface: HTMLCanvasElement,
+    depth: number
+  ): void {
+    if (isDisposed) return;
+    removeSurfaceListener(surface);
+    surface.width = 0;
+    surface.height = 0;
+    if (surfacePool[depth] === surface) {
+      surfacePool[depth] = undefined as unknown as HTMLCanvasElement;
+    }
+    if (!graphicsLost && !isCanvasContextLost(canvas)) {
+      const gen = ++renderGeneration;
+      void enqueueRender(currentTime, gen).finally(() => {
+        if (isPlaying && !isDisposed && !isBuffering) scheduleTick();
+      });
+    }
+  }
+
+  function onVisibleContextLost(): void {
+    if (isDisposed) return;
+    graphicsLost = true;
+    isBuffering = true;
+    for (const surface of surfacePool) {
+      if (surface) {
+        removeSurfaceListener(surface);
+        surface.width = 0;
+        surface.height = 0;
+      }
+    }
+    surfacePool.length = 0;
+    clearTimeout(restoreTimeout);
+    restoreTimeout = setTimeout(() => {
+      restoreTimeout = undefined;
+      if (isDisposed) return;
+      mediaFailures.set(
+        'graphics-context-lost',
+        diagnostic(
+          'error',
+          'unsupported-browser',
+          'Preview graphics context was lost and the browser did not restore it'
+        )
+      );
+      isBuffering = false;
+      notify();
+    }, OTIO_GRAPHICS_RESTORE_MS);
+    notify();
+  }
+
+  function onVisibleContextRestored(): void {
+    if (isDisposed) return;
+    clearTimeout(restoreTimeout);
+    restoreTimeout = undefined;
+    mediaFailures.delete('graphics-context-lost');
+    graphicsLost = false;
+    const gen = ++renderGeneration;
+    clockAnchor = null;
+    isBuffering = true;
+    notify();
+    void enqueueRender(currentTime, gen).finally(() => {
+      if (stale(gen)) return;
+      clockAnchor = null;
+      notify();
+      if (isPlaying && !isDisposed && !isBuffering) scheduleTick();
+    });
+  }
+
+  if (typeof canvas.addEventListener === 'function') {
+    canvas.addEventListener('contextlost', onVisibleContextLost);
+    canvas.addEventListener('contextrestored', onVisibleContextRestored);
+  }
 
   let audioContext: AudioContext | null = options.audioContext ?? null;
   let masterGain: GainNode | null = null;
@@ -1706,11 +1853,11 @@ export function createOtioPlayback(
   function paint(
     tree: OtioVideoCompositionTree | null,
     leaves: readonly (OtioPreparedLeaf | null)[]
-  ): void {
+  ): boolean {
+    if (graphicsLost || isCanvasContextLost(canvas)) return false;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) return false;
     const { width, height } = outputSize();
-    surfaceCursor = 0;
     const blocked = blockedTracks(tree);
     renderOtioVideoTree(
       ctx,
@@ -1718,22 +1865,30 @@ export function createOtioPlayback(
       height,
       tree,
       leaves,
-      () => {
-        let surface = surfacePool[surfaceCursor];
+      (depth: number) => {
+        let surface = surfacePool[depth];
+        if (surface && isCanvasContextLost(surface)) {
+          removeSurfaceListener(surface);
+          surface.width = 0;
+          surface.height = 0;
+          surface = undefined as unknown as HTMLCanvasElement;
+        }
         if (!surface && typeof document !== 'undefined') {
           surface = document.createElement('canvas');
-          surfacePool.push(surface);
+          attachSurfaceListener(surface, depth);
+          surfacePool[depth] = surface;
         }
         if (!surface) {
           throw new Error('Canvas surface unavailable');
         }
-        surfaceCursor += 1;
         surface.width = width;
         surface.height = height;
         return surface;
       },
       (nodeId, ancestry) => videoHidden(nodeId, ancestry) || blocked.has(nodeId)
     );
+    if (graphicsLost || isCanvasContextLost(canvas)) return false;
+    return true;
   }
 
   async function renderAt(time: OtioRationalTime, gen: number): Promise<void> {
@@ -1758,15 +1913,18 @@ export function createOtioPlayback(
       }
       const leaves = await prepareLeaves(evaluation, tree, gen);
       if (stale(gen)) return;
+      let presented = false;
       try {
-        paint(tree, leaves);
+        presented = paint(tree, leaves);
       } catch {
         // A missing surface must not paint a stale frame.
       }
       images.evict();
       await reconcileAudio(evaluation, gen);
       if (stale(gen)) return;
-      isBuffering = false;
+      if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
+        isBuffering = false;
+      }
       notify();
     } finally {
       if (gen === renderGeneration) renderInFlight = false;
@@ -1940,7 +2098,6 @@ export function createOtioPlayback(
       notify();
       await enqueueRender(currentTime, gen);
       if (stale(gen)) return;
-      isBuffering = false;
       clockAnchor = null;
       notify();
       if (isPlaying) scheduleTick();
@@ -2002,6 +2159,12 @@ export function createOtioPlayback(
     dispose(): void {
       if (isDisposed) return;
       isDisposed = true;
+      clearTimeout(restoreTimeout);
+      restoreTimeout = undefined;
+      if (typeof canvas.removeEventListener === 'function') {
+        canvas.removeEventListener('contextlost', onVisibleContextLost);
+        canvas.removeEventListener('contextrestored', onVisibleContextRestored);
+      }
       videoTimingAbort.abort();
       isPlaying = false;
       renderGeneration += 1;
@@ -2042,6 +2205,15 @@ export function createOtioPlayback(
       masterGain = null;
       trackGains.clear();
       listeners.clear();
+      for (const surface of surfacePool) {
+        if (surface) {
+          removeSurfaceListener(surface);
+          surface.width = 0;
+          surface.height = 0;
+        }
+      }
+      surfacePool.length = 0;
+      pooledSurfaceListeners.clear();
       const ctx = canvas.getContext('2d');
       if (ctx) {
         try {
