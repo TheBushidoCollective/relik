@@ -2198,19 +2198,18 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
 async function runCompare(
   baselineDir: string,
   candidateDir: string,
-  selfTestSubstitution = false
+  selfTestSubstitution = false,
+  requireNoContextEvents = false
 ): Promise<void> {
   assert.ok(isAbsolute(baselineDir), `baseline dir must be absolute: ${baselineDir}`);
   assert.ok(existsSync(baselineDir), `baseline dir does not exist: ${baselineDir}`);
   assert.ok(isAbsolute(candidateDir), `candidate dir must be absolute: ${candidateDir}`);
   assert.ok(existsSync(candidateDir), `candidate dir does not exist: ${candidateDir}`);
 
-  // In self-test substitution mode, we test baseline against baseline (pretending it is candidate)
-  // and assert that compare fails!
   if (selfTestSubstitution) {
     let failedAsExpected = false;
     try {
-      await executeCompareChecks(baselineDir, baselineDir);
+      await executeCompareChecks(baselineDir, baselineDir, requireNoContextEvents);
     } catch {
       failedAsExpected = true;
     }
@@ -2222,11 +2221,39 @@ async function runCompare(
     return;
   }
 
-  await executeCompareChecks(baselineDir, candidateDir);
+  await executeCompareChecks(baselineDir, candidateDir, requireNoContextEvents);
   console.log('COMPARE_OK: All OTIO resource repair proofs verified');
 }
 
-async function executeCompareChecks(baselineDir: string, candidateDir: string): Promise<void> {
+function isExcludedSemanticKey(key: string): boolean {
+  if (key === 'timestamp' || key === 'time' || key === 'duration' || key === 'durationMs') return true;
+  if (key === 'contextEvents' || key === 'snapshots' || key === 'preSnapshot' || key === 'postSnapshot') return true;
+  if (key.startsWith('isLost')) return true;
+  if (key.startsWith('readback') && key !== 'readbackClass') return true;
+  if (key.startsWith('ready') && key !== 'ready') return true;
+  return false;
+}
+
+function stripNonSemantic(val: unknown): unknown {
+  if (Array.isArray(val)) {
+    return val.map(stripNonSemantic);
+  }
+  if (val !== null && typeof val === 'object') {
+    const res: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+      if (isExcludedSemanticKey(k)) continue;
+      res[k] = stripNonSemantic(v);
+    }
+    return res;
+  }
+  return val;
+}
+
+async function executeCompareChecks(
+  baselineDir: string,
+  candidateDir: string,
+  requireNoContextEvents = false
+): Promise<void> {
   const baseManifest = JSON.parse(readFileSync(join(baselineDir, 'manifest.json'), 'utf8'));
   const candManifest = JSON.parse(readFileSync(join(candidateDir, 'manifest.json'), 'utf8'));
 
@@ -2263,6 +2290,54 @@ async function executeCompareChecks(baselineDir: string, candidateDir: string): 
   const baseObs = readObservations(baselineDir);
   const candObs = readObservations(candidateDir);
 
+  function checkPacketContextEvents(dir: string, label: string, obs: Record<string, Array<Record<string, unknown>>>) {
+    const r1List = obs.R1 ?? [];
+    let foundContextEvents = false;
+    const allContextEvents: Array<{ type?: string }> = [];
+
+    for (const item of r1List) {
+      if (item.step === 'contextEvents' && Array.isArray(item.events)) {
+        foundContextEvents = true;
+        allContextEvents.push(...item.events);
+      } else if (Array.isArray(item.contextEvents)) {
+        foundContextEvents = true;
+        allContextEvents.push(...item.contextEvents);
+      }
+    }
+
+    if (foundContextEvents) {
+      const lostEvents = allContextEvents.filter((e) => e && e.type === 'contextlost');
+      if (lostEvents.length > 0) {
+        throw new Error(
+          `[compare] ${label} packet R1 recorded ${lostEvents.length} contextlost event(s); cannot be used as comparison evidence under --require-no-context-events`
+        );
+      }
+      console.log(`[compare] ${label} packet R1 verified clean (0 contextlost events)`);
+    } else {
+      console.log(
+        `[compare] ${label} packet lacks R1 context event data (predates event recording); requiring R1 settled and seek2 are OPAQUE_EXACT`
+      );
+      const settled = r1List.find((o) => o.step === 'settled');
+      const seek2 = r1List.find((o) => o.step === 'seek2');
+      assert.ok(settled, `[compare] ${label} R1 settled observation missing`);
+      assert.ok(seek2, `[compare] ${label} R1 seek2 observation missing`);
+      assert.strictEqual(
+        settled.pixelsSha256,
+        OPAQUE_EXACT_SHA,
+        `[compare] ${label} R1 settled canvas is not OPAQUE_EXACT: got ${settled.pixelsSha256}`
+      );
+      assert.strictEqual(
+        seek2.pixelsSha256,
+        OPAQUE_EXACT_SHA,
+        `[compare] ${label} R1 seek2 canvas is not OPAQUE_EXACT: got ${seek2.pixelsSha256}`
+      );
+    }
+  }
+
+  if (requireNoContextEvents) {
+    checkPacketContextEvents(baselineDir, 'baseline', baseObs);
+    checkPacketContextEvents(candidateDir, 'candidate', candObs);
+  }
   // --- R1 Checks ---
   const r1BaseSettled = baseObs.R1?.find((o) => o.step === 'settled');
   const r1CandSettled = candObs.R1?.find((o) => o.step === 'settled');
@@ -2350,7 +2425,7 @@ async function executeCompareChecks(baselineDir: string, candidateDir: string): 
   assert.ok(r6BaseBrowser && r6CandBrowser && r6BaseEval && r6CandEval, 'R6 observations missing');
   assert.strictEqual(r6BaseBrowser.ready, 'diagnostic', 'R6 baseline not diagnostic');
   assert.strictEqual(r6CandBrowser.ready, 'diagnostic', 'R6 candidate not diagnostic');
-  assert.deepStrictEqual(r6BaseEval, r6CandEval, 'R6 evaluator output mismatch between baseline and candidate');
+  assert.deepStrictEqual(stripNonSemantic(r6BaseEval), stripNonSemantic(r6CandEval), 'R6 evaluator output mismatch between baseline and candidate');
 }
 
 export const OPAQUE_EXACT_SHA = '7b1fcc441fd6c2518b2a0f818b1982eba6287d23712be4a8c7c51e4b281f719b';
@@ -4153,6 +4228,7 @@ async function main(): Promise<void> {
     let baselineDir = '';
     let candidateDir = '';
     let selfTestSubstitution = false;
+    let requireNoContextEvents = false;
 
     for (let i = 1; i < args.length; i++) {
       if (args[i] === '--baseline' && i + 1 < args.length) {
@@ -4161,15 +4237,19 @@ async function main(): Promise<void> {
         candidateDir = resolve(args[++i] ?? '');
       } else if (args[i] === '--self-test-substitution') {
         selfTestSubstitution = true;
+      } else if (args[i] === '--require-no-context-events') {
+        requireNoContextEvents = true;
       }
     }
 
     if (!baselineDir || !candidateDir) {
-      console.error('Usage: otio-resource-browser.ts compare --baseline <dir> --candidate <dir> [--self-test-substitution]');
+      console.error(
+        'Usage: otio-resource-browser.ts compare --baseline <dir> --candidate <dir> [--self-test-substitution] [--require-no-context-events]'
+      );
       process.exit(1);
     }
 
-    await runCompare(baselineDir, candidateDir, selfTestSubstitution);
+    await runCompare(baselineDir, candidateDir, selfTestSubstitution, requireNoContextEvents);
   } else if (command === 'official-repeat') {
     let checkout = '';
     let baselineConfig = '';

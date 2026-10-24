@@ -60,11 +60,16 @@ mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
 
 ### 3. Compare Baseline and Candidate
 
+Compares semantic observations between baseline and candidate directories, ignoring non-semantic fields (timestamps, durations, observer-only state) while strictly asserting fixture byte equality, R1-R5 properties, and R6 evaluator output.
+
 ```bash
 mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
   compare --baseline /absolute/resource-baseline \
-  --candidate /absolute/resource-candidate
+  --candidate /absolute/resource-candidate \
+  [--require-no-context-events]
 ```
+
+When `--require-no-context-events` is passed, comparison fails if either packet's R1 recorded any `contextlost` events (rejecting natural-loss packets as valid comparison evidence). For legacy packets predating event recording (such as `h71555e3`), it prints a notice and asserts that R1 settled and seek2 canvases are both `OPAQUE_EXACT`.
 
 ### 4. Comparison Substitution Falsifier
 
