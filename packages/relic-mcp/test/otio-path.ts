@@ -1355,7 +1355,6 @@ function barColumn(rgb: Uint8Array, width: number, height: number): number {
   return bestX;
 }
 
-
 /** Luminance-weighted centre of the above-half-peak run, as a fraction of row width. */
 function rowCenter(rgb: Uint8Array, rowWidth: number): number {
   const stride = rgb.length % 4 === 0 && rgb.length !== rowWidth * 3 ? 4 : 3;
@@ -2090,26 +2089,23 @@ async function openBrowser(
       async getContextEvents(): Promise<
         Array<{ type: string; timestamp: number; target: string | null }>
       > {
-        return (
-          (await cdp
-            .send(
-              'Runtime.evaluate',
-              {
-                expression: '(globalThis.__otioContextEvents || []).slice()',
-                returnByValue: true,
-              },
-              sessionId
-            )
-            .then(
-              (res) =>
-                (res['result'] as { value?: unknown } | undefined)?.value
-            )
-            .catch(() => [])) as Array<{
-            type: string;
-            timestamp: number;
-            target: string | null;
-          }>
-        );
+        return (await cdp
+          .send(
+            'Runtime.evaluate',
+            {
+              expression: '(globalThis.__otioContextEvents || []).slice()',
+              returnByValue: true,
+            },
+            sessionId
+          )
+          .then(
+            (res) => (res['result'] as { value?: unknown } | undefined)?.value
+          )
+          .catch(() => [])) as Array<{
+          type: string;
+          timestamp: number;
+          target: string | null;
+        }>;
       },
       send: (method, params) => cdp.send(method, params, sessionId),
       async evaluate<T>(expression: string): Promise<T> {
@@ -2210,8 +2206,7 @@ async function openBrowser(
               sessionId
             )
             .then(
-              (res) =>
-                (res['result'] as { value?: unknown } | undefined)?.value
+              (res) => (res['result'] as { value?: unknown } | undefined)?.value
             )
             .catch(() => [])) as unknown[];
           if (Array.isArray(events) && events.length > 0) {
