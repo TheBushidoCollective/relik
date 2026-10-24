@@ -788,6 +788,90 @@ describe('OTIO archive projection reader', () => {
         globalThis.setTimeout = origSetTimeout;
       }
     });
+
+    test('authored node with id graphics-context-lost carrying unsupported effect is not forced blocking when base-media preview is allowed and graphics are fine', async () => {
+      const root = new ViewElement('div');
+
+      const authoredDoc = new TextEncoder().encode(
+        JSON.stringify({
+          OTIO_SCHEMA: 'Timeline.1',
+          name: 'Authored node timeline',
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: [
+              {
+                OTIO_SCHEMA: 'Track.1',
+                kind: 'Video',
+                metadata: { relic: { id: 'track_1' } },
+                children: [
+                  {
+                    OTIO_SCHEMA: 'Clip.1',
+                    metadata: { relic: { id: 'graphics-context-lost' } },
+                    source_range: range(0, 24),
+                    effects: [
+                      {
+                        schema: 'CustomEffect.1',
+                        name: 'Glow',
+                        enabled: true,
+                      },
+                    ],
+                    media_reference: {
+                      OTIO_SCHEMA: 'ImageSequenceReference.1',
+                      missing_frame_policy: 'black',
+                      available_range: null,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      );
+
+      const { promise: readyPromise, resolve: onReady } =
+        Promise.withResolvers<void>();
+      root.addEventListener('relic:otio-ready', () => onReady());
+
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: otioz(authoredDoc, []),
+        revision: 1,
+      });
+      await readyPromise;
+
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected OTIO controller');
+
+      try {
+        const previewStatus = findViewElement(
+          root,
+          (el) => el.className === 'otio-preview-status'
+        );
+        expect(previewStatus).toBeDefined();
+
+        // Click to allow base media preview
+        const baseBtn = findViewElement(
+          root,
+          (el) => el.className === 'otio-preview-base'
+        );
+        expect(baseBtn).toBeDefined();
+        baseBtn?.dispatchEvent(new Event('click'));
+
+        // Overlay is hidden because graphics are fine and base media is allowed
+        expect(previewStatus?.hidden).toBe(true);
+
+        // Authored clip row exists and does not carry graphics error
+        const clipItem = findViewElement(
+          root,
+          (el) => el.dataset['itemId'] === 'graphics-context-lost'
+        );
+        expect(clipItem).toBeDefined();
+        expect(clipItem?.title).not.toContain(
+          'Preview graphics context was lost'
+        );
+      } finally {
+        controller.dispose();
+      }
+    });
     test('checks the original digest before reading corrupt current archive media', async () => {
       const expectedContent = projectionContent();
       const wrongOriginal = otioz(structuralContent(), []);

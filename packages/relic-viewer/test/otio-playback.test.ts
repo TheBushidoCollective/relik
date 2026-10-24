@@ -3035,13 +3035,13 @@ describe('otio playback controller', () => {
 
       const stateAtDeadline = playback.getState();
       expect(stateAtDeadline.buffering).toBe(false);
+      expect(stateAtDeadline.graphicsFailed).toBe(true);
       expect(stateAtDeadline.diagnostics).toEqual([
         {
           severity: 'error',
           code: 'unsupported-browser',
           message:
             'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.',
-          target: { node_id: 'graphics-context-lost' },
         },
       ]);
 
@@ -3319,13 +3319,13 @@ describe('otio playback controller', () => {
       executeTimer();
 
       expect(playback.getState().buffering).toBe(false);
+      expect(playback.getState().graphicsFailed).toBe(true);
       expect(playback.getState().diagnostics).toEqual([
         {
           severity: 'error',
           code: 'unsupported-browser',
           message:
             'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.',
-          target: { node_id: 'graphics-context-lost' },
         },
       ]);
       expect(visibleCanvas.style.visibility).toBe('hidden');
@@ -3343,6 +3343,7 @@ describe('otio playback controller', () => {
 
       expect(playback.getState().diagnostics).toEqual([]);
       expect(visibleCanvas.style.visibility).not.toBe('hidden');
+      expect(playback.getState().graphicsFailed).toBe(false);
 
       // A new loss after a successful present starts a fresh 3000ms episode
       timerScheduledCount = 0;

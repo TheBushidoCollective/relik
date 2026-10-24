@@ -59,6 +59,7 @@ export interface OtioPlaybackState {
   readonly tracks: Readonly<Record<string, OtioTrackState>>;
   readonly baseMediaPreviewAllowed: boolean;
   readonly previewBlocked: boolean;
+  readonly graphicsFailed: boolean;
 }
 
 export type OtioPlaybackListener = (state: OtioPlaybackState) => void;
@@ -775,6 +776,7 @@ export function createOtioPlayback(
   const imageElements = new Map<string, LoadedImage>();
   const surfacePool: HTMLCanvasElement[] = [];
   let graphicsLost = false;
+  let graphicsFailed = false;
   let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
   let priorCanvasVisibility: string | null = null;
   let canvasHidden = false;
@@ -882,13 +884,13 @@ export function createOtioPlayback(
       restoreTimeout = setTimeout(() => {
         restoreTimeout = undefined;
         if (isDisposed) return;
+        graphicsFailed = true;
         mediaFailures.set(
           'graphics-context-lost',
           diagnostic(
             'error',
             'unsupported-browser',
-            'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.',
-            'graphics-context-lost'
+            'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.'
           )
         );
         isBuffering = false;
@@ -1956,6 +1958,7 @@ export function createOtioPlayback(
         restoreVisibleCanvas();
         clearTimeout(restoreTimeout);
         restoreTimeout = undefined;
+        graphicsFailed = false;
         mediaFailures.delete('graphics-context-lost');
         isBuffering = false;
       }
@@ -2076,6 +2079,7 @@ export function createOtioPlayback(
       baseMediaPreviewAllowed,
       previewBlocked:
         !baseMediaPreviewAllowed && contributionIssues(evaluation).length > 0,
+      graphicsFailed,
     };
   }
 
@@ -2194,6 +2198,7 @@ export function createOtioPlayback(
       if (isDisposed) return;
       restoreVisibleCanvas();
       isDisposed = true;
+      graphicsFailed = false;
       clearTimeout(restoreTimeout);
       restoreTimeout = undefined;
       if (typeof canvas.removeEventListener === 'function') {

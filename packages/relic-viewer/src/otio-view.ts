@@ -1521,8 +1521,9 @@ export async function mountOtioView(
     );
     const blocking = incomplete.filter(
       (issue) =>
-        issue.target?.node_id === 'graphics-context-lost' ||
-        issue.message.startsWith('Preview graphics context was lost') ||
+        (state.graphicsFailed &&
+          issue.code === 'unsupported-browser' &&
+          !issue.target) ||
         !state.baseMediaPreviewAllowed ||
         !['unsupported-effect', 'unsupported-browser'].includes(issue.code)
     );
