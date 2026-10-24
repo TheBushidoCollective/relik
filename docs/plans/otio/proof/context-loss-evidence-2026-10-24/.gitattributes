@@ -1,1 +1,2 @@
 *.part-* -text binary
+*.tar.zst -text binary

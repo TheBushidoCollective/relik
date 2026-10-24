@@ -1,0 +1,15 @@
+confinement-probe-darwin-7863852.log
+integrated-final3-verify-node18.log
+integrated-final4-verify-node18.log
+integrated-sliceA-verify-node18.log
+integrated-sliceB-verify-node18.log
+pack-capture-proof
+publish-mcp-40070924479-pack.log
+publish-mcp-40071301106-linux-x64-node24.log
+publish-mcp-40071301106.watch.log
+publish-mcp-40074093793
+publish-mcp-dryrun-2ee603b.watch.log
+qualification-865934e
+qualification-865934e.runner.log
+verify-40073727740-sliceA.log
+verify-40073862659-sliceB.log

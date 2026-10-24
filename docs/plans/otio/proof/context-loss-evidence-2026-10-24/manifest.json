@@ -17,5 +17,13 @@
   "packetsFile": "packets.txt",
   "packetCount": 83,
   "sourceRoot": "/Users/jwaldrip/.omp/otio-evidence",
-  "reassemble": "cat otio-context-loss-evidence-2026-10-24.tar.zst.part-* > otio-context-loss-evidence-2026-10-24.tar.zst && shasum -a 256 otio-context-loss-evidence-2026-10-24.tar.zst && zstd -dc otio-context-loss-evidence-2026-10-24.tar.zst | tar -xf -"
+  "reassemble": "cat otio-context-loss-evidence-2026-10-24.tar.zst.part-* > otio-context-loss-evidence-2026-10-24.tar.zst && shasum -a 256 otio-context-loss-evidence-2026-10-24.tar.zst && zstd -dc otio-context-loss-evidence-2026-10-24.tar.zst | tar -xf -",
+  "supplement": {
+    "archive": "otio-context-loss-evidence-2026-10-24-supplement.tar.zst",
+    "bytes": 43658669,
+    "sha256": "0fc6d97c9db3e434425fa50ab7e5053f4ce7458904730c0b65af301be9f7ab0f",
+    "packetsFile": "supplement-packets.txt",
+    "contents": "Release dry runs 40070924479 (summarize failure), 40071301106 (Linux root symlink ENOTDIR), 40074093793 (all green, all job logs); PR verify fail-before 40073727740 and pass-after 40073862659 Linux confinement probe logs; local Darwin confinement probe; pack and summarize step proofs; qualification-865934e (10/10).",
+    "extract": "zstd -dc otio-context-loss-evidence-2026-10-24-supplement.tar.zst | tar -xf -"
+  }
 }
