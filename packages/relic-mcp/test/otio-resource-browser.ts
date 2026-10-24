@@ -134,6 +134,14 @@ interface ChromeSession {
     }>
   >;
   readonly crashGpu: () => Promise<{ readonly gpuPid: number | null; readonly pidGone: boolean }>;
+  readonly getPaintDurations: () => Promise<
+    Array<{
+      readonly paintIndex: number;
+      readonly startTime: number | null;
+      readonly endTime: number | null;
+      readonly durationMs: number | null;
+    }>
+  >;
   readonly close: () => Promise<void>;
   readonly terminate: () => Promise<void>;
 }
@@ -929,6 +937,24 @@ async function openBrowserSession(
       }
       return { gpuPid, pidGone };
     }
+    async function getPaintDurations(): Promise<
+      Array<{
+        paintIndex: number;
+        startTime: number | null;
+        endTime: number | null;
+        durationMs: number | null;
+      }>
+    > {
+      return evaluate<
+        Array<{
+          paintIndex: number;
+          startTime: number | null;
+          endTime: number | null;
+          durationMs: number | null;
+        }>
+      >('window.__otioAccounting.getPaintDurations()');
+    }
+
 
     return {
       cdp,
@@ -940,6 +966,7 @@ async function openBrowserSession(
       readVisibleWithState,
       getContextEvents,
       crashGpu,
+      getPaintDurations,
       close,
       terminate,
     };
@@ -3484,6 +3511,192 @@ export async function runR1Provoke(
   console.log(`Summary written to: ${join(outDir, 'summary.json')}`);
 }
 
+export interface PaintDurationSummary {
+  count: number;
+  minMs: number;
+  maxMs: number;
+  meanMs: number;
+  medianMs: number;
+  p95Ms: number;
+}
+
+function summarizeDurations(durations: number[]): PaintDurationSummary {
+  if (durations.length === 0) {
+    return { count: 0, minMs: 0, maxMs: 0, meanMs: 0, medianMs: 0, p95Ms: 0 };
+  }
+  const sorted = [...durations].sort((a, b) => a - b);
+  const count = sorted.length;
+  const minMs = sorted[0]!;
+  const maxMs = sorted[count - 1]!;
+  const sum = sorted.reduce((acc, v) => acc + v, 0);
+  const meanMs = sum / count;
+  const medianMs = sorted[Math.floor(count / 2)]!;
+  const p95Index = Math.min(count - 1, Math.floor(count * 0.95));
+  const p95Ms = sorted[p95Index]!;
+  return { count, minMs, maxMs, meanMs, medianMs, p95Ms };
+}
+
+export async function runR1Stress(
+  configPaths: string[],
+  outDir: string,
+  trials = 10,
+  seeks = 200
+): Promise<void> {
+  assert.ok(configPaths.length > 0, 'at least one config path is required for r1-stress');
+  assert.ok(isAbsolute(outDir), `outDir must be absolute: ${outDir}`);
+
+  console.log(`[r1-stress] Validating ${configPaths.length} config(s)...`);
+  const validatedConfigs = configPaths.map((p) => {
+    assert.ok(isAbsolute(p), `config path must be absolute: ${p}`);
+    return validateConfig(p);
+  });
+
+  mkdirSync(outDir, { recursive: true });
+  mkdirSync(join(outDir, 'runs'), { recursive: true });
+  mkdirSync(join(outDir, 'fixtures'), { recursive: true });
+
+  const r1Bytes = buildOtioz(generateR1FixtureContent());
+  const r1Path = join(outDir, 'fixtures/R1.otioz');
+  writeFileSync(r1Path, r1Bytes);
+
+  const resultsByArm: Record<string, Record<string, unknown>> = {};
+  const runsDetail: Array<Record<string, unknown>> = [];
+
+  for (const { config } of validatedConfigs) {
+    console.log(`\n[r1-stress] === Testing Arm: ${config.label} ===`);
+    let trialsWithContextLost = 0;
+    let totalContextLostEvents = 0;
+    let totalMappableLines = 0;
+    const allDurations: number[] = [];
+    const armTrials: Array<Record<string, unknown>> = [];
+
+    for (let t = 1; t <= trials; t++) {
+      const runDir = join(outDir, 'runs', `${config.label}-trial-${t}`);
+      mkdirSync(runDir, { recursive: true });
+      mkdirSync(join(runDir, 'stderr'), { recursive: true });
+
+      const loopbackStderrPath = join(runDir, 'stderr/loopback.stderr');
+      const server = await startLoopbackServer(config.viewerDist, loopbackStderrPath);
+      const sessionToken = await server.createSessionToken();
+
+      const startTime = Date.now();
+      try {
+        const pub = await publishFixture(
+          config.nodePath,
+          config.mcpBundle,
+          server.origin,
+          join(runDir, 'state.json'),
+          r1Path,
+          join(runDir, 'stderr/mcp.stderr')
+        );
+
+        const browser = await openBrowserSession(
+          config.chromePath,
+          server.port,
+          server.origin,
+          pub.url,
+          sessionToken,
+          join(runDir, 'stderr/browser.stderr'),
+          join(runDir, 'browser-attestation.json')
+        );
+
+        const ready = await waitReady(browser);
+
+        console.log(`[r1-stress] ${config.label} trial ${t}: executing ${seeks} seeks...`);
+        for (let s = 0; s < seeks; s++) {
+          const frame = s % 24;
+          await seekTo(browser, frame);
+        }
+
+        const events = await browser.getContextEvents();
+        const contextLostCount = events.filter((e) => e.type === 'contextlost').length;
+        if (contextLostCount > 0) {
+          trialsWithContextLost++;
+          totalContextLostEvents += contextLostCount;
+        }
+
+        const paintDurations = await browser.getPaintDurations();
+        const durationsMs = paintDurations
+          .map((p) => p.durationMs)
+          .filter((d): d is number => typeof d === 'number' && d >= 0);
+        allDurations.push(...durationsMs);
+        const trialDurSummary = summarizeDurations(durationsMs);
+
+        await browser.close();
+
+        const stderrFile = join(runDir, 'stderr/browser.stderr');
+        let mappableCount = 0;
+        if (existsSync(stderrFile)) {
+          for (const l of readFileSync(stderrFile, 'utf8').split('\n')) {
+            if (/Creation of MappableSharedImage failed/i.test(l) || /MappableSharedImage/i.test(l)) {
+              mappableCount++;
+            }
+          }
+        }
+        totalMappableLines += mappableCount;
+
+        const trialInfo = {
+          arm: config.label,
+          trial: t,
+          seeks,
+          contextLostCount,
+          mappableCount,
+          paintsCount: paintDurations.length,
+          paintDurationsSummary: trialDurSummary,
+          durationMs: Date.now() - startTime,
+        };
+        armTrials.push(trialInfo);
+        runsDetail.push(trialInfo);
+
+        appendFileSync(join(runDir, 'observations.jsonl'), JSON.stringify(trialInfo) + '\n');
+        console.log(
+          `[r1-stress] ${config.label} trial ${t}: contextLost=${contextLostCount}, mappable=${mappableCount}, ` +
+          `meanPaint=${trialDurSummary.meanMs.toFixed(1)}ms, p95Paint=${trialDurSummary.p95Ms.toFixed(1)}ms`
+        );
+      } finally {
+        await server.stop();
+      }
+    }
+
+    resultsByArm[config.label] = {
+      trials,
+      seeks,
+      trialsWithContextLost,
+      totalContextLostEvents,
+      totalMappableLines,
+      paintDurations: summarizeDurations(allDurations),
+      trialsDetail: armTrials,
+    };
+  }
+
+  const baselineStats = resultsByArm['baseline'];
+  const candidateStats = resultsByArm['candidate'];
+  let candidateChurnTrigger = false;
+  if (
+    baselineStats &&
+    candidateStats &&
+    (candidateStats.trialsWithContextLost as number) >= Math.ceil(trials / 2) &&
+    (baselineStats.trialsWithContextLost as number) === 0
+  ) {
+    candidateChurnTrigger = true;
+  }
+
+  const summary = {
+    experiment: 'E1-amp',
+    subcommand: 'r1-stress',
+    status: 'completed',
+    trialsPerArm: trials,
+    seeksPerTrial: seeks,
+    candidateChurnTrigger,
+    arms: resultsByArm,
+    runsDetail,
+  };
+  writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
+
+  console.log('\n[r1-stress] Finished all stress trials.');
+  console.log(`Summary written to: ${join(outDir, 'summary.json')}`);
+}
+
 
 
 // CLI Entrypoint
@@ -3627,8 +3840,45 @@ async function main(): Promise<void> {
     }
 
     await runR1Provoke(baselineConfig, candidateConfig, outDir, mode, trials);
+  } else if (command === 'r1-stress') {
+    const configPaths: string[] = [];
+    let outDir = '';
+    let trials = 10;
+    let seeks = 200;
+
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if (
+        (arg === '--config' ||
+          arg === '--baseline-config' ||
+          arg === '--candidate-config' ||
+          arg === '--baseline' ||
+          arg === '--candidate') &&
+        i + 1 < args.length
+      ) {
+        configPaths.push(resolve(args[++i] ?? ''));
+      } else if (arg === '--configs' && i + 1 < args.length) {
+        const parts = (args[++i] ?? '').split(',').map((p) => p.trim()).filter(Boolean);
+        configPaths.push(...parts.map((p) => resolve(p)));
+      } else if (arg === '--out' && i + 1 < args.length) {
+        outDir = resolve(args[++i] ?? '');
+      } else if (arg === '--trials' && i + 1 < args.length) {
+        trials = parseInt(args[++i] ?? '10', 10);
+      } else if (arg === '--seeks' && i + 1 < args.length) {
+        seeks = parseInt(args[++i] ?? '200', 10);
+      }
+    }
+
+    if (configPaths.length === 0 || !outDir) {
+      console.error(
+        'Usage: otio-resource-browser.ts r1-stress --config <config1.json> [--config <config2.json>...] --out <outDir> [--trials <N>] [--seeks <N>]'
+      );
+      process.exit(1);
+    }
+
+    await runR1Stress(configPaths, outDir, trials, seeks);
   } else {
-    console.error('Unknown command. Available commands: record, compare, official-repeat, r1-repeat, r1-provoke');
+    console.error('Unknown command. Available commands: record, compare, official-repeat, r1-repeat, r1-provoke, r1-stress');
     process.exit(1);
   }
 }

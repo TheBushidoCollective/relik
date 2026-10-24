@@ -89,6 +89,130 @@ mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
 
 This command must exit non-zero because the baseline data fails R1 canvas counts and R5 budget boundaries.
 
+### 5. Official Repeat (E1a: Frequency under Official Observer)
+
+Spawns the unmodified official `record` subcommand from a pinned checkout (e.g. detached `71555e3e`) in balanced ABBA blocks (`baseline`, `candidate`, `candidate`, `baseline`) to measure natural R1 context loss rates without changing the official execution path.
+
+```bash
+mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
+  official-repeat \
+  --checkout /Users/jwaldrip/.omp/wt/otio-resource-browser \
+  --baseline-config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/baseline.json \
+  --candidate-config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/candidate.json \
+  --out /Users/jwaldrip/.omp/otio-evidence/e1a \
+  --blocks 15 \
+  --runs 60
+```
+
+#### Telemetry and Snapshots
+- **System Snapshots**: Pre-run and post-run captures of Apple Silicon AGX `PerformanceStatistics` via `ioreg`, macOS `memory_pressure` (free memory percentage), `os.loadavg`, and foreign `chrome-headless-shell` process counts.
+- **R1 Readback Classification**:
+  - `OPAQUE_EXACT`: SHA-256 `7b1fcc441fd6c2518b2a0f818b1982eba6287d23712be4a8c7c51e4b281f719b`
+  - `TRANSPARENT`: SHA-256 `11283ef755895422e6f28b93f3d78cad7539891cf2893c9fdccefb923c5bf70b`
+  - `OTHER`: Any differing SHA-256 digest
+- **Browser Log Classification**:
+  - R1 window: Counts `Creation of MappableSharedImage failed` lines and `Canvas2D: Multiple readback operations` warning lines before R1 browser close.
+  - Later windows: Counts `Creation of MappableSharedImage failed` lines across cases R2–R6.
+  - `signature-only`: Assigned when R1 reads `TRANSPARENT` with at least 1 `MappableSharedImage` line and 0 readback warnings.
+
+#### Stop Rules (E1a)
+- Any R1 readback `OTHER`: Stop immediately (verdict: `other`).
+- Infrastructure failure (non-zero child exit or missing outputs): Stop immediately (verdict: `infrastructure_failure`).
+- Baseline >= 1 and Candidate >= 1 `TRANSPARENT`: Stop immediately (verdict: `arm-independent`).
+- Candidate >= 5 and Baseline == 0: Stop immediately (verdict: `candidate-associated`, exact one-sided Fisher p <= 0.029).
+- Cap reached (60 runs):
+  - Candidate 1–4, Baseline 0: `inconclusive`
+  - Baseline only >= 1: `arm-independent`
+  - Zero transparent total: `none`
+
+Output summary with exact Clopper-Pearson 95% binomial confidence intervals and exact one-sided Fisher p-value is written to `<outDir>/summary.json`.
+
+### 6. R1 Repeat (E1b: Natural Failures with Direct Signals)
+
+Runs R1 across 4 rotated arms `{baseline, candidate} x {official, passive}` with direct context loss telemetry, late recovery windows, and optional background GPU noise.
+
+```bash
+mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
+  r1-repeat \
+  --baseline-config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/baseline.json \
+  --candidate-config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/candidate.json \
+  --out /Users/jwaldrip/.omp/otio-evidence/e1b \
+  --rounds 30 \
+  [--noise] \
+  [--e1a-verdict <verdict>]
+```
+
+#### Passive Observers and Late Window
+- `getContextEvents()`: Captures native `contextlost` and `contextrestored` events on `canvas.otio-canvas`.
+- `readVisibleWithState()`: Evaluates `isContextLost()` then `getImageData()` in a single atomic task.
+- **Late Window**: When either settled or seek2 readback is non-`OPAQUE_EXACT`, harness waits 3000 ms, logs state and events, reads canvas, seeks to frame 0, and reads again to verify if context recovers.
+- **Optional Noise**: An independent headless shell repainting a 960x540 2D canvas every frame and requesting screenshots every 30 ms, active during noise rounds.
+
+#### Classification and Stop Rules (E1b)
+- `M1`: TRANSPARENT, and canvas recorded `contextlost` event before readback or reported `isContextLost()` true at it.
+- `M2`: TRANSPARENT with neither event nor flag (passive arms only).
+- Stop on `OTHER` -> `other`
+- Stop on `M2` -> `m2_observed`
+- Stop on infrastructure failure -> `infrastructure_failure`
+- Stop when at least 1 passive `M1` appears in both baseline and candidate -> `passive_m1_both_products`
+- Stop when 1 passive `M1` appears overall if E1a was already `arm-independent` -> `arm-independent`
+- Cap reached (30 rounds):
+  - Failures in noise rounds only -> `noise_only` (proves concurrent headless GPU use is trigger)
+  - Zero failures -> `none`
+  - Otherwise -> `inconclusive`
+
+### 7. R1 Provocation (E2: Mechanism by Provocation)
+
+Deterministically exercises the context loss mechanism through CDP browser-level fault injection across baseline and candidate arms (3 trials per mode).
+
+```bash
+mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
+  r1-provoke \
+  --baseline-config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/baseline.json \
+  --candidate-config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/candidate.json \
+  --out /Users/jwaldrip/.omp/otio-evidence/e2 \
+  --mode all \
+  --trials 3
+```
+
+#### Provocation Modes
+1. `gpu-crash-after-settle`:
+   - Settle R1 viewer -> capture initial readback.
+   - Issue `Browser.crashGpuProcess` and poll until GPU PID exits.
+   - Readback while lost: must record `contextlost` and return `TRANSPARENT`.
+   - Wait up to 3000 ms for `contextrestored`.
+   - Readback after restore: must remain `TRANSPARENT` while `ready='true'` and `buffering='false'`.
+   - Seek to frame 0: must recover and read back `OPAQUE_EXACT`.
+   - Success in >= 2 of 3 trials demonstrates the **product defect**.
+2. `gpu-crash-first-paint` (Fault Barrier):
+   - Harness sets `window.__otioFaultArm = 'visible-paint-end-1'` and enables `Debugger`.
+   - In prelude, matching native visible `drawImage` triggers `debugger;`.
+   - On `Debugger.paused`, harness crashes GPU process, polls PID gone up to 2000 ms, then sends `Debugger.resume`.
+   - Settle and seek2: both read back `TRANSPARENT`, 0 readback warnings, and `MappableSharedImage` logged.
+   - Success in >= 2 of 3 trials demonstrates the **natural signature**.
+3. `memory-pressure-after-settle`:
+   - Sends `Memory.simulatePressureNotification` (`critical`). Record only.
+
+### 8. R1 Stress (E1-amp: Stress Amplification)
+
+Executes 200 rapid seeks on R1 without intervening canvas readbacks to measure context loss resilience under churn across a list of configuration files.
+
+```bash
+mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
+  r1-stress \
+  --config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/baseline.json \
+  --config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/candidate.json \
+  --out /Users/jwaldrip/.omp/otio-evidence/e1-amp \
+  --trials 10 \
+  --seeks 200
+```
+
+#### Metrics Recorded
+- `contextlost` event count on visible canvas.
+- `Creation of MappableSharedImage failed` lines in `browser.stderr`.
+- High-resolution paint start/end timestamps and duration distributions (min, max, mean, median, p95).
+- Evaluation rule: Candidate >= 5 of 10 trials with `contextlost` while Baseline is 0 flags candidate churn trigger.
+
 ## Fixture Matrix and Expected Numbers
 
 | Fixture | Description | Baseline (6a83) | Candidate | Deciding Observable |

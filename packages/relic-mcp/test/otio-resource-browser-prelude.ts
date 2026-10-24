@@ -447,6 +447,16 @@ export const PRELUDE_SOURCE = String.raw`(() => {
         timestamp,
       };
     },
+    getPaintDurations() {
+      return completedPaints.map(function(p) {
+        return {
+          paintIndex: p.paintIndex,
+          startTime: p.startTime,
+          endTime: p.endTime,
+          durationMs: p.durationMs,
+        };
+      });
+    },
   };
 })();
 `;
