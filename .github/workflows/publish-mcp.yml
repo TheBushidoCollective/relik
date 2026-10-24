@@ -471,19 +471,32 @@ jobs:
           if-no-files-found: error
 
       - name: Summarize packed artifact
-        working-directory: packages/relic-mcp
+        env:
+          TARBALL: ${{ steps.package.outputs.tarball }}
         run: |
           set -euo pipefail
+          # Summarize the tarball that was packed and will be published. Running
+          # npm pack again would rerun prepack, whose stdout is not JSON.
+          test -f "$TARBALL"
           {
             printf '### relic-mcp %s\n' "$RELEASE_VERSION"
-            npm pack --dry-run --json --no-workspaces | node -e '
-              let raw = "";
-              process.stdin.on("data", (chunk) => (raw += chunk));
-              process.stdin.on("end", () => {
-                const parsed = JSON.parse(raw);
-                const meta = Array.isArray(parsed) ? parsed[0] : parsed;
-                console.log(`files: ${meta.entryCount}, unpacked: ${meta.unpackedSize} bytes`);
-              });
+            node -e '
+              const { gunzipSync } = require("node:zlib");
+              const archive = gunzipSync(require("node:fs").readFileSync(process.env.TARBALL));
+              let files = 0;
+              let bytes = 0;
+              for (let offset = 0; offset + 512 <= archive.length; ) {
+                const header = archive.subarray(offset, offset + 512);
+                if (header.every((byte) => byte === 0)) break;
+                const size = Number.parseInt(header.subarray(124, 136).toString("ascii").replace(/\0.*$/, "").trim() || "0", 8);
+                const type = String.fromCharCode(header[156] || 48);
+                if (type === "0") {
+                  files += 1;
+                  bytes += size;
+                }
+                offset += 512 + Math.ceil(size / 512) * 512;
+              }
+              console.log(`files: ${files}, unpacked: ${bytes} bytes`);
             '
           } >> "$GITHUB_STEP_SUMMARY"
 
