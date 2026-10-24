@@ -29,9 +29,10 @@
  */
 
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execSync, spawn } from 'node:child_process';
 import {
   cp,
+  mkdir,
   mkdtemp,
   readFile,
   realpath,
@@ -68,6 +69,8 @@ import {
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
 const OTIO_PIN = 'opentimelineio==0.18.1';
+const captureDecoderTrace =
+  process.env['RELIC_OTIO_CAPTURE_DECODER_TRACE'] === '1';
 
 const viewerDist = fileURLToPath(
   new URL('../../relic-viewer/dist/', import.meta.url)
@@ -149,6 +152,7 @@ const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 const mails: { to: string; mail: OutboundMail }[] = [];
 const children = new Set<ChildProcess>();
 const packetCanvasMeasurements: Array<Record<string, unknown>> = [];
+const decoderTraceObservations: Array<Record<string, unknown>> = [];
 
 interface PendingMcpLoopbackReceipt {
   readonly callOrdinal: number;
@@ -1572,6 +1576,17 @@ function windowForSeconds(
   return match;
 }
 
+interface FaultBarrierState {
+  arm_time: number | null;
+  hit_time: number | null;
+  debugger_paused_time: number | null;
+  gpu_pid: number | null;
+  crash_gpu_response: Record<string, unknown> | null;
+  gpu_pid_gone_time: number | null;
+  resume_time: number | null;
+  context_lost_time: number | null;
+}
+
 interface ChromeSession {
   evaluate<T>(expression: string): Promise<T>;
   send(
@@ -1586,10 +1601,49 @@ interface ChromeSession {
   continuedNonLoopback: string[];
   cspHeaders: string[];
   workerUrls: string[];
+  captureDecoderTrace: boolean;
+  decoderTraceLabel: string | null;
+  label: string | null;
+  faultState: FaultBarrierState;
+  getContextEvents?(): Promise<
+    Array<{ type: string; timestamp: number; target: string | null }>
+  >;
+}
+
+interface DecoderTraceCanvasRead {
+  readonly rgb: readonly number[] | null;
+  readonly alpha: {
+    readonly sample_count: number;
+    readonly min: number;
+    readonly max: number;
+    readonly mean: number;
+    readonly zero_count: number;
+    readonly opaque_count: number;
+  } | null;
+  readonly lost?: boolean;
+  readonly context_events?: readonly Array<{
+    readonly type: string;
+    readonly timestamp: number;
+    readonly target: string | null;
+  }>;
+  readonly root: {
+    readonly frame: string | null;
+    readonly buffering: string | null;
+    readonly ready: string | null;
+    readonly preview_state: string | null;
+    readonly preview_blocked: string | null;
+  } | null;
+  readonly diagnostics: readonly string[];
+  readonly selected_canvas_id: string | null;
+  readonly native_videos: readonly Record<string, unknown>[];
+  readonly trace: Record<string, unknown> | null;
 }
 
 interface OpenBrowserOptions {
+  readonly label?: string;
   readonly recordMediaSeekTargets?: boolean;
+  readonly captureDecoderTrace?: boolean;
+  readonly decoderTraceLabel?: string;
   readonly blockWebCodecs?: boolean;
 }
 
@@ -1607,6 +1661,221 @@ function loopbackUrl(value: string): boolean {
     return false;
   }
 }
+interface CanvasAlphaStatistics {
+  readonly sample_count: number;
+  readonly min: number;
+  readonly max: number;
+  readonly mean: number;
+  readonly zero_count: number;
+  readonly opaque_count: number;
+}
+
+interface CanvasAlphaCensusRecord {
+  readonly sequence: number;
+  readonly browser_label: string | null;
+  readonly width: number;
+  readonly height: number;
+  readonly lost: boolean;
+  readonly alpha: CanvasAlphaStatistics;
+  readonly context_events: readonly Array<{
+    readonly type: string;
+    readonly timestamp: number;
+    readonly target: string | null;
+  }>;
+  readonly timestamp: number;
+}
+
+let nextBrowserSeq = 0;
+let nextCanvasAlphaCensusSeq = 0;
+const canvasAlphaCensus: CanvasAlphaCensusRecord[] = [];
+let latestCanvasAlphaRecord: CanvasAlphaCensusRecord | undefined;
+
+async function persistCanvasAlphaCensus(): Promise<void> {
+  try {
+    await mkdir(shotDir, { recursive: true });
+    await writeFile(
+      join(shotDir, 'canvas-alpha-census.json'),
+      `${JSON.stringify({ format: 'relic-otio-canvas-alpha-census/v1', census: canvasAlphaCensus, observations: canvasAlphaCensus }, null, 2)}\n`
+    );
+  } catch {}
+}
+
+function formatAlphaCensus(record?: CanvasAlphaCensusRecord | null): string {
+  const r = record ?? latestCanvasAlphaRecord;
+  if (!r) return 'census:none';
+  const a = r.alpha;
+  return `census(lost=${r.lost}, alpha=[min=${a.min}, max=${a.max}, mean=${a.mean.toFixed(2)}, zero=${a.zero_count}, opaque=${a.opaque_count}])`;
+}
+
+const contextEventLogPrelude = String.raw`(() => {
+  try {
+    const events = [];
+    globalThis.__otioContextEvents = events;
+    globalThis.__relicOtioContextEvents = events;
+
+    const record = (type, target, event) => {
+      try {
+        if (event) {
+          if (event.__otioLogged) return;
+          event.__otioLogged = true;
+        }
+        events.push({
+          type,
+          timestamp: performance.timeOrigin + performance.now(),
+          target:
+            target && target.tagName
+              ? target.tagName.toLowerCase() +
+                (target.className ? '.' + target.className : '')
+              : null,
+        });
+      } catch {}
+    };
+
+    const attach = (canvas) => {
+      if (!canvas || canvas.__otioContextObserved) return;
+      canvas.__otioContextObserved = true;
+      try {
+        canvas.addEventListener(
+          'contextlost',
+          (e) => {
+            try {
+              record('contextlost', e.target, e);
+            } catch {}
+          },
+          { capture: true, passive: true }
+        );
+        canvas.addEventListener(
+          'contextrestored',
+          (e) => {
+            try {
+              record('contextrestored', e.target, e);
+            } catch {}
+          },
+          { capture: true, passive: true }
+        );
+      } catch {}
+    };
+
+    const scan = () => {
+      try {
+        const canvases = document.querySelectorAll('canvas.otio-canvas');
+        for (let i = 0; i < canvases.length; i++) attach(canvases[i]);
+      } catch {}
+    };
+
+    window.addEventListener(
+      'contextlost',
+      (e) => {
+        try {
+          const t = e.target;
+          if (
+            t &&
+            ((t.matches && t.matches('canvas.otio-canvas')) ||
+              (t.classList && t.classList.contains('otio-canvas')))
+          ) {
+            record('contextlost', t, e);
+          }
+        } catch {}
+      },
+      { capture: true, passive: true }
+    );
+
+    window.addEventListener(
+      'contextrestored',
+      (e) => {
+        try {
+          const t = e.target;
+          if (
+            t &&
+            ((t.matches && t.matches('canvas.otio-canvas')) ||
+              (t.classList && t.classList.contains('otio-canvas')))
+          ) {
+            record('contextrestored', t, e);
+          }
+        } catch {}
+      },
+      { capture: true, passive: true }
+    );
+
+    const setupObserver = () => {
+      try {
+        scan();
+        if (document.documentElement) {
+          const observer = new MutationObserver(() => scan());
+          observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+          });
+        }
+      } catch {}
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupObserver);
+    } else {
+      setupObserver();
+    }
+    console.log('[otio-fault-page] contextEventLogPrelude installed');
+  } catch (err) {
+    console.error('[otio-fault-page] contextEventLogPrelude setup error:', err);
+  }
+})();`;
+
+const faultBarrierPrelude = String.raw`(() => {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      CanvasRenderingContext2D.prototype,
+      'drawImage'
+    );
+    if (!descriptor || typeof descriptor.value !== 'function' || !descriptor.configurable) {
+      console.error('[otio-fault-page] cannot wrap drawImage:', descriptor);
+      return;
+    }
+    const originalDrawImage = descriptor.value;
+    let visiblePaintCount = 0;
+
+    Object.defineProperty(CanvasRenderingContext2D.prototype, 'drawImage', {
+      ...descriptor,
+      value: function (...args) {
+        let result;
+        try {
+          result = Reflect.apply(originalDrawImage, this, args);
+        } catch (error) {
+          throw error;
+        }
+        try {
+          const c = this.canvas;
+          const isVisible =
+            c &&
+            ((typeof c.matches === 'function' && c.matches('canvas.otio-canvas')) ||
+              (c.classList && c.classList.contains('otio-canvas')));
+          if (isVisible) {
+            visiblePaintCount++;
+            const arm = globalThis.__otioFaultArm;
+            console.log('[otio-fault-page] visible paint #' + visiblePaintCount + ', arm=' + arm);
+            if (arm === 'visible-paint-end-1' && visiblePaintCount === 1) {
+              globalThis.__otioFaultArm = null;
+              globalThis.__otioFaultHit = performance.timeOrigin + performance.now();
+              console.log('[otio-fault-page] hitting debugger for visible-paint-end-1 at ' + globalThis.__otioFaultHit);
+              debugger;
+            } else if (arm === 'next-visible-paint-end') {
+              globalThis.__otioFaultArm = null;
+              globalThis.__otioFaultHit = performance.timeOrigin + performance.now();
+              console.log('[otio-fault-page] hitting debugger for next-visible-paint-end at ' + globalThis.__otioFaultHit);
+              debugger;
+            }
+          }
+        } catch (err) {
+          console.error('[otio-fault-page] drawImage hook error:', err);
+        }
+        return result;
+      },
+    });
+    console.log('[otio-fault-page] faultBarrierPrelude installed');
+  } catch (err) {
+    console.error('[otio-fault-page] faultBarrierPrelude setup error:', err);
+  }
+})();`;
 
 async function openBrowser(
   url: string,
@@ -1662,6 +1931,42 @@ async function openBrowser(
     throw error;
   }
   children.add(child);
+  const browserSeq = ++nextBrowserSeq;
+  const seq = String(browserSeq).padStart(2, '0');
+  const label = options.label ?? options.decoderTraceLabel ?? 'browser';
+  const stderrDir = join(shotDir, 'browser-stderr');
+  await mkdir(stderrDir, { recursive: true });
+  const stderrPath = join(stderrDir, `${seq}-${label}.log`);
+  await writeFile(stderrPath, Buffer.alloc(0)).catch(() => {});
+
+  const stderrPipe = child.stdio[2];
+  assert.ok(
+    stderrPipe instanceof Readable,
+    'Chrome fd 2 did not expose a readable stderr pipe'
+  );
+  const MAX_STDERR_BYTES = 1024 * 1024;
+  const stderrChunks: Buffer[] = [];
+  let stderrBytes = 0;
+
+  const flushStderr = async () => {
+    try {
+      await writeFile(stderrPath, Buffer.concat(stderrChunks));
+    } catch {}
+  };
+
+  stderrPipe.on('data', (chunk: Buffer) => {
+    if (stderrBytes < MAX_STDERR_BYTES) {
+      const take = Math.min(chunk.length, MAX_STDERR_BYTES - stderrBytes);
+      stderrChunks.push(chunk.subarray(0, take));
+      stderrBytes += take;
+    }
+  });
+  stderrPipe.on('end', () => {
+    void flushStderr();
+  });
+  stderrPipe.on('close', () => {
+    void flushStderr();
+  });
   let startupConnection: CdpConnection | undefined;
   try {
     const toChrome = child.stdio[3];
@@ -1676,6 +1981,16 @@ async function openBrowser(
     );
     const cdp = connectPipe(toChrome, fromChrome);
     startupConnection = cdp;
+    const faultState: FaultBarrierState = {
+      arm_time: null,
+      hit_time: null,
+      debugger_paused_time: null,
+      gpu_pid: null,
+      crash_gpu_response: null,
+      gpu_pid_gone_time: null,
+      resume_time: null,
+      context_lost_time: null,
+    };
     const blocked: string[] = [];
     const continuedNonLoopback: string[] = [];
     const cspHeaders: string[] = [];
@@ -1696,6 +2011,96 @@ async function openBrowser(
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Runtime.enable', {}, sessionId);
     await cdp.send('Network.enable', {}, sessionId);
+    await cdp.send('Debugger.enable', {}, sessionId);
+    const stopDebugger = cdp.onEvent(async (event) => {
+      if (event.method !== 'Debugger.paused' || event.sessionId !== sessionId) {
+        return;
+      }
+      faultState.debugger_paused_time = Date.now();
+      console.log(
+        `[otio-fault-harness] Debugger.paused received at ${faultState.debugger_paused_time}`
+      );
+      let gpuPid: number | undefined;
+      try {
+        const info = (await cdp.send('SystemInfo.getProcessInfo')) as {
+          processInfo?: Array<{ id: number; type: string }>;
+        };
+        const gpu = info.processInfo?.find(
+          (p) => p.type === 'gpu' || p.type.includes('gpu')
+        );
+        if (gpu && typeof gpu.id === 'number') {
+          gpuPid = gpu.id;
+        }
+      } catch (err) {
+        console.error('[otio-fault-harness] SystemInfo.getProcessInfo error:', err);
+      }
+      if (!gpuPid) {
+        try {
+          const psOut = execSync('ps -ax -o pid,ppid,command', {
+            encoding: 'utf8',
+          });
+          for (const line of psOut.split('\n')) {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length >= 3) {
+              const pid = Number(parts[0]);
+              const ppid = Number(parts[1]);
+              const cmd = parts.slice(2).join(' ');
+              if (
+                cmd.includes('--type=gpu-process') &&
+                (ppid === child.pid ||
+                  cmd.includes(profile) ||
+                  cmd.includes(String(child.pid)))
+              ) {
+                gpuPid = pid;
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[otio-fault-harness] ps fallback error:', err);
+        }
+      }
+      faultState.gpu_pid = gpuPid ?? null;
+      console.log(`[otio-fault-harness] Target GPU pid: ${gpuPid}`);
+
+      try {
+        const crashRes = await cdp.send('Browser.crashGpuProcess');
+        faultState.crash_gpu_response = crashRes;
+        console.log('[otio-fault-harness] Browser.crashGpuProcess completed');
+      } catch (err) {
+        console.error('[otio-fault-harness] Browser.crashGpuProcess error:', err);
+        faultState.crash_gpu_response = { error: String(err) };
+      }
+
+      if (gpuPid) {
+        const start = Date.now();
+        while (Date.now() - start < 2000) {
+          let alive = false;
+          try {
+            process.kill(gpuPid, 0);
+            alive = true;
+          } catch {
+            alive = false;
+          }
+          if (!alive) break;
+          const { promise, resolve } = Promise.withResolvers<void>();
+          setTimeout(resolve, 50);
+          await promise;
+        }
+        faultState.gpu_pid_gone_time = Date.now();
+        console.log(
+          `[otio-fault-harness] GPU pid ${gpuPid} confirmed dead at ${faultState.gpu_pid_gone_time}`
+        );
+      }
+
+      try {
+        await cdp.send('Debugger.resume', {}, sessionId);
+        faultState.resume_time = Date.now();
+        console.log('[otio-fault-harness] Debugger.resume completed');
+      } catch (err) {
+        console.error('[otio-fault-harness] Debugger.resume error:', err);
+      }
+    });
     await cdp.send(
       'Fetch.enable',
       { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
@@ -1759,7 +2164,322 @@ async function openBrowser(
         },
       });
     }
-  })()`;
+  })();`;
+    const decoderTracePrelude = String.raw`(() => {
+    const key = '__relicOtioDecoderTrace';
+    const capacity = 512;
+    const ids = {
+      media: new WeakMap(),
+      canvas: new WeakMap(),
+      drawable: new WeakMap(),
+    };
+    const idCounters = { media: 0, canvas: 0, drawable: 0 };
+    const state = {
+      nextSequence: 0,
+      events: [],
+      overflow: { dropped: 0, firstDroppedSequence: null },
+      installationErrors: [],
+      runtimeErrors: [],
+    };
+    const errorText = (error) => {
+      try {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'name' in error &&
+          'message' in error
+        ) {
+          return String(error.name) + ': ' + String(error.message);
+        }
+        return String(error);
+      } catch {
+        return '[unreadable error]';
+      }
+    };
+    const safe = (read) => {
+      try {
+        return read();
+      } catch {
+        return null;
+      }
+    };
+    const numberOrNull = (value) =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    const booleanOrNull = (value) =>
+      typeof value === 'boolean' ? value : null;
+    const stableId = (value, kind) => {
+      if (
+        !value ||
+        (typeof value !== 'object' && typeof value !== 'function')
+      ) {
+        return null;
+      }
+      const map = ids[kind];
+      let id = map.get(value);
+      if (!id) {
+        idCounters[kind] += 1;
+        id = kind + '-' + idCounters[kind];
+        map.set(value, id);
+      }
+      return id;
+    };
+    const record = (event, fields = {}) => {
+      const sequence = state.nextSequence;
+      state.nextSequence += 1;
+      if (state.events.length >= capacity) {
+        state.overflow.dropped += 1;
+        if (state.overflow.firstDroppedSequence === null) {
+          state.overflow.firstDroppedSequence = sequence;
+        }
+        return;
+      }
+      state.events.push({
+        sequence,
+        browser_time_ms: safe(() => performance.now()) ?? 0,
+        event,
+        ...fields,
+      });
+    };
+    const recordSafely = (event, fields = {}) => {
+      try {
+        record(event, fields);
+      } catch (error) {
+        state.runtimeErrors.push(errorText(error));
+      }
+    };
+    const mediaError = (video) => {
+      const error = safe(() => video.error);
+      if (!error) return null;
+      return {
+        code: numberOrNull(safe(() => error.code)),
+        message: safe(() => String(error.message)),
+      };
+    };
+    const videoSnapshot = (video) => ({
+      media_id: stableId(video, 'media'),
+      current_time: numberOrNull(safe(() => video.currentTime)),
+      seeking: booleanOrNull(safe(() => video.seeking)),
+      ready_state: numberOrNull(safe(() => video.readyState)),
+      network_state: numberOrNull(safe(() => video.networkState)),
+      video_width: numberOrNull(safe(() => video.videoWidth)),
+      video_height: numberOrNull(safe(() => video.videoHeight)),
+      error: mediaError(video),
+    });
+    const canvasSnapshot = (canvas) => ({
+      canvas_id: stableId(canvas, 'canvas'),
+      width: numberOrNull(safe(() => canvas.width)),
+      height: numberOrNull(safe(() => canvas.height)),
+    });
+    const drawableSnapshot = (value) => {
+      if (value instanceof HTMLVideoElement) {
+        return {
+          id: stableId(value, 'media'),
+          kind: 'video',
+          width: numberOrNull(safe(() => value.videoWidth)),
+          height: numberOrNull(safe(() => value.videoHeight)),
+        };
+      }
+      if (
+        value instanceof HTMLCanvasElement ||
+        (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)
+      ) {
+        return {
+          id: stableId(value, 'canvas'),
+          kind: 'canvas',
+          width: numberOrNull(safe(() => value.width)),
+          height: numberOrNull(safe(() => value.height)),
+        };
+      }
+      if (value instanceof HTMLImageElement) {
+        return {
+          id: stableId(value, 'drawable'),
+          kind: 'image',
+          width: numberOrNull(safe(() => value.naturalWidth)),
+          height: numberOrNull(safe(() => value.naturalHeight)),
+        };
+      }
+      return {
+        id: stableId(value, 'drawable'),
+        kind: safe(() => value?.constructor?.name) ?? typeof value,
+        width: numberOrNull(safe(() => value?.width)),
+        height: numberOrNull(safe(() => value?.height)),
+      };
+    };
+    const numericArguments = (values) =>
+      values.map((value) => numberOrNull(value));
+    const canvasOperation = (name, context, args) => {
+      const destination = canvasSnapshot(context.canvas);
+      if (name === 'drawImage') {
+        const source = args[0];
+        return {
+          source: drawableSnapshot(source),
+          destination,
+          arguments: numericArguments(args.slice(1)),
+          native_video:
+            source instanceof HTMLVideoElement ? videoSnapshot(source) : null,
+        };
+      }
+      return {
+        source: null,
+        destination,
+        rect: {
+          x: numberOrNull(args[0]),
+          y: numberOrNull(args[1]),
+          width: numberOrNull(args[2]),
+          height: numberOrNull(args[3]),
+        },
+      };
+    };
+    const install = (name, operation) => {
+      try {
+        operation();
+      } catch (error) {
+        const message = name + ': ' + errorText(error);
+        state.installationErrors.push(message);
+        recordSafely('instrumentation_install_error', { name, error: message });
+      }
+    };
+    const wrapCanvasMethod = (name) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        CanvasRenderingContext2D.prototype,
+        name
+      );
+      if (!descriptor || typeof descriptor.value !== 'function') {
+        throw new Error('missing CanvasRenderingContext2D.' + name);
+      }
+      const original = descriptor.value;
+      Object.defineProperty(CanvasRenderingContext2D.prototype, name, {
+        ...descriptor,
+        value: function (...args) {
+          let operation;
+          try {
+            operation = canvasOperation(name, this, args);
+          } catch (error) {
+            const message = name + ': ' + errorText(error);
+            state.runtimeErrors.push(message);
+            operation = { trace_error: message };
+          }
+          let result;
+          try {
+            result = Reflect.apply(original, this, args);
+          } catch (error) {
+            recordSafely('canvas_' + name, {
+              ...operation,
+              outcome: 'thrown',
+              error: errorText(error),
+            });
+            throw error;
+          }
+          recordSafely('canvas_' + name, { ...operation, outcome: 'returned' });
+          return result;
+        },
+      });
+    };
+    const api = {
+      beginSeek(frame) {
+        const discarded_events = state.events.length;
+        const prior_overflow = { ...state.overflow };
+        state.events.length = 0;
+        state.overflow = { dropped: 0, firstDroppedSequence: null };
+        recordSafely('seek_before_input_dispatch', {
+          frame,
+          discarded_events,
+          prior_overflow,
+        });
+      },
+      mark(event, fields = {}) {
+        recordSafely(event, fields);
+      },
+      canvasId(canvas) {
+        return stableId(canvas, 'canvas');
+      },
+      snapshotVideo(video) {
+        return video instanceof HTMLVideoElement ? videoSnapshot(video) : null;
+      },
+      snapshot() {
+        return {
+          version: 1,
+          capacity,
+          next_sequence: state.nextSequence,
+          events: state.events.slice(),
+          overflow: { ...state.overflow },
+          installation_errors: state.installationErrors.slice(),
+          runtime_errors: state.runtimeErrors.slice(),
+        };
+      },
+    };
+    Reflect.set(globalThis, key, api);
+    install('media-current-time', () => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        HTMLMediaElement.prototype,
+        'currentTime'
+      );
+      if (!descriptor?.get || !descriptor.set || !descriptor.configurable) {
+        throw new Error('currentTime descriptor is not wrappable');
+      }
+      Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+        ...descriptor,
+        get() {
+          return descriptor.get.call(this);
+        },
+        set(value) {
+          if (!(this instanceof HTMLVideoElement)) {
+            return descriptor.set.call(this, value);
+          }
+          const before = videoSnapshot(this);
+          const input =
+            typeof value === 'number'
+              ? Number.isFinite(value)
+                ? value
+                : String(value)
+              : null;
+          const input_type = typeof value;
+          let result;
+          try {
+            result = descriptor.set.call(this, value);
+          } catch (error) {
+            recordSafely('native_video_current_time', {
+              input,
+              input_type,
+              before,
+              after: videoSnapshot(this),
+              outcome: 'thrown',
+              error: errorText(error),
+            });
+            throw error;
+          }
+          recordSafely('native_video_current_time', {
+            input,
+            input_type,
+            before,
+            after: videoSnapshot(this),
+            outcome: 'returned',
+          });
+          return result;
+        },
+      });
+    });
+    install('media-events', () => {
+      for (const eventType of ['loadeddata', 'seeking', 'seeked', 'error']) {
+        document.addEventListener(
+          eventType,
+          (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLVideoElement)) return;
+            recordSafely('native_video_event', {
+              event_type: eventType,
+              video: videoSnapshot(target),
+            });
+          },
+          true
+        );
+      }
+    });
+    for (const name of ['fillRect', 'clearRect', 'drawImage']) {
+      install('canvas-' + name, () => wrapCanvasMethod(name));
+    }
+    recordSafely('instrumentation_ready', { capacity });
+  })();`;
     const pagePrelude = [
       options.recordMediaSeekTargets
         ? String.raw`(() => {
@@ -1782,12 +2502,15 @@ async function openBrowser(
               descriptor.set.call(this, value);
             },
           });
-        })()`
+        })();`
         : '',
+      contextEventLogPrelude,
+      faultBarrierPrelude,
       options.blockWebCodecs ? webCodecsTrap : '',
+      options.captureDecoderTrace ? decoderTracePrelude : '',
     ]
       .filter(Boolean)
-      .join('\n');
+      .join(';\n');
     if (pagePrelude) {
       await cdp.send(
         'Page.addScriptToEvaluateOnNewDocument',
@@ -1890,6 +2613,34 @@ async function openBrowser(
       continuedNonLoopback,
       cspHeaders,
       workerUrls,
+      captureDecoderTrace: options.captureDecoderTrace === true,
+      decoderTraceLabel: options.decoderTraceLabel ?? null,
+      label,
+      faultState,
+      async getContextEvents(): Promise<
+        Array<{ type: string; timestamp: number; target: string | null }>
+      > {
+        return (
+          (await cdp
+            .send(
+              'Runtime.evaluate',
+              {
+                expression: '(globalThis.__otioContextEvents || []).slice()',
+                returnByValue: true,
+              },
+              sessionId
+            )
+            .then(
+              (res) =>
+                (res['result'] as { value?: unknown } | undefined)?.value
+            )
+            .catch(() => [])) as Array<{
+            type: string;
+            timestamp: number;
+            target: string | null;
+          }>
+        );
+      },
       send: (method, params) => cdp.send(method, params, sessionId),
       async evaluate<T>(expression: string): Promise<T> {
         const res = await cdp.send(
@@ -1947,6 +2698,37 @@ async function openBrowser(
         await writeFile(join(shotDir, `${label}.png`), bytes);
       },
       async close(): Promise<void> {
+        if (options.captureDecoderTrace) {
+          try {
+            let trace: Record<string, unknown> | null = null;
+            let flush_error: string | null = null;
+            try {
+              const evalResult = await cdp.send(
+                'Runtime.evaluate',
+                {
+                  expression:
+                    'globalThis.__relicOtioDecoderTrace?.snapshot() ?? null',
+                  returnByValue: true,
+                },
+                sessionId
+              );
+              const inner = evalResult['result'] as
+                | { value?: unknown }
+                | undefined;
+              trace = (inner?.value as Record<string, unknown> | null) ?? null;
+            } catch (error) {
+              flush_error =
+                error instanceof Error ? error.message : String(error);
+            }
+            await persistDecoderTraceObservation(
+              options.decoderTraceLabel,
+              'teardown',
+              { trace, flush_error }
+            );
+          } catch {
+            // Teardown raw CDP flush errors captured never prevents close.
+          }
+        }
         await cdp
           .send(
             'Runtime.evaluate',
@@ -1978,6 +2760,68 @@ async function openBrowser(
             sessionId
           )
           .catch(() => {});
+        stopDebugger();
+        await cdp.send('Debugger.disable', {}, sessionId).catch(() => {});
+        let latestEvents: unknown[] = [];
+        try {
+          const events = (await cdp
+            .send(
+              'Runtime.evaluate',
+              {
+                expression: '(globalThis.__otioContextEvents || []).slice()',
+                returnByValue: true,
+              },
+              sessionId
+            )
+            .then(
+              (res) =>
+                (res['result'] as { value?: unknown } | undefined)?.value
+            )
+            .catch(() => [])) as unknown[];
+          if (Array.isArray(events)) {
+            latestEvents = events;
+            const lostEvt = events.find(
+              (e: unknown): e is { type: string; timestamp: number } =>
+                typeof e === 'object' &&
+                e !== null &&
+                'type' in e &&
+                (e as { type: string }).type === 'contextlost'
+            );
+            if (lostEvt && typeof lostEvt.timestamp === 'number') {
+              faultState.context_lost_time = lostEvt.timestamp;
+            }
+            if (events.length > 0) {
+              const contextEventsDir = join(shotDir, 'context-events');
+              await mkdir(contextEventsDir, { recursive: true });
+              await writeFile(
+                join(contextEventsDir, `${seq}-${label}.json`),
+                `${JSON.stringify({ sequence: seq, label, events }, null, 2)}\n`
+              );
+            }
+          }
+        } catch {}
+        if (faultState.arm_time !== null) {
+          try {
+            const receipt = {
+              fault: 'available-origin-cut-56',
+              arm_time: faultState.arm_time,
+              hit_time: faultState.hit_time,
+              debugger_paused_time: faultState.debugger_paused_time,
+              gpu_pid: faultState.gpu_pid,
+              crash_gpu_response: faultState.crash_gpu_response,
+              gpu_pid_gone_time: faultState.gpu_pid_gone_time,
+              resume_time: faultState.resume_time,
+              context_lost_time: faultState.context_lost_time,
+              context_events: latestEvents,
+            };
+            await mkdir(shotDir, { recursive: true });
+            await writeFile(
+              join(shotDir, 'fault-receipt.json'),
+              `${JSON.stringify(receipt, null, 2)}\n`
+            );
+          } catch {}
+        }
+        await flushStderr();
         await cdp.send('Browser.close').catch(() => {});
         child.kill('SIGKILL');
         children.delete(child);
@@ -1986,6 +2830,7 @@ async function openBrowser(
       },
     };
   } catch (error) {
+    await flushStderr();
     await cleanupOwnedBrowserStartup({
       child,
       connection: startupConnection,
@@ -2020,16 +2865,25 @@ async function waitReady(browser: ChromeSession): Promise<string> {
 }
 
 async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
+  const before = browser.captureDecoderTrace
+    ? `globalThis.__relicOtioDecoderTrace?.beginSeek(${frame}); `
+    : '';
+  const after = browser.captureDecoderTrace
+    ? ` globalThis.__relicOtioDecoderTrace?.mark('seek_after_input_dispatch', { frame: ${frame} });`
+    : '';
+  const terminal = browser.captureDecoderTrace
+    ? `globalThis.__relicOtioDecoderTrace?.mark('seek_terminal_predicate_true', { frame: ${frame}, root_frame: root.dataset.frame ?? null, buffering: root.dataset.buffering ?? null }), `
+    : '';
   const landed = await browser.evaluate<boolean>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
     const seek = document.querySelector('input.otio-seek');
     if (!seek) { resolve(false); return promise; }
     seek.value = '${frame}';
-    seek.dispatchEvent(new Event('input', { bubbles: true }));
+    ${before}seek.dispatchEvent(new Event('input', { bubbles: true }));${after}
     const start = Date.now();
     const tick = () => {
       const root = document.querySelector('.otio-view');
-      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) resolve(true);
+      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) ${terminal}resolve(true);
       else if (Date.now() - start > 12000) resolve(false);
       else setTimeout(tick, 50);
     };
@@ -2048,26 +2902,193 @@ async function sampleCanvas(
   width: number,
   height: number
 ): Promise<Uint8Array> {
-  const values = await browser.evaluate<number[]>(`(() => {
+  if (!browser.captureDecoderTrace) {
+    const read = await browser.evaluate<{
+      values: number[] | null;
+      lost: boolean;
+      context_events: Array<{
+        type: string;
+        timestamp: number;
+        target: string | null;
+      }>;
+      alpha: CanvasAlphaStatistics;
+    }>(`(() => {
     const canvas = document.querySelector('canvas.otio-canvas');
     if (!canvas) return null;
-    const src = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const ctx = canvas.getContext('2d');
+    const lost = typeof ctx?.isContextLost === 'function' ? ctx.isContextLost() : false;
+    let src = null;
+    try {
+      src = ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
+    } catch {}
+    if (!src) {
+      src = new Uint8Array(canvas.width * canvas.height * 4);
+    }
     const out = [];
+    let alphaMin = 255;
+    let alphaMax = 0;
+    let alphaSum = 0;
+    let alphaZeroCount = 0;
+    let alphaOpaqueCount = 0;
     for (let y = 0; y < ${height}; y++) {
       const sy = Math.min(canvas.height - 1, Math.floor(y * canvas.height / ${height}));
       for (let x = 0; x < ${width}; x++) {
         const sx = Math.min(canvas.width - 1, Math.floor(x * canvas.width / ${width}));
         const i = (sy * canvas.width + sx) * 4;
         out.push(src[i], src[i + 1], src[i + 2]);
+        const a = src[i + 3];
+        if (a < alphaMin) alphaMin = a;
+        if (a > alphaMax) alphaMax = a;
+        alphaSum += a;
+        if (a === 0) alphaZeroCount++;
+        if (a === 255) alphaOpaqueCount++;
       }
     }
-    return out;
+    const sample_count = ${width} * ${height};
+    return {
+      values: out,
+      lost,
+      context_events: (globalThis.__otioContextEvents || []).slice(),
+      alpha: {
+        sample_count,
+        min: sample_count > 0 ? alphaMin : 0,
+        max: sample_count > 0 ? alphaMax : 0,
+        mean: sample_count > 0 ? alphaSum / sample_count : 0,
+        zero_count: alphaZeroCount,
+        opaque_count: alphaOpaqueCount,
+      },
+    };
   })()`);
+    assert.ok(
+      read?.values && read.values.length === width * height * 3,
+      'canvas sample missing'
+    );
+    const record: CanvasAlphaCensusRecord = {
+      sequence: ++nextCanvasAlphaCensusSeq,
+      browser_label: browser.label ?? browser.decoderTraceLabel,
+      width,
+      height,
+      lost: Boolean(read.lost),
+      alpha: read.alpha,
+      context_events: read.context_events ?? [],
+      timestamp: Date.now(),
+    };
+    canvasAlphaCensus.push(record);
+    latestCanvasAlphaRecord = record;
+    await persistCanvasAlphaCensus();
+    return Uint8Array.from(read.values);
+  }
+
+  const read = await browser.evaluate<DecoderTraceCanvasRead>(`(() => {
+    const trace = globalThis.__relicOtioDecoderTrace;
+    const rootEl = document.querySelector('.otio-view');
+    const root = rootEl ? {
+      frame: rootEl.dataset.frame ?? null,
+      buffering: rootEl.dataset.buffering ?? null,
+      ready: rootEl.dataset.ready ?? null,
+      preview_state: rootEl.dataset.previewState ?? null,
+      preview_blocked: rootEl.dataset.previewBlocked ?? null,
+    } : null;
+    const diagnostics = Array.from(
+      document.querySelectorAll('.otio-diagnostics'),
+      (element) => element.textContent ?? ''
+    );
+    const videoElements = Array.from(
+      document.querySelectorAll('.otio-video-decoders video')
+    );
+    const native_videos = videoElements
+      .map((video) => trace?.snapshotVideo(video) ?? null)
+      .filter((entry) => entry !== null);
+    const canvas = document.querySelector('canvas.otio-canvas');
+    if (!canvas) {
+      return {
+        rgb: null,
+        alpha: null,
+        lost: false,
+        context_events: (globalThis.__otioContextEvents || []).slice(),
+        root,
+        diagnostics,
+        selected_canvas_id: null,
+        native_videos,
+        trace: trace?.snapshot() ?? null,
+      };
+    }
+    const ctx = canvas.getContext('2d');
+    const lost = typeof ctx?.isContextLost === 'function' ? ctx.isContextLost() : false;
+    let src = null;
+    try {
+      src = ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
+    } catch {}
+    if (!src) {
+      src = new Uint8Array(canvas.width * canvas.height * 4);
+    }
+    const out = [];
+    let alphaMin = 255;
+    let alphaMax = 0;
+    let alphaSum = 0;
+    let alphaZeroCount = 0;
+    let alphaOpaqueCount = 0;
+    for (let y = 0; y < ${height}; y++) {
+      const sy = Math.min(canvas.height - 1, Math.floor(y * canvas.height / ${height}));
+      for (let x = 0; x < ${width}; x++) {
+        const sx = Math.min(canvas.width - 1, Math.floor(x * canvas.width / ${width}));
+        const i = (sy * canvas.width + sx) * 4;
+        out.push(src[i], src[i + 1], src[i + 2]);
+        const a = src[i + 3];
+        if (a < alphaMin) alphaMin = a;
+        if (a > alphaMax) alphaMax = a;
+        alphaSum += a;
+        if (a === 0) alphaZeroCount++;
+        if (a === 255) alphaOpaqueCount++;
+      }
+    }
+    const sample_count = ${width} * ${height};
+    const alpha = {
+      sample_count,
+      min: sample_count > 0 ? alphaMin : 0,
+      max: sample_count > 0 ? alphaMax : 0,
+      mean: sample_count > 0 ? alphaSum / sample_count : 0,
+      zero_count: alphaZeroCount,
+      opaque_count: alphaOpaqueCount,
+    };
+    return {
+      rgb: out,
+      alpha,
+      lost,
+      context_events: (globalThis.__otioContextEvents || []).slice(),
+      root,
+      diagnostics,
+      selected_canvas_id: trace?.canvasId(canvas) ?? null,
+      native_videos,
+      trace: trace?.snapshot() ?? null,
+    };
+  })()`);
+
+  await persistDecoderTraceObservation(
+    browser.decoderTraceLabel,
+    'sample',
+    read as unknown as Record<string, unknown>
+  );
+  if (read?.alpha) {
+    const record: CanvasAlphaCensusRecord = {
+      sequence: ++nextCanvasAlphaCensusSeq,
+      browser_label: browser.label ?? browser.decoderTraceLabel,
+      width,
+      height,
+      lost: Boolean(read.lost),
+      alpha: read.alpha,
+      context_events: read.context_events ?? [],
+      timestamp: Date.now(),
+    };
+    canvasAlphaCensus.push(record);
+    latestCanvasAlphaRecord = record;
+    await persistCanvasAlphaCensus();
+  }
   assert.ok(
-    values && values.length === width * height * 3,
+    read?.rgb && read.rgb.length === width * height * 3,
     'canvas sample missing'
   );
-  return Uint8Array.from(values);
+  return Uint8Array.from(read.rgb);
 }
 
 async function canvasRowCenter(browser: ChromeSession): Promise<number> {
@@ -4875,7 +5896,9 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
     createdAt: loopbackNow,
     expiresAt: loopbackNow + app.config.sessionTtlSeconds * 1000,
   });
-  const browser = await openBrowser(shareUrl, auxiliaryToken);
+  const browser = await openBrowser(shareUrl, auxiliaryToken, {
+    label: 'auxiliary-coincident-comment-reveal',
+  });
   const measurements: Array<Record<string, unknown>> = [];
   try {
     assert.equal(
@@ -5980,6 +7003,24 @@ async function recordPacketCanvasMeasurement(
   );
 }
 
+async function persistDecoderTraceObservation(
+  label: string | null | undefined,
+  phase: string,
+  data?: Record<string, unknown> | null
+): Promise<void> {
+  const observation: Record<string, unknown> = {
+    label: label ?? null,
+    phase,
+    recorded_at: new Date().toISOString(),
+    ...(data ?? {}),
+  };
+  decoderTraceObservations.push(observation);
+  await writeFile(
+    join(shotDir, 'decoder-trace.json'),
+    `${JSON.stringify({ format: 'relic-otio-decoder-trace/v1', observations: decoderTraceObservations }, null, 2)}\n`
+  );
+}
+
 async function assertPacketCanvas(
   browser: ChromeSession,
   label: string,
@@ -6082,6 +7123,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   const knownUrl = await publishDecoderDirectory('known', decoderFixtureDir);
   const knownBrowser = await openBrowser(knownUrl, sessionToken, {
     blockWebCodecs: true,
+    label: 'decoder-known',
   });
   try {
     assert.equal(
@@ -6182,6 +7224,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const webmBrowser = await openBrowser(webmUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    label: 'decoder-webm',
   });
   try {
     assert.equal(await waitReady(webmBrowser), 'true');
@@ -6235,7 +7278,11 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     'near-zero',
     nearZeroDocument
   );
-  const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken);
+  const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken, {
+    captureDecoderTrace,
+    decoderTraceLabel: 'near-zero-control',
+    label: 'near-zero-control',
+  });
   try {
     const nearZeroReady = await waitReady(nearZeroBrowser);
     assert.equal(
@@ -6306,7 +7353,8 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   );
   const strictNegativeBrowser = await openBrowser(
     strictNegativeUrl,
-    sessionToken
+    sessionToken,
+    { label: 'strict-negative' }
   );
   try {
     assert.equal(await waitReady(strictNegativeBrowser), 'diagnostic');
@@ -6319,7 +7367,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     assert.equal(
       isOpaqueBlack(await sampleCanvas(strictNegativeBrowser, width, height)),
       true,
-      'truly negative source time painted media'
+      `truly negative source time painted media (${formatAlphaCensus()})`
     );
   } finally {
     await strictNegativeBrowser.close();
@@ -6358,7 +7406,12 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   );
   const availableOriginCutBrowser = await openBrowser(
     availableOriginCutUrl,
-    sessionToken
+    sessionToken,
+    {
+      captureDecoderTrace,
+      decoderTraceLabel: 'available-origin-cut-witness',
+      label: 'available-origin-cut',
+    }
   );
   try {
     assert.equal(await waitReady(availableOriginCutBrowser), 'true');
@@ -6368,9 +7421,74 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
         await sampleCanvas(availableOriginCutBrowser, width, height)
       ),
       true,
-      'available-origin/cut witness has media before cut-c'
+      `available-origin/cut witness has media before cut-c (${formatAlphaCensus()})`
     );
+    if (process.env['RELIC_OTIO_FAULT'] === 'available-origin-cut-56') {
+      const armTime = Date.now();
+      availableOriginCutBrowser.faultState.arm_time = armTime;
+      console.log(`[otio-fault] Arming available-origin-cut-56 at ${armTime}`);
+      await availableOriginCutBrowser.evaluate<void>(`(() => {
+        globalThis.__otioFaultArm = 'next-visible-paint-end';
+        console.log('[otio-fault-page] armed __otioFaultArm = next-visible-paint-end at ' + (performance.timeOrigin + performance.now()));
+      })()`);
+    }
     await seekTo(availableOriginCutBrowser, 56);
+    if (process.env['RELIC_OTIO_FAULT'] === 'available-origin-cut-56') {
+      const pageFaultInfo = await availableOriginCutBrowser.evaluate<{
+        hit: number | null;
+        arm: string | null;
+        contextEvents: Array<{ type: string; timestamp: number; target: string | null }>;
+      }>(`(() => {
+        return {
+          hit: globalThis.__otioFaultHit ?? null,
+          arm: globalThis.__otioFaultArm ?? null,
+          contextEvents: (globalThis.__otioContextEvents || []).slice(),
+        };
+      })()`);
+
+      availableOriginCutBrowser.faultState.hit_time = pageFaultInfo.hit;
+      const contextLost = pageFaultInfo.contextEvents.find(
+        (e) => e.type === 'contextlost'
+      );
+      if (contextLost) {
+        availableOriginCutBrowser.faultState.context_lost_time =
+          contextLost.timestamp;
+      }
+
+      const receipt = {
+        fault: 'available-origin-cut-56',
+        arm_time: availableOriginCutBrowser.faultState.arm_time,
+        hit_time: availableOriginCutBrowser.faultState.hit_time,
+        debugger_paused_time:
+          availableOriginCutBrowser.faultState.debugger_paused_time,
+        gpu_pid: availableOriginCutBrowser.faultState.gpu_pid,
+        crash_gpu_response:
+          availableOriginCutBrowser.faultState.crash_gpu_response,
+        gpu_pid_gone_time:
+          availableOriginCutBrowser.faultState.gpu_pid_gone_time,
+        resume_time: availableOriginCutBrowser.faultState.resume_time,
+        context_lost_time:
+          availableOriginCutBrowser.faultState.context_lost_time,
+        context_events: pageFaultInfo.contextEvents,
+        unhit_arm: pageFaultInfo.arm,
+      };
+      await mkdir(shotDir, { recursive: true });
+      await writeFile(
+        join(shotDir, 'fault-receipt.json'),
+        `${JSON.stringify(receipt, null, 2)}\n`
+      );
+
+      if (
+        !availableOriginCutBrowser.faultState.hit_time ||
+        !availableOriginCutBrowser.faultState.debugger_paused_time ||
+        !availableOriginCutBrowser.faultState.gpu_pid ||
+        !availableOriginCutBrowser.faultState.gpu_pid_gone_time
+      ) {
+        throw new Error(
+          `FAULT_NOT_FIRED: armed RELIC_OTIO_FAULT=available-origin-cut-56 but fault barrier did not complete (hit=${availableOriginCutBrowser.faultState.hit_time}, paused=${availableOriginCutBrowser.faultState.debugger_paused_time}, gpuPid=${availableOriginCutBrowser.faultState.gpu_pid}, gpuGone=${availableOriginCutBrowser.faultState.gpu_pid_gone_time}, armLeft=${pageFaultInfo.arm})`
+        );
+      }
+    }
     assert.equal(
       (
         await assertPacketCanvas(
@@ -6423,6 +7541,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const editBrowser = await openBrowser(editUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    label: 'decoder-edit',
   });
   try {
     assert.equal(await waitReady(editBrowser), 'diagnostic');
@@ -6460,6 +7579,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const noDurationBrowser = await openBrowser(noDurationUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    label: 'decoder-no-duration',
   });
   try {
     assert.equal(await waitReady(noDurationBrowser), 'true');
@@ -6577,7 +7697,9 @@ try {
   const editedDupRangeBody = 'Duplicate Video 2 edit stays on the same range.';
   const replyBody = 'Reply to the duplicate Video 2 range.';
   let reaimed: HeldComposerProbe | undefined;
-  const browser = await openBrowser(shareUrl, sessionToken);
+  const browser = await openBrowser(shareUrl, sessionToken, {
+    label: 'qualification',
+  });
   try {
     await waitReady(browser);
     const who = await browser.evaluate<{ email: string | null }>(
@@ -6762,12 +7884,12 @@ try {
     assert.equal(
       isOpaqueBlack(outsideCanvas),
       true,
-      'nested plate spilled outside its exposure'
+      `nested plate spilled outside its exposure (${formatAlphaCensus()})`
     );
     assert.ok(
       Math.abs(barColumn(outsideCanvas, width, height) - plateBar) > 3 ||
         isOpaqueBlack(outsideCanvas),
-      'outside frame still shows the nested plate bar'
+      `outside frame still shows the nested plate bar (${formatAlphaCensus()})`
     );
     pass('nested-no-spill');
 
@@ -6890,7 +8012,7 @@ try {
     assert.equal(
       isOpaqueBlack(gapCanvas),
       true,
-      'gap frame is not opaque black'
+      `gap frame is not opaque black (${formatAlphaCensus()})`
     );
     pass('state-gap-black');
 
@@ -8001,7 +9123,9 @@ try {
   );
   const primaryCommentId = String(primaryAfterInsert['comment_id']);
   const insertedVersion = String(inserted['version']);
-  const insertBrowser = await openBrowser(shareUrl, sessionToken);
+  const insertBrowser = await openBrowser(shareUrl, sessionToken, {
+    label: 'version-insert',
+  });
   try {
     await waitReady(insertBrowser);
     const projectedMark = await insertBrowser.evaluate<{
@@ -8192,7 +9316,9 @@ try {
   const stateUrl = String(
     statePublished['url'] ?? statePublished['link'] ?? ''
   );
-  const stateBrowser = await openBrowser(stateUrl, sessionToken);
+  const stateBrowser = await openBrowser(stateUrl, sessionToken, {
+    label: 'state-occlusion',
+  });
   try {
     await waitReady(stateBrowser);
     await setTracksHidden(stateBrowser, plan.nested_occluders, true);
@@ -8230,7 +9356,7 @@ try {
     assert.equal(
       isOpaqueBlack(beneath),
       false,
-      `${statePlan.black_under} paints nothing under the black probe, so the policy check cannot fail`
+      `${statePlan.black_under} paints nothing under the black probe, so the policy check cannot fail (${formatAlphaCensus()})`
     );
     await setTracksHidden(stateBrowser, [statePlan.probe_track], false);
     await seekTo(stateBrowser, statePlan.black_frame);
@@ -8238,7 +9364,7 @@ try {
     assert.equal(
       isOpaqueBlack(black),
       true,
-      'sequence black policy did not paint opaque black'
+      `sequence black policy did not paint opaque black (${formatAlphaCensus()})`
     );
     pass('state-sequence-black');
 
@@ -8255,7 +9381,7 @@ try {
     assert.equal(
       isOpaqueBlack(codecCanvas),
       true,
-      'undecodable media painted a substitute frame'
+      `undecodable media painted a substitute frame (${formatAlphaCensus()})`
     );
     pass('state-codec');
   } finally {
