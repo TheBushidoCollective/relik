@@ -3041,6 +3041,7 @@ describe('otio playback controller', () => {
           code: 'unsupported-browser',
           message:
             'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.',
+          target: { node_id: 'graphics-context-lost' },
         },
       ]);
 
@@ -3231,6 +3232,126 @@ describe('otio playback controller', () => {
       expect(visibleCanvas.style.visibility).toBe('inherit');
     } finally {
       playback.dispose();
+    }
+  });
+
+  test('episode-capped deadline: flapping loss and restore without present fires error at 3000 ms from first loss', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_flapping' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_1' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const visibleCanvas = new LossyCanvas();
+    visibleCanvas.width = 960;
+    visibleCanvas.height = 540;
+
+    let timerCallback: (() => void) | null = null;
+    let scheduledDelay = 0;
+    let timerScheduledCount = 0;
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((
+      fn: (...args: unknown[]) => void,
+      ms?: number
+    ) => {
+      timerCallback = fn as () => void;
+      scheduledDelay = ms ?? 0;
+      timerScheduledCount += 1;
+      return 999 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+
+    let playback: OtioPlaybackController | null = null;
+    try {
+      playback = createOtioPlayback({
+        document: doc,
+        timelineId: 'timeline_flapping',
+        canvas: visibleCanvas as unknown as HTMLCanvasElement,
+        resolveMedia: async () => null,
+      });
+
+      await playback.seek({ value: 0, rate: 24 });
+      expect(playback.getState().diagnostics).toEqual([]);
+
+      // First loss starts 3000ms timer
+      visibleCanvas.loseContext();
+      expect(timerScheduledCount).toBe(1);
+      expect(scheduledDelay).toBe(OTIO_GRAPHICS_RESTORE_MS);
+
+      // Flapping cycles without a successful present do not reset or restart timer
+      visibleCanvas.restoreContext();
+      visibleCanvas.loseContext();
+      expect(timerScheduledCount).toBe(1);
+
+      visibleCanvas.restoreContext();
+      visibleCanvas.loseContext();
+      expect(timerScheduledCount).toBe(1);
+
+      // Deadline fires at 3000ms after first loss
+      const executeTimer = timerCallback as (() => void) | null;
+      if (!executeTimer) throw new Error('deadline timer not scheduled');
+      executeTimer();
+
+      expect(playback.getState().buffering).toBe(false);
+      expect(playback.getState().diagnostics).toEqual([
+        {
+          severity: 'error',
+          code: 'unsupported-browser',
+          message:
+            'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.',
+          target: { node_id: 'graphics-context-lost' },
+        },
+      ]);
+      expect(visibleCanvas.style.visibility).toBe('hidden');
+
+      // A successful present after restore clears timer and error
+      const { promise: presentedPromise, resolve: onPresented } =
+        Promise.withResolvers<void>();
+      playback.subscribe((state) => {
+        if (!state.buffering && state.diagnostics.length === 0) {
+          onPresented();
+        }
+      });
+      visibleCanvas.restoreContext();
+      await presentedPromise;
+
+      expect(playback.getState().diagnostics).toEqual([]);
+      expect(visibleCanvas.style.visibility).not.toBe('hidden');
+
+      // A new loss after a successful present starts a fresh 3000ms episode
+      timerScheduledCount = 0;
+      visibleCanvas.loseContext();
+      expect(timerScheduledCount).toBe(1);
+      expect(scheduledDelay).toBe(OTIO_GRAPHICS_RESTORE_MS);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+      playback?.dispose();
     }
   });
 });

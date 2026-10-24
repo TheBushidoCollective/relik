@@ -692,6 +692,102 @@ describe('OTIO archive projection reader', () => {
       expect(controller).toBeDefined();
       controller?.dispose();
     });
+    test('with base-media preview allowed and the deadline fired, the overlay shows the graphics message', async () => {
+      const root = new ViewElement('div');
+
+      let timerCallback: (() => void) | null = null;
+      const origSetTimeout = globalThis.setTimeout;
+      globalThis.setTimeout = ((fn: (...args: unknown[]) => void) => {
+        timerCallback = fn as () => void;
+        return 999 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout;
+
+      const effectDoc = new TextEncoder().encode(
+        JSON.stringify({
+          OTIO_SCHEMA: 'Timeline.1',
+          name: 'Unsupported effect timeline',
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: [
+              {
+                OTIO_SCHEMA: 'Track.1',
+                kind: 'Video',
+                metadata: { relic: { id: 'track_1' } },
+                children: [
+                  {
+                    OTIO_SCHEMA: 'Clip.1',
+                    metadata: { relic: { id: 'clip_1' } },
+                    source_range: range(0, 24),
+                    effects: [
+                      {
+                        schema: 'CustomEffect.1',
+                        name: 'Glow',
+                        enabled: true,
+                      },
+                    ],
+                    media_reference: {
+                      OTIO_SCHEMA: 'ImageSequenceReference.1',
+                      missing_frame_policy: 'black',
+                      available_range: null,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      );
+
+      try {
+        await mountOtioView(root as unknown as HTMLElement, {
+          content: otioz(effectDoc, []),
+          revision: 1,
+        });
+
+        const controller = otioControllerFor(root as unknown as HTMLElement);
+        if (!controller) throw new Error('expected OTIO controller');
+
+        // Allow base media preview via the button rendered when preview is blocked by effect
+        const baseBtn = findViewElement(
+          root,
+          (el) => el.className === 'otio-preview-base'
+        );
+        expect(baseBtn).toBeDefined();
+        baseBtn?.dispatchEvent(new Event('click'));
+
+        const canvas = findViewElement(root, (el) => el.tagName === 'canvas');
+        if (!canvas) throw new Error('expected canvas element');
+
+        // Trigger visible context lost
+        const listeners = canvas.listeners.get('contextlost');
+        if (listeners) {
+          for (const l of Array.from(listeners)) l(new Event('contextlost'));
+        }
+
+        // Fire deadline timer
+        const executeTimer = timerCallback as (() => void) | null;
+        if (!executeTimer) throw new Error('deadline timer not scheduled');
+        executeTimer();
+
+        // The status overlay element
+        const previewStatus = findViewElement(
+          root,
+          (el) => el.className === 'otio-preview-status'
+        );
+        expect(previewStatus).toBeDefined();
+        expect(previewStatus?.hidden).toBe(false);
+
+        const text =
+          previewStatus?.children.map((c) => c.textContent).join(' ') ?? '';
+        expect(text).toContain(
+          'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.'
+        );
+
+        controller.dispose();
+      } finally {
+        globalThis.setTimeout = origSetTimeout;
+      }
+    });
     test('checks the original digest before reading corrupt current archive media', async () => {
       const expectedContent = projectionContent();
       const wrongOriginal = otioz(structuralContent(), []);

@@ -878,29 +878,28 @@ export function createOtioPlayback(
       }
     }
     surfacePool.length = 0;
-    clearTimeout(restoreTimeout);
-    restoreTimeout = setTimeout(() => {
-      restoreTimeout = undefined;
-      if (isDisposed) return;
-      mediaFailures.set(
-        'graphics-context-lost',
-        diagnostic(
-          'error',
-          'unsupported-browser',
-          'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.'
-        )
-      );
-      isBuffering = false;
-      notify();
-    }, OTIO_GRAPHICS_RESTORE_MS);
+    if (restoreTimeout === undefined) {
+      restoreTimeout = setTimeout(() => {
+        restoreTimeout = undefined;
+        if (isDisposed) return;
+        mediaFailures.set(
+          'graphics-context-lost',
+          diagnostic(
+            'error',
+            'unsupported-browser',
+            'Preview graphics context was lost and the browser did not restore it. Reload the page to try again.',
+            'graphics-context-lost'
+          )
+        );
+        isBuffering = false;
+        notify();
+      }, OTIO_GRAPHICS_RESTORE_MS);
+    }
     notify();
   }
 
   function onVisibleContextRestored(): void {
     if (isDisposed) return;
-    clearTimeout(restoreTimeout);
-    restoreTimeout = undefined;
-    mediaFailures.delete('graphics-context-lost');
     graphicsLost = false;
     const gen = ++renderGeneration;
     clockAnchor = null;
@@ -1955,6 +1954,9 @@ export function createOtioPlayback(
       if (stale(gen)) return;
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
         restoreVisibleCanvas();
+        clearTimeout(restoreTimeout);
+        restoreTimeout = undefined;
+        mediaFailures.delete('graphics-context-lost');
         isBuffering = false;
       }
       notify();
