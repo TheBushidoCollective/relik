@@ -654,6 +654,26 @@ export async function waitForPidGone(pid: number, timeoutMs = 2000): Promise<boo
   return false;
 }
 
+export function getGpuPidFromPs(chromeChildPid?: number): number | null {
+  try {
+    const out = execFileSync('ps', ['-A', '-o', 'pid,ppid,command'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    for (const line of out.split('\n')) {
+      if (line.includes('--type=gpu-process')) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parseInt(parts[0] ?? '', 10);
+        const ppid = parseInt(parts[1] ?? '', 10);
+        if (chromeChildPid === undefined || ppid === chromeChildPid) {
+          if (!isNaN(pid)) return pid;
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
 // Browser session management
 async function openBrowserSession(
   chromePath: string,
@@ -689,6 +709,7 @@ async function openBrowserSession(
             : arg
       ),
       '--autoplay-policy=no-user-gesture-required',
+      '--disable-gpu-process-crash-limit',
     ],
     profile
   );
@@ -697,6 +718,10 @@ async function openBrowserSession(
   try {
     child = spawn(chromePath, launch.args, {
       stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
+    });
+    child.on('exit', (code, sig) => {
+      cdp.dispose();
+      console.log(`[openBrowserSession] Chrome process ${child.pid} exited with code ${code}, signal ${sig}`);
     });
   } catch (error) {
     await rm(profile, { recursive: true, force: true }).catch(() => {});
@@ -849,12 +874,47 @@ async function openBrowserSession(
       );
     }
 
-    async function screenshotCrop(selector: string): Promise<Buffer> {
+    async function screenshotCrop(selector = '.otio-view'): Promise<Buffer> {
       const box = await evaluate<{ x: number; y: number; width: number; height: number } | null>(`(() => {
+        const parts = [
+          document.querySelector('.otio-monitor-row'),
+          document.querySelector('.otio-preview'),
+          document.querySelector('.otio-transport'),
+          document.querySelector('.otio-preview-status')
+        ].filter(Boolean);
+
+        if (parts.length > 0) {
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const el of parts) {
+            const r = el.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+              minX = Math.min(minX, r.left);
+              minY = Math.min(minY, r.top);
+              maxX = Math.max(maxX, r.right);
+              maxY = Math.max(maxY, r.bottom);
+            }
+          }
+          if (minX < maxX && minY < maxY) {
+            return {
+              x: Math.max(0, Math.floor(minX)),
+              y: Math.max(0, Math.floor(minY)),
+              width: Math.ceil(maxX - minX),
+              height: Math.ceil(maxY - minY),
+            };
+          }
+        }
+
         const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) return null;
-        const rect = el.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        if (el) {
+          const r = el.getBoundingClientRect();
+          return {
+            x: Math.max(0, Math.floor(r.left)),
+            y: Math.max(0, Math.floor(r.top)),
+            width: Math.ceil(r.width),
+            height: Math.min(Math.ceil(r.height), 900),
+          };
+        }
+        return null;
       })()`);
 
       if (box && box.width > 0 && box.height > 0) {
@@ -4180,6 +4240,198 @@ export async function runR1States(configPath: string, outDir: string): Promise<v
       };
 
       await browser.close();
+    } finally {
+      await server.stop();
+    }
+  }
+
+  // --- Trial 3: Real GPU crash with repeated crashing for failed-restore-real ---
+  console.log('[r1-states] Starting Trial 3: failed-restore-real (provoked real loss held past 3500ms)...');
+  {
+    const server = await startLoopbackServer(config.viewerDist, join(outDir, 'stderr/loopback-trial3.stderr'));
+    const sessionToken = await server.createSessionToken();
+    try {
+      const pub = await publishFixture(
+        config.nodePath,
+        config.mcpBundle,
+        server.origin,
+        join(outDir, 'state-trial3.json'),
+        r1Path,
+        join(outDir, 'stderr/mcp-trial3.stderr')
+      );
+
+      const browser = await openBrowserSession(
+        config.chromePath,
+        server.port,
+        server.origin,
+        pub.url,
+        sessionToken,
+        join(outDir, 'stderr/browser-trial3.stderr'),
+        join(outDir, 'browser-attestation-trial3.json')
+      );
+
+      await waitReady(browser);
+      await browser.setViewport(1440, 900);
+
+      let crashCount = 1;
+      const realLossStart = performance.now();
+      await browser.crashGpu();
+
+      const { promise: p100, resolve: r100 } = Promise.withResolvers<void>();
+      setTimeout(r100, 100);
+      await p100;
+
+      console.log('[r1-states] Capturing failed-restore-real at +100ms...');
+      const frReal100Full = await browser.screenshot('failed-restore-real-100ms-full');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-real-100ms-full.png'), frReal100Full);
+      const frReal100Viewer = await browser.screenshotCrop('.otio-view');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-real-100ms-viewer.png'), frReal100Viewer);
+      const frReal100Attrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+        "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+      );
+      const frReal100Diags = await browser.evaluate<string[]>(
+        "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+      );
+      const frReal100Readback = await browser.readVisibleWithState();
+      if (frReal100Readback.pixels) {
+        writeFileSync(join(outDir, 'pixels/failed-restore-real-100ms.rgba'), frReal100Readback.pixels);
+      }
+      const frReal100Events = await browser.getContextEvents();
+
+      statesResult['failedRestoreReal100ms'] = {
+        dataReady: frReal100Attrs.ready ?? null,
+        dataBuffering: frReal100Attrs.buffering ?? null,
+        diagnostics: frReal100Diags,
+        readbackSha: frReal100Readback.pixelsSha256,
+        readbackClass: classifyReadbackSha(frReal100Readback.pixelsSha256 ?? ''),
+        isContextLost: frReal100Readback.isContextLost,
+        screenshots: {
+          full: 'screenshots/failed-restore-real-100ms-full.png',
+          viewer: 'screenshots/failed-restore-real-100ms-viewer.png',
+        },
+        contextEvents: frReal100Events,
+      };
+
+      // Keep GPU down past 3500ms by crashing periodically until 3500ms from loss has elapsed
+      const targetDeadline = realLossStart + 3500;
+      while (performance.now() < targetDeadline) {
+        const remaining = targetDeadline - performance.now();
+        const nextSleep = Math.min(800, Math.max(10, remaining));
+        const { promise: pWait, resolve: rWait } = Promise.withResolvers<void>();
+        setTimeout(rWait, nextSleep);
+        await pWait;
+        if (performance.now() >= targetDeadline) break;
+        crashCount++;
+        await browser.crashGpu().catch(() => {});
+      }
+      console.log('[r1-states] Capturing failed-restore-real at +3500ms...');
+      const frReal3500Full = await browser.screenshot('failed-restore-real-3500ms-full');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-real-3500ms-full.png'), frReal3500Full);
+      const frReal3500Viewer = await browser.screenshotCrop('.otio-view');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-real-3500ms-viewer.png'), frReal3500Viewer);
+      const frReal3500Attrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+        "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+      );
+      const frReal3500Diags = await browser.evaluate<string[]>(
+        "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+      );
+      const frReal3500Readback = await browser.readVisibleWithState();
+      if (frReal3500Readback.pixels) {
+        writeFileSync(join(outDir, 'pixels/failed-restore-real-3500ms.rgba'), frReal3500Readback.pixels);
+      }
+      const frReal3500Events = await browser.getContextEvents();
+
+      statesResult['failedRestoreReal3500ms'] = {
+        dataReady: frReal3500Attrs.ready ?? null,
+        dataBuffering: frReal3500Attrs.buffering ?? null,
+        diagnostics: frReal3500Diags,
+        readbackSha: frReal3500Readback.pixelsSha256,
+        readbackClass: classifyReadbackSha(frReal3500Readback.pixelsSha256 ?? ''),
+        isContextLost: frReal3500Readback.isContextLost,
+        screenshots: {
+          full: 'screenshots/failed-restore-real-3500ms-full.png',
+          viewer: 'screenshots/failed-restore-real-3500ms-viewer.png',
+        },
+        contextEvents: frReal3500Events,
+      };
+
+
+      console.log('[r1-states] Waiting up to 5000ms for natural restore after stopping crashes...');
+      const naturalRestoreStart = performance.now();
+      let naturalRestored = false;
+      while (performance.now() - naturalRestoreStart < 5000 && browser.child.exitCode === null) {
+        try {
+          const evts = await browser.getContextEvents();
+          if (evts.some((e) => e.type === 'contextrestored')) {
+            naturalRestored = true;
+            break;
+          }
+        } catch {
+          break;
+        }
+        const { promise: pWait, resolve: rWait } = Promise.withResolvers<void>();
+        setTimeout(rWait, 50);
+        await pWait;
+      }
+
+      if (naturalRestored && browser.child.exitCode === null) {
+        await waitReady(browser, 5000).catch(() => {});
+      }
+
+      let frRealRestoreFull: Buffer | null = null;
+      let frRealRestoreViewer: Buffer | null = null;
+      let frRealRestoreAttrs = { ready: null as string | null, buffering: null as string | null };
+      let frRealRestoreDiags: string[] = [];
+      let frRealRestoreReadback: { pixelsSha256?: string | null; isContextLost?: boolean | null } = {};
+      let frRealRestoreEvents: Array<{ type: string; timestamp: number }> = [];
+
+      if (browser.child.exitCode === null) {
+        try {
+          frRealRestoreFull = await browser.screenshot('failed-restore-real-after-restore-full');
+          writeFileSync(join(outDir, 'screenshots/failed-restore-real-after-restore-full.png'), frRealRestoreFull);
+          frRealRestoreViewer = await browser.screenshotCrop('.otio-view');
+          writeFileSync(join(outDir, 'screenshots/failed-restore-real-after-restore-viewer.png'), frRealRestoreViewer);
+          const attrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+            "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+          );
+          frRealRestoreAttrs = { ready: attrs.ready ?? null, buffering: attrs.buffering ?? null };
+          frRealRestoreDiags = await browser.evaluate<string[]>(
+            "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+          );
+          const rb = await browser.readVisibleWithState();
+          frRealRestoreReadback = rb;
+          if (rb.pixels) {
+            writeFileSync(join(outDir, 'pixels/failed-restore-real-after-restore.rgba'), rb.pixels);
+          }
+          frRealRestoreEvents = await browser.getContextEvents();
+        } catch (e) {
+          console.log(`[r1-states] Post-restore capture failed (browser exited or unresponsive): ${(e as Error).message}`);
+        }
+      } else {
+        console.log(`[r1-states] Chrome process exited with code ${browser.child.exitCode} after GPU crashes; recorded truthfully in states.json`);
+      }
+
+      statesResult['failedRestoreRealAfterRestore'] = {
+        naturalRestored,
+        chromeExited: browser.child.exitCode !== null,
+        chromeExitCode: browser.child.exitCode,
+        gpuCrashCount: crashCount,
+        dataReady: frRealRestoreAttrs.ready ?? null,
+        dataBuffering: frRealRestoreAttrs.buffering ?? null,
+        diagnostics: frRealRestoreDiags,
+        readbackSha: frRealRestoreReadback.pixelsSha256 ?? null,
+        readbackClass: classifyReadbackSha(frRealRestoreReadback.pixelsSha256 ?? ''),
+        isContextLost: frRealRestoreReadback.isContextLost ?? null,
+        screenshots: frRealRestoreFull ? {
+          full: 'screenshots/failed-restore-real-after-restore-full.png',
+          viewer: 'screenshots/failed-restore-real-after-restore-viewer.png',
+        } : null,
+        contextEvents: frRealRestoreEvents,
+      };
+
+      try {
+        await browser.close();
+      } catch {}
     } finally {
       await server.stop();
     }
