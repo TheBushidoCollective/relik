@@ -116,6 +116,52 @@ describe('where the panel lands', () => {
     expect(placed.left).toBe(POPOVER_MARGIN);
   });
 });
+describe('bounded OTIO placement', () => {
+  const host = {
+    scrollLeft: 40,
+    scrollTop: 500,
+    clientWidth: 800,
+    clientHeight: 600,
+  };
+  const safe = { left: 90, top: 620, width: 420, height: 240 };
+
+  test('keeps an off-preview selection anchored but clamps the card into preview', () => {
+    const point = { left: 460, top: 960, width: 0, height: 16 };
+    const placed = placePopover(
+      point,
+      { width: 280, height: 160 },
+      host,
+      POPOVER_GAP,
+      POPOVER_MARGIN,
+      safe
+    );
+    expect(placed.left).toBe(222);
+    expect(placed.top).toBe(692);
+    expect(placed.side).toBe('above');
+  });
+
+  test('applies both scroll offsets and the 8px clearance once', () => {
+    const placed = placePopover(
+      { left: 44, top: 510, width: 4, height: 6 },
+      { width: 360, height: 200 },
+      host,
+      POPOVER_GAP,
+      POPOVER_MARGIN,
+      safe
+    );
+    expect(placed.left).toBe(98);
+    expect(placed.top).toBe(628);
+    expect(placed.side).toBe('below');
+  });
+
+  test('existing callers without bounds still clamp to the entire stage', () => {
+    const anchor = { left: 460, top: 960, width: 0, height: 16 };
+    expect(placePopover(anchor, SIZE, host)).toEqual(
+      placePopover(anchor, SIZE, host, POPOVER_GAP, POPOVER_MARGIN)
+    );
+    expect(placePopover(anchor, SIZE, host).top).toBe(792);
+  });
+});
 
 describe('the conversion every call site would otherwise get wrong', () => {
   test('a viewport rect becomes content coordinates', () => {

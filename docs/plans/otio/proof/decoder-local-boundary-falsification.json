@@ -1,0 +1,57 @@
+{
+  "sourceHead": "4bfbc24",
+  "runtime": "Bun 1.3.14 (0d9b296a)",
+  "source": "packages/relic-viewer/src/otio-playback.ts",
+  "sourceSha256BeforeAndAfter": "3010f02d5a15d861b1e304e678b91b225f507358dedb929df107d2c2a44a9b63",
+  "command": "mise exec -- bun test packages/relic-viewer/test/otio-playback.test.ts -t 'near-zero|tiny negative|positive fractional|certified presentation|WebM packet|unavailable -24|unavailable Video 2|unknown and uncovered'",
+  "baselineAndEachRestoredRun": {
+    "exit": 0,
+    "pass": 8,
+    "fail": 0,
+    "assertions": 48
+  },
+  "mutations": [
+    {
+      "change": "Remove decoder-local near-zero source copy while preserving the original source time",
+      "exit": 1,
+      "pass": 7,
+      "fail": 1,
+      "assertions": 38,
+      "failure": {
+        "line": 1301,
+        "expectedDecoderTime": 0.008333333333333333,
+        "receivedDecoder": "undefined"
+      }
+    },
+    {
+      "change": "Accept every locally near-zero sample without checking node availability and sampling-map available-start evidence",
+      "exit": 1,
+      "pass": 7,
+      "fail": 1,
+      "assertions": 42,
+      "failure": {
+        "line": 1429,
+        "expectedUnknownAvailabilityVideoDecoder": false,
+        "received": true
+      },
+      "scope": "First unknown-availability video assertion catches this mutation; later assertions in that combined test were not reached."
+    },
+    {
+      "change": "Treat all negative source values as acceptable local zero instead of only private near-zero residuals",
+      "exit": 1,
+      "pass": 6,
+      "fail": 2,
+      "assertions": 45,
+      "failures": [
+        { "line": 1636, "expectedPrimaryVideoDecoderCount": 1, "received": 2 },
+        {
+          "line": 1735,
+          "expectedUnavailableAudioPaused": true,
+          "received": false
+        }
+      ],
+      "scope": "Independent video and audio true-negative controls both failed."
+    }
+  ],
+  "scope": "Each mutation was separately applied and reverted, followed by the original eight passing behavior tests. Original source restored byte-exactly. These focused decoder controls do not clear rendered SOURCE or release gates."
+}

@@ -1,0 +1,19 @@
+{
+  "name": "Relic",
+  "short_name": "Relic",
+  "description": "Open an encrypted relic. Decryption happens in your browser.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f1f2f0",
+  "theme_color": "#1f6b64",
+  "icons": [
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "sourceHead": "83dec3e",
+  "viewerShellHash": "2d322d462c092d06",
+  "intentFlagCommit": "b393762",
+  "separateAuxiliaryPublication": "Succeeded with existing force_new:true intent",
+  "originalStagesThroughStateCodec": 33,
+  "originalTrustedMarkerCases": 4,
+  "failure": "Auxiliary UI postComposer timed out on Coincident duplicate-point reveal 11.",
+  "cause": "Unknown; rate limit is a hypothesis pending route-policy and actual refusal-state evidence.",
+  "noTimeoutOrPolicyRelaxation": true,
+  "auxiliaryFailureView": "Not captured by existing helper; source owner adding failure-only receipt before unchanged assertion.",
+  "renderedReviewBlocker": "New-composer context body initially hides full disclosure despite measured desktop room; independent auto-basis repair and allocation gate in flight."
+}

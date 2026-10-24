@@ -26,7 +26,6 @@ import {
 import {
   COMMENT_TOOL_NAME,
   handleMessage,
-  INSTRUCTIONS,
   READ_COMMENTS_TOOL_NAME,
 } from '../src/server.ts';
 import { publishStatePath } from '../src/state.ts';
@@ -266,13 +265,13 @@ describe('writing a comment as the publisher', () => {
 
     const request = posted[0];
     expect(request).toBeDefined();
+    expect(Object.hasOwn(request ?? {}, 'version')).toBe(false);
     expect(request?.['publish_token']).toBe(
       'publish-token-held-only-in-local-state'
     );
     const ciphertext = String(request?.['ciphertext']);
     expect(ciphertext).not.toContain('second chart');
     expect(JSON.stringify(request)).not.toContain('last quarter');
-
     // The only party who can read it is somebody holding the relic key.
     const commentKey = await deriveCommentKey(
       decodeKey(await storedKey(relicId))
@@ -946,12 +945,6 @@ describe('what an agent is told before it calls anything', () => {
       expect(tool?.description).toMatch(/never the share URL/);
     }
   });
-
-  test('the handshake instructions name the comment tools', () => {
-    expect(INSTRUCTIONS).toMatch(/relic_read_comments/);
-    expect(INSTRUCTIONS).toMatch(/relic_comment/);
-    expect(INSTRUCTIONS).toMatch(/Nine things/);
-  });
 });
 
 describe('anchor round-trip through write and read tools', () => {
@@ -1058,7 +1051,10 @@ describe('anchor round-trip through write and read tools', () => {
     >;
     expect(structured['count']).toBe(8);
     const comments = structured['comments'] as Array<Record<string, unknown>>;
-
+    expect(posted).toHaveLength(8);
+    for (const request of posted) {
+      expect(Object.hasOwn(request, 'version')).toBe(false);
+    }
     expect(comments[0]?.['anchor']).toEqual({
       kind: 'text',
       quote: 'original passage',

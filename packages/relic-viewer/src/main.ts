@@ -39,6 +39,11 @@ import { formatTimecode, formatTimecodeTenths } from './annotate-time.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import { createMediaPlayer, type TimeAimDetail } from './media-player.ts';
 import {
+  disposeOtioViews,
+  type OtioAimDetail,
+  otioControllerFor,
+} from './otio-bridge.ts';
+import {
   landmarkScrollDelta,
   nearestScrollLandmark,
   type ScrollPosition,
@@ -229,6 +234,7 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   code: 'Rendered as text, no author code',
   image: 'Shown as an image, no author code',
   media: 'Plays in your browser, no author code',
+  otio: 'Plays its timeline in your browser, no author code',
   pdf: 'Rendered as a document, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
@@ -1295,6 +1301,22 @@ export function buildCurrentStage(
     case 'media':
       main.appendChild(renderMediaView(view));
       break;
+    case 'otio': {
+      const root = document.createElement('section');
+      root.className = 'otio-view';
+      root.textContent = 'Loading OTIO';
+      main.appendChild(root);
+      void import('./otio-view.ts')
+        .then(({ mountOtioView }) =>
+          mountOtioView(root, { content: view.content, revision: view.version })
+        )
+        .catch(() => {
+          if (root.dataset['disposed'] === 'true') return;
+          root.textContent = 'OTIO could not be loaded.';
+          root.dataset['ready'] = 'error';
+        });
+      break;
+    }
     case 'sandboxed-html':
       main.appendChild(renderSandboxedHtml(view, usercontentOrigin));
       break;
@@ -3598,7 +3620,7 @@ export function paintPendingMark(
  */
 export function anchorSurfaceFor(host: HTMLElement): AnchorSurface | undefined {
   const candidates = host.querySelectorAll(
-    'img.relic-image, video.relic-media, audio.relic-media, iframe.usercontent-frame, canvas.relic-page'
+    '.otio-view, img.relic-image, video.relic-media, audio.relic-media, iframe.usercontent-frame, canvas.relic-page'
   );
   if (candidates.length > 1) return undefined;
   const only = candidates.item?.(0) ?? candidates[0];
@@ -3687,6 +3709,8 @@ export interface ComposeOptions {
    * that moved under the panel: a stage going into fullscreen or coming out.
    */
   readonly reanchor?: () => AnchorBox | undefined;
+  /** Preview-safe band measured live in the host's scrolled content coordinates. */
+  readonly bounds?: () => AnchorBox | undefined;
 }
 
 /**
@@ -4520,7 +4544,14 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           'video.relic-media, audio.relic-media, video, audio'
         ) as HTMLMediaElement | null;
 
-        if (isFramed) {
+        if (next.querySelector('.otio-view') !== null) {
+          mode = undefined;
+          timeMode = undefined;
+          const hint = document.createElement('span');
+          hint.className = 'thread-hint';
+          hint.textContent = 'Point or range on a named track';
+          tools.replaceChildren(hint);
+        } else if (isFramed) {
           const toggle = document.createElement('button');
           toggle.type = 'button';
           toggle.className = 'mark-mode';
@@ -4649,6 +4680,7 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           'canvas.relic-page',
           'video.relic-media',
           'audio.relic-media',
+          '.otio-view',
         ]
           .filter((selector) => next.querySelector(selector) !== null)
           .join(',');
@@ -4887,8 +4919,8 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       // A moment or a span on the scrubber. Written in a panel over the
       // scrubber, exactly as a selection is written over the words, and
       // handed to the sidebar only when the page cannot compose here.
-      next.addEventListener('relic:time-aim', ((
-        event: CustomEvent<TimeAimDetail>
+      const aimTemporal = ((
+        event: CustomEvent<TimeAimDetail | OtioAimDetail>
       ) => {
         const detail = event.detail;
         if (!detail?.anchor) return;
@@ -4903,9 +4935,27 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           );
         };
         const box = reanchor();
+        const measureBounds =
+          'measureBounds' in detail ? detail.measureBounds : undefined;
+        const bounds = measureBounds
+          ? () => {
+              const measured = measureBounds();
+              return measured
+                ? anchorFromClientRect(
+                    measured,
+                    next.getBoundingClientRect(),
+                    next
+                  )
+                : undefined;
+            }
+          : undefined;
         if (
           box !== undefined &&
-          deps.compose?.(detail.anchor, box, { focus, reanchor }) === true
+          deps.compose?.(detail.anchor, box, {
+            focus,
+            reanchor,
+            ...(bounds ? { bounds } : {}),
+          }) === true
         ) {
           dismiss();
           return;
@@ -4921,7 +4971,9 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           return;
         }
         aim(detail.anchor, false, false);
-      }) as EventListener);
+      }) as EventListener;
+      next.addEventListener('relic:time-aim', aimTemporal);
+      next.addEventListener('relic:otio-aim', aimTemporal);
 
       // A box on a rendered page. Self-guarding on a `canvas.relic-page`
       // target, so it costs nothing on the classes that have no pages.
@@ -4998,6 +5050,37 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     },
   };
 }
+
+function stampedCommentVersion(entry: CommentEntry): number | null {
+  const version = entry.version;
+  return typeof version === 'number' &&
+    Number.isSafeInteger(version) &&
+    version > 0
+    ? version
+    : null;
+}
+
+/**
+ * OTIO coordinates are sealed inside the body, while the service stamps the
+ * row's revision. They must agree before either one can place or fetch media.
+ */
+function sealedOtioAnchorMatchesEntryVersion(entry: CommentEntry): boolean {
+  if (entry.kind !== 'open' || entry.anchor?.kind !== 'otio') return false;
+  const version = stampedCommentVersion(entry);
+  return version !== null && entry.anchor.relic_version === version;
+}
+
+function visibleOtioEntryAtVersion(
+  entry: CommentEntry,
+  viewedVersion: number
+): boolean {
+  const version = stampedCommentVersion(entry);
+  if (version === null) return viewedVersion === 1;
+  return sealedOtioAnchorMatchesEntryVersion(entry)
+    ? version <= viewedVersion
+    : version === viewedVersion;
+}
+
 /**
  * The thread, in the service-origin chrome.
  *
@@ -5011,7 +5094,8 @@ export function buildThread(
   view: ReadyView,
   relicId: string,
   deps: ViewerDeps,
-  onCount: (count: number) => void
+  onCount: (count: number) => void,
+  onViewOriginal?: (version: number) => void
 ): ThreadHandle {
   const section = document.createElement('aside');
   section.className = 'thread';
@@ -5107,6 +5191,115 @@ export function buildThread(
   let session: SessionState = { kind: 'unknown' };
   let host: HTMLElement | undefined;
   let lastEntries: readonly CommentEntry[] = [];
+  const originalViews = new Map<number, Promise<ReadyView | undefined>>();
+  const projectionAttempts = new Set<string>();
+  const projectionFailures = new Set<string>();
+
+  const addOtioFeedbackContext = (
+    row: HTMLElement,
+    entry: CommentEntry
+  ): void => {
+    if (entry.kind !== 'open' || entry.anchor?.kind !== 'otio') return;
+    const anchor = entry.anchor;
+    const context = document.createElement('div');
+    context.className = 'otio-feedback-projection';
+    const label = document.createElement('span');
+    if (!sealedOtioAnchorMatchesEntryVersion(entry)) {
+      context.dataset['projectionStatus'] = 'unresolvable';
+      label.textContent =
+        'This OTIO target is unresolvable because its sealed revision is not ' +
+        'bound to the version recorded with the comment.';
+      context.append(label);
+      row.appendChild(context);
+      return;
+    }
+    const target = document.createElement('p');
+    target.className = 'otio-feedback-target';
+    target.textContent = markTargetLabel(anchor);
+    if (anchor.track_id !== null) {
+      const track = document.createElement('span');
+      track.textContent = anchor.track_id;
+      target.appendChild(track);
+    }
+    row.querySelector('.comment-body')?.before(target);
+    if (anchor.relic_version === view.version) return;
+    const projection =
+      host === undefined
+        ? undefined
+        : otioControllerFor(host)?.projection(anchor);
+    context.dataset['projectionStatus'] =
+      projection?.status ??
+      (projectionFailures.has(entry.id) ? 'unavailable' : 'loading');
+    label.textContent = `Earlier feedback · v${anchor.relic_version} → v${view.version} · ${
+      projection?.status ??
+      (projectionFailures.has(entry.id)
+        ? 'Original context unavailable'
+        : 'Loading original version')
+    }`;
+    const original = document.createElement('button');
+    original.type = 'button';
+    original.className = 'otio-view-original';
+    original.textContent = 'View original';
+    original.addEventListener('click', (event) => {
+      event.stopPropagation();
+      onViewOriginal?.(anchor.relic_version);
+    });
+    context.append(label, original);
+    row.appendChild(context);
+  };
+
+  const projectEarlierOtioFeedback = async (
+    entries: readonly CommentEntry[]
+  ): Promise<void> => {
+    if (host === undefined) return;
+    const controller = otioControllerFor(host);
+    if (controller === undefined) return;
+    let changed = false;
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (
+          entry.kind !== 'open' ||
+          entry.anchor?.kind !== 'otio' ||
+          !sealedOtioAnchorMatchesEntryVersion(entry) ||
+          entry.anchor.relic_version === view.version ||
+          projectionAttempts.has(entry.id)
+        ) {
+          return;
+        }
+        projectionAttempts.add(entry.id);
+        const anchor = entry.anchor;
+        try {
+          let original = originalViews.get(anchor.relic_version);
+          if (original === undefined) {
+            original = loadHistoricalVersion(
+              relicId,
+              anchor.relic_version,
+              view,
+              deps
+            ).then((result) =>
+              result.kind === 'ready' ? result.view : undefined
+            );
+            originalViews.set(anchor.relic_version, original);
+          }
+          const originalView = await original;
+          if (originalView === undefined)
+            throw new Error('Original context unavailable');
+          await controller.project(anchor, originalView.content);
+        } catch {
+          projectionFailures.add(entry.id);
+        }
+        changed = true;
+      })
+    );
+    if (
+      changed &&
+      host !== undefined &&
+      otioControllerFor(host) === controller
+    ) {
+      paintMarks(lastEntries);
+      rerenderRows?.();
+    }
+  };
   /**
    * Comment ids whose mark is real but has nowhere to land on this page.
    *
@@ -5177,6 +5370,7 @@ export function buildThread(
     if (host === undefined) return;
     unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
+    otioControllerFor(host)?.clearMarks();
     host
       .querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
       ?.contentWindow?.postMessage({ type: 'relic:clear-marks' }, '*');
@@ -5190,6 +5384,12 @@ export function buildThread(
     unplaceable.clear();
     for (const entry of entries) {
       if (entry.kind !== 'open' || entry.anchor === null) continue;
+      if (
+        entry.anchor.kind === 'otio' &&
+        !sealedOtioAnchorMatchesEntryVersion(entry)
+      ) {
+        continue;
+      }
       number += 1;
       if (entry.anchor.kind === 'text') {
         wrapTextQuote(host, entry.anchor.quote, entry.id);
@@ -5270,6 +5470,7 @@ export function buildThread(
         { type: 'relic:quiet-marks', ids: settled },
         '*'
       );
+    void projectEarlierOtioFeedback(entries);
   };
 
   /**
@@ -5473,9 +5674,15 @@ export function buildThread(
     );
     const rows = document.createElement('ol');
     rows.className = 'popover-thread';
-    rows.appendChild(
-      commentRow(entry, unplaceable.has(entry.id), undefined, replies, false)
+    const row = commentRow(
+      entry,
+      unplaceable.has(entry.id),
+      undefined,
+      replies,
+      false
     );
+    addOtioFeedbackContext(row, entry);
+    rows.appendChild(row);
 
     const id = entry.id;
     const actions: PopoverAction[] = [];
@@ -5753,7 +5960,7 @@ export function buildThread(
         // one is a choice of member, so it goes to that member's.
         const surface = host === undefined ? undefined : anchorSurfaceFor(host);
         if (surface !== undefined && anchor !== null) {
-          adapterFor(anchor, surface)?.reveal?.(surface, anchor);
+          adapterFor(anchor, surface)?.reveal?.(surface, anchor, memberId);
         }
         openCard(member, anchorBoxFor(memberId) ?? box, true);
       });
@@ -5795,17 +6002,18 @@ export function buildThread(
     const opener = cipher;
     if (layer === undefined || opener === undefined) return;
     const focus = options.focus ?? true;
+    const placement = options.bounds ? { bounds: options.bounds } : undefined;
 
     const held = composing;
     if (
       held !== undefined &&
       layer.current() === held.panel &&
-      held.anchor.kind === 'time' &&
-      anchor.kind === 'time'
+      ((held.anchor.kind === 'time' && anchor.kind === 'time') ||
+        (held.anchor.kind === 'otio' && anchor.kind === 'otio'))
     ) {
       held.anchor = anchor;
       held.target.textContent = markTargetLabel(anchor);
-      layer.show(held.panel, box);
+      layer.show(held.panel, box, placement);
       reanchor = options.reanchor;
       if (focus) held.field.focus();
       return;
@@ -5853,16 +6061,45 @@ export function buildThread(
           // comment on the last thing selected. A moment or a span never
           // went through the chip, and clearing it would also put focus in
           // the sidebar, which a fullscreen stage cannot even show.
-          if (aimed.kind !== 'time') marks.clear();
+          if (aimed.kind !== 'time' && aimed.kind !== 'otio') marks.clear();
           window.getSelection()?.removeAllRanges();
           closeCard();
           await refresh();
         })();
       },
     });
-    panel.appendChild(composer.element);
+    if (options.bounds) {
+      const body = document.createElement('div');
+      body.className = 'popover-bounded-body';
+      body.append(target);
+      const disclosure = composer.element.querySelector('.popover-disclosure');
+      if (disclosure) body.append(disclosure);
+      const note = composer.element.querySelector('.popover-note');
+      if (note) body.append(note);
+      panel.append(body, ...Array.from(composer.element.children));
+      panel.classList.add('is-otio-composer');
+      // Keep existing composer selectors on the card now that its rows are
+      // direct flex children instead of descendants of the old wrapper.
+      panel.classList.add('popover-composer');
+    } else panel.appendChild(composer.element);
     const state = { anchor, panel, target, field: composer.field };
-    layer.show(panel, box);
+    if (options.bounds && host) {
+      const safe = options.bounds();
+      if (safe) {
+        const visibleTop = host.scrollTop;
+        const visibleBottom = visibleTop + host.clientHeight;
+        if (
+          safe.top + safe.height <= visibleTop ||
+          safe.top >= visibleBottom ||
+          Math.min(visibleBottom, safe.top + safe.height) -
+            Math.max(visibleTop, safe.top) <
+            Math.min(safe.height, host.clientHeight)
+        ) {
+          host.scrollTop = Math.max(0, safe.top - 8);
+        }
+      }
+    }
+    layer.show(panel, options.reanchor?.() ?? box, placement);
     composing = state;
     reanchor = options.reanchor;
     // Held open against hover, because a composer that vanished when the
@@ -6072,10 +6309,16 @@ export function buildThread(
     if (entry === undefined || entry.kind !== 'open' || entry.anchor === null) {
       return;
     }
+    if (
+      entry.anchor.kind === 'otio' &&
+      !sealedOtioAnchorMatchesEntryVersion(entry)
+    ) {
+      return;
+    }
     const surface = anchorSurfaceFor(host);
     if (surface === undefined) return;
     const adapter = adapterFor(entry.anchor, surface);
-    adapter?.reveal?.(surface, entry.anchor);
+    adapter?.reveal?.(surface, entry.anchor, commentId);
     // Revealing answers "where", and lighting answers "which one". A reader
     // who clicked a row about one sentence in a paragraph of marked
     // sentences needs the second answer more than the first.
@@ -6110,6 +6353,12 @@ export function buildThread(
     const isCurrentVersion = view.version === view.currentVersion;
     const hasHistory = view.currentVersion > 1;
     const filteredEntries = state.entries.filter((entry) => {
+      // OTIO placement is eligible only when its sealed target is bound to the
+      // service-stamped revision. A mismatch remains on that service revision
+      // as unresolvable body text, never as a claimed historical coordinate.
+      if (entry.kind === 'open' && entry.anchor?.kind === 'otio') {
+        return visibleOtioEntryAtVersion(entry, viewedVersion);
+      }
       // 1. When a relic has no version history (currentVersion <= 1), there is
       // no version dimension for a reader to navigate. Every comment shows
       // regardless of stored version so single-version relics never lose rows.
@@ -6143,7 +6392,15 @@ export function buildThread(
         node.entry.id !== null && unplaceable.has(node.entry.id);
       const addressed =
         node.entry.id !== null ? addressedMap.get(node.entry.id) : null;
-      return commentRow(node.entry, isUnplaceable, addressed, replies, isReply);
+      const row = commentRow(
+        node.entry,
+        isUnplaceable,
+        addressed,
+        replies,
+        isReply
+      );
+      addOtioFeedbackContext(row, node.entry);
+      return row;
     };
 
     const renderRows = (): void => {
@@ -6395,6 +6652,10 @@ export function buildThread(
         });
         next.addEventListener('relic:frame-ready', () => {
           paintMarks(lastEntries);
+        });
+        next.addEventListener('relic:otio-ready', () => {
+          paintMarks(lastEntries);
+          rerenderRows?.();
         });
         // Time marks wait for the media's duration. When it arrives they
         // land, and the rows that said they could not are drawn again.
@@ -6936,17 +7197,26 @@ export function renderReady(
     activeView = viewToShow;
     bar = barFor(false);
     if (viewToShow.route !== 'download') {
-      thread = buildThread(viewToShow, relicId, deps, (count) => {
-        commentCount = count;
-        if (bar === undefined) return;
-        const replacement = barFor(false);
-        bar.replaceWith(replacement);
-        bar = replacement;
-      });
+      thread = buildThread(
+        viewToShow,
+        relicId,
+        deps,
+        (count) => {
+          commentCount = count;
+          if (bar === undefined) return;
+          const replacement = barFor(false);
+          bar.replaceWith(replacement);
+          bar = replacement;
+        },
+        (version) => {
+          void showVersion(version);
+        }
+      );
     } else {
       thread = undefined;
     }
     const stage = buildStageWrap(viewToShow, usercontentOrigin);
+    disposeOtioViews(document.body);
     document.body.replaceChildren(
       bar,
       buildRelicRow(stage, thread?.element, thread?.resizer, thread?.tab)
@@ -6987,13 +7257,21 @@ export function renderReady(
   // item 13 gives it no comparison control: nothing rendered, so there is
   // nothing on the page to comment about.
   if (view.route !== 'download') {
-    thread = buildThread(view, relicId, deps, (count) => {
-      commentCount = count;
-      if (bar === undefined) return;
-      const replacement = barFor(false);
-      bar.replaceWith(replacement);
-      bar = replacement;
-    });
+    thread = buildThread(
+      view,
+      relicId,
+      deps,
+      (count) => {
+        commentCount = count;
+        if (bar === undefined) return;
+        const replacement = barFor(false);
+        bar.replaceWith(replacement);
+        bar = replacement;
+      },
+      (version) => {
+        void showVersion(version);
+      }
+    );
   }
 
   showSingle(activeView);

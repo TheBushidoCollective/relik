@@ -12,6 +12,7 @@
  * make deliberate.
  */
 
+import { inflateRawSync } from 'node:zlib';
 import {
   deriveRendererClass,
   deriveShareProof,
@@ -19,7 +20,10 @@ import {
   encryptRelic,
   generateKey,
   generateRelicId,
+  indexOtioZip,
   normalizeTitle,
+  PLAINTEXT_CAP_BYTES,
+  parseOtioJson,
   type RendererClass,
   relicUrl,
   shareVerifierFor,
@@ -31,6 +35,7 @@ import type {
 } from '@relic/format/cover';
 import { keyToMnemonic } from '@relic/format/mnemonic';
 import { uploadCover } from './cover/upload.ts';
+import { bundleOtiod } from './otio-bundle.ts';
 import {
   loadPublishedSource,
   resolveSourceIdentity,
@@ -68,6 +73,7 @@ export type ClientCode =
   | 'local_comment_body_empty'
   | 'local_comment_body_too_long'
   | 'local_comment_name_too_long'
+  | 'local_comment_ciphertext_too_long'
   | 'local_comment_anchor_invalid'
   | 'local_comment_anchor_unsupported'
   | 'local_comment_anchor_kind_unknown'
@@ -84,6 +90,8 @@ export type ClientCode =
   | 'local_comment_anchor_time_invalid'
   | 'local_comment_anchor_time_out_of_range'
   | 'local_comment_anchor_time_span_invalid'
+  | 'local_comment_anchor_otio_invalid'
+  | 'local_comment_anchor_otio_too_long'
   | 'local_comment_anchor_page_missing'
   | 'local_comment_anchor_page_out_of_range'
   | 'local_comment_addresses_invalid'
@@ -101,7 +109,8 @@ export type ClientCode =
   | 'current_version_unavailable'
   | 'local_comment_not_found'
   | 'local_comment_unreadable'
-  | 'app_response_unusable';
+  | 'app_response_unusable'
+  | 'otio_bundle_invalid';
 export class PublishError extends Error {
   override readonly name = 'PublishError';
   constructor(
@@ -131,16 +140,38 @@ export interface SourceFile {
   readonly resolvedPath: string;
 }
 
+export interface ConfinedBundleFile {
+  /** Size returned by fstat on the held native descriptor. */
+  readonly size: number;
+  /** Reads from that descriptor only, refusing more than maxBytes. */
+  readBounded(maxBytes: number): Promise<Uint8Array>;
+  close(): Promise<void>;
+}
+
+export interface ConfinedBundleDirectory {
+  /**
+   * Opens a bundle-relative regular file under the pinned root descriptor.
+   * The implementation must not reopen or resolve a string pathname in JS.
+   */
+  openRegular(relativePath: string): Promise<ConfinedBundleFile>;
+  close(): Promise<void>;
+}
+
 /** Filesystem access, injected so the flow is testable without a disk. */
 export interface FileReader {
   stat(
     path: string
   ): Promise<
-    { kind: 'file'; size: number } | { kind: 'directory' } | { kind: 'other' }
+    | { kind: 'file'; size: number }
+    | { kind: 'directory' }
+    | { kind: 'symlink' }
+    | { kind: 'other' }
   >;
   read(path: string): Promise<Uint8Array>;
   resolve(path: string): string;
   basename(path: string): string;
+  /** Required for .otiod. It is the only authority for bundle descendants. */
+  openBundleRoot(path: string): Promise<ConfinedBundleDirectory>;
 }
 
 export interface PublishInput {
@@ -589,6 +620,16 @@ export async function contentDigest(input: {
     .join('');
 }
 
+function inflateRawBounded(compressed: Uint8Array, budget: number): Uint8Array {
+  const inflated = new Uint8Array(
+    inflateRawSync(compressed, { maxOutputLength: Math.max(1, budget) })
+  );
+  if (inflated.length > budget) {
+    throw new Error(`Inflated ZIP entry exceeds byte budget of ${budget}`);
+  }
+  return inflated;
+}
+
 export async function readSource(
   path: string,
   files: FileReader
@@ -596,7 +637,24 @@ export async function readSource(
   const resolvedPath = files.resolve(path);
   const stat = await files.stat(resolvedPath);
 
+  if (stat.kind === 'symlink') {
+    throw new PublishError(
+      'source_not_regular_file',
+      `${resolvedPath} is a symlink`
+    );
+  }
+
   if (stat.kind === 'directory') {
+    const base = files.basename(resolvedPath);
+    if (base.toLowerCase().endsWith('.otiod')) {
+      // Securely package the .otiod bundle into a standard deterministic .otioz archive.
+      const bundled = await bundleOtiod(resolvedPath, files);
+      return {
+        bytes: bundled.bytes,
+        basename: bundled.defaultFilename,
+        resolvedPath: bundled.resolvedPath,
+      };
+    }
     // format.md 3.1 fixes entry count at exactly 1 in version 1, so a
     // directory cannot be represented as a multi-entry relic at all.
     // Publishing one would mean silently tarring it into an opaque blob that
@@ -618,6 +676,17 @@ export async function readSource(
     );
   }
 
+  if (
+    !Number.isSafeInteger(stat.size) ||
+    stat.size < 0 ||
+    stat.size > PLAINTEXT_CAP_BYTES
+  ) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${resolvedPath} size (${stat.size} bytes) exceeds the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap`
+    );
+  }
+
   let bytes: Uint8Array;
   try {
     bytes = await files.read(resolvedPath);
@@ -626,6 +695,43 @@ export async function readSource(
       'source_unreadable',
       `could not read ${resolvedPath}: ${(error as Error).message}`
     );
+  }
+
+  if (bytes.length > PLAINTEXT_CAP_BYTES) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${resolvedPath} changed beyond the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap while being read`
+    );
+  }
+
+  const base = files.basename(resolvedPath).toLowerCase();
+  if (base.endsWith('.otioz')) {
+    // Validate existing .otioz archive structurally before grant/upload.
+    try {
+      await indexOtioZip(bytes, {
+        maxExpandedBytes: PLAINTEXT_CAP_BYTES,
+        inflater: async (compressed, _uncompressedSize, maxBytes) =>
+          inflateRawBounded(compressed, maxBytes),
+      });
+    } catch (err) {
+      throw new PublishError(
+        'otio_bundle_invalid',
+        `Invalid .otioz archive: ${(err as Error).message}`
+      );
+    }
+  } else if (base.endsWith('.otio')) {
+    // Validate raw .otio JSON structurally.
+    try {
+      const parsed = parseOtioJson(bytes);
+      if (typeof parsed !== 'object' || parsed === null) {
+        throw new Error('root must be a JSON object');
+      }
+    } catch (err) {
+      throw new PublishError(
+        'otio_bundle_invalid',
+        `Invalid .otio JSON: ${(err as Error).message}`
+      );
+    }
   }
 
   return { bytes, basename: files.basename(resolvedPath), resolvedPath };
@@ -841,6 +947,7 @@ const CLASS_FALLBACK: Readonly<Record<RendererClass, string>> = {
   pdf: 'application/pdf',
   image: 'application/octet-stream',
   media: 'application/octet-stream',
+  otio: 'application/x-otioz',
   archive: 'application/octet-stream',
   binary: 'application/octet-stream',
 };

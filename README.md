@@ -45,11 +45,24 @@ about network reach, not safety: the code runs in your browser, can use your
 CPU, and can render whatever it wants. The viewer says so on the page before the
 content renders, and so does `/policy`.
 
+The viewer renders Markdown, code, HTML, JSX, still images, PDF, and provides
+in-browser players for audio and video media and OpenTimelineIO timelines
+(`.otiod` directories packaged as `.otioz`, or `.otioz` archives). Arbitrary
+directories remain refused, while general archives and binaries remain
+download-only. For OpenTimelineIO relics, unencrypted first-screen media
+rendering is skipped by default to prevent private timeline cuts or frames from
+leaking into unencrypted link unfurl previews.
+
+OTIO comment rows show the sealed revision, rational range and stable track ID
+with the feedback, distinguishing same-named tracks. Native reader screenshots,
+measurements and interaction results are recorded in
+[`docs/plans/otio/proof/native-interactions.json`](docs/plans/otio/proof/native-interactions.json).
+
 `/policy` states the whole trade: the telemetry, the optional plaintext title,
 the per-relic cover image raster stored in the clear for unfurl cards
-(rendered by default and declined with `cover: false`), and what the operator
-learns. The frame conditions the telemetry on that statement being readable
-before anybody publishes.
+(rendered by default and declined with `cover: false`, with generic cards for
+OpenTimelineIO), and what the operator learns. The frame conditions the
+telemetry on that statement being readable before anybody publishes.
 
 ## The packages
 
@@ -87,8 +100,11 @@ restart.
 ## Connecting the MCP server
 
 Relic exposes `relic_publish`, which takes a filesystem path (and optional
-`title` and `cover` arguments for link unfurls) and never inline content, and
-`relic_describe_client`, which explains what the client does with your file
+`title` and `cover` arguments for link unfurls) and never inline content.
+Standard OpenTimelineIO directories (`.otiod`) are automatically packaged into
+standard `.otioz` archives for native in-browser timeline viewing while
+preserving the directory path as source identity; arbitrary directories are
+refused. `relic_describe_client` explains what the client does with your file
 without reading it or contacting anything.
 
 It also exposes `relic_republish`, which posts a new version of a file to an
@@ -320,15 +336,24 @@ with security consequences, not a cosmetic inconsistency.
 Something has to run on your machine, because encryption has to happen where
 the plaintext is. That is forced by the product, not chosen.
 
-What is chosen is that it arrives as **readable source rather than a compiled
-binary**. `dist/relic-mcp.js` is a single unminified file of about 1,100 lines,
-and it is exactly what executes. The cover rendering page assets in
-`dist/cover/` contain the unminified cover bundle built from `@relic/viewer`,
-with vendored React, pdfjs, and sucrase for local document rendering in
-headless Chrome. The TypeScript it was built from ships in the same package.
-Releases carry [npm provenance][provenance], which is a cryptographic
-attestation binding the published tarball to a specific commit and workflow
-in this repository.
+What is chosen is that its JavaScript arrives as readable source.
+`dist/relic-mcp.js` is a single unminified file and the TypeScript it was built
+from ships in the same package. The deliberate exception is automatic `.otiod`
+directory packaging: a source-included Node-API helper, prebuilt in the npm
+tarball for macOS arm64 and x64 with a 15.0 binary deployment floor, plus Linux
+glibc 2.28+ arm64 and x64. On either platform, before it reads a bundle, the
+helper verifies on the running kernel that beneath-root resolution refuses
+parent and absolute escapes from a held directory and that the no-symlink flag
+is accepted. Symlink refusal, held-descriptor behavior, and replacement
+behavior are verified by the CI probe on the listed versions. A kernel that
+lacks the primitive refuses the directory feature rather than reopening paths
+in JavaScript. The helper never downloads, invokes Python, or compiles on an
+installed machine. The cover
+rendering page assets in `dist/cover/` contain the unminified cover bundle built
+from `@relic/viewer`, with vendored React, pdfjs, and sucrase for local document
+rendering in headless Chrome. Releases carry [npm provenance][provenance], which
+is a cryptographic attestation binding the published tarball to a specific
+commit and workflow in this repository.
 
 There is also a `relic_describe_client` tool. Call it and the client tells you
 what it does with your file, what leaves the machine, and what the service can

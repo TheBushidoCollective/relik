@@ -1,0 +1,21 @@
+{
+  "sourceHead": "6129db4",
+  "source": "packages/relic-viewer/src/otio-playback.ts",
+  "sourceSha256BeforeAndAfter": "b92c241abf92daf168bb7d3c85e602dd9c0a3e978b0318b1b353cd04518db948",
+  "runtime": "Bun 1.4.3 (c6da4a4d3)",
+  "baselineAndRestored": {
+    "command": "mise exec -- bun test packages/relic-viewer/test/otio-playback.test.ts",
+    "exit": 0,
+    "pass": 29,
+    "fail": 0,
+    "assertions": 137
+  },
+  "mutation": {
+    "change": "Restore video_contributions to the synthetic withheld-warning helper loop while leaving decoder/rendering admission unchanged",
+    "command": "mise exec -- bun test packages/relic-viewer/test/otio-playback.test.ts -t 'parsed black sequence policy'",
+    "exit": 1,
+    "failure": "keeps parsed black sequence policy frames out of withheld diagnostics, line1921: expected warning predicate false, received true",
+    "scope": "Public parsed ImageSequenceReference black-policy case still rendered its intended black pixels; only the incorrect withheld warning caused the failure."
+  },
+  "restoration": "Exact copied source restored and cmp verified; all 29 behavior tests passed afterward."
+}

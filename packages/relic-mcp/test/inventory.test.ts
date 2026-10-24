@@ -99,6 +99,33 @@ function fakeFiles(): FileReader {
       if (bytes === undefined) throw new Error('ENOENT');
       return bytes;
     },
+    async openBundleRoot(rootPath) {
+      let rootClosed = false;
+      return {
+        async openRegular(relativePath) {
+          if (rootClosed) throw new Error('bundle root is closed');
+          const bytes = disk.get(`${rootPath}/${relativePath}`);
+          if (bytes === undefined) {
+            throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+          }
+          let fileClosed = false;
+          return {
+            size: bytes.length,
+            async readBounded(maxBytes) {
+              if (fileClosed) throw new Error('bundle file is closed');
+              if (bytes.length > maxBytes) throw new Error('EFBIG');
+              return bytes;
+            },
+            async close() {
+              fileClosed = true;
+            },
+          };
+        },
+        async close() {
+          rootClosed = true;
+        },
+      };
+    },
   };
 }
 

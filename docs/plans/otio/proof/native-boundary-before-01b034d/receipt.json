@@ -1,0 +1,20 @@
+{
+  "sourceHead": "3ab3b70",
+  "viewerShellHash": "c5e48f780f993604",
+  "rawOutputArtifact": "artifact://3570",
+  "outcome": "SOURCE failed unchanged native-control ownership assertion at 320px light",
+  "control": "Interview Mic 1 · Clip.2",
+  "controlRect": {
+    "left": 148,
+    "top": 899.515625,
+    "right": 760,
+    "bottom": 945.296875
+  },
+  "sample": {
+    "x": 219.5,
+    "y": 899.7578125,
+    "hitTag": null
+  },
+  "composerIntersectionArea": 0,
+  "interpretation": "Subpixel viewport-edge addressability remains unadjudicated. Existing generated screenshots retained before diagnostic run."
+}

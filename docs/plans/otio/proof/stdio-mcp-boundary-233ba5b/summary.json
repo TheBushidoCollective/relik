@@ -1,0 +1,16 @@
+{
+  "probeSha": "233ba5bda7f30caf5d1abb2d6d6aeb9f6b640fd3",
+  "integratedOnto": "bf01777",
+  "runtime": "Bun 1.3.14 (0d9b296a), Node 24.15.0 via mise, macOS arm64",
+  "order": ["none1", "corrupt", "none16", "helper16", "browser-retired16"],
+  "results": {
+    "none1": "PASS 1/1",
+    "corrupt": "FAIL as required at 'decrypted comment nonce did not match the expected nonce' with valid JSON-RPC response, exit 0, clean numeric write/end",
+    "none16": "PASS 16/16",
+    "helper16": "PASS 16/16",
+    "browser-retired16": "Unclassified probe-fixture stall: trial-01..trial-10 fixture directories created, then no progress until the 1800 s outer deadline killed the process. No witness was written (end-only persistence). The stalled phase is unknown; target, fixture, context and finalization are all unruled-out. Never MCP loss.",
+    "browser-retired-then-helper16": "not run"
+  },
+  "interpretation": "Old-SHA samples only. Passing arms are nondiscriminating. The probe is being revised to bound every outer await and persist phase-entry state; that checkpoint I/O changes parent FD history, so the full order is rerun on the revised SHA rather than resuming.",
+  "files": "SHA256SUMS lists the archived witnesses; browser-retired16.files.txt lists the stalled arm's fixture files."
+}

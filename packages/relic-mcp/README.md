@@ -25,23 +25,30 @@ For any client that takes a JSON config:
 ## What it does with your file
 
 1. Reads it from disk, in this process. It is never sent anywhere in plaintext.
+   A standard OpenTimelineIO directory (`.otiod`) is automatically packaged into
+   a deterministic standard `.otioz` archive; arbitrary directories are refused.
 2. Draws a 128-bit key and a 26-character relic id independently from your
    machine's CSPRNG. Neither derives from the other.
 3. Encrypts locally with AES-128-GCM under RFC 8188 `aes128gcm` framing.
 4. Uploads **only ciphertext**, straight to object storage under a signed URL.
    It does not pass through the Relic service.
-5. Tells the service four things: a coarse renderer class from an eight-value
-   list, this client's name, the ciphertext's byte length, and the title, which
-   defaults to the filename and is stored in the clear. By default, it also
-   renders a 1200x630 cover image of the file's first screen in local headless
-   Chrome and uploads it unencrypted via `POST /api/relics/{id}/cover` for link
-   preview cards (pass `cover: false` to decline). Not the mimetype, not the
-   contents.
+5. Tells the service four things: a coarse renderer class from a ten-value
+   list (`markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `media`, `archive`,
+   `binary`, `otio`), this client's name, the ciphertext's byte length, and the
+   title, which defaults to the filename and is stored in the clear. By default,
+   it also renders a 1200x630 cover image of the file's first screen in local
+   headless Chrome and uploads it unencrypted via `POST /api/relics/{id}/cover`
+   for link preview cards (pass `cover: false` to decline). OpenTimelineIO
+   timeline relics (`otio`) skip unencrypted first-screen media rendering by
+   default, using a generic card carrying the title and format label to protect
+   private timeline cuts and media from leaking into unencrypted link previews.
+   Not the mimetype, not the contents.
 6. Records the relic's id, key, and publish token locally, in a 0600 file
    under your user config directory, so the relic can be republished from
-   this machine later. See [Republishing](#republishing). The service never
-   receives the key or the token plaintext; it keeps only a SHA-256 of the
-   token.
+   this machine later. See [Republishing](#republishing). Preserves logical
+   source identity for `.otiod` directories as the original directory path so
+   republishing detects the source across sessions. The service never receives
+   the key or the token plaintext; it keeps only a SHA-256 of the token.
 7. Returns a shareable URL whose fragment holds the decryption key. Fragments
    are never sent to a server by a browser.
 Call the `relic_describe_client` tool and it will tell you all of this itself,
@@ -147,14 +154,27 @@ Encryption has to happen where the plaintext is, so a hosted version of this
 would have to receive your file, which defeats the point. Nothing here is
 fetched from the network and executed.
 
-Because a local client is otherwise opaque, it ships as **readable source
-rather than a compiled binary**. `dist/relic-mcp.js` is a single unminified
-file and it is exactly what runs; the TypeScript it was built from is in the
-same package. The cover rendering page assets in `dist/cover/` contain the
+The client ships its JavaScript as readable source: `dist/relic-mcp.js` is a
+single unminified file and the TypeScript it was built from is in the same
+package. There is one narrow exception for automatic `.otiod` directory
+packaging. It uses a source-included Node-API secure-open helper, prebuilt in
+the npm tarball for macOS arm64 and x64 with a 15.0 binary deployment floor,
+plus glibc 2.28 or newer Linux on arm64 and x64. On either platform, before it
+reads a bundle, the helper verifies on the running kernel that beneath-root
+resolution refuses parent and absolute escapes from a held directory and that
+the no-symlink flag is accepted. Symlink refusal, held-descriptor behavior, and
+replacement behavior are verified by the CI probe on the listed versions. It
+never downloads a helper, invokes Python, or compiles at install or publish
+time. A missing packaged target or failed capability check refuses `.otiod`
+packaging rather than using a pathname fallback. Ordinary file publishing
+remains plain Node 18 or newer. The cover
+rendering page assets in `dist/cover/` contain the
 unminified cover bundle built from `@relic/viewer`, with vendored React, pdfjs,
 and sucrase for offline document rendering in local Chrome. Releases carry npm
 provenance, a cryptographic attestation binding the tarball to a specific commit
 and workflow.
+
+The manual release workflow requires an exact SemVer 2.0.0 version, accepts prerelease and build metadata, validates it before release metadata changes, and passes it as environment data rather than executable shell source.
 
 ### Cover rendering and local Chrome requirement
 
@@ -209,6 +229,20 @@ that does outlive a call is the per-machine publish state file described
 above. The handshake-based revisions (`2025-11-25` and earlier) are still
 answered.
 
-Requires Node 18 or newer.
+Requires Node 18 or newer. Automatic `.otiod` packaging additionally requires
+one of four packaged targets: macOS arm64 or x64 with a 15.0 binary deployment
+floor, or Linux glibc 2.28+ arm64 or x64. On either platform, before it reads
+a bundle, the helper verifies on the running kernel that beneath-root
+resolution refuses parent and absolute escapes from a held directory and that
+the no-symlink flag is accepted. Symlink refusal, held-descriptor behavior, and
+replacement behavior are verified by the CI probe on the listed versions. A
+target or kernel that cannot satisfy that requirement refuses directory
+conversion without reducing ordinary file publishing.
+
+Tested on macOS: CI native probes in dry run `39652819003` on macOS 15.7.9
+(`24G830`), Darwin 24.6.0 (`xnu-11417.140.69.711.44~1`) on arm64 and x64, with
+Xcode 26.0.1 and SDK 26.0 plus Xcode 16.4 and SDK 15.5; local macOS 27.0.1
+(`26A434`), Darwin 27.0.0 arm64, Homebrew clang 22.1.8, and SDK 27. An earlier
+historical local probe used Xcode clang 21.0.0 and SDK 27.
 
 MIT licensed. Source: https://github.com/TheBushidoCollective/relic

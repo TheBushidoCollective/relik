@@ -1,0 +1,63 @@
+[feat/otio-native-renderer 15cae60] test: round OTIO marker exposure outward
+ Date: Thu Oct 22 15:10:12 2026 -0600
+ 1 file changed, 52 insertions(+), 13 deletions(-)
+remote: This repository moved. Please use the new location:        
+remote:   git@github.com:TheBushidoCollective/relik.git        
+To github.com:TheBushidoCollective/relic.git
+   79a94fb..15cae60  feat/otio-native-renderer -> feat/otio-native-renderer
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+PUBLISHED relic_id=g8fwhh57n9fwd89pnmt8d8fw6m
+STAGE published
+STAGE decrypted
+OFFICIAL nested=media/plate_1009.png dissolve=72 audio=48
+STAGE official-archive
+STAGE network-block
+STAGE pixels-offset
+STAGE default-view-negative-head
+STAGE nested-200
+STAGE nested-no-spill
+STAGE dissolve-pixels
+STAGE audio-signal
+STAGE state-gap-black
+STAGE state-effect
+STAGE ui-point-nested
+STAGE ui-range-nested
+STAGE ui-point-duplicate
+STAGE ui-range-duplicate
+STAGE ui-range-dissolve
+STAGE ui-track-duplicate
+STAGE screenshots
+STAGE decoder-worker-csp
+STAGE decoder-timing-windows
+STAGE decoder-webm-quantization
+STAGE decoder-near-zero
+STAGE decoder-edit-diagnostics
+STAGE decoder-no-duration
+STAGE ciphertext
+STAGE mcp-original
+STAGE revision-insert
+STAGE revision-trim
+STAGE revision-ambiguous
+STAGE state-hold
+STAGE state-sequence-black
+STAGE state-codec
+SHOTS /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/otio-path-shots
+518 |     assert.ok(
+519 |       !response['error'],
+520 |       `JSON-RPC error from ${toolName}: ${JSON.stringify(response['error'])}`
+521 |     );
+522 |     const result = response['result'] as Record<string, unknown>;
+523 |     assert.ok(
+                 ^
+AssertionError: tool error from relic_publish: [{"type":"text","text":"source_already_published: packages/relic-format/test/fixtures/otio/standard-sample.otiod in github.com/thebushidocollective/relic is already version 4 of relic g8fwhh57n9fwd89pnmt8d8fw6m. Publishing it as new would cost a second URL that nobody holding the first one will ever see. Call relic_republish({\"relic_id\":\"g8fwhh57n9fwd89pnmt8d8fw6m\",\"path\":\"/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-format/test/fixtures/otio/standard-sample.otiod\"}) instead. Set force_new to true only when you intend a separate relic."}]
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at callMcp (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:523:12)
+      at runAuxiliaryCoincidentCommentRevealScenario (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:4535:27)
+
+Bun v1.4.3 (macOS arm64)

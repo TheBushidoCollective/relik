@@ -594,6 +594,20 @@ export async function requestMagicLink(
   }
 }
 
+/** A row that had a body and would not open. Shown, never dropped. */
+function sealedEntry(record: CommentRecord): CommentEntry {
+  return {
+    kind: 'sealed',
+    id: record.comment_id,
+    author: record.author,
+    createdAt: record.created_at,
+    version: typeof record.version === 'number' ? record.version : null,
+    clearAddresses: stringField(record, 'addresses'),
+    editedAt: stringField(record, 'edited_at'),
+    resolution: resolutionOf(record),
+  };
+}
+
 /** Turns one stored row into an entry, sealed rather than dropped on failure. */
 export async function openEntry(
   record: CommentRecord,
@@ -633,16 +647,7 @@ export async function openEntry(
     ) {
       throw error;
     }
-    return {
-      kind: 'sealed',
-      id: record.comment_id,
-      author: record.author,
-      createdAt: record.created_at,
-      version,
-      clearAddresses,
-      editedAt,
-      resolution,
-    };
+    return sealedEntry(record);
   }
 }
 
@@ -677,11 +682,17 @@ export async function loadThread(
     // may never have had one, and guessing which is worse than saying so.
     // Dropping it would be worst of all: the reader would see a thread that
     // is shorter than it is and have no way to notice.
-    entries.push(
-      isCommentRecord(record)
-        ? await openEntry(record, cipher)
-        : unreadableEntry(record)
-    );
+    if (!isCommentRecord(record)) {
+      entries.push(unreadableEntry(record));
+      continue;
+    }
+    try {
+      entries.push(await openEntry(record, cipher));
+    } catch {
+      // One sealed row that throws while opening must not hide the others.
+      // A malformed anchor used to throw TypeError here and abort the load.
+      entries.push(sealedEntry(record));
+    }
   }
   return { kind: 'ready', entries };
 }
@@ -1278,48 +1289,145 @@ export function resolveAddressedMap(
   return map;
 }
 
+/**
+ * Said on a remark whose sealed address loops back onto itself.
+ *
+ * The loop is broken for display. Both remarks stay visible, once, with this
+ * note, instead of disappearing because neither has a root.
+ */
+export const THREAD_CYCLE_RECOVERY =
+  'This remark points at another remark that points back, so each one is ' +
+  'shown once instead of hidden in the loop.';
+
+/**
+ * Said on a remark whose parent is in the thread but not shown.
+ *
+ * A reply whose own target is missing stays omitted, so a version filter
+ * does not paint it as a new top-level comment. A reply to that omitted row
+ * would otherwise vanish with it. This note is why that reply is still here.
+ */
+export const THREAD_ORPHAN_RECOVERY =
+  'This remark answers one that is not shown in this thread, so it is ' +
+  'shown on its own instead of dropped.';
+
+export interface ThreadRecovery {
+  readonly kind: 'cycle' | 'orphan';
+  readonly detail: string;
+  /** Sealed comment id this remark addresses. Never the server's clear copy. */
+  readonly addresses: string;
+}
+
 export interface CommentNode {
   readonly entry: CommentEntry;
   readonly replies: CommentNode[];
+  readonly recovery?: ThreadRecovery;
+}
+
+interface MutableCommentNode {
+  entry: CommentEntry;
+  replies: CommentNode[];
+  recovery?: ThreadRecovery;
+}
+
+/**
+ * The sealed address, or null when this row does not answer another.
+ *
+ * The server's clear `addresses` is a routing hint. It is never read here.
+ */
+function sealedTarget(entry: CommentEntry): string | null {
+  if (entry.kind !== 'open') return null;
+  const target = entry.addresses;
+  if (typeof target !== 'string' || target.length === 0) return null;
+  return target;
+}
+
+function cycleMembers(
+  parentOf: ReadonlyMap<string, string | null>
+): Set<string> {
+  const cycles = new Set<string>();
+  const state = new Map<string, 'visiting' | 'done'>();
+  const walk = (id: string, stack: readonly string[]): void => {
+    if (cycles.has(id) || state.get(id) === 'done') return;
+    if (state.get(id) === 'visiting') {
+      const at = stack.indexOf(id);
+      for (const member of stack.slice(at)) cycles.add(member);
+      return;
+    }
+    state.set(id, 'visiting');
+    const parent = parentOf.get(id);
+    if (typeof parent === 'string') walk(parent, stack.concat(id));
+    state.set(id, 'done');
+  };
+  for (const id of parentOf.keys()) walk(id, []);
+  return cycles;
+}
+
+function recovery(kind: 'cycle' | 'orphan', addresses: string): ThreadRecovery {
+  return {
+    kind,
+    detail: kind === 'cycle' ? THREAD_CYCLE_RECOVERY : THREAD_ORPHAN_RECOVERY,
+    addresses,
+  };
 }
 
 /**
  * Structures flat comments into top-level comments and nested replies.
  *
- * Replies whose target is filtered out or missing are omitted so they never
- * read as orphans on the page.
+ * The sealed pointer is the only parent. A reply whose target is missing or
+ * filtered out of this set stays omitted, so it does not appear as a new
+ * root on a version that does not hold its parent. A loop, or a reply to a
+ * row that omission hid, is shown once with recovery context instead of
+ * being dropped or walked forever.
  */
 export function threadEntries(entries: readonly CommentEntry[]): CommentNode[] {
-  const nodesById = new Map<
-    string,
-    { entry: CommentEntry; replies: CommentNode[] }
-  >();
+  const nodesById = new Map<string, MutableCommentNode>();
   for (const entry of entries) {
     if (entry.id !== null) {
       nodesById.set(entry.id, { entry, replies: [] });
     }
   }
 
+  const parentOf = new Map<string, string | null>();
+  for (const [id, node] of nodesById) {
+    const target = sealedTarget(node.entry);
+    if (target === null) continue;
+    parentOf.set(id, nodesById.has(target) ? target : null);
+  }
+  const cycles = cycleMembers(parentOf);
+
   const roots: CommentNode[] = [];
+  const placed = new Set<string>();
   for (const entry of entries) {
     if (entry.id === null) {
       roots.push({ entry, replies: [] });
       continue;
     }
     const node = nodesById.get(entry.id);
-    if (node === undefined) continue;
-    // Authoritative sealed pointer only:
-    const targetId = entry.kind === 'open' ? entry.addresses : null;
-
-    if (typeof targetId === 'string' && targetId.length > 0) {
-      const parentNode = nodesById.get(targetId);
-      if (parentNode !== undefined) {
-        parentNode.replies.push(node);
-      }
-      // Target missing or filtered out: omit to prevent orphan display.
-    } else {
-      roots.push(node);
+    if (node === undefined || node.entry !== entry || placed.has(entry.id)) {
+      continue;
     }
+    placed.add(entry.id);
+    const parent = parentOf.get(entry.id);
+    if (cycles.has(entry.id)) {
+      const addresses =
+        typeof parent === 'string' ? parent : (sealedTarget(entry) ?? entry.id);
+      node.recovery = recovery('cycle', addresses);
+      roots.push(node);
+      continue;
+    }
+    if (parent === null) continue;
+    if (parent === undefined) {
+      roots.push(node);
+      continue;
+    }
+    const parentNode = nodesById.get(parent);
+    const parentOmitted = parentOf.get(parent) === null && !cycles.has(parent);
+    if (parentNode === undefined || parentOmitted) {
+      node.recovery = recovery('orphan', parent);
+      roots.push(node);
+      continue;
+    }
+    parentNode.replies.push(node);
   }
 
   return roots;
@@ -1329,11 +1437,15 @@ export function collectDisplayedEntries(
   nodes: readonly CommentNode[]
 ): CommentEntry[] {
   const out: CommentEntry[] = [];
-  for (const node of nodes) {
-    out.push(node.entry);
-    if (node.replies.length > 0) {
-      out.push(...collectDisplayedEntries(node.replies));
+  const seen = new Set<CommentEntry>();
+  const walk = (list: readonly CommentNode[]): void => {
+    for (const node of list) {
+      if (seen.has(node.entry)) continue;
+      seen.add(node.entry);
+      out.push(node.entry);
+      if (node.replies.length > 0) walk(node.replies);
     }
-  }
+  };
+  walk(nodes);
   return out;
 }

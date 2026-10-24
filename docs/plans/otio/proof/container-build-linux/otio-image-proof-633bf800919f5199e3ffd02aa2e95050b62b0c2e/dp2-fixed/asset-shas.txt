@@ -1,0 +1,8 @@
+5dcb47442e21b7e163ac952e238e063cce89cc260982422f1805fe294da5a46d  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/assets_viewer.js.body
+111f77d72a8b0f6d75e65a58fc8118f45612ac668316c1b57a33d547500d1066  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/assets_home.js.body
+0c7066359b4091be1751a068da4c95020b554905cdb696a95dfd700705c0a017  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/assets_styles.css.body
+7465950dd0b053b49898cea7796818c72d6e0b36a86f5cb25407f81dbbad64c6  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/assets_register-sw.js.body
+34b1df0107233a120deedee8c8b2c77da44916ad02de64ea087f3adbc4e5814a  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/manifest.webmanifest.body
+8b56c0994a2e87c0c79f39b58e301e67fa67533b2fc1a741f864389cea11dfce  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/sw.js.body
+469bafc45198d672dbeffe2f53546735a199d71826ac68b2137e0fd4f87954b4  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/assets_icon.svg.body
+61044b49afbae420065d181f64527df2da5b332b008a95f98f528bbcd4a1e7f9  /home/runner/work/_temp/otio-image-proof/dp2-fixed/responses/assets_otio-video-timing-worker.js.body

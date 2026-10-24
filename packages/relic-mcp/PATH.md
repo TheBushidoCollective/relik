@@ -46,6 +46,45 @@ REFUSED_URL_ARGUMENT code=no_local_publish_state
 COMMENT_PATH_OK
 ```
 
+## Built Node stdio EOF lifecycle
+
+Build the MCP bundle, then run the focused loopback probe from the repository
+root:
+
+```bash
+mise exec -- bun run --cwd packages/relic-mcp build
+mise exec -- bun packages/relic-mcp/test/stdio-eof-path.ts
+```
+
+The probe seeds an encrypted comment in `MemoryStore` with `MemoryStorage` and
+a captured mail sink, then launches a fresh Node process with
+`node --import test/fixtures/stdio-eof-tap.mjs dist/relic-mcp.js`. It uses the
+same immediate `stdin.write(requestLine); stdin.end();` sequence as the OTIO
+path. The loopback comments GET remains unresolved until both physical stdin
+EOF and the accepted GET have been observed. They may arrive in either order.
+
+The request must be delivered byte-for-byte, the held GET must release, and a
+matching JSON-RPC response must decrypt the known comment nonce before child
+exit 0 counts as success. The scratch trace records only process IDs, event
+ordering, byte lengths, and hashes. The service, state, storage, mail sink,
+and child all belong to the probe's loopback scratch state.
+
+Run the explicit loss falsifier with:
+
+```bash
+RELIC_STDIO_EOF_SUPPRESS_RESPONSE=1 mise exec -- bun packages/relic-mcp/test/stdio-eof-path.ts
+```
+
+That command must fail. It arms a scratch-only marker after the gated GET is
+accepted. Once its held response is released, the preload suppresses the
+otherwise matching stdout response. A zero child exit is not accepted without
+that response.
+
+The tap is an instrumented witness, not timing-neutral proof of an
+uninstrumented empty-output report. Its synchronous trace and stdout callback
+alter child scheduling. A passing control therefore does not identify or fix
+the original cause.
+
 ## Finding and editing a relic whose source was never recorded
 
 Run from the repository root:
@@ -94,12 +133,12 @@ constant card `card.v1.png`. The command exercises this fallback path.
 It asserts the Open Graph and Twitter block lands after the character-set
 declaration and before the first `link` or `script` tag, because an unfurler
 range-fetches the head and metadata outside that range produces no card at
-all. It also asserts that the card reveals the relic's coarse renderer class
-across renderable and download-only types, catching description drift between
-browser and download tails and proving the class reaches the card even when
-the publisher declines a title. It catches false download claims on audio and
-video relics by asserting that sniffed media relics carry the played tail and
-the media fallback title. It then publishes the same file with an empty
+It also asserts that the card reveals the relic's coarse renderer class
+across renderable, playable (`media`, `otio`), and download-only types,
+catching description drift between browser, played, and download tails and
+proving the class reaches the card even when the publisher declines a title.
+It catches false download claims on audio, video, and timeline relics by
+asserting that media and otio relics carry the played tail.
 title and `cover: false`, proves the name reaches no field on the relic row,
 fetches the card image and reads 1200x630 out of its PNG header, and confirms
 neither shell fetch spent an open.
@@ -252,4 +291,66 @@ Success for phase 1 ends with:
 
 ```text
 PROBE relic_id=<id> version=2
+```
+
+## OpenTimelineIO end-to-end path
+
+Run the full source proof from the repository root with an explicit Chrome:
+
+```bash
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-path.ts
+```
+
+At startup, the locally owned browser reports its actual command line through
+`Browser.getBrowserCommandLine`. The proof accepts only one observed approved
+headless switch matching the launched switch, the fresh `--user-data-dir`,
+`--remote-debugging-pipe`, and `--enable-automation`, with no remote-debugging
+port. Product text and the executable pathname are diagnostic information, not
+mode proof.
+
+Use the focused positive control with the same source mode and browser:
+
+```bash
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-browser-controls.ts --smoke
+```
+
+It ends with `OTIO_HEADLESS_SMOKE_OK`. On Linux, use the negative control under
+Xvfb to require both the headed and profile-mismatch rejections before a review
+target is created or navigated:
+
+```bash
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+xvfb-run -a bun packages/relic-mcp/test/otio-browser-controls.ts --negative-source
+```
+
+It ends with `OTIO_HEADED_REJECTED` and `OTIO_PROFILE_MISMATCH_REJECTED`.
+
+The full command starts a service on loopback with `MemoryStore` and
+`MemoryStorage`, serving real built viewer assets. Every MCP operation runs
+through a fresh Node stdio process.
+
+It exercises:
+1. Publishing a standard `.otiod` directory bundle through real MCP stdio, verifying automated packaging into a deterministic standard `.otioz` archive.
+2. Inspecting stored ciphertext and decrypting locally.
+3. Verifying archive layout against the official OpenTimelineIO specification (`content.otio` DEFLATE, `version.txt` 1.0.0 DEFLATE, and referenced media STORED).
+4. Opening the returned link in a fresh headless browser.
+5. Exercising transport, playback, and seeking, measuring decoded video frames and audio contributions.
+6. Selecting track-specific points and ranges in the viewer UI and submitting encrypted feedback.
+7. Confirming server storage rows contain only opaque ciphertext, with no track IDs, time ranges, or source paths in the clear.
+8. Reading feedback via a fresh MCP process with `version: "*"` and `resolve_anchors: true`.
+9. Asserting exact rational time coordinates and original source context mapping.
+10. Republishing a revision and verifying safe current projection alongside immutable historical anchors.
+11. Verifying ambiguous revisions produce explicit ambiguous diagnostics rather than false mappings.
+
+Success ends with:
+
+```text
+OTIO_PATH_OK
 ```

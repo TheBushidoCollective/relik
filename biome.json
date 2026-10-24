@@ -13,6 +13,8 @@
       "**/*.js",
       "**/*.jsx",
       "**/*.json",
+      "!packages/relic-format/test/fixtures/otio/edge-cases/faithful-tokens.otio.json",
+      "!packages/relic-mcp/mcp-servers.json",
       "!**/node_modules",
       "!**/dist",
       "!**/.terraform",
@@ -40,5 +42,15 @@
       "quoteStyle": "single",
       "trailingCommas": "es5"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "packages/relic-format/test/fixtures/otio/expected-oracle.json"
+      ],
+      "formatter": {
+        "enabled": false
+      }
+    }
+  ]
 }

@@ -1,0 +1,29 @@
+{
+  "head": "15d6c29",
+  "runtime": "Bun 1.4.3, Node 24.15.0, macOS arm64, owned headless-shell1228",
+  "viewerShellHash": "41895b0e4c68533f",
+  "rootVerify": {
+    "lint": "passed (warnings)",
+    "typecheck": "passed",
+    "tests": { "pass": 2068, "fail": 2, "assertions": 60994 },
+    "failures": [
+      "timeline-popover.test.ts242: decrypted latest anchor expected valid OTIO but received unsupported/otio-vundefined; new test fixture omitted v and violated other schema fields",
+      "timeline-popover.test.ts272: initial composer remained parented to stage-wrap instead of fullscreen preview; closeCard reset reanchor and initial opening failed to store options.reanchor"
+    ]
+  },
+  "actualSourcePath": {
+    "exit": 1,
+    "lastStage": "ui-track-duplicate",
+    "assertion": "1440px light composer native control hit is blocked",
+    "control": "Track Marker, Video 1, track-v1-main, Timeline 100 @24 duration0 @24",
+    "cardIntersectionArea": 0,
+    "hitOwned": false,
+    "rect": {
+      "left": 684.55029296875,
+      "top": 582.9252319335938,
+      "right": 694.4497680664062
+    },
+    "limit": "Initial receipt records a boolean hit result, not the blocking element. Planner source analysis attributes the blocker to the later VFX range marker96..120 at the same z-index4. New hit-element metadata is required to observe identity."
+  },
+  "adjudication": "OtioComposerFailureSpec and independent reviewer both identified missing first-open reanchor as product defect. Planner retained all intersection, center ownership, matrix and latest-target assertions. Subsequent patch14a9451 restores the callback and raises point markers to z-index5; its behavior proof is separate. These failures are retained as negative evidence and were not rerun merely to confirm them."
+}

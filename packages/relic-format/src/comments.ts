@@ -39,6 +39,7 @@ import {
   CommentTooLargeError,
   MalformedCommentError,
 } from './errors.ts';
+import type { OtioAnchorV1, OtioRationalTime } from './otio-types.ts';
 
 /**
  * The third label. Distinct from RFC 8188's two by construction, and namespaced
@@ -139,7 +140,14 @@ export type CommentAnchor =
       readonly rect?: AnchorRect;
       readonly exact?: string;
     }
+  | OtioAnchorV1
   | { readonly kind: 'unsupported'; readonly declared: string };
+
+/** Cap on encoded OTIO anchor bytes (1,536 bytes). */
+export const COMMENT_ANCHOR_OTIO_LIMIT_BYTES = 1536;
+
+/** Cap on final encrypted base64url comment ciphertext (8,192 characters). */
+export const COMMENT_CIPHERTEXT_LIMIT_CHARS = 8192;
 
 /** Longest quote stored on a text mark. A selection is not a document. */
 export const COMMENT_ANCHOR_QUOTE_LIMIT_BYTES = 512;
@@ -318,7 +326,15 @@ export async function encryptComment(
   const framed = new Uint8Array(nonce.length + sealed.length);
   framed.set(nonce, 0);
   framed.set(sealed, nonce.length);
-  return base64url(framed);
+  const ciphertext = base64url(framed);
+  if (ciphertext.length > COMMENT_CIPHERTEXT_LIMIT_CHARS) {
+    throw new CommentTooLargeError(
+      'ciphertext',
+      ciphertext.length,
+      COMMENT_CIPHERTEXT_LIMIT_CHARS
+    );
+  }
+  return ciphertext;
 }
 
 /**
@@ -519,6 +535,93 @@ function parseAnchor(value: unknown): CommentAnchor | null {
     };
   }
 
+  if (kind === 'otio') {
+    const v = anchor['v'];
+    if (v !== 1) {
+      // A future version is a primitive the writer chose, not an object.
+      // String() on `{toString: null, valueOf: null}` throws TypeError, and
+      // that throw used to escape one row and hide the rest of the thread.
+      // A non-primitive is a malformed envelope, not a version this reader
+      // is too old to show.
+      if (!isJsonPrimitive(v)) {
+        throw new MalformedCommentError(
+          'otio anchor version is not a primitive, so it is not a future ' +
+            'version'
+        );
+      }
+      return {
+        kind: 'unsupported',
+        declared: `otio-v${primitiveVersionLabel(v)}`,
+      };
+    }
+    const relicVersion = anchor['relic_version'];
+    if (
+      typeof relicVersion !== 'number' ||
+      !Number.isSafeInteger(relicVersion) ||
+      relicVersion < 1
+    ) {
+      throw new MalformedCommentError(
+        'otio anchor relic_version is not a positive safe integer'
+      );
+    }
+    const docSha = anchor['document_sha256'];
+    if (typeof docSha !== 'string' || !/^[0-9a-fA-F]{64}$/.test(docSha)) {
+      throw new MalformedCommentError(
+        'otio anchor document_sha256 is not a 64-character hex hash'
+      );
+    }
+    const timelineId = requireOtioId(
+      anchor['timeline_id'],
+      'otio anchor timeline_id'
+    );
+    const trackId = requireOtioIdOrNull(
+      anchor['track_id'],
+      'otio anchor track_id'
+    );
+    const itemId =
+      anchor['item_id'] === undefined
+        ? undefined
+        : requireOtioId(anchor['item_id'], 'otio anchor item_id');
+    const range = requireOtioRange(anchor['range']);
+    const snapshot = requireOtioSnapshot(anchor['snapshot']);
+
+    refuseExtra(
+      anchor,
+      [
+        'kind',
+        'v',
+        'relic_version',
+        'document_sha256',
+        'timeline_id',
+        'track_id',
+        'item_id',
+        'range',
+        'snapshot',
+      ],
+      'otio'
+    );
+
+    const otioAnchor: OtioAnchorV1 = {
+      kind: 'otio',
+      v: 1,
+      relic_version: relicVersion,
+      document_sha256: docSha.toLowerCase(),
+      timeline_id: timelineId,
+      track_id: trackId,
+      ...(itemId === undefined ? {} : { item_id: itemId }),
+      range,
+      snapshot,
+    };
+
+    const encoded = new TextEncoder().encode(JSON.stringify(otioAnchor)).length;
+    if (encoded > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
+      throw new MalformedCommentError(
+        `otio anchor encoded size ${encoded} bytes exceeds cap of ` +
+          `${COMMENT_ANCHOR_OTIO_LIMIT_BYTES}`
+      );
+    }
+    return otioAnchor;
+  }
   // The forward-tolerant branch. A `kind` this build has never heard of is a
   // writer newer than this reader, which is a version gap and not a defect in
   // the comment, so it keeps its body and loses only the ability to be shown
@@ -547,6 +650,16 @@ function assertWritableAnchor(anchor: CommentAnchor): void {
   }
   if (anchor.kind === 'page' && anchor.exact !== undefined) {
     capQuote(anchor.exact);
+  }
+  if (anchor.kind === 'otio') {
+    const encoded = new TextEncoder().encode(JSON.stringify(anchor)).length;
+    if (encoded > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
+      throw new CommentTooLargeError(
+        'anchor',
+        encoded,
+        COMMENT_ANCHOR_OTIO_LIMIT_BYTES
+      );
+    }
   }
   // Every other field is a bounded number, and the bound is checked on the
   // way back in by `parseAnchor`. Round-tripping a value this side accepted
@@ -700,6 +813,171 @@ function decodeBase64url(encoded: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+/**
+ * A JSON primitive is the only thing a future OTIO anchor version can be.
+ *
+ * `null` and a missing field are primitives too: this reader already reports
+ * those as unsupported rather than as tampering. An object, an array, or a
+ * function is not a version, and formatting it with `String()` can throw.
+ */
+function isJsonPrimitive(
+  value: unknown
+): value is string | number | boolean | null | undefined {
+  return (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
+}
+
+/**
+ * A short label for a future version.
+ *
+ * Only called after `isJsonPrimitive`, so `String()` cannot throw. A hostile
+ * string version is truncated so the unsupported mark cannot grow without
+ * bound inside an otherwise readable comment.
+ */
+function primitiveVersionLabel(
+  value: string | number | boolean | null | undefined
+): string {
+  if (typeof value === 'string') {
+    let out = '';
+    const encoder = new TextEncoder();
+    for (const character of value) {
+      if (character === '\u0000') break;
+      const next = out + character;
+      if (encoder.encode(next).length > 32) break;
+      out = next;
+    }
+    return out;
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    if (Number.isNaN(value)) return 'NaN';
+    return value > 0 ? 'Infinity' : '-Infinity';
+  }
+  return String(value);
+}
+
+function boundOtioText(value: string, label: string): string {
+  if (value.includes('\u0000')) {
+    throw new MalformedCommentError(`${label} contains a NUL`);
+  }
+  const bytes = new TextEncoder().encode(value).length;
+  if (bytes > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
+    throw new MalformedCommentError(
+      `${label} is ${bytes} bytes, over the ` +
+        `${COMMENT_ANCHOR_OTIO_LIMIT_BYTES}-byte anchor cap`
+    );
+  }
+  return value;
+}
+
+function requireOtioId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new MalformedCommentError(`${label} is missing or empty`);
+  }
+  return boundOtioText(value, label);
+}
+
+function requireOtioIdOrNull(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new MalformedCommentError(
+      `${label} is neither null nor a non-empty string`
+    );
+  }
+  return boundOtioText(value, label);
+}
+
+function requireOtioRational(
+  value: unknown,
+  label: string,
+  allowNegative: boolean
+): OtioRationalTime {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new MalformedCommentError(`${label} is missing or not an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const rationalValue = record['value'];
+  const rate = record['rate'];
+  if (
+    typeof rationalValue !== 'number' ||
+    !Number.isFinite(rationalValue) ||
+    Math.abs(rationalValue) > Number.MAX_SAFE_INTEGER ||
+    (!allowNegative && rationalValue < 0)
+  ) {
+    throw new MalformedCommentError(
+      allowNegative
+        ? `${label} value is not a safe finite number`
+        : `${label} value is not a non-negative safe finite number`
+    );
+  }
+  if (
+    typeof rate !== 'number' ||
+    !Number.isFinite(rate) ||
+    rate <= 0 ||
+    rate > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new MalformedCommentError(
+      `${label} rate is not a positive safe finite number`
+    );
+  }
+  refuseExtra(record, ['value', 'rate'], label);
+  return { value: rationalValue, rate };
+}
+
+function requireOtioRange(value: unknown): OtioAnchorV1['range'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new MalformedCommentError('otio anchor range is not an object');
+  }
+  const range = value as Record<string, unknown>;
+  const start = requireOtioRational(
+    range['start_time'],
+    'otio anchor range start_time',
+    true
+  );
+  const duration = requireOtioRational(
+    range['duration'],
+    'otio anchor range duration',
+    false
+  );
+  refuseExtra(range, ['start_time', 'duration'], 'otio range');
+  return { start_time: start, duration };
+}
+
+function requireOtioSnapshot(value: unknown): OtioAnchorV1['snapshot'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new MalformedCommentError('otio anchor snapshot is not an object');
+  }
+  const snapshot = value as Record<string, unknown>;
+  if (typeof snapshot['timeline'] !== 'string') {
+    throw new MalformedCommentError(
+      'otio anchor snapshot timeline is not a string'
+    );
+  }
+  const timeline = boundOtioText(
+    snapshot['timeline'],
+    'otio anchor snapshot timeline'
+  );
+  const track = requireOtioLabel(
+    snapshot['track'],
+    'otio anchor snapshot track'
+  );
+  const item = requireOtioLabel(snapshot['item'], 'otio anchor snapshot item');
+  refuseExtra(snapshot, ['timeline', 'track', 'item'], 'otio snapshot');
+  return { timeline, track, item };
+}
+
+function requireOtioLabel(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') {
+    throw new MalformedCommentError(`${label} is neither null nor a string`);
+  }
+  return boundOtioText(value, label);
 }
 
 /**

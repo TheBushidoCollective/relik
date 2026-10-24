@@ -1,0 +1,446 @@
+{
+  "sourceHead": "15cae60",
+  "viewerShellHash": "2d322d462c092d06",
+  "passedStages": [
+    "published",
+    "decrypted",
+    "official-archive",
+    "network-block",
+    "pixels-offset",
+    "default-view-negative-head",
+    "nested-200",
+    "nested-no-spill",
+    "dissolve-pixels",
+    "audio-signal",
+    "state-gap-black",
+    "state-effect",
+    "ui-point-nested",
+    "ui-range-nested",
+    "ui-point-duplicate",
+    "ui-range-duplicate",
+    "ui-range-dissolve",
+    "ui-track-duplicate",
+    "screenshots",
+    "decoder-worker-csp",
+    "decoder-timing-windows",
+    "decoder-webm-quantization",
+    "decoder-near-zero",
+    "decoder-edit-diagnostics",
+    "decoder-no-duration",
+    "ciphertext",
+    "mcp-original",
+    "revision-insert",
+    "revision-trim",
+    "revision-ambiguous",
+    "state-hold",
+    "state-sequence-black",
+    "state-codec"
+  ],
+  "passedStageCount": 33,
+  "fourTrustedMarkerIdentities": [
+    {
+      "case": "primary-range",
+      "expectedId": "Nuua4SpuR2Awf-PA5Wdrjw",
+      "hitId": "Nuua4SpuR2Awf-PA5Wdrjw",
+      "trustedClickId": "Nuua4SpuR2Awf-PA5Wdrjw",
+      "trusted": true,
+      "cardId": "Nuua4SpuR2Awf-PA5Wdrjw",
+      "anchor": {
+        "trackId": "track-v1-main",
+        "start": 8,
+        "duration": 8,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "expectedAnchor": {
+        "trackId": "track-v1-main",
+        "start": 8,
+        "duration": 8,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "exposure": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "rect": {
+            "left": 215.234375,
+            "top": 632.375,
+            "right": 256.46875,
+            "bottom": 646.375,
+            "width": 41.234375,
+            "height": 14
+          },
+          "center": {
+            "x": 235.8515625,
+            "y": 639.375
+          },
+          "hitId": "Nuua4SpuR2Awf-PA5Wdrjw",
+          "anchor": {
+            "trackId": "track-v1-main",
+            "start": 8,
+            "duration": 8,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 0,
+          "stageScrollTop": 31,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "after": {
+          "rect": {
+            "left": 215.234375,
+            "top": 632.375,
+            "right": 256.46875,
+            "bottom": 646.375,
+            "width": 41.234375,
+            "height": 14
+          },
+          "center": {
+            "x": 235.8515625,
+            "y": 639.375
+          },
+          "hitId": "Nuua4SpuR2Awf-PA5Wdrjw",
+          "anchor": {
+            "trackId": "track-v1-main",
+            "start": 8,
+            "duration": 8,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 0,
+          "stageScrollTop": 31,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "stageClientBounds": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "stageScrollHeight": 1270,
+        "stageClientHeight": 846,
+        "maxScrollTop": 424,
+        "attempts": [
+          {
+            "beforeScrollTop": 31,
+            "requestedScrollTop": 31,
+            "appliedScrollTop": 31
+          }
+        ]
+      }
+    },
+    {
+      "case": "pointer-reaim",
+      "expectedId": "MV9gwZWRTTlrqNeUg7CKKg",
+      "hitId": "MV9gwZWRTTlrqNeUg7CKKg",
+      "trustedClickId": "MV9gwZWRTTlrqNeUg7CKKg",
+      "trusted": true,
+      "cardId": "MV9gwZWRTTlrqNeUg7CKKg",
+      "anchor": {
+        "trackId": "track-v1-main",
+        "start": 9,
+        "duration": 4,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "expectedAnchor": {
+        "trackId": "track-v1-main",
+        "start": 9,
+        "duration": 4,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "exposure": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "rect": {
+            "left": 220.390625,
+            "top": 610.375,
+            "right": 241,
+            "bottom": 624.375,
+            "width": 20.609375,
+            "height": 14
+          },
+          "center": {
+            "x": 230.6953125,
+            "y": 617.375
+          },
+          "hitId": "MV9gwZWRTTlrqNeUg7CKKg",
+          "anchor": {
+            "trackId": "track-v1-main",
+            "start": 9,
+            "duration": 4,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 1,
+          "stageScrollTop": 31,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "after": {
+          "rect": {
+            "left": 220.390625,
+            "top": 610.375,
+            "right": 241,
+            "bottom": 624.375,
+            "width": 20.609375,
+            "height": 14
+          },
+          "center": {
+            "x": 230.6953125,
+            "y": 617.375
+          },
+          "hitId": "MV9gwZWRTTlrqNeUg7CKKg",
+          "anchor": {
+            "trackId": "track-v1-main",
+            "start": 9,
+            "duration": 4,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 1,
+          "stageScrollTop": 31,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "stageClientBounds": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "stageScrollHeight": 1270,
+        "stageClientHeight": 846,
+        "maxScrollTop": 424,
+        "attempts": [
+          {
+            "beforeScrollTop": 31,
+            "requestedScrollTop": 31,
+            "appliedScrollTop": 31
+          }
+        ]
+      }
+    },
+    {
+      "case": "duplicate-point",
+      "expectedId": "kRDWZ1EnFB-ALnXVOYbuMg",
+      "hitId": "kRDWZ1EnFB-ALnXVOYbuMg",
+      "trustedClickId": "kRDWZ1EnFB-ALnXVOYbuMg",
+      "trusted": true,
+      "cardId": "kRDWZ1EnFB-ALnXVOYbuMg",
+      "anchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 0,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "expectedAnchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 0,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "exposure": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "rect": {
+            "left": 171.5,
+            "top": 962.375,
+            "right": 176.5,
+            "bottom": 976.375,
+            "width": 5,
+            "height": 14
+          },
+          "center": {
+            "x": 174,
+            "y": 969.375
+          },
+          "hitId": null,
+          "anchor": {
+            "trackId": "track-v2-duplicate",
+            "start": 0,
+            "duration": 0,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 0,
+          "stageScrollTop": 31,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "after": {
+          "rect": {
+            "left": 171.5,
+            "top": 885.375,
+            "right": 176.5,
+            "bottom": 899.375,
+            "width": 5,
+            "height": 14
+          },
+          "center": {
+            "x": 174,
+            "y": 892.375
+          },
+          "hitId": "kRDWZ1EnFB-ALnXVOYbuMg",
+          "anchor": {
+            "trackId": "track-v2-duplicate",
+            "start": 0,
+            "duration": 0,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 0,
+          "stageScrollTop": 108,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "stageClientBounds": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "stageScrollHeight": 1270,
+        "stageClientHeight": 846,
+        "maxScrollTop": 424,
+        "attempts": [
+          {
+            "beforeScrollTop": 31,
+            "requestedScrollTop": 108,
+            "appliedScrollTop": 108
+          },
+          {
+            "beforeScrollTop": 108,
+            "requestedScrollTop": 108,
+            "appliedScrollTop": 108
+          }
+        ]
+      }
+    },
+    {
+      "case": "whole-track",
+      "expectedId": "rh26ofGN8y7MfYmVEXEFag",
+      "hitId": "rh26ofGN8y7MfYmVEXEFag",
+      "trustedClickId": "rh26ofGN8y7MfYmVEXEFag",
+      "trusted": true,
+      "cardId": "rh26ofGN8y7MfYmVEXEFag",
+      "anchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 240,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "expectedAnchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 240,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "exposure": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "rect": {
+            "left": 174,
+            "top": 940.375,
+            "right": 1411.21875,
+            "bottom": 954.375,
+            "width": 1237.21875,
+            "height": 14
+          },
+          "center": {
+            "x": 792.609375,
+            "y": 947.375
+          },
+          "hitId": null,
+          "anchor": {
+            "trackId": "track-v2-duplicate",
+            "start": 0,
+            "duration": 240,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 1,
+          "stageScrollTop": 31,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "after": {
+          "rect": {
+            "left": 174,
+            "top": 885.375,
+            "right": 1411.21875,
+            "bottom": 899.375,
+            "width": 1237.21875,
+            "height": 14
+          },
+          "center": {
+            "x": 792.609375,
+            "y": 892.375
+          },
+          "hitId": "rh26ofGN8y7MfYmVEXEFag",
+          "anchor": {
+            "trackId": "track-v2-duplicate",
+            "start": 0,
+            "duration": 240,
+            "rate": 24,
+            "durationRate": 24
+          },
+          "commentLane": 1,
+          "stageScrollTop": 86,
+          "timelineScrollLeft": 0,
+          "exposedLeft": 174,
+          "exposedRight": 1411
+        },
+        "stageClientBounds": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 1411,
+          "bottom": 900.0625,
+          "width": 1411,
+          "height": 846
+        },
+        "stageScrollHeight": 1270,
+        "stageClientHeight": 846,
+        "maxScrollTop": 424,
+        "attempts": [
+          {
+            "beforeScrollTop": 31,
+            "requestedScrollTop": 86,
+            "appliedScrollTop": 86
+          },
+          {
+            "beforeScrollTop": 86,
+            "requestedScrollTop": 86,
+            "appliedScrollTop": 86
+          }
+        ]
+      }
+    }
+  ],
+  "outcome": "Full path remains unqualified: isolated auxiliary publication was refused because the deliberate new relic request lacked force_new:true; no-mail/final OTIO_PATH_OK not reached.",
+  "nextChange": "Use existing documented force_new:true intent for separate loopback auxiliary relic. No product guard change."
+}

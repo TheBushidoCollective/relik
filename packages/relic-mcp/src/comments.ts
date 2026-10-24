@@ -33,8 +33,10 @@ import {
   COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES,
   COMMENT_ANCHOR_MAX_PAGE,
   COMMENT_ANCHOR_MAX_SECONDS,
+  COMMENT_ANCHOR_OTIO_LIMIT_BYTES,
   COMMENT_ANCHOR_QUOTE_LIMIT_BYTES,
   COMMENT_BODY_LIMIT_BYTES,
+  COMMENT_CIPHERTEXT_LIMIT_CHARS,
   COMMENT_DISPLAY_NAME_LIMIT_BYTES,
   type CommentAnchor,
   decodeKey,
@@ -291,6 +293,17 @@ export type CommentAnchorInput =
       readonly page: number | string;
       readonly rect?: AnchorRect | undefined;
       readonly exact?: string | undefined;
+    }
+  | {
+      readonly kind: 'otio';
+      readonly v?: number | undefined;
+      readonly relic_version?: number | undefined;
+      readonly document_sha256?: string | undefined;
+      readonly timeline_id?: string | undefined;
+      readonly track_id?: string | null | undefined;
+      readonly item_id?: string | undefined;
+      readonly range?: unknown;
+      readonly snapshot?: unknown;
     };
 
 export interface CommentInput {
@@ -673,7 +686,7 @@ export async function postComment(
     anchor,
     ...(addresses == null ? {} : { addresses }),
   });
-
+  refuseOversizedCiphertext(ciphertext);
   // The token travels in the body, where the republish grant already puts it,
   // so the two write paths authorize the same way and neither invents a
   // header the service has to learn.
@@ -685,6 +698,7 @@ export async function postComment(
     {
       publish_token: state.publish_token,
       ciphertext,
+      ...(anchor?.kind === 'otio' ? { version: anchor.relic_version } : {}),
       ...(addresses == null ? {} : { addresses }),
     }
   );
@@ -832,7 +846,7 @@ export async function editComment(
       { comment_id: input.comment_id }
     );
   });
-
+  refuseOversizedCiphertext(ciphertext);
   // The token travels in the body, where the republish grant already puts
   // it, so every write path authorizes the same way.
   const posted = await patchJson(
@@ -1170,6 +1184,20 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
       return parts.join(' ');
     }
 
+    case 'otio': {
+      const start = anchor.range.start_time;
+      const duration = anchor.range.duration;
+      const where =
+        anchor.track_id === null
+          ? `timeline ${anchor.snapshot.timeline}`
+          : `track ${anchor.snapshot.track ?? anchor.track_id} of ${anchor.snapshot.timeline}`;
+      const span =
+        duration.value === 0
+          ? `point ${start.value}/${start.rate}`
+          : `range ${start.value}/${start.rate} for ${duration.value}/${duration.rate}`;
+      return `on ${where} (${span}, relic version ${anchor.relic_version})`;
+    }
+
     case 'unsupported':
       return `carrying a mark this client does not understand (declared kind "${anchor.declared}")`;
   }
@@ -1221,6 +1249,177 @@ function parseRectInput(rect: unknown, kind: string): AnchorRect {
     );
   }
   return { x, y, w, h };
+}
+
+/** Refuse a sealed comment that cannot fit the service ciphertext cap. */
+export function refuseOversizedCiphertext(ciphertext: string): void {
+  if (ciphertext.length > COMMENT_CIPHERTEXT_LIMIT_CHARS) {
+    throw new PublishError(
+      'local_comment_ciphertext_too_long',
+      `the sealed comment is ${ciphertext.length} characters and the limit is ${COMMENT_CIPHERTEXT_LIMIT_CHARS}. Shorten the body or the anchor before posting.`,
+      {
+        ciphertext_chars: ciphertext.length,
+        limit_chars: COMMENT_CIPHERTEXT_LIMIT_CHARS,
+      }
+    );
+  }
+}
+
+function requireRational(
+  value: unknown,
+  label: string,
+  allowZero: boolean
+): { readonly value: number; readonly rate: number } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      `${label} must be an object with value and rate.`
+    );
+  }
+  const record = value as Record<string, unknown>;
+  const rationalValue = record['value'];
+  const rate = record['rate'];
+  if (typeof rationalValue !== 'number' || !Number.isFinite(rationalValue)) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      `${label} value must be a finite number.`
+    );
+  }
+  if (allowZero && rationalValue < 0) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      `${label} value must be non-negative.`
+    );
+  }
+  if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      `${label} rate must be a positive finite number.`
+    );
+  }
+  return { value: rationalValue, rate };
+}
+
+function normalizeOtioAnchor(
+  obj: Record<string, unknown>
+): Extract<CommentAnchor, { kind: 'otio' }> {
+  if (obj['v'] !== 1) {
+    throw new PublishError(
+      'local_comment_anchor_unsupported',
+      `otio anchor version ${JSON.stringify(obj['v'])} is unsupported. This client writes version 1 only. A newer version is not treated as tampering when read back.`
+    );
+  }
+  const relicVersion = obj['relic_version'];
+  if (
+    typeof relicVersion !== 'number' ||
+    !Number.isSafeInteger(relicVersion) ||
+    relicVersion < 1
+  ) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'an otio anchor requires relic_version as a positive integer.'
+    );
+  }
+  const digest = obj['document_sha256'];
+  if (typeof digest !== 'string' || !/^[0-9a-fA-F]{64}$/.test(digest)) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'an otio anchor requires document_sha256 as 64 hex characters.'
+    );
+  }
+  const timelineId = obj['timeline_id'];
+  if (typeof timelineId !== 'string' || timelineId.length === 0) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'an otio anchor requires a non-empty timeline_id.'
+    );
+  }
+  const trackId = obj['track_id'];
+  if (
+    trackId !== null &&
+    (typeof trackId !== 'string' || trackId.length === 0)
+  ) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'otio track_id must be null for the whole composition or a non-empty track id.'
+    );
+  }
+  const itemId = obj['item_id'];
+  if (
+    itemId !== undefined &&
+    (typeof itemId !== 'string' || itemId.length === 0)
+  ) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'otio item_id, when present, must be a non-empty string.'
+    );
+  }
+  if (typeof obj['range'] !== 'object' || obj['range'] === null) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'an otio anchor requires a range object.'
+    );
+  }
+  const range = obj['range'] as Record<string, unknown>;
+  const start = requireRational(range['start_time'], 'range start_time', false);
+  const duration = requireRational(range['duration'], 'range duration', true);
+  const snapshot = obj['snapshot'];
+  if (
+    typeof snapshot !== 'object' ||
+    snapshot === null ||
+    Array.isArray(snapshot)
+  ) {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'an otio anchor requires a snapshot with timeline, track, and item labels.'
+    );
+  }
+  const snap = snapshot as Record<string, unknown>;
+  if (typeof snap['timeline'] !== 'string') {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'otio snapshot.timeline must be a string.'
+    );
+  }
+  if (snap['track'] !== null && typeof snap['track'] !== 'string') {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'otio snapshot.track must be a string or null.'
+    );
+  }
+  if (snap['item'] !== null && typeof snap['item'] !== 'string') {
+    throw new PublishError(
+      'local_comment_anchor_otio_invalid',
+      'otio snapshot.item must be a string or null.'
+    );
+  }
+  const anchor: Extract<CommentAnchor, { kind: 'otio' }> = {
+    kind: 'otio',
+    v: 1,
+    relic_version: relicVersion,
+    document_sha256: digest.toLowerCase(),
+    timeline_id: timelineId,
+    track_id: trackId,
+    ...(itemId === undefined ? {} : { item_id: itemId }),
+    range: { start_time: start, duration },
+    snapshot: {
+      timeline: snap['timeline'],
+      track: snap['track'],
+      item: snap['item'],
+    },
+  };
+  const encoded = new TextEncoder().encode(JSON.stringify(anchor)).length;
+  if (encoded > COMMENT_ANCHOR_OTIO_LIMIT_BYTES) {
+    throw new PublishError(
+      'local_comment_anchor_otio_too_long',
+      `the otio anchor is ${encoded} bytes and the limit is ${COMMENT_ANCHOR_OTIO_LIMIT_BYTES}.`,
+      {
+        anchor_bytes: encoded,
+        limit_bytes: COMMENT_ANCHOR_OTIO_LIMIT_BYTES,
+      }
+    );
+  }
+  return anchor;
 }
 
 /**
@@ -1463,10 +1662,13 @@ export function validateAndNormalizeAnchor(raw: unknown): CommentAnchor | null {
       };
     }
 
+    case 'otio':
+      return normalizeOtioAnchor(obj);
+
     default:
       throw new PublishError(
         'local_comment_anchor_kind_unknown',
-        `unknown anchor kind "${kind}". Expected one of: quote, text, pin, region, time, page.`
+        `unknown anchor kind "${kind}". Expected one of: quote, text, pin, region, time, page, otio.`
       );
   }
 }

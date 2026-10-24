@@ -1,0 +1,63 @@
+{
+  "fixtureCommit": "5a85d416ffc9958544b577d5f2cadbbafc143e2d",
+  "baselineSha256": "57d25096a01048de5a54b63fd263657b9880ba6d64e80387cbcfab33f7de5727",
+  "restoredSha256": "57d25096a01048de5a54b63fd263657b9880ba6d64e80387cbcfab33f7de5727",
+  "baseline": "27 pass; 0 fail; 228 assertions",
+  "scope": "Each isolated injection added one captured request after both successful consumer opens and before the unchanged leakage assertions. No network target or production code was changed. Exactly one injection was present per run; the sole added line was removed byte-exactly afterward.",
+  "mutations": [
+    {
+      "label": "URL fragment",
+      "exit": 1,
+      "assertion": "expect(call.url).not.toContain(fragment)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"r1AAAAAAAAAAAAAAAAAAAAAA\"\nReceived: \"https://relic.example/?leak=r1AAAAAAAAAAAAAAAAAAAAAA\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:941:28)\n"
+    },
+    {
+      "label": "Body fragment",
+      "exit": 1,
+      "assertion": "expect(call.body ?? '').not.toContain(fragment)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"r1AAAAAAAAAAAAAAAAAAAAAA\"\nReceived: \"r1AAAAAAAAAAAAAAAAAAAAAA\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:942:35)\n"
+    },
+    {
+      "label": "Encoded space-joined mnemonic",
+      "exit": 1,
+      "assertion": "expect(decodedUrl).not.toContain(joined)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"\nReceived: \"https://relic.example/?leak=abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:953:32)\n"
+    },
+    {
+      "label": "No-separator mnemonic",
+      "exit": 1,
+      "assertion": "expect(decodedUrl).not.toContain(joined)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"abandonabandonabandonabandonabandonabandonabandonabandonabandonabandonabandonabout\"\nReceived: \"https://relic.example/?leak=abandonabandonabandonabandonabandonabandonabandonabandonabandonabandonabandonabout\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:953:32)\n"
+    },
+    {
+      "label": "Hyphen-separated mnemonic",
+      "exit": 1,
+      "assertion": "expect(decodedUrl).not.toContain(joined)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-about\"\nReceived: \"https://relic.example/?leak=abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-abandon-about\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:953:32)\n"
+    },
+    {
+      "label": "Underscore-separated mnemonic",
+      "exit": 1,
+      "assertion": "expect(decodedUrl).not.toContain(joined)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_about\"\nReceived: \"https://relic.example/?leak=abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_abandon_about\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:953:32)\n"
+    },
+    {
+      "label": "Single mnemonic word in URL",
+      "exit": 1,
+      "assertion": "expect(urlTokens).not.toContain(word)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"about\"\nReceived: [ \"https\", \"relic\", \"example\", \"word\", \"about\" ]\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:956:31)\n"
+    },
+    {
+      "label": "Full mnemonic in body",
+      "exit": 1,
+      "assertion": "expect(call.body ?? '').not.toContain(word)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"abandon\"\nReceived: \"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:957:37)\n"
+    },
+    {
+      "label": "Single mnemonic word in body",
+      "exit": 1,
+      "assertion": "expect(call.body ?? '').not.toContain(word)",
+      "guardFailure": "error: expect(received).not.toContain(expected)\n\nExpected to not contain: \"about\"\nReceived: \"about\"\n\n      at <anonymous> (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-viewer/test/dashboard-and-key-entry.test.ts:957:37)\n"
+    }
+  ]
+}

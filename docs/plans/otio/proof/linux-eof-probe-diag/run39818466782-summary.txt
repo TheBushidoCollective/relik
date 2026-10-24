@@ -1,0 +1,9 @@
+eof run 0 mode=0 rc=1 ms=12057
+eof run 3 mode=1 rc=1 ms=124
+eof run 5 mode=0 rc=1 ms=12052
+eof run 7 mode=1 rc=1 ms=12057
+stamp run 1 rc=1 ms=5044
+stamp run 2 rc=1 ms=5040
+stamp run 3 rc=1 ms=5037
+stamp run 4 rc=1 ms=5039
+stamp run 5 rc=1 ms=5041

@@ -3979,8 +3979,8 @@ site data for this origin removes every remembered key.
 
 ## What we do know
 
-- **A coarse renderer class**, one of: markdown, code, html, jsx, image, media,
-  archive, binary. Nothing finer. It is now also on the relic's card, so the kind
+- **A coarse renderer class**, one of: markdown, code, html, jsx, image, pdf, media,
+  archive, binary, otio. Nothing finer. It is now also on the relic's card, so the kind
   of thing that was published is readable by anyone who fetches the link, not
   only by the operator.
 - **The name of the tool that published it**, so we can tell whether Relic
@@ -3997,7 +3997,11 @@ site data for this origin removes every remembered key.
   without the decryption key. Publishing with \`cover: false\` or republishing
   with \`cover: false\` clears the cover. Takedown deletes it. When a relic expires,
   the cover stops serving immediately while the underlying storage object
-  remains until deletion per our soft-delete retention policy.
+  remains until deletion per our soft-delete retention policy. For OpenTimelineIO
+  timeline relics (otio), unencrypted first-screen media rendering is skipped by
+  default; link previews use a generic card carrying the publisher-declared title
+  and format label, preventing referenced media frames and track metadata from
+  leaking into unencrypted cover previews.
 This moves us from knowing nothing to knowing what kind of thing you published
 and roughly how often it was fetched. It is metadata. It is never content.
 

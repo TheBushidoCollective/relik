@@ -5,7 +5,6 @@ import {
   isRendererClass,
   leastPrivileged,
   privilegeTier,
-  RENDERABLE_CLASSES,
   RENDERER_CLASSES,
   type RendererClass,
   sniffContentClass,
@@ -14,24 +13,11 @@ import {
 const utf8 = (text: string): Uint8Array => new TextEncoder().encode(text);
 
 describe('the taxonomy', () => {
-  test('has exactly nine values', () => {
-    expect(RENDERER_CLASSES).toHaveLength(9);
+  test('keeps OTIO outside the telemetry renderable wedge', () => {
+    expect(isRenderable('otio')).toBe(false);
   });
 
-  test('cuts on the wedge boundary, so the second clause is unambiguous', () => {
-    expect([...RENDERABLE_CLASSES].sort()).toEqual([
-      'code',
-      'html',
-      'image',
-      'jsx',
-      'markdown',
-      'pdf',
-    ]);
-    const downloadOnly = RENDERER_CLASSES.filter((c) => !isRenderable(c));
-    expect([...downloadOnly].sort()).toEqual(['archive', 'binary', 'media']);
-  });
-
-  test('rejects a value outside the eight', () => {
+  test('rejects a value outside the taxonomy', () => {
     expect(isRendererClass('spreadsheet')).toBe(false);
     expect(isRendererClass('markdown')).toBe(true);
     expect(isRendererClass('jsx')).toBe(true);

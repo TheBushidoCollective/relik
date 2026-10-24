@@ -1,0 +1,576 @@
+{
+  "dx_mic1.wav": [
+    {
+      "codec_name": "pcm_s16le",
+      "codec_type": "audio",
+      "sample_rate": "48000",
+      "channels": 1
+    }
+  ],
+  "fx_flare.webm": [
+    {
+      "codec_name": "vp9",
+      "codec_type": "video",
+      "width": 640,
+      "height": 360,
+      "pix_fmt": "yuv420p"
+    }
+  ],
+  "mx_bed.wav": [
+    {
+      "codec_name": "pcm_s16le",
+      "codec_type": "audio",
+      "sample_rate": "48000",
+      "channels": 1
+    }
+  ],
+  "overlay_alpha.webm": [
+    {
+      "codec_name": "vp9",
+      "codec_type": "video",
+      "width": 640,
+      "height": 360,
+      "pix_fmt": "yuv420p"
+    }
+  ],
+  "plate_1001.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1002.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1003.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1004.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1005.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1006.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1007.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1008.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1009.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1010.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1011.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1012.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1013.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1014.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1015.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1016.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1017.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1018.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1019.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1020.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1021.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1022.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1023.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1024.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1025.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1026.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1027.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1028.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1029.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1030.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1031.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1032.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1033.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1034.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1035.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1036.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1037.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1038.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1039.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1040.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1041.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1042.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1043.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1044.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1045.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1046.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1047.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "plate_1048.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "primary_a.mp4": [
+    {
+      "codec_name": "h264",
+      "codec_type": "video",
+      "width": 640,
+      "height": 360,
+      "pix_fmt": "yuv420p"
+    }
+  ],
+  "secondary_b.mp4": [
+    {
+      "codec_name": "h264",
+      "codec_type": "video",
+      "width": 640,
+      "height": 360,
+      "pix_fmt": "yuv420p"
+    }
+  ],
+  "secondary_b_prores.mov": [
+    {
+      "codec_name": "prores",
+      "codec_type": "video",
+      "width": 640,
+      "height": 360,
+      "pix_fmt": "yuv444p10le"
+    }
+  ],
+  "signed_-0001.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "signed_-0002.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "signed_-0003.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "signed_0000.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "step_0000.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "step_0002.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "step_0004.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "step_0006.png": [
+    {
+      "codec_name": "png",
+      "codec_type": "video",
+      "width": 320,
+      "height": 180,
+      "pix_fmt": "rgb24"
+    }
+  ],
+  "unsupported_prores.mov": [
+    {
+      "codec_name": "prores",
+      "codec_type": "video",
+      "width": 640,
+      "height": 360,
+      "pix_fmt": "yuv444p12le"
+    }
+  ]
+}

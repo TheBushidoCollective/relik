@@ -1,0 +1,12 @@
+dp0-main commit 5ac668a89daea0217f1bd042f28712faa18282d5
+dp0-main dockerfile-git 0b6582cdf1014d3c27eb32fc11937269d0fecf5e
+dp0-main dockerfile-sha256 6fe41c29fbc53a9d464ab9d1164f9b35e594c6666c4121aa0453f6e354459543  /home/runner/work/relik/relik/proof-context/dp0-main/deploy/docker/server/Dockerfile
+dp1-prefix commit 702a5bb033ad0155c77842085642450d0106a39c
+dp1-prefix dockerfile-git 3134ed9b945c2ad02af9cc76cd2370b5205bc871
+dp1-prefix dockerfile-sha256 88784585686417f7021c4b80e1a8161153a430dc9067c3d687325d7f54a2c639  /home/runner/work/relik/relik/proof-context/dp1-prefix/deploy/docker/server/Dockerfile
+dp2-fixed commit 633bf800919f5199e3ffd02aa2e95050b62b0c2e
+dp2-fixed dockerfile-git 2cf7a90bd7ecac4decec461cc33767689371414e
+dp2-fixed dockerfile-sha256 271d80bb45f525db05cbbbe5ab2835622d92fdb2c8b397e508ad780f3855a398  /home/runner/work/relik/relik/proof-context/dp2-fixed/deploy/docker/server/Dockerfile
+dp3-mutant commit 633bf800919f5199e3ffd02aa2e95050b62b0c2e
+dp3-mutant dockerfile-git 2cf7a90bd7ecac4decec461cc33767689371414e
+dp3-mutant dockerfile-sha256 271d80bb45f525db05cbbbe5ab2835622d92fdb2c8b397e508ad780f3855a398  /home/runner/work/relik/relik/proof-context/dp3-mutant/deploy/docker/server/Dockerfile

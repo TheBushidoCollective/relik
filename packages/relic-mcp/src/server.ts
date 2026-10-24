@@ -268,14 +268,27 @@ export const TOOL_DEFINITION = {
     'it. Pass an empty string to publish without one. ' +
     'By default a picture of the first screen is rendered locally and ' +
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
-    'it. Takes a filesystem path, never ' +
+    'it. An .otiod directory is packaged into a standard .otioz archive ' +
+    '(content.otio, version.txt 1.0.0, and only referenced media under media/) ' +
+    'on packaged targets: macOS arm64 or x64 with a 15.0 binary deployment ' +
+    'floor, or Linux glibc 2.28+ arm64 or x64. Before it reads a bundle on ' +
+    'either platform, the helper verifies on the running kernel that ' +
+    'beneath-root resolution refuses parent and absolute escapes from a held ' +
+    'directory and that the no-symlink flag is accepted. Symlink refusal, ' +
+    'held-descriptor behavior, and replacement behavior are verified by the CI ' +
+    'probe on the listed versions. A target or kernel that cannot satisfy that ' +
+    'requirement refuses it rather than using a pathname fallback. A raw .otio ' +
+    'file or an existing .otioz archive is published ' +
+    'as given. OTIO covers use only the public title and format label; media ' +
+    'frames stay out of the unencrypted preview. Takes a filesystem path, never ' +
     'inline content.',
   inputSchema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Filesystem path to the file to publish.',
+        description:
+          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory.',
       },
       filename: {
         type: 'string',
@@ -381,7 +394,19 @@ export const REPUBLISH_TOOL_DEFINITION = {
     'token; a relic that was taken down can never be revived. ' +
     'By default a picture of the first screen is rendered locally and ' +
     'uploaded unencrypted for link previews; pass cover: false to withhold ' +
-    'it.' +
+    'it. An .otiod directory is packaged into a standard .otioz archive ' +
+    '(content.otio, version.txt 1.0.0, and only referenced media under media/) ' +
+    'on packaged targets: macOS arm64 or x64 with a 15.0 binary deployment ' +
+    'floor, or Linux glibc 2.28+ arm64 or x64. Before it reads a bundle on ' +
+    'either platform, the helper verifies on the running kernel that ' +
+    'beneath-root resolution refuses parent and absolute escapes from a held ' +
+    'directory and that the no-symlink flag is accepted. Symlink refusal, ' +
+    'held-descriptor behavior, and replacement behavior are verified by the CI ' +
+    'probe on the listed versions. A target or kernel that cannot satisfy that ' +
+    'requirement refuses it rather than using a pathname fallback. A raw .otio ' +
+    'file or an existing .otioz archive is republished ' +
+    'as given. OTIO covers use only the public title and format label; media ' +
+    'frames stay out of the unencrypted preview.' +
     REPUBLISH_DISCIPLINE_DISCLOSURE +
     ' Each new version emails a change notice, naming the title and version and never the key, to each verified commenter and each address added with relic_share, minus any that stopped emails; pass notify: false to skip it. At most one email per person per relic per 10 minutes, and one stop link stops every email about that relic.',
   inputSchema: {
@@ -394,7 +419,7 @@ export const REPUBLISH_TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to the file that becomes the new version.',
+          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory that becomes the new version.',
       },
       filename: {
         type: 'string',
@@ -592,15 +617,17 @@ export const LOOKUP_TOOL_DEFINITION = {
   name: LOOKUP_TOOL_NAME,
   title: 'Look up a published source',
   description:
-    'Look up whether this machine already published a file and return the ' +
-    'relic id needed by relic_republish. Reads local publish state only and ' +
-    'never calls the service.',
+    'Look up whether this machine already published a file or .otiod bundle ' +
+    'directory and return the relic id needed by relic_republish. An .otiod ' +
+    'directory is identified by its original path even after it was packaged ' +
+    'as .otioz. Reads local publish state only and never calls the service.',
   inputSchema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Filesystem path to the source to look up.',
+        description:
+          'Filesystem path to the file or .otiod bundle directory to look up.',
       },
     },
     required: ['path'],
@@ -959,7 +986,8 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'resolved before a new version can land. ' +
     'Each comment can be a remark on the relic as a whole or an exact mark: ' +
     'a text quote with surrounding context, a stage pin, an artifact region, ' +
-    'a timestamp or span in audio or video, or a page in a document. ' +
+    'a timestamp or span in audio or video, a page in a document, or an OTIO ' +
+    'timeline point or range. ' +
     'Pass `version` to scope the thread: a version number returns the comments ' +
     'made on that version, `"*"` returns every comment on every version, and ' +
     'omitting it returns the comments on the relic\u2019s current version only. ' +
@@ -970,7 +998,19 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'whole one. ' +
     'Pass `resolve_anchors: true` to fetch and decrypt the relic content and ' +
     'resolve anchors against the actual content (source context runs for quotes, ' +
-    'crops and annotated views for image regions, and extracted video frames). ' +
+    'crops and annotated views for image regions, extracted video frames, and ' +
+    'for OTIO the original revision\u2019s source intervals plus a separate ' +
+    'current-revision projection). An OTIO source location must identify an ' +
+    'actual Timeline.1 and, when selected, Track.1 within its original exposed ' +
+    'range; ' +
+    'that source validation happens before any current-revision request. An ' +
+    'invalid source location stays a readable unresolvable comment with no ' +
+    'artifact-derived source context or current projection. An explicit Gap or ' +
+    'an exposed timeline tail can be valid even when it has no media or source ' +
+    'span. Historical OTIO comments are fetched by their service-stamped ' +
+    'revision only after it matches the sealed anchor, and the decrypted original ' +
+    'must match the sealed document digest. A mismatch is unresolvable and ' +
+    'carries no artifact-derived context. ' +
     'This defaults to false because content resolution spends a signed download ' +
     'URL mint and download quota. ' +
     COMMENT_MACHINE_BOUNDARY +
@@ -999,6 +1039,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
         description:
           'Whether to fetch and decrypt the relic to resolve anchors against the actual content ' +
           '(e.g. text quotes with surrounding source context, image region crops and annotated views, video frames). ' +
+          'OTIO source context is returned only after its service-stamped comment revision and sealed document digest validate. ' +
           'Defaults to false because resolving content mints a signed download URL and fetches the ciphertext, ' +
           'which consumes download quota and bandwidth.',
       },
@@ -1090,6 +1131,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
                 'artifact region ({kind: "region", rect: {x, y, w, h}}), ' +
                 'media timestamp or span ({kind: "time", t, t_end?, rect?}), ' +
                 'paged document page ({kind: "page", page, rect?, exact?}), ' +
+                'OTIO point or range ({kind: "otio", v: 1, relic_version, document_sha256, timeline_id, track_id, range, snapshot}), ' +
                 'or unsupported ({kind: "unsupported", declared}).',
               properties: {
                 kind: {
@@ -1101,6 +1143,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
                     'region',
                     'time',
                     'page',
+                    'otio',
                     'unsupported',
                   ],
                 },
@@ -1168,7 +1211,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
             resolved: {
               type: ['object', 'null'],
               description:
-                'The resolved content and status for this anchor, when resolve_anchors is enabled.',
+                'The resolved content and status for this anchor, when resolve_anchors is enabled. OTIO digest or revision mismatches are unresolvable and contain no artifact-derived context.',
             },
           },
           required: [
@@ -1221,8 +1264,8 @@ export const COMMENT_TOOL_DEFINITION = {
     'every email about that relic. That is attribution and not ' +
     'authorization. ' +
     'Comments can be anchored to an exact location: a text quote, a stage ' +
-    'pin, an artifact region, a moment or span in audio or video, or a page ' +
-    'in a document. Passing an anchor attaches your reply at that location, ' +
+    'pin, an artifact region, a moment or span in audio or video, a page ' +
+    'in a document, or an OTIO timeline point or range. Passing an anchor attaches your reply at that location, ' +
     'so the reader sees what you are answering; omitting it leaves a remark ' +
     'about the whole relic. ' +
     COMMENT_MACHINE_BOUNDARY +
@@ -1264,12 +1307,14 @@ export const COMMENT_TOOL_DEFINITION = {
           'a box on the artifact ({kind: "region", rect: {x, y, w, h}}), ' +
           'a moment or span in audio/video ({kind: "time", t, t_end?, rect?}, with t ' +
           'given as seconds or as a timecode like "1:23"), ' +
-          'or a page in a paged document ({kind: "page", page, rect?, exact?}). ' +
+          'a page in a paged document ({kind: "page", page, rect?, exact?}), ' +
+          'or an OTIO point or range ({kind: "otio", v: 1, relic_version, document_sha256, timeline_id, track_id, item_id?, range: {start_time, duration}, snapshot}). ' +
+          'track_id null marks the whole composition. Zero duration is a point. ' +
           'Omit for a remark about the whole relic.',
         properties: {
           kind: {
             type: 'string',
-            enum: ['quote', 'text', 'pin', 'region', 'time', 'page'],
+            enum: ['quote', 'text', 'pin', 'region', 'time', 'page', 'otio'],
             description: 'The kind of anchor mark.',
           },
           exact: {
@@ -1330,6 +1375,73 @@ export const COMMENT_TOOL_DEFINITION = {
             minimum: 1,
             maximum: 10000,
             description: 'For page anchors: 1-based page number (1 to 10000).',
+          },
+          v: {
+            type: 'integer',
+            const: 1,
+            description: 'OTIO anchor version. Only 1 can be written.',
+          },
+          relic_version: {
+            type: 'integer',
+            minimum: 1,
+            description:
+              'OTIO: the relic revision this mark was made on. The comment is stored against this revision even when newer revisions exist. Sealed, not the format version.',
+          },
+          document_sha256: {
+            type: 'string',
+            description:
+              'OTIO: 64 hex characters of the original content.otio digest.',
+          },
+          timeline_id: {
+            type: 'string',
+            description: 'OTIO: timeline node id.',
+          },
+          track_id: {
+            type: ['string', 'null'],
+            description:
+              'OTIO: track node id, or null for the whole composition.',
+          },
+          item_id: {
+            type: 'string',
+            description: 'OTIO: optional item id inside the track.',
+          },
+          range: {
+            type: 'object',
+            description:
+              'OTIO: half-open timeline range. Zero duration is a point.',
+            properties: {
+              start_time: {
+                type: 'object',
+                properties: {
+                  value: { type: 'number' },
+                  rate: { type: 'number' },
+                },
+                required: ['value', 'rate'],
+                additionalProperties: false,
+              },
+              duration: {
+                type: 'object',
+                properties: {
+                  value: { type: 'number' },
+                  rate: { type: 'number' },
+                },
+                required: ['value', 'rate'],
+                additionalProperties: false,
+              },
+            },
+            required: ['start_time', 'duration'],
+            additionalProperties: false,
+          },
+          snapshot: {
+            type: 'object',
+            description: 'OTIO: bounded labels for timeline, track, and item.',
+            properties: {
+              timeline: { type: 'string' },
+              track: { type: ['string', 'null'] },
+              item: { type: ['string', 'null'] },
+            },
+            required: ['timeline', 'track', 'item'],
+            additionalProperties: false,
           },
         },
         required: ['kind'],
@@ -1546,38 +1658,35 @@ export const INSTRUCTIONS = `Relic encrypts a file on this machine and uploads \
 only ciphertext. The key lives in the URL fragment, which browsers never send \
 to a server.
 
-Nine things that change how you should act:
-1. The link is the credential: anyone holding it, fragment included, can read \
-the file. Never paste it into a tracker, log, or channel.
+Publishing rules:
+1. The full link is the credential: anyone holding it can read the file. Never \
+paste it into a tracker, log, or channel.
 2. A relic carries a plaintext title, defaulting to the filename: the service \
-stores it and every link preview shows it. Pass \
-title: "" when the name is sensitive.
-3. Publishing puts the key in this transcript: say so plainly when handing \
-the link over.
-4. Check sources with relic_lookup_source; relic_republish keeps the URL \
-where relic_publish costs a second URL. \
-${VERSION_HISTORY_DISCLOSURE}
-5. A relic can be republished only from the machine that published it: the key \
-and publish token live nowhere else.
-6. HTML and JSX render in an isolated frame with no network access, so inline \
+stores it and every link preview shows it. Pass title: "" when it is sensitive.
+3. Publishing puts the key in this transcript. Say so when handing over the link.
+4. Check sources with relic_lookup_source. relic_publish costs a second URL; \
+relic_republish keeps the first. ${VERSION_HISTORY_DISCLOSURE}
+5. Only the publishing machine can republish: its key and publish token live there.
+6. HTML and JSX render in an isolated frame with no network access. Inline \
 styles, scripts, fonts, and images: a CDN reference renders as nothing.
-7. People can comment on a relic. Read with relic_read_comments before \
-changing reviewed content, answer with relic_comment. relic_edit_comment \
-rewrites one, relic_resolve_comment settles one, and settled counts as \
-handled. All take the relic id and attribute you as publisher. A new \
-comment emails everyone on the relic's list except the author (naming \
-the address, or "The publisher" for relic_comment; at most once per 10 \
-minutes). One stop link stops every email about that relic.
-8. By default relic_publish and relic_republish upload a picture of the file's \
-first screen, unencrypted, for link previews: the service and anyone holding \
-the link without the key can see it. Pass cover: false for anything you would \
-not show in a chat preview.
-9. relic_republish emails a change notice, naming the title and version but \
-never the key, to everyone following the relic; pass notify: false to skip \
-it. relic_share hands back a share email with the full link for you to draft \
-in the sharer's own mailbox: Relic never sends it, so the key never reaches \
-the service. Readers holding the link can also share from the viewer once this \
-client version has published or republished the relic.`;
+7. Read reviewed-relic comments with relic_read_comments before changes. Answer \
+with relic_comment, rewrite yours with relic_edit_comment, or settle one with \
+relic_resolve_comment; settled counts as handled. New-comment mail excludes its \
+author, is capped once per 10 minutes, and one stop link stops every email \
+about that relic.
+8. Previews are unencrypted: publish and republish upload the first screen by \
+default. Pass cover: false for anything not public. OTIO previews are a generic \
+card with only the public title and format, never media frames or track metadata. \
+Ordinary files need Node 18+. .otiod packaging uses source-included Node-API \
+prebuilds: macOS arm64/x64 (15.0 binary floor), Linux glibc 2.28+ arm64/x64. \
+A running-kernel self-test must verify held-root confinement and no-symlink \
+flag support; otherwise packaging is refused. No runtime build/download or \
+pathname fallback. See relic_describe_client for tested systems.
+9. relic_republish emails followers a change notice naming the title and version, \
+never the key; pass notify: false to skip it. relic_share returns a share email \
+with the full link to draft in the sharer's mailbox but never sends it. Readers \
+holding the link can also share from the viewer once this client version has \
+published or republished the relic.`;
 
 /**
  * Handle one JSON-RPC message.
@@ -2764,6 +2873,18 @@ function resolutionLine(resolved: CommentRecord['resolved']): string {
 
     case 'unsupported':
       return `[Resolution note: ${resolved.explanation}]\n`;
+    case 'otio':
+      if (resolved.status === 'unresolvable') {
+        return `[Resolution note: ${resolved.explanation} Snapshot: ${resolved.snapshot.timeline}${resolved.snapshot.track ? ` / ${resolved.snapshot.track}` : ''}]\n`;
+      }
+      return (
+        `[OTIO revision ${resolved.relic_version} ${resolved.start_timecode}` +
+        `${resolved.point ? '' : ` to ${resolved.end_timecode}`}, ` +
+        `${resolved.intersections.length} intersection(s). ` +
+        `Current projection: ${resolved.current_projection.status}` +
+        `${resolved.current_projection.current_version === null ? '' : ` on version ${resolved.current_projection.current_version}`}. ` +
+        `${resolved.current_projection.explanation}]\n`
+      );
   }
 }
 
@@ -3025,8 +3146,18 @@ URL, so it enters the model's context and your session transcript. That is
 structural, not a defect. Anyone who can read this conversation can open the
 relic.
 
-The code doing all of this is on disk in this package and can be read. Nothing
-is fetched from the network and executed.`;
+The code doing all of this is on disk in this package and can be read. The only
+compiled component is the source-included Node-API secure-open helper used for
+automatic .otiod directory packaging. It ships for macOS arm64 and x64 with a
+15.0 binary deployment floor, plus Linux glibc 2.28+ arm64 and x64. Before it
+reads a bundle on either platform, the helper verifies on the running kernel
+that beneath-root resolution refuses parent and absolute escapes from a held
+directory and that the no-symlink flag is accepted. Symlink refusal,
+held-descriptor behavior, and replacement behavior are verified by the CI probe
+on the listed versions. The helper is never downloaded or compiled at runtime,
+and an unsupported platform, architecture, libc, or kernel configuration
+refuses .otiod packaging rather than using a pathname fallback. Nothing is
+fetched from the network and executed.`;
 }
 
 /** Read newline-delimited JSON-RPC from a stream and write responses back. */

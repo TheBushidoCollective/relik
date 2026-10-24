@@ -1,0 +1,157 @@
+{
+  "sourceHead": "80cd2ee",
+  "productBase": "704379d",
+  "viewerShellHash": "9352fc542aa04af3",
+  "gateCommits": ["1bab97e", "6183368"],
+  "command": "mise exec node@24.15.0 -- env RELIC_OTIO_PATH_CLIENT=source RELIC_OTIO_CHROME_PATH=<owned headless shell 1228> bun packages/relic-mcp/test/otio-path.ts",
+  "exit": 1,
+  "expectedCounterexample": true,
+  "assertion": "1440px light composer naturally fitting context still overflows",
+  "allocation": {
+    "bodyPresent": true,
+    "bodyRect": {
+      "left": 624.796875,
+      "top": 291.0625,
+      "right": 960.421875,
+      "bottom": 312.65625,
+      "width": 335.625,
+      "height": 21.59375
+    },
+    "bodyClientHeight": 22,
+    "bodyScrollHeight": 116,
+    "initialScrollTop": 0,
+    "bodyBorderHeight": 0,
+    "naturalBodyHeight": 116,
+    "nonBodyHeight": 118.375,
+    "naturalRequiredCardHeight": 234.375,
+    "naturalFitsSafeRegion": true,
+    "cardRect": {
+      "left": 616.609375,
+      "top": 286.0625,
+      "right": 968.609375,
+      "bottom": 426.03125,
+      "width": 352,
+      "height": 139.96875
+    },
+    "safeRegion": {
+      "left": 8,
+      "right": 1159.21875,
+      "top": 100.796875,
+      "bottom": 426.0625,
+      "width": 1151.21875,
+      "height": 325.265625
+    },
+    "fragments": [
+      {
+        "name": "target",
+        "present": true,
+        "visible": true,
+        "text": "v1 · Relik Feature Editorial · Video 2 · 0 @ 24, duration 240 @ 24",
+        "paragraphRect": {
+          "left": 624.796875,
+          "top": 291.0625,
+          "right": 960.421875,
+          "bottom": 329.75,
+          "width": 335.625,
+          "height": 38.6875
+        },
+        "lineRects": [
+          {
+            "left": 624.796875,
+            "top": 293.0625,
+            "right": 937.296875,
+            "bottom": 308.0625,
+            "width": 312.5,
+            "height": 15
+          },
+          {
+            "left": 624.796875,
+            "top": 312.40625,
+            "right": 681.625,
+            "bottom": 327.40625,
+            "width": 56.828125,
+            "height": 15
+          }
+        ],
+        "paragraphInBody": false,
+        "paragraphInCard": true,
+        "paragraphInSafeRegion": true,
+        "linesInBody": false,
+        "linesInCard": true,
+        "linesInSafeRegion": true
+      },
+      {
+        "name": "disclosure",
+        "present": true,
+        "visible": true,
+        "text": "Your address is shown with your comment and in emails to people following the relic, and Relic sees who commented on what. When someone comments or a new version is published, Relic emails you, with a link to stop.",
+        "paragraphRect": {
+          "left": 624.796875,
+          "top": 332.9375,
+          "right": 960.421875,
+          "bottom": 404.3125,
+          "width": 335.625,
+          "height": 71.375
+        },
+        "lineRects": [
+          {
+            "left": 624.796875,
+            "top": 334.9375,
+            "right": 943.53125,
+            "bottom": 347.9375,
+            "width": 318.734375,
+            "height": 13
+          },
+          {
+            "left": 624.796875,
+            "top": 352.78125,
+            "right": 957.34375,
+            "bottom": 365.78125,
+            "width": 332.546875,
+            "height": 13
+          },
+          {
+            "left": 624.796875,
+            "top": 370.625,
+            "right": 907.328125,
+            "bottom": 383.625,
+            "width": 282.53125,
+            "height": 13
+          },
+          {
+            "left": 624.796875,
+            "top": 388.46875,
+            "right": 878.609375,
+            "bottom": 401.46875,
+            "width": 253.8125,
+            "height": 13
+          }
+        ],
+        "paragraphInBody": false,
+        "paragraphInCard": true,
+        "paragraphInSafeRegion": true,
+        "linesInBody": false,
+        "linesInCard": true,
+        "linesInSafeRegion": true
+      },
+      {
+        "name": "note",
+        "present": true,
+        "visible": false,
+        "text": "",
+        "paragraphRect": null,
+        "lineRects": [],
+        "paragraphInBody": false,
+        "paragraphInCard": false,
+        "paragraphInSafeRegion": false,
+        "linesInBody": false,
+        "linesInCard": false,
+        "linesInSafeRegion": false
+      }
+    ]
+  },
+  "stagesObserved": 18,
+  "noProductIdentityRevealRepair": true,
+  "noCssAutoRepair": true,
+  "externalWrites": "Isolated loopback in-memory only"
+}

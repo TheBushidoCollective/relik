@@ -9,8 +9,7 @@
  *
  * What it never carries: the contents, the envelope header's authoritative
  * filename and declared mimetype, which stay inside the AEAD, and anything
- * finer than the eight-value class.
- *
+ * finer than the ten-value class.
  * Why the class is allowed here at all. It is the coarse category the frame
  * already concedes to the operator on the grant, so the card is a new
  * audience for a field the service has always held rather than a new field.
@@ -48,6 +47,7 @@ export const CLASS_PHRASES: Record<RendererClass, string> = {
   media: 'An audio or video file.',
   archive: 'An archive.',
   binary: 'A binary file.',
+  otio: 'An OpenTimelineIO timeline.',
 };
 
 export const CLASS_TITLES: Record<RendererClass, string> = {
@@ -60,6 +60,7 @@ export const CLASS_TITLES: Record<RendererClass, string> = {
   media: 'A media relic',
   archive: 'An archive relic',
   binary: 'A binary relic',
+  otio: 'An OpenTimelineIO relic',
 };
 
 export const BEHAVIOUR_TAILS: Record<ClassBehaviour, string> = {

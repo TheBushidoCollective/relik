@@ -1,10 +1,12 @@
 /**
  * Bundle the client into one readable Node ESM file.
  *
- * Deliberately NOT minified. The whole point of shipping source rather than a
- * compiled binary is that an agent, or a person, can read what the encryption
- * path actually does before trusting it. A minified bundle would be a black
- * box wearing a `.js` extension.
+ * Deliberately NOT minified. The JavaScript encryption path stays readable so
+ * an agent or person can inspect what happens before trusting it. The
+ * source-included Node-API confined opener for .otiod is the narrow compiled
+ * exception; it ships as audited source and target-specific prebuilts. A
+ * minified JavaScript bundle would still be a black box wearing a `.js`
+ * extension.
  *
  * One file rather than a tree, because the alternative is publishing
  * `@relic/format` separately and asking a reader to follow imports across
@@ -55,6 +57,26 @@ if (!built.success) {
   process.exit(1);
 }
 
+const nativeLoader = await Bun.build({
+  entrypoints: ['./src/native-secure-open.ts'],
+  outdir: out,
+  target: 'node',
+  format: 'esm',
+  minify: false,
+  splitting: false,
+  naming: 'native-secure-open.js',
+});
+
+if (!nativeLoader.success) {
+  for (const log of nativeLoader.logs) console.error(log);
+  process.exit(1);
+}
+
+await Bun.write(
+  `${out}native-secure-open.d.ts`,
+  await Bun.file('./native/secure-open.d.ts').text()
+);
+
 const bundle = `${out}relic-mcp.js`;
 const text = await Bun.file(bundle).text();
 
@@ -71,15 +93,13 @@ console.log(
 );
 
 /**
- * Generate the Claude Code manifests from package.json.
+ * Generate the Claude Code manifests and their MCP launch configuration from
+ * package.json. The package and plugin are one artifact, so installing either
+ * must describe the same client version without a separately maintained pin.
  *
- * The package and the plugin are the same artifact: installing from npm and
- * installing from the repo have to describe the same thing, and a version that
- * only matches because somebody remembered to edit it in four places will stop
- * matching. Generating them means package.json is the one source of truth, and
- * a stale manifest cannot be committed because it is not committed at all.
+ * mcp-servers.json is committed as the current generated output so a checkout
+ * remains installable before its first build. Every release build overwrites it.
  */
-// Read above, before the build, because the bundle is stamped from it too.
 
 const PLUGIN_DESCRIPTION =
   'Publish a file from your machine as an encrypted, shareable link. The ' +
@@ -89,6 +109,22 @@ const PLUGIN_DESCRIPTION =
 
 const author = { name: 'The Bushido Collective', url: 'https://thebushido.co' };
 const homepage = 'https://github.com/TheBushidoCollective/relic';
+
+const pluginMcpServers = {
+  relic: {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', `${pkg.name}@${pkg.version}`],
+    env: {
+      RELIC_CLIENT_NAME: `relic-plugin/${pkg.version}`,
+    },
+  },
+};
+
+await Bun.write(
+  './mcp-servers.json',
+  `${JSON.stringify(pluginMcpServers, null, 2)}\n`
+);
 
 await mkdir('./.claude-plugin', { recursive: true });
 
@@ -148,4 +184,6 @@ await Bun.write(
   )}\n`
 );
 
-console.log(`wrote plugin manifests at version ${pkg.version}`);
+console.log(
+  `wrote plugin manifests and launch config at version ${pkg.version}`
+);

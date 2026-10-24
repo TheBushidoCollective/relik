@@ -1,0 +1,22 @@
+{
+  "sourceHead": "b1aab2e",
+  "viewerShellHash": "2d322d462c092d06",
+  "originalComposerMatrix": "Completed; previous viewport-edge assertion passed after actual sampler integration.",
+  "failure": "New duplicate-point marker exposure precondition stayed RED although pre-hit, trusted click, matching card, body and anchor all identified the expected comment.",
+  "before": {
+    "top": 962.375,
+    "bottom": 976.375,
+    "stageScrollTop": 31
+  },
+  "after": {
+    "top": 886.375,
+    "bottom": 900.375,
+    "center": {
+      "x": 174,
+      "y": 893.375
+    },
+    "stageScrollTop": 107
+  },
+  "cause": "Fractional scroll rounding versus scroll cap is not yet distinguished; actual bounds/maximum/requested/applied fields absent.",
+  "approvedNextChange": "Round directional scroll correction outward while retaining whole-mark containment, max clamp, three-attempt limit and all identity assertions; add actual scroll diagnostics."
+}

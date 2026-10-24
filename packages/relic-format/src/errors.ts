@@ -124,12 +124,17 @@ export class CommentDecryptFailedError extends RelicFormatError {
 export class CommentTooLargeError extends RelicFormatError {
   override readonly name = 'CommentTooLargeError';
   constructor(
-    readonly field: 'body' | 'display_name' | 'anchor' | 'addresses',
+    readonly field:
+      | 'body'
+      | 'display_name'
+      | 'anchor'
+      | 'addresses'
+      | 'ciphertext',
     readonly declaredBytes: number,
     readonly limitBytes: number
   ) {
     super(
-      `comment ${field} is ${declaredBytes} bytes of UTF-8, over the ` +
+      `comment ${field} is ${declaredBytes} ${field === 'ciphertext' ? 'characters' : 'bytes of UTF-8'}, over the ` +
         `${limitBytes} cap`
     );
   }

@@ -181,6 +181,26 @@ click. The parent validates it again and opens a separate tab with `noopener`
 and `noreferrer`. Author code still cannot fetch, beacon, navigate, or open a
 popup, and a scripted click is rejected.
 
+
+### 3.6 OpenTimelineIO native playback and timeline viewer
+
+**Proposed native timeline player.** Subject to end-to-end surface proof in `packages/relic-mcp/test/otio-path.ts`.
+
+`otio` is the tenth renderer class (`RendererClass: otio`, `CLASS_BEHAVIOUR.otio: plays`, `RenderRoute: otio`).
+
+- **Archive routing and sniffing:** Decrypted content is inspected by byte signature and archive index. Standard `.otioz` archives (containing `content.otio` and `version.txt`) route to `otio`. Generic archives remain download-only (`CLASS_BEHAVIOUR.archive: downloads`). A raw `.otio` file provides structural inspection without remote fetching.
+- **Composition and multi-track playback:** Evaluates timeline tracks in painter order (video stacked bottom to top over opaque black; audio summed additively across all active tracks). Gaps are transparent for video and silent for audio. Disabled items change contribution without altering timeline duration. Nested stacks evaluate parent coordinate systems without spilling.
+- **Time ranges and rational time:** Rational time `{value, rate}` is preserved across all coordinate systems. Mixed rates, non-zero start times, and source trims are supported natively.
+- **Transitions and retiming:** Evaluates `SMPTE_Dissolve` transitions by blending premultiplied track contributions into an intermediate track surface before stacking. Evaluates `LinearTimeWarp` scalar retiming and freeze frames. Image sequences (`ImageSequenceReference`) resolve frames from bundled media with frame step and missing frame policies.
+
+Movie samples outside their available range are withheld for video and silent for audio. Video decoders seek the midpoint of a certified presentation window, preserving the sampled frame at decoder boundaries. Before an image sequence begins, `hold` selects the first archived frame, skipping missing entries; after its end it still selects backward.
+
+- **Certified movie timing:** Movie timing comes only from actual, sorted packet-presentation windows in the local bundled Blob. For a source sample, the viewer binary-searches window starts with rational comparison in that sample's units, confirms the half-open end, and seeks only the certified window midpoint. It never reconstructs an FPS grid, shifts the first PTS to zero, or treats OTIO units as media cadence. An unknown index, window gap, or uncovered sample seeks exact normalized source seconds and reports `invalid-timing` rather than guessing. A representationally negative value that compares equal to zero is normalized only in decoder-local state; true negatives and missing handles remain withheld or silent.
+- **Timing limits:** The timing reader admits a media Blob up to 100 MiB, and one playback controller reserves at most 16 MiB for retained timing arrays. Reader caps return an explicit unknown result rather than a partial index. An uncertified tail is omitted, so seeking it is an explicit uncovered sample.
+
+- **Fidelity boundaries and diagnostic states:** Browser playback operates in browser-managed SDR. Unsupported effects, proprietary plugins, unknown schemas, and unavailable codecs trigger explicit diagnostic states (`supported`, `missing-media`, `unsupported-codec`, `unsupported-effect`, `unsupported-schema`, `invalid-timing`, `unsupported-browser`). An incomplete preview provides a deliberate "Preview base media without unsupported effects" control; it is never claimed as full fidelity.
+- **Security:** The viewer never executes bundled code, plugins, or SchemaDef expressions. All media references resolve only to existing non-directory entries beneath bundled `media/`; remote network fetches are barred.
+- **Chunk loading:** The OTIO parser and playback engine are lazy-loaded on demand to preserve the initial viewer shell budget.
 ## 4. The sandbox boundary
 
 **Direction is forced, not chosen.** The main origin fetches, decrypts, and posts plaintext to a static shim whose own code never touches ciphertext and never makes a request. The alternative shape, where the usercontent origin fetches and the parent posts it the key, is what somebody reaches for to avoid moving large payloads across a boundary, and it requires the key to cross. That must never happen.
@@ -303,14 +323,15 @@ When a relic has no cover, when `cover: false` was passed, or when the relic is 
   - `html`: `An HTML page.`
   - `jsx`: `A JSX component.`
   - `image`: `An image.`
+  - `pdf`: `A PDF document.`
   - `media`: `An audio or video file.`
   - `archive`: `An archive.`
   - `binary`: `A binary file.`
+  - `otio`: `An OpenTimelineIO timeline.`
 - Tail:
-  - Renderable tail (`renders`: `markdown`, `code`, `html`, `jsx`, `image`): `It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.`
-  - Playable tail (`plays`: `media`): `It plays in your browser, and only someone holding the whole link, including the part after the #, can open it.`
+  - Renderable tail (`renders`: `markdown`, `code`, `html`, `jsx`, `image`, `pdf`): `It opens in your browser, and only someone holding the whole link, including the part after the #, can open it.`
+  - Playable tail (`plays`: `media`, `otio`): `It plays in your browser, and only someone holding the whole link, including the part after the #, can open it.`
   - Download-only tail (`downloads`: `archive`, `binary`): `It downloads to your device, and only someone holding the whole link, including the part after the #, can open it.`
-
 The description tag value is the class phrase, one space, and the matching tail (for example, "An audio or video file. It plays in your browser, and only someone holding the whole link, including the part after the #, can open it.").
 
 **`og:title` and document `<title>` carry the title or a per-class fallback.** When titled, `og:title` and `twitter:title` are the publisher-declared plaintext title, and the document `<title>` is `{title} · Relic` (using a U+00B7 middle dot, never a dash). When untitled, the title falls back to a per-class label:
@@ -319,10 +340,11 @@ The description tag value is the class phrase, one space, and the matching tail 
 - `html`: `An HTML relic`
 - `jsx`: `A JSX relic`
 - `image`: `An image relic`
+- `pdf`: `A PDF relic`
 - `media`: `A media relic`
 - `archive`: `An archive relic`
 - `binary`: `A binary relic`
-
+- `otio`: `An OpenTimelineIO relic`
 For an untitled relic, `<title>` is `{Class} relic · Relic` (for example, `A Markdown relic · Relic`), while `og:title` and `twitter:title` carry the per-class fallback string verbatim.
 
 **Declining a title does not hide the class.** The title is publisher-declared and declinable: a publisher can pass an empty title or clear it on republish. The class is derived from the bytes by the publishing client and is not declinable.

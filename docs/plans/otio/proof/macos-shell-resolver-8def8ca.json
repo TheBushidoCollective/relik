@@ -1,0 +1,158 @@
+{
+  "sourceHead": "8def8ca",
+  "shell": "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin26)",
+  "scalar": "set -euo pipefail\nshells=()\nwhile IFS= read -r candidate; do\n  shells+=(\"$candidate\")\ndone < <(find \"$PLAYWRIGHT_BROWSERS_PATH\" -type f \\\n  \\( -name headless_shell -o -name chrome-headless-shell \\) -print)\nif [ \"${#shells[@]}\" -ne 1 ]; then\n  printf 'expected one Playwright headless shell, found %s\\n' \"${#shells[@]}\" >&2\n  if [ \"${#shells[@]}\" -gt 0 ]; then\n    printf '%s\\n' \"${shells[@]}\" >&2\n  fi\n  exit 1\nfi\ntest -x \"${shells[0]}\"\ncase \"${shells[0]}\" in\n  \"$PLAYWRIGHT_BROWSERS_PATH\"/chromium_headless_shell-1228/*) ;;\n  *)\n    printf 'headless shell is not Playwright revision 1228\\n' >&2\n    exit 1\n    ;;\nesac\nprintf '%s\\n' \"${shells[0]}\" > \"$OTIO_BROWSER_PROOF_DIR/headless-shell-path.txt\"\nprintf 'RELIC_OTIO_CHROME_PATH=%s\\n' \"${shells[0]}\" >> \"$GITHUB_ENV\"\n",
+  "policy": "Actual workflow run scalar; fixture binaries are never executed; independent cache/proof/environment per case. No vendor or browser writes.",
+  "cases": [
+    {
+      "name": "empty",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "expected one Playwright headless shell, found 0\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "upstream-0",
+      "expectedSuccess": true,
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "exported": "RELIC_OTIO_CHROME_PATH=/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/upstream-0/cache/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell\n",
+      "receiptExists": true,
+      "pass": true
+    },
+    {
+      "name": "upstream-1",
+      "expectedSuccess": true,
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "exported": "RELIC_OTIO_CHROME_PATH=/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/upstream-1/cache/chromium_headless_shell-1228/chrome-headless-shell-mac-x64/chrome-headless-shell\n",
+      "receiptExists": true,
+      "pass": true
+    },
+    {
+      "name": "upstream-2",
+      "expectedSuccess": true,
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "exported": "RELIC_OTIO_CHROME_PATH=/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/upstream-2/cache/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell\n",
+      "receiptExists": true,
+      "pass": true
+    },
+    {
+      "name": "upstream-3",
+      "expectedSuccess": true,
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "exported": "RELIC_OTIO_CHROME_PATH=/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/upstream-3/cache/chromium_headless_shell-1228/chrome-linux/headless_shell\n",
+      "receiptExists": true,
+      "pass": true
+    },
+    {
+      "name": "spaces",
+      "expectedSuccess": true,
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "exported": "RELIC_OTIO_CHROME_PATH=/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/spaces/cache with spaces/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell\n",
+      "receiptExists": true,
+      "pass": true
+    },
+    {
+      "name": "duplicate-same-name",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "expected one Playwright headless shell, found 2\n/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/duplicate-same-name/cache/chromium_headless_shell-1228/a/headless_shell\n/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/duplicate-same-name/cache/chromium_headless_shell-1228/b/headless_shell\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "duplicate-both-names",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "expected one Playwright headless shell, found 2\n/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/duplicate-both-names/cache/chromium_headless_shell-1228/a/headless_shell\n/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/duplicate-both-names/cache/chromium_headless_shell-1228/b/chrome-headless-shell\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "duplicate-mixed-revisions",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "expected one Playwright headless shell, found 2\n/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/duplicate-mixed-revisions/cache/chromium_headless_shell-1228/a/headless_shell\n/var/folders/cx/smp6389s35gds6b_bfywv_8h0000gn/T/otio-shell-resolver-ZA3jZY/duplicate-mixed-revisions/cache/chromium_headless_shell-1227/b/chrome-headless-shell\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "wrong-revision",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "headless shell is not Playwright revision 1228\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "revision-prefix",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "headless shell is not Playwright revision 1228\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "non-executable",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "outside-cache",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "expected one Playwright headless shell, found 0\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "unrecognized-name",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "expected one Playwright headless shell, found 0\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    },
+    {
+      "name": "symlink-only",
+      "expectedSuccess": false,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "expected one Playwright headless shell, found 0\n",
+      "exported": "",
+      "receiptExists": false,
+      "pass": true
+    }
+  ]
+}

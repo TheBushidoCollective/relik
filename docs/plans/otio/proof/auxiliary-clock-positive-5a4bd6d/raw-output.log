@@ -1,0 +1,41 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+PUBLISHED relic_id=0ffdg6x4q4qz2trzam8r3h0ah0
+STAGE published
+STAGE decrypted
+OFFICIAL nested=media/plate_1009.png dissolve=72 audio=48
+STAGE official-archive
+STAGE network-block
+STAGE pixels-offset
+STAGE default-view-negative-head
+STAGE nested-200
+STAGE nested-no-spill
+STAGE dissolve-pixels
+STAGE audio-signal
+STAGE state-gap-black
+STAGE state-effect
+STAGE ui-point-nested
+STAGE ui-range-nested
+STAGE ui-point-duplicate
+STAGE ui-range-duplicate
+STAGE ui-range-dissolve
+STAGE ui-track-duplicate
+STAGE screenshots
+STAGE decoder-worker-csp
+STAGE decoder-timing-windows
+STAGE decoder-webm-quantization
+STAGE decoder-near-zero
+STAGE decoder-edit-diagnostics
+STAGE decoder-no-duration
+STAGE ciphertext
+STAGE mcp-original
+STAGE revision-insert
+STAGE revision-trim
+STAGE revision-ambiguous
+STAGE state-hold
+STAGE state-sequence-black
+STAGE state-codec
+OTIO_AUXILIARY_REVEAL {"state":"auxiliary-coincident-sidebar-reveal","position":"spatial-top","expectedId":"ZtNO9habtWdr5DZDXlXJqA","expectedAnchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"beforeScreenshot":"auxiliary-coincident-spatial-top-sidebar-before","afterScreenshot":"auxiliary-coincident-spatial-top-sidebar-after","precondition":{"missing":[],"blocker":null,"before":{"stageScrollTop":0,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":824.953125,"right":760,"bottom":1758.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":882.953125,"right":176.5,"bottom":896.953125,"width":5,"height":14},"bodySpansStage":false,"markOffscreen":false,"direction":null},"after":{"stageScrollTop":851,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":-26.046875,"right":760,"bottom":907.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":31.953125,"right":176.5,"bottom":45.953125,"width":5,"height":14},"bodySpansStage":true,"markOffscreen":true,"direction":"above"}},"row":{"missing":[],"rowRect":{"left":569,"top":743.375,"right":880,"bottom":899.921875,"width":311,"height":156.546875},"center":{"x":724.5,"y":821.6484375},"visible":true,"hitOwned":true,"stageBefore":851,"stageAfter":851,"timelineBefore":0,"timelineAfter":0},"captureInstalled":true,"trustedClickId":"ZtNO9habtWdr5DZDXlXJqA","trusted":true,"after":{"missing":[],"markRect":{"left":171.5,"top":53.953125,"right":176.5,"bottom":67.953125,"width":5,"height":14},"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"center":{"x":174,"y":60.953125},"usableLeft":174,"usableRight":548,"hitId":"ZtNO9habtWdr5DZDXlXJqA","hitOwned":true,"activeIds":["ZtNO9habtWdr5DZDXlXJqA"],"cardId":"ZtNO9habtWdr5DZDXlXJqA","cardVisible":true,"bodyPresent":true,"anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"stageScrollTop":829,"timelineScrollLeft":0}}
+OTIO_AUXILIARY_REVEAL {"state":"auxiliary-coincident-sidebar-reveal","position":"spatial-bottom","expectedId":"2Bie1j9iPe5a0e8uzY9KPA","expectedAnchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"beforeScreenshot":"auxiliary-coincident-spatial-bottom-sidebar-before","afterScreenshot":"auxiliary-coincident-spatial-bottom-sidebar-after","precondition":{"missing":[],"blocker":null,"before":{"stageScrollTop":829,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":-4.046875,"right":760,"bottom":929.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":911.953125,"right":176.5,"bottom":925.953125,"width":5,"height":14},"bodySpansStage":true,"markOffscreen":true,"direction":null},"after":{"stageScrollTop":806,"timelineScrollLeft":0,"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"bodyRect":{"left":174,"top":18.953125,"right":760,"bottom":952.953125,"width":586,"height":934},"markRect":{"left":171.5,"top":934.953125,"right":176.5,"bottom":948.953125,"width":5,"height":14},"bodySpansStage":true,"markOffscreen":true,"direction":"below"}},"row":{"missing":[],"rowRect":{"left":569,"top":743.484375,"right":880,"bottom":900.03125,"width":311,"height":156.546875},"center":{"x":724.5,"y":821.7578125},"visible":true,"hitOwned":true,"stageBefore":806,"stageAfter":806,"timelineBefore":0,"timelineAfter":0},"captureInstalled":true,"trustedClickId":"2Bie1j9iPe5a0e8uzY9KPA","trusted":true,"after":{"missing":[],"markRect":{"left":171.5,"top":885.953125,"right":176.5,"bottom":899.953125,"width":5,"height":14},"stageContent":{"left":0,"top":54.0625,"right":548,"bottom":900.0625,"width":548,"height":846},"center":{"x":174,"y":892.953125},"usableLeft":174,"usableRight":548,"hitId":"2Bie1j9iPe5a0e8uzY9KPA","hitOwned":true,"activeIds":["2Bie1j9iPe5a0e8uzY9KPA"],"cardId":"2Bie1j9iPe5a0e8uzY9KPA","cardVisible":true,"bodyPresent":true,"anchor":{"trackId":"track-v2-duplicate","start":0,"duration":0,"rate":24,"durationRate":24},"stageScrollTop":855,"timelineScrollLeft":0}}
+STAGE no-mail
+OTIO_PATH_OK
+SHOTS /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/otio-path-shots

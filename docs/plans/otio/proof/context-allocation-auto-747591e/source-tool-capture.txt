@@ -1,0 +1,74 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+Formatted 1 file in 6ms. Fixed 1 file.
+[feat/otio-native-renderer 747591e] Retain the measured zero-basis context allocation failure
+ 4 files changed, 208 insertions(+)
+ create mode 100644 docs/plans/otio/proof/context-allocation-zero-basis-80cd2ee/1440-light-composer-open.png
+ create mode 100644 docs/plans/otio/proof/context-allocation-zero-basis-80cd2ee/1440-light.png
+ create mode 100644 docs/plans/otio/proof/context-allocation-zero-basis-80cd2ee/receipt.json
+ create mode 100644 docs/plans/otio/proof/context-allocation-zero-basis-80cd2ee/source-tool-capture.txt
+remote: This repository moved. Please use the new location:        
+remote:   git@github.com:TheBushidoCollective/relik.git        
+To github.com:TheBushidoCollective/relic.git
+   8b85b88..747591e  feat/otio-native-renderer -> feat/otio-native-renderer
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+PUBLISHED relic_id=qebvt8mw710tepq4zhw2kppbq8
+STAGE published
+STAGE decrypted
+OFFICIAL nested=media/plate_1009.png dissolve=72 audio=48
+STAGE official-archive
+STAGE network-block
+STAGE pixels-offset
+STAGE default-view-negative-head
+STAGE nested-200
+STAGE nested-no-spill
+STAGE dissolve-pixels
+STAGE audio-signal
+STAGE state-gap-black
+STAGE state-effect
+STAGE ui-point-nested
+STAGE ui-range-nested
+STAGE ui-point-duplicate
+STAGE ui-range-duplicate
+STAGE ui-range-dissolve
+STAGE ui-track-duplicate
+STAGE screenshots
+STAGE decoder-worker-csp
+STAGE decoder-timing-windows
+STAGE decoder-webm-quantization
+STAGE decoder-near-zero
+STAGE decoder-edit-diagnostics
+STAGE decoder-no-duration
+STAGE ciphertext
+STAGE mcp-original
+STAGE revision-insert
+STAGE revision-trim
+STAGE revision-ambiguous
+STAGE state-hold
+STAGE state-sequence-black
+STAGE state-codec
+OTIO_POST_COMPOSER_FAILURE {"posted":"timeout","payload":{"expectedBody":"Coincident duplicate-point reveal 11.","fieldValue":"Coincident duplicate-point reveal 11.","selection":{"trackId":"track-v2-duplicate","start":"0","duration":"0","rate":"24","durationRate":"24"}},"card":{"left":8,"top":184.25,"right":360,"bottom":421.734375,"width":352,"height":237.484375},"composer":{"present":true,"visible":true,"className":"popover popover-card is-otio-composer popover-composer","ariaBusy":null,"text":"v1 · Relik Feature Editorial · Video 2 · point 0 @ 24Your address is shown with your comment and in emails to people following the relic, and Relic sees who commented on what. When someone comments or a new version is published, Relic emails you, with a link to stop.Too many comments from here just nowPostCancel"},"submit":{"present":true,"disabled":false,"ariaBusy":null,"text":"Post"},"note":{"present":true,"visible":true,"text":"Too many comments from here just now"},"bodyVisible":false}
+SHOTS /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/otio-path-shots
+2364 |       })()`
+2365 |     );
+2366 |     await browser.screenshot('otio-post-composer-failure');
+2367 |     console.log(`OTIO_POST_COMPOSER_FAILURE ${JSON.stringify(failure)}`);
+2368 |   }
+2369 |   assert.equal(
+                ^
+AssertionError: native composer did not submit "Coincident duplicate-point reveal 11.": timeout
++ actual - expected
+
++ 'timeout'
+- 'posted'
+
+ generatedMessage: false,
+     actual: "timeout",
+   expected: "posted",
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at postComposer (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:2369:10)
+      at runAuxiliaryCoincidentCommentRevealScenario (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:4893:13)
+
+Bun v1.4.3 (macOS arm64)

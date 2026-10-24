@@ -1,0 +1,73 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.38kB done
+#1 DONE 0.0s
+
+#2 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#2 DONE 0.1s
+
+#3 docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#3 CACHED
+
+#4 [internal] load metadata for docker.io/oven/bun:1.4.3-alpine
+#4 DONE 0.1s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 117B done
+#5 DONE 0.0s
+
+#6 [build  1/10] FROM docker.io/oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373
+#6 DONE 0.0s
+
+#7 [runtime 2/5] WORKDIR /app
+#7 CACHED
+
+#8 [internal] load build context
+#8 transferring context: 8.00MB 0.1s done
+#8 DONE 0.1s
+
+#9 [build  2/10] WORKDIR /src
+#9 CACHED
+
+#10 [build  6/10] COPY packages/relic-mcp/package.json packages/relic-mcp/
+#10 CACHED
+
+#11 [build  4/10] COPY packages/relic-format/package.json packages/relic-format/
+#11 CACHED
+
+#12 [build  5/10] COPY packages/relic-server/package.json packages/relic-server/
+#12 CACHED
+
+#13 [build  3/10] COPY package.json bun.lock ./
+#13 CACHED
+
+#14 [build  7/10] COPY packages/relic-viewer/package.json packages/relic-viewer/
+#14 CACHED
+
+#15 [build  8/10] RUN bun install --frozen-lockfile
+#15 CACHED
+
+#16 [build  9/10] COPY . .
+#16 DONE 0.1s
+
+#17 [build 10/10] RUN bun run --filter '@relic/viewer' build
+#17 0.211 @relic/viewer build: built 17 assets (shell hash: 5410c3b8c8afee7b): card.v1.png, chunk-cxdt56tv.js, chunk-cze9mtr7.js, chunk-f4ye20v7.js, chunk-r3661b90.js, home.js, icon.svg, main.js, manifest.webmanifest, mediabunny-license.txt, otio-video-timing-worker.js, pdf.worker.js, sandbox.html, sandbox.js, styles.css, sw.js, viewer.js
+#17 0.217 @relic/viewer build: Exited with code 0
+#17 DONE 0.2s
+
+#18 [runtime 3/5] COPY --from=build /src/node_modules ./node_modules
+#18 DONE 0.4s
+
+#19 [runtime 4/5] COPY --from=build /src/package.json ./package.json
+#19 DONE 0.0s
+
+#20 [runtime 5/5] COPY --from=build /src/packages ./packages
+#20 DONE 0.1s
+
+#21 exporting to image
+#21 exporting layers
+#21 exporting layers 0.8s done
+#21 writing image sha256:c5e48409c21a50a7b4a2f06ad8759f940ac9dbdcf76a65af631b982503b46616 done
+#21 naming to docker.io/library/relic-otio-image-proof:dp2-fixed done
+#21 DONE 0.8s

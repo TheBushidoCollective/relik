@@ -1,0 +1,67 @@
+[33mmise[0m [33mWARN[0m  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+[Bun.serve]: request timed out after 10 seconds. Pass `idleTimeout` to configure.
+757 |   );
+758 |   console.log(`STDIO_EOF_TRACE\n${formatTrace()}`);
+759 |   console.log('STDIO_EOF_PATH_OK');
+760 | } catch (error) {
+761 |   await settleActiveChild();
+762 |   throw new Error(
+                  ^
+error: [{"type":"text","text":"service_unreachable: could not reach http://127.0.0.1:44423/api/relics/9t8g30acx7rnqppne413wxtstc/comments: fetch failed"}]
+
+true !== false
+
+child_exit=143 stderr=""
+trace:
+{"origin":"parent","sequence":1,"at":1792690208244,"event":"stdin_write_end_called","request_bytes":207,"request_sha256":"34da58d0a8d4f9a8e84d8f7c859c0ceef708d796b3eab974b36f5ac8794aaf4b","write_result_type":"number","end_result_type":"number"}
+{"origin":"parent","sequence":2,"at":1792690208244,"event":"trace_wait_created","wait_id":1,"label":"exact request delivery","existing_found":false,"trace_bytes":0}
+{"origin":"parent","sequence":3,"at":1792690208244,"event":"trace_watch_armed","wait_id":1,"label":"exact request delivery"}
+{"origin":"parent","sequence":4,"at":1792690208244,"event":"trace_inspect","wait_id":1,"label":"exact request delivery","via":"post_watch","found":false,"trace_bytes":0}
+{"origin":"parent","sequence":5,"at":1792690208245,"event":"stdin_write_completed"}
+{"origin":"parent","sequence":6,"at":1792690208245,"event":"stdin_end_completed"}
+{"origin":"tap","pid":3107,"sequence":1,"at":1792690208271,"event":"tap_ready","suppress_response":false}
+{"origin":"parent","sequence":7,"at":1792690208273,"event":"trace_watch_callback","wait_id":1,"label":"exact request delivery","n":1,"event_type":"change","filename":"stdio-eof-trace.jsonl"}
+{"origin":"parent","sequence":8,"at":1792690208273,"event":"trace_inspect","wait_id":1,"label":"exact request delivery","via":"callback#1","found":false,"trace_bytes":106}
+{"origin":"parent","sequence":9,"at":1792690208317,"event":"trace_watch_callback","wait_id":1,"label":"exact request delivery","n":2,"event_type":"change","filename":"stdio-eof-trace.jsonl"}
+{"origin":"parent","sequence":10,"at":1792690208317,"event":"trace_inspect","wait_id":1,"label":"exact request delivery","via":"callback#2","found":false,"trace_bytes":197}
+{"origin":"tap","pid":3107,"sequence":2,"at":1792690208317,"event":"stdin_to_web_created"}
+{"origin":"tap","pid":3107,"sequence":3,"at":1792690208317,"event":"stdin_reader_attached"}
+{"origin":"parent","sequence":11,"at":1792690208319,"event":"trace_watch_callback","wait_id":1,"label":"exact request delivery","n":3,"event_type":"change","filename":"stdio-eof-trace.jsonl"}
+{"origin":"parent","sequence":12,"at":1792690208319,"event":"trace_inspect","wait_id":1,"label":"exact request delivery","via":"callback#3","found":true,"trace_bytes":477}
+{"origin":"parent","sequence":13,"at":1792690208319,"event":"trace_watch_closed","wait_id":1,"label":"exact request delivery"}
+{"origin":"parent","sequence":14,"at":1792690208319,"event":"trace_wait_resolved","wait_id":1,"label":"exact request delivery","via":"callback#3"}
+{"origin":"tap","pid":3107,"sequence":4,"at":1792690208319,"event":"stdin_chunk","bytes":207,"total_bytes":207,"sha256":"34da58d0a8d4f9a8e84d8f7c859c0ceef708d796b3eab974b36f5ac8794aaf4b"}
+{"origin":"parent","sequence":15,"at":1792690208320,"event":"trace_wait_created","wait_id":2,"label":"physical stdin EOF","existing_found":false,"trace_bytes":477}
+{"origin":"parent","sequence":16,"at":1792690208320,"event":"trace_watch_armed","wait_id":2,"label":"physical stdin EOF"}
+{"origin":"parent","sequence":17,"at":1792690208320,"event":"trace_inspect","wait_id":2,"label":"physical stdin EOF","via":"post_watch","found":false,"trace_bytes":477}
+{"origin":"parent","sequence":18,"at":1792690208320,"event":"trace_wait_created","wait_id":3,"label":"comments GET start","existing_found":false,"trace_bytes":477}
+{"origin":"parent","sequence":19,"at":1792690208320,"event":"trace_watch_armed","wait_id":3,"label":"comments GET start"}
+{"origin":"parent","sequence":20,"at":1792690208320,"event":"trace_inspect","wait_id":3,"label":"comments GET start","via":"post_watch","found":false,"trace_bytes":477}
+{"origin":"parent","sequence":21,"at":1792690208321,"event":"trace_watch_callback","wait_id":2,"label":"physical stdin EOF","n":1,"event_type":"change","filename":"stdio-eof-trace.jsonl"}
+{"origin":"parent","sequence":22,"at":1792690208321,"event":"trace_inspect","wait_id":2,"label":"physical stdin EOF","via":"callback#1","found":true,"trace_bytes":566}
+{"origin":"parent","sequence":23,"at":1792690208321,"event":"trace_watch_closed","wait_id":2,"label":"physical stdin EOF"}
+{"origin":"parent","sequence":24,"at":1792690208321,"event":"trace_wait_resolved","wait_id":2,"label":"physical stdin EOF","via":"callback#1"}
+{"origin":"parent","sequence":25,"at":1792690208321,"event":"trace_watch_callback","wait_id":3,"label":"comments GET start","n":1,"event_type":"change","filename":"stdio-eof-trace.jsonl"}
+{"origin":"parent","sequence":26,"at":1792690208321,"event":"trace_inspect","wait_id":3,"label":"comments GET start","via":"callback#1","found":false,"trace_bytes":566}
+{"origin":"tap","pid":3107,"sequence":5,"at":1792690208321,"event":"stdin_physical_eof"}
+{"origin":"tap","pid":3107,"sequence":6,"at":1792690208321,"event":"comments_get_started","path":"/api/relics/9t8g30acx7rnqppne413wxtstc/comments"}
+{"origin":"parent","sequence":27,"at":1792690208331,"event":"comments_get_accepted","path":"/api/relics/9t8g30acx7rnqppne413wxtstc/comments","physical_eof_already_observed":true,"comments_get_started_in_file":true,"trace_bytes":714,"pending_waits":[{"wait_id":3,"label":"comments GET start","callbacks":1}]}
+{"origin":"tap","pid":3107,"sequence":7,"at":1792690220225,"event":"stdout_write_attempt","bytes":312,"sha256":"087eb75faf2fef3962f91a0ef15852d5399a7ebb76d638ca3f47727c26862739"}
+{"origin":"tap","pid":3107,"sequence":8,"at":1792690220226,"event":"stdin_reader_eof","total_bytes":207,"sha256":"34da58d0a8d4f9a8e84d8f7c859c0ceef708d796b3eab974b36f5ac8794aaf4b"}
+{"origin":"tap","pid":3107,"sequence":9,"at":1792690220226,"event":"stdout_write_callback","bytes":312,"sha256":"087eb75faf2fef3962f91a0ef15852d5399a7ebb76d638ca3f47727c26862739","error":null}
+{"origin":"tap","pid":3107,"sequence":10,"at":1792690220226,"event":"process_exit","code":0}
+{"origin":"parent","sequence":28,"at":1792690220227,"event":"stdout_chunk_received","bytes":312,"sha256":"087eb75faf2fef3962f91a0ef15852d5399a7ebb76d638ca3f47727c26862739"}
+{"origin":"parent","sequence":29,"at":1792690220227,"event":"matching_jsonrpc_response_received","id":"stdio-eof-read-010d1b5f-d02c-410e-ba37-f150d18674c4","bytes":311,"sha256":"746e644ed1a8f2580abae2773dddb505e0d233f49a232da2d490ccc1b3c0222a"}
+{"origin":"parent","sequence":30,"at":1792690220228,"event":"trace_watch_callback","wait_id":3,"label":"comments GET start","n":2,"event_type":"change","filename":"stdio-eof-trace.jsonl"}
+{"origin":"parent","sequence":31,"at":1792690220228,"event":"trace_inspect","wait_id":3,"label":"comments GET start","via":"callback#2","found":true,"trace_bytes":1360}
+{"origin":"parent","sequence":32,"at":1792690220228,"event":"trace_watch_closed","wait_id":3,"label":"comments GET start"}
+{"origin":"parent","sequence":33,"at":1792690220228,"event":"trace_wait_resolved","wait_id":3,"label":"comments GET start","via":"callback#2"}
+{"origin":"parent","sequence":34,"at":1792690220228,"event":"eof_and_comments_get_accepted_before_release"}
+{"origin":"parent","sequence":35,"at":1792690220228,"event":"comments_get_released","reason":"physical_eof_and_comments_get_accepted"}
+{"origin":"parent","sequence":36,"at":1792690220233,"event":"child_exit_observed","code":143}
+{"origin":"parent","sequence":37,"at":1792690220233,"event":"trace_inspect","wait_id":1,"label":"exact request delivery","via":"child_exit","found":true,"trace_bytes":1360}
+{"origin":"parent","sequence":38,"at":1792690220233,"event":"trace_inspect","wait_id":2,"label":"physical stdin EOF","via":"child_exit","found":true,"trace_bytes":1360}
+{"origin":"parent","sequence":39,"at":1792690220233,"event":"trace_inspect","wait_id":3,"label":"comments GET start","via":"child_exit","found":true,"trace_bytes":1360}
+      at /home/runner/work/relik/relik/packages/relic-mcp/test/stdio-eof-path.ts:762:13
+
+Bun v1.3.14 (Linux x64)

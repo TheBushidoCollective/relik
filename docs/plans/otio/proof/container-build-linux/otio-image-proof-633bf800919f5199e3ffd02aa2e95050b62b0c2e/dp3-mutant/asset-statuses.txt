@@ -1,0 +1,8 @@
+/assets/viewer.js 404
+/assets/home.js 404
+/assets/styles.css 404
+/assets/register-sw.js 200
+/manifest.webmanifest 404
+/sw.js 404
+/assets/icon.svg 404
+/assets/otio-video-timing-worker.js 404

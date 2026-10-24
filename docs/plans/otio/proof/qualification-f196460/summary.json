@@ -1,0 +1,78 @@
+{
+  "head": "f196460",
+  "host": "macOS 27.0.1 arm64",
+  "chrome": "ms-playwright chromium_headless_shell-1228",
+  "mode": "five fail-fast rounds per Node, each: bun run verify && relic-mcp build && 33-stage SOURCE otio-path.ts; no retries",
+  "rounds": [
+    {
+      "round": "node18.20.8-r1",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node18.20.8-r2",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node18.20.8-r3",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node18.20.8-r4",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node18.20.8-r5",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node24.15.0-r1",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node24.15.0-r2",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node24.15.0-r3",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node24.15.0-r4",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    },
+    {
+      "round": "node24.15.0-r5",
+      "stages": 33,
+      "pathOk": 1,
+      "tests": " 2062 pass  0 fail",
+      "bun": "bun test v1.4.3 (c6da4a4d3)"
+    }
+  ]
+}

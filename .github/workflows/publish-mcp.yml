@@ -1,8 +1,7 @@
 name: publish-mcp
 
-# Publishing is manual and versioned, never on every merge. The package is
-# code that runs on other people's machines with access to their files, so a
-# release is a decision somebody makes, not a side effect of a commit.
+# Publishing is manual and versioned. The package can read local files, so a
+# release is an explicit decision rather than a merge side effect.
 on:
   workflow_dispatch:
     inputs:
@@ -11,7 +10,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: 'Pack and inspect without publishing'
+        description: 'Pack and prove without publishing'
         type: boolean
         default: true
 
@@ -21,20 +20,219 @@ concurrency:
 
 permissions:
   contents: read
-  # Trusted publishing: npm exchanges this OIDC token for both publish
-  # authorization and a provenance attestation. There is no NPM_TOKEN, and
-  # there should never be one. A long-lived token is a credential that can
-  # leak; this one is minted per run and scoped to this workflow.
   id-token: write
 
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
 
-  publish:
-    needs: verify
-    runs-on: ubuntu-latest
+  native-build:
+    name: native ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+            platform: darwin
+            architecture: arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+            platform: darwin
+            architecture: x86_64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            platform: linux
+            architecture: aarch64
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+            platform: linux
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.0'
+
+      - name: Record native build environment
+        run: |
+          set -euo pipefail
+          {
+            echo "### Native build: ${{ matrix.target }}"
+            echo '```text'
+            uname -a
+            uname -r
+            uname -m
+            if [ "$(uname -s)" = Linux ]; then
+              cat /etc/os-release
+            else
+              sw_vers
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require Linux native build prerequisites
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          command -v docker
+          docker version --format '{{.Server.Version}}'
+          if ! command -v readelf >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends binutils
+          fi
+          echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
+
+      - name: Select release Xcode 26.0.1
+        if: matrix.platform == 'darwin'
+        run: |
+          set -euo pipefail
+          PIN_FILE="packages/relic-mcp/native/darwin-release-toolchain.json"
+          DEVELOPER_DIR="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).developerDir' "$PIN_FILE")"
+          XCODE_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).xcodeVersion' "$PIN_FILE")"
+          PINNED_SDK_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).sdkVersion' "$PIN_FILE")"
+          export DEVELOPER_DIR
+          test -d "$DEVELOPER_DIR"
+          test "$(xcodebuild -version | awk 'NR == 1 { print $2 }')" = "$XCODE_VERSION"
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+          test "$SDK_VERSION" = "$PINNED_SDK_VERSION"
+          CC="$(xcrun --sdk macosx --find clang)"
+          case "$SDKROOT" in "$DEVELOPER_DIR"/*) ;; *) echo "unexpected SDK: $SDKROOT" >&2; exit 1;; esac
+          case "$CC" in "$DEVELOPER_DIR"/*) ;; *) echo "unexpected compiler: $CC" >&2; exit 1;; esac
+          cat > "$RUNNER_TEMP/require-enotcapable.c" <<'EOF'
+          #include <errno.h>
+          #ifndef ENOTCAPABLE
+          #error ENOTCAPABLE is required by the release SDK
+          #endif
+          int main(void) { return ENOTCAPABLE == 0; }
+          EOF
+          "$CC" -isysroot "$SDKROOT" -mmacosx-version-min=15.0 -arch "${{ matrix.architecture }}" -fsyntax-only "$RUNNER_TEMP/require-enotcapable.c"
+          {
+            echo "### Release Xcode: ${{ matrix.target }}"
+            echo '```text'
+            xcodebuild -version
+            printf 'SDK path: %s\nSDK version: %s\nCompiler: %s\n' "$SDKROOT" "$SDK_VERSION" "$CC"
+            "$CC" --version | head -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+            echo "RELIC_RELEASE_CC=$CC"
+          } >> "$GITHUB_ENV"
+
+      - name: Run release Darwin semantic probe
+        if: matrix.platform == 'darwin'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          node packages/relic-mcp/native/build.mjs \
+            --probe \
+            --target "$TARGET" \
+            --cc "$RELIC_RELEASE_CC" \
+            --output-dir "$RUNNER_TEMP/probe-release-$TARGET"
+
+      - name: Run Linux semantic probe
+        if: matrix.platform == 'linux'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          unset CC
+          node packages/relic-mcp/native/build.mjs \
+            --probe \
+            --target "$TARGET" \
+            --output-dir "$RUNNER_TEMP/probe-linux-$TARGET"
+
+      - name: Build and audit Linux target
+        if: matrix.platform == 'linux'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          unset CC
+          NODE_INCLUDE="$(node -p "const p = require('node:path'); p.join(p.dirname(p.dirname(process.execPath)), 'include', 'node')")"
+          test -f "$NODE_INCLUDE/node_api.h"
+          OUT="$RUNNER_TEMP/native-$TARGET"
+          mkdir -p "$OUT"
+          node packages/relic-mcp/native/build.mjs \
+            --target "$TARGET" \
+            --node-include "$NODE_INCLUDE" \
+            --output-dir "$OUT" \
+            --release
+          test -f "$OUT/secure_open.node"
+          test -f "$OUT/build-info.json"
+
+      - name: Build and audit Darwin target
+        if: matrix.platform == 'darwin'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          NODE_INCLUDE="$(node -p "const p = require('node:path'); p.join(p.dirname(p.dirname(process.execPath)), 'include', 'node')")"
+          test -f "$NODE_INCLUDE/node_api.h"
+          OUT="$RUNNER_TEMP/native-$TARGET"
+          mkdir -p "$OUT"
+          node packages/relic-mcp/native/build.mjs \
+            --target "$TARGET" \
+            --node-include "$NODE_INCLUDE" \
+            --cc "$RELIC_RELEASE_CC" \
+            --output-dir "$OUT" \
+            --release
+          test -f "$OUT/secure_open.node"
+          test -f "$OUT/build-info.json"
+
+      - name: Run Xcode 16.4 Darwin semantic probe
+        if: matrix.platform == 'darwin'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR="/Applications/Xcode_16.4.app/Contents/Developer"
+          test -d "$DEVELOPER_DIR"
+          test "$(xcodebuild -version | awk 'NR == 1 { print $2 }')" = "16.4"
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+          CC="$(xcrun --sdk macosx --find clang)"
+          case "$SDKROOT" in "$DEVELOPER_DIR"/*) ;; *) echo "unexpected SDK: $SDKROOT" >&2; exit 1;; esac
+          case "$CC" in "$DEVELOPER_DIR"/*) ;; *) echo "unexpected compiler: $CC" >&2; exit 1;; esac
+          cat > "$RUNNER_TEMP/require-missing-enotcapable.c" <<'EOF'
+          #include <errno.h>
+          #ifdef ENOTCAPABLE
+          #error Xcode 16.4 must exercise the missing ENOTCAPABLE header branch
+          #endif
+          int main(void) { return 0; }
+          EOF
+          "$CC" -isysroot "$SDKROOT" -mmacosx-version-min=15.0 -arch "${{ matrix.architecture }}" -fsyntax-only "$RUNNER_TEMP/require-missing-enotcapable.c"
+          {
+            echo "### Xcode 16.4 probe: ${{ matrix.target }}"
+            echo '```text'
+            xcodebuild -version
+            printf 'SDK path: %s\nSDK version: %s\nCompiler: %s\n' "$SDKROOT" "$SDK_VERSION" "$CC"
+            "$CC" --version | head -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          node packages/relic-mcp/native/build.mjs \
+            --probe \
+            --target "$TARGET" \
+            --cc "$CC" \
+            --output-dir "$RUNNER_TEMP/probe-xcode-16.4-$TARGET"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-${{ matrix.target }}
+          if-no-files-found: error
+  pack:
+    needs: [verify, native-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -44,24 +242,25 @@ jobs:
           install: true
           cache: true
 
-      # npm, not bun, does the publishing: provenance attestation is an npm
-      # CLI feature and this is the path that produces a verifiable link
-      # between the tarball and this commit.
-      # Node 24, not a pin at the documented minimum. Trusted publishing needs
-      # Node >= 22.14.0, but that is a floor rather than a target: pinning
-      # 22.14.0 exactly makes `npm@latest` uninstallable, because current npm
-      # requires ^22.22.2 || ^24.15.0 || >=26.
-      #
-      # No `registry-url`. That option writes an .npmrc containing
-      # `_authToken=${NODE_AUTH_TOKEN}`, and with no token in the environment
-      # setup-node substitutes a placeholder. npm then presents a garbage
-      # credential instead of falling through to OIDC, and the failure looks
-      # like a bad secret rather than a misconfiguration. registry.npmjs.org
-      # is the default anyway.
+      # Trusted publishing requires a current npm. No registry-url is set: it
+      # would materialize a placeholder token and prevent OIDC from taking over.
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.22.0'
 
+      - name: Validate release version
+        run: |
+          set -euo pipefail
+          # https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
+          # match[0] === version rejects trailing line terminators.
+          node <<'NODE'
+            const version = process.env.RELEASE_VERSION;
+            const syntax = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+            const match = typeof version === "string" ? syntax.exec(version) : null;
+            if (!match || match[0] !== version) {
+              throw new Error("RELEASE_VERSION must be an exact SemVer 2.0.0 version");
+            }
+          NODE
       - name: Use an npm that supports trusted publishing
         run: |
           npm install -g npm@latest
@@ -71,188 +270,437 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Set the version and drop the workspace protocol in one pass, with
-      # node rather than `npm version`.
-      #
-      # Before the build, not after. The build generates the plugin manifests
-      # from package.json, so building first would stamp them with the version
-      # this release is replacing and publish a tarball that disagrees with
-      # itself about what it is.
-      #
-      # `npm version` resolves the dependency tree, and any npm command run
-      # inside this directory walks up to the workspace root and resolves the
-      # sibling packages too. Those still carry bun's `workspace:*`, which npm
-      # rejects with EUNSUPPORTEDPROTOCOL. Stripping this package's own
-      # manifest does not help, because the manifests npm chokes on belong to
-      # its siblings.
-      #
-      # Editing the JSON directly sidesteps resolution entirely. Every later
-      # npm invocation carries --no-workspaces for the same reason.
-      - name: Set the version and strip the workspace protocol
-        working-directory: packages/relic-mcp
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-arm64
+          path: ${{ runner.temp }}/native/darwin-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-x64
+          path: ${{ runner.temp }}/native/darwin-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-linux-arm64-gnu
+          path: ${{ runner.temp }}/native/linux-arm64-gnu
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64-gnu
+          path: ${{ runner.temp }}/native/linux-x64-gnu
+
+      - name: Place audited prebuilds in the package
         run: |
-          node -e '
-            const fs = require("node:fs");
-            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            pkg.version = process.argv[1];
-            delete pkg.devDependencies;
-            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-            console.log(`${pkg.name}@${pkg.version}`);
-          ' "${{ inputs.version }}"
+          set -euo pipefail
+          for TARGET in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            DEST="packages/relic-mcp/prebuilds/$TARGET"
+            mkdir -p "$DEST"
+            cp "$RUNNER_TEMP/native/$TARGET/secure_open.node" "$DEST/"
+            cp "$RUNNER_TEMP/native/$TARGET/build-info.json" "$DEST/"
+          done
+          # This portable check proves the tarball carries all audited files.
+          # Per-target jobs above and packed-target probes below perform the
+          # platform-specific otool/readelf checks.
+          node packages/relic-mcp/native/build.mjs --check --metadata-only --release
 
-      - name: Build the readable bundle
-        run: bun run --filter 'relic-mcp' build
+      - name: Snapshot audited native prebuilds
+        run: |
+          set -euo pipefail
+          MANIFEST="$RUNNER_TEMP/native-prebuilds.sha256"
+          : > "$MANIFEST"
+          for TARGET in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            for FILE in secure_open.node build-info.json; do
+              PATHNAME="packages/relic-mcp/prebuilds/$TARGET/$FILE"
+              test -f "$PATHNAME"
+              sha256sum "$PATHNAME" >> "$MANIFEST"
+            done
+          done
+          {
+            echo '### Staged native prebuild hashes'
+            echo '```text'
+            cat "$MANIFEST"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # The manifests are generated, so the only way they can be wrong is if
-      # the build read a stale package.json. Assert they agree before anything
-      # is published, because a plugin that reports the wrong version installs
-      # fine and then never updates.
-      - name: Check the plugin manifests carry this version
+      # npm cannot resolve bun workspace protocol dependencies from a package
+      # directory. Write only this release copy, then publish its tarball.
+      - name: Set release version
         working-directory: packages/relic-mcp
         run: |
           set -euo pipefail
-          for FILE in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+          node -e '
+            const fs = require("node:fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = process.env.RELEASE_VERSION;
+            delete pkg.devDependencies;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
+
+      - name: Build the readable bundle without recompiling native prebuilds
+        run: |
+          set -euo pipefail
+          bun run --filter 'relic-mcp' build:bundle
+          sha256sum --check "$RUNNER_TEMP/native-prebuilds.sha256"
+
+      - name: Check generated plugin manifests and launch config
+        working-directory: packages/relic-mcp
+        run: |
+          set -euo pipefail
+          for FILE in .claude-plugin/plugin.json .claude-plugin/marketplace.json mcp-servers.json; do
             test -f "$FILE" || { echo "$FILE was not generated"; exit 1; }
           done
           node -e '
             const fs = require("node:fs");
-            const want = process.argv[1];
-            const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
-            const plugin = read(".claude-plugin/plugin.json");
-            const market = read(".claude-plugin/marketplace.json");
-            const found = [
-              ["plugin.json", plugin.version],
-              ["marketplace plugin", market.plugins[0].version],
-              ["marketplace metadata", market.metadata.version],
-            ];
-            for (const [where, got] of found) {
-              if (got !== want) {
-                console.error(`${where} says ${got}, expected ${want}`);
-                process.exit(1);
-              }
+            const want = process.env.RELEASE_VERSION;
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const plugin = JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8"));
+            const market = JSON.parse(fs.readFileSync(".claude-plugin/marketplace.json", "utf8"));
+            const mcp = JSON.parse(fs.readFileSync("mcp-servers.json", "utf8"));
+            const found = [plugin.version, market.plugins[0].version, market.metadata.version];
+            if (pkg.version !== want || found.some((value) => value !== want)) {
+              throw new Error(`plugin manifests disagree with ${want}: package=${pkg.version}, manifests=${found.join(", ")}`);
             }
-            console.log(`manifests agree at ${want}`);
-          ' "${{ inputs.version }}"
+            const server = mcp.relic;
+            const args = server?.args;
+            const expected = `${pkg.name}@${want}`;
+            if (
+              plugin.mcpServers !== "./mcp-servers.json" ||
+              server?.type !== "stdio" ||
+              server.command !== "npx" ||
+              !Array.isArray(args) ||
+              args.length !== 2 ||
+              args[0] !== "-y" ||
+              args[1] !== expected ||
+              server.env?.RELIC_CLIENT_NAME !== `relic-plugin/${want}`
+            ) {
+              throw new Error(`generated MCP launch config does not pin ${expected}`);
+            }
+          '
 
-      # The bundle is what runs on a user machine. Assert the properties that
-      # make it inspectable and runnable before it goes anywhere.
-      - name: Check the artifact
+      - name: Pack the release tarball
+        id: package
         working-directory: packages/relic-mcp
         run: |
           set -euo pipefail
-          BUNDLE=dist/relic-mcp.js
+          # prepack prints its native checks to stdout, so the tarball name
+          # cannot be read from npm's stdout. Pack into an empty directory,
+          # keep npm's output in the log, and require exactly the expected file.
+          PACK_DIR="$RUNNER_TEMP/release-pack"
+          rm -rf "$PACK_DIR"
+          mkdir -p "$PACK_DIR"
+          npm pack --pack-destination "$PACK_DIR" --no-workspaces >&2
+          shopt -s nullglob
+          PACKED=("$PACK_DIR"/*.tgz)
+          test "${#PACKED[@]}" -eq 1 || { echo "expected one tarball in $PACK_DIR, found ${#PACKED[@]}"; exit 1; }
+          TARBALL="${PACKED[0]}"
+          test "$(basename "$TARBALL")" = "relic-mcp-${RELEASE_VERSION}.tgz" || { echo "unexpected tarball name: $(basename "$TARBALL")"; exit 1; }
+          {
+            echo '### Tarball hash'
+            echo '```text'
+            sha256sum "$TARBALL"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
 
-          head -1 "$BUNDLE" | grep -q '^#!/usr/bin/env node'
-          test -x "$BUNDLE"
+      - name: Verify tarball preserves audited native prebuilds
+        run: |
+          set -euo pipefail
+          TARBALL="${{ steps.package.outputs.tarball }}"
+          EXTRACT="$RUNNER_TEMP/native-prebuild-extract"
+          mkdir -p "$EXTRACT"
+          tar -xzf "$TARBALL" -C "$EXTRACT"
+          test -d "$EXTRACT/package"
+          while IFS= read -r LINE; do
+            EXPECTED="${LINE%% *}"
+            PATHNAME="${LINE#*  }"
+            RELATIVE="${PATHNAME#packages/relic-mcp/}"
+            ACTUAL_PATH="$EXTRACT/package/$RELATIVE"
+            test -f "$ACTUAL_PATH"
+            ACTUAL="$(sha256sum "$ACTUAL_PATH")"
+            ACTUAL="${ACTUAL%% *}"
+            test "$ACTUAL" = "$EXPECTED"
+          done < "$RUNNER_TEMP/native-prebuilds.sha256"
 
-          # Not minified: the whole reason this ships as source rather than a
-          # compiled binary is that somebody can read it.
-          LINES=$(wc -l < "$BUNDLE")
-          echo "bundle is $LINES lines"
-          test "$LINES" -gt 200
-
-          # It has to run under plain Node, which is what npx will have.
-          #
-          # The origin is supplied because the server requires one and refuses
-          # to start without it. That refusal is the point: an unconfigured
-          # install should fail at startup naming the variable rather than at
-          # the first publish with a DNS error. The value is irrelevant here,
-          # since nothing is published; only that the bundle boots and answers.
-          echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' \
-            | RELIC_SERVICE_ORIGIN=https://relic.invalid node "$BUNDLE" \
-            | grep -q relic_publish
-
-          # And it starts without one, so `--help` works on a machine that has
-          # never configured anything.
-          node "$BUNDLE" --help | grep -q 'relic-mcp install'
-
-      # The manifest is not the tarball. npm normalizes `bin` on publish and
-      # will silently drop an entry it dislikes, which produces a package that
-      # installs fine and whose `npx relic-mcp` resolves to nothing. The only
-      # honest check is to install the real tarball and run the real bin.
-      - name: Install the tarball and run its bin, as npx would
+      - name: Check packed contents
         working-directory: packages/relic-mcp
         run: |
           set -euo pipefail
-          TARBALL="$(npm pack --pack-destination "$RUNNER_TEMP" --silent --no-workspaces | tail -1)"
-          PROBE="$RUNNER_TEMP/installprobe"
-          rm -rf "$PROBE" && mkdir -p "$PROBE"
+          TARBALL="${{ steps.package.outputs.tarball }}"
+          PROBE="$RUNNER_TEMP/contents-probe"
+          mkdir -p "$PROBE"
           cd "$PROBE"
           npm init -y >/dev/null
-          npm install "$RUNNER_TEMP/$TARBALL" >/dev/null
-
-          test -L node_modules/.bin/relic-mcp \
-            || { echo "bin was dropped: npx relic-mcp would not work"; exit 1; }
-
-          echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' \
-            | RELIC_SERVICE_ORIGIN=https://relic.invalid ./node_modules/.bin/relic-mcp \
-            | grep -q relic_describe_client
-
-          # The package is also the Claude Code plugin, which only holds if the
-          # manifests survive packing. npm is historically uneven about
-          # dot-prefixed entries in `files`, and this is the same class of bug
-          # as the `bin` entry it used to drop: installs fine, silently does
-          # less than it claims.
+          npm install --ignore-scripts --no-audit --no-fund --offline "$TARBALL" >/dev/null
           for FILE in \
+            node_modules/relic-mcp/dist/relic-mcp.js \
+            node_modules/relic-mcp/dist/native-secure-open.js \
+            node_modules/relic-mcp/dist/native-secure-open.d.ts \
+            node_modules/relic-mcp/native/secure-open.c \
+            node_modules/relic-mcp/native/build.mjs \
+            node_modules/relic-mcp/scripts/prove-packed-native.mjs \
             node_modules/relic-mcp/.claude-plugin/plugin.json \
             node_modules/relic-mcp/.claude-plugin/marketplace.json \
             node_modules/relic-mcp/mcp-servers.json \
             node_modules/relic-mcp/skills/relic/SKILL.md
           do
-            test -f "$FILE" || {
-              echo "$FILE is missing from the tarball; the package would not be installable as a plugin"
-              exit 1
-            }
+            test -f "$FILE" || { echo "$FILE is missing from the tarball"; exit 1; }
           done
-
-          # The package renders covers inside headless Chrome using assets
-          # bundled into dist/cover/. Assert that all six assets survived packing.
-          for FILE in \
-            node_modules/relic-mcp/dist/cover/index.html \
-            node_modules/relic-mcp/dist/cover/cover.js \
-            node_modules/relic-mcp/dist/cover/cover.css \
-            node_modules/relic-mcp/dist/cover/styles.css \
-            node_modules/relic-mcp/dist/cover/frame.html \
-            node_modules/relic-mcp/dist/cover/pdf.worker.mjs
-          do
-            test -f "$FILE" || {
-              echo "$FILE is missing from the tarball; the package would not be able to render covers"
-              exit 1
-            }
+          for TARGET in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            test -f "node_modules/relic-mcp/prebuilds/$TARGET/secure_open.node"
+            test -f "node_modules/relic-mcp/prebuilds/$TARGET/build-info.json"
           done
+          node -e '
+            const fs = require("node:fs");
+            const root = "node_modules/relic-mcp";
+            const want = process.env.RELEASE_VERSION;
+            const pkg = JSON.parse(fs.readFileSync(`${root}/package.json`, "utf8"));
+            const plugin = JSON.parse(fs.readFileSync(`${root}/.claude-plugin/plugin.json`, "utf8"));
+            const market = JSON.parse(fs.readFileSync(`${root}/.claude-plugin/marketplace.json`, "utf8"));
+            const mcp = JSON.parse(fs.readFileSync(`${root}/mcp-servers.json`, "utf8"));
+            const found = [plugin.version, market.plugins[0].version, market.metadata.version];
+            if (pkg.version !== want || found.some((value) => value !== want)) {
+              throw new Error(`packed plugin manifests disagree with ${want}: package=${pkg.version}, manifests=${found.join(", ")}`);
+            }
+            const server = mcp.relic;
+            const args = server?.args;
+            const expected = `${pkg.name}@${want}`;
+            if (
+              plugin.mcpServers !== "./mcp-servers.json" ||
+              server?.type !== "stdio" ||
+              server.command !== "npx" ||
+              !Array.isArray(args) ||
+              args.length !== 2 ||
+              args[0] !== "-y" ||
+              args[1] !== expected ||
+              server.env?.RELIC_CLIENT_NAME !== `relic-plugin/${want}`
+            ) {
+              throw new Error(`packed MCP launch config does not pin ${expected}`);
+            }
+          '
 
-          # And the installer has to run from the packed copy, not just in dev.
-          ./node_modules/.bin/relic-mcp --help | grep -q 'relic-mcp install'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relic-mcp-tarball
+          path: ${{ steps.package.outputs.tarball }}
+          if-no-files-found: error
 
-      - name: Pack and list contents
-        working-directory: packages/relic-mcp
+      - name: Summarize packed artifact
+        env:
+          TARBALL: ${{ steps.package.outputs.tarball }}
         run: |
-          npm pack --dry-run --no-workspaces
+          set -euo pipefail
+          # Summarize the tarball that was packed and will be published. Running
+          # npm pack again would rerun prepack, whose stdout is not JSON.
+          test -f "$TARBALL"
           {
-            echo "### relic-mcp ${{ inputs.version }}"
-            npm pack --dry-run --json --no-workspaces | node -e '
-              let raw = "";
-              process.stdin.on("data", (d) => (raw += d));
-              process.stdin.on("end", () => {
-                // npm returns an array normally and a bare object under
-                // --no-workspaces. Accept either rather than guessing.
-                const parsed = JSON.parse(raw);
-                const meta = Array.isArray(parsed) ? parsed[0] : parsed;
-                console.log(
-                  `files: ${meta.entryCount}, unpacked: ${meta.unpackedSize} bytes`
-                );
-              });
+            printf '### relic-mcp %s\n' "$RELEASE_VERSION"
+            node -e '
+              const { gunzipSync } = require("node:zlib");
+              const archive = gunzipSync(require("node:fs").readFileSync(process.env.TARBALL));
+              let files = 0;
+              let bytes = 0;
+              for (let offset = 0; offset + 512 <= archive.length; ) {
+                const header = archive.subarray(offset, offset + 512);
+                if (header.every((byte) => byte === 0)) break;
+                const size = Number.parseInt(header.subarray(124, 136).toString("ascii").replace(/\0.*$/, "").trim() || "0", 8);
+                const type = String.fromCharCode(header[156] || 48);
+                if (type === "0") {
+                  files += 1;
+                  bytes += size;
+                }
+                offset += 512 + Math.ceil(size / 512) * 512;
+              }
+              console.log(`files: ${files}, unpacked: ${bytes} bytes`);
             '
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # No NODE_AUTH_TOKEN. Authorization comes from the OIDC token above,
-      # and npm attaches provenance automatically under trusted publishing.
-      #
-      # This requires the package to already exist on npm with this repository
-      # and workflow configured as its trusted publisher. The very first
-      # publish of a new package cannot use it, which is why 0.1.0 was pushed
-      # by hand.
+  packed-native-probe:
+    needs: pack
+    name: packed native ${{ matrix.target }} on Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+            platform: darwin
+            architecture: arm64
+            node: '18.20.8'
+          - runner: macos-15
+            target: darwin-arm64
+            platform: darwin
+            architecture: arm64
+            node: '24.22.0'
+          - runner: macos-15-intel
+            target: darwin-x64
+            platform: darwin
+            architecture: x86_64
+            node: '18.20.8'
+          - runner: macos-15-intel
+            target: darwin-x64
+            platform: darwin
+            architecture: x86_64
+            node: '24.22.0'
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            platform: linux
+            architecture: aarch64
+            container_platform: linux/arm64
+            runtime_image: quay.io/pypa/manylinux_2_28_aarch64@sha256:0333f44c4eb759ec8f47b27bc9dc27b1c929932a267cf13ce0cff1a4b758cccb
+            node: '18.20.8'
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            platform: linux
+            architecture: aarch64
+            container_platform: linux/arm64
+            runtime_image: quay.io/pypa/manylinux_2_28_aarch64@sha256:0333f44c4eb759ec8f47b27bc9dc27b1c929932a267cf13ce0cff1a4b758cccb
+            node: '24.22.0'
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+            platform: linux
+            architecture: x86_64
+            container_platform: linux/amd64
+            runtime_image: quay.io/pypa/manylinux_2_28_x86_64@sha256:b74a5b6f1705ecff17be8bd792589bef9b3b039766d12205720ecd2a9e919192
+            node: '18.20.8'
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+            platform: linux
+            architecture: x86_64
+            container_platform: linux/amd64
+            runtime_image: quay.io/pypa/manylinux_2_28_x86_64@sha256:b74a5b6f1705ecff17be8bd792589bef9b3b039766d12205720ecd2a9e919192
+            node: '24.22.0'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: relic-mcp-tarball
+          path: ${{ runner.temp }}/tarball
+
+      - name: Record packed proof host
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.architecture }}"
+          {
+            echo "### Packed proof: ${{ matrix.target }}, Node ${{ matrix.node }}"
+            echo '```text'
+            node --version
+            uname -a
+            uname -r
+            uname -m
+            if [ "$(uname -s)" = Linux ]; then
+              cat /etc/os-release
+            else
+              sw_vers
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record Linux glibc 2.28 runtime
+        if: matrix.platform == 'linux'
+        env:
+          CONTAINER_PLATFORM: ${{ matrix.container_platform }}
+          EXPECTED_ARCH: ${{ matrix.architecture }}
+          RUNTIME_IMAGE: ${{ matrix.runtime_image }}
+        run: |
+          set -euo pipefail
+          command -v docker
+          docker version --format '{{.Server.Version}}'
+          {
+            echo "### Linux runtime: ${{ matrix.target }}, Node ${{ matrix.node }}"
+            echo '```text'
+            printf 'host_kernel=%s\nhost_arch=%s\nimage=%s\n' "$(uname -r)" "$(uname -m)" "$RUNTIME_IMAGE"
+            docker run --rm \
+              --platform "$CONTAINER_PLATFORM" \
+              --network none \
+              --cap-drop ALL \
+              --read-only \
+              --tmpfs /tmp:rw,nosuid,nodev,noexec,mode=1777,size=512m \
+              --entrypoint /bin/sh \
+              --env EXPECTED_ARCH="$EXPECTED_ARCH" \
+              "$RUNTIME_IMAGE" \
+              -ec '
+                actual_arch="$(uname -m)"
+                actual_glibc="$(getconf GNU_LIBC_VERSION)"
+                test "$actual_arch" = "$EXPECTED_ARCH"
+                test "$actual_glibc" = "glibc 2.28"
+                printf "container_kernel=%s\ncontainer_arch=%s\ncontainer_glibc=%s\n" "$(uname -r)" "$actual_arch" "$actual_glibc"
+              '
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prove Darwin installed tarball without Bun or the checkout
+        if: matrix.platform == 'darwin'
+        run: |
+          set -euo pipefail
+          set -- "$RUNNER_TEMP"/tarball/*.tgz
+          test -f "$1"
+          RELIC_MCP_PROVE_HIDE_SOURCE=1 \
+          RELIC_MCP_PROVE_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+          node packages/relic-mcp/scripts/prove-packed-native.mjs "$1"
+
+      - name: Prove Linux installed tarball in glibc 2.28 with Node only
+        if: matrix.platform == 'linux'
+        env:
+          CONTAINER_PLATFORM: ${{ matrix.container_platform }}
+          RUNTIME_IMAGE: ${{ matrix.runtime_image }}
+        run: |
+          set -euo pipefail
+          set -- "$RUNNER_TEMP"/tarball/*.tgz
+          test -f "$1"
+          TARBALL_NAME="$(basename "$1")"
+          PROOF_DIRECTORY="$RUNNER_TEMP/packed-proof"
+          mkdir -p "$PROOF_DIRECTORY"
+          cp packages/relic-mcp/scripts/prove-packed-native.mjs "$PROOF_DIRECTORY/"
+          NODE_ROOT="$(node -p "const p = require('node:path'); p.dirname(p.dirname(process.execPath))")"
+          test -x "$NODE_ROOT/bin/node"
+          docker run --rm \
+            --platform "$CONTAINER_PLATFORM" \
+            --network none \
+            --cap-drop ALL \
+            --read-only \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,mode=1777,size=512m \
+            --tmpfs /work:rw,nosuid,nodev,exec,mode=1777,size=512m \
+            --entrypoint /node/bin/node \
+            --env PATH=/node/bin \
+            --env HOME=/work \
+            --env TMPDIR=/work \
+            --env CC= \
+            --env CXX= \
+            --env AR= \
+            --env MAKE= \
+            --volume "$NODE_ROOT:/node:ro" \
+            --volume "$PROOF_DIRECTORY:/proof:ro" \
+            --volume "$RUNNER_TEMP/tarball:/input:ro" \
+            "$RUNTIME_IMAGE" \
+            /proof/prove-packed-native.mjs "/input/$TARBALL_NAME"
+
+  publish:
+    needs: [pack, packed-native-probe]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.0'
+
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@latest
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: relic-mcp-tarball
+          path: ${{ runner.temp }}/tarball
+
       - name: Publish
         if: ${{ !inputs.dry_run }}
-        working-directory: packages/relic-mcp
-        run: npm publish --access public --no-workspaces
+        run: |
+          set -euo pipefail
+          set -- "$RUNNER_TEMP"/tarball/*.tgz
+          test -f "$1"
+          npm publish "$1" --access public

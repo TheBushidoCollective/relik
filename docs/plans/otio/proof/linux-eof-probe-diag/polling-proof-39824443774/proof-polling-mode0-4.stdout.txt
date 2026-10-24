@@ -1,0 +1,2 @@
+STDIO_EOF_PROBE bytes=207 sha256=44563b38293fe5e0cdb2f44b6f7b965d4a749954241c55cff37c93add461b4cb response_id=stdio-eof-read-d255b03f-9267-457a-98f4-c33a41a3fe9c nonce_decrypted=true exit=0
+STDIO_EOF_PATH_OK

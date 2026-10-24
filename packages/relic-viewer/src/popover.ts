@@ -63,28 +63,34 @@ export function placePopover(
   size: { readonly width: number; readonly height: number },
   host: HostBox,
   gap = POPOVER_GAP,
-  margin = POPOVER_MARGIN
+  margin = POPOVER_MARGIN,
+  bounds?: AnchorBox
 ): Placement {
-  const visibleTop = host.scrollTop + margin;
-  const visibleBottom = host.scrollTop + host.clientHeight - margin;
+  const visibleTop = bounds
+    ? Math.max(host.scrollTop, bounds.top) + margin
+    : host.scrollTop + margin;
+  const visibleBottom = bounds
+    ? Math.min(host.scrollTop + host.clientHeight, bounds.top + bounds.height) -
+      margin
+    : host.scrollTop + host.clientHeight - margin;
   const above = anchor.top - gap - size.height;
   const below = anchor.top + anchor.height + gap;
-  // Fits above when its own top clears the visible edge. Measured against
-  // the panel's top rather than the anchor's, because a tall panel on a mark
-  // near the top of the page fits by the anchor's reckoning and not by its
-  // own.
   const side: 'above' | 'below' = above >= visibleTop ? 'above' : 'below';
   const wanted = side === 'above' ? above : below;
-  // A panel taller than the room below still has to land somewhere a reader
-  // can see the top of, so the bottom clamp never pushes its head off screen.
   const top = Math.max(
     visibleTop,
     Math.min(wanted, Math.max(visibleTop, visibleBottom - size.height))
   );
 
   const centred = anchor.left + anchor.width / 2 - size.width / 2;
-  const leftLimit = host.scrollLeft + margin;
-  const rightLimit = host.scrollLeft + host.clientWidth - size.width - margin;
+  const leftLimit = bounds
+    ? Math.max(host.scrollLeft, bounds.left) + margin
+    : host.scrollLeft + margin;
+  const rightLimit = bounds
+    ? Math.min(host.scrollLeft + host.clientWidth, bounds.left + bounds.width) -
+      size.width -
+      margin
+    : host.scrollLeft + host.clientWidth - size.width - margin;
   const left = Math.max(
     leftLimit,
     Math.min(centred, Math.max(leftLimit, rightLimit))
@@ -114,6 +120,10 @@ export function anchorFromClientRect(
   };
 }
 
+export interface PopoverPlacementOptions {
+  readonly bounds?: () => AnchorBox | undefined;
+}
+
 export interface PopoverLayer {
   /**
    * Puts `content` on the stage over `anchor`, replacing anything open.
@@ -122,7 +132,11 @@ export interface PopoverLayer {
    * it, so a reader re-aiming a comment keeps the sentence they are typing
    * and the focus they are typing it with.
    */
-  show(content: HTMLElement, anchor: AnchorBox): HTMLElement;
+  show(
+    content: HTMLElement,
+    anchor: AnchorBox,
+    options?: PopoverPlacementOptions
+  ): HTMLElement;
   /** Takes it down. Safe to call when nothing is open. */
   hide(): void;
   /** The open panel, or undefined. */
@@ -149,6 +163,29 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
   let open: HTMLElement | undefined;
   let anchored: AnchorBox | undefined;
   let mounted: HTMLElement | undefined;
+  let boundsProvider: (() => AnchorBox | undefined) | undefined;
+  let observer: ResizeObserver | undefined;
+  const onBoundedChange = (): void => position();
+  const stopBounded = (): void => {
+    observer?.disconnect();
+    observer = undefined;
+    host.removeEventListener('scroll', onBoundedChange, true);
+    if (typeof window !== 'undefined')
+      window.removeEventListener('resize', onBoundedChange);
+  };
+  const watchBounded = (): void => {
+    stopBounded();
+    if (!boundsProvider || !open || !mounted) return;
+    host.addEventListener('scroll', onBoundedChange, true);
+    if (typeof window !== 'undefined')
+      window.addEventListener('resize', onBoundedChange);
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(onBoundedChange);
+      observer.observe(open);
+      observer.observe(host);
+      if (mounted !== host) observer.observe(mounted);
+    }
+  };
 
   /** Where a panel can be seen right now. */
   const mount = (): HTMLElement => {
@@ -159,42 +196,65 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
     return host;
   };
 
+  const translate = (box: AnchorBox): AnchorBox => {
+    if (mounted === host || !mounted) return box;
+    const from = host.getBoundingClientRect();
+    const into = mounted.getBoundingClientRect();
+    return {
+      left:
+        box.left - host.scrollLeft + from.left - into.left + mounted.scrollLeft,
+      top: box.top - host.scrollTop + from.top - into.top + mounted.scrollTop,
+      width: box.width,
+      height: box.height,
+    };
+  };
+
   const position = (): void => {
     if (open === undefined || anchored === undefined || mounted === undefined)
       return;
-    let local = anchored;
-    if (mounted !== host) {
-      // Host content coordinates back to the viewport, then into the
-      // fullscreen element's own content coordinates. Both rects are read
-      // now, so the round trip is exact whatever moved in between.
-      const from = host.getBoundingClientRect();
-      const into = mounted.getBoundingClientRect();
-      local = {
-        left:
-          anchored.left -
-          host.scrollLeft +
-          from.left -
-          into.left +
-          mounted.scrollLeft,
-        top:
-          anchored.top -
-          host.scrollTop +
-          from.top -
-          into.top +
-          mounted.scrollTop,
-        width: anchored.width,
-        height: anchored.height,
-      };
+    const bounds = boundsProvider?.();
+    let localBounds: AnchorBox | undefined;
+    if (boundsProvider) {
+      const local = bounds && translate(bounds);
+      localBounds = local;
+      const left = local && Math.max(local.left, mounted.scrollLeft);
+      const right =
+        local &&
+        Math.min(
+          local.left + local.width,
+          mounted.scrollLeft + mounted.clientWidth
+        );
+      const top = local && Math.max(local.top, mounted.scrollTop);
+      const bottom =
+        local &&
+        Math.min(
+          local.top + local.height,
+          mounted.scrollTop + mounted.clientHeight
+        );
+      if (
+        !local ||
+        right! - left! <= 2 * POPOVER_MARGIN ||
+        bottom! - top! <= 2 * POPOVER_MARGIN
+      ) {
+        open.style.visibility = 'hidden';
+        return;
+      }
+      open.style.maxWidth = `${right! - left! - 2 * POPOVER_MARGIN}px`;
+      open.style.maxHeight = `${bottom! - top! - 2 * POPOVER_MARGIN}px`;
+      open.style.visibility = '';
     }
     const placement = placePopover(
-      local,
+      translate(anchored),
       { width: open.offsetWidth, height: open.offsetHeight },
       {
         scrollLeft: mounted.scrollLeft,
         scrollTop: mounted.scrollTop,
         clientWidth: mounted.clientWidth,
         clientHeight: mounted.clientHeight,
-      }
+      },
+      POPOVER_GAP,
+      POPOVER_MARGIN,
+      localBounds
     );
     open.style.left = `${placement.left}px`;
     open.style.top = `${placement.top}px`;
@@ -202,8 +262,17 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
   };
 
   return {
-    show(content, anchor) {
-      if (open !== undefined && open !== content) open.remove();
+    show(content, anchor, options) {
+      if (open !== undefined && open !== content) {
+        stopBounded();
+        open.style.maxWidth = '';
+        open.style.maxHeight = '';
+        open.style.visibility = '';
+        open.remove();
+        boundsProvider = undefined;
+      }
+      if (open !== content) boundsProvider = options?.bounds;
+      else if (options?.bounds !== undefined) boundsProvider = options.bounds;
       content.classList.add('popover');
       const into = mount();
       if (open !== content || mounted !== into) {
@@ -219,17 +288,26 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
         into.appendChild(content);
         refocus?.focus();
       }
+      const remounted = mounted !== into;
       open = content;
       anchored = anchor;
       mounted = into;
+      if (boundsProvider && (remounted || !observer)) watchBounded();
       position();
       return content;
     },
     hide() {
+      stopBounded();
       open?.remove();
+      if (open && boundsProvider) {
+        open.style.maxWidth = '';
+        open.style.maxHeight = '';
+        open.style.visibility = '';
+      }
       open = undefined;
       anchored = undefined;
       mounted = undefined;
+      boundsProvider = undefined;
     },
     current() {
       return open;

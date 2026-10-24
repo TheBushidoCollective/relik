@@ -1,0 +1,897 @@
+{
+  "browser": "HeadlessChrome/156.0.8078.4",
+  "sourceCommit": "31ef33d3dc340a4750d24d249d6b38338f2aa20b",
+  "results": [
+    {
+      "key": "dark-desktop",
+      "screenshot": "mock-dark-desktop.png",
+      "composerScreenshot": "mock-dark-desktop-composer.png",
+      "measurement": "mock-measurement.json",
+      "baseline": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "theme": "dark",
+        "documentWidth": 1425,
+        "bodyWidth": 1425,
+        "anchor": {
+          "box": {
+            "x": 919.40625,
+            "y": 476.140625,
+            "width": 160,
+            "height": 26.21875,
+            "right": 1079.40625,
+            "bottom": 502.359375
+          },
+          "value": "video-1",
+          "selectedText": "V1 · Video 1",
+          "color": "rgb(230, 233, 231)",
+          "background": "rgb(23, 27, 28)",
+          "contrast": 14.19376255626825,
+          "paddingInlineEnd": 24,
+          "textContentRight": 1054.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 1066.40625,
+            "y": 489.25
+          },
+          "indicatorHitElement": "anchor-track",
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758,
+          "opacity": "0.5",
+          "disabled": true,
+          "box": {
+            "x": 1124.59375,
+            "y": 922.046875,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 1221.171875,
+            "bottom": 951.171875
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 310.4375,
+              "y": 689.34375,
+              "width": 10.828125,
+              "height": 11,
+              "right": 321.265625,
+              "bottom": 700.34375
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 861.75,
+              "y": 838.71875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 872.578125,
+              "bottom": 849.71875
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 1093,
+          "scrollWidth": 1093
+        }
+      },
+      "composer": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "theme": "dark",
+        "documentWidth": 1425,
+        "bodyWidth": 1425,
+        "anchor": {
+          "box": {
+            "x": 919.40625,
+            "y": 366.140625,
+            "width": 160,
+            "height": 26.21875,
+            "right": 1079.40625,
+            "bottom": 392.359375
+          },
+          "value": "video-2-overlay",
+          "selectedText": "V2 · Video 2 · tracks/1",
+          "color": "rgb(230, 233, 231)",
+          "background": "rgb(23, 27, 28)",
+          "contrast": 14.19376255626825,
+          "paddingInlineEnd": 24,
+          "textContentRight": 1054.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 1066.40625,
+            "y": 379.25
+          },
+          "indicatorHitElement": "anchor-track",
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758,
+          "opacity": "1",
+          "disabled": false,
+          "box": {
+            "x": 1124.59375,
+            "y": 806.515625,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 1221.171875,
+            "bottom": 835.640625
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 310.4375,
+              "y": 579.34375,
+              "width": 10.828125,
+              "height": 11,
+              "right": 321.265625,
+              "bottom": 590.34375
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 861.75,
+              "y": 728.71875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 872.578125,
+              "bottom": 739.71875
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 1093,
+          "scrollWidth": 1093
+        }
+      },
+      "interactions": {
+        "point": {
+          "track": "video-2-overlay",
+          "start": 36,
+          "end": 36
+        },
+        "track": {
+          "track": "video-2-overlay",
+          "start": 0,
+          "end": 240
+        },
+        "range": {
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72
+        },
+        "savedComment": {
+          "id": "c4",
+          "number": 4,
+          "version": 2,
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72,
+          "body": "Clipping in highlights around actor edge",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "savedStatus": "Saved in this mock.",
+        "clearedSelection": null,
+        "clearDisabled": true
+      },
+      "indicatorInteraction": {
+        "key": "dark-desktop",
+        "indicatorClick": {
+          "x": 1067.40625,
+          "y": 489.25
+        },
+        "focusedAfterIndicatorClick": "anchor-track",
+        "selectionMethod": "Puppeteer select on existing native control",
+        "after": {
+          "value": "composition",
+          "selectedTrack": "composition"
+        }
+      }
+    },
+    {
+      "key": "light-desktop",
+      "screenshot": "mock-light-desktop.png",
+      "composerScreenshot": "mock-light-desktop-composer.png",
+      "measurement": "mock-light-desktop-measurement.json",
+      "baseline": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "theme": "light",
+        "documentWidth": 1425,
+        "bodyWidth": 1425,
+        "anchor": {
+          "box": {
+            "x": 919.40625,
+            "y": 476.140625,
+            "width": 160,
+            "height": 26.21875,
+            "right": 1079.40625,
+            "bottom": 502.359375
+          },
+          "value": "video-1",
+          "selectedText": "V1 · Video 1",
+          "color": "rgb(22, 25, 26)",
+          "background": "rgb(251, 251, 250)",
+          "contrast": 17.070474516489536,
+          "paddingInlineEnd": 24,
+          "textContentRight": 1054.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 1066.40625,
+            "y": 489.25
+          },
+          "indicatorHitElement": "anchor-track",
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165,
+          "opacity": "0.5",
+          "disabled": true,
+          "box": {
+            "x": 1124.59375,
+            "y": 922.046875,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 1221.171875,
+            "bottom": 951.171875
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 310.4375,
+              "y": 689.34375,
+              "width": 10.828125,
+              "height": 11,
+              "right": 321.265625,
+              "bottom": 700.34375
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 861.75,
+              "y": 838.71875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 872.578125,
+              "bottom": 849.71875
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 1093,
+          "scrollWidth": 1093
+        }
+      },
+      "composer": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "theme": "light",
+        "documentWidth": 1425,
+        "bodyWidth": 1425,
+        "anchor": {
+          "box": {
+            "x": 919.40625,
+            "y": 366.140625,
+            "width": 160,
+            "height": 26.21875,
+            "right": 1079.40625,
+            "bottom": 392.359375
+          },
+          "value": "video-2-overlay",
+          "selectedText": "V2 · Video 2 · tracks/1",
+          "color": "rgb(22, 25, 26)",
+          "background": "rgb(251, 251, 250)",
+          "contrast": 17.070474516489536,
+          "paddingInlineEnd": 24,
+          "textContentRight": 1054.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 1066.40625,
+            "y": 379.25
+          },
+          "indicatorHitElement": "anchor-track",
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165,
+          "opacity": "1",
+          "disabled": false,
+          "box": {
+            "x": 1124.59375,
+            "y": 806.515625,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 1221.171875,
+            "bottom": 835.640625
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 310.4375,
+              "y": 579.34375,
+              "width": 10.828125,
+              "height": 11,
+              "right": 321.265625,
+              "bottom": 590.34375
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 861.75,
+              "y": 728.71875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 872.578125,
+              "bottom": 739.71875
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 1093,
+          "scrollWidth": 1093
+        }
+      },
+      "interactions": {
+        "point": {
+          "track": "video-2-overlay",
+          "start": 36,
+          "end": 36
+        },
+        "track": {
+          "track": "video-2-overlay",
+          "start": 0,
+          "end": 240
+        },
+        "range": {
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72
+        },
+        "savedComment": {
+          "id": "c4",
+          "number": 4,
+          "version": 2,
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72,
+          "body": "Clipping in highlights around actor edge",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "savedStatus": "Saved in this mock.",
+        "clearedSelection": null,
+        "clearDisabled": true
+      },
+      "indicatorInteraction": {
+        "key": "light-desktop",
+        "indicatorClick": {
+          "x": 1067.40625,
+          "y": 489.25
+        },
+        "focusedAfterIndicatorClick": "anchor-track",
+        "selectionMethod": "Puppeteer select on existing native control",
+        "after": {
+          "value": "composition",
+          "selectedTrack": "composition"
+        }
+      }
+    },
+    {
+      "key": "dark-narrow",
+      "screenshot": "mock-dark-narrow.png",
+      "composerScreenshot": "mock-dark-narrow-composer.png",
+      "measurement": "mock-dark-narrow-measurement.json",
+      "baseline": {
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "theme": "dark",
+        "documentWidth": 375,
+        "bodyWidth": 375,
+        "anchor": {
+          "box": {
+            "x": 210.40625,
+            "y": 439.625,
+            "width": 155,
+            "height": 26.21875,
+            "right": 365.40625,
+            "bottom": 465.84375
+          },
+          "value": "video-1",
+          "selectedText": "V1 · Video 1",
+          "color": "rgb(230, 233, 231)",
+          "background": "rgb(23, 27, 28)",
+          "contrast": 14.19376255626825,
+          "paddingInlineEnd": 24,
+          "textContentRight": 340.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 352.40625,
+            "y": 452.734375
+          },
+          "indicatorHitElement": "anchor-track",
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758,
+          "opacity": "0.5",
+          "disabled": true,
+          "box": {
+            "x": 28.1875,
+            "y": 1988.640625,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 124.765625,
+            "bottom": 2017.765625
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 236.6875,
+              "y": 683.171875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 247.515625,
+              "bottom": 694.171875
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 605,
+              "y": 859.546875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 615.828125,
+              "bottom": 870.546875
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 375,
+          "scrollWidth": 760
+        }
+      },
+      "composer": {
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "theme": "dark",
+        "documentWidth": 375,
+        "bodyWidth": 375,
+        "anchor": {
+          "box": {
+            "x": 210.40625,
+            "y": -743.375,
+            "width": 155,
+            "height": 26.21875,
+            "right": 365.40625,
+            "bottom": -717.15625
+          },
+          "value": "video-2-overlay",
+          "selectedText": "V2 · Video 2 · tracks/1",
+          "color": "rgb(230, 233, 231)",
+          "background": "rgb(23, 27, 28)",
+          "contrast": 14.19376255626825,
+          "paddingInlineEnd": 24,
+          "textContentRight": 340.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 352.40625,
+            "y": -730.265625
+          },
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(23, 27, 28)",
+          "background": "rgb(79, 179, 166)",
+          "contrast": 6.885383352064758,
+          "opacity": "1",
+          "disabled": false,
+          "box": {
+            "x": 28.1875,
+            "y": 820.640625,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 124.765625,
+            "bottom": 849.765625
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 236.6875,
+              "y": -499.828125,
+              "width": 10.828125,
+              "height": 11,
+              "right": 247.515625,
+              "bottom": -488.828125
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(23, 27, 28)",
+            "background": "rgb(79, 179, 166)",
+            "contrast": 6.885383352064758,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 605,
+              "y": -323.453125,
+              "width": 10.828125,
+              "height": 11,
+              "right": 615.828125,
+              "bottom": -312.453125
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 375,
+          "scrollWidth": 760
+        }
+      },
+      "interactions": {
+        "point": {
+          "track": "video-2-overlay",
+          "start": 36,
+          "end": 36
+        },
+        "track": {
+          "track": "video-2-overlay",
+          "start": 0,
+          "end": 240
+        },
+        "range": {
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72
+        },
+        "savedComment": {
+          "id": "c4",
+          "number": 4,
+          "version": 2,
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72,
+          "body": "Clipping in highlights around actor edge",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "savedStatus": "Saved in this mock.",
+        "clearedSelection": null,
+        "clearDisabled": true
+      },
+      "indicatorInteraction": {
+        "key": "dark-narrow",
+        "indicatorClick": {
+          "x": 353.40625,
+          "y": 452.734375
+        },
+        "focusedAfterIndicatorClick": "anchor-track",
+        "selectionMethod": "Puppeteer select on existing native control",
+        "after": {
+          "value": "composition",
+          "selectedTrack": "composition"
+        }
+      }
+    },
+    {
+      "key": "light-narrow",
+      "screenshot": "mock-light-narrow.png",
+      "composerScreenshot": "mock-light-narrow-composer.png",
+      "measurement": "mock-light-narrow-measurement.json",
+      "baseline": {
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "theme": "light",
+        "documentWidth": 375,
+        "bodyWidth": 375,
+        "anchor": {
+          "box": {
+            "x": 210.40625,
+            "y": 439.625,
+            "width": 155,
+            "height": 26.21875,
+            "right": 365.40625,
+            "bottom": 465.84375
+          },
+          "value": "video-1",
+          "selectedText": "V1 · Video 1",
+          "color": "rgb(22, 25, 26)",
+          "background": "rgb(251, 251, 250)",
+          "contrast": 17.070474516489536,
+          "paddingInlineEnd": 24,
+          "textContentRight": 340.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 352.40625,
+            "y": 452.734375
+          },
+          "indicatorHitElement": "anchor-track",
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165,
+          "opacity": "0.5",
+          "disabled": true,
+          "box": {
+            "x": 28.1875,
+            "y": 1988.640625,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 124.765625,
+            "bottom": 2017.765625
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 236.6875,
+              "y": 683.171875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 247.515625,
+              "bottom": 694.171875
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 605,
+              "y": 859.546875,
+              "width": 10.828125,
+              "height": 11,
+              "right": 615.828125,
+              "bottom": 870.546875
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 375,
+          "scrollWidth": 760
+        }
+      },
+      "composer": {
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "theme": "light",
+        "documentWidth": 375,
+        "bodyWidth": 375,
+        "anchor": {
+          "box": {
+            "x": 210.40625,
+            "y": -743.375,
+            "width": 155,
+            "height": 26.21875,
+            "right": 365.40625,
+            "bottom": -717.15625
+          },
+          "value": "video-2-overlay",
+          "selectedText": "V2 · Video 2 · tracks/1",
+          "color": "rgb(22, 25, 26)",
+          "background": "rgb(251, 251, 250)",
+          "contrast": 17.070474516489536,
+          "paddingInlineEnd": 24,
+          "textContentRight": 340.40625,
+          "nativeAppearance": "auto",
+          "indicatorHitPoint": {
+            "x": 352.40625,
+            "y": -730.265625
+          },
+          "textOverflow": "clip"
+        },
+        "post": {
+          "color": "rgb(251, 251, 250)",
+          "background": "rgb(31, 107, 100)",
+          "contrast": 6.0624709617609165,
+          "opacity": "1",
+          "disabled": false,
+          "box": {
+            "x": 28.1875,
+            "y": 820.640625,
+            "width": 96.578125,
+            "height": 29.125,
+            "right": 124.765625,
+            "bottom": 849.765625
+          }
+        },
+        "markerLabels": [
+          {
+            "text": "1",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 236.6875,
+              "y": -499.828125,
+              "width": 10.828125,
+              "height": 11,
+              "right": 247.515625,
+              "bottom": -488.828125
+            }
+          },
+          {
+            "text": "2",
+            "color": "rgb(251, 251, 250)",
+            "background": "rgb(31, 107, 100)",
+            "contrast": 6.0624709617609165,
+            "markOpacity": "1",
+            "markFilter": "none",
+            "box": {
+              "x": 605,
+              "y": -323.453125,
+              "width": 10.828125,
+              "height": 11,
+              "right": 615.828125,
+              "bottom": -312.453125
+            }
+          }
+        ],
+        "timeline": {
+          "clientWidth": 375,
+          "scrollWidth": 760
+        }
+      },
+      "interactions": {
+        "point": {
+          "track": "video-2-overlay",
+          "start": 36,
+          "end": 36
+        },
+        "track": {
+          "track": "video-2-overlay",
+          "start": 0,
+          "end": 240
+        },
+        "range": {
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72
+        },
+        "savedComment": {
+          "id": "c4",
+          "number": 4,
+          "version": 2,
+          "track": "video-2-overlay",
+          "start": 48,
+          "end": 72,
+          "body": "Clipping in highlights around actor edge",
+          "author": "publisher",
+          "resolved": false,
+          "replies": []
+        },
+        "savedStatus": "Saved in this mock.",
+        "clearedSelection": null,
+        "clearDisabled": true
+      },
+      "indicatorInteraction": {
+        "key": "light-narrow",
+        "indicatorClick": {
+          "x": 353.40625,
+          "y": 452.734375
+        },
+        "focusedAfterIndicatorClick": "anchor-track",
+        "selectionMethod": "Puppeteer select on existing native control",
+        "after": {
+          "value": "composition",
+          "selectedTrack": "composition"
+        }
+      }
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,27 @@
+{
+  "boundary": "Uninstrumented built Node MCP process launched by the real 33-stage SOURCE OTIO path",
+  "runtime": { "node": "24.15.0", "bun": "1.3.14" },
+  "sequence": "Fail-fast diagnostic sample 1 passed all 33 stages; sample 2 stopped after mcp-original before revision-insert",
+  "tool": "relic_read_comments",
+  "observed": {
+    "pid": 70677,
+    "packetBytes": 178,
+    "packetSha256": "ba4a79b7543aa900ffabd7dea7bdc3d6d9a0a25df5f1820b8fd878fe6030d04b",
+    "inputOutcomes": [
+      { "status": "fulfilled", "value": 178 },
+      {
+        "status": "fulfilled",
+        "value": { "code": "EBADF", "syscall": "write", "errno": -9 }
+      }
+    ],
+    "stdoutBytes": 0,
+    "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "exit": 0,
+    "signal": null,
+    "stderr": ""
+  },
+  "established": "The parent FileSink accepted the write call, but end() returned an EBADF write error object as a fulfilled value. The consumer received no response and rejected the zero exit.",
+  "unknown": "The delivered child stdin bytes and underlying descriptor lifecycle mechanism were not observed. This receipt alone does not prove whether the error originates in producer descriptor management or an early child close.",
+  "productionTransportChanged": false,
+  "release": "Blocked pending a discriminating producer-boundary investigation and correction."
+}

@@ -1,0 +1,4 @@
+relic: mail is not configured (RELIC_RESEND_API_KEY, RELIC_MAIL_FROM unset). Sign-in links will not be sent, and the request endpoint will still answer 202, so nobody can complete a comment.
+relic: no GCS credentials, using in-memory storage. Every relic is lost on restart.
+relic: no durable store, using memory. Relics do not survive a restart and are invisible across instances.
+relic server listening on :8080

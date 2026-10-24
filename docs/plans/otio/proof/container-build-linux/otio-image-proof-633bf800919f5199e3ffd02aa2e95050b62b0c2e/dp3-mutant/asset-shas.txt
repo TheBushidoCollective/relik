@@ -1,0 +1,8 @@
+e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/assets_viewer.js.body
+e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/assets_home.js.body
+e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/assets_styles.css.body
+7465950dd0b053b49898cea7796818c72d6e0b36a86f5cb25407f81dbbad64c6  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/assets_register-sw.js.body
+e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/manifest.webmanifest.body
+e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/sw.js.body
+e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/assets_icon.svg.body
+e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31  /home/runner/work/_temp/otio-image-proof/dp3-mutant/responses/assets_otio-video-timing-worker.js.body

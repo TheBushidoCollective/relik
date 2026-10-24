@@ -1,0 +1,38 @@
+{
+  "boundary": "Built Node MCP stdio process with owned loopback service, encrypted comment, isolated storage, and captured mail sink",
+  "runtime": { "node": "24.15.0", "bun": "1.3.14" },
+  "control": {
+    "command": "mise exec node@24.15.0 -- bun packages/relic-mcp/test/stdio-eof-path.ts",
+    "observed": "STDIO_EOF_PATH_OK",
+    "additionalRuntime": "Node 18.20.8 also returned STDIO_EOF_PATH_OK"
+  },
+  "falsifier": {
+    "command": "RELIC_STDIO_EOF_SUPPRESS_RESPONSE=1 mise exec node@24.15.0 -- bun packages/relic-mcp/test/stdio-eof-path.ts",
+    "mutation": "Suppress the matching stdout response only after the held comments GET is accepted and physical stdin EOF is observed",
+    "observedExit": 1,
+    "observedError": "no matching JSON-RPC response",
+    "childExit": 0,
+    "childStderr": "",
+    "deliveredRequestBytes": 207,
+    "deliveredRequestSha256Matched": true,
+    "responseWriteAttemptBytes": 1091,
+    "responseSuppressed": true,
+    "events": [
+      "stdin_write_end_called",
+      "stdin_chunk",
+      "stdin_physical_eof",
+      "comments_get_started",
+      "comments_get_accepted",
+      "eof_and_comments_get_accepted_before_release",
+      "response_suppression_armed",
+      "comments_get_released",
+      "stdout_write_attempt",
+      "stdout_write_suppressed",
+      "stdin_reader_eof",
+      "process_exit"
+    ]
+  },
+  "scope": "Instrumented witness. The tap changes scheduling through synchronous trace writes, a reader Promise continuation, and a stdout callback. This control proves detection of a missing matching response despite exit 0. It does not identify or fix the earlier uninstrumented empty-response cause.",
+  "productionTransportChanged": false,
+  "restoration": "The suppression flag was set for the falsifier command only; production source and bundle were not mutated. The protocol regression runs control and falsifier in isolated children."
+}

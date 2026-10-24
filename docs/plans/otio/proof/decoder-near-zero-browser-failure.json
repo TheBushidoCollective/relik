@@ -1,0 +1,87 @@
+{
+  "sourceHead": "97f401b",
+  "command": "mise exec -- bun run build && mise exec -- bun run --cwd packages/relic-mcp build && RELIC_OTIO_CHROME_PATH=/Users/jwaldrip/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell RELIC_OTIO_PATH_CLIENT=source mise exec node@24.15.0 -- bun packages/relic-mcp/test/otio-path.ts",
+  "runtime": "Bun 1.3.14 (0d9b296a), Node 24.15.0 selected through mise",
+  "viewerShellHash": "f6f59f550af162db",
+  "builds": {
+    "nativeLocal": 0,
+    "viewer": 0,
+    "mcp": 0
+  },
+  "passedStages": [
+    "published",
+    "decrypted",
+    "official-archive",
+    "network-block",
+    "pixels-offset",
+    "default-view-negative-head",
+    "nested-200",
+    "nested-no-spill",
+    "dissolve-pixels",
+    "audio-signal",
+    "state-gap-black",
+    "state-effect",
+    "ui-point-nested",
+    "ui-range-nested",
+    "ui-point-duplicate",
+    "ui-range-duplicate",
+    "ui-range-dissolve",
+    "screenshots",
+    "decoder-worker-csp",
+    "decoder-timing-windows",
+    "decoder-webm-quantization"
+  ],
+  "failure": {
+    "file": "packages/relic-mcp/test/otio-path.ts",
+    "line": 3871,
+    "operation": "waitReady(nearZeroBrowser)",
+    "expected": "true",
+    "actual": "diagnostic",
+    "exit": 1
+  },
+  "terminalWarningObservation": {
+    "harnessHead": "e5f6eb6",
+    "unchangedProductBuildHead": "97f401b",
+    "purpose": "Observe actual DOM diagnostic text before any product correction, not qualification or a confirmation retry",
+    "diagnostic": "missing-handles · Requested source for near-zero is outside available media",
+    "ready": "diagnostic",
+    "expectedReady": "true",
+    "exit": 1,
+    "passedStageCount": 21
+  },
+  "terminalDecoderStateObservation": {
+    "harnessHead": "d192d50",
+    "unchangedProductBuildHead": "97f401b",
+    "purpose": "Observe terminal readiness attributes and native decoder state before any product correction",
+    "ready": "diagnostic",
+    "previewState": "diagnostic",
+    "previewBlocked": "false",
+    "diagnostics": [
+      "missing-handles · Requested source for near-zero is outside available media"
+    ],
+    "nativeVideoCount": 1,
+    "videos": [{ "currentTime": 0.020833, "readyState": 4, "error": null }],
+    "expectedReady": "true",
+    "exit": 1,
+    "passedStageCount": 21,
+    "limitation": "Native video state was observed; the later first-frame pixel assertion was not reached."
+  },
+  "fixture": {
+    "file": "fr24.mp4",
+    "sourceStart": {
+      "value": 4,
+      "rateExpression": "24000 / 1001"
+    },
+    "availableStart": {
+      "value": 5,
+      "rateExpression": "30000 / 1001"
+    },
+    "duration": {
+      "value": 48,
+      "rate": 24
+    },
+    "representationalZeroAssertion": "passed before browser open"
+  },
+  "interpretation": "Actual headless browser run failed despite eight passing focused decoder controls. Two distinct failure-observation increments captured the DOM warning, then readiness and decoder state, before any product correction. All stopped before mcp-original and did not reproduce or clear the separate transport failure. No assertion or fixture was relaxed.",
+  "rawConsole": "mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.\n$ bun run --filter 'relic-mcp' native:local && bun run --filter '@relic/viewer' build\nrelic-mcp native:local: built darwin-arm64: /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/prebuilds/darwin-arm64/secure_open.node\nrelic-mcp native:local: Exited with code 0\n@relic/viewer build: built 25 assets (shell hash: f6f59f550af162db): card.v1.png, chunk-2drvj3dy.js, chunk-31gvkcv5.js, chunk-6f5b4rb6.js, chunk-6jz51d6t.js, chunk-8ztyyezc.js, chunk-asa14ht3.js, chunk-evw6nfwd.js, chunk-jypvymg2.js, chunk-qtmn0f2k.js, chunk-r5s7xbg3.js, chunk-thmg5x08.js, chunk-vq9ts4jm.js, home.js, icon.svg, main.js, manifest.webmanifest, mediabunny-license.txt, otio-video-timing-worker.js, pdf.worker.js, sandbox.html, sandbox.js, styles.css, sw.js, viewer.js\n@relic/viewer build: Exited with code 0\nmise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.\n$ node native/local-build.mjs && bun run build:bundle\nbuilt darwin-arm64: /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/prebuilds/darwin-arm64/secure_open.node\n$ bun run build.ts\nbuilt dist/relic-mcp.js: 37858 readable lines\nwrote plugin manifests and launch config at version 0.3.0\nmise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.\nPUBLISHED relic_id=zx90kpepg5wmg62sj7kq6s5dx8\nSTAGE published\nSTAGE decrypted\nOFFICIAL nested=media/plate_1009.png dissolve=72 audio=48\nSTAGE official-archive\nSTAGE network-block\nSTAGE pixels-offset\nSTAGE default-view-negative-head\nSTAGE nested-200\nSTAGE nested-no-spill\nSTAGE dissolve-pixels\nSTAGE audio-signal\nSTAGE state-gap-black\nSTAGE state-effect\nSTAGE ui-point-nested\nSTAGE ui-range-nested\nSTAGE ui-point-duplicate\nSTAGE ui-range-duplicate\nSTAGE ui-range-dissolve\nSTAGE screenshots\nSTAGE decoder-worker-csp\nSTAGE decoder-timing-windows\nSTAGE decoder-webm-quantization\nSHOTS /Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/otio-path-shots\n3866 |     'near-zero',\n3867 |     nearZeroDocument\n3868 |   );\n3869 |   const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken);\n3870 |   try {\n3871 |     assert.equal(await waitReady(nearZeroBrowser), 'true');\n                  ^\nAssertionError: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'diagnostic'\n- 'true'\n\n generatedMessage: true,\n     actual: \"diagnostic\",\n   expected: \"true\",\n   operator: \"strictEqual\",\n       code: \"ERR_ASSERTION\"\n\n      at runDecoderTimingProof (/Users/jwaldrip/dev/src/github.com/thebushidocollective/artifacts/.claude/worktrees/otio-native-renderer/packages/relic-mcp/test/otio-path.ts:3871:12)\n      at processTicksAndRejections (native:7:39)\n\nBun v1.3.14 (macOS arm64)"
+}

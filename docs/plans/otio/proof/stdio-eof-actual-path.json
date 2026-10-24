@@ -1,0 +1,288 @@
+{
+  "schema": 1,
+  "boundary": "Observed real Node 18 bundled MCP processes during the complete loopback-only 33-stage OTIO PATH.",
+  "result": "OTIO_PATH_OK",
+  "production_transport_changed": false,
+  "prior_empty_output_cause": "Unresolved; this successful trace does not establish the cause of earlier empty responses.",
+  "children": [
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 321,
+      "stdout": 1786,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 322,
+      "stdout": 1781,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 270,
+      "stdout": 1763,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 260,
+      "stdout": 1732,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 272,
+      "stdout": 1762,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 282,
+      "stdout": 1783,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 276,
+      "stdout": 1782,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 264,
+      "stdout": 1744,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "comments_get_started",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 178,
+      "stdout": 38039,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "comments_get_started",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 738,
+      "stdout": 2437,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "comments_get_started",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 178,
+      "stdout": 42163,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "comments_get_started",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 266,
+      "stdout": 1560,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "comments_get_started",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 178,
+      "stdout": 42282,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "comments_get_started",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 271,
+      "stdout": 1585,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "comments_get_started",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 178,
+      "stdout": 41595,
+      "stdout_callback_error": null,
+      "exit": 0
+    },
+    {
+      "events": [
+        "tap_ready",
+        "stdin_to_web_created",
+        "stdin_reader_attached",
+        "stdin_chunk",
+        "stdin_physical_eof",
+        "stdout_write_attempt",
+        "stdin_reader_eof",
+        "stdout_write_callback",
+        "process_exit"
+      ],
+      "stdin": 238,
+      "stdout": 1675,
+      "stdout_callback_error": null,
+      "exit": 0
+    }
+  ]
+}

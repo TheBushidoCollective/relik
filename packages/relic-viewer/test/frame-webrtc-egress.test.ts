@@ -142,6 +142,36 @@ describe('installSandboxContainment unit containment', () => {
       winRecord['RTCPeerConnection'] = MockRTCPeerConnection;
     }).toThrow();
 
+    // Only the frame global and real holders are locked. Inherited names on
+    // shared prototypes stay writable, so ordinary code assigning a property
+    // called Worker or RTCPeerConnection keeps working in strict mode, and
+    // the caller's own realm is untouched.
+    expect(Object.getOwnPropertyDescriptor(Object.prototype, 'Worker')).toBe(
+      undefined
+    );
+    expect(
+      Object.getOwnPropertyDescriptor(Object.prototype, 'RTCPeerConnection')
+    ).toBe(undefined);
+    const plain: Record<string, unknown> = {};
+    plain['Worker'] = MockWorker;
+    plain['RTCPeerConnection'] = MockRTCPeerConnection;
+    expect(plain['Worker']).toBe(MockWorker);
+    expect(plain['RTCPeerConnection']).toBe(MockRTCPeerConnection);
+    expect(typeof (globalThis as Record<string, unknown>)['Worker']).toBe(
+      'function'
+    );
+
+    // A prototype that owns a name is still locked there.
+    const holder = { SharedWorker: MockSharedWorker };
+    const inheritingWindow = Object.create(holder) as Record<string, unknown>;
+    inheritingWindow['Node'] = { ELEMENT_NODE: 1, prototype: {} };
+    installSandboxContainment(inheritingWindow as unknown as Window);
+    expect(inheritingWindow['SharedWorker']).toBeUndefined();
+    expect(
+      Object.getOwnPropertyDescriptor(holder, 'SharedWorker')?.writable
+    ).toBe(false);
+    expect(holder.SharedWorker).toBeUndefined();
+
     // Verify prototype getters return null
     const iframeProto = MockHTMLIFrameElement.prototype as unknown as Record<
       string,

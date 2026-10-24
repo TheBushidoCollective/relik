@@ -1,0 +1,54 @@
+[
+  {
+    "key": "dark-desktop",
+    "command": [
+      "node",
+      "/Users/jwaldrip/.omp/plugins/cache/plugins/cld___cld___0.44.0/skills/image-rich-experiences/scripts/gate.mjs",
+      "/Users/jwaldrip/.omp/wt/otio-native-visual-fix/docs/plans/otio/proof/mock-measurement.json",
+      "--exclude",
+      "relic"
+    ],
+    "exitCode": 0,
+    "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:57594/\nMeasured at: 2026-10-21T23:56:35.170Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.479 (skel: 0.333, shape: 0.500, pal: 0.796, type: 0.200, img: 0.500)\n  [ok] han (https://han.guru/): 0.435 (skel: 0.417, shape: 0.275, pal: 0.688, type: 0.400, img: 0.500)\n  [ok] ompctl (https://ompctl.ai/): 0.400 (skel: 0.167, shape: 0.500, pal: 0.800, type: 0.400, img: 0.000)\n  [ok] thebushidoco (https://thebushido.co/): 0.399 (skel: 0.183, shape: 0.500, pal: 0.871, type: 0.200, img: 0.000)\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.362 (skel: 0.350, shape: 0.500, pal: 0.436, type: 0.200, img: 0.000)\n\nOVERALL VERDICT: PASSED\n",
+    "stderr": ""
+  },
+  {
+    "key": "light-desktop",
+    "command": [
+      "node",
+      "/Users/jwaldrip/.omp/plugins/cache/plugins/cld___cld___0.44.0/skills/image-rich-experiences/scripts/gate.mjs",
+      "/Users/jwaldrip/.omp/wt/otio-native-visual-fix/docs/plans/otio/proof/mock-light-desktop-measurement.json",
+      "--exclude",
+      "relic"
+    ],
+    "exitCode": 0,
+    "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:57594/\nMeasured at: 2026-10-21T23:56:36.654Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.439 (skel: 0.350, shape: 0.500, pal: 0.821, type: 0.200, img: 0.000)\n  [ok] endmetaltheft-demo (https://endmetaltheft-demo-tbc.web.app/): 0.404 (skel: 0.300, shape: 0.500, pal: 0.821, type: 0.000, img: 0.000)\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.402 (skel: 0.333, shape: 0.500, pal: 0.411, type: 0.200, img: 0.500)\n  [ok] baseplot (https://baseplot.app/): 0.393 (skel: 0.450, shape: 0.350, pal: 0.763, type: 0.000, img: 0.000)\n  [ok] han (https://han.guru/): 0.365 (skel: 0.417, shape: 0.275, pal: 0.336, type: 0.400, img: 0.500)\n\nOVERALL VERDICT: PASSED\n",
+    "stderr": ""
+  },
+  {
+    "key": "dark-narrow",
+    "command": [
+      "node",
+      "/Users/jwaldrip/.omp/plugins/cache/plugins/cld___cld___0.44.0/skills/image-rich-experiences/scripts/gate.mjs",
+      "/Users/jwaldrip/.omp/wt/otio-native-visual-fix/docs/plans/otio/proof/mock-dark-narrow-measurement.json",
+      "--exclude",
+      "relic"
+    ],
+    "exitCode": 0,
+    "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:57594/\nMeasured at: 2026-10-21T23:56:38.236Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.479 (skel: 0.333, shape: 0.500, pal: 0.796, type: 0.200, img: 0.500)\n  [ok] han (https://han.guru/): 0.435 (skel: 0.417, shape: 0.275, pal: 0.688, type: 0.400, img: 0.500)\n  [ok] ompctl (https://ompctl.ai/): 0.400 (skel: 0.167, shape: 0.500, pal: 0.800, type: 0.400, img: 0.000)\n  [ok] thebushidoco (https://thebushido.co/): 0.399 (skel: 0.183, shape: 0.500, pal: 0.871, type: 0.200, img: 0.000)\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.362 (skel: 0.350, shape: 0.500, pal: 0.436, type: 0.200, img: 0.000)\n\nOVERALL VERDICT: PASSED\n",
+    "stderr": ""
+  },
+  {
+    "key": "light-narrow",
+    "command": [
+      "node",
+      "/Users/jwaldrip/.omp/plugins/cache/plugins/cld___cld___0.44.0/skills/image-rich-experiences/scripts/gate.mjs",
+      "/Users/jwaldrip/.omp/wt/otio-native-visual-fix/docs/plans/otio/proof/mock-light-narrow-measurement.json",
+      "--exclude",
+      "relic"
+    ],
+    "exitCode": 0,
+    "stdout": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:57594/\nMeasured at: 2026-10-21T23:56:39.749Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 15 sites, threshold: 0.59):\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.439 (skel: 0.350, shape: 0.500, pal: 0.821, type: 0.200, img: 0.000)\n  [ok] endmetaltheft-demo (https://endmetaltheft-demo-tbc.web.app/): 0.404 (skel: 0.300, shape: 0.500, pal: 0.821, type: 0.000, img: 0.000)\n  [ok] jasonwaldrip (https://jasonwaldrip.com/): 0.402 (skel: 0.333, shape: 0.500, pal: 0.411, type: 0.200, img: 0.500)\n  [ok] baseplot (https://baseplot.app/): 0.393 (skel: 0.450, shape: 0.350, pal: 0.763, type: 0.000, img: 0.000)\n  [ok] han (https://han.guru/): 0.365 (skel: 0.417, shape: 0.275, pal: 0.336, type: 0.400, img: 0.500)\n\nOVERALL VERDICT: PASSED\n",
+    "stderr": ""
+  }
+]

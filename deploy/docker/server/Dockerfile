@@ -11,7 +11,7 @@
 # It showed up as a production `viewer.js` that did not match the tested
 # `viewer.js`: the chunk loader's `meta[property=csp-nonce]` lookup was
 # present in the shipped bundle and absent in the tested one.
-FROM oven/bun:1.3.14-alpine AS build
+FROM oven/bun:1.4.3-alpine AS build
 WORKDIR /src
 
 # Manifests first, so a source-only change does not reinstall dependencies.
@@ -23,14 +23,17 @@ COPY packages/relic-viewer/package.json packages/relic-viewer/
 RUN bun install --frozen-lockfile
 
 COPY . .
-RUN bun run build
+# The root build also prepares the MCP native helper for tests. It requires
+# Node headers and a manylinux Docker build, while this server only needs the
+# viewer dist it serves.
+RUN bun run --filter '@relic/viewer' build
 
 # --- runtime ---------------------------------------------------------------
 # Pinned for the same reason, one step weaker: this stage only runs the
 # server, so a floating tag risks a runtime behaviour change rather than a
 # different artifact. Both stages move together so the version a bug is
 # reproduced against is the version that produced it.
-FROM oven/bun:1.3.14-alpine AS runtime
+FROM oven/bun:1.4.3-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production

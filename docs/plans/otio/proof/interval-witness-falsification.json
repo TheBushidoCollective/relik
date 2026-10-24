@@ -1,0 +1,83 @@
+{
+  "sourceHead": "57b102aeeefe029fe1a1361471ec09f8f60b3c6a",
+  "runtime": "Bun 1.3.14 (0d9b296a)",
+  "source": "packages/relic-format/src/otio-identity.ts",
+  "sourceSha256BeforeAndAfter": "9a90190bfc8aec6c75373cd42774f844d934d3767f42a21f749bb682007ee63d",
+  "integratedBaseline": {
+    "files": 3,
+    "pass": 77,
+    "fail": 0,
+    "assertions": 1079
+  },
+  "focusedCommand": "mise exec -- bun test packages/relic-format/test/otio-identity.test.ts -t 'projects equal fractional-rate reverse|tiny shifted current reverse|rounded forward source witnesses'",
+  "focusedBaselineAndEachRestoredRun": {
+    "exit": 0,
+    "pass": 3,
+    "fail": 0,
+    "assertions": 28
+  },
+  "mutations": [
+    {
+      "change": "Disable both exact current-boundary source witness matches",
+      "exit": 1,
+      "pass": 1,
+      "fail": 2,
+      "assertions": 9,
+      "failures": [
+        { "line": 1722, "expected": "mapped", "received": "partial" },
+        { "line": 1830, "expected": "ambiguous", "received": "mapped" }
+      ]
+    },
+    {
+      "change": "Also accept same-clock boundary source values within 1e-7 rather than requiring exact equality",
+      "exit": 1,
+      "pass": 2,
+      "fail": 1,
+      "assertions": 26,
+      "failure": { "line": 1792, "expected": "partial", "received": "mapped" }
+    },
+    {
+      "change": "Choose the first exposed boundary instead of refusing distinct boundaries with equal rounded source witnesses",
+      "exit": 1,
+      "pass": 2,
+      "fail": 1,
+      "assertions": 23,
+      "failure": { "line": 1830, "expected": "ambiguous", "received": "mapped" }
+    },
+    {
+      "change": "Disable only the full opposite-boundary literal exposed-range return, retaining exact endpoint reuse",
+      "exit": 0,
+      "pass": 3,
+      "fail": 0,
+      "assertions": 28,
+      "interpretation": "Nondiscriminating against the first three cases alone. Superseded by literalPayloadFollowup below; this original count is retained as historical evidence."
+    }
+  ],
+  "literalPayloadFollowup": {
+    "sourceHead": "integration of df8dde1 onto 9cb9615",
+    "sourceSha256BeforeAndAfter": "9a90190bfc8aec6c75373cd42774f844d934d3767f42a21f749bb682007ee63d",
+    "fixture": "Public readOtioDocument parse of a 24 fps Timeline whose Stack.source_range trims to 1 + 2^-52, containing a 2^-53 Gap and a two-frame Clip; distinct original/current Timeline names; track-scoped anchor without item_id. Same clock: descendant exposures inherit the root clock, so no mixed-clock exposure is required.",
+    "command": "mise exec -- bun test packages/relic-format/test/otio-identity.test.ts -t 'round-to-even|fractional|rounded forward|reverse projection|shorter|nearby'",
+    "baselineAndRestoredRun": {
+      "exit": 0,
+      "pass": 9,
+      "fail": 0,
+      "assertions": 71
+    },
+    "mutation": {
+      "change": "Disable only the full opposite-boundary literal exposed-range return (boundary comparison replaced by an impossible value), retaining exact endpoint reuse",
+      "exit": 1,
+      "pass": 8,
+      "fail": 1,
+      "assertions": 70,
+      "failure": {
+        "line": 1932,
+        "expectedDuration": 1,
+        "receivedDuration": 0.9999999999999999,
+        "statusStillMapped": true
+      }
+    },
+    "interpretation": "Parser exposure, both exact source-witness correspondences, and the immutable original anchor passed before the payload assertion failed. The literal-payload branch is now load-bearing under real parser construction."
+  },
+  "scope": "Every mutation was restored immediately from an exact copy and followed by passing controls. No mutation survives. This focused evidence does not clear full SOURCE, playback status, process boundaries, or release gates."
+}

@@ -1,0 +1,7 @@
+/assets/viewer.js
+/assets/home.js
+/assets/styles.css
+/manifest.webmanifest
+/sw.js
+/assets/icon.svg
+/assets/otio-video-timing-worker.js

@@ -1,0 +1,49 @@
+{
+  "run": "https://github.com/TheBushidoCollective/relik/actions/runs/39723814228",
+  "jobId": 119643075857,
+  "head": "d6c3c2712ff360b354a9c03a51aec0ce521aba30",
+  "artifact": "stdio-linux-full-test-trace-39723814228",
+  "artifactId": 12402053040,
+  "environment": {
+    "runner_os": "Linux",
+    "platform": "linux",
+    "architecture": "x64",
+    "kernel_release": "6.17.0-1022-azure",
+    "kernel_version": "#22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026",
+    "bun_version": "1.3.14",
+    "bun_revision": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4",
+    "node_version": "v24.3.0"
+  },
+  "trace": {
+    "command": "strace -f -ttt -yy -k with the prior complete descriptor/process filter, bun run test",
+    "rawSha256": "e5b22f5d00cb66bbca400d7965d69c45a2093d8cbb57f084e468794fc03d7bf1",
+    "gzipSha256": "e7049c9b14a1df51f20d11c700c59882061f520fd7d596af4c329ab52697e2d1",
+    "storedFile": "stdio-linux-full-test-39723814228.strace.gz",
+    "compression": "gzip level 6, complete raw file without truncation"
+  },
+  "testOutcome": {
+    "exit": 1,
+    "pass": 1802,
+    "fail": 7,
+    "errors": 3,
+    "assertions": 57702,
+    "observedFailureClasses": [
+      "WebRTC STUN egress timeout at 45000ms",
+      "three image region crop tests",
+      "three source identity and prior publish steering timeouts at 5000ms"
+    ],
+    "interpretation": "Failures are recorded, not cleared. Caller attribution requires analysis of the successful premature close, if reproduced; trace overhead is not itself a proven explanation."
+  },
+  "otherJobs": {
+    "normalVerify": "success, separate runner",
+    "boundedBoundaryExperiment": "success, separate runner"
+  },
+  "binaryIdentityLimitation": {
+    "recordedCommandPath": "/home/runner/.local/share/mise/shims/bun",
+    "recordedResolvedPath": "/home/runner/.local/share/mise/bin/mise",
+    "recordedSha256": "8d48bc510b7d844fad0bc7156c0855c2a1e7230c51e498a7f6b63b021f8b57c5",
+    "recordedElfBuildId": "e10fabbdbcbca867551315a571682226eb7d7b94",
+    "interpretation": "The recorded SHA and ELF build ID identify the mise executable, NOT Bun. Exact Bun binary SHA/build ID were not captured. Bun version/revision above are runtime observations. This receipt does not present the mise identity as Bun identity."
+  },
+  "releaseGate": "Not cleared. No API cutover or product fix authorized by green diagnostic samples."
+}

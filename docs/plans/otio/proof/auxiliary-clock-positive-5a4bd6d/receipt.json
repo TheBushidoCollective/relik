@@ -1,0 +1,118 @@
+{
+  "sourceHead": "5a4bd6dff817f1f92e8b49923a18cc553ff55a00",
+  "exit": 0,
+  "sourceStages": 34,
+  "pathOk": true,
+  "clock": {
+    "configuredLimit": 30,
+    "configuredWindowSeconds": 3600,
+    "initialBoundary": {
+      "before": 1792705123867,
+      "after": 1792708723867
+    },
+    "boundaries": [
+      {
+        "before": 1792708723867,
+        "after": 1792712323867,
+        "completedUiPosts": 30
+      }
+    ],
+    "completedUiPosts": 40,
+    "finalNow": 1792712323867
+  },
+  "reveals": [
+    {
+      "position": "spatial-top",
+      "expectedId": "ZtNO9habtWdr5DZDXlXJqA",
+      "trustedClickId": "ZtNO9habtWdr5DZDXlXJqA",
+      "trusted": true,
+      "after": {
+        "missing": [],
+        "markRect": {
+          "left": 171.5,
+          "top": 53.953125,
+          "right": 176.5,
+          "bottom": 67.953125,
+          "width": 5,
+          "height": 14
+        },
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 548,
+          "bottom": 900.0625,
+          "width": 548,
+          "height": 846
+        },
+        "center": {
+          "x": 174,
+          "y": 60.953125
+        },
+        "usableLeft": 174,
+        "usableRight": 548,
+        "hitId": "ZtNO9habtWdr5DZDXlXJqA",
+        "hitOwned": true,
+        "activeIds": ["ZtNO9habtWdr5DZDXlXJqA"],
+        "cardId": "ZtNO9habtWdr5DZDXlXJqA",
+        "cardVisible": true,
+        "bodyPresent": true,
+        "anchor": {
+          "trackId": "track-v2-duplicate",
+          "start": 0,
+          "duration": 0,
+          "rate": 24,
+          "durationRate": 24
+        },
+        "stageScrollTop": 829,
+        "timelineScrollLeft": 0
+      }
+    },
+    {
+      "position": "spatial-bottom",
+      "expectedId": "2Bie1j9iPe5a0e8uzY9KPA",
+      "trustedClickId": "2Bie1j9iPe5a0e8uzY9KPA",
+      "trusted": true,
+      "after": {
+        "missing": [],
+        "markRect": {
+          "left": 171.5,
+          "top": 885.953125,
+          "right": 176.5,
+          "bottom": 899.953125,
+          "width": 5,
+          "height": 14
+        },
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 548,
+          "bottom": 900.0625,
+          "width": 548,
+          "height": 846
+        },
+        "center": {
+          "x": 174,
+          "y": 892.953125
+        },
+        "usableLeft": 174,
+        "usableRight": 548,
+        "hitId": "2Bie1j9iPe5a0e8uzY9KPA",
+        "hitOwned": true,
+        "activeIds": ["2Bie1j9iPe5a0e8uzY9KPA"],
+        "cardId": "2Bie1j9iPe5a0e8uzY9KPA",
+        "cardVisible": true,
+        "bodyPresent": true,
+        "anchor": {
+          "trackId": "track-v2-duplicate",
+          "start": 0,
+          "duration": 0,
+          "rate": 24,
+          "durationRate": 24
+        },
+        "stageScrollTop": 855,
+        "timelineScrollLeft": 0
+      }
+    }
+  ],
+  "policy": "Loopback MemoryStore/MemoryStorage/captured mail sink. Forty real UI posts; only injected time advances at configured bucket boundaries. No live writes, direct comment insertion, limiter mutation, or retries."
+}

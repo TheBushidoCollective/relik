@@ -1,0 +1,386 @@
+{
+  "head": "3ab3b700a6c63c4e3e70d5f054a062b3b23c55e9",
+  "scope": "Self-contained clickable mock, not native SOURCE or production proof",
+  "headlessAttested": true,
+  "ownedProfile": true,
+  "service": "loopback-only",
+  "cases": [
+    {
+      "width": 1440,
+      "theme": "light",
+      "clicked": [
+        {
+          "id": "c5",
+          "label": "Comment 5 · V3 · Video 2 · tracks/2 · 01:00:00:08 → 01:00:00:16 · [8, 16) @ 24",
+          "x": 231.2890625,
+          "y": 453.34375,
+          "lane": "0",
+          "rect": {
+            "left": 210.859375,
+            "top": 446.34375,
+            "width": 40.859375,
+            "height": 14
+          },
+          "openedId": "c5"
+        },
+        {
+          "id": "c6",
+          "label": "Comment 6 · V3 · Video 2 · tracks/2 · 01:00:00:09 → 01:00:00:13 · [9, 13) @ 24",
+          "x": 212.296875,
+          "y": 450.34375,
+          "lane": "2",
+          "rect": {
+            "left": 204.609375,
+            "top": 443.34375,
+            "width": 15.375,
+            "height": 14
+          },
+          "openedId": "c6"
+        },
+        {
+          "id": "c4",
+          "label": "Comment 4 · V3 · Video 2 · tracks/2 · 01:00:00:00 · point · 0 @ 24",
+          "x": 170,
+          "y": 453.34375,
+          "lane": "0",
+          "rect": {
+            "left": 167.5,
+            "top": 446.34375,
+            "width": 5,
+            "height": 14
+          },
+          "openedId": "c4"
+        },
+        {
+          "id": "c7",
+          "label": "Comment 7 · V3 · Video 2 · tracks/2 · 01:00:00:00 → 01:00:10:00 · [0, 240) @ 24",
+          "x": 631.5,
+          "y": 450.34375,
+          "lane": "1",
+          "rect": {
+            "left": 170,
+            "top": 443.34375,
+            "width": 923,
+            "height": 14
+          },
+          "openedId": "c7"
+        }
+      ]
+    },
+    {
+      "width": 1440,
+      "theme": "dark",
+      "clicked": [
+        {
+          "id": "c5",
+          "label": "Comment 5 · V3 · Video 2 · tracks/2 · 01:00:00:08 → 01:00:00:16 · [8, 16) @ 24",
+          "x": 231.2890625,
+          "y": 453.34375,
+          "lane": "0",
+          "rect": {
+            "left": 210.859375,
+            "top": 446.34375,
+            "width": 40.859375,
+            "height": 14
+          },
+          "openedId": "c5"
+        },
+        {
+          "id": "c6",
+          "label": "Comment 6 · V3 · Video 2 · tracks/2 · 01:00:00:09 → 01:00:00:13 · [9, 13) @ 24",
+          "x": 212.296875,
+          "y": 450.34375,
+          "lane": "2",
+          "rect": {
+            "left": 204.609375,
+            "top": 443.34375,
+            "width": 15.375,
+            "height": 14
+          },
+          "openedId": "c6"
+        },
+        {
+          "id": "c4",
+          "label": "Comment 4 · V3 · Video 2 · tracks/2 · 01:00:00:00 · point · 0 @ 24",
+          "x": 170,
+          "y": 453.34375,
+          "lane": "0",
+          "rect": {
+            "left": 167.5,
+            "top": 446.34375,
+            "width": 5,
+            "height": 14
+          },
+          "openedId": "c4"
+        },
+        {
+          "id": "c7",
+          "label": "Comment 7 · V3 · Video 2 · tracks/2 · 01:00:00:00 → 01:00:10:00 · [0, 240) @ 24",
+          "x": 631.5,
+          "y": 450.34375,
+          "lane": "1",
+          "rect": {
+            "left": 170,
+            "top": 443.34375,
+            "width": 923,
+            "height": 14
+          },
+          "openedId": "c7"
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "theme": "light",
+      "clicked": [
+        {
+          "id": "c5",
+          "label": "Comment 5 · V3 · Video 2 · tracks/2 · 01:00:00:08 → 01:00:00:16 · [8, 16) @ 24",
+          "x": 172.890625,
+          "y": 450.171875,
+          "lane": "0",
+          "rect": {
+            "left": 162.59375,
+            "top": 443.171875,
+            "width": 20.59375,
+            "height": 14
+          },
+          "openedId": "c5"
+        },
+        {
+          "id": "c6",
+          "label": "Comment 6 · V3 · Video 2 · tracks/2 · 01:00:00:09 → 01:00:00:13 · [9, 13) @ 24",
+          "x": 170.3203125,
+          "y": 450.171875,
+          "lane": "2",
+          "rect": {
+            "left": 165.171875,
+            "top": 443.171875,
+            "width": 10.296875,
+            "height": 14
+          },
+          "openedId": "c6"
+        },
+        {
+          "id": "c4",
+          "label": "Comment 4 · V3 · Video 2 · tracks/2 · 01:00:00:00 · point · 0 @ 24",
+          "x": 142,
+          "y": 450.171875,
+          "lane": "0",
+          "rect": {
+            "left": 139.5,
+            "top": 443.171875,
+            "width": 5,
+            "height": 14
+          },
+          "openedId": "c4"
+        },
+        {
+          "id": "c7",
+          "label": "Comment 7 · V3 · Video 2 · tracks/2 · 01:00:00:00 → 01:00:10:00 · [0, 240) @ 24",
+          "x": 173,
+          "y": 450.171875,
+          "lane": "1",
+          "rect": {
+            "left": -136,
+            "top": 443.171875,
+            "width": 618,
+            "height": 14
+          },
+          "openedId": "c7"
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "clicked": [
+        {
+          "id": "c5",
+          "label": "Comment 5 · V3 · Video 2 · tracks/2 · 01:00:00:08 → 01:00:00:16 · [8, 16) @ 24",
+          "x": 172.890625,
+          "y": 450.171875,
+          "lane": "0",
+          "rect": {
+            "left": 162.59375,
+            "top": 443.171875,
+            "width": 20.59375,
+            "height": 14
+          },
+          "openedId": "c5"
+        },
+        {
+          "id": "c6",
+          "label": "Comment 6 · V3 · Video 2 · tracks/2 · 01:00:00:09 → 01:00:00:13 · [9, 13) @ 24",
+          "x": 170.3203125,
+          "y": 450.171875,
+          "lane": "2",
+          "rect": {
+            "left": 165.171875,
+            "top": 443.171875,
+            "width": 10.296875,
+            "height": 14
+          },
+          "openedId": "c6"
+        },
+        {
+          "id": "c4",
+          "label": "Comment 4 · V3 · Video 2 · tracks/2 · 01:00:00:00 · point · 0 @ 24",
+          "x": 142,
+          "y": 450.171875,
+          "lane": "0",
+          "rect": {
+            "left": 139.5,
+            "top": 443.171875,
+            "width": 5,
+            "height": 14
+          },
+          "openedId": "c4"
+        },
+        {
+          "id": "c7",
+          "label": "Comment 7 · V3 · Video 2 · tracks/2 · 01:00:00:00 → 01:00:10:00 · [0, 240) @ 24",
+          "x": 173,
+          "y": 450.171875,
+          "lane": "1",
+          "rect": {
+            "left": -136,
+            "top": 443.171875,
+            "width": 618,
+            "height": 14
+          },
+          "openedId": "c7"
+        }
+      ]
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "clicked": [
+        {
+          "id": "c5",
+          "label": "Comment 5 · V3 · Video 2 · tracks/2 · 01:00:00:08 → 01:00:00:16 · [8, 16) @ 24",
+          "x": 172.890625,
+          "y": 450.40625,
+          "lane": "0",
+          "rect": {
+            "left": 162.59375,
+            "top": 443.40625,
+            "width": 20.59375,
+            "height": 14
+          },
+          "openedId": "c5"
+        },
+        {
+          "id": "c6",
+          "label": "Comment 6 · V3 · Video 2 · tracks/2 · 01:00:00:09 → 01:00:00:13 · [9, 13) @ 24",
+          "x": 170.3203125,
+          "y": 450.40625,
+          "lane": "2",
+          "rect": {
+            "left": 165.171875,
+            "top": 443.40625,
+            "width": 10.296875,
+            "height": 14
+          },
+          "openedId": "c6"
+        },
+        {
+          "id": "c4",
+          "label": "Comment 4 · V3 · Video 2 · tracks/2 · 01:00:00:00 · point · 0 @ 24",
+          "x": 142,
+          "y": 450.40625,
+          "lane": "0",
+          "rect": {
+            "left": 139.5,
+            "top": 443.40625,
+            "width": 5,
+            "height": 14
+          },
+          "openedId": "c4"
+        },
+        {
+          "id": "c7",
+          "label": "Comment 7 · V3 · Video 2 · tracks/2 · 01:00:00:00 → 01:00:10:00 · [0, 240) @ 24",
+          "x": 209,
+          "y": 450.40625,
+          "lane": "1",
+          "rect": {
+            "left": -100,
+            "top": 443.40625,
+            "width": 618,
+            "height": 14
+          },
+          "openedId": "c7"
+        }
+      ]
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "clicked": [
+        {
+          "id": "c5",
+          "label": "Comment 5 · V3 · Video 2 · tracks/2 · 01:00:00:08 → 01:00:00:16 · [8, 16) @ 24",
+          "x": 172.890625,
+          "y": 450.40625,
+          "lane": "0",
+          "rect": {
+            "left": 162.59375,
+            "top": 443.40625,
+            "width": 20.59375,
+            "height": 14
+          },
+          "openedId": "c5"
+        },
+        {
+          "id": "c6",
+          "label": "Comment 6 · V3 · Video 2 · tracks/2 · 01:00:00:09 → 01:00:00:13 · [9, 13) @ 24",
+          "x": 170.3203125,
+          "y": 450.40625,
+          "lane": "2",
+          "rect": {
+            "left": 165.171875,
+            "top": 443.40625,
+            "width": 10.296875,
+            "height": 14
+          },
+          "openedId": "c6"
+        },
+        {
+          "id": "c4",
+          "label": "Comment 4 · V3 · Video 2 · tracks/2 · 01:00:00:00 · point · 0 @ 24",
+          "x": 142,
+          "y": 450.40625,
+          "lane": "0",
+          "rect": {
+            "left": 139.5,
+            "top": 443.40625,
+            "width": 5,
+            "height": 14
+          },
+          "openedId": "c4"
+        },
+        {
+          "id": "c7",
+          "label": "Comment 7 · V3 · Video 2 · tracks/2 · 01:00:00:00 → 01:00:10:00 · [0, 240) @ 24",
+          "x": 209,
+          "y": 450.40625,
+          "lane": "1",
+          "rect": {
+            "left": -100,
+            "top": 443.40625,
+            "width": 618,
+            "height": 14
+          },
+          "openedId": "c7"
+        }
+      ]
+    }
+  ],
+  "exposureNotes": [
+    "Close intentional narrow Comments drawer between independent marker clicks.",
+    "At320, raw inline-center scrollIntoView placed target behind sticky labels; corrected scroll exposure uses the actual time-content window and preserves strict center ownership. No product or fixture changes."
+  ],
+  "clickChecks": "All six viewport/theme cases independently opened c5,c6,c4,c7 from real pointer clicks; overlapping c5/c6 occupied different lanes."
+}

@@ -1,0 +1,38 @@
+warn: Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure.
+669 |     `STDIO_EOF_PROBE bytes=${requestBytes.byteLength} sha256=${requestSha256} response_id=${REQUEST_ID} nonce_decrypted=true exit=${exit}`
+670 |   );
+671 |   console.log('STDIO_EOF_PATH_OK');
+672 | } catch (error) {
+673 |   await settleActiveChild();
+674 |   throw new Error(
+                  ^
+error: [{"type":"text","text":"service_unreachable: could not reach http://127.0.0.1:44569/api/relics/grjs9rxchy9fjq8qtgdt1gzxx8/comments: fetch failed"}]
+
+true !== false
+
+child_exit=143 stderr=""
+trace:
+{"origin":"parent","sequence":1,"at":1792690870669,"event":"stdin_write_end_called","request_bytes":207,"request_sha256":"ad11bd28d9c2393e55351268c5471bf52033b61625140a92b015911d25bf3bd2","write_result_type":"number","end_result_type":"number"}
+{"origin":"parent","sequence":2,"at":1792690870670,"event":"stdin_write_completed"}
+{"origin":"parent","sequence":3,"at":1792690870670,"event":"stdin_end_completed"}
+{"origin":"tap","pid":3541,"sequence":1,"at":1792690870698,"event":"tap_ready","suppress_response":false}
+{"origin":"tap","pid":3541,"sequence":2,"at":1792690870751,"event":"stdin_to_web_created"}
+{"origin":"tap","pid":3541,"sequence":3,"at":1792690870751,"event":"stdin_reader_attached"}
+{"origin":"tap","pid":3541,"sequence":4,"at":1792690870753,"event":"stdin_chunk","bytes":207,"total_bytes":207,"sha256":"ad11bd28d9c2393e55351268c5471bf52033b61625140a92b015911d25bf3bd2"}
+{"origin":"tap","pid":3541,"sequence":5,"at":1792690870755,"event":"stdin_physical_eof"}
+{"origin":"tap","pid":3541,"sequence":6,"at":1792690870756,"event":"comments_get_started","path":"/api/relics/grjs9rxchy9fjq8qtgdt1gzxx8/comments"}
+{"origin":"parent","sequence":4,"at":1792690870766,"event":"comments_get_accepted","path":"/api/relics/grjs9rxchy9fjq8qtgdt1gzxx8/comments","physical_eof_already_observed":true}
+{"origin":"parent","sequence":5,"at":1792690882656,"event":"eof_and_comments_get_accepted_before_release"}
+{"origin":"parent","sequence":6,"at":1792690882656,"event":"comments_get_released","reason":"physical_eof_and_comments_get_accepted"}
+{"origin":"tap","pid":3541,"sequence":7,"at":1792690882656,"event":"stdout_write_attempt","bytes":312,"sha256":"cbf7999077f4be2eea54f53c2e5c9b559987ad32a7ab78932bf814fd6c5fc32b"}
+{"origin":"tap","pid":3541,"sequence":8,"at":1792690882656,"event":"stdin_reader_eof","total_bytes":207,"sha256":"ad11bd28d9c2393e55351268c5471bf52033b61625140a92b015911d25bf3bd2"}
+{"origin":"tap","pid":3541,"sequence":9,"at":1792690882656,"event":"stdout_write_callback","bytes":312,"sha256":"cbf7999077f4be2eea54f53c2e5c9b559987ad32a7ab78932bf814fd6c5fc32b","error":null}
+{"origin":"tap","pid":3541,"sequence":10,"at":1792690882656,"event":"process_exit","code":0}
+{"origin":"parent","sequence":7,"at":1792690882657,"event":"stdout_chunk_received","bytes":312,"sha256":"cbf7999077f4be2eea54f53c2e5c9b559987ad32a7ab78932bf814fd6c5fc32b"}
+{"origin":"parent","sequence":8,"at":1792690882657,"event":"matching_jsonrpc_response_received","id":"stdio-eof-read-36353e6d-04da-4216-b520-83a364deefe6","bytes":311,"sha256":"e99db12eb1a0a92fa6e3a1164947afaf580097afbb2f5e0e0802181f3a998392"}
+{"origin":"parent","sequence":9,"at":1792690882664,"event":"child_exit_observed","code":143}
+      at /home/runner/work/relik/relik/packages/relic-mcp/test/stdio-eof-path.baseline.ts:674:13
+
+::error file=packages/relic-mcp/test/stdio-eof-path.baseline.ts,line=674,col=13,title=error: [{"type"%3A"text"%2C"text"%3A"service_unreachable%3A could not reach http%3A//127.0.0.1%3A44569/api/relics/grjs9rxchy9fjq8qtgdt1gzxx8/comments%3A fetch failed"}]::true !== false%0A%0Achild_exit=143 stderr=""%0Atrace:%0A{"origin":"parent","sequence":1,"at":1792690870669,"event":"stdin_write_end_called","request_bytes":207,"request_sha256":"ad11bd28d9c2393e55351268c5471bf52033b61625140a92b015911d25bf3bd2","write_result_type":"number","end_result_type":"number"}%0A{"origin":"parent","sequence":2,"at":1792690870670,"event":"stdin_write_completed"}%0A{"origin":"parent","sequence":3,"at":1792690870670,"event":"stdin_end_completed"}%0A{"origin":"tap","pid":3541,"sequence":1,"at":1792690870698,"event":"tap_ready","suppress_response":false}%0A{"origin":"tap","pid":3541,"sequence":2,"at":1792690870751,"event":"stdin_to_web_created"}%0A{"origin":"tap","pid":3541,"sequence":3,"at":1792690870751,"event":"stdin_reader_attached"}%0A{"origin":"tap","pid":3541,"sequence":4,"at":1792690870753,"event":"stdin_chunk","bytes":207,"total_bytes":207,"sha256":"ad11bd28d9c2393e55351268c5471bf52033b61625140a92b015911d25bf3bd2"}%0A{"origin":"tap","pid":3541,"sequence":5,"at":1792690870755,"event":"stdin_physical_eof"}%0A{"origin":"tap","pid":3541,"sequence":6,"at":1792690870756,"event":"comments_get_started","path":"/api/relics/grjs9rxchy9fjq8qtgdt1gzxx8/comments"}%0A{"origin":"parent","sequence":4,"at":1792690870766,"event":"comments_get_accepted","path":"/api/relics/grjs9rxchy9fjq8qtgdt1gzxx8/comments","physical_eof_already_observed":true}%0A{"origin":"parent","sequence":5,"at":1792690882656,"event":"eof_and_comments_get_accepted_before_release"}%0A{"origin":"parent","sequence":6,"at":1792690882656,"event":"comments_get_released","reason":"physical_eof_and_comments_get_accepted"}%0A{"origin":"tap","pid":3541,"sequence":7,"at":1792690882656,"event":"stdout_write_attempt","bytes":312,"sha256":"cbf7999077f4be2eea54f53c2e5c9b559987ad32a7ab78932bf814fd6c5fc32b"}%0A{"origin":"tap","pid":3541,"sequence":8,"at":1792690882656,"event":"stdin_reader_eof","total_bytes":207,"sha256":"ad11bd28d9c2393e55351268c5471bf52033b61625140a92b015911d25bf3bd2"}%0A{"origin":"tap","pid":3541,"sequence":9,"at":1792690882656,"event":"stdout_write_callback","bytes":312,"sha256":"cbf7999077f4be2eea54f53c2e5c9b559987ad32a7ab78932bf814fd6c5fc32b","error":null}%0A{"origin":"tap","pid":3541,"sequence":10,"at":1792690882656,"event":"process_exit","code":0}%0A{"origin":"parent","sequence":7,"at":1792690882657,"event":"stdout_chunk_received","bytes":312,"sha256":"cbf7999077f4be2eea54f53c2e5c9b559987ad32a7ab78932bf814fd6c5fc32b"}%0A{"origin":"parent","sequence":8,"at":1792690882657,"event":"matching_jsonrpc_response_received","id":"stdio-eof-read-36353e6d-04da-4216-b520-83a364deefe6","bytes":311,"sha256":"e99db12eb1a0a92fa6e3a1164947afaf580097afbb2f5e0e0802181f3a998392"}%0A{"origin":"parent","sequence":9,"at":1792690882664,"event":"child_exit_observed","code":143}%0A      at /home/runner/work/relik/relik/packages/relic-mcp/test/stdio-eof-path.baseline.ts:674:13
+
+Bun v1.4.3 (Linux x64)

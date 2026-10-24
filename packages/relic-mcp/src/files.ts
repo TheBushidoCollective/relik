@@ -2,7 +2,39 @@
 
 import { lstat, readFile } from 'node:fs/promises';
 import { basename as pathBasename, resolve as pathResolve } from 'node:path';
-import type { FileReader } from './publish.ts';
+import {
+  type NativeBundleRoot,
+  type NativeOpenedRegularFile,
+  openNativeBundleRoot,
+} from './native-secure-open.ts';
+import type {
+  ConfinedBundleDirectory,
+  ConfinedBundleFile,
+  FileReader,
+} from './publish.ts';
+
+function confinedFile(file: NativeOpenedRegularFile): ConfinedBundleFile {
+  return {
+    size: file.size,
+    readBounded(maxBytes) {
+      return file.read(maxBytes);
+    },
+    close() {
+      return file.close();
+    },
+  };
+}
+
+function confinedDirectory(root: NativeBundleRoot): ConfinedBundleDirectory {
+  return {
+    async openRegular(relativePath) {
+      return confinedFile(await root.openRegular(relativePath));
+    },
+    close() {
+      return root.close();
+    },
+  };
+}
 
 export const nodeFiles: FileReader = {
   resolve(path) {
@@ -19,6 +51,7 @@ export const nodeFiles: FileReader = {
   async stat(path) {
     const info = await lstat(path).catch(() => undefined);
     if (info === undefined) return { kind: 'other' };
+    if (info.isSymbolicLink()) return { kind: 'symlink' };
     if (info.isDirectory()) return { kind: 'directory' };
     if (!info.isFile()) return { kind: 'other' };
     return { kind: 'file', size: info.size };
@@ -26,5 +59,9 @@ export const nodeFiles: FileReader = {
 
   async read(path) {
     return new Uint8Array(await readFile(path));
+  },
+
+  async openBundleRoot(path) {
+    return confinedDirectory(await openNativeBundleRoot(path));
   },
 };

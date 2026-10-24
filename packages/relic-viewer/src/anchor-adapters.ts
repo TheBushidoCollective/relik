@@ -37,6 +37,7 @@ import {
   frameQuoteAdapter,
   frameRegionAdapter,
 } from './annotate-frame.ts';
+import { otioAdapter } from './annotate-otio.ts';
 import { pageAnchorAdapter } from './annotate-page.ts';
 import { quoteAdapter } from './annotate-quote.ts';
 import { regionAdapter } from './annotate-region.ts';
@@ -55,6 +56,7 @@ export function registerBuiltInAnchorAdapters(): void {
   registerAnchorAdapter(framePinAdapter);
   registerAnchorAdapter(quoteAdapter);
   registerAnchorAdapter(regionAdapter);
+  registerAnchorAdapter(otioAdapter);
   registerAnchorAdapter(timeAdapter);
   registerAnchorAdapter(pageAnchorAdapter);
 }
