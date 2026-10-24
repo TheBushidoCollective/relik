@@ -692,6 +692,20 @@ async function proveInstalledNativeLoader(loaderPath, runtime) {
     await withNativeRoot(openNativeBundleRoot, rootSymlink, async () => undefined);
   });
 
+  const rootAncestorLink = join(runtime, 'native-ancestor-link');
+  await symlink(runtime, rootAncestorLink, 'dir');
+  await expectNativeRefusal(
+    'native root ancestor symlink',
+    symlinkRefusal,
+    async () => {
+      await withNativeRoot(
+        openNativeBundleRoot,
+        join(rootAncestorLink, 'native-direct.otiod'),
+        async () => undefined
+      );
+    }
+  );
+
   const heldRootPath = join(runtime, 'native-held.otiod');
   const movedHeldRoot = `${heldRootPath}.original`;
   const heldBytes = Buffer.from('held native bytes');

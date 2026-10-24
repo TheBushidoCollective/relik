@@ -47,6 +47,10 @@ jobs:
           command -v xvfb-run
           command -v xauth
           echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
+      - name: Linux confinement probe
+        run: |
+          set -euo pipefail; unset CC
+          node packages/relic-mcp/native/build.mjs --probe --target linux-x64-gnu --output-dir "$RUNNER_TEMP/confinement-probe-linux-x64-gnu"
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}

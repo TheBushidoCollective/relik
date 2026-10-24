@@ -136,6 +136,18 @@ jobs:
             --cc "$RELIC_RELEASE_CC" \
             --output-dir "$RUNNER_TEMP/probe-release-$TARGET"
 
+      - name: Run Linux semantic probe
+        if: matrix.platform == 'linux'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          unset CC
+          node packages/relic-mcp/native/build.mjs \
+            --probe \
+            --target "$TARGET" \
+            --output-dir "$RUNNER_TEMP/probe-linux-$TARGET"
+
       - name: Build and audit Linux target
         if: matrix.platform == 'linux'
         env:
