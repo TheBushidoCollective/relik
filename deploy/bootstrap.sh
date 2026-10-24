@@ -6,8 +6,9 @@
 # workstation, because state is shared and a local run races the pipeline.
 #
 # It creates: the Terraform state bucket, a Workload Identity Federation pool
-# and provider scoped to this one GitHub repository, and the deployer service
-# account CI impersonates. No service account keys are created, ever.
+# and provider scoped to this one GitHub repository by its numeric ID, and the
+# deployer service account CI impersonates. No service account keys are
+# created, ever.
 #
 # Idempotent. Safe to re-run.
 
@@ -15,8 +16,14 @@ set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-thebushido-co}"
 REGION="${REGION:-us-central1}"
-REPO="${REPO:-TheBushidoCollective/relic}"
-PREVIOUS_REPO="${PREVIOUS_REPO:-TheBushidoCollective/artifacts}"
+REPO="${REPO:-TheBushidoCollective/relik}"
+# GitHub's numeric repository ID survives renames and transfers; the name does
+# not. The renames from artifacts to relic to relik each broke a name-pinned
+# condition. Read it with: gh api repos/<owner>/<name> --jq .id
+REPO_ID="${REPO_ID:-1316636189}"
+# Name-based impersonation bindings from before the ID pin. Removed once the
+# ID-based binding is in place.
+PREVIOUS_REPOS="${PREVIOUS_REPOS:-TheBushidoCollective/artifacts TheBushidoCollective/relic TheBushidoCollective/relik}"
 ACCOUNT="${ACCOUNT:-jwaldrip@thebushido.co}"
 
 STATE_BUCKET="${PROJECT_ID}-tfstate"
@@ -149,47 +156,49 @@ else
 fi
 
 say "Workload Identity provider: ${PROVIDER_ID}"
+# The attribute condition is the security boundary. Without it, any GitHub
+# repository in the world could mint a token for this pool. It pins the
+# numeric repository ID so a rename or transfer cannot silently break deploys.
+MAPPING="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.ref=assertion.ref"
+CONDITION="assertion.repository_id == '${REPO_ID}'"
 if ! g iam workload-identity-pools providers describe "${PROVIDER_ID}" \
       --location=global --workload-identity-pool="${POOL_ID}" >/dev/null 2>&1; then
-  # The attribute condition is the security boundary. Without it, any GitHub
-  # repository in the world could mint a token for this pool.
   g iam workload-identity-pools providers create-oidc "${PROVIDER_ID}" \
     --location=global \
     --workload-identity-pool="${POOL_ID}" \
     --display-name="${REPO}" \
     --issuer-uri="https://token.actions.githubusercontent.com" \
-    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
-    --attribute-condition="assertion.repository == '${REPO}'"
+    --attribute-mapping="${MAPPING}" \
+    --attribute-condition="${CONDITION}"
 else
-  # Repository transfers change the OIDC assertion. Leaving the old condition
-  # in place makes every deploy fail before Terraform starts.
   g iam workload-identity-pools providers update-oidc "${PROVIDER_ID}" \
     --location=global \
     --workload-identity-pool="${POOL_ID}" \
     --display-name="${REPO}" \
-    --attribute-condition="assertion.repository == '${REPO}'"
+    --attribute-mapping="${MAPPING}" \
+    --attribute-condition="${CONDITION}"
 fi
 
-say "Letting ${REPO} impersonate the deployer"
+say "Letting repository ${REPO_ID} (${REPO}) impersonate the deployer"
 g iam service-accounts add-iam-policy-binding "${DEPLOYER_EMAIL}" \
   --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository_id/${REPO_ID}" \
   >/dev/null
 
-if [ "${PREVIOUS_REPO}" != "${REPO}" ]; then
+for PREVIOUS_REPO in ${PREVIOUS_REPOS}; do
   PREVIOUS_MEMBER="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${PREVIOUS_REPO}"
   EXISTING_PREVIOUS_MEMBER="$(g iam service-accounts get-iam-policy "${DEPLOYER_EMAIL}" \
     --flatten="bindings[].members" \
     --filter="bindings.role:roles/iam.workloadIdentityUser AND bindings.members:${PREVIOUS_MEMBER}" \
     --format="value(bindings.members)")"
   if [ -n "${EXISTING_PREVIOUS_MEMBER}" ]; then
-    say "Removing obsolete ${PREVIOUS_REPO} impersonation"
+    say "Removing name-based ${PREVIOUS_REPO} impersonation"
     g iam service-accounts remove-iam-policy-binding "${DEPLOYER_EMAIL}" \
       --role=roles/iam.workloadIdentityUser \
       --member="${PREVIOUS_MEMBER}" \
       >/dev/null
   fi
-fi
+done
 
 WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
 
