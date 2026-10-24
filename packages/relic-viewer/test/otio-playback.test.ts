@@ -28,6 +28,7 @@ import type {
 } from '../src/otio-video-timing.ts';
 
 type ReadVideoTiming = typeof readOtioVideoTiming;
+const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
 const standardFixtureUrl = new URL(
   '../../relic-format/test/fixtures/otio/standard-sample.otiod/content.otio',
@@ -47,8 +48,56 @@ class SoftCanvas {
   pixel: Pixel = { r: 0, g: 0, b: 0, a: 0 };
   readonly ctx = new SoftContext(this);
 
+  isContextLost(): boolean {
+    return false;
+  }
+
   getContext(kind: string): SoftContext | null {
     return kind === '2d' ? this.ctx : null;
+  }
+}
+
+class LossyCanvas extends SoftCanvas {
+  private lost = false;
+  readonly listeners = new Map<string, Set<(e: Event) => void>>();
+
+  addEventListener(type: string, listener: (e: Event) => void): void {
+    let set = this.listeners.get(type);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(type, set);
+    }
+    set.add(listener);
+  }
+
+  removeEventListener(type: string, listener: (e: Event) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  loseContext(): void {
+    this.lost = true;
+    const event = { type: 'contextlost' } as Event;
+    const set = this.listeners.get('contextlost');
+    if (set) {
+      for (const listener of Array.from(set)) {
+        listener(event);
+      }
+    }
+  }
+
+  restoreContext(): void {
+    this.lost = false;
+    const event = { type: 'contextrestored' } as Event;
+    const set = this.listeners.get('contextrestored');
+    if (set) {
+      for (const listener of Array.from(set)) {
+        listener(event);
+      }
+    }
+  }
+
+  override isContextLost(): boolean {
+    return this.lost;
   }
 }
 
@@ -69,6 +118,9 @@ class SoftContext {
 
   drawImage(source: { pixel: Pixel }): void {
     this.blend(source.pixel);
+  }
+  isContextLost(): boolean {
+    return this.canvas.isContextLost();
   }
 
   private blend(src: Pixel): void {
@@ -2687,6 +2739,397 @@ describe('otio playback controller', () => {
     } finally {
       playback?.dispose();
       document.createElement = originalCreateElement;
+    }
+  });
+
+  test('loss before paint keeps buffering and draws nothing', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_loss_before_paint' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_1' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const visibleCanvas = new LossyCanvas();
+    visibleCanvas.width = 960;
+    visibleCanvas.height = 540;
+    visibleCanvas.pixel = { r: 0, g: 0, b: 0, a: 0 };
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_loss_before_paint',
+      canvas: visibleCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: async () => null,
+    });
+
+    try {
+      visibleCanvas.loseContext();
+
+      await playback.seek({ value: 0, rate: 24 });
+
+      expect(playback.getState().buffering).toBe(true);
+      expect(visibleCanvas.pixel).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('restore causes exactly one re-render and an exact pixel', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_restore' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_1' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const visibleCanvas = new LossyCanvas();
+    visibleCanvas.width = 960;
+    visibleCanvas.height = 540;
+    visibleCanvas.pixel = { r: 0, g: 0, b: 0, a: 0 };
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_restore',
+      canvas: visibleCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: async () => null,
+    });
+
+    try {
+      visibleCanvas.loseContext();
+      await playback.seek({ value: 0, rate: 24 });
+      expect(playback.getState().buffering).toBe(true);
+      expect(visibleCanvas.pixel).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+
+      let reRenderCount = 0;
+      const { promise: reRenderPromise, resolve: onReRender } =
+        Promise.withResolvers<void>();
+      playback.subscribe((state) => {
+        if (!state.buffering) {
+          reRenderCount += 1;
+          onReRender();
+        }
+      });
+
+      expect(reRenderCount).toBe(0);
+
+      visibleCanvas.restoreContext();
+      await reRenderPromise;
+
+      expect(playback.getState().buffering).toBe(false);
+      expect(visibleCanvas.pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+      expect(reRenderCount).toBe(1);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('a lost pooled surface is replaced at the same depth, the pool length is unchanged and the old surface is at width 0', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_pooled_lost' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_1' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const visibleCanvas = new LossyCanvas();
+    visibleCanvas.width = 960;
+    visibleCanvas.height = 540;
+
+    const createdPooledCanvases: LossyCanvas[] = [];
+    const originalCreateElement = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      if (tag === 'canvas') {
+        const sc = new LossyCanvas();
+        createdPooledCanvases.push(sc);
+        return sc as unknown as HTMLElement;
+      }
+      return originalCreateElement(tag);
+    }) as typeof document.createElement;
+
+    let playback: OtioPlaybackController | null = null;
+    try {
+      playback = createOtioPlayback({
+        document: doc,
+        timelineId: 'timeline_pooled_lost',
+        canvas: visibleCanvas as unknown as HTMLCanvasElement,
+        resolveMedia: async () => null,
+      });
+
+      await playback.seek({ value: 0, rate: 24 });
+      expect(createdPooledCanvases.length).toBe(3); // depths 0, 1, 2
+
+      const oldLeafSurface = createdPooledCanvases[2];
+      if (!oldLeafSurface) throw new Error('missing old leaf surface');
+      expect(oldLeafSurface.width).toBe(960);
+
+      // Lose context on pooled leaf surface
+      oldLeafSurface.loseContext();
+
+      // Trigger next seek
+      await playback.seek({ value: 1, rate: 24 });
+
+      // Old surface width is 0
+      expect(oldLeafSurface.width).toBe(0);
+
+      // Pool created a 4th canvas to replace it
+      expect(createdPooledCanvases.length).toBe(4);
+      const newLeafSurface = createdPooledCanvases[3];
+      if (!newLeafSurface) throw new Error('missing new leaf surface');
+      expect(newLeafSurface.width).toBe(960);
+      expect(newLeafSurface).not.toBe(oldLeafSurface);
+    } finally {
+      playback?.dispose();
+      document.createElement = originalCreateElement;
+    }
+  });
+
+  test('the deadline produces the error, and a later restore clears it and repaints', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_deadline' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_1' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const visibleCanvas = new LossyCanvas();
+    visibleCanvas.width = 960;
+    visibleCanvas.height = 540;
+
+    let timerCallback: (() => void) | null = null;
+    let scheduledDelay = 0;
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((
+      fn: (...args: unknown[]) => void,
+      ms?: number
+    ) => {
+      timerCallback = fn as () => void;
+      scheduledDelay = ms ?? 0;
+      return 999 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+
+    let playback: OtioPlaybackController | null = null;
+    try {
+      playback = createOtioPlayback({
+        document: doc,
+        timelineId: 'timeline_deadline',
+        canvas: visibleCanvas as unknown as HTMLCanvasElement,
+        resolveMedia: async () => null,
+      });
+
+      await playback.seek({ value: 0, rate: 24 });
+      expect(playback.getState().diagnostics).toEqual([]);
+
+      visibleCanvas.loseContext();
+      expect(playback.getState().buffering).toBe(true);
+      expect(scheduledDelay).toBe(OTIO_GRAPHICS_RESTORE_MS);
+      expect(timerCallback).not.toBeNull();
+
+      const executeTimer = timerCallback as (() => void) | null;
+      if (!executeTimer) throw new Error('deadline timer was not scheduled');
+      executeTimer();
+
+      const stateAtDeadline = playback.getState();
+      expect(stateAtDeadline.buffering).toBe(false);
+      expect(stateAtDeadline.diagnostics).toEqual([
+        {
+          severity: 'error',
+          code: 'unsupported-browser',
+          message:
+            'Preview graphics context was lost and the browser did not restore it',
+        },
+      ]);
+
+      const { promise: restorePromise, resolve: onRestore } =
+        Promise.withResolvers<void>();
+      playback.subscribe((state) => {
+        if (!state.buffering && state.diagnostics.length === 0) {
+          onRestore();
+        }
+      });
+
+      // Later restore clears the error and repaints
+      visibleCanvas.restoreContext();
+      await restorePromise;
+
+      const stateAfterRestore = playback.getState();
+      expect(stateAfterRestore.buffering).toBe(false);
+      expect(stateAfterRestore.diagnostics).toEqual([]);
+      expect(visibleCanvas.pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+      playback?.dispose();
+    }
+  });
+
+  test('dispose removes listeners and the timer', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_dispose_listeners' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_1' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_1' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const visibleCanvas = new LossyCanvas();
+    visibleCanvas.width = 960;
+    visibleCanvas.height = 540;
+
+    let timerCleared = false;
+    const origClearTimeout = globalThis.clearTimeout;
+    globalThis.clearTimeout = ((id?: number) => {
+      if (id !== undefined) timerCleared = true;
+      origClearTimeout(id);
+    }) as typeof clearTimeout;
+
+    try {
+      const playback = createOtioPlayback({
+        document: doc,
+        timelineId: 'timeline_dispose_listeners',
+        canvas: visibleCanvas as unknown as HTMLCanvasElement,
+        resolveMedia: async () => null,
+      });
+
+      expect(visibleCanvas.listeners.get('contextlost')?.size).toBe(1);
+      expect(visibleCanvas.listeners.get('contextrestored')?.size).toBe(1);
+
+      visibleCanvas.loseContext();
+
+      playback.dispose();
+
+      expect(visibleCanvas.listeners.get('contextlost')?.size ?? 0).toBe(0);
+      expect(visibleCanvas.listeners.get('contextrestored')?.size ?? 0).toBe(0);
+      expect(timerCleared).toBe(true);
+    } finally {
+      globalThis.clearTimeout = origClearTimeout;
     }
   });
 });
