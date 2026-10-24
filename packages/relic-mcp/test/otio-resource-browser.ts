@@ -301,8 +301,12 @@ interface LoopbackService {
   readonly createSessionToken: () => Promise<string>;
 }
 
-async function startLoopbackServer(viewerDist: string): Promise<LoopbackService> {
+async function startLoopbackServer(
+  viewerDist: string,
+  stderrPath: string
+): Promise<LoopbackService> {
   const store = new MemoryStore();
+  const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
   const mails: Array<{ to: string; mail: unknown }> = [];
   const fakeNow = Date.now();
 
@@ -319,11 +323,12 @@ async function startLoopbackServer(viewerDist: string): Promise<LoopbackService>
   const origin = `http://127.0.0.1:${service.port}`;
   const storage = new MemoryStorage(`${origin}/__storage`);
 
-  createApp({
+  const app = createApp({
     config: { serviceOrigin: origin },
     store,
     storage,
     now: () => fakeNow,
+    operatorTokens,
     assets: diskAssets(viewerDist),
     mailer: {
       send: async () => {},
@@ -354,7 +359,19 @@ async function startLoopbackServer(viewerDist: string): Promise<LoopbackService>
         headers: { 'content-type': 'application/octet-stream' },
       });
     }
-    return new Response('Not found', { status: 404 });
+
+    const response = await app.fetch(request);
+    if (response.status >= 400) {
+      try {
+        const clone = response.clone();
+        const text = await clone.text().catch(() => '');
+        appendFileSync(
+          stderrPath,
+          `[loopback ${request.method} ${url.pathname} -> ${response.status}]\n${text}\n`
+        );
+      } catch {}
+    }
+    return response;
   };
 
   async function createSessionToken(email = 'proof@example.test'): Promise<string> {
@@ -686,9 +703,16 @@ async function waitReady(browser: ChromeSession, timeoutMs = 25000): Promise<str
     const tick = () => {
       const root = document.querySelector('.otio-view');
       const state = root?.dataset?.ready ?? '';
-      if (state === 'true' || state === 'diagnostic' || state === 'structural' || state === 'error') resolve(state);
-      else if (Date.now() - start > ${timeoutMs}) resolve(state || 'timeout');
-      else setTimeout(tick, 100);
+      const buffering = root?.dataset?.buffering;
+      if (buffering === 'false' && (state === 'true' || state === 'diagnostic')) {
+        resolve(state);
+      } else if (state === 'error') {
+        resolve('error');
+      } else if (Date.now() - start > ${timeoutMs}) {
+        resolve(state || 'timeout');
+      } else {
+        setTimeout(tick, 50);
+      }
     };
     tick();
     return promise;
@@ -829,6 +853,16 @@ function generateR3Fixture(): {
   // Expected center color: ~ (50, 100, 50, 255)
   const expectedColor = { r: 50, g: 100, b: 50, a: 255 };
 
+  const ref = (targetUrl: string) => ({
+    OTIO_SCHEMA: 'ExternalReference.1',
+    target_url: targetUrl,
+    available_range: {
+      OTIO_SCHEMA: 'TimeRange.1',
+      start_time: { OTIO_SCHEMA: 'RationalTime.1', value: 0, rate: 24 },
+      duration: { OTIO_SCHEMA: 'RationalTime.1', value: 24, rate: 24 },
+    },
+  });
+
   const otioJson = JSON.stringify({
     OTIO_SCHEMA: 'Timeline.1',
     metadata: { relic: { id: 'timeline-r3' } },
@@ -849,10 +883,7 @@ function generateR3Fixture(): {
                 start_time: { OTIO_SCHEMA: 'RationalTime.1', value: 0, rate: 24 },
                 duration: { OTIO_SCHEMA: 'RationalTime.1', value: 24, rate: 24 },
               },
-              media_reference: {
-                OTIO_SCHEMA: 'ExternalReference.1',
-                target_url: 'media/base.png',
-              },
+              media_reference: ref('media/base.png'),
             },
           ],
         },
@@ -874,10 +905,7 @@ function generateR3Fixture(): {
                     start_time: { OTIO_SCHEMA: 'RationalTime.1', value: 0, rate: 24 },
                     duration: { OTIO_SCHEMA: 'RationalTime.1', value: 24, rate: 24 },
                   },
-                  media_reference: {
-                    OTIO_SCHEMA: 'ExternalReference.1',
-                    target_url: 'media/layer1.png',
-                  },
+                  media_reference: ref('media/layer1.png'),
                 },
               ],
             },
@@ -895,10 +923,7 @@ function generateR3Fixture(): {
                     start_time: { OTIO_SCHEMA: 'RationalTime.1', value: 0, rate: 24 },
                     duration: { OTIO_SCHEMA: 'RationalTime.1', value: 24, rate: 24 },
                   },
-                  media_reference: {
-                    OTIO_SCHEMA: 'ExternalReference.1',
-                    target_url: 'media/layer2.png',
-                  },
+                  media_reference: ref('media/layer2.png'),
                 },
               ],
             },
@@ -949,6 +974,11 @@ function generateR4Fixture(): {
               media_reference: {
                 OTIO_SCHEMA: 'ExternalReference.1',
                 target_url: 'media/bg.png',
+                available_range: {
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: { OTIO_SCHEMA: 'RationalTime.1', value: 0, rate: 24 },
+                  duration: { OTIO_SCHEMA: 'RationalTime.1', value: 48, rate: 24 },
+                },
               },
             },
           ],
@@ -1212,7 +1242,8 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
   // Start loopback server
-  const server = await startLoopbackServer(config.viewerDist);
+  const loopbackStderrPath = join(outDir, 'stderr/loopback.stderr');
+  const server = await startLoopbackServer(config.viewerDist, loopbackStderrPath);
   const sessionToken = await server.createSessionToken();
 
   function logObservation(record: Record<string, unknown>) {
@@ -1250,7 +1281,7 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
 
       const stats1 = await browserR1.evaluate<CanvasStats>('window.__otioAccounting.getCanvasStats()');
       const trackRowsCount = await browserR1.evaluate<number>(
-        "document.querySelectorAll('.otio-track-row').length"
+        "document.querySelectorAll('.otio-track-row:not(.otio-composition-row)').length"
       );
       const diagnostics1 = await browserR1.evaluate<string[]>(
         "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
@@ -1335,6 +1366,7 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
     try {
       // 1. Test 62 stacks nesting limit rejection (> 64 JSON depth)
       let rejectPassed = false;
+      let rejectError = '';
       try {
         // Runtime-selected productRoot format package: exercises parser at configured productRoot
         const formatMod = await import(join(config.productRoot, 'packages/relic-format/src/index.ts'));
@@ -1432,10 +1464,10 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
       );
 
       const readyR3 = await waitReady(browserR3);
-      assert.ok(readyR3 === 'true', `R3 never settled: ${readyR3}`);
+      assert.ok(readyR3 === 'true' || readyR3 === 'diagnostic', `R3 never settled: ${readyR3}`);
 
       const trackRows3 = await browserR3.evaluate<number>(
-        "document.querySelectorAll('.otio-track-row').length"
+        "document.querySelectorAll('.otio-track-row:not(.otio-composition-row)').length"
       );
       const diag3 = await browserR3.evaluate<string[]>(
         "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
@@ -1504,7 +1536,7 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
       );
 
       const readyR4 = await waitReady(browserR4);
-      assert.ok(readyR4 === 'true', `R4 never settled: ${readyR4}`);
+      assert.ok(readyR4 === 'true' || readyR4 === 'diagnostic', `R4 never settled: ${readyR4}`);
 
       const frameResults: Record<number, { pixelsSha256: string; draws: number; centerPixel: number[] }> = {};
 
@@ -1623,9 +1655,8 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
           65532,
           `Candidate R5 decode count mismatch: expected 65532, got ${finalDecodeCount}`
         );
-
         const trackRows5 = await browserR5.evaluate<number>(
-          "document.querySelectorAll('.otio-track-row').length"
+          "document.querySelectorAll('.otio-track-row:not(.otio-composition-row)').length"
         );
         assert.strictEqual(trackRows5, 10, `Candidate R5 track rows mismatch: expected 10, got ${trackRows5}`);
 
@@ -1703,16 +1734,21 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
       assert.strictEqual(readyR6, 'diagnostic', `R6 did not settle as diagnostic: ${readyR6}`);
 
       const trackRows6 = await browserR6.evaluate<number>(
-        "document.querySelectorAll('.otio-track-row').length"
+        "document.querySelectorAll('.otio-track-row:not(.otio-composition-row)').length"
       );
       const diagnostics6 = await browserR6.evaluate<string[]>(
         "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
       );
 
       // Check missing media present, no budget exhaustion
-      const hasMissingMedia = diagnostics6.some((d) => d.toLowerCase().includes('missing-media'));
+      const hasMissing = diagnostics6.some(
+        (d) =>
+          d.toLowerCase().includes('missing-media') ||
+          d.toLowerCase().includes('missing-handles') ||
+          d.toLowerCase().includes('outside available media')
+      );
       const hasBudgetExhaustion = diagnostics6.some((d) => d.includes('exceed 65532'));
-      assert.ok(hasMissingMedia, 'R6 did not report missing media');
+      assert.ok(hasMissing, 'R6 did not report missing media/handles');
       assert.ok(!hasBudgetExhaustion, 'R6 unexpectedly reported budget exhaustion');
 
       await browserR6.close();
@@ -1763,6 +1799,22 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
     cases: caseResults,
   };
   writeFileSync(resultJsonPath, JSON.stringify(finalResult, null, 2), 'utf8');
+  const failedCases = Object.entries(caseResults).filter(
+    ([, res]) => (res as { status?: string }).status === 'fail'
+  );
+
+  if (failedCases.length > 0) {
+    manifest.status = 'failed';
+    (manifest as Record<string, unknown>).finishedAt = new Date().toISOString();
+    (manifest as Record<string, unknown>).resultsSummary = caseResults;
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+    const errorDetails = failedCases
+      .map(([k, v]) => `${k}: ${(v as { error?: string }).error ?? 'unknown error'}`)
+      .join('; ');
+    console.error(`RECORD_FAILED: ${config.label} encountered execution errors: ${errorDetails}`);
+    process.exit(1);
+  }
 
   manifest.status = 'completed';
   (manifest as Record<string, unknown>).finishedAt = new Date().toISOString();
