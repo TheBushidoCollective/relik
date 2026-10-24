@@ -8,6 +8,11 @@
 - Directory conversion is feature-detected on both platforms. Before the helper reads a bundle, the running kernel must show that beneath-root resolution refuses parent and absolute escapes from a held directory and accepts the no-symlink flag. Symlink refusal, held-descriptor behavior, and replacement behavior are verified by the CI probe on the listed versions. A failed or unavailable primitive refuses `.otiod` conversion.
 - Linux arm64 and x64 binaries are built in the pinned manylinux 2.28 image for their native architecture. They require glibc 2.28 and the `openat2` confinement primitive.
 - No directory path falls back to JavaScript checks, a runtime compiler, Python, or a downloaded helper.
+- Refusal contract: Any symlink is refused before a descriptor is returned, with `ELOOP` (62 on Darwin, 40 on Linux). The Node-API error has `code: 'ELOOP'` and `errno: os.constants.errno.ELOOP`. This covers:
+  - the root path, in its final or an ancestor component;
+  - a descendant path: leaf, intermediate, or a directory replaced after the root was opened;
+  - on Linux, any procfs magic link.
+  Exception: Linux reports `EACCES` when `fs.protected_symlinks` refuses to follow a foreign-owned link in a sticky world-writable directory. The open is still refused. A non-directory root is refused with `ENOTDIR`. Kernel-level escapes return `EACCES` or `ENOTCAPABLE` on Darwin and `EXDEV` on Linux. At the Node-API layer, `..` and absolute descendant paths are refused lexically before any syscall.
 
 The macOS binary floor permits the helper to load. It does not establish confinement support for every macOS 15 kernel.
 
@@ -19,6 +24,8 @@ All four native build jobs passed for commit
 This includes each artifact audit and both Darwin SDK semantic probes.
 Verification stopped at lint, so packing and the eight installed-runtime cells
 did not run. The final release-matrix rows remain pending.
+In [release dry run 40071301106](https://github.com/TheBushidoCollective/relik/actions/runs/40071301106) at `a9375a0c4bfb015adfdd0ace6f45fbca23415f70`, the four Darwin cells passed. The four Linux cells failed at 'native root symlink' with ENOTDIR (errno 20, syscall "open bundle root"), after the leaf, intermediate and replaced cases had returned ELOOP 40.
+
 
 | Target | Runner image and observed runtime | Toolchains and probe result | Packed runtime |
 | --- | --- | --- | --- |
@@ -74,6 +81,6 @@ The release job records the commit, native source and recipe hashes, compiler id
 
 ## Required semantic results
 
-Each Darwin release probe must read controlled in-root bytes, prove controlled outside access before confinement, then reject absolute and parent escapes, root, leaf, and intermediate symlinks, and a directory replacement race while preserving an original read through a held root descriptor. The release SDK accepts `EACCES` or SDK-declared `ENOTCAPABLE`; the Xcode 16.4 branch exercises the missing-`ENOTCAPABLE` header path. Each run records numeric errno and SDK/runtime identity.
+Each release probe must read controlled in-root bytes, prove controlled outside access before confinement, then reject parent and absolute escapes, root symlinks, root ancestor symlinks, root non-directories, leaf symlinks, intermediate symlinks, (on Linux: root magic links and descendant magic links), and a directory replacement race while preserving an original read through a held root descriptor. Kernel-level escapes return `EACCES` or SDK-declared `ENOTCAPABLE` on Darwin, and `EXDEV` on Linux. Symlink cases return `ELOOP` (62 on Darwin, 40 on Linux). Root non-directory returns `ENOTDIR` (20 on Darwin and Linux). The standalone confinement probe runs during `native-build` for all four release targets in `publish-mcp.yml`, and runs during PR `verify.yml` for `linux-x64-gnu` on every PR. Each run records numeric errno and toolchain/SDK/runtime identity.
 
 Each installed proof runs with Node only. It clears compiler and helper environment variables, installs the tarball offline with scripts disabled through npm's JavaScript CLI, imports the installed loader, proves valid `.otiod` publishing to a loopback service, proves hostile paths fail before service traffic, and proves ordinary-file publishing when the native prebuild is unavailable.

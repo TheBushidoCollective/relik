@@ -25,7 +25,7 @@ const darwinReleaseToolchainPath = join(
 const linuxToolchainPath = join(nativeDirectory, 'linux-toolchain.json');
 const sourceFiles = [
   'native/build.mjs',
-  'native/darwin-confinement-probe.c',
+  'native/confinement-probe.c',
   'native/darwin-release-toolchain.json',
   'native/linux-toolchain.json',
   'native/local-build.mjs',
@@ -152,7 +152,7 @@ function usage() {
   return [
     'usage:',
     '  node native/build.mjs --target <tuple> --node-include <node-header-directory> [--output-dir <private-directory>] [--cc <compiler>] [--release]',
-    '  node native/build.mjs --probe --target <darwin-tuple> --cc <compiler> --output-dir <private-directory>',
+  '  node native/build.mjs --probe --target <tuple> --output-dir <private-directory> [--cc <compiler>]',
     '  node native/build.mjs --check [--target <tuple>] [--metadata-only] [--release]',
     `tuples: ${Object.keys(targets).join(', ')}`,
     'Linux compilation always runs inside the pinned manylinux container; --cc and CC are Darwin-only.',
@@ -245,7 +245,6 @@ function parseArguments(argumentsToParse) {
 
   if (options.probe) {
     if (
-      target.platform !== 'darwin' ||
       options.nodeInclude !== undefined ||
       options.outputDir === undefined
     ) {
@@ -391,25 +390,35 @@ function dockerBindMount(source, target, readOnly) {
   return `type=bind,source=${source},target=${target}${readOnly ? ',readonly' : ''}`;
 }
 
+function runLinuxContainer(toolchain, mounts, command, args) {
+  const argumentsToRun = dockerSecurityArguments(toolchain);
+  for (const mount of mounts) {
+    argumentsToRun.push('--mount', mount);
+  }
+  argumentsToRun.push(toolchain.image, command, ...args);
+  return run('docker', argumentsToRun);
+}
+
 function runLinuxCompiler(
   toolchain,
   outputDirectory,
   nodeInclude,
   compilerArgs
 ) {
-  const argumentsToRun = dockerSecurityArguments(toolchain);
+  const mounts = [];
   if (outputDirectory !== undefined) {
-    argumentsToRun.push(
-      '--mount',
+    mounts.push(
       dockerBindMount(nativeDirectory, '/source/native', true),
-      '--mount',
       dockerBindMount(resolve(nodeInclude), '/source/node-include', true),
-      '--mount',
       dockerBindMount(outputDirectory, '/output', false)
     );
   }
-  argumentsToRun.push(toolchain.image, toolchain.compilerPath, ...compilerArgs);
-  return run('docker', argumentsToRun);
+  return runLinuxContainer(
+    toolchain,
+    mounts,
+    toolchain.compilerPath,
+    compilerArgs
+  );
 }
 
 async function sha256(path) {
@@ -892,7 +901,7 @@ async function checkTarget(target, metadataOnly, release) {
   );
 }
 
-async function buildDarwinProbe(target, options) {
+async function buildProbe(target, options) {
   assertNativeHost(target);
   const prebuildDirectory = resolve(join(packageDirectory, 'prebuilds'));
   if (isPathWithin(prebuildDirectory, options.outputDir)) {
@@ -900,37 +909,84 @@ async function buildDarwinProbe(target, options) {
   }
 
   await mkdir(options.outputDir, { recursive: true });
-  const output = join(options.outputDir, 'darwin-confinement-probe');
-  const buildContext = darwinToolchainContext(target, options.cc);
+  if (target.platform === 'darwin') {
+    const output = join(options.outputDir, 'confinement-probe');
+    const buildContext = darwinToolchainContext(target, options.cc);
+    const argumentsToCompile = [
+      ...commonCompilerArguments(),
+      ...darwinCompilerArguments(target, buildContext.toolchain),
+      join(nativeDirectory, 'confinement-probe.c'),
+      join(nativeDirectory, target.source),
+      '-o',
+      output,
+    ];
+    run(options.cc, argumentsToCompile);
+
+    const runtime = {
+      kernel: run('uname', ['-a']).trim(),
+      macOS: run('sw_vers', ['-productVersion']).trim(),
+      nodeArchitecture: process.arch,
+    };
+    console.log(
+      JSON.stringify({
+        compiler: buildContext.compiler,
+        event: 'confinement-probe',
+        platform: target.platform,
+        runtime,
+        sdk: {
+          path: buildContext.toolchain.sdkPath,
+          version: buildContext.toolchain.sdkVersion,
+        },
+        target: target.id,
+      })
+    );
+
+    const probeOutput = run(output, []).trim();
+    if (probeOutput !== '') process.stdout.write(`${probeOutput}\n`);
+    return;
+  }
+
+  const buildContext = linuxToolchainContext(target);
+  const toolchain = linuxToolchainFor(target);
   const argumentsToCompile = [
     ...commonCompilerArguments(),
-    ...darwinCompilerArguments(target, buildContext.toolchain),
-    join(nativeDirectory, 'darwin-confinement-probe.c'),
-    join(nativeDirectory, target.source),
+    '-D_GNU_SOURCE',
+    '/source/native/confinement-probe.c',
+    `/source/native/${target.source}`,
     '-o',
-    output,
+    '/output/confinement-probe',
   ];
-  run(options.cc, argumentsToCompile);
+  runLinuxContainer(
+    toolchain,
+    [
+      dockerBindMount(nativeDirectory, '/source/native', true),
+      dockerBindMount(options.outputDir, '/output', false),
+    ],
+    toolchain.compilerPath,
+    argumentsToCompile
+  );
 
   const runtime = {
     kernel: run('uname', ['-a']).trim(),
-    macOS: run('sw_vers', ['-productVersion']).trim(),
     nodeArchitecture: process.arch,
   };
   console.log(
     JSON.stringify({
       compiler: buildContext.compiler,
-      event: 'darwin-confinement-probe',
+      event: 'confinement-probe',
+      platform: target.platform,
       runtime,
-      sdk: {
-        path: buildContext.toolchain.sdkPath,
-        version: buildContext.toolchain.sdkVersion,
-      },
       target: target.id,
+      toolchain: buildContext.toolchain,
     })
   );
 
-  const probeOutput = run(output, []).trim();
+  const probeOutput = runLinuxContainer(
+    toolchain,
+    [dockerBindMount(options.outputDir, '/probe', true)],
+    '/probe/confinement-probe',
+    []
+  ).trim();
   if (probeOutput !== '') process.stdout.write(`${probeOutput}\n`);
 }
 
@@ -941,7 +997,7 @@ if (options.check) {
     await checkTarget(target, options.metadataOnly, options.release);
   }
 } else if (options.probe) {
-  await buildDarwinProbe(targets[options.target], options);
+  await buildProbe(targets[options.target], options);
 } else {
   await buildTarget(targets[options.target], options);
 }
