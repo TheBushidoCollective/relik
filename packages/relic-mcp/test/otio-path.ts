@@ -1576,6 +1576,17 @@ function windowForSeconds(
   return match;
 }
 
+interface FaultBarrierState {
+  arm_time: number | null;
+  hit_time: number | null;
+  debugger_paused_time: number | null;
+  gpu_pid: number | null;
+  crash_gpu_response: Record<string, unknown> | null;
+  gpu_pid_gone_time: number | null;
+  resume_time: number | null;
+  context_lost_time: number | null;
+}
+
 interface ChromeSession {
   evaluate<T>(expression: string): Promise<T>;
   send(
@@ -1593,6 +1604,7 @@ interface ChromeSession {
   captureDecoderTrace: boolean;
   decoderTraceLabel: string | null;
   label: string | null;
+  faultState: FaultBarrierState;
   getContextEvents?(): Promise<
     Array<{ type: string; timestamp: number; target: string | null }>
   >;
@@ -1803,8 +1815,11 @@ const contextEventLogPrelude = String.raw`(() => {
     } else {
       setupObserver();
     }
-  } catch {}
-})()`;
+    console.log('[otio-fault-page] contextEventLogPrelude installed');
+  } catch (err) {
+    console.error('[otio-fault-page] contextEventLogPrelude setup error:', err);
+  }
+})();`;
 
 const faultBarrierPrelude = String.raw`(() => {
   try {
@@ -1812,7 +1827,10 @@ const faultBarrierPrelude = String.raw`(() => {
       CanvasRenderingContext2D.prototype,
       'drawImage'
     );
-    if (!descriptor || typeof descriptor.value !== 'function' || !descriptor.configurable) return;
+    if (!descriptor || typeof descriptor.value !== 'function' || !descriptor.configurable) {
+      console.error('[otio-fault-page] cannot wrap drawImage:', descriptor);
+      return;
+    }
     const originalDrawImage = descriptor.value;
     let visiblePaintCount = 0;
 
@@ -1826,29 +1844,38 @@ const faultBarrierPrelude = String.raw`(() => {
           throw error;
         }
         try {
+          const c = this.canvas;
           const isVisible =
-            this.canvas &&
-            ((this.canvas.matches && this.canvas.matches('canvas.otio-canvas')) ||
-              (this.canvas.classList && this.canvas.classList.contains('otio-canvas')));
+            c &&
+            ((typeof c.matches === 'function' && c.matches('canvas.otio-canvas')) ||
+              (c.classList && c.classList.contains('otio-canvas')));
           if (isVisible) {
             visiblePaintCount++;
             const arm = globalThis.__otioFaultArm;
+            console.log('[otio-fault-page] visible paint #' + visiblePaintCount + ', arm=' + arm);
             if (arm === 'visible-paint-end-1' && visiblePaintCount === 1) {
               globalThis.__otioFaultArm = null;
               globalThis.__otioFaultHit = performance.timeOrigin + performance.now();
+              console.log('[otio-fault-page] hitting debugger for visible-paint-end-1 at ' + globalThis.__otioFaultHit);
               debugger;
             } else if (arm === 'next-visible-paint-end') {
               globalThis.__otioFaultArm = null;
               globalThis.__otioFaultHit = performance.timeOrigin + performance.now();
+              console.log('[otio-fault-page] hitting debugger for next-visible-paint-end at ' + globalThis.__otioFaultHit);
               debugger;
             }
           }
-        } catch {}
+        } catch (err) {
+          console.error('[otio-fault-page] drawImage hook error:', err);
+        }
         return result;
       },
     });
-  } catch {}
-})()`;
+    console.log('[otio-fault-page] faultBarrierPrelude installed');
+  } catch (err) {
+    console.error('[otio-fault-page] faultBarrierPrelude setup error:', err);
+  }
+})();`;
 
 async function openBrowser(
   url: string,
@@ -1954,6 +1981,16 @@ async function openBrowser(
     );
     const cdp = connectPipe(toChrome, fromChrome);
     startupConnection = cdp;
+    const faultState: FaultBarrierState = {
+      arm_time: null,
+      hit_time: null,
+      debugger_paused_time: null,
+      gpu_pid: null,
+      crash_gpu_response: null,
+      gpu_pid_gone_time: null,
+      resume_time: null,
+      context_lost_time: null,
+    };
     const blocked: string[] = [];
     const continuedNonLoopback: string[] = [];
     const cspHeaders: string[] = [];
@@ -1979,6 +2016,10 @@ async function openBrowser(
       if (event.method !== 'Debugger.paused' || event.sessionId !== sessionId) {
         return;
       }
+      faultState.debugger_paused_time = Date.now();
+      console.log(
+        `[otio-fault-harness] Debugger.paused received at ${faultState.debugger_paused_time}`
+      );
       let gpuPid: number | undefined;
       try {
         const info = (await cdp.send('SystemInfo.getProcessInfo')) as {
@@ -1990,29 +2031,47 @@ async function openBrowser(
         if (gpu && typeof gpu.id === 'number') {
           gpuPid = gpu.id;
         }
-      } catch {}
+      } catch (err) {
+        console.error('[otio-fault-harness] SystemInfo.getProcessInfo error:', err);
+      }
       if (!gpuPid) {
         try {
-          const psOut = execSync('ps -ax -o pid,command', {
+          const psOut = execSync('ps -ax -o pid,ppid,command', {
             encoding: 'utf8',
           });
           for (const line of psOut.split('\n')) {
-            if (
-              line.includes('--type=gpu-process') &&
-              (line.includes(profile) || line.includes(String(child.pid)))
-            ) {
-              const match = line.trim().match(/^(\d+)/);
-              if (match) {
-                gpuPid = Number(match[1]);
+            const parts = line.trim().split(/\s+/);
+            if (parts.length >= 3) {
+              const pid = Number(parts[0]);
+              const ppid = Number(parts[1]);
+              const cmd = parts.slice(2).join(' ');
+              if (
+                cmd.includes('--type=gpu-process') &&
+                (ppid === child.pid ||
+                  cmd.includes(profile) ||
+                  cmd.includes(String(child.pid)))
+              ) {
+                gpuPid = pid;
                 break;
               }
             }
           }
-        } catch {}
+        } catch (err) {
+          console.error('[otio-fault-harness] ps fallback error:', err);
+        }
       }
+      faultState.gpu_pid = gpuPid ?? null;
+      console.log(`[otio-fault-harness] Target GPU pid: ${gpuPid}`);
+
       try {
-        await cdp.send('Browser.crashGpuProcess');
-      } catch {}
+        const crashRes = await cdp.send('Browser.crashGpuProcess');
+        faultState.crash_gpu_response = crashRes;
+        console.log('[otio-fault-harness] Browser.crashGpuProcess completed');
+      } catch (err) {
+        console.error('[otio-fault-harness] Browser.crashGpuProcess error:', err);
+        faultState.crash_gpu_response = { error: String(err) };
+      }
+
       if (gpuPid) {
         const start = Date.now();
         while (Date.now() - start < 2000) {
@@ -2028,10 +2087,19 @@ async function openBrowser(
           setTimeout(resolve, 50);
           await promise;
         }
+        faultState.gpu_pid_gone_time = Date.now();
+        console.log(
+          `[otio-fault-harness] GPU pid ${gpuPid} confirmed dead at ${faultState.gpu_pid_gone_time}`
+        );
       }
+
       try {
         await cdp.send('Debugger.resume', {}, sessionId);
-      } catch {}
+        faultState.resume_time = Date.now();
+        console.log('[otio-fault-harness] Debugger.resume completed');
+      } catch (err) {
+        console.error('[otio-fault-harness] Debugger.resume error:', err);
+      }
     });
     await cdp.send(
       'Fetch.enable',
@@ -2096,7 +2164,7 @@ async function openBrowser(
         },
       });
     }
-  })()`;
+  })();`;
     const decoderTracePrelude = String.raw`(() => {
     const key = '__relicOtioDecoderTrace';
     const capacity = 512;
@@ -2411,7 +2479,7 @@ async function openBrowser(
       install('canvas-' + name, () => wrapCanvasMethod(name));
     }
     recordSafely('instrumentation_ready', { capacity });
-  })()`;
+  })();`;
     const pagePrelude = [
       options.recordMediaSeekTargets
         ? String.raw`(() => {
@@ -2434,7 +2502,7 @@ async function openBrowser(
               descriptor.set.call(this, value);
             },
           });
-        })()`
+        })();`
         : '',
       contextEventLogPrelude,
       faultBarrierPrelude,
@@ -2442,7 +2510,7 @@ async function openBrowser(
       options.captureDecoderTrace ? decoderTracePrelude : '',
     ]
       .filter(Boolean)
-      .join('\n');
+      .join(';\n');
     if (pagePrelude) {
       await cdp.send(
         'Page.addScriptToEvaluateOnNewDocument',
@@ -2548,6 +2616,7 @@ async function openBrowser(
       captureDecoderTrace: options.captureDecoderTrace === true,
       decoderTraceLabel: options.decoderTraceLabel ?? null,
       label,
+      faultState,
       async getContextEvents(): Promise<
         Array<{ type: string; timestamp: number; target: string | null }>
       > {
@@ -2693,6 +2762,7 @@ async function openBrowser(
           .catch(() => {});
         stopDebugger();
         await cdp.send('Debugger.disable', {}, sessionId).catch(() => {});
+        let latestEvents: unknown[] = [];
         try {
           const events = (await cdp
             .send(
@@ -2708,15 +2778,49 @@ async function openBrowser(
                 (res['result'] as { value?: unknown } | undefined)?.value
             )
             .catch(() => [])) as unknown[];
-          if (Array.isArray(events) && events.length > 0) {
-            const contextEventsDir = join(shotDir, 'context-events');
-            await mkdir(contextEventsDir, { recursive: true });
-            await writeFile(
-              join(contextEventsDir, `${seq}-${label}.json`),
-              `${JSON.stringify({ sequence: seq, label, events }, null, 2)}\n`
+          if (Array.isArray(events)) {
+            latestEvents = events;
+            const lostEvt = events.find(
+              (e: unknown): e is { type: string; timestamp: number } =>
+                typeof e === 'object' &&
+                e !== null &&
+                'type' in e &&
+                (e as { type: string }).type === 'contextlost'
             );
+            if (lostEvt && typeof lostEvt.timestamp === 'number') {
+              faultState.context_lost_time = lostEvt.timestamp;
+            }
+            if (events.length > 0) {
+              const contextEventsDir = join(shotDir, 'context-events');
+              await mkdir(contextEventsDir, { recursive: true });
+              await writeFile(
+                join(contextEventsDir, `${seq}-${label}.json`),
+                `${JSON.stringify({ sequence: seq, label, events }, null, 2)}\n`
+              );
+            }
           }
         } catch {}
+        if (faultState.arm_time !== null) {
+          try {
+            const receipt = {
+              fault: 'available-origin-cut-56',
+              arm_time: faultState.arm_time,
+              hit_time: faultState.hit_time,
+              debugger_paused_time: faultState.debugger_paused_time,
+              gpu_pid: faultState.gpu_pid,
+              crash_gpu_response: faultState.crash_gpu_response,
+              gpu_pid_gone_time: faultState.gpu_pid_gone_time,
+              resume_time: faultState.resume_time,
+              context_lost_time: faultState.context_lost_time,
+              context_events: latestEvents,
+            };
+            await mkdir(shotDir, { recursive: true });
+            await writeFile(
+              join(shotDir, 'fault-receipt.json'),
+              `${JSON.stringify(receipt, null, 2)}\n`
+            );
+          } catch {}
+        }
         await flushStderr();
         await cdp.send('Browser.close').catch(() => {});
         child.kill('SIGKILL');
@@ -7320,11 +7424,71 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       `available-origin/cut witness has media before cut-c (${formatAlphaCensus()})`
     );
     if (process.env['RELIC_OTIO_FAULT'] === 'available-origin-cut-56') {
+      const armTime = Date.now();
+      availableOriginCutBrowser.faultState.arm_time = armTime;
+      console.log(`[otio-fault] Arming available-origin-cut-56 at ${armTime}`);
       await availableOriginCutBrowser.evaluate<void>(`(() => {
         globalThis.__otioFaultArm = 'next-visible-paint-end';
+        console.log('[otio-fault-page] armed __otioFaultArm = next-visible-paint-end at ' + (performance.timeOrigin + performance.now()));
       })()`);
     }
     await seekTo(availableOriginCutBrowser, 56);
+    if (process.env['RELIC_OTIO_FAULT'] === 'available-origin-cut-56') {
+      const pageFaultInfo = await availableOriginCutBrowser.evaluate<{
+        hit: number | null;
+        arm: string | null;
+        contextEvents: Array<{ type: string; timestamp: number; target: string | null }>;
+      }>(`(() => {
+        return {
+          hit: globalThis.__otioFaultHit ?? null,
+          arm: globalThis.__otioFaultArm ?? null,
+          contextEvents: (globalThis.__otioContextEvents || []).slice(),
+        };
+      })()`);
+
+      availableOriginCutBrowser.faultState.hit_time = pageFaultInfo.hit;
+      const contextLost = pageFaultInfo.contextEvents.find(
+        (e) => e.type === 'contextlost'
+      );
+      if (contextLost) {
+        availableOriginCutBrowser.faultState.context_lost_time =
+          contextLost.timestamp;
+      }
+
+      const receipt = {
+        fault: 'available-origin-cut-56',
+        arm_time: availableOriginCutBrowser.faultState.arm_time,
+        hit_time: availableOriginCutBrowser.faultState.hit_time,
+        debugger_paused_time:
+          availableOriginCutBrowser.faultState.debugger_paused_time,
+        gpu_pid: availableOriginCutBrowser.faultState.gpu_pid,
+        crash_gpu_response:
+          availableOriginCutBrowser.faultState.crash_gpu_response,
+        gpu_pid_gone_time:
+          availableOriginCutBrowser.faultState.gpu_pid_gone_time,
+        resume_time: availableOriginCutBrowser.faultState.resume_time,
+        context_lost_time:
+          availableOriginCutBrowser.faultState.context_lost_time,
+        context_events: pageFaultInfo.contextEvents,
+        unhit_arm: pageFaultInfo.arm,
+      };
+      await mkdir(shotDir, { recursive: true });
+      await writeFile(
+        join(shotDir, 'fault-receipt.json'),
+        `${JSON.stringify(receipt, null, 2)}\n`
+      );
+
+      if (
+        !availableOriginCutBrowser.faultState.hit_time ||
+        !availableOriginCutBrowser.faultState.debugger_paused_time ||
+        !availableOriginCutBrowser.faultState.gpu_pid ||
+        !availableOriginCutBrowser.faultState.gpu_pid_gone_time
+      ) {
+        throw new Error(
+          `FAULT_NOT_FIRED: armed RELIC_OTIO_FAULT=available-origin-cut-56 but fault barrier did not complete (hit=${availableOriginCutBrowser.faultState.hit_time}, paused=${availableOriginCutBrowser.faultState.debugger_paused_time}, gpuPid=${availableOriginCutBrowser.faultState.gpu_pid}, gpuGone=${availableOriginCutBrowser.faultState.gpu_pid_gone_time}, armLeft=${pageFaultInfo.arm})`
+        );
+      }
+    }
     assert.equal(
       (
         await assertPacketCanvas(
