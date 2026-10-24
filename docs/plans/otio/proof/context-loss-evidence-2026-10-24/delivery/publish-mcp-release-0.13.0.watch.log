@@ -1,0 +1,2049 @@
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch less than a minute ago
+
+JOBS
+* native linux-arm64-gnu (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  * Run Linux semantic probe
+  * Build and audit Linux target
+  * Build and audit Darwin target
+  * Run Xcode 16.4 Darwin semantic probe
+  * Run actions/upload-artifact@v4
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* native darwin-arm64 (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  * Select release Xcode 26.0.1
+  * Run release Darwin semantic probe
+  * Run Linux semantic probe
+  * Build and audit Linux target
+  * Build and audit Darwin target
+  * Run Xcode 16.4 Darwin semantic probe
+  * Run actions/upload-artifact@v4
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* native darwin-x64 (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  * Run actions/setup-node@v4
+  * Record native build environment
+  * Require Linux native build prerequisites
+  * Select release Xcode 26.0.1
+  * Run release Darwin semantic probe
+  * Run Linux semantic probe
+  * Build and audit Linux target
+  * Build and audit Darwin target
+  * Run Xcode 16.4 Darwin semantic probe
+  * Run actions/upload-artifact@v4
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* native linux-x64-gnu (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  * Run Linux semantic probe
+  * Build and audit Linux target
+  * Build and audit Darwin target
+  * Run Xcode 16.4 Darwin semantic probe
+  * Run actions/upload-artifact@v4
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* verify / image (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  * Build the deploy image without pushing it
+  * Boot the image and smoke its served assets
+  * Collect image logs and remove the container
+  * Run jdx/mise-action@v2
+  * Record image and runner viewer hashes
+  * Post Run actions/checkout@v4
+* verify / verify (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  * Require Linux native build prerequisites
+  * Linux confinement probe
+  * Run hashicorp/setup-terraform@v3
+  * Validate Terraform
+  * Install ffmpeg
+  * Install dependencies
+  * Lint
+  * Typecheck
+  * Test
+  * Build MCP bundle
+  * Cover path
+  * Notify path
+  * Install pinned uv
+  * Install headless Chrome
+  * OTIO conformance
+  * Prepare OTIO browser proof receipt
+  * OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Run actions/checkout@v4
+* verify / otio-headless-smoke-macos (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  * Install dependencies
+  * Build MCP bundle for browser controls
+  * Prepare OTIO browser proof receipt
+  * Install Playwright 1.61.1 headless shell
+  * Resolve Playwright headless shell
+  * OTIO headless shell smoke
+  * Upload OTIO browser proof
+  * Post Run actions/checkout@v4
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch less than a minute ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* native darwin-x64 (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  * Linux confinement probe
+  * Run hashicorp/setup-terraform@v3
+  * Validate Terraform
+  * Install ffmpeg
+  * Install dependencies
+  * Lint
+  * Typecheck
+  * Test
+  * Build MCP bundle
+  * Cover path
+  * Notify path
+  * Install pinned uv
+  * Install headless Chrome
+  * OTIO conformance
+  * Prepare OTIO browser proof receipt
+  * OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Run actions/checkout@v4
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 1 minute ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  * Test
+  * Build MCP bundle
+  * Cover path
+  * Notify path
+  * Install pinned uv
+  * Install headless Chrome
+  * OTIO conformance
+  * Prepare OTIO browser proof receipt
+  * OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Run actions/checkout@v4
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 1 minute ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  * Test
+  * Build MCP bundle
+  * Cover path
+  * Notify path
+  * Install pinned uv
+  * Install headless Chrome
+  * OTIO conformance
+  * Prepare OTIO browser proof receipt
+  * OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Run actions/checkout@v4
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 2 minutes ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  * Install pinned uv
+  * Install headless Chrome
+  * OTIO conformance
+  * Prepare OTIO browser proof receipt
+  * OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Install pinned uv
+  * Post Run actions/checkout@v4
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 3 minutes ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Install pinned uv
+  * Post Run actions/checkout@v4
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 3 minutes ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Install pinned uv
+  * Post Run actions/checkout@v4
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 4 minutes ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 3m42s (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* pack (ID 120907645209)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  * Run actions/setup-node@v4
+  * Validate release version
+  * Use an npm that supports trusted publishing
+  * Install dependencies
+  * Run actions/download-artifact@v4
+  * Run actions/download-artifact@v4
+  * Run actions/download-artifact@v4
+  * Run actions/download-artifact@v4
+  * Place audited prebuilds in the package
+  * Snapshot audited native prebuilds
+  * Set release version
+  * Build the readable bundle without recompiling native prebuilds
+  * Check generated plugin manifests and launch config
+  * Pack the release tarball
+  * Verify tarball preserves audited native prebuilds
+  * Check packed contents
+  * Run actions/upload-artifact@v4
+  * Summarize packed artifact
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 4 minutes ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 3m42s (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ pack in 30s (ID 120907645209)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Run actions/setup-node@v4
+  ✓ Validate release version
+  ✓ Use an npm that supports trusted publishing
+  ✓ Install dependencies
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Place audited prebuilds in the package
+  ✓ Snapshot audited native prebuilds
+  ✓ Set release version
+  ✓ Build the readable bundle without recompiling native prebuilds
+  ✓ Check generated plugin manifests and launch config
+  ✓ Pack the release tarball
+  ✓ Verify tarball preserves audited native prebuilds
+  ✓ Check packed contents
+  ✓ Run actions/upload-artifact@v4
+  ✓ Summarize packed artifact
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* packed native darwin-arm64 on Node 18.20.8 (ID 120907758728)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* packed native darwin-x64 on Node 18.20.8 (ID 120907758731)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  * Run actions/setup-node@v4
+  * Run actions/download-artifact@v4
+  * Record packed proof host
+  * Record Linux glibc 2.28 runtime
+  * Prove Darwin installed tarball without Bun or the checkout
+  * Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* packed native linux-x64-gnu on Node 24.22.0 (ID 120907758741)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  * Record Linux glibc 2.28 runtime
+  * Prove Darwin installed tarball without Bun or the checkout
+  * Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* packed native darwin-arm64 on Node 24.22.0 (ID 120907758745)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  * Prove Darwin installed tarball without Bun or the checkout
+  * Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* packed native darwin-x64 on Node 24.22.0 (ID 120907758774)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  * Run actions/setup-node@v4
+  * Run actions/download-artifact@v4
+  * Record packed proof host
+  * Record Linux glibc 2.28 runtime
+  * Prove Darwin installed tarball without Bun or the checkout
+  * Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* packed native linux-arm64-gnu on Node 18.20.8 (ID 120907758800)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  * Record Linux glibc 2.28 runtime
+  * Prove Darwin installed tarball without Bun or the checkout
+  * Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* packed native linux-arm64-gnu on Node 24.22.0 (ID 120907758802)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  * Record Linux glibc 2.28 runtime
+  * Prove Darwin installed tarball without Bun or the checkout
+  * Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+* packed native linux-x64-gnu on Node 18.20.8 (ID 120907758829)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  * Record Linux glibc 2.28 runtime
+  * Prove Darwin installed tarball without Bun or the checkout
+  * Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+pack: .github#2
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 5 minutes ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 3m42s (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ pack in 30s (ID 120907645209)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Run actions/setup-node@v4
+  ✓ Validate release version
+  ✓ Use an npm that supports trusted publishing
+  ✓ Install dependencies
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Place audited prebuilds in the package
+  ✓ Snapshot audited native prebuilds
+  ✓ Set release version
+  ✓ Build the readable bundle without recompiling native prebuilds
+  ✓ Check generated plugin manifests and launch config
+  ✓ Pack the release tarball
+  ✓ Verify tarball preserves audited native prebuilds
+  ✓ Check packed contents
+  ✓ Run actions/upload-artifact@v4
+  ✓ Summarize packed artifact
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native darwin-arm64 on Node 18.20.8 in 15s (ID 120907758728)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native darwin-x64 on Node 18.20.8 in 25s (ID 120907758731)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* packed native linux-x64-gnu on Node 24.22.0 (ID 120907758741)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+✓ packed native darwin-arm64 on Node 24.22.0 in 17s (ID 120907758745)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native darwin-x64 on Node 24.22.0 in 41s (ID 120907758774)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native linux-arm64-gnu on Node 18.20.8 in 40s (ID 120907758800)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native linux-arm64-gnu on Node 24.22.0 in 42s (ID 120907758802)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native linux-x64-gnu on Node 18.20.8 in 43s (ID 120907758829)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+pack: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-arm64 on Node 18.20.8: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+packed native darwin-arm64 on Node 18.20.8: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-x64 on Node 18.20.8: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-arm64 on Node 24.22.0: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+packed native darwin-arm64 on Node 24.22.0: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-x64 on Node 24.22.0: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native linux-arm64-gnu on Node 18.20.8: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native linux-arm64-gnu on Node 24.22.0: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native linux-x64-gnu on Node 18.20.8: .github#2
+
+X main publish-mcp · 40105697253
+Triggered via workflow_dispatch about 5 minutes ago
+
+JOBS
+✓ native linux-arm64-gnu in 42s (ID 120906813183)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-arm64 in 28s (ID 120906813265)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native darwin-x64 in 46s (ID 120906813329)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  - Require Linux native build prerequisites
+  ✓ Select release Xcode 26.0.1
+  ✓ Run release Darwin semantic probe
+  - Run Linux semantic probe
+  - Build and audit Linux target
+  ✓ Build and audit Darwin target
+  ✓ Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ native linux-x64-gnu in 43s (ID 120906813335)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Record native build environment
+  ✓ Require Linux native build prerequisites
+  - Select release Xcode 26.0.1
+  - Run release Darwin semantic probe
+  ✓ Run Linux semantic probe
+  ✓ Build and audit Linux target
+  - Build and audit Darwin target
+  - Run Xcode 16.4 Darwin semantic probe
+  ✓ Run actions/upload-artifact@v4
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120906813453)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 3m42s (ID 120906813603)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / otio-headless-smoke-macos in 28s (ID 120906813605)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ pack in 30s (ID 120907645209)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Run actions/setup-node@v4
+  ✓ Validate release version
+  ✓ Use an npm that supports trusted publishing
+  ✓ Install dependencies
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Place audited prebuilds in the package
+  ✓ Snapshot audited native prebuilds
+  ✓ Set release version
+  ✓ Build the readable bundle without recompiling native prebuilds
+  ✓ Check generated plugin manifests and launch config
+  ✓ Pack the release tarball
+  ✓ Verify tarball preserves audited native prebuilds
+  ✓ Check packed contents
+  ✓ Run actions/upload-artifact@v4
+  ✓ Summarize packed artifact
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native darwin-arm64 on Node 18.20.8 in 15s (ID 120907758728)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native darwin-x64 on Node 18.20.8 in 25s (ID 120907758731)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native linux-x64-gnu on Node 24.22.0 in 50s (ID 120907758741)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native darwin-arm64 on Node 24.22.0 in 17s (ID 120907758745)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native darwin-x64 on Node 24.22.0 in 41s (ID 120907758774)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  - Record Linux glibc 2.28 runtime
+  ✓ Prove Darwin installed tarball without Bun or the checkout
+  - Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native linux-arm64-gnu on Node 18.20.8 in 40s (ID 120907758800)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native linux-arm64-gnu on Node 24.22.0 in 42s (ID 120907758802)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ packed native linux-x64-gnu on Node 18.20.8 in 43s (ID 120907758829)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run actions/download-artifact@v4
+  ✓ Record packed proof host
+  ✓ Record Linux glibc 2.28 runtime
+  - Prove Darwin installed tarball without Bun or the checkout
+  ✓ Prove Linux installed tarball in glibc 2.28 with Node only
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+X publish in 15s (ID 120907951108)
+  ✓ Set up job
+  ✓ Run actions/setup-node@v4
+  ✓ Use an npm that supports trusted publishing
+  ✓ Run actions/download-artifact@v4
+  X Publish
+  - Post Run actions/setup-node@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-arm64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-arm64: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+native darwin-arm64: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native darwin-x64: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native linux-x64-gnu: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+pack: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-arm64 on Node 18.20.8: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+packed native darwin-arm64 on Node 18.20.8: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-x64 on Node 18.20.8: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-arm64 on Node 24.22.0: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+packed native darwin-arm64 on Node 24.22.0: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native darwin-x64 on Node 24.22.0: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native linux-arm64-gnu on Node 18.20.8: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native linux-arm64-gnu on Node 24.22.0: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+packed native linux-x64-gnu on Node 18.20.8: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+publish: .github#2
+
+X Process completed with exit code 1.
+publish: .github#88
+

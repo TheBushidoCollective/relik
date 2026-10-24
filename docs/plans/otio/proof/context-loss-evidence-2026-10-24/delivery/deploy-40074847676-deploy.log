@@ -1,0 +1,145 @@
+deploy	Set up job	﻿2026-10-24T07:40:16.8710328Z Current runner version: '2.338.0'
+deploy	Set up job	2026-10-24T07:40:16.8746986Z ##[group]Runner Image Provisioner
+deploy	Set up job	2026-10-24T07:40:16.8748484Z Hosted Compute Agent
+deploy	Set up job	2026-10-24T07:40:16.8749682Z Version: 20261012.601
+deploy	Set up job	2026-10-24T07:40:16.8750902Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+deploy	Set up job	2026-10-24T07:40:16.8752524Z Build Date: 2026-10-12T17:48:21Z
+deploy	Set up job	2026-10-24T07:40:16.8753957Z Worker ID: {f278a212-ce98-4fc4-8ca9-6aa7684f9b46}
+deploy	Set up job	2026-10-24T07:40:16.8754867Z Region: centralus
+deploy	Set up job	2026-10-24T07:40:16.8755472Z Cloud: Azure
+deploy	Set up job	2026-10-24T07:40:16.8756031Z ##[endgroup]
+deploy	Set up job	2026-10-24T07:40:16.8757567Z ##[group]Operating System
+deploy	Set up job	2026-10-24T07:40:16.8758349Z Ubuntu
+deploy	Set up job	2026-10-24T07:40:16.8758972Z 24.04.5
+deploy	Set up job	2026-10-24T07:40:16.8759538Z LTS
+deploy	Set up job	2026-10-24T07:40:16.8760092Z ##[endgroup]
+deploy	Set up job	2026-10-24T07:40:16.8760678Z ##[group]Runner Image
+deploy	Set up job	2026-10-24T07:40:16.8761357Z Image: ubuntu-24.04
+deploy	Set up job	2026-10-24T07:40:16.8762225Z Version: 20261012.334.1
+deploy	Set up job	2026-10-24T07:40:16.8763332Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+deploy	Set up job	2026-10-24T07:40:16.8765162Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+deploy	Set up job	2026-10-24T07:40:16.8766211Z ##[endgroup]
+deploy	Set up job	2026-10-24T07:40:16.8767324Z ##[group]GITHUB_TOKEN Permissions
+deploy	Set up job	2026-10-24T07:40:16.8769502Z Contents: read
+deploy	Set up job	2026-10-24T07:40:16.8770146Z Metadata: read
+deploy	Set up job	2026-10-24T07:40:16.8770684Z ##[endgroup]
+deploy	Set up job	2026-10-24T07:40:16.8773129Z Secret source: Actions
+deploy	Set up job	2026-10-24T07:40:16.8774112Z Cache mode: write
+deploy	Set up job	2026-10-24T07:40:16.8774909Z Prepare workflow directory
+deploy	Set up job	2026-10-24T07:40:16.9242801Z Prepare all required actions
+deploy	Set up job	2026-10-24T07:40:16.9313240Z Getting action download info
+deploy	Set up job	2026-10-24T07:40:17.2159641Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+deploy	Set up job	2026-10-24T07:40:17.3181673Z Download action repository 'google-github-actions/auth@v2' (SHA:c200f3691d83b41bf9bbd8638997a462592937ed)
+deploy	Set up job	2026-10-24T07:40:17.6519388Z Download action repository 'google-github-actions/setup-gcloud@v2' (SHA:e427ad8a34f8676edf47cf7d7925499adf3eb74f)
+deploy	Set up job	2026-10-24T07:40:17.9953449Z Download action repository 'hashicorp/setup-terraform@v3' (SHA:b9cd54a3c349d3f38e8881555d616ced269862dd)
+deploy	Set up job	2026-10-24T07:40:18.5264015Z Complete job name: deploy
+deploy	Run actions/checkout@v4	﻿2026-10-24T07:40:18.6370817Z ##[group]Run actions/checkout@v4
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6372483Z with:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6373391Z   repository: TheBushidoCollective/relik
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6383392Z   token: ***
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6384239Z   ssh-strict: true
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6385071Z   ssh-user: git
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6385941Z   persist-credentials: true
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6386897Z   clean: true
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6387768Z   sparse-checkout-cone-mode: true
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6388809Z   fetch-depth: 1
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6389652Z   fetch-tags: false
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6390517Z   show-progress: true
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6391396Z   lfs: false
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6392331Z   submodules: false
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6393204Z   set-safe-directory: true
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6394203Z   allow-unsafe-pr-checkout: false
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6395514Z env:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6396278Z   TF_VERSION: 1.9.8
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.6397112Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7498525Z Syncing repository: TheBushidoCollective/relik
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7502907Z ##[group]Getting Git version info
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7505101Z Working directory is '/home/runner/work/relik/relik'
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7508112Z [command]/usr/bin/git version
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7509721Z git version 2.55.0
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7523297Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7537566Z Temporarily overriding HOME='/home/runner/work/_temp/6752c6de-97cb-46a1-82fe-0b108614d164' before making global git config changes
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7542748Z Adding repository directory to the temporary git global config as a safe directory
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7546592Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/relik/relik
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7617253Z Deleting the contents of '/home/runner/work/relik/relik'
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7620568Z ##[group]Initializing the repository
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7623038Z [command]/usr/bin/git init /home/runner/work/relik/relik
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7762353Z hint: Using 'master' as the name for the initial branch. This default branch name
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7765732Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7769182Z hint: to use in all of your new repositories, which will suppress this warning,
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7771686Z hint: call:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7773211Z hint:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7774792Z hint: 	git config --global init.defaultBranch <name>
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7776772Z hint:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7778661Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7781787Z hint: 'development'. The just-created branch can be renamed via this command:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7789062Z hint:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7790598Z hint: 	git branch -m <name>
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7792313Z hint:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7794384Z hint: Disable this message with "git config set advice.defaultBranchName false"
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7797766Z Initialized empty Git repository in /home/runner/work/relik/relik/.git/
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7803477Z [command]/usr/bin/git remote add origin https://github.com/TheBushidoCollective/relik
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7855521Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7858110Z ##[group]Disabling automatic garbage collection
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7860455Z [command]/usr/bin/git config --local gc.auto 0
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7892473Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7895000Z ##[group]Setting up auth
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7898514Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.7933925Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8336135Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8386956Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8629174Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8669201Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8904634Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8948091Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8949902Z ##[group]Fetching the repository
+deploy	Run actions/checkout@v4	2026-10-24T07:40:18.8963767Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +1f7b186edab1d9e1acdbe7c426463dbcd389322e:refs/remotes/origin/main
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.2933463Z From https://github.com/TheBushidoCollective/relik
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.2935774Z  * [new ref]         1f7b186edab1d9e1acdbe7c426463dbcd389322e -> origin/main
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.2938436Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.2939007Z ##[group]Determining the checkout info
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.2943348Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.2948489Z [command]/usr/bin/git sparse-checkout disable
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.3004400Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.3039014Z ##[group]Checking out the ref
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.3039640Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.6000280Z Switched to a new branch 'main'
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.6023014Z branch 'main' set up to track 'origin/main'.
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.6024993Z ##[endgroup]
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.6078266Z [command]/usr/bin/git log -1 --format=%H
+deploy	Run actions/checkout@v4	2026-10-24T07:40:20.6109167Z 1f7b186edab1d9e1acdbe7c426463dbcd389322e
+deploy	Run google-github-actions/auth@v2	﻿2026-10-24T07:40:20.6391538Z ##[group]Run google-github-actions/auth@v2
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6392453Z with:
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6392688Z   project_id: thebushido-co
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6393229Z   workload_identity_provider: projects/911514101920/locations/global/workloadIdentityPools/github/providers/artifacts
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6393896Z   service_account: relic-deployer@thebushido-co.iam.gserviceaccount.com
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6394306Z   create_credentials_file: true
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6394584Z   export_environment_variables: true
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6394857Z   universe: googleapis.com
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6395101Z   cleanup_credentials: true
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6395348Z   access_token_lifetime: 3600s
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6395732Z   access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6396136Z   id_token_include_email: false
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6396386Z env:
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6396576Z   TF_VERSION: 1.9.8
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.6396787Z ##[endgroup]
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:20.9054377Z Created credentials file at "/home/runner/work/relik/relik/gha-creds-592aaa34f2c6ea68.json"
+deploy	Run google-github-actions/auth@v2	2026-10-24T07:40:21.0139736Z ##[error]google-github-actions/auth failed with: failed to generate Google Cloud federated token for //iam.googleapis.com/projects/911514101920/locations/global/workloadIdentityPools/github/providers/artifacts: {"error":"unauthorized_client","error_description":"The given credential is rejected by the attribute condition."}
+deploy	Post Run google-github-actions/auth@v2	﻿2026-10-24T07:40:21.0417512Z Post job cleanup.
+deploy	Post Run google-github-actions/auth@v2	2026-10-24T07:40:21.1294935Z Removed exported credentials at "/home/runner/work/relik/relik/gha-creds-592aaa34f2c6ea68.json".
+deploy	Post Run actions/checkout@v4	﻿2026-10-24T07:40:21.1470339Z Post job cleanup.
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2366980Z [command]/usr/bin/git version
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2409371Z git version 2.55.0
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2448633Z Temporarily overriding HOME='/home/runner/work/_temp/6cb25d5c-68b3-436f-bf06-c02942080a11' before making global git config changes
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2449979Z Adding repository directory to the temporary git global config as a safe directory
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2454176Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/relik/relik
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2495286Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2533174Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2789522Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2835833Z http.https://github.com/.extraheader
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2837867Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.2888764Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.3142750Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+deploy	Post Run actions/checkout@v4	2026-10-24T07:40:21.3184917Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+deploy	Complete job	﻿2026-10-24T07:40:21.3609770Z Cleaning up orphan processes
+deploy	Complete job	2026-10-24T07:40:21.3970082Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, google-github-actions/auth@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

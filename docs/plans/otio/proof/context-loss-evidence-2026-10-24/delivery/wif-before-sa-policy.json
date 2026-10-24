@@ -1,0 +1,12 @@
+{
+  "bindings": [
+    {
+      "members": [
+        "principalSet://iam.googleapis.com/projects/911514101920/locations/global/workloadIdentityPools/github/attribute.repository/TheBushidoCollective/relic"
+      ],
+      "role": "roles/iam.workloadIdentityUser"
+    }
+  ],
+  "etag": "BwZZPYJvfIw=",
+  "version": 1
+}

@@ -1,0 +1,52 @@
+
+[1m==> Project thebushido-co (911514101920)[0m
+
+[1m==> Enabling the APIs bootstrap itself needs[0m
+Operation "operations/acat.p2-911514101920-dbdb0390-9689-48c1-b309-7ff40a67dbb6" finished successfully.
+
+[1m==> Terraform state bucket: gs://thebushido-co-tfstate[0m
+already exists
+
+[1m==> Artifact Registry: us-central1/relic[0m
+already exists
+  cleanup policy set
+
+[1m==> Deployer service account: relic-deployer@thebushido-co.iam.gserviceaccount.com[0m
+already exists
+
+[1m==> Waiting for the deployer to be visible to IAM[0m
+
+[1m==> Granting the deployer what Terraform needs, and nothing more[0m
+  roles/run.admin
+  roles/storage.admin
+  roles/artifactregistry.admin
+  roles/dns.admin
+  roles/compute.loadBalancerAdmin
+  roles/compute.networkAdmin
+  roles/iam.serviceAccountAdmin
+  roles/iam.serviceAccountUser
+  roles/resourcemanager.projectIamAdmin
+  roles/serviceusage.serviceUsageAdmin
+
+[1m==> Workload Identity pool: github[0m
+already exists
+
+[1m==> Workload Identity provider: artifacts[0m
+Updated workload identity pool provider [artifacts].
+name: projects/911514101920/locations/global/workloadIdentityPools/github/providers/artifacts/operations/bigarges6plamefqy3w5oaq000000000
+
+[1m==> Letting repository 1316636189 (TheBushidoCollective/relik) impersonate the deployer[0m
+Updated IAM policy for serviceAccount [relic-deployer@thebushido-co.iam.gserviceaccount.com].
+
+[1m==> Removing name-based TheBushidoCollective/relic impersonation[0m
+Updated IAM policy for serviceAccount [relic-deployer@thebushido-co.iam.gserviceaccount.com].
+
+[1m==> Done. Set these as GitHub Actions variables.[0m
+
+  gh variable set GCP_PROJECT_ID   --body 'thebushido-co'   --repo TheBushidoCollective/relik
+  gh variable set GCP_REGION       --body 'us-central1'       --repo TheBushidoCollective/relik
+  gh variable set WIF_PROVIDER     --body 'projects/911514101920/locations/global/workloadIdentityPools/github/providers/artifacts' --repo TheBushidoCollective/relik
+  gh variable set DEPLOYER_SA      --body 'relic-deployer@thebushido-co.iam.gserviceaccount.com' --repo TheBushidoCollective/relik
+  gh variable set RUN_URL_INFIX    --body 'wh2jw5fg2q-uc'    --repo TheBushidoCollective/relik
+
+No service account key was created, and none should ever be.

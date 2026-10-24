@@ -1,0 +1,15 @@
+{
+  "attributeCondition": "assertion.repository_id == '1316636189'",
+  "attributeMapping": {
+    "attribute.ref": "assertion.ref",
+    "attribute.repository": "assertion.repository",
+    "attribute.repository_id": "assertion.repository_id",
+    "google.subject": "assertion.sub"
+  },
+  "displayName": "TheBushidoCollective/relik",
+  "name": "projects/911514101920/locations/global/workloadIdentityPools/github/providers/artifacts",
+  "oidc": {
+    "issuerUri": "https://token.actions.githubusercontent.com"
+  },
+  "state": "ACTIVE"
+}

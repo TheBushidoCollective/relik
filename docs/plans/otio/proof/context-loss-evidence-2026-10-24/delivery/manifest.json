@@ -1,0 +1,50 @@
+{
+  "note": "Deploy auth repair (WIF pinned to repository id 1316636189 via bootstrap.sh after PR #117), production deploy 40105300684, and npm publish 40105697253 failing at ENEEDAUTH before anything was published.",
+  "files": [
+    {
+      "file": "bootstrap-76269ed.log",
+      "bytes": 2270,
+      "sha256": "fa75e0806ba569a09c557847db8c88b2c6945ab1f096baaa326440caacc85140"
+    },
+    {
+      "file": "wif-before-provider.json",
+      "bytes": 489,
+      "sha256": "db55de7cf86cb7d58cf9326c23ceebb27773622c5909d434176bd8d6d47a16af"
+    },
+    {
+      "file": "wif-before-sa-policy.json",
+      "bytes": 313,
+      "sha256": "445532cbde394dfc02c587bdb14500a149e63758fe9016d54669be541e3850dc"
+    },
+    {
+      "file": "wif-after-provider.json",
+      "bytes": 534,
+      "sha256": "e00427e06435bb2304c7831892eb92580f6ca750e415179448dcfde990e5b5f2"
+    },
+    {
+      "file": "wif-after-sa-policy.json",
+      "bytes": 300,
+      "sha256": "47ab71e75eac75f1db3287bf72e74e55630dcc7d9aff257bcedcda2c334b1f2f"
+    },
+    {
+      "file": "deploy-40074847676-deploy.log",
+      "bytes": 16167,
+      "sha256": "35182fa95dc598352a604fc4a5446e9ae59a4ef815707b05684659ad709f97cf"
+    },
+    {
+      "file": "deploy-40105300684.watch.log",
+      "bytes": 20417,
+      "sha256": "399b0053a059816b57fa52d4c15ec11a110ef760926bf02bf493cea0652e757c"
+    },
+    {
+      "file": "publish-mcp-40105697253-publish.log",
+      "bytes": 16482,
+      "sha256": "4987f629be8c9d17a6ba896695c4dbade70c7cc8e80722c9fbe361b0e36ee713"
+    },
+    {
+      "file": "publish-mcp-release-0.13.0.watch.log",
+      "bytes": 88174,
+      "sha256": "70a8ab167029ab943d830f565db59e7f1a54d6430e171fe636cfa2cea39c7c5c"
+    }
+  ]
+}

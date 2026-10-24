@@ -1,0 +1,549 @@
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main deploy · 40105300684
+Triggered via push about 1 minute ago
+
+JOBS
+✓ verify / otio-headless-smoke-macos in 36s (ID 120905644435)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120905644578)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  * Typecheck
+  * Test
+  * Build MCP bundle
+  * Cover path
+  * Notify path
+  * Install pinned uv
+  * Install headless Chrome
+  * OTIO conformance
+  * Prepare OTIO browser proof receipt
+  * OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Run actions/checkout@v4
+✓ verify / image in 22s (ID 120905644592)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main deploy · 40105300684
+Triggered via push about 1 minute ago
+
+JOBS
+✓ verify / otio-headless-smoke-macos in 36s (ID 120905644435)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120905644578)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  * Cover path
+  * Notify path
+  * Install pinned uv
+  * Install headless Chrome
+  * OTIO conformance
+  * Prepare OTIO browser proof receipt
+  * OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Run actions/checkout@v4
+✓ verify / image in 22s (ID 120905644592)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main deploy · 40105300684
+Triggered via push about 2 minutes ago
+
+JOBS
+✓ verify / otio-headless-smoke-macos in 36s (ID 120905644435)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* verify / verify (ID 120905644578)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  * OTIO path
+  * Upload OTIO browser proof
+  * Post Install pinned uv
+  * Post Run actions/checkout@v4
+✓ verify / image in 22s (ID 120905644592)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main deploy · 40105300684
+Triggered via push about 2 minutes ago
+
+JOBS
+✓ verify / otio-headless-smoke-macos in 36s (ID 120905644435)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 2m39s (ID 120905644578)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120905644592)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* deploy (ID 120906240062)
+  * Set up job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main deploy · 40105300684
+Triggered via push about 3 minutes ago
+
+JOBS
+✓ verify / otio-headless-smoke-macos in 36s (ID 120905644435)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 2m39s (ID 120905644578)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120905644592)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* deploy (ID 120906240062)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run google-github-actions/auth@v2
+  ✓ Run google-github-actions/setup-gcloud@v2
+  ✓ Configure Docker for Artifact Registry
+  * Build and push
+  * Run hashicorp/setup-terraform@v3
+  * Terraform init
+  * Force-unlock a leftover lock
+  * Terraform format check
+  * Terraform plan
+  * Terraform apply
+  * Drop the lock if this run is cancelled mid-apply
+  * Report the deployed origins and DNS delegation
+  * Smoke test the deployment
+  * Smoke test the origin boundary
+  * Post Run google-github-actions/auth@v2
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* main deploy · 40105300684
+Triggered via push about 3 minutes ago
+
+JOBS
+✓ verify / otio-headless-smoke-macos in 36s (ID 120905644435)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 2m39s (ID 120905644578)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120905644592)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+* deploy (ID 120906240062)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run google-github-actions/auth@v2
+  ✓ Run google-github-actions/setup-gcloud@v2
+  ✓ Configure Docker for Artifact Registry
+  ✓ Build and push
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Terraform init
+  - Force-unlock a leftover lock
+  ✓ Terraform format check
+  ✓ Terraform plan
+  * Terraform apply
+  * Drop the lock if this run is cancelled mid-apply
+  * Report the deployed origins and DNS delegation
+  * Smoke test the deployment
+  * Smoke test the origin boundary
+  * Post Run google-github-actions/auth@v2
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+✓ main deploy · 40105300684
+Triggered via push about 4 minutes ago
+
+JOBS
+✓ verify / otio-headless-smoke-macos in 36s (ID 120905644435)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Require Bun 1.4.3
+  ✓ Configure OTIO browser proof paths
+  ✓ Install dependencies
+  ✓ Build MCP bundle for browser controls
+  ✓ Prepare OTIO browser proof receipt
+  ✓ Install Playwright 1.61.1 headless shell
+  ✓ Resolve Playwright headless shell
+  ✓ OTIO headless shell smoke
+  ✓ Upload OTIO browser proof
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / verify in 2m39s (ID 120905644578)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run jdx/mise-action@v2
+  ✓ Configure OTIO browser proof path
+  ✓ Require Linux native build prerequisites
+  ✓ Linux confinement probe
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Validate Terraform
+  ✓ Install ffmpeg
+  ✓ Install dependencies
+  ✓ Lint
+  ✓ Typecheck
+  ✓ Test
+  ✓ Build MCP bundle
+  ✓ Cover path
+  ✓ Notify path
+  ✓ Install pinned uv
+  ✓ Install headless Chrome
+  ✓ OTIO conformance
+  ✓ Prepare OTIO browser proof receipt
+  ✓ OTIO browser negative controls
+  ✓ OTIO path
+  ✓ Upload OTIO browser proof
+  ✓ Post Install pinned uv
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ verify / image in 22s (ID 120905644592)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Prepare image smoke receipt
+  ✓ Build the deploy image without pushing it
+  ✓ Boot the image and smoke its served assets
+  ✓ Collect image logs and remove the container
+  ✓ Run jdx/mise-action@v2
+  ✓ Record image and runner viewer hashes
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+✓ deploy in 1m26s (ID 120906240062)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run google-github-actions/auth@v2
+  ✓ Run google-github-actions/setup-gcloud@v2
+  ✓ Configure Docker for Artifact Registry
+  ✓ Build and push
+  ✓ Run hashicorp/setup-terraform@v3
+  ✓ Terraform init
+  - Force-unlock a leftover lock
+  ✓ Terraform format check
+  ✓ Terraform plan
+  ✓ Terraform apply
+  - Drop the lock if this run is cancelled mid-apply
+  ✓ Report the deployed origins and DNS delegation
+  ✓ Smoke test the deployment
+  ✓ Smoke test the origin boundary
+  ✓ Post Run google-github-actions/auth@v2
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / otio-headless-smoke-macos: .github#2
+
+- Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.
+verify / otio-headless-smoke-macos: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, jdx/mise-action@v2. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify / image: .github#2
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, google-github-actions/auth@v2, google-github-actions/setup-gcloud@v2, hashicorp/setup-terraform@v3. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+deploy: .github#2
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+deploy: .github#1
+

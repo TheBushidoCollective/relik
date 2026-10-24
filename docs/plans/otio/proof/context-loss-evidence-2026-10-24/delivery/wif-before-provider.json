@@ -1,0 +1,14 @@
+{
+  "attributeCondition": "assertion.repository == 'TheBushidoCollective/relic'",
+  "attributeMapping": {
+    "attribute.ref": "assertion.ref",
+    "attribute.repository": "assertion.repository",
+    "google.subject": "assertion.sub"
+  },
+  "displayName": "TheBushidoCollective/relic",
+  "name": "projects/911514101920/locations/global/workloadIdentityPools/github/providers/artifacts",
+  "oidc": {
+    "issuerUri": "https://token.actions.githubusercontent.com"
+  },
+  "state": "ACTIVE"
+}

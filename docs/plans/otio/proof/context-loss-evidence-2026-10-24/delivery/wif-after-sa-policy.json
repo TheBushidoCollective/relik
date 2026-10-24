@@ -1,0 +1,12 @@
+{
+  "bindings": [
+    {
+      "members": [
+        "principalSet://iam.googleapis.com/projects/911514101920/locations/global/workloadIdentityPools/github/attribute.repository_id/1316636189"
+      ],
+      "role": "roles/iam.workloadIdentityUser"
+    }
+  ],
+  "etag": "BwZel2ung90=",
+  "version": 1
+}
