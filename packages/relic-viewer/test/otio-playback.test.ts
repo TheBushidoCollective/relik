@@ -17,6 +17,7 @@ import {
   decodedImageAllowed,
   ImageFrameCache,
   OTIO_MAX_IMAGE_EDGE,
+  type OtioPlaybackController,
   type OtioPreparedLeaf,
   type OtioVideoCompositionTree,
   renderOtioVideoTree,
@@ -837,6 +838,184 @@ describe('otio composition tree', () => {
       { kind: 'black' },
     ]);
     expect(pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+  });
+
+  test('direct rendering: 99 gap-only tracks and 1 black track take 3 checkouts', () => {
+    const output = new SoftCanvas();
+    const checkouts: number[] = [];
+    const checkout = (depth: number) => {
+      checkouts.push(depth);
+      return new SoftCanvas() as unknown as HTMLCanvasElement;
+    };
+
+    const gapTracks = Array.from({ length: 99 }, (_, i) => ({
+      kind: 'track' as const,
+      node_id: `track_gap_${i}`,
+      ancestry: ['stack'],
+      branches: [
+        {
+          weight: 1,
+          child: {
+            kind: 'leaf' as const,
+            contribution_index: i,
+          },
+        },
+      ],
+    }));
+    const blackTrack = {
+      kind: 'track' as const,
+      node_id: 'track_black',
+      ancestry: ['stack'],
+      branches: [
+        {
+          weight: 1,
+          child: {
+            kind: 'leaf' as const,
+            contribution_index: 99,
+          },
+        },
+      ],
+    };
+
+    const tree: OtioVideoCompositionTree = {
+      kind: 'stack',
+      node_id: 'stack',
+      ancestry: [],
+      children: [...gapTracks, blackTrack],
+    };
+
+    const leaves: (OtioPreparedLeaf | null)[] = [
+      ...Array.from({ length: 99 }, () => ({ kind: 'empty' as const })),
+      { kind: 'black' as const },
+    ];
+
+    renderOtioVideoTree(
+      output.ctx as unknown as CanvasRenderingContext2D,
+      960,
+      540,
+      tree,
+      leaves,
+      checkout
+    );
+
+    expect(checkouts.length).toBe(3);
+    expect(checkouts).toEqual([2, 1, 0]);
+    expect(output.pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+  });
+
+  test('depth-pooled checkout matches fresh-canvas exact pixels on nontrivial composite trees', () => {
+    const nested = [0, 1, 2].map((index) => ({
+      kind: 'track' as const,
+      node_id: `nested_${index}`,
+      ancestry: ['outer', 'lower', 'nested'],
+      branches: [
+        {
+          weight: 1,
+          child: { kind: 'leaf' as const, contribution_index: index },
+        },
+      ],
+    }));
+    const nestedTree: OtioVideoCompositionTree = {
+      kind: 'stack',
+      node_id: 'outer',
+      ancestry: [],
+      children: [
+        {
+          kind: 'track',
+          node_id: 'lower',
+          ancestry: ['outer'],
+          branches: [
+            {
+              weight: 1,
+              child: {
+                kind: 'stack',
+                node_id: 'nested',
+                ancestry: ['outer', 'lower'],
+                children: nested,
+              },
+            },
+          ],
+        },
+        {
+          kind: 'track',
+          node_id: 'foreground',
+          ancestry: ['outer'],
+          branches: [
+            { weight: 1, child: { kind: 'leaf', contribution_index: 3 } },
+          ],
+        },
+      ],
+    };
+    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00'];
+    const nestedLeaves = colors.map((color) => ({
+      kind: 'image' as const,
+      source: solid(color) as unknown as CanvasImageSource,
+      alpha: 1,
+    }));
+
+    const white = solid('#ffffff');
+    const dissolveTree: OtioVideoCompositionTree = {
+      kind: 'track',
+      node_id: 'track',
+      ancestry: [],
+      branches: [
+        { weight: 0.5, child: { kind: 'leaf', contribution_index: 0 } },
+        { weight: 0.5, child: { kind: 'leaf', contribution_index: 1 } },
+      ],
+    };
+    const dissolveLeaves = [
+      {
+        kind: 'image' as const,
+        source: white as unknown as CanvasImageSource,
+        alpha: 1,
+      },
+      {
+        kind: 'image' as const,
+        source: white as unknown as CanvasImageSource,
+        alpha: 1,
+      },
+    ];
+
+    const treesAndLeaves = [
+      { tree: nestedTree, leaves: nestedLeaves },
+      { tree: dissolveTree, leaves: dissolveLeaves },
+    ];
+
+    for (const { tree, leaves } of treesAndLeaves) {
+      // 1. Fresh surfaces reference (independent baseline)
+      const freshOutput = new SoftCanvas();
+      renderOtioVideoTree(
+        freshOutput.ctx as unknown as CanvasRenderingContext2D,
+        1,
+        1,
+        tree,
+        leaves,
+        () => new SoftCanvas() as unknown as HTMLCanvasElement
+      );
+
+      // 2. Depth-pooled surfaces (reused across siblings at same depth)
+      const pooledOutput = new SoftCanvas();
+      const pool: SoftCanvas[] = [];
+      renderOtioVideoTree(
+        pooledOutput.ctx as unknown as CanvasRenderingContext2D,
+        1,
+        1,
+        tree,
+        leaves,
+        (depth: number) => {
+          let surface = pool[depth];
+          if (!surface) {
+            surface = new SoftCanvas();
+            pool[depth] = surface;
+          }
+          surface.width = 1;
+          surface.height = 1;
+          return surface as unknown as HTMLCanvasElement;
+        }
+      );
+
+      expect(pooledOutput.pixel).toEqual(freshOutput.pixel);
+    }
   });
 });
 
@@ -2289,5 +2468,225 @@ describe('otio playback controller', () => {
     resolve(new Blob(['late']));
     await seek;
     expect(createdUrls.filter((url) => !revokedUrls.includes(url))).toEqual([]);
+  });
+
+  test('50 black tracks at 960x540 seek 0 creates 3 pooled canvases and paints all 50 leaves', async () => {
+    const trackCount = 50;
+    const tracks = Array.from({ length: trackCount }, (_, i) => ({
+      OTIO_SCHEMA: 'Track.1',
+      metadata: { relic: { id: `track_${i}` } },
+      kind: 'Video',
+      children: [
+        {
+          OTIO_SCHEMA: 'Clip.1',
+          metadata: { relic: { id: `clip_${i}` } },
+          source_range: {
+            start_time: { value: 0, rate: 24 },
+            duration: { value: 24, rate: 24 },
+          },
+          media_reference: {
+            OTIO_SCHEMA: 'ImageSequenceReference.1',
+            missing_frame_policy: 'black',
+            available_range: null,
+          },
+        },
+      ],
+    }));
+
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_50_black' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_50_black' } },
+          children: tracks,
+        },
+      })
+    );
+
+    const output = new SoftCanvas();
+    output.width = 960;
+    output.height = 540;
+
+    const createdCanvases: SoftCanvas[] = [];
+    let leafPaintCount = 0;
+    const originalCreateElement = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      if (tag === 'canvas') {
+        const sc = new SoftCanvas();
+        createdCanvases.push(sc);
+        const origFillRect = sc.ctx.fillRect.bind(sc.ctx);
+        sc.ctx.fillRect = () => {
+          leafPaintCount += 1;
+          origFillRect();
+        };
+        return sc as unknown as HTMLElement;
+      }
+      return originalCreateElement(tag);
+    }) as typeof document.createElement;
+
+    let playback: OtioPlaybackController | null = null;
+    try {
+      playback = createOtioPlayback({
+        document: doc,
+        timelineId: 'timeline_50_black',
+        canvas: canvas(output),
+        resolveMedia: async () => null,
+      });
+
+      await playback.seek({ value: 0, rate: 24 });
+
+      expect(leafPaintCount).toBe(50);
+      expect(createdCanvases.length).toBe(3);
+      expect(output.pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+      expect(playback.getState().diagnostics).toEqual([]);
+    } finally {
+      playback?.dispose();
+      document.createElement = originalCreateElement;
+    }
+  });
+
+  test('depth witness: 61 nested Stacks parse and create 62 surfaces; 62 Stacks throw nesting limit', async () => {
+    function buildNestedStackJson(stackCount: number): string {
+      let inner: Record<string, unknown> = {
+        OTIO_SCHEMA: 'Clip.1',
+        source_range: {
+          start_time: { value: 0, rate: 24 },
+          duration: { value: 1, rate: 24 },
+        },
+        media_reference: {
+          OTIO_SCHEMA: 'ImageSequenceReference.1',
+          missing_frame_policy: 'black',
+          available_range: null,
+        },
+      };
+      for (let i = stackCount - 1; i >= 0; i--) {
+        inner = {
+          OTIO_SCHEMA: 'Stack.1',
+          tracks: inner,
+        };
+      }
+      return JSON.stringify(inner);
+    }
+
+    expect(() => readOtioDocument(buildNestedStackJson(62))).toThrow(
+      'OTIO JSON exceeds the nesting limit of 64'
+    );
+
+    const doc = readOtioDocument(buildNestedStackJson(61));
+    const timelineId = doc.timeline_ids[0];
+    if (!timelineId) throw new Error('missing synthetic timeline');
+
+    const output = new SoftCanvas();
+    output.width = 960;
+    output.height = 540;
+
+    const createdCanvases: SoftCanvas[] = [];
+    const originalCreateElement = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      if (tag === 'canvas') {
+        const sc = new SoftCanvas();
+        createdCanvases.push(sc);
+        return sc as unknown as HTMLElement;
+      }
+      return originalCreateElement(tag);
+    }) as typeof document.createElement;
+
+    let playback: OtioPlaybackController | null = null;
+    try {
+      playback = createOtioPlayback({
+        document: doc,
+        timelineId,
+        canvas: canvas(output),
+        resolveMedia: async () => null,
+      });
+
+      await playback.seek({ value: 0, rate: 24 });
+
+      expect(createdCanvases.length).toBe(62);
+      expect(output.pixel).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+      expect(playback.getState().diagnostics).toEqual([]);
+    } finally {
+      playback?.dispose();
+      document.createElement = originalCreateElement;
+    }
+  });
+
+  test('every pooled canvas ends at 0x0 on dispose', async () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_dispose' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_dispose' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_dispose' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_dispose' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const output = new SoftCanvas();
+    output.width = 960;
+    output.height = 540;
+
+    const createdCanvases: SoftCanvas[] = [];
+    const originalCreateElement = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      if (tag === 'canvas') {
+        const sc = new SoftCanvas();
+        createdCanvases.push(sc);
+        return sc as unknown as HTMLElement;
+      }
+      return originalCreateElement(tag);
+    }) as typeof document.createElement;
+
+    let playback: OtioPlaybackController | null = null;
+    try {
+      playback = createOtioPlayback({
+        document: doc,
+        timelineId: 'timeline_dispose',
+        canvas: canvas(output),
+        resolveMedia: async () => null,
+      });
+
+      await playback.seek({ value: 0, rate: 24 });
+
+      expect(createdCanvases.length).toBeGreaterThan(0);
+      for (const surface of createdCanvases) {
+        expect(surface.width).toBe(960);
+        expect(surface.height).toBe(540);
+      }
+
+      playback.dispose();
+
+      for (const surface of createdCanvases) {
+        expect(surface.width).toBe(0);
+        expect(surface.height).toBe(0);
+      }
+    } finally {
+      playback?.dispose();
+      document.createElement = originalCreateElement;
+    }
   });
 });
