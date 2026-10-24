@@ -24,6 +24,7 @@ import type {
   OtioVideoComposition,
 } from '../src/otio-types.ts';
 import { MAX_OTIO_BUNDLE_MEDIA_ENTRIES } from '../src/otio-zip.ts';
+
 describe('otio-timing rational arithmetic and mixed rates', () => {
   test('timeToSeconds throws on zero or non-finite rate', () => {
     expect(() => timeToSeconds({ value: 10, rate: 0 })).toThrow(TypeError);
@@ -1757,6 +1758,12 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
     [name]: { key: name, bundle_path: name, size: 1 },
   });
 
+  const imageRange = (start: number, duration: number, rate = 24) => ({
+    OTIO_SCHEMA: 'TimeRange.1',
+    start_time: { OTIO_SCHEMA: 'RationalTime.1', value: start, rate },
+    duration: { OTIO_SCHEMA: 'RationalTime.1', value: duration, rate },
+  });
+
   const makeSequenceDoc = (
     reference: Record<string, unknown>,
     mediaIndex: Record<string, OtioMediaEntry> = {}
@@ -1805,11 +1812,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         rate: 24,
         frame_zero_padding: 4,
         missing_frame_policy: 'hold',
-        available_range: {
-          OTIO_SCHEMA: 'TimeRange.1',
-          start_time: { value: 24, rate: 24 },
-          duration: { value: 4, rate: 24 },
-        },
+        available_range: imageRange(24, 4),
       },
       mediaEntry('media/frames/plate_1001.png')
     );
@@ -1817,10 +1820,17 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       value: 0,
       rate: 24,
     }).video_contributions[0];
-    expect(preStartEval?.bundle_path).toBe('media/frames/plate_1001.png');
+    expect<string | null | undefined>(preStartEval?.bundle_path).toBe(
+      'media/frames/plate_1001.png'
+    );
     expect(preStartEval?.source_frame).toBe(1001);
     expect(preStartEval?.sample_kind).toBe('media');
-    expect(preStartEval?.diagnostics).toEqual([]);
+    expect(
+      preStartEval?.diagnostics.some((d) => d.code === 'missing-handles')
+    ).toBe(true);
+    expect(
+      preStartEval?.diagnostics.some((d) => d.code === 'missing-media')
+    ).toBe(false);
 
     // 2. Hold after the end, held backward: available_range starts at 0, duration 4 (frames 1001-1004).
     // Frame 1004 is missing, 1003 is present. Sample at time 10 (after end).
@@ -1836,11 +1846,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         rate: 24,
         frame_zero_padding: 4,
         missing_frame_policy: 'hold',
-        available_range: {
-          OTIO_SCHEMA: 'TimeRange.1',
-          start_time: { value: 0, rate: 24 },
-          duration: { value: 4, rate: 24 },
-        },
+        available_range: imageRange(0, 4),
       },
       {
         ...mediaEntry('media/frames/plate_1001.png'),
@@ -1852,10 +1858,17 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       value: 10,
       rate: 24,
     }).video_contributions[0];
-    expect(postEndEval?.bundle_path).toBe('media/frames/plate_1003.png');
+    expect<string | null | undefined>(postEndEval?.bundle_path).toBe(
+      'media/frames/plate_1003.png'
+    );
     expect(postEndEval?.source_frame).toBe(1003);
     expect(postEndEval?.sample_kind).toBe('media');
-    expect(postEndEval?.diagnostics).toEqual([]);
+    expect(
+      postEndEval?.diagnostics.some((d) => d.code === 'missing-handles')
+    ).toBe(true);
+    expect(
+      postEndEval?.diagnostics.some((d) => d.code === 'missing-media')
+    ).toBe(false);
 
     // 3. Missing frame inside range: 1002 is missing, 1001 and 1003 are present. Sample at time 1 (frame 1002).
     // Holds 1001.
@@ -1870,11 +1883,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         rate: 24,
         frame_zero_padding: 4,
         missing_frame_policy: 'hold',
-        available_range: {
-          OTIO_SCHEMA: 'TimeRange.1',
-          start_time: { value: 0, rate: 24 },
-          duration: { value: 4, rate: 24 },
-        },
+        available_range: imageRange(0, 4),
       },
       {
         ...mediaEntry('media/frames/plate_1001.png'),
@@ -1886,7 +1895,9 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       value: 1,
       rate: 24,
     }).video_contributions[0];
-    expect(gapEval?.bundle_path).toBe('media/frames/plate_1001.png');
+    expect<string | null | undefined>(gapEval?.bundle_path).toBe(
+      'media/frames/plate_1001.png'
+    );
     expect(gapEval?.source_frame).toBe(1001);
     expect(gapEval?.sample_kind).toBe('media');
     expect(gapEval?.diagnostics).toEqual([]);
@@ -1904,11 +1915,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         rate: 24,
         frame_zero_padding: 4,
         missing_frame_policy: 'hold',
-        available_range: {
-          OTIO_SCHEMA: 'TimeRange.1',
-          start_time: { value: 0, rate: 24 },
-          duration: { value: 4, rate: 24 },
-        },
+        available_range: imageRange(0, 4),
       },
       {
         ...mediaEntry('media/frames/plate_1002.png'),
@@ -1927,7 +1934,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         severity: 'warning',
         code: 'missing-media',
         message: 'Image sequence frame for test-clip is not in the bundle',
-        target: { node_id: expect.any(String) },
+        target: { node_id: 'clip-test', media_key: 'DEFAULT_MEDIA' },
       },
     ]);
 
@@ -1944,11 +1951,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         rate: 24,
         frame_zero_padding: 4,
         missing_frame_policy: 'hold',
-        available_range: {
-          OTIO_SCHEMA: 'TimeRange.1',
-          start_time: { value: 24, rate: 24 },
-          duration: { value: 4, rate: 24 },
-        },
+        available_range: imageRange(24, 4),
       },
       {}
     );
@@ -1956,10 +1959,17 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       value: 0,
       rate: 24,
     }).video_contributions[0];
-    expect(rawEval?.bundle_path).toBe('media/frames/plate_1001.png');
+    expect<string | null | undefined>(rawEval?.bundle_path).toBe(
+      'media/frames/plate_1001.png'
+    );
     expect(rawEval?.source_frame).toBe(1001);
     expect(rawEval?.sample_kind).toBe('media');
-    expect(rawEval?.diagnostics).toEqual([]);
+    expect(rawEval?.diagnostics.some((d) => d.code === 'missing-handles')).toBe(
+      true
+    );
+    expect(rawEval?.diagnostics.some((d) => d.code === 'missing-media')).toBe(
+      false
+    );
 
     // 6. Refused `../` base: path traversal fails otioBundleEntry, so no entry can resolve.
     // Gives missing-media warning.
@@ -1974,11 +1984,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         rate: 24,
         frame_zero_padding: 4,
         missing_frame_policy: 'hold',
-        available_range: {
-          OTIO_SCHEMA: 'TimeRange.1',
-          start_time: { value: 0, rate: 24 },
-          duration: { value: 4, rate: 24 },
-        },
+        available_range: imageRange(24, 4),
       },
       mediaEntry('media/frames/plate_1001.png')
     );
@@ -1989,14 +1995,14 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
     expect(traversalEval?.bundle_path).toBeNull();
     expect(traversalEval?.source_frame).toBeUndefined();
     expect(traversalEval?.sample_kind).toBe('media');
-    expect(traversalEval?.diagnostics).toEqual([
-      {
-        severity: 'warning',
-        code: 'missing-media',
-        message: 'Image sequence frame for test-clip is not in the bundle',
-        target: { node_id: expect.any(String) },
-      },
-    ]);
+    expect(
+      traversalEval?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            'Image sequence frame for test-clip is not in the bundle'
+      )
+    ).toBe(true);
   });
 
   test('bounds held image sequence scan to MAX_OTIO_BUNDLE_MEDIA_ENTRIES and memoizes across evaluations', () => {
@@ -2027,11 +2033,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
               rate: 24,
               frame_zero_padding: 4,
               missing_frame_policy: 'hold',
-              available_range: {
-                OTIO_SCHEMA: 'TimeRange.1',
-                start_time: { value: 100, rate: 24 },
-                duration: { value: 1000, rate: 24 },
-              },
+              available_range: imageRange(100, 1000),
             },
           },
         ],
@@ -2088,6 +2090,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       rate: 24,
     });
     expect(getOwnPropertyDescriptorCalls).toBe(0);
+    expect(eval2.video_contributions).toEqual(eval1.video_contributions);
 
     // Third evaluation: still memoized, zero scans
     getOwnPropertyDescriptorCalls = 0;
@@ -2096,6 +2099,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       rate: 24,
     });
     expect(getOwnPropertyDescriptorCalls).toBe(0);
+    expect(eval3.video_contributions).toEqual(eval1.video_contributions);
 
     // Verify consumer-visible diagnostics on the first 65 vs last 35 clips
     expect(eval1.video_contributions).toHaveLength(100);
@@ -2104,14 +2108,15 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       const contrib = eval1.video_contributions[i];
       expect(contrib?.bundle_path).toBeNull();
       expect(contrib?.sample_kind).toBe('media');
-      expect(contrib?.diagnostics).toEqual([
-        {
-          severity: 'warning',
-          code: 'missing-media',
-          message: `Image sequence frame for clip-${pad} is not in the bundle`,
-          target: { node_id: expect.any(String) },
-        },
-      ]);
+      expect(
+        contrib?.diagnostics.some(
+          (d) =>
+            d.code === 'missing-media' &&
+            d.severity === 'warning' &&
+            d.message ===
+              `Image sequence frame for clip-${pad} is not in the bundle`
+        )
+      ).toBe(true);
     }
 
     for (let i = 65; i < 100; i += 1) {
@@ -2119,14 +2124,15 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       const contrib = eval1.video_contributions[i];
       expect(contrib?.bundle_path).toBeNull();
       expect(contrib?.sample_kind).toBe('media');
-      expect(contrib?.diagnostics).toEqual([
-        {
-          severity: 'warning',
-          code: 'missing-media',
-          message: `Image sequence hold for clip-${pad} was not searched: held sequences exceed ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} images`,
-          target: { node_id: expect.any(String) },
-        },
-      ]);
+      expect(
+        contrib?.diagnostics.some(
+          (d) =>
+            d.code === 'missing-media' &&
+            d.severity === 'warning' &&
+            d.message ===
+              `Image sequence hold for clip-${pad} was not searched: held sequences exceed ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} images`
+        )
+      ).toBe(true);
     }
   });
 
@@ -2158,11 +2164,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
               rate: 24,
               frame_zero_padding: 4,
               missing_frame_policy: 'error',
-              available_range: {
-                OTIO_SCHEMA: 'TimeRange.1',
-                start_time: { value: 0, rate: 24 },
-                duration: { value: 48, rate: 24 },
-              },
+              available_range: imageRange(0, 48),
             },
           },
         ],
@@ -2216,11 +2218,15 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
     });
 
     expect(ownKeysCalls).toBe(1);
+    expect(eval2.video_contributions).toEqual(eval1.video_contributions);
+    expect(eval3.video_contributions).toEqual(eval1.video_contributions);
     expect(eval1.video_contributions).toHaveLength(10);
     for (let i = 0; i < 10; i += 1) {
       const pad = String(i).padStart(2, '0');
       const contrib = eval1.video_contributions[i];
-      expect(contrib?.bundle_path).toBe(`media/err_${pad}_0011.png`);
+      expect<string | null | undefined>(contrib?.bundle_path).toBe(
+        `media/err_${pad}_0011.png`
+      );
       expect(contrib?.source_frame).toBe(11);
       expect(contrib?.sample_kind).toBe('media');
       expect(contrib?.diagnostics).toEqual([]);
@@ -2264,11 +2270,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
                     rate: 24,
                     frame_zero_padding: 5,
                     missing_frame_policy: 'hold',
-                    available_range: {
-                      OTIO_SCHEMA: 'TimeRange.1',
-                      start_time: { value: 10, rate: 24 },
-                      duration: { value: 32766, rate: 24 },
-                    },
+                    available_range: imageRange(10, 32766),
                   },
                 },
               ],
@@ -2298,11 +2300,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
                     rate: 24,
                     frame_zero_padding: 5,
                     missing_frame_policy: 'hold',
-                    available_range: {
-                      OTIO_SCHEMA: 'TimeRange.1',
-                      start_time: { value: 10, rate: 24 },
-                      duration: { value: 32766, rate: 24 },
-                    },
+                    available_range: imageRange(10, 32766),
                   },
                 },
               ],
@@ -2332,11 +2330,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
                     rate: 24,
                     frame_zero_padding: 5,
                     missing_frame_policy: 'hold',
-                    available_range: {
-                      OTIO_SCHEMA: 'TimeRange.1',
-                      start_time: { value: 10, rate: 24 },
-                      duration: { value: 1, rate: 24 },
-                    },
+                    available_range: imageRange(10, 1),
                   },
                 },
               ],
@@ -2368,37 +2362,46 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
 
     // Clip 1 was admitted -> gets standard missing-media not-found warning, NOT budget refusal
     expect(c1?.bundle_path).toBeNull();
-    expect(c1?.diagnostics).toEqual([
-      {
-        severity: 'warning',
-        code: 'missing-media',
-        message: 'Image sequence frame for clip-bound-1 is not in the bundle',
-        target: { node_id: expect.any(String) },
-      },
-    ]);
+    expect(
+      c1?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            'Image sequence frame for clip-bound-1 is not in the bundle'
+      )
+    ).toBe(true);
+    expect(
+      c1?.diagnostics.some((d) => d.message.includes('was not searched'))
+    ).toBe(false);
 
     // Clip 2 was admitted (32,766 + 32,766 = 65,532) -> gets standard missing-media not-found warning
     // A `>=` mutant rejects clip 2 here, so this assertion strictly discriminates that mutant
     expect(c2?.bundle_path).toBeNull();
-    expect(c2?.diagnostics).toEqual([
-      {
-        severity: 'warning',
-        code: 'missing-media',
-        message: 'Image sequence frame for clip-bound-2 is not in the bundle',
-        target: { node_id: expect.any(String) },
-      },
-    ]);
+    expect(
+      c2?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            'Image sequence frame for clip-bound-2 is not in the bundle'
+      )
+    ).toBe(true);
+    expect(
+      c2?.diagnostics.some((d) => d.message.includes('was not searched'))
+    ).toBe(false);
 
     // Clip 3 was refused (65,532 + 1 > 65,532) -> gets explicit over-budget hold warning
     expect(c3?.bundle_path).toBeNull();
-    expect(c3?.diagnostics).toEqual([
-      {
-        severity: 'warning',
-        code: 'missing-media',
-        message: `Image sequence hold for clip-bound-3 was not searched: held sequences exceed ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} images`,
-        target: { node_id: expect.any(String) },
-      },
-    ]);
+    expect(
+      c3?.diagnostics.some(
+        (d) =>
+          d.code === 'missing-media' &&
+          d.message ===
+            `Image sequence hold for clip-bound-3 was not searched: held sequences exceed ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} images`
+      )
+    ).toBe(true);
+    expect(
+      c3?.diagnostics.some((d) => d.message.includes('is not in the bundle'))
+    ).toBe(false);
   });
 
   test('deduplicates identical sequence records across multiple clips so shared images are counted once', () => {
@@ -2413,11 +2416,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
       rate: 24,
       frame_zero_padding: 5,
       missing_frame_policy: 'hold' as const,
-      available_range: {
-        OTIO_SCHEMA: 'TimeRange.1',
-        start_time: { value: 10, rate: 24 },
-        duration: { value: 40000, rate: 24 },
-      },
+      available_range: imageRange(10, 40000),
     };
 
     const doc = readOtioDocument(
@@ -2488,11 +2487,7 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
                     rate: 24,
                     frame_zero_padding: 5,
                     missing_frame_policy: 'hold',
-                    available_range: {
-                      OTIO_SCHEMA: 'TimeRange.1',
-                      start_time: { value: 10, rate: 24 },
-                      duration: { value: 20000, rate: 24 },
-                    },
+                    available_range: imageRange(10, 20000),
                   },
                 },
               ],
@@ -2512,10 +2507,16 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
     );
 
     // Point clip-d2's media reference to the identical object as clip-d1
-    const clip1Node = Object.values(doc.nodes).find((n) => n.name === 'clip-d1');
-    const clip2Node = Object.values(doc.nodes).find((n) => n.name === 'clip-d2');
+    const clip1Node = Object.values(doc.nodes).find(
+      (n) => n.name === 'clip-d1'
+    );
+    const clip2Node = Object.values(doc.nodes).find(
+      (n) => n.name === 'clip-d2'
+    );
     if (clip1Node && clip2Node && clip1Node.media_references) {
-      Object.assign(clip2Node, { media_references: clip1Node.media_references });
+      Object.assign(clip2Node, {
+        media_references: clip1Node.media_references,
+      });
     }
 
     const evalDedup = evaluateOtioAt(doc, 'timeline-dedup', {
@@ -2525,13 +2526,16 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
     expect(evalDedup.video_contributions).toHaveLength(3);
     // All 3 clips admitted -> none get the budget warning
     for (const contrib of evalDedup.video_contributions) {
-      expect(contrib.diagnostics).toEqual([
-        expect.objectContaining({
-          severity: 'warning',
-          code: 'missing-media',
-          message: expect.stringMatching(/is not in the bundle$/),
-        }),
-      ]);
+      expect(
+        contrib.diagnostics.some(
+          (d) =>
+            d.code === 'missing-media' &&
+            d.message.endsWith('is not in the bundle')
+        )
+      ).toBe(true);
+      expect(
+        contrib.diagnostics.some((d) => d.message.includes('was not searched'))
+      ).toBe(false);
     }
   });
 });

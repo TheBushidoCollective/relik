@@ -451,7 +451,10 @@ function heldImages(
   document: OtioDocumentV1,
   state: DocumentSequenceState,
   record: object,
-  sequence: { readonly count: number; entry(index: number): OtioBundleEntryName | null }
+  sequence: {
+    readonly count: number;
+    entry(index: number): OtioBundleEntryName | null;
+  }
 ): Int32Array {
   const cached = state.heldImages.get(record);
   if (cached) return cached;
@@ -479,8 +482,8 @@ function lastAtOrBefore(images: Int32Array, target: number): number {
   let result = -1;
   while (low <= high) {
     const mid = (low + high) >>> 1;
-    const value = images[mid]!;
-    if (value <= target) {
+    const value = images[mid];
+    if (value !== undefined && value <= target) {
       result = value;
       low = mid + 1;
     } else {
@@ -584,11 +587,8 @@ function chooseSequenceFrame(
     const images = heldImages(document, state, record, sequence);
     const chosenIndex =
       imageIndex < 0
-        ? images[0] ?? -1
-        : lastAtOrBefore(
-            images,
-            outside ? sequence.count - 1 : imageIndex - 1
-          );
+        ? (images[0] ?? -1)
+        : lastAtOrBefore(images, outside ? sequence.count - 1 : imageIndex - 1);
     if (chosenIndex >= 0) {
       const built = resolve(chosenIndex);
       if (built) {
