@@ -32,6 +32,7 @@ import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
   cp,
+  mkdir,
   mkdtemp,
   readFile,
   realpath,
@@ -64,6 +65,7 @@ import {
   cleanupOwnedBrowserStartup,
   createBrowserHeadlessLaunch,
 } from './browser-headless.ts';
+import { isOpaqueBlack } from './otio-path-pixels.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
@@ -1293,7 +1295,7 @@ async function extractFrame(
       '-f',
       'rawvideo',
       '-pix_fmt',
-      'rgb24',
+      'rgba',
       'pipe:1',
     ],
     { timeoutMs: 20000 }
@@ -1305,7 +1307,7 @@ async function extractFrame(
   );
   assert.equal(
     result.stdout.length,
-    width * height * 3,
+    width * height * 4,
     `decoded ${file} frame ${frame} is ${result.stdout.length} bytes`
   );
   return new Uint8Array(result.stdout);
@@ -1341,8 +1343,9 @@ function barColumn(rgb: Uint8Array, width: number, height: number): number {
   let best = 0;
   let bestX = 0;
   const y = Math.floor(height / 2);
+  const stride = rgb.length === width * height * 4 ? 4 : 3;
   for (let x = 0; x < width; x++) {
-    const i = (y * width + x) * 3;
+    const i = (y * width + x) * stride;
     const lum = (rgb[i] ?? 0) + (rgb[i + 1] ?? 0) + (rgb[i + 2] ?? 0);
     if (lum > best) {
       best = lum;
@@ -1352,17 +1355,13 @@ function barColumn(rgb: Uint8Array, width: number, height: number): number {
   return bestX;
 }
 
-function isOpaqueBlack(rgb: Uint8Array): boolean {
-  let peak = 0;
-  for (const value of rgb) peak = Math.max(peak, value);
-  return peak <= 8;
-}
 
 /** Luminance-weighted centre of the above-half-peak run, as a fraction of row width. */
 function rowCenter(rgb: Uint8Array, rowWidth: number): number {
+  const stride = rgb.length % 4 === 0 && rgb.length !== rowWidth * 3 ? 4 : 3;
   const lum: number[] = [];
   for (let x = 0; x < rowWidth; x++) {
-    const i = x * 3;
+    const i = x * stride;
     lum.push((rgb[i] ?? 0) + (rgb[i + 1] ?? 0) + (rgb[i + 2] ?? 0));
   }
   const half = (Math.min(...lum) + Math.max(...lum)) / 2;
@@ -1586,9 +1585,13 @@ interface ChromeSession {
   continuedNonLoopback: string[];
   cspHeaders: string[];
   workerUrls: string[];
+  label: string | null;
+  getContextEvents?(): Promise<
+    Array<{ type: string; timestamp: number; target: string | null }>
+  >;
 }
-
 interface OpenBrowserOptions {
+  readonly label?: string;
   readonly recordMediaSeekTargets?: boolean;
   readonly blockWebCodecs?: boolean;
 }
@@ -1607,6 +1610,162 @@ function loopbackUrl(value: string): boolean {
     return false;
   }
 }
+interface CanvasAlphaStatistics {
+  readonly sample_count: number;
+  readonly min: number;
+  readonly max: number;
+  readonly mean: number;
+  readonly zero_count: number;
+  readonly opaque_count: number;
+}
+
+interface CanvasAlphaCensusRecord {
+  readonly sequence: number;
+  readonly browser_label: string | null;
+  readonly width: number;
+  readonly height: number;
+  readonly lost: boolean;
+  readonly alpha: CanvasAlphaStatistics;
+  readonly context_events: ReadonlyArray<{
+    readonly type: string;
+    readonly timestamp: number;
+    readonly target: string | null;
+  }>;
+  readonly timestamp: number;
+}
+
+let nextBrowserSeq = 0;
+let nextCanvasAlphaCensusSeq = 0;
+const canvasAlphaCensus: CanvasAlphaCensusRecord[] = [];
+let latestCanvasAlphaRecord: CanvasAlphaCensusRecord | undefined;
+
+async function persistCanvasAlphaCensus(): Promise<void> {
+  try {
+    await mkdir(shotDir, { recursive: true });
+    await writeFile(
+      join(shotDir, 'canvas-alpha-census.json'),
+      `${JSON.stringify({ format: 'relic-otio-canvas-alpha-census/v1', census: canvasAlphaCensus, observations: canvasAlphaCensus }, null, 2)}\n`
+    );
+  } catch {}
+}
+
+function formatAlphaCensus(record?: CanvasAlphaCensusRecord | null): string {
+  const r = record ?? latestCanvasAlphaRecord;
+  if (!r) return 'census:none';
+  const a = r.alpha;
+  return `census(lost=${r.lost}, alpha=[min=${a.min}, max=${a.max}, mean=${a.mean.toFixed(2)}, zero=${a.zero_count}, opaque=${a.opaque_count}])`;
+}
+
+const contextEventLogPrelude = `(() => {
+  try {
+    const events = [];
+    globalThis.__otioContextEvents = events;
+    globalThis.__relicOtioContextEvents = events;
+
+    const record = (type, target, event) => {
+      try {
+        if (event) {
+          if (event.__otioLogged) return;
+          event.__otioLogged = true;
+        }
+        events.push({
+          type,
+          timestamp: performance.timeOrigin + performance.now(),
+          target:
+            target && target.tagName
+              ? target.tagName.toLowerCase() +
+                (target.className ? '.' + target.className : '')
+              : null,
+        });
+      } catch {}
+    };
+
+    const attach = (canvas) => {
+      if (!canvas || canvas.__otioContextObserved) return;
+      canvas.__otioContextObserved = true;
+      try {
+        canvas.addEventListener(
+          'contextlost',
+          (e) => {
+            try {
+              record('contextlost', e.target, e);
+            } catch {}
+          },
+          { capture: true, passive: true }
+        );
+        canvas.addEventListener(
+          'contextrestored',
+          (e) => {
+            try {
+              record('contextrestored', e.target, e);
+            } catch {}
+          },
+          { capture: true, passive: true }
+        );
+      } catch {}
+    };
+
+    const scan = () => {
+      try {
+        const canvases = document.querySelectorAll('canvas.otio-canvas');
+        for (let i = 0; i < canvases.length; i++) attach(canvases[i]);
+      } catch {}
+    };
+
+    window.addEventListener(
+      'contextlost',
+      (e) => {
+        try {
+          const t = e.target;
+          if (
+            t &&
+            ((t.matches && t.matches('canvas.otio-canvas')) ||
+              (t.classList && t.classList.contains('otio-canvas')))
+          ) {
+            record('contextlost', t, e);
+          }
+        } catch {}
+      },
+      { capture: true, passive: true }
+    );
+
+    window.addEventListener(
+      'contextrestored',
+      (e) => {
+        try {
+          const t = e.target;
+          if (
+            t &&
+            ((t.matches && t.matches('canvas.otio-canvas')) ||
+              (t.classList && t.classList.contains('otio-canvas')))
+          ) {
+            record('contextrestored', t, e);
+          }
+        } catch {}
+      },
+      { capture: true, passive: true }
+    );
+
+    const setupObserver = () => {
+      try {
+        scan();
+        if (document.documentElement) {
+          const observer = new MutationObserver(() => scan());
+          observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+          });
+        }
+      } catch {}
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupObserver);
+    } else {
+      setupObserver();
+    }
+  } catch {}
+})();`;
 
 async function openBrowser(
   url: string,
@@ -1662,6 +1821,42 @@ async function openBrowser(
     throw error;
   }
   children.add(child);
+  const browserSeq = ++nextBrowserSeq;
+  const seq = String(browserSeq).padStart(2, '0');
+  const label = options.label ?? 'browser';
+  const stderrDir = join(shotDir, 'browser-stderr');
+  await mkdir(stderrDir, { recursive: true });
+  const stderrPath = join(stderrDir, `${seq}-${label}.log`);
+  await writeFile(stderrPath, Buffer.alloc(0)).catch(() => {});
+
+  const stderrPipe = child.stdio[2];
+  assert.ok(
+    stderrPipe instanceof Readable,
+    'Chrome fd 2 did not expose a readable stderr pipe'
+  );
+  const MAX_STDERR_BYTES = 1024 * 1024;
+  const stderrChunks: Buffer[] = [];
+  let stderrBytes = 0;
+
+  const flushStderr = async () => {
+    try {
+      await writeFile(stderrPath, Buffer.concat(stderrChunks));
+    } catch {}
+  };
+
+  stderrPipe.on('data', (chunk: Buffer) => {
+    if (stderrBytes < MAX_STDERR_BYTES) {
+      const take = Math.min(chunk.length, MAX_STDERR_BYTES - stderrBytes);
+      stderrChunks.push(chunk.subarray(0, take));
+      stderrBytes += take;
+    }
+  });
+  stderrPipe.on('end', () => {
+    void flushStderr();
+  });
+  stderrPipe.on('close', () => {
+    void flushStderr();
+  });
   let startupConnection: CdpConnection | undefined;
   try {
     const toChrome = child.stdio[3];
@@ -1759,7 +1954,7 @@ async function openBrowser(
         },
       });
     }
-  })()`;
+  })();`;
     const pagePrelude = [
       options.recordMediaSeekTargets
         ? String.raw`(() => {
@@ -1782,12 +1977,13 @@ async function openBrowser(
               descriptor.set.call(this, value);
             },
           });
-        })()`
+        })();`
         : '',
+      contextEventLogPrelude,
       options.blockWebCodecs ? webCodecsTrap : '',
     ]
       .filter(Boolean)
-      .join('\n');
+      .join(';\n');
     if (pagePrelude) {
       await cdp.send(
         'Page.addScriptToEvaluateOnNewDocument',
@@ -1890,6 +2086,31 @@ async function openBrowser(
       continuedNonLoopback,
       cspHeaders,
       workerUrls,
+      label,
+      async getContextEvents(): Promise<
+        Array<{ type: string; timestamp: number; target: string | null }>
+      > {
+        return (
+          (await cdp
+            .send(
+              'Runtime.evaluate',
+              {
+                expression: '(globalThis.__otioContextEvents || []).slice()',
+                returnByValue: true,
+              },
+              sessionId
+            )
+            .then(
+              (res) =>
+                (res['result'] as { value?: unknown } | undefined)?.value
+            )
+            .catch(() => [])) as Array<{
+            type: string;
+            timestamp: number;
+            target: string | null;
+          }>
+        );
+      },
       send: (method, params) => cdp.send(method, params, sessionId),
       async evaluate<T>(expression: string): Promise<T> {
         const res = await cdp.send(
@@ -1978,6 +2199,31 @@ async function openBrowser(
             sessionId
           )
           .catch(() => {});
+        try {
+          const events = (await cdp
+            .send(
+              'Runtime.evaluate',
+              {
+                expression: '(globalThis.__otioContextEvents || []).slice()',
+                returnByValue: true,
+              },
+              sessionId
+            )
+            .then(
+              (res) =>
+                (res['result'] as { value?: unknown } | undefined)?.value
+            )
+            .catch(() => [])) as unknown[];
+          if (Array.isArray(events) && events.length > 0) {
+            const contextEventsDir = join(shotDir, 'context-events');
+            await mkdir(contextEventsDir, { recursive: true });
+            await writeFile(
+              join(contextEventsDir, `${seq}-${label}.json`),
+              `${JSON.stringify({ sequence: seq, label, events }, null, 2)}\n`
+            );
+          }
+        } catch {}
+        await flushStderr();
         await cdp.send('Browser.close').catch(() => {});
         child.kill('SIGKILL');
         children.delete(child);
@@ -1986,6 +2232,7 @@ async function openBrowser(
       },
     };
   } catch (error) {
+    await flushStderr();
     await cleanupOwnedBrowserStartup({
       child,
       connection: startupConnection,
@@ -2048,26 +2295,80 @@ async function sampleCanvas(
   width: number,
   height: number
 ): Promise<Uint8Array> {
-  const values = await browser.evaluate<number[]>(`(() => {
+  const read = await browser.evaluate<{
+    values: number[] | null;
+    lost: boolean;
+    context_events: Array<{
+      type: string;
+      timestamp: number;
+      target: string | null;
+    }>;
+    alpha: CanvasAlphaStatistics;
+  }>(`(() => {
     const canvas = document.querySelector('canvas.otio-canvas');
     if (!canvas) return null;
-    const src = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const ctx = canvas.getContext('2d');
+    const lost = typeof ctx?.isContextLost === 'function' ? ctx.isContextLost() : false;
+    let src = null;
+    try {
+      src = ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
+    } catch {}
+    if (!src) {
+      src = new Uint8Array(canvas.width * canvas.height * 4);
+    }
     const out = [];
+    let alphaMin = 255;
+    let alphaMax = 0;
+    let alphaSum = 0;
+    let alphaZeroCount = 0;
+    let alphaOpaqueCount = 0;
     for (let y = 0; y < ${height}; y++) {
       const sy = Math.min(canvas.height - 1, Math.floor(y * canvas.height / ${height}));
       for (let x = 0; x < ${width}; x++) {
         const sx = Math.min(canvas.width - 1, Math.floor(x * canvas.width / ${width}));
         const i = (sy * canvas.width + sx) * 4;
-        out.push(src[i], src[i + 1], src[i + 2]);
+        out.push(src[i], src[i + 1], src[i + 2], src[i + 3]);
+        const a = src[i + 3];
+        if (a < alphaMin) alphaMin = a;
+        if (a > alphaMax) alphaMax = a;
+        alphaSum += a;
+        if (a === 0) alphaZeroCount++;
+        if (a === 255) alphaOpaqueCount++;
       }
     }
-    return out;
+    const sample_count = ${width} * ${height};
+    return {
+      values: out,
+      lost,
+      context_events: (globalThis.__otioContextEvents || []).slice(),
+      alpha: {
+        sample_count,
+        min: sample_count > 0 ? alphaMin : 0,
+        max: sample_count > 0 ? alphaMax : 0,
+        mean: sample_count > 0 ? alphaSum / sample_count : 0,
+        zero_count: alphaZeroCount,
+        opaque_count: alphaOpaqueCount,
+      },
+    };
   })()`);
   assert.ok(
-    values && values.length === width * height * 3,
+    read?.values && read.values.length === width * height * 4,
     'canvas sample missing'
   );
-  return Uint8Array.from(values);
+  const record: CanvasAlphaCensusRecord = {
+    sequence: ++nextCanvasAlphaCensusSeq,
+    browser_label: browser.label ?? null,
+    width,
+    height,
+    lost: Boolean(read.lost),
+    alpha: read.alpha,
+    context_events: read.context_events ?? [],
+    timestamp: Date.now(),
+  };
+  canvasAlphaCensus.push(record);
+  latestCanvasAlphaRecord = record;
+  await persistCanvasAlphaCensus();
+  return Uint8Array.from(read.values);
 }
 
 async function canvasRowCenter(browser: ChromeSession): Promise<number> {
@@ -2076,14 +2377,14 @@ async function canvasRowCenter(browser: ChromeSession): Promise<number> {
     if (!canvas) return null;
     const data = canvas.getContext('2d').getImageData(0, Math.floor(canvas.height / 2), canvas.width, 1).data;
     const out = [];
-    for (let x = 0; x < canvas.width; x++) out.push(data[x * 4], data[x * 4 + 1], data[x * 4 + 2]);
+    for (let x = 0; x < canvas.width; x++) out.push(data[x * 4], data[x * 4 + 1], data[x * 4 + 2], data[x * 4 + 3]);
     return out;
   })()`);
   assert.ok(
-    row && row.length > 0 && row.length % 3 === 0,
+    row && row.length > 0 && row.length % 4 === 0,
     'canvas row missing'
   );
-  return rowCenter(Uint8Array.from(row), row.length / 3);
+  return rowCenter(Uint8Array.from(row), row.length / 4);
 }
 
 async function setTracksHidden(
@@ -4875,7 +5176,9 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
     createdAt: loopbackNow,
     expiresAt: loopbackNow + app.config.sessionTtlSeconds * 1000,
   });
-  const browser = await openBrowser(shareUrl, auxiliaryToken);
+  const browser = await openBrowser(shareUrl, auxiliaryToken, {
+    label: 'auxiliary-coincident-comment-reveal',
+  });
   const measurements: Array<Record<string, unknown>> = [];
   try {
     assert.equal(
@@ -6008,7 +6311,11 @@ async function assertPacketCanvas(
   );
   const toCorrect = rmse(canvas, correct);
   const toWrong = rmse(canvas, wrong);
-  const toBlack = rmse(canvas, new Uint8Array(correct.length));
+  const blackFrame = new Uint8Array(correct.length);
+  for (let i = 0; i < blackFrame.length; i += 4) {
+    blackFrame[i + 3] = 255;
+  }
+  const toBlack = rmse(canvas, blackFrame);
   const decoderCount = await browser.evaluate<number>(
     `document.querySelectorAll('.otio-video-decoders video').length`
   );
@@ -6082,6 +6389,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   const knownUrl = await publishDecoderDirectory('known', decoderFixtureDir);
   const knownBrowser = await openBrowser(knownUrl, sessionToken, {
     blockWebCodecs: true,
+    label: 'decoder-known',
   });
   try {
     assert.equal(
@@ -6182,6 +6490,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const webmBrowser = await openBrowser(webmUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    label: 'decoder-webm',
   });
   try {
     assert.equal(await waitReady(webmBrowser), 'true');
@@ -6235,7 +6544,9 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     'near-zero',
     nearZeroDocument
   );
-  const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken);
+  const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken, {
+    label: 'near-zero-control',
+  });
   try {
     const nearZeroReady = await waitReady(nearZeroBrowser);
     assert.equal(
@@ -6306,7 +6617,8 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   );
   const strictNegativeBrowser = await openBrowser(
     strictNegativeUrl,
-    sessionToken
+    sessionToken,
+    { label: 'strict-negative' }
   );
   try {
     assert.equal(await waitReady(strictNegativeBrowser), 'diagnostic');
@@ -6319,7 +6631,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     assert.equal(
       isOpaqueBlack(await sampleCanvas(strictNegativeBrowser, width, height)),
       true,
-      'truly negative source time painted media'
+      `truly negative source time painted media (${formatAlphaCensus()})`
     );
   } finally {
     await strictNegativeBrowser.close();
@@ -6358,7 +6670,8 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   );
   const availableOriginCutBrowser = await openBrowser(
     availableOriginCutUrl,
-    sessionToken
+    sessionToken,
+    { label: 'available-origin-cut' }
   );
   try {
     assert.equal(await waitReady(availableOriginCutBrowser), 'true');
@@ -6368,7 +6681,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
         await sampleCanvas(availableOriginCutBrowser, width, height)
       ),
       true,
-      'available-origin/cut witness has media before cut-c'
+      `available-origin/cut witness has media before cut-c (${formatAlphaCensus()})`
     );
     await seekTo(availableOriginCutBrowser, 56);
     assert.equal(
@@ -6423,6 +6736,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const editBrowser = await openBrowser(editUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    label: 'decoder-edit',
   });
   try {
     assert.equal(await waitReady(editBrowser), 'diagnostic');
@@ -6460,6 +6774,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const noDurationBrowser = await openBrowser(noDurationUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    label: 'decoder-no-duration',
   });
   try {
     assert.equal(await waitReady(noDurationBrowser), 'true');
@@ -6577,7 +6892,9 @@ try {
   const editedDupRangeBody = 'Duplicate Video 2 edit stays on the same range.';
   const replyBody = 'Reply to the duplicate Video 2 range.';
   let reaimed: HeldComposerProbe | undefined;
-  const browser = await openBrowser(shareUrl, sessionToken);
+  const browser = await openBrowser(shareUrl, sessionToken, {
+    label: 'qualification',
+  });
   try {
     await waitReady(browser);
     const who = await browser.evaluate<{ email: string | null }>(
@@ -6762,12 +7079,12 @@ try {
     assert.equal(
       isOpaqueBlack(outsideCanvas),
       true,
-      'nested plate spilled outside its exposure'
+      `nested plate spilled outside its exposure (${formatAlphaCensus()})`
     );
     assert.ok(
       Math.abs(barColumn(outsideCanvas, width, height) - plateBar) > 3 ||
         isOpaqueBlack(outsideCanvas),
-      'outside frame still shows the nested plate bar'
+      `outside frame still shows the nested plate bar (${formatAlphaCensus()})`
     );
     pass('nested-no-spill');
 
@@ -6890,7 +7207,7 @@ try {
     assert.equal(
       isOpaqueBlack(gapCanvas),
       true,
-      'gap frame is not opaque black'
+      `gap frame is not opaque black (${formatAlphaCensus()})`
     );
     pass('state-gap-black');
 
@@ -8001,7 +8318,9 @@ try {
   );
   const primaryCommentId = String(primaryAfterInsert['comment_id']);
   const insertedVersion = String(inserted['version']);
-  const insertBrowser = await openBrowser(shareUrl, sessionToken);
+  const insertBrowser = await openBrowser(shareUrl, sessionToken, {
+    label: 'version-insert',
+  });
   try {
     await waitReady(insertBrowser);
     const projectedMark = await insertBrowser.evaluate<{
@@ -8192,7 +8511,9 @@ try {
   const stateUrl = String(
     statePublished['url'] ?? statePublished['link'] ?? ''
   );
-  const stateBrowser = await openBrowser(stateUrl, sessionToken);
+  const stateBrowser = await openBrowser(stateUrl, sessionToken, {
+    label: 'state-occlusion',
+  });
   try {
     await waitReady(stateBrowser);
     await setTracksHidden(stateBrowser, plan.nested_occluders, true);
@@ -8230,7 +8551,7 @@ try {
     assert.equal(
       isOpaqueBlack(beneath),
       false,
-      `${statePlan.black_under} paints nothing under the black probe, so the policy check cannot fail`
+      `${statePlan.black_under} paints nothing under the black probe, so the policy check cannot fail (${formatAlphaCensus()})`
     );
     await setTracksHidden(stateBrowser, [statePlan.probe_track], false);
     await seekTo(stateBrowser, statePlan.black_frame);
@@ -8238,7 +8559,7 @@ try {
     assert.equal(
       isOpaqueBlack(black),
       true,
-      'sequence black policy did not paint opaque black'
+      `sequence black policy did not paint opaque black (${formatAlphaCensus()})`
     );
     pass('state-sequence-black');
 
@@ -8255,7 +8576,7 @@ try {
     assert.equal(
       isOpaqueBlack(codecCanvas),
       true,
-      'undecodable media painted a substitute frame'
+      `undecodable media painted a substitute frame (${formatAlphaCensus()})`
     );
     pass('state-codec');
   } finally {
