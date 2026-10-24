@@ -295,7 +295,7 @@ function paintNode(
         hidden
       );
       if (!painted) continue;
-      if (!surface) {
+      if (!surface || !ctx) {
         surface = checkout(depth);
         ctx = surface.getContext('2d');
         if (!ctx) return null;
@@ -323,7 +323,7 @@ function paintNode(
       hidden
     );
     if (!painted) continue;
-    if (!surface) {
+    if (!surface || !ctx) {
       surface = checkout(depth);
       ctx = surface.getContext('2d');
       if (!ctx) return null;

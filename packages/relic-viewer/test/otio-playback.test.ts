@@ -2532,6 +2532,7 @@ describe('otio playback controller', () => {
         document: doc,
         timelineId: 'timeline_50_black',
         canvas: canvas(output),
+        resolveMedia: async () => null,
       });
 
       await playback.seek({ value: 0, rate: 24 });
@@ -2598,6 +2599,7 @@ describe('otio playback controller', () => {
         document: doc,
         timelineId,
         canvas: canvas(output),
+        resolveMedia: async () => null,
       });
 
       await playback.seek({ value: 0, rate: 24 });
@@ -2612,7 +2614,38 @@ describe('otio playback controller', () => {
   });
 
   test('every pooled canvas ends at 0x0 on dispose', async () => {
-    const doc = buildDocument();
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_dispose' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_dispose' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_dispose' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_dispose' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 24, rate: 24 },
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ImageSequenceReference.1',
+                    missing_frame_policy: 'black',
+                    available_range: null,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
     const output = new SoftCanvas();
     output.width = 960;
     output.height = 540;
@@ -2628,11 +2661,13 @@ describe('otio playback controller', () => {
       return originalCreateElement(tag);
     }) as typeof document.createElement;
 
+    let playback: OtioPlaybackController | null = null;
     try {
-      const playback = createOtioPlayback({
+      playback = createOtioPlayback({
         document: doc,
-        timelineId: 'timeline_1',
+        timelineId: 'timeline_dispose',
         canvas: canvas(output),
+        resolveMedia: async () => null,
       });
 
       await playback.seek({ value: 0, rate: 24 });
@@ -2650,6 +2685,7 @@ describe('otio playback controller', () => {
         expect(surface.height).toBe(0);
       }
     } finally {
+      playback?.dispose();
       document.createElement = originalCreateElement;
     }
   });
