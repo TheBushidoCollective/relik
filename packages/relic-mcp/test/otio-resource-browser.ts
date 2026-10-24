@@ -395,7 +395,6 @@ async function startLoopbackServer(
   };
 }
 
-// Publish fixture via Node MCP process
 async function publishFixture(
   nodePath: string,
   mcpBundle: string,
@@ -440,17 +439,34 @@ async function publishFixture(
   child.stdin.end();
 
   const { promise: exitPromise, resolve: resolveExit } = Promise.withResolvers<number>();
-  child.on('close', resolveExit);
-  const exit = await exitPromise;
+  const timer = setTimeout(() => {
+    try {
+      child.kill('SIGKILL');
+    } catch {}
+    resolveExit(-1);
+  }, 15000);
 
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    resolveExit(code ?? 0);
+  });
+  child.on('error', (err) => {
+    clearTimeout(timer);
+    appendFileSync(stderrPath, `[mcp spawn error: ${err.message}]\n`);
+    resolveExit(-1);
+  });
+
+  const exit = await exitPromise;
+  const stdout = Buffer.concat(chunks).toString('utf8');
   const stderr = Buffer.concat(errChunks).toString('utf8');
+  child.kill();
+
   if (stderr.length > 0) {
     appendFileSync(stderrPath, `[mcp publish stderr for ${fixturePath}]\n${stderr}\n`);
   }
 
   assert.strictEqual(exit, 0, `Node MCP publish exited ${exit}: ${stderr}`);
 
-  const stdout = Buffer.concat(chunks).toString('utf8');
   const lines = stdout.trim().split('\n').filter((l) => l.trim().length > 0);
   assert.ok(lines.length > 0, `No JSON-RPC response from relic_publish: ${stdout}`);
 
@@ -480,6 +496,22 @@ async function publishFixture(
 }
 
 // Browser session management
+function loopbackUrl(value: string): boolean {
+  if (
+    value.startsWith('blob:') ||
+    value.startsWith('data:') ||
+    value.startsWith('about:')
+  ) {
+    return true;
+  }
+  try {
+    const host = new URL(value).hostname;
+    return host === '127.0.0.1' || host === 'localhost' || host === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
 async function openBrowserSession(
   chromePath: string,
   servicePort: number,
@@ -559,13 +591,10 @@ async function openBrowserSession(
       const reqUrl = params.request?.url ?? '';
       const reqId = params.requestId;
       if (!reqId) return;
-      try {
-        const parsed = new URL(reqUrl);
-        if (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') {
-          void cdp.send('Fetch.continueRequest', { requestId: reqId }, sessionId).catch(() => {});
-          return;
-        }
-      } catch {}
+      if (loopbackUrl(reqUrl)) {
+        void cdp.send('Fetch.continueRequest', { requestId: reqId }, sessionId).catch(() => {});
+        return;
+      }
       void cdp.send('Fetch.failRequest', { requestId: reqId, errorReason: 'BlockedByClient' }, sessionId).catch(() => {});
     });
 
@@ -635,6 +664,28 @@ async function openBrowserSession(
       assert.ok(b64 && b64.length > 0, 'Canvas pixel capture returned empty base64');
       return Buffer.from(b64, 'base64');
     }
+    async function waitForExit(childProc: ChildProcess, timeoutMs = 2000): Promise<void> {
+      if (childProc.exitCode !== null || childProc.signalCode !== null) return;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      childProc.once('close', finish);
+      childProc.once('error', finish);
+      childProc.once('exit', finish);
+      const timer = setTimeout(() => {
+        try {
+          childProc.kill('SIGKILL');
+        } catch {}
+        finish();
+      }, timeoutMs);
+      await promise;
+      clearTimeout(timer);
+    }
+
 
     async function close(): Promise<void> {
       try {
@@ -660,6 +711,7 @@ async function openBrowserSession(
       try {
         child.kill('SIGTERM');
       } catch {}
+      await waitForExit(child).catch(() => {});
       await rm(profile, { recursive: true, force: true }).catch(() => {});
     }
 
@@ -670,6 +722,7 @@ async function openBrowserSession(
       try {
         child.kill('SIGKILL');
       } catch {}
+      await waitForExit(child).catch(() => {});
       await rm(profile, { recursive: true, force: true }).catch(() => {});
     }
 
@@ -694,7 +747,6 @@ async function openBrowserSession(
     throw error;
   }
 }
-
 // Wait for OTIO viewer to settle readiness
 async function waitReady(browser: ChromeSession, timeoutMs = 25000): Promise<string> {
   const ready = await browser.evaluate<string>(`(() => {
@@ -703,11 +755,8 @@ async function waitReady(browser: ChromeSession, timeoutMs = 25000): Promise<str
     const tick = () => {
       const root = document.querySelector('.otio-view');
       const state = root?.dataset?.ready ?? '';
-      const buffering = root?.dataset?.buffering;
-      if (buffering === 'false' && (state === 'true' || state === 'diagnostic')) {
+      if (state === 'true' || state === 'diagnostic' || state === 'error') {
         resolve(state);
-      } else if (state === 'error') {
-        resolve('error');
       } else if (Date.now() - start > ${timeoutMs}) {
         resolve(state || 'timeout');
       } else {
@@ -742,9 +791,9 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
 }
 
 // Generate R1 fixture: 50 wide black tracks
-function generateR1FixtureContent(): string {
+function generateR1FixtureContent(count = 50): string {
   const tracks: unknown[] = [];
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < count; i++) {
     tracks.push({
       OTIO_SCHEMA: 'Track.1',
       name: `Track ${i + 1}`,
@@ -1158,8 +1207,77 @@ function generateR6RawOtio(): string {
   });
 }
 
-// Main Record Routine
-async function runRecord(configPath: string, outDir: string): Promise<void> {
+// R1 Track Count Sweep
+async function runR1Sweep(
+  config: HarnessConfig,
+  server: LoopbackService,
+  sessionToken: string,
+  outDir: string
+): Promise<Array<Record<string, unknown>>> {
+  const counts = [1, 2, 3, 10, 49, 50];
+  const sweepResults: Array<Record<string, unknown>> = [];
+  const sweepDir = join(outDir, 'sweep');
+  mkdirSync(sweepDir, { recursive: true });
+
+  for (const count of counts) {
+    const fixtureContent = generateR1FixtureContent(count);
+    const fixtureBytes = buildOtioz(fixtureContent);
+    const fixturePath = join(sweepDir, `sweep_${count}.otioz`);
+    writeFileSync(fixturePath, fixtureBytes);
+
+    const pub = await publishFixture(
+      config.nodePath,
+      config.mcpBundle,
+      server.origin,
+      join(outDir, 'state.json'),
+      fixturePath,
+      join(outDir, 'stderr/mcp.stderr')
+    );
+
+    const browser = await openBrowserSession(
+      config.chromePath,
+      server.port,
+      server.origin,
+      pub.url,
+      sessionToken,
+      join(outDir, 'stderr/browser.stderr'),
+      join(outDir, 'browser-attestation.json')
+    );
+
+    await waitReady(browser);
+
+    const centerPixel = await browser.evaluate<[number, number, number, number]>(
+      'window.__otioAccounting.samplePixel(480, 270)'
+    );
+
+    const opTrace = await browser.evaluate<Array<Record<string, unknown>>>(
+      'window.__otioAccounting.getOpTrace ? window.__otioAccounting.getOpTrace() : []'
+    );
+    const visibleOps = opTrace.filter((op) => op.isVisible === true);
+
+    const isOpaque = centerPixel[3] === 255;
+    const isOpaqueBlack = isOpaque && centerPixel[0] === 0 && centerPixel[1] === 0 && centerPixel[2] === 0;
+
+    const row = {
+      count,
+      centerPixel,
+      isOpaque,
+      isOpaqueBlack,
+      visibleOpsCount: visibleOps.length,
+      visibleOpSequence: visibleOps.map((op) => op.op),
+      visiblePaintEndPixels: visibleOps.filter((o) => o.op === 'visible_paint_end_pixel'),
+    };
+    await browser.close();
+    await Bun.sleep(300);
+
+  }
+
+  writeFileSync(join(outDir, 'sweep-results.json'), JSON.stringify(sweepResults, null, 2), 'utf8');
+  console.log(`SWEEP_RESULTS: ${JSON.stringify(sweepResults)}`);
+  return sweepResults;
+}
+
+async function runRecord(configPath: string, outDir: string, diagSweep = false): Promise<void> {
   assert.ok(!existsSync(outDir), `Output directory already exists: ${outDir}`);
 
   const { config, hashes, assetManifest } = validateConfig(configPath);
@@ -1302,6 +1420,13 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         }
       }
 
+      const opTrace1 = await browserR1.evaluate<Array<Record<string, unknown>>>(
+        'window.__otioAccounting.getOpTrace ? window.__otioAccounting.getOpTrace() : []'
+      );
+      writeFileSync(join(outDir, 'op-trace-r1.json'), JSON.stringify(opTrace1, null, 2), 'utf8');
+      const visibleOps1 = opTrace1.filter((op) => op.isVisible === true);
+      writeFileSync(join(outDir, 'visible-ops-r1.json'), JSON.stringify(visibleOps1, null, 2), 'utf8');
+
       logObservation({
         case: 'R1',
         step: 'settled',
@@ -1313,9 +1438,10 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         diagnostics: diagnostics1,
         isOpaqueBlack: allBlack,
         pixelsSha256: pixels1Sha,
+        visibleOpsCount: visibleOps1.length,
+        visibleOpSequence: visibleOps1.map((o) => o.op),
+        paintEndPixels: visibleOps1.filter((o) => o.op === 'visible_paint_end_pixel'),
       });
-
-      // Second seek to frame 0
       await seekTo(browserR1, 0);
       const stats1Seek = await browserR1.evaluate<CanvasStats>('window.__otioAccounting.getCanvasStats()');
       const pixels1Seek = await browserR1.captureCanvasPixels();
@@ -1789,6 +1915,10 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
       logObservation({ case: 'R6', error: (err as Error).message });
     }
   } finally {
+    if (diagSweep) {
+      console.log(`Running R1 track-count diagnostic sweep for ${config.label}...`);
+      await runR1Sweep(config, server, sessionToken, outDir);
+    }
     await server.stop();
   }
 
@@ -2005,7 +2135,8 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    await runRecord(configPath, outDir);
+    const diagSweep = args.includes('--diag-sweep');
+    await runRecord(configPath, outDir, diagSweep);
   } else if (command === 'compare') {
     let baselineDir = '';
     let candidateDir = '';

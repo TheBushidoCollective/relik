@@ -10,6 +10,7 @@
  * - Black leaf fill count per paint
  * - decodeURIComponent call counter restricted to media/holdp00N_<digits>.png (streams via CDP binding every 4096 calls)
  * - Canvas disposal dimension capture across window 'pagehide'
+ * - Bounded op-trace of canvas mutations and visible canvas end-of-paint pixel alpha
  */
 
 export const PRELUDE_SOURCE = String.raw`(() => {
@@ -22,12 +23,30 @@ export const PRELUDE_SOURCE = String.raw`(() => {
   let totalCanvasCreations = 0;
   let currentOffscreenPixels = 0;
   let peakOffscreenPixels = 0;
+  let paintIndex = 0;
+
+  const opTrace = [];
+  const MAX_OP_TRACE = 5000;
+
+  function recordOp(op) {
+    if (paintIndex <= 2 && opTrace.length < MAX_OP_TRACE) {
+      opTrace.push({
+        ...op,
+        t: Date.now(),
+      });
+    }
+  }
+
+  function isVisibleCanvasDirect(canvas) {
+    if (!canvas) return false;
+    if (canvas.classList && canvas.classList.contains('otio-canvas')) return true;
+    if (canvas.className && typeof canvas.className === 'string' && canvas.className.includes('otio-canvas')) return true;
+    return false;
+  }
 
   function resolveCanvasRole(canvas, rec) {
     if (!canvas || !rec) return;
-    if (canvas.classList && canvas.classList.contains('otio-canvas')) {
-      rec.role = 'visible';
-    } else if (canvas.className && typeof canvas.className === 'string' && canvas.className.includes('otio-canvas')) {
+    if (isVisibleCanvasDirect(canvas)) {
       rec.role = 'visible';
     } else if (rec.role === 'unknown') {
       rec.role = 'offscreen';
@@ -89,6 +108,25 @@ export const PRELUDE_SOURCE = String.raw`(() => {
     globalThis.OffscreenCanvas = WrappedOffscreenCanvas;
   }
 
+  // Intercept HTMLCanvasElement.prototype.getContext
+  const nativeGetContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function(type, options) {
+    const res = nativeGetContext.apply(this, arguments);
+    let rec = canvasWeakMap.get(this);
+    if (!rec) {
+      rec = registerCanvas(this, this.width, this.height);
+    }
+    resolveCanvasRole(this, rec);
+    recordOp({
+      op: 'getContext',
+      canvasId: rec.id,
+      role: rec.role,
+      isVisible: isVisibleCanvasDirect(this),
+      contextType: type,
+    });
+    return res;
+  };
+
   // Intercept HTMLCanvasElement.prototype.width and height setters
   const widthDesc = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'width');
   const heightDesc = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'height');
@@ -107,6 +145,13 @@ export const PRELUDE_SOURCE = String.raw`(() => {
           rec = registerCanvas(this, this.width, this.height);
         }
         resolveCanvasRole(this, rec);
+        recordOp({
+          op: 'set_width',
+          canvasId: rec.id,
+          role: rec.role,
+          isVisible: isVisibleCanvasDirect(this),
+          value: val,
+        });
         rec.width = this.width;
         recomputeOffscreenPixels();
       },
@@ -127,32 +172,50 @@ export const PRELUDE_SOURCE = String.raw`(() => {
           rec = registerCanvas(this, this.width, this.height);
         }
         resolveCanvasRole(this, rec);
+        recordOp({
+          op: 'set_height',
+          canvasId: rec.id,
+          role: rec.role,
+          isVisible: isVisibleCanvasDirect(this),
+          value: val,
+        });
         rec.height = this.height;
         recomputeOffscreenPixels();
       },
     });
   }
 
-  // Paint tracking on CanvasRenderingContext2D
   let inPaint = false;
-  let paintIndex = 0;
   let currentPaint = null;
   const completedPaints = [];
 
   const nativeFillRect = CanvasRenderingContext2D.prototype.fillRect;
   const nativeClearRect = CanvasRenderingContext2D.prototype.clearRect;
   const nativeDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+  const nativeGetImageData = CanvasRenderingContext2D.prototype.getImageData;
 
   function isVisibleCanvas(ctx) {
-    const canvas = ctx.canvas;
-    if (!canvas) return false;
-    if (canvas.classList && canvas.classList.contains('otio-canvas')) return true;
-    if (canvas.className && typeof canvas.className === 'string' && canvas.className.includes('otio-canvas')) return true;
-    return false;
+    return isVisibleCanvasDirect(ctx.canvas);
   }
 
   CanvasRenderingContext2D.prototype.fillRect = function(x, y, w, h) {
-    if (isVisibleCanvas(this)) {
+    const isVis = isVisibleCanvas(this);
+    let rec = canvasWeakMap.get(this.canvas);
+    if (!rec) rec = registerCanvas(this.canvas, this.canvas.width, this.canvas.height);
+    resolveCanvasRole(this.canvas, rec);
+
+    recordOp({
+      op: 'fillRect',
+      canvasId: rec.id,
+      role: rec.role,
+      isVisible: isVis,
+      x, y, w, h,
+      fillStyle: String(this.fillStyle),
+      globalAlpha: this.globalAlpha,
+      globalCompositeOperation: this.globalCompositeOperation,
+    });
+
+    if (isVis) {
       inPaint = true;
       paintIndex++;
       currentPaint = {
@@ -169,7 +232,6 @@ export const PRELUDE_SOURCE = String.raw`(() => {
       if (isBlack) {
         currentPaint.leafFills++;
       }
-      const rec = canvasWeakMap.get(this.canvas);
       if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
         currentPaint.offscreenCanvasIdsUsed.push(rec.id);
       }
@@ -178,9 +240,21 @@ export const PRELUDE_SOURCE = String.raw`(() => {
   };
 
   CanvasRenderingContext2D.prototype.clearRect = function(x, y, w, h) {
-    if (inPaint && currentPaint && !isVisibleCanvas(this)) {
+    const isVis = isVisibleCanvas(this);
+    let rec = canvasWeakMap.get(this.canvas);
+    if (!rec) rec = registerCanvas(this.canvas, this.canvas.width, this.canvas.height);
+    resolveCanvasRole(this.canvas, rec);
+
+    recordOp({
+      op: 'clearRect',
+      canvasId: rec.id,
+      role: rec.role,
+      isVisible: isVis,
+      x, y, w, h,
+    });
+
+    if (inPaint && currentPaint && !isVis) {
       currentPaint.clears++;
-      const rec = canvasWeakMap.get(this.canvas);
       if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
         currentPaint.offscreenCanvasIdsUsed.push(rec.id);
       }
@@ -189,18 +263,66 @@ export const PRELUDE_SOURCE = String.raw`(() => {
   };
 
   CanvasRenderingContext2D.prototype.drawImage = function(image, ...rest) {
-    if (isVisibleCanvas(this) && inPaint && currentPaint) {
-      currentPaint.complete = true;
-      completedPaints.push(currentPaint);
-      inPaint = false;
-    } else if (inPaint && currentPaint) {
+    const isVis = isVisibleCanvas(this);
+    let rec = canvasWeakMap.get(this.canvas);
+    if (!rec) rec = registerCanvas(this.canvas, this.canvas.width, this.canvas.height);
+    resolveCanvasRole(this.canvas, rec);
+
+    const sourceRec = (image instanceof HTMLCanvasElement) ? canvasWeakMap.get(image) : null;
+    const sourceId = sourceRec ? sourceRec.id : (image && image.tagName ? image.tagName : 'unknown');
+
+    recordOp({
+      op: 'drawImage',
+      canvasId: rec.id,
+      role: rec.role,
+      isVisible: isVis,
+      sourceId,
+      globalAlpha: this.globalAlpha,
+      globalCompositeOperation: this.globalCompositeOperation,
+    });
+
+    if (inPaint && currentPaint && !isVis) {
       currentPaint.draws++;
-      const rec = canvasWeakMap.get(this.canvas);
       if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
         currentPaint.offscreenCanvasIdsUsed.push(rec.id);
       }
     }
-    return nativeDrawImage.apply(this, arguments);
+
+    const ret = nativeDrawImage.apply(this, arguments);
+    if (isVis && inPaint && currentPaint) {
+      currentPaint.complete = true;
+      completedPaints.push(currentPaint);
+      inPaint = false;
+
+      // Sample center pixel immediately after visible canvas drawImage (bounded to paint 1)
+      if (pIdx === 1) {
+        try {
+          const sample = nativeGetImageData.call(this, 480, 270, 1, 1);
+          recordOp({
+            op: 'visible_paint_end_pixel',
+            canvasId: rec ? rec.id : -1,
+            paintIndex: pIdx,
+            centerAlpha: sample.data[3],
+            centerRgba: [sample.data[0], sample.data[1], sample.data[2], sample.data[3]],
+          });
+        } catch {}
+      }
+    }
+
+    return ret;
+  };
+
+  CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh, settings) {
+    const res = nativeGetImageData.apply(this, arguments);
+    const rec = canvasWeakMap.get(this.canvas);
+    recordOp({
+      op: 'getImageData',
+      canvasId: rec ? rec.id : -1,
+      role: rec ? rec.role : 'unknown',
+      isVisible: isVisibleCanvas(this),
+      sx, sy, sw, sh,
+    });
+    return res;
   };
 
   // Wrapped decodeURIComponent counter restricted to media/holdp00N_<digits>.png
@@ -279,6 +401,9 @@ export const PRELUDE_SOURCE = String.raw`(() => {
     },
     getDecodeCount() {
       return matchingDecodeCount;
+    },
+    getOpTrace() {
+      return opTrace;
     },
     captureBeforeDispose() {
       beforeDisposeSnapshot = takeSnapshot();
