@@ -133,6 +133,7 @@ interface ChromeSession {
       readonly timestamp: number;
     }>
   >;
+  readonly crashGpu: () => Promise<{ readonly gpuPid: number | null; readonly pidGone: boolean }>;
   readonly close: () => Promise<void>;
   readonly terminate: () => Promise<void>;
 }
@@ -593,6 +594,55 @@ async function publishFixture(
   return { url: parsedUrl, relicId };
 }
 
+export interface BrowserSessionOptions {
+  readonly onBindingEvent?: (payload: { type: string; count: number; timestamp: number }) => void;
+  readonly faultArm?: 'visible-paint-end-1' | 'next-visible-paint-end' | null;
+  readonly onPaused?: (cdp: CdpConnection, sessionId: string) => Promise<void>;
+}
+
+export async function getGpuPid(cdp: CdpConnection, chromeChildPid?: number): Promise<number | null> {
+  try {
+    const res = await cdp.send('SystemInfo.getProcessInfo');
+    const list = res['processInfo'] as Array<{ type?: string; id?: number }> | undefined;
+    if (list) {
+      const gpu = list.find((p) => p.type === 'gpu');
+      if (gpu && typeof gpu.id === 'number') {
+        return gpu.id;
+      }
+    }
+  } catch {}
+
+  try {
+    const out = execFileSync('ps', ['-A', '-o', 'pid,ppid,command'], { encoding: 'utf8' });
+    for (const line of out.split('\n')) {
+      if (line.includes('--type=gpu-process')) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parseInt(parts[0] ?? '', 10);
+        const ppid = parseInt(parts[1] ?? '', 10);
+        if (chromeChildPid === undefined || ppid === chromeChildPid) {
+          if (!isNaN(pid)) return pid;
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export async function waitForPidGone(pid: number, timeoutMs = 2000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      process.kill(pid, 0);
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 20);
+      await promise;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Browser session management
 async function openBrowserSession(
   chromePath: string,
@@ -602,8 +652,19 @@ async function openBrowserSession(
   sessionToken: string,
   stderrPath: string,
   attestationPath: string,
-  onBindingEvent?: (payload: { type: string; count: number; timestamp: number }) => void
+  optionsOrBinding?: ((payload: { type: string; count: number; timestamp: number }) => void) | BrowserSessionOptions
 ): Promise<ChromeSession> {
+  let onBindingEvent: ((payload: { type: string; count: number; timestamp: number }) => void) | undefined;
+  let faultArm: 'visible-paint-end-1' | 'next-visible-paint-end' | null = null;
+  let onPaused: ((cdp: CdpConnection, sessionId: string) => Promise<void>) | undefined;
+
+  if (typeof optionsOrBinding === 'function') {
+    onBindingEvent = optionsOrBinding;
+  } else if (optionsOrBinding && typeof optionsOrBinding === 'object') {
+    onBindingEvent = optionsOrBinding.onBindingEvent;
+    faultArm = optionsOrBinding.faultArm ?? null;
+    onPaused = optionsOrBinding.onPaused;
+  }
   const profile = await mkdtemp(join(tmpdir(), 'relic-otio-res-chrome-'));
   const shared = chromeArgs(chromePath, profile);
 
@@ -695,6 +756,32 @@ async function openBrowserSession(
         } catch {}
       }
     });
+
+    if (faultArm) {
+      await cdp.send('Debugger.enable', {}, sessionId);
+      await cdp.send(
+        'Page.addScriptToEvaluateOnNewDocument',
+        {
+          source: `window.__otioFaultArm = ${JSON.stringify(faultArm)};`,
+        },
+        sessionId
+      );
+
+      cdp.onEvent(async (event) => {
+        if (event.method === 'Debugger.paused' && (!event.sessionId || event.sessionId === sessionId)) {
+          if (onPaused) {
+            await onPaused(cdp, sessionId);
+          } else {
+            const gpuPid = await getGpuPid(cdp, child.pid);
+            await cdp.send('Browser.crashGpuProcess');
+            if (gpuPid) {
+              await waitForPidGone(gpuPid, 2000);
+            }
+            await cdp.send('Debugger.resume', {}, sessionId);
+          }
+        }
+      });
+    }
 
     // Install prelude before navigation
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: PRELUDE_SOURCE }, sessionId);
@@ -833,6 +920,15 @@ async function openBrowserSession(
       } catch {}
       await rm(profile, { recursive: true, force: true }).catch(() => {});
     }
+    async function crashGpu(): Promise<{ gpuPid: number | null; pidGone: boolean }> {
+      const gpuPid = await getGpuPid(cdp, child.pid);
+      await cdp.send('Browser.crashGpuProcess');
+      let pidGone = false;
+      if (gpuPid) {
+        pidGone = await waitForPidGone(gpuPid, 2000);
+      }
+      return { gpuPid, pidGone };
+    }
 
     return {
       cdp,
@@ -843,6 +939,7 @@ async function openBrowserSession(
       captureCanvasPixels,
       readVisibleWithState,
       getContextEvents,
+      crashGpu,
       close,
       terminate,
     };
@@ -3106,6 +3203,287 @@ export async function runR1Repeat(
   }
 }
 
+export async function runR1Provoke(
+  baselineConfigPath: string,
+  candidateConfigPath: string,
+  outDir: string,
+  mode = 'all',
+  trials = 3
+): Promise<void> {
+  assert.ok(isAbsolute(baselineConfigPath), `baselineConfigPath must be absolute: ${baselineConfigPath}`);
+  assert.ok(isAbsolute(candidateConfigPath), `candidateConfigPath must be absolute: ${candidateConfigPath}`);
+  assert.ok(isAbsolute(outDir), `outDir must be absolute: ${outDir}`);
+
+  console.log('[r1-provoke] Validating configs...');
+  const baselineVal = validateConfig(baselineConfigPath);
+  const candidateVal = validateConfig(candidateConfigPath);
+
+  mkdirSync(outDir, { recursive: true });
+  mkdirSync(join(outDir, 'runs'), { recursive: true });
+  mkdirSync(join(outDir, 'fixtures'), { recursive: true });
+
+  const r1Bytes = buildOtioz(generateR1FixtureContent());
+  const r1Path = join(outDir, 'fixtures/R1.otioz');
+  writeFileSync(r1Path, r1Bytes);
+
+  const selectedModes =
+    mode === 'all'
+      ? ['gpu-crash-after-settle', 'gpu-crash-first-paint', 'memory-pressure-after-settle']
+      : [mode];
+
+  const arms = ['baseline', 'candidate'] as const;
+  const resultsByMode: Record<string, Record<string, unknown>> = {};
+  const runsDetail: Array<Record<string, unknown>> = [];
+
+  for (const m of selectedModes) {
+    console.log(`\n[r1-provoke] === Mode: ${m} ===`);
+    const modeResult: Record<string, unknown> = {};
+
+    for (const arm of arms) {
+      const config = arm === 'baseline' ? baselineVal.config : candidateVal.config;
+      let demonstratedCount = 0;
+      let browserCheckFailedCount = 0;
+
+      for (let t = 1; t <= trials; t++) {
+        const runDir = join(outDir, 'runs', `${m}-${arm}-trial-${t}`);
+        mkdirSync(runDir, { recursive: true });
+        mkdirSync(join(runDir, 'pixels'), { recursive: true });
+        mkdirSync(join(runDir, 'screenshots'), { recursive: true });
+        mkdirSync(join(runDir, 'stderr'), { recursive: true });
+
+        const loopbackStderrPath = join(runDir, 'stderr/loopback.stderr');
+        const server = await startLoopbackServer(config.viewerDist, loopbackStderrPath);
+        const sessionToken = await server.createSessionToken();
+
+        const preSnapshot = takeSystemSnapshot();
+        const startTime = Date.now();
+
+        try {
+          const pub = await publishFixture(
+            config.nodePath,
+            config.mcpBundle,
+            server.origin,
+            join(runDir, 'state.json'),
+            r1Path,
+            join(runDir, 'stderr/mcp.stderr')
+          );
+
+          if (m === 'gpu-crash-first-paint') {
+            const browser = await openBrowserSession(
+              config.chromePath,
+              server.port,
+              server.origin,
+              pub.url,
+              sessionToken,
+              join(runDir, 'stderr/browser.stderr'),
+              join(runDir, 'browser-attestation.json'),
+              {
+                faultArm: 'visible-paint-end-1',
+              }
+            );
+
+            const ready = await waitReady(browser);
+            const rSettled = await browser.readVisibleWithState();
+            if (rSettled.pixels) writeFileSync(join(runDir, 'pixels/R1_settled.rgba'), rSettled.pixels);
+
+            await seekTo(browser, 0);
+            const rSeek2 = await browser.readVisibleWithState();
+            if (rSeek2.pixels) writeFileSync(join(runDir, 'pixels/R1_seek2.rgba'), rSeek2.pixels);
+
+            const events = await browser.getContextEvents();
+            await browser.close();
+
+            const stderrFile = join(runDir, 'stderr/browser.stderr');
+            let mappableCount = 0;
+            let readbackWarnCount = 0;
+            if (existsSync(stderrFile)) {
+              for (const l of readFileSync(stderrFile, 'utf8').split('\n')) {
+                if (/Creation of MappableSharedImage failed/i.test(l) || /MappableSharedImage/i.test(l)) mappableCount++;
+                if (/Canvas2D: Multiple readback operations/i.test(l) || /Multiple readback operations/i.test(l)) readbackWarnCount++;
+              }
+            }
+
+            const bothTransparent =
+              rSettled.pixelsSha256 === TRANSPARENT_SHA && rSeek2.pixelsSha256 === TRANSPARENT_SHA;
+            const noWarn = readbackWarnCount === 0;
+            const demonstrated = bothTransparent && noWarn;
+            if (demonstrated) demonstratedCount++;
+
+            const trialDetail = {
+              mode: m,
+              arm,
+              trial: t,
+              demonstrated,
+              bothTransparent,
+              noWarn,
+              mappableCount,
+              readbackWarnCount,
+              rSettledSha: rSettled.pixelsSha256,
+              rSeek2Sha: rSeek2.pixelsSha256,
+              events,
+              durationMs: Date.now() - startTime,
+              preSnapshot,
+              postSnapshot: takeSystemSnapshot(),
+            };
+            runsDetail.push(trialDetail);
+            appendFileSync(join(runDir, 'observations.jsonl'), JSON.stringify(trialDetail) + '\n');
+            console.log(
+              `[r1-provoke] ${m} ${arm} trial ${t}: demonstrated=${demonstrated} ` +
+              `(bothTransparent=${bothTransparent}, noWarn=${noWarn}, mappable=${mappableCount})`
+            );
+          } else if (m === 'gpu-crash-after-settle') {
+            const browser = await openBrowserSession(
+              config.chromePath,
+              server.port,
+              server.origin,
+              pub.url,
+              sessionToken,
+              join(runDir, 'stderr/browser.stderr'),
+              join(runDir, 'browser-attestation.json')
+            );
+
+            const ready = await waitReady(browser);
+            const rInitial = await browser.readVisibleWithState();
+
+            const crash = await browser.crashGpu();
+
+            const rLost = await browser.readVisibleWithState();
+            const eventsLost = await browser.getContextEvents();
+            const contextLostRecorded =
+              eventsLost.some((e) => e.type === 'contextlost') || rLost.isContextLost === true;
+            const lostTransparent = rLost.pixelsSha256 === TRANSPARENT_SHA;
+
+            const startWait = Date.now();
+            let restored = false;
+            while (Date.now() - startWait < 3000) {
+              const evts = await browser.getContextEvents();
+              if (evts.some((e) => e.type === 'contextrestored')) {
+                restored = true;
+                break;
+              }
+              const { promise: p, resolve: r } = Promise.withResolvers<void>();
+              setTimeout(r, 50);
+              await p;
+            }
+
+            const stateAfterRestore = await browser.evaluate<{ ready?: string; buffering?: string }>(
+              "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+            );
+            const rAfterRestore = await browser.readVisibleWithState();
+            const restoreTransparent = rAfterRestore.pixelsSha256 === TRANSPARENT_SHA;
+            const stateOk = stateAfterRestore.ready === 'true' && stateAfterRestore.buffering === 'false';
+
+            await seekTo(browser, 0);
+            const rAfterSeek = await browser.readVisibleWithState();
+            const seekOpaque = rAfterSeek.pixelsSha256 === OPAQUE_EXACT_SHA;
+
+            await browser.close();
+
+            const demonstrated =
+              contextLostRecorded && lostTransparent && restored && restoreTransparent && stateOk && seekOpaque;
+            if (demonstrated) demonstratedCount++;
+
+            if (!contextLostRecorded || !lostTransparent) {
+              browserCheckFailedCount++;
+            }
+
+            const trialDetail = {
+              mode: m,
+              arm,
+              trial: t,
+              demonstrated,
+              contextLostRecorded,
+              lostTransparent,
+              restored,
+              restoreTransparent,
+              stateOk,
+              seekOpaque,
+              initialSha: rInitial.pixelsSha256,
+              lostSha: rLost.pixelsSha256,
+              restoreSha: rAfterRestore.pixelsSha256,
+              seekSha: rAfterSeek.pixelsSha256,
+              durationMs: Date.now() - startTime,
+              preSnapshot,
+              postSnapshot: takeSystemSnapshot(),
+            };
+            runsDetail.push(trialDetail);
+            appendFileSync(join(runDir, 'observations.jsonl'), JSON.stringify(trialDetail) + '\n');
+            console.log(
+              `[r1-provoke] ${m} ${arm} trial ${t}: demonstrated=${demonstrated} ` +
+              `(lostRec=${contextLostRecorded}, lostTrans=${lostTransparent}, restored=${restored}, seekOpaque=${seekOpaque})`
+            );
+          } else if (m === 'memory-pressure-after-settle') {
+            const browser = await openBrowserSession(
+              config.chromePath,
+              server.port,
+              server.origin,
+              pub.url,
+              sessionToken,
+              join(runDir, 'stderr/browser.stderr'),
+              join(runDir, 'browser-attestation.json')
+            );
+
+            const ready = await waitReady(browser);
+            await browser.cdp.send('Memory.simulatePressureNotification', { level: 'critical' });
+            const { promise: p, resolve: r } = Promise.withResolvers<void>();
+            setTimeout(r, 500);
+            await p;
+
+            const rSettled = await browser.readVisibleWithState();
+            await seekTo(browser, 0);
+            const rSeek2 = await browser.readVisibleWithState();
+            const events = await browser.getContextEvents();
+            await browser.close();
+
+            const trialDetail = {
+              mode: m,
+              arm,
+              trial: t,
+              settledSha: rSettled.pixelsSha256,
+              settledContextLost: rSettled.isContextLost,
+              seek2Sha: rSeek2.pixelsSha256,
+              seek2ContextLost: rSeek2.isContextLost,
+              events,
+              durationMs: Date.now() - startTime,
+              preSnapshot,
+              postSnapshot: takeSystemSnapshot(),
+            };
+            runsDetail.push(trialDetail);
+            appendFileSync(join(runDir, 'observations.jsonl'), JSON.stringify(trialDetail) + '\n');
+            console.log(
+              `[r1-provoke] ${m} ${arm} trial ${t}: record-only ` +
+              `(settledSha=${rSettled.pixelsSha256}, seek2Sha=${rSeek2.pixelsSha256})`
+            );
+          }
+        } finally {
+          await server.stop();
+        }
+      }
+
+      modeResult[arm] = {
+        trials,
+        demonstratedCount,
+        demonstrated: demonstratedCount >= Math.ceil((trials * 2) / 3),
+        browserCheckFailed: browserCheckFailedCount > 0,
+      };
+    }
+
+    resultsByMode[m] = modeResult;
+  }
+
+  const summary = {
+    experiment: 'E2',
+    subcommand: 'r1-provoke',
+    status: 'completed',
+    modes: resultsByMode,
+    runsDetail,
+  };
+  writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
+
+  console.log('\n[r1-provoke] Finished all trials.');
+  console.log(`Summary written to: ${join(outDir, 'summary.json')}`);
+}
+
 
 
 // CLI Entrypoint
@@ -3219,8 +3597,38 @@ async function main(): Promise<void> {
     }
 
     await runR1Repeat(baselineConfig, candidateConfig, outDir, rounds, noise, e1aVerdict);
+  } else if (command === 'r1-provoke') {
+    let baselineConfig = '';
+    let candidateConfig = '';
+    let outDir = '';
+    let mode = 'all';
+    let trials = 3;
+
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if ((arg === '--baseline-config' || arg === '--baseline') && i + 1 < args.length) {
+        baselineConfig = resolve(args[++i] ?? '');
+      } else if ((arg === '--candidate-config' || arg === '--candidate') && i + 1 < args.length) {
+        candidateConfig = resolve(args[++i] ?? '');
+      } else if (arg === '--out' && i + 1 < args.length) {
+        outDir = resolve(args[++i] ?? '');
+      } else if (arg === '--mode' && i + 1 < args.length) {
+        mode = args[++i] ?? 'all';
+      } else if (arg === '--trials' && i + 1 < args.length) {
+        trials = parseInt(args[++i] ?? '3', 10);
+      }
+    }
+
+    if (!baselineConfig || !candidateConfig || !outDir) {
+      console.error(
+        'Usage: otio-resource-browser.ts r1-provoke --baseline-config <config.json> --candidate-config <config.json> --out <outDir> [--mode <all|gpu-crash-after-settle|gpu-crash-first-paint|memory-pressure-after-settle>] [--trials <N>]'
+      );
+      process.exit(1);
+    }
+
+    await runR1Provoke(baselineConfig, candidateConfig, outDir, mode, trials);
   } else {
-    console.error('Unknown command. Available commands: record, compare, official-repeat, r1-repeat');
+    console.error('Unknown command. Available commands: record, compare, official-repeat, r1-repeat, r1-provoke');
     process.exit(1);
   }
 }

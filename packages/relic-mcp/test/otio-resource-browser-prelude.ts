@@ -242,8 +242,10 @@ export const PRELUDE_SOURCE = String.raw`(() => {
   };
 
   CanvasRenderingContext2D.prototype.drawImage = function(image, ...rest) {
+    let isVis = false;
     try {
-      if (isVisibleCanvas(this) && inPaint && currentPaint) {
+      isVis = isVisibleCanvas(this);
+      if (isVis && inPaint && currentPaint) {
         const endTs = performance.timeOrigin + performance.now();
         currentPaint.complete = true;
         currentPaint.endTime = endTs;
@@ -258,7 +260,17 @@ export const PRELUDE_SOURCE = String.raw`(() => {
         }
       }
     } catch {}
-    return nativeDrawImage.apply(this, arguments);
+    const ret = nativeDrawImage.apply(this, arguments);
+    try {
+      if (isVis) {
+        if (globalThis.__otioFaultArm === 'visible-paint-end-1' || globalThis.__otioFaultArm === 'next-visible-paint-end') {
+          globalThis.__otioFaultArm = null;
+          globalThis.__otioFaultHit = true;
+          debugger;
+        }
+      }
+    } catch {}
+    return ret;
   };
   // Wrapped decodeURIComponent counter restricted to media/holdp00N_<digits>.png
   const nativeDecodeURIComponent = globalThis.decodeURIComponent;
