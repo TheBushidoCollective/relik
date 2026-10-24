@@ -368,15 +368,25 @@ jobs:
         working-directory: packages/relic-mcp
         run: |
           set -euo pipefail
-          TARBALL="$(npm pack --pack-destination "$RUNNER_TEMP" --silent --no-workspaces)"
-          test -f "$RUNNER_TEMP/$TARBALL"
+          # prepack prints its native checks to stdout, so the tarball name
+          # cannot be read from npm's stdout. Pack into an empty directory,
+          # keep npm's output in the log, and require exactly the expected file.
+          PACK_DIR="$RUNNER_TEMP/release-pack"
+          rm -rf "$PACK_DIR"
+          mkdir -p "$PACK_DIR"
+          npm pack --pack-destination "$PACK_DIR" --no-workspaces >&2
+          shopt -s nullglob
+          PACKED=("$PACK_DIR"/*.tgz)
+          test "${#PACKED[@]}" -eq 1 || { echo "expected one tarball in $PACK_DIR, found ${#PACKED[@]}"; exit 1; }
+          TARBALL="${PACKED[0]}"
+          test "$(basename "$TARBALL")" = "relic-mcp-${RELEASE_VERSION}.tgz" || { echo "unexpected tarball name: $(basename "$TARBALL")"; exit 1; }
           {
             echo '### Tarball hash'
             echo '```text'
-            sha256sum "$RUNNER_TEMP/$TARBALL"
+            sha256sum "$TARBALL"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "tarball=$RUNNER_TEMP/$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
 
       - name: Verify tarball preserves audited native prebuilds
         run: |
