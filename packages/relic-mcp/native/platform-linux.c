@@ -205,8 +205,15 @@ int relic_probe_confined_open(struct relic_open_error *error) {
 }
 
 int relic_open_root(const char *path, struct relic_open_error *error) {
+  /*
+   * RESOLVE_NO_SYMLINKS refuses every symlink, including the final component,
+   * with ELOOP once the walk follows it. O_NOFOLLOW stopped the walk early, so
+   * O_DIRECTORY reported ENOTDIR for a symlinked root, unlike Darwin's
+   * O_NOFOLLOW_ANY. O_DIRECTORY stays so non-directories are refused before any
+   * open.
+   */
   const unsigned long long flags =
-    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY;
+    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY;
   const int fd = relic_openat2(AT_FDCWD, path, flags, RESOLVE_NO_SYMLINKS);
 
   if (fd < 0) {
