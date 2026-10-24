@@ -76,6 +76,9 @@ interface CanvasStats {
     readonly clears: number;
     readonly draws: number;
     readonly complete: boolean;
+    readonly startTime?: number | null;
+    readonly endTime?: number | null;
+    readonly durationMs?: number | null;
   } | null;
 }
 
@@ -113,6 +116,23 @@ interface ChromeSession {
   readonly evaluate: <T>(expression: string) => Promise<T>;
   readonly screenshot: (label: string) => Promise<Buffer>;
   readonly captureCanvasPixels: () => Promise<Buffer>;
+  readonly readVisibleWithState: () => Promise<{
+    readonly found: boolean;
+    readonly isContextLost: boolean | null;
+    readonly width: number;
+    readonly height: number;
+    readonly pixels: Buffer | null;
+    readonly pixelsSha256: string | null;
+    readonly timestamp: number;
+  }>;
+  readonly getContextEvents: () => Promise<
+    Array<{
+      readonly type: 'contextlost' | 'contextrestored';
+      readonly canvasId: number | null;
+      readonly role: string;
+      readonly timestamp: number;
+    }>
+  >;
   readonly close: () => Promise<void>;
   readonly terminate: () => Promise<void>;
 }
@@ -636,6 +656,53 @@ async function openBrowserSession(
       return Buffer.from(b64, 'base64');
     }
 
+    async function readVisibleWithState(): Promise<{
+      found: boolean;
+      isContextLost: boolean | null;
+      width: number;
+      height: number;
+      pixels: Buffer | null;
+      pixelsSha256: string | null;
+      timestamp: number;
+    }> {
+      const res = await evaluate<{
+        found: boolean;
+        isContextLost: boolean | null;
+        width: number;
+        height: number;
+        pixelsBase64: string | null;
+        timestamp: number;
+      }>('window.__otioAccounting.readVisibleWithState()');
+      const buf = res.pixelsBase64 ? Buffer.from(res.pixelsBase64, 'base64') : null;
+      return {
+        found: res.found,
+        isContextLost: res.isContextLost,
+        width: res.width,
+        height: res.height,
+        pixels: buf,
+        pixelsSha256: buf ? sha256Hex(buf) : null,
+        timestamp: res.timestamp,
+      };
+    }
+
+    async function getContextEvents(): Promise<
+      Array<{
+        type: 'contextlost' | 'contextrestored';
+        canvasId: number | null;
+        role: string;
+        timestamp: number;
+      }>
+    > {
+      return evaluate<
+        Array<{
+          type: 'contextlost' | 'contextrestored';
+          canvasId: number | null;
+          role: string;
+          timestamp: number;
+        }>
+      >('window.__otioAccounting.getContextEvents()');
+    }
+
     async function close(): Promise<void> {
       try {
         await cdp.send(
@@ -680,6 +747,8 @@ async function openBrowserSession(
       evaluate,
       screenshot,
       captureCanvasPixels,
+      readVisibleWithState,
+      getContextEvents,
       close,
       terminate,
     };
@@ -1348,6 +1417,25 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         before: beforeDispose,
         after: afterDispose,
       });
+
+      const contextEvents1 = await browserR1.getContextEvents();
+      logObservation({
+        case: 'R1',
+        step: 'contextEvents',
+        events: contextEvents1,
+      });
+
+      // R1 must fail closed: settled and seek2 must both be OPAQUE_EXACT
+      assert.strictEqual(
+        pixels1Sha,
+        OPAQUE_EXACT_SHA,
+        `R1 settled canvas is not OPAQUE_EXACT: got ${pixels1Sha}`
+      );
+      assert.strictEqual(
+        pixels1SeekSha,
+        OPAQUE_EXACT_SHA,
+        `R1 seek2 canvas is not OPAQUE_EXACT: got ${pixels1SeekSha}`
+      );
 
       caseResults.R1 = {
         status: 'pass',

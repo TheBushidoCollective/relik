@@ -23,11 +23,49 @@ export const PRELUDE_SOURCE = String.raw`(() => {
   let currentOffscreenPixels = 0;
   let peakOffscreenPixels = 0;
 
+  const contextEvents = [];
+
+  function isVisibleCanvasEl(canvas) {
+    if (!canvas) return false;
+    if (canvas.classList && canvas.classList.contains('otio-canvas')) return true;
+    if (canvas.className && typeof canvas.className === 'string' && canvas.className.includes('otio-canvas')) return true;
+    return false;
+  }
+
+  function attachContextListeners(canvas) {
+    if (!canvas || typeof canvas.addEventListener !== 'function') return;
+    try {
+      canvas.addEventListener('contextlost', function(e) {
+        // Never call preventDefault
+        try {
+          const timestamp = performance.timeOrigin + performance.now();
+          const rec = canvasWeakMap.get(canvas);
+          contextEvents.push({
+            type: 'contextlost',
+            canvasId: rec ? rec.id : null,
+            role: rec ? rec.role : (isVisibleCanvasEl(canvas) ? 'visible' : 'unknown'),
+            timestamp,
+          });
+        } catch {}
+      });
+      canvas.addEventListener('contextrestored', function(e) {
+        try {
+          const timestamp = performance.timeOrigin + performance.now();
+          const rec = canvasWeakMap.get(canvas);
+          contextEvents.push({
+            type: 'contextrestored',
+            canvasId: rec ? rec.id : null,
+            role: rec ? rec.role : (isVisibleCanvasEl(canvas) ? 'visible' : 'unknown'),
+            timestamp,
+          });
+        } catch {}
+      });
+    } catch {}
+  }
+
   function resolveCanvasRole(canvas, rec) {
     if (!canvas || !rec) return;
-    if (canvas.classList && canvas.classList.contains('otio-canvas')) {
-      rec.role = 'visible';
-    } else if (canvas.className && typeof canvas.className === 'string' && canvas.className.includes('otio-canvas')) {
+    if (isVisibleCanvasEl(canvas)) {
       rec.role = 'visible';
     } else if (rec.role === 'unknown') {
       rec.role = 'offscreen';
@@ -64,8 +102,18 @@ export const PRELUDE_SOURCE = String.raw`(() => {
     if (rec.role === 'offscreen') {
       recomputeOffscreenPixels();
     }
+    attachContextListeners(canvas);
     return rec;
   }
+
+  try {
+    window.addEventListener('DOMContentLoaded', () => {
+      try {
+        const vis = document.querySelector('canvas.otio-canvas');
+        if (vis) attachContextListeners(vis);
+      } catch {}
+    });
+  } catch {}
 
   // Intercept document.createElement('canvas')
   const nativeCreateElement = Document.prototype.createElement;
@@ -145,64 +193,73 @@ export const PRELUDE_SOURCE = String.raw`(() => {
 
   function isVisibleCanvas(ctx) {
     const canvas = ctx.canvas;
-    if (!canvas) return false;
-    if (canvas.classList && canvas.classList.contains('otio-canvas')) return true;
-    if (canvas.className && typeof canvas.className === 'string' && canvas.className.includes('otio-canvas')) return true;
-    return false;
+    return isVisibleCanvasEl(canvas);
   }
 
   CanvasRenderingContext2D.prototype.fillRect = function(x, y, w, h) {
-    if (isVisibleCanvas(this)) {
-      inPaint = true;
-      paintIndex++;
-      currentPaint = {
-        paintIndex,
-        offscreenCanvasIdsUsed: [],
-        leafFills: 0,
-        clears: 0,
-        draws: 0,
-        complete: false,
-      };
-    } else if (inPaint && currentPaint) {
-      const style = String(this.fillStyle).toLowerCase().trim();
-      const isBlack = style === '#000000' || style === '#000' || style === 'black' || style === 'rgb(0, 0, 0)' || style === 'rgba(0, 0, 0, 1)';
-      if (isBlack) {
-        currentPaint.leafFills++;
+    try {
+      if (isVisibleCanvas(this)) {
+        const startTs = performance.timeOrigin + performance.now();
+        inPaint = true;
+        paintIndex++;
+        currentPaint = {
+          paintIndex,
+          offscreenCanvasIdsUsed: [],
+          leafFills: 0,
+          clears: 0,
+          draws: 0,
+          complete: false,
+          startTime: startTs,
+          endTime: null,
+          durationMs: null,
+        };
+      } else if (inPaint && currentPaint) {
+        const style = String(this.fillStyle).toLowerCase().trim();
+        const isBlack = style === '#000000' || style === '#000' || style === 'black' || style === 'rgb(0, 0, 0)' || style === 'rgba(0, 0, 0, 1)';
+        if (isBlack) {
+          currentPaint.leafFills++;
+        }
+        const rec = canvasWeakMap.get(this.canvas);
+        if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
+          currentPaint.offscreenCanvasIdsUsed.push(rec.id);
+        }
       }
-      const rec = canvasWeakMap.get(this.canvas);
-      if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
-        currentPaint.offscreenCanvasIdsUsed.push(rec.id);
-      }
-    }
+    } catch {}
     return nativeFillRect.apply(this, arguments);
   };
 
   CanvasRenderingContext2D.prototype.clearRect = function(x, y, w, h) {
-    if (inPaint && currentPaint && !isVisibleCanvas(this)) {
-      currentPaint.clears++;
-      const rec = canvasWeakMap.get(this.canvas);
-      if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
-        currentPaint.offscreenCanvasIdsUsed.push(rec.id);
+    try {
+      if (inPaint && currentPaint && !isVisibleCanvas(this)) {
+        currentPaint.clears++;
+        const rec = canvasWeakMap.get(this.canvas);
+        if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
+          currentPaint.offscreenCanvasIdsUsed.push(rec.id);
+        }
       }
-    }
+    } catch {}
     return nativeClearRect.apply(this, arguments);
   };
 
   CanvasRenderingContext2D.prototype.drawImage = function(image, ...rest) {
-    if (isVisibleCanvas(this) && inPaint && currentPaint) {
-      currentPaint.complete = true;
-      completedPaints.push(currentPaint);
-      inPaint = false;
-    } else if (inPaint && currentPaint) {
-      currentPaint.draws++;
-      const rec = canvasWeakMap.get(this.canvas);
-      if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
-        currentPaint.offscreenCanvasIdsUsed.push(rec.id);
+    try {
+      if (isVisibleCanvas(this) && inPaint && currentPaint) {
+        const endTs = performance.timeOrigin + performance.now();
+        currentPaint.complete = true;
+        currentPaint.endTime = endTs;
+        currentPaint.durationMs = endTs - (currentPaint.startTime || endTs);
+        completedPaints.push(currentPaint);
+        inPaint = false;
+      } else if (inPaint && currentPaint) {
+        currentPaint.draws++;
+        const rec = canvasWeakMap.get(this.canvas);
+        if (rec && !currentPaint.offscreenCanvasIdsUsed.includes(rec.id)) {
+          currentPaint.offscreenCanvasIdsUsed.push(rec.id);
+        }
       }
-    }
+    } catch {}
     return nativeDrawImage.apply(this, arguments);
   };
-
   // Wrapped decodeURIComponent counter restricted to media/holdp00N_<digits>.png
   const nativeDecodeURIComponent = globalThis.decodeURIComponent;
   let matchingDecodeCount = 0;
@@ -321,6 +378,62 @@ export const PRELUDE_SOURCE = String.raw`(() => {
       if (!ctx) return null;
       const pixel = ctx.getImageData(x, y, 1, 1).data;
       return [pixel[0], pixel[1], pixel[2], pixel[3]];
+    },
+    getContextEvents() {
+      return contextEvents.slice();
+    },
+    readVisibleWithState() {
+      const timestamp = performance.timeOrigin + performance.now();
+      const canvas = document.querySelector('canvas.otio-canvas');
+      if (!canvas) {
+        return {
+          found: false,
+          isContextLost: null,
+          width: 0,
+          height: 0,
+          pixelsBase64: null,
+          timestamp,
+        };
+      }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        return {
+          found: true,
+          isContextLost: true,
+          width: canvas.width,
+          height: canvas.height,
+          pixelsBase64: null,
+          timestamp,
+        };
+      }
+      let isLost = false;
+      try {
+        isLost = typeof ctx.isContextLost === 'function' ? ctx.isContextLost() : false;
+      } catch {
+        isLost = true;
+      }
+      let pixelsBase64 = null;
+      try {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const bytes = new Uint8Array(imageData.data.buffer);
+        let binary = '';
+        const len = bytes.byteLength;
+        const chunkSize = 0x8000;
+        for (let i = 0; i < len; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
+        }
+        pixelsBase64 = btoa(binary);
+      } catch {
+        pixelsBase64 = null;
+      }
+      return {
+        found: true,
+        isContextLost: isLost,
+        width: canvas.width,
+        height: canvas.height,
+        pixelsBase64,
+        timestamp,
+      };
     },
   };
 })();
