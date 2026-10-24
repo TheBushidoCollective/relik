@@ -1,0 +1,22 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+503 |             signal: child.signalCode,
+504 |             stderr,
+505 |             loopbackReceipts: persistedReceipts.receipts,
+506 |           })
+507 |         : '';
+508 |     assert.equal(exit, 0, `relic-mcp exited ${exit}: ${transport}`);
+                 ^
+AssertionError: relic-mcp exited 1: {"pid":96868,"packetBytes":262,"packetSha256":"37767a3347820b6fc73f1b4c9d45b7da13fa4a79f295fed46c80835b713543e1","inputOutcomes":[{"status":"fulfilled","value":262},{"status":"fulfilled","value":262}],"stdoutBytes":0,"stdoutSha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","exit":1,"signal":null,"stderr":"npm error code ETARGET\nnpm error notarget No matching version found for relic-mcp@0.13.0.\nnpm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist.\nnpm error A complete log of this run can be found in: /Users/jwaldrip/.npm/_logs/2026-10-24T19_11_05_278Z-debug-0.log\n","loopbackReceipts":[]}
+
+1 !== 0
+
+ generatedMessage: false,
+     actual: 1,
+   expected: 0,
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at callMcp (/Users/jwaldrip/.omp/wt/bootstrap-run-76269ed/packages/relic-mcp/test/otio-path.ts:508:12)
+
+Bun v1.4.3 (macOS arm64)

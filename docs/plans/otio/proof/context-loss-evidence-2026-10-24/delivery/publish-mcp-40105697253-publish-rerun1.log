@@ -1,0 +1,171 @@
+publish	Set up job	﻿2026-10-24T15:50:38.5821099Z Current runner version: '2.338.0'
+publish	Set up job	2026-10-24T15:50:38.5859151Z ##[group]Runner Image Provisioner
+publish	Set up job	2026-10-24T15:50:38.5860467Z Hosted Compute Agent
+publish	Set up job	2026-10-24T15:50:38.5861641Z Version: 20261021.618
+publish	Set up job	2026-10-24T15:50:38.5862826Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+publish	Set up job	2026-10-24T15:50:38.5864541Z Build Date: 2026-10-21T00:45:21Z
+publish	Set up job	2026-10-24T15:50:38.5865932Z Worker ID: {48b8f2fb-694f-4978-b60a-36cfdb7db502}
+publish	Set up job	2026-10-24T15:50:38.5867247Z Region: eastus
+publish	Set up job	2026-10-24T15:50:38.5868422Z Cloud: Azure
+publish	Set up job	2026-10-24T15:50:38.5869365Z ##[endgroup]
+publish	Set up job	2026-10-24T15:50:38.5871886Z ##[group]Operating System
+publish	Set up job	2026-10-24T15:50:38.5873038Z Ubuntu
+publish	Set up job	2026-10-24T15:50:38.5874336Z 24.04.5
+publish	Set up job	2026-10-24T15:50:38.5875220Z LTS
+publish	Set up job	2026-10-24T15:50:38.5876055Z ##[endgroup]
+publish	Set up job	2026-10-24T15:50:38.5877036Z ##[group]Runner Image
+publish	Set up job	2026-10-24T15:50:38.5878069Z Image: ubuntu-24.04
+publish	Set up job	2026-10-24T15:50:38.5879525Z Version: 20261012.334.1
+publish	Set up job	2026-10-24T15:50:38.5881483Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+publish	Set up job	2026-10-24T15:50:38.5884793Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+publish	Set up job	2026-10-24T15:50:38.5886623Z ##[endgroup]
+publish	Set up job	2026-10-24T15:50:38.5888693Z ##[group]GITHUB_TOKEN Permissions
+publish	Set up job	2026-10-24T15:50:38.5891572Z Contents: read
+publish	Set up job	2026-10-24T15:50:38.5892773Z Metadata: read
+publish	Set up job	2026-10-24T15:50:38.5894139Z ##[endgroup]
+publish	Set up job	2026-10-24T15:50:38.5897159Z Secret source: Actions
+publish	Set up job	2026-10-24T15:50:38.5898823Z Cache mode: write
+publish	Set up job	2026-10-24T15:50:38.5900557Z Prepare workflow directory
+publish	Set up job	2026-10-24T15:50:38.6389976Z Prepare all required actions
+publish	Set up job	2026-10-24T15:50:38.6462320Z Getting action download info
+publish	Set up job	2026-10-24T15:50:38.8151203Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+publish	Set up job	2026-10-24T15:50:39.0427430Z Download action repository 'actions/download-artifact@v4' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+publish	Set up job	2026-10-24T15:50:39.3112501Z Complete job name: publish
+publish	Run actions/setup-node@v4	﻿2026-10-24T15:50:39.3960164Z ##[group]Run actions/setup-node@v4
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.3961216Z with:
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.3961658Z   node-version: 24.22.0
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.3962138Z   always-auth: false
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.3962605Z   check-latest: false
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.3966779Z   token: ***
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.3967496Z ##[endgroup]
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.5428877Z Attempting to download 24.22.0...
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.5567216Z (node:2122) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.5569193Z (Use `node --trace-deprecation ...` to show where the warning was created)
+publish	Run actions/setup-node@v4	2026-10-24T15:50:39.9828165Z Acquiring 24.22.0 - x64 from https://github.com/actions/node-versions/releases/download/24.22.0-38668177966/node-24.22.0-linux-x64.tar.gz
+publish	Run actions/setup-node@v4	2026-10-24T15:50:40.5009715Z Extracting ...
+publish	Run actions/setup-node@v4	2026-10-24T15:50:40.5131309Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/b895a90b-7b22-4021-b34a-cc96417c523d -f /home/runner/work/_temp/b28c6ad2-85e2-4d7a-8dd7-ea2ae4532cbe
+publish	Run actions/setup-node@v4	2026-10-24T15:50:41.7786699Z Adding to the cache ...
+publish	Run actions/setup-node@v4	2026-10-24T15:50:45.0381711Z ##[group]Environment details
+publish	Run actions/setup-node@v4	2026-10-24T15:50:45.3315563Z node: v24.22.0
+publish	Run actions/setup-node@v4	2026-10-24T15:50:45.3316371Z npm: 11.19.1
+publish	Run actions/setup-node@v4	2026-10-24T15:50:45.3344646Z yarn: 1.22.22
+publish	Run actions/setup-node@v4	2026-10-24T15:50:45.3355068Z ##[endgroup]
+publish	Use an npm that supports trusted publishing	﻿2026-10-24T15:50:45.3628746Z ##[group]Run npm install -g npm@latest
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:45.3629431Z ^[[36;1mnpm install -g npm@latest^[[0m
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:45.3910755Z shell: /usr/bin/bash -e {0}
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:45.3911148Z ##[endgroup]
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:49.0099941Z 
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:49.0109395Z removed 8 packages, and changed 77 packages in 4s
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:49.0112059Z 
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:49.0112904Z 15 packages are looking for funding
+publish	Use an npm that supports trusted publishing	2026-10-24T15:50:49.0113542Z   run `npm fund` for details
+publish	Run actions/download-artifact@v4	﻿2026-10-24T15:50:49.0743203Z ##[group]Run actions/download-artifact@v4
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.0744000Z with:
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.0744346Z   name: relic-mcp-tarball
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.0744779Z   path: /home/runner/work/_temp/tarball
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.0745572Z   merge-multiple: false
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.0746006Z   repository: TheBushidoCollective/relik
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.0746480Z   run-id: 40105697253
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.0746836Z ##[endgroup]
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.2455047Z Downloading single artifact
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.2705824Z (node:2204) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.2735397Z (Use `node --trace-deprecation ...` to show where the warning was created)
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.3510025Z Preparing to download the following artifacts:
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.3511864Z - relic-mcp-tarball (ID: 12565110187, Size: 1122448, Expected Digest: sha256:42102099f254407d0aa1dee071443b71f659a4ef81307a3f17d98d8f3c8b61ca)
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.4735491Z Redirecting to blob download url: https://productionresultssa18.blob.core.windows.net/actions-results/d7f2b4bb-5b71-4b3a-84e7-7146ca89119b/workflow-job-run-32f928cf-aee6-50a7-8864-7ca92c06a9b8/artifacts/b7a5f67b137fa69a9375a015a143a8883dfce409c7ecf4854d96c6c52ede4da9.zip
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.4738193Z Starting download of artifact to: /home/runner/work/_temp/tarball
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.5370097Z (node:2204) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.5779171Z SHA256 digest of downloaded artifact is 42102099f254407d0aa1dee071443b71f659a4ef81307a3f17d98d8f3c8b61ca
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.5780269Z Artifact download completed successfully.
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.5780973Z Total of 1 artifact(s) downloaded
+publish	Run actions/download-artifact@v4	2026-10-24T15:50:49.5794637Z Download artifact has finished successfully
+publish	Publish	﻿2026-10-24T15:50:49.5945019Z ##[group]Run set -euo pipefail
+publish	Publish	2026-10-24T15:50:49.5945380Z ^[[36;1mset -euo pipefail^[[0m
+publish	Publish	2026-10-24T15:50:49.5945670Z ^[[36;1mset -- "$RUNNER_TEMP"/tarball/*.tgz^[[0m
+publish	Publish	2026-10-24T15:50:49.5946021Z ^[[36;1mtest -f "$1"^[[0m
+publish	Publish	2026-10-24T15:50:49.5946275Z ^[[36;1mnpm publish "$1" --access public^[[0m
+publish	Publish	2026-10-24T15:50:49.6012111Z shell: /usr/bin/bash -e {0}
+publish	Publish	2026-10-24T15:50:49.6012406Z ##[endgroup]
+publish	Publish	2026-10-24T15:50:50.2403111Z npm notice
+publish	Publish	2026-10-24T15:50:50.2542324Z npm notice 📦  relic-mcp@0.13.0
+publish	Publish	2026-10-24T15:50:50.2542993Z npm notice Tarball Contents
+publish	Publish	2026-10-24T15:50:50.2543800Z npm notice 935B .claude-plugin/marketplace.json
+publish	Publish	2026-10-24T15:50:50.2544504Z npm notice 706B .claude-plugin/plugin.json
+publish	Publish	2026-10-24T15:50:50.2545059Z npm notice 16.2kB README.md
+publish	Publish	2026-10-24T15:50:50.2545596Z npm notice 5.0kB dist/cover/cover.css
+publish	Publish	2026-10-24T15:50:50.2546180Z npm notice 1.2MB dist/cover/cover.js
+publish	Publish	2026-10-24T15:50:50.2546796Z npm notice 586.7kB dist/cover/frame.html
+publish	Publish	2026-10-24T15:50:50.2547396Z npm notice 356B dist/cover/index.html
+publish	Publish	2026-10-24T15:50:50.2548080Z npm notice 1.9MB dist/cover/pdf.worker.mjs
+publish	Publish	2026-10-24T15:50:50.2548692Z npm notice 102.4kB dist/cover/styles.css
+publish	Publish	2026-10-24T15:50:50.2549333Z npm notice 371B dist/native-secure-open.d.ts
+publish	Publish	2026-10-24T15:50:50.2549995Z npm notice 5.9kB dist/native-secure-open.js
+publish	Publish	2026-10-24T15:50:50.2550610Z npm notice 1.1MB dist/relic-mcp.js
+publish	Publish	2026-10-24T15:50:50.2551155Z npm notice 190B mcp-servers.json
+publish	Publish	2026-10-24T15:50:50.2551697Z npm notice 29.5kB native/build.mjs
+publish	Publish	2026-10-24T15:50:50.2552356Z npm notice 14.2kB native/confinement-probe.c
+publish	Publish	2026-10-24T15:50:50.2553074Z npm notice 148B native/darwin-release-toolchain.json
+publish	Publish	2026-10-24T15:50:50.2553955Z npm notice 500B native/linux-toolchain.json
+publish	Publish	2026-10-24T15:50:50.2554598Z npm notice 1.7kB native/local-build.mjs
+publish	Publish	2026-10-24T15:50:50.2555229Z npm notice 6.0kB native/platform-darwin.c
+publish	Publish	2026-10-24T15:50:50.2555847Z npm notice 5.5kB native/platform-linux.c
+publish	Publish	2026-10-24T15:50:50.2556435Z npm notice 609B native/platform.h
+publish	Publish	2026-10-24T15:50:50.2557007Z npm notice 23.7kB native/secure-open.c
+publish	Publish	2026-10-24T15:50:50.2557615Z npm notice 371B native/secure-open.d.ts
+publish	Publish	2026-10-24T15:50:50.2558158Z npm notice 1.8kB package.json
+publish	Publish	2026-10-24T15:50:50.2558801Z npm notice 996B prebuilds/darwin-arm64/build-info.json
+publish	Publish	2026-10-24T15:50:50.2559588Z npm notice 53.2kB prebuilds/darwin-arm64/secure_open.node
+publish	Publish	2026-10-24T15:50:50.2560696Z npm notice 995B prebuilds/darwin-x64/build-info.json
+publish	Publish	2026-10-24T15:50:50.2561508Z npm notice 23.9kB prebuilds/darwin-x64/secure_open.node
+publish	Publish	2026-10-24T15:50:50.2562315Z npm notice 1.0kB prebuilds/linux-arm64-gnu/build-info.json
+publish	Publish	2026-10-24T15:50:50.2563166Z npm notice 204.1kB prebuilds/linux-arm64-gnu/secure_open.node
+publish	Publish	2026-10-24T15:50:50.2564221Z npm notice 1.1kB prebuilds/linux-x64-gnu/build-info.json
+publish	Publish	2026-10-24T15:50:50.2565094Z npm notice 26.4kB prebuilds/linux-x64-gnu/secure_open.node
+publish	Publish	2026-10-24T15:50:50.2565873Z npm notice 32.4kB scripts/prove-packed-native.mjs
+publish	Publish	2026-10-24T15:50:50.2566534Z npm notice 15.2kB skills/relic/SKILL.md
+publish	Publish	2026-10-24T15:50:50.2567104Z npm notice 59.2kB src/comments.ts
+publish	Publish	2026-10-24T15:50:50.2567667Z npm notice 11.0kB src/cover/archive.ts
+publish	Publish	2026-10-24T15:50:50.2568243Z npm notice 2.4kB src/cover/assets.ts
+publish	Publish	2026-10-24T15:50:50.2568796Z npm notice 8.9kB src/cover/cdp.ts
+publish	Publish	2026-10-24T15:50:50.2569345Z npm notice 16.4kB src/cover/chrome.ts
+publish	Publish	2026-10-24T15:50:50.2569921Z npm notice 7.7kB src/cover/inputs.ts
+publish	Publish	2026-10-24T15:50:50.2570473Z npm notice 4.1kB src/cover/media.ts
+publish	Publish	2026-10-24T15:50:50.2571024Z npm notice 5.0kB src/cover/raster.ts
+publish	Publish	2026-10-24T15:50:50.2571575Z npm notice 9.9kB src/cover/render.ts
+publish	Publish	2026-10-24T15:50:50.2572121Z npm notice 4.4kB src/cover/upload.ts
+publish	Publish	2026-10-24T15:50:50.2572720Z npm notice 3.3kB src/cover/virtual-origin.ts
+publish	Publish	2026-10-24T15:50:50.2573284Z npm notice 1.8kB src/files.ts
+publish	Publish	2026-10-24T15:50:50.2573960Z npm notice 6.5kB src/http.ts
+publish	Publish	2026-10-24T15:50:50.2574444Z npm notice 5.2kB src/index.ts
+publish	Publish	2026-10-24T15:50:50.2574954Z npm notice 8.0kB src/install.ts
+publish	Publish	2026-10-24T15:50:50.2575479Z npm notice 8.7kB src/installer.ts
+publish	Publish	2026-10-24T15:50:50.2576284Z npm notice 34.3kB src/inventory.ts
+publish	Publish	2026-10-24T15:50:50.2576850Z npm notice 5.1kB src/metadata-cache.ts
+publish	Publish	2026-10-24T15:50:50.2577467Z npm notice 8.0kB src/native-secure-open.ts
+publish	Publish	2026-10-24T15:50:50.2578040Z npm notice 3.9kB src/origin.ts
+publish	Publish	2026-10-24T15:50:50.2578567Z npm notice 21.7kB src/otio-bundle.ts
+publish	Publish	2026-10-24T15:50:50.2579135Z npm notice 4.8kB src/protocol.ts
+publish	Publish	2026-10-24T15:50:50.2579656Z npm notice 32.2kB src/publish.ts
+publish	Publish	2026-10-24T15:50:50.2580187Z npm notice 18.8kB src/republish.ts
+publish	Publish	2026-10-24T15:50:50.2580757Z npm notice 57.6kB src/resolve-anchor.ts
+publish	Publish	2026-10-24T15:50:50.2581329Z npm notice 120.0kB src/server.ts
+publish	Publish	2026-10-24T15:50:50.2581810Z npm notice 5.6kB src/share.ts
+publish	Publish	2026-10-24T15:50:50.2582311Z npm notice 22.1kB src/state.ts
+publish	Publish	2026-10-24T15:50:50.2582781Z npm notice Tarball Details
+publish	Publish	2026-10-24T15:50:50.2583234Z npm notice name: relic-mcp
+publish	Publish	2026-10-24T15:50:50.2583842Z npm notice version: 0.13.0
+publish	Publish	2026-10-24T15:50:50.2584441Z npm notice filename: relic-mcp-0.13.0.tgz
+publish	Publish	2026-10-24T15:50:50.2585079Z npm notice package size: 1.1 MB
+publish	Publish	2026-10-24T15:50:50.2585671Z npm notice unpacked size: 5.9 MB
+publish	Publish	2026-10-24T15:50:50.2586372Z npm notice shasum: 69f730d6fa306870dcef686fd7d7ba5b6604340b
+publish	Publish	2026-10-24T15:50:50.2587243Z npm notice integrity: sha512-rBVHjM1xc5YkR[...]WRF2vhS5v9Tjg==
+publish	Publish	2026-10-24T15:50:50.2587910Z npm notice total files: 62
+publish	Publish	2026-10-24T15:50:50.2588324Z npm notice
+publish	Publish	2026-10-24T15:50:50.8040788Z npm notice npm tokens that bypass 2FA are being restricted for account changes and direct publishing. Learn how to prepare: https://gh.io/npm-gat-bypass2fa-deprecation
+publish	Publish	2026-10-24T15:50:50.8077187Z npm error code ENEEDAUTH
+publish	Publish	2026-10-24T15:50:50.8081864Z npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+publish	Publish	2026-10-24T15:50:50.8086112Z npm error need auth You need to authorize this machine using `npm login`
+publish	Publish	2026-10-24T15:50:50.8100272Z npm error A complete log of this run can be found in: /home/runner/.npm/_logs/2026-10-24T15_50_49_673Z-debug-0.log
+publish	Publish	2026-10-24T15:50:50.8324528Z ##[error]Process completed with exit code 1.
+publish	Complete job	﻿2026-10-24T15:50:50.8430447Z Cleaning up orphan processes
+publish	Complete job	2026-10-24T15:50:50.8923558Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/download-artifact@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
