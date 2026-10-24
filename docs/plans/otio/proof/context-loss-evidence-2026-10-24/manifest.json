@@ -1,0 +1,21 @@
+{
+  "archive": "otio-context-loss-evidence-2026-10-24.tar.zst",
+  "archiveBytes": 167092079,
+  "archiveSha256": "e2ecf6c920103fbac605dcf4e6c9f3d7828eaf89557be86cdd65b55f2cfc517a",
+  "parts": [
+    {
+      "name": "otio-context-loss-evidence-2026-10-24.tar.zst.part-00",
+      "bytes": 89128960,
+      "sha256": "a3f681c782c6b4582ede440d49bb5166fba8f326957076f52e1046c06b31cf57"
+    },
+    {
+      "name": "otio-context-loss-evidence-2026-10-24.tar.zst.part-01",
+      "bytes": 77963119,
+      "sha256": "3100752256b92f6b663f54588ca7e98b3026a422409196278767a94ff13cd66e"
+    }
+  ],
+  "packetsFile": "packets.txt",
+  "packetCount": 83,
+  "sourceRoot": "/Users/jwaldrip/.omp/otio-evidence",
+  "reassemble": "cat otio-context-loss-evidence-2026-10-24.tar.zst.part-* > otio-context-loss-evidence-2026-10-24.tar.zst && shasum -a 256 otio-context-loss-evidence-2026-10-24.tar.zst && zstd -dc otio-context-loss-evidence-2026-10-24.tar.zst | tar -xf -"
+}
