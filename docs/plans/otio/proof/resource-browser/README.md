@@ -213,6 +213,26 @@ mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
 - High-resolution paint start/end timestamps and duration distributions (min, max, mean, median, p95).
 - Evaluation rule: Candidate >= 5 of 10 trials with `contextlost` while Baseline is 0 flags candidate churn trigger.
 
+### 9. R1 Rendered States for Designer Review (r1-states)
+
+Exercises and captures rendered loss, restored, and failed-restore states for designer review with 1440x900 full-page screenshots and `.otio-view` element crops.
+
+```bash
+mise exec -- bun packages/relic-mcp/test/otio-resource-browser.ts \
+  r1-states \
+  --config /Users/jwaldrip/.omp/otio-evidence/resource-browser-configs/candidate.json \
+  --out /Users/jwaldrip/.omp/otio-evidence/r1-states
+```
+
+#### States Captured
+1. `lost`: Real GPU crash (`Browser.crashGpuProcess`); captured IMMEDIATELY after `contextlost` is observed (< 16 ms polling) and before `contextrestored`. Records time gap in ms.
+2. `restored`: Same trial; captured after `contextrestored` once `data-ready` settles without user seek.
+3. `failedRestore100ms`: Synthetic `contextlost` event dispatched on canvas; captured at +100 ms.
+4. `failedRestore3500ms`: Captured after 3000 ms restore deadline passes. Expects `unsupported-browser` diagnostic ("Preview graphics context was lost and the browser did not restore it") and buffering cleared.
+5. `failedRestoreAfterRepaint`: Synthetic `contextrestored` event dispatched; captured after repaint.
+
+Output manifest with all state metadata, diagnostics, readback classes, and screenshot file paths is written to `<outDir>/states.json`.
+
 ## Fixture Matrix and Expected Numbers
 
 | Fixture | Description | Baseline (6a83) | Candidate | Deciding Observable |

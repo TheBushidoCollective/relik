@@ -116,6 +116,9 @@ interface ChromeSession {
   readonly evaluate: <T>(expression: string) => Promise<T>;
   readonly screenshot: (label: string) => Promise<Buffer>;
   readonly captureCanvasPixels: () => Promise<Buffer>;
+  readonly captureCanvasPixelsWithTime: () => Promise<{ readonly pixels: Buffer; readonly timestamp: number }>;
+  readonly setViewport: (width: number, height: number) => Promise<void>;
+  readonly screenshotCrop: (selector: string) => Promise<Buffer>;
   readonly readVisibleWithState: () => Promise<{
     readonly found: boolean;
     readonly isContextLost: boolean | null;
@@ -838,11 +841,54 @@ async function openBrowserSession(
       assert.ok(bytes.length > 500, `Screenshot ${label} is empty or corrupted`);
       return bytes;
     }
+    async function setViewport(width: number, height: number): Promise<void> {
+      await cdp.send(
+        'Emulation.setDeviceMetricsOverride',
+        { width, height, deviceScaleFactor: 1, mobile: false },
+        sessionId
+      );
+    }
+
+    async function screenshotCrop(selector: string): Promise<Buffer> {
+      const box = await evaluate<{ x: number; y: number; width: number; height: number } | null>(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      })()`);
+
+      if (box && box.width > 0 && box.height > 0) {
+        const res = (await cdp.send(
+          'Page.captureScreenshot',
+          {
+            format: 'png',
+            clip: {
+              x: Math.max(0, box.x),
+              y: Math.max(0, box.y),
+              width: Math.max(1, box.width),
+              height: Math.max(1, box.height),
+              scale: 1,
+            },
+          },
+          sessionId
+        )) as { data: string };
+        return Buffer.from(res.data, 'base64');
+      }
+      return screenshot(selector);
+    }
+
+    async function captureCanvasPixelsWithTime(): Promise<{ pixels: Buffer; timestamp: number }> {
+      const res = await evaluate<{ pixelsBase64: string; timestamp: number }>(`(() => {
+        const timestamp = performance.timeOrigin + performance.now();
+        const b64 = window.__otioAccounting.getCanvasPixels();
+        return { pixelsBase64: b64, timestamp };
+      })()`);
+      assert.ok(res.pixelsBase64 && res.pixelsBase64.length > 0, 'Canvas pixel capture returned empty base64');
+      return { pixels: Buffer.from(res.pixelsBase64, 'base64'), timestamp: res.timestamp };
+    }
 
     async function captureCanvasPixels(): Promise<Buffer> {
-      const b64 = await evaluate<string>('window.__otioAccounting.getCanvasPixels()');
-      assert.ok(b64 && b64.length > 0, 'Canvas pixel capture returned empty base64');
-      return Buffer.from(b64, 'base64');
+      return (await captureCanvasPixelsWithTime()).pixels;
     }
 
     async function readVisibleWithState(): Promise<{
@@ -962,7 +1008,10 @@ async function openBrowserSession(
       profile,
       evaluate,
       screenshot,
+      screenshotCrop,
+      setViewport,
       captureCanvasPixels,
+      captureCanvasPixelsWithTime,
       readVisibleWithState,
       getContextEvents,
       crashGpu,
@@ -983,20 +1032,24 @@ async function openBrowserSession(
 }
 
 // Wait for OTIO viewer to settle readiness
-async function waitReady(browser: ChromeSession, timeoutMs = 25000): Promise<string> {
-  const ready = await browser.evaluate<string>(`(() => {
+async function waitReadyWithTime(
+  browser: ChromeSession,
+  timeoutMs = 25000
+): Promise<{ state: string; timestamp: number }> {
+  const res = await browser.evaluate<{ state: string; timestamp: number }>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
     const start = Date.now();
     const tick = () => {
       const root = document.querySelector('.otio-view');
       const state = root?.dataset?.ready ?? '';
       const buffering = root?.dataset?.buffering;
+      const timestamp = performance.timeOrigin + performance.now();
       if (buffering === 'false' && (state === 'true' || state === 'diagnostic')) {
-        resolve(state);
+        resolve({ state, timestamp });
       } else if (state === 'error') {
-        resolve('error');
+        resolve({ state: 'error', timestamp });
       } else if (Date.now() - start > ${timeoutMs}) {
-        resolve(state || 'timeout');
+        resolve({ state: state || 'timeout', timestamp });
       } else {
         setTimeout(tick, 50);
       }
@@ -1004,9 +1057,13 @@ async function waitReady(browser: ChromeSession, timeoutMs = 25000): Promise<str
     tick();
     return promise;
   })()`);
-  return ready;
+  return res;
 }
 
+async function waitReady(browser: ChromeSession, timeoutMs = 25000): Promise<string> {
+  const res = await waitReadyWithTime(browser, timeoutMs);
+  return res.state;
+}
 // Seek playhead via native slider
 async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
   const landed = await browser.evaluate<boolean>(`(() => {
@@ -1560,7 +1617,7 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         attestationPath
       );
 
-      const readyR1 = await waitReady(browserR1);
+      const { state: readyR1, timestamp: readyR1Timestamp } = await waitReadyWithTime(browserR1);
       assert.ok(
         readyR1 === 'true' || readyR1 === 'structural' || readyR1 === 'diagnostic',
         `R1 never settled: ${readyR1}`
@@ -1574,7 +1631,7 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
       );
 
-      const pixels1 = await browserR1.captureCanvasPixels();
+      const { pixels: pixels1, timestamp: settledReadbackTs } = await browserR1.captureCanvasPixelsWithTime();
       const pixels1Sha = sha256Hex(pixels1);
       writeFileSync(join(outDir, 'pixels/R1_settled.rgba'), pixels1);
       const shot1 = await browserR1.screenshot('R1_settled');
@@ -1600,12 +1657,14 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         diagnostics: diagnostics1,
         isOpaqueBlack: allBlack,
         pixelsSha256: pixels1Sha,
+        readyTimestamp: readyR1Timestamp,
+        readbackTimestamp: settledReadbackTs,
       });
 
       // Second seek to frame 0
       await seekTo(browserR1, 0);
       const stats1Seek = await browserR1.evaluate<CanvasStats>('window.__otioAccounting.getCanvasStats()');
-      const pixels1Seek = await browserR1.captureCanvasPixels();
+      const { pixels: pixels1Seek, timestamp: seek2ReadbackTs } = await browserR1.captureCanvasPixelsWithTime();
       const pixels1SeekSha = sha256Hex(pixels1Seek);
       writeFileSync(join(outDir, 'pixels/R1_seek2.rgba'), pixels1Seek);
 
@@ -1616,6 +1675,7 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         leafFills: stats1Seek.lastPaint?.leafFills ?? 0,
         pixelsMatch: pixels1Sha === pixels1SeekSha,
         pixelsSha256: pixels1SeekSha,
+        readbackTimestamp: seek2ReadbackTs,
       });
 
       // Disposal accounting
@@ -1627,8 +1687,6 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         'window.__otioAccounting.captureAfterDispose()'
       );
 
-      await browserR1.close();
-
       logObservation({
         case: 'R1',
         step: 'disposal',
@@ -1636,12 +1694,18 @@ async function runRecord(configPath: string, outDir: string): Promise<void> {
         after: afterDispose,
       });
 
+      // Collect context events BEFORE closing browserR1!
       const contextEvents1 = await browserR1.getContextEvents();
       logObservation({
         case: 'R1',
         step: 'contextEvents',
         events: contextEvents1,
+        readyTimestamp: readyR1Timestamp,
+        settledReadbackTimestamp: settledReadbackTs,
+        seek2ReadbackTimestamp: seek2ReadbackTs,
       });
+
+      await browserR1.close();
 
       // R1 must fail closed: settled and seek2 must both be OPAQUE_EXACT
       assert.strictEqual(
@@ -2981,19 +3045,22 @@ export async function runR1Repeat(
           join(runDir, 'browser-attestation.json')
         );
 
-        const ready = await waitReady(browser);
+        const { state: ready, timestamp: readyTimestamp } = await waitReadyWithTime(browser);
 
         let pixels1Sha = '';
         let isLost1: boolean | null = null;
+        let read1Ts = 0;
 
         if (arm.observer === 'passive') {
           const r1 = await browser.readVisibleWithState();
           pixels1Sha = r1.pixelsSha256 ?? '';
           isLost1 = r1.isContextLost;
+          read1Ts = r1.timestamp;
           if (r1.pixels) writeFileSync(join(runDir, 'pixels/R1_settled.rgba'), r1.pixels);
         } else {
-          const p1 = await browser.captureCanvasPixels();
+          const { pixels: p1, timestamp: ts1 } = await browser.captureCanvasPixelsWithTime();
           pixels1Sha = sha256Hex(p1);
+          read1Ts = ts1;
           writeFileSync(join(runDir, 'pixels/R1_settled.rgba'), p1);
         }
 
@@ -3004,15 +3071,18 @@ export async function runR1Repeat(
 
         let pixels2Sha = '';
         let isLost2: boolean | null = null;
+        let read2Ts = 0;
 
         if (arm.observer === 'passive') {
           const r2 = await browser.readVisibleWithState();
           pixels2Sha = r2.pixelsSha256 ?? '';
           isLost2 = r2.isContextLost;
+          read2Ts = r2.timestamp;
           if (r2.pixels) writeFileSync(join(runDir, 'pixels/R1_seek2.rgba'), r2.pixels);
         } else {
-          const p2 = await browser.captureCanvasPixels();
+          const { pixels: p2, timestamp: ts2 } = await browser.captureCanvasPixelsWithTime();
           pixels2Sha = sha256Hex(p2);
+          read2Ts = ts2;
           writeFileSync(join(runDir, 'pixels/R1_seek2.rgba'), p2);
         }
 
@@ -3139,8 +3209,48 @@ export async function runR1Repeat(
         };
         runsDetail.push(runInfo);
 
+        appendFileSync(
+          join(runDir, 'observations.jsonl'),
+          JSON.stringify({
+            case: 'R1',
+            step: 'settled',
+            arm: arm.key,
+            observer: arm.observer,
+            readyTimestamp,
+            readbackTimestamp: read1Ts,
+            pixelsSha256: pixels1Sha,
+            isContextLost: arm.observer === 'passive' ? isLost1 : null,
+            timestamp: read1Ts,
+          }) + '\n'
+        );
+        appendFileSync(
+          join(runDir, 'observations.jsonl'),
+          JSON.stringify({
+            case: 'R1',
+            step: 'seek2',
+            arm: arm.key,
+            observer: arm.observer,
+            readbackTimestamp: read2Ts,
+            pixelsSha256: pixels2Sha,
+            isContextLost: arm.observer === 'passive' ? isLost2 : null,
+            timestamp: read2Ts,
+          }) + '\n'
+        );
+        appendFileSync(
+          join(runDir, 'observations.jsonl'),
+          JSON.stringify({
+            case: 'R1',
+            step: 'contextEvents',
+            arm: arm.key,
+            observer: arm.observer,
+            events,
+            readyTimestamp,
+            settledReadbackTimestamp: read1Ts,
+            seek2ReadbackTimestamp: read2Ts,
+            timestamp: Date.now(),
+          }) + '\n'
+        );
         appendFileSync(join(runDir, 'observations.jsonl'), JSON.stringify(runInfo) + '\n');
-
         console.log(
           `[r1-repeat] Round ${round + 1} Run ${stepIndex + 1} (${arm.key}, ${isNoiseRound ? 'NOISE' : 'QUIET'}): ` +
           `label=${label} settled=${settledClass} seek2=${seek2Class}`
@@ -3697,6 +3807,323 @@ export async function runR1Stress(
   console.log(`Summary written to: ${join(outDir, 'summary.json')}`);
 }
 
+export async function runR1States(configPath: string, outDir: string): Promise<void> {
+  assert.ok(isAbsolute(configPath), `configPath must be absolute: ${configPath}`);
+  assert.ok(isAbsolute(outDir), `outDir must be absolute: ${outDir}`);
+
+  console.log('[r1-states] Validating config...');
+  const { config } = validateConfig(configPath);
+
+  mkdirSync(outDir, { recursive: true });
+  mkdirSync(join(outDir, 'screenshots'), { recursive: true });
+  mkdirSync(join(outDir, 'fixtures'), { recursive: true });
+  mkdirSync(join(outDir, 'pixels'), { recursive: true });
+  mkdirSync(join(outDir, 'stderr'), { recursive: true });
+
+  const r1Bytes = buildOtioz(generateR1FixtureContent());
+  const r1Path = join(outDir, 'fixtures/R1.otioz');
+  writeFileSync(r1Path, r1Bytes);
+
+  const statesResult: Record<string, unknown> = {};
+
+  // --- Trial 1: Real GPU crash for states (a) lost and (b) restored ---
+  console.log('[r1-states] Starting Trial 1: (a) lost and (b) restored...');
+  {
+    const server = await startLoopbackServer(config.viewerDist, join(outDir, 'stderr/loopback-trial1.stderr'));
+    const sessionToken = await server.createSessionToken();
+    try {
+      const pub = await publishFixture(
+        config.nodePath,
+        config.mcpBundle,
+        server.origin,
+        join(outDir, 'state-trial1.json'),
+        r1Path,
+        join(outDir, 'stderr/mcp-trial1.stderr')
+      );
+
+      const browser = await openBrowserSession(
+        config.chromePath,
+        server.port,
+        server.origin,
+        pub.url,
+        sessionToken,
+        join(outDir, 'stderr/browser-trial1.stderr'),
+        join(outDir, 'browser-attestation-trial1.json')
+      );
+
+      await waitReady(browser);
+      await browser.setViewport(1440, 900);
+
+      const crashStart = performance.now();
+      await browser.crashGpu();
+
+      let timeGapMs: number | null = null;
+      let lostObserved = false;
+      const pollStart = performance.now();
+      while (performance.now() - pollStart < 3000) {
+        const evts = await browser.getContextEvents();
+        if (evts.some((e) => e.type === 'contextlost')) {
+          lostObserved = true;
+          timeGapMs = performance.now() - crashStart;
+          break;
+        }
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 10);
+        await promise;
+      }
+
+      console.log(`[r1-states] Capturing state (a) lost (timeGapMs=${timeGapMs?.toFixed(1)})...`);
+      const lostFull = await browser.screenshot('lost-full');
+      writeFileSync(join(outDir, 'screenshots/lost-full.png'), lostFull);
+      const lostViewer = await browser.screenshotCrop('.otio-view');
+      writeFileSync(join(outDir, 'screenshots/lost-viewer.png'), lostViewer);
+
+      const lostAttrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+        "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+      );
+      const lostDiags = await browser.evaluate<string[]>(
+        "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+      );
+      const lostReadback = await browser.readVisibleWithState();
+      if (lostReadback.pixels) {
+        writeFileSync(join(outDir, 'pixels/lost.rgba'), lostReadback.pixels);
+      }
+      const lostEvents = await browser.getContextEvents();
+
+      statesResult['lost'] = {
+        timeGapMs,
+        lostObserved,
+        dataReady: lostAttrs.ready ?? null,
+        dataBuffering: lostAttrs.buffering ?? null,
+        diagnostics: lostDiags,
+        readbackSha: lostReadback.pixelsSha256,
+        readbackClass: classifyReadbackSha(lostReadback.pixelsSha256 ?? ''),
+        isContextLost: lostReadback.isContextLost,
+        screenshots: {
+          full: 'screenshots/lost-full.png',
+          viewer: 'screenshots/lost-viewer.png',
+        },
+        contextEvents: lostEvents,
+      };
+
+      console.log('[r1-states] Waiting for contextrestored and readiness to settle (b) restored...');
+      const restoreWaitStart = performance.now();
+      let restored = false;
+      while (performance.now() - restoreWaitStart < 5000) {
+        const evts = await browser.getContextEvents();
+        if (evts.some((e) => e.type === 'contextrestored')) {
+          restored = true;
+          break;
+        }
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 20);
+        await promise;
+      }
+
+      await waitReady(browser, 5000);
+
+      const restoredFull = await browser.screenshot('restored-full');
+      writeFileSync(join(outDir, 'screenshots/restored-full.png'), restoredFull);
+      const restoredViewer = await browser.screenshotCrop('.otio-view');
+      writeFileSync(join(outDir, 'screenshots/restored-viewer.png'), restoredViewer);
+
+      const restoredAttrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+        "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+      );
+      const restoredDiags = await browser.evaluate<string[]>(
+        "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+      );
+      const restoredReadback = await browser.readVisibleWithState();
+      if (restoredReadback.pixels) {
+        writeFileSync(join(outDir, 'pixels/restored.rgba'), restoredReadback.pixels);
+      }
+      const restoredEvents = await browser.getContextEvents();
+
+      statesResult['restored'] = {
+        restored,
+        dataReady: restoredAttrs.ready ?? null,
+        dataBuffering: restoredAttrs.buffering ?? null,
+        diagnostics: restoredDiags,
+        readbackSha: restoredReadback.pixelsSha256,
+        readbackClass: classifyReadbackSha(restoredReadback.pixelsSha256 ?? ''),
+        isContextLost: restoredReadback.isContextLost,
+        screenshots: {
+          full: 'screenshots/restored-full.png',
+          viewer: 'screenshots/restored-viewer.png',
+        },
+        contextEvents: restoredEvents,
+      };
+
+      await browser.close();
+    } finally {
+      await server.stop();
+    }
+  }
+
+  // --- Trial 2: Synthetic contextlost for state (c) failed-restore ---
+  console.log('[r1-states] Starting Trial 2: (c) failed-restore...');
+  {
+    const server = await startLoopbackServer(config.viewerDist, join(outDir, 'stderr/loopback-trial2.stderr'));
+    const sessionToken = await server.createSessionToken();
+    try {
+      const pub = await publishFixture(
+        config.nodePath,
+        config.mcpBundle,
+        server.origin,
+        join(outDir, 'state-trial2.json'),
+        r1Path,
+        join(outDir, 'stderr/mcp-trial2.stderr')
+      );
+
+      const browser = await openBrowserSession(
+        config.chromePath,
+        server.port,
+        server.origin,
+        pub.url,
+        sessionToken,
+        join(outDir, 'stderr/browser-trial2.stderr'),
+        join(outDir, 'browser-attestation-trial2.json')
+      );
+
+      await waitReady(browser);
+      await browser.setViewport(1440, 900);
+
+      await browser.evaluate(`(() => {
+        const canvas = document.querySelector('canvas.otio-canvas');
+        if (canvas) {
+          canvas.dispatchEvent(new Event('contextlost'));
+        }
+      })()`);
+
+      const { promise: p100, resolve: r100 } = Promise.withResolvers<void>();
+      setTimeout(r100, 100);
+      await p100;
+
+      const fr100Full = await browser.screenshot('failed-restore-100ms-full');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-100ms-full.png'), fr100Full);
+      const fr100Viewer = await browser.screenshotCrop('.otio-view');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-100ms-viewer.png'), fr100Viewer);
+      const fr100Attrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+        "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+      );
+      const fr100Diags = await browser.evaluate<string[]>(
+        "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+      );
+      const fr100Readback = await browser.readVisibleWithState();
+      if (fr100Readback.pixels) {
+        writeFileSync(join(outDir, 'pixels/failed-restore-100ms.rgba'), fr100Readback.pixels);
+      }
+      const fr100Events = await browser.getContextEvents();
+
+      statesResult['failedRestore100ms'] = {
+        dataReady: fr100Attrs.ready ?? null,
+        dataBuffering: fr100Attrs.buffering ?? null,
+        diagnostics: fr100Diags,
+        readbackSha: fr100Readback.pixelsSha256,
+        readbackClass: classifyReadbackSha(fr100Readback.pixelsSha256 ?? ''),
+        isContextLost: fr100Readback.isContextLost,
+        screenshots: {
+          full: 'screenshots/failed-restore-100ms-full.png',
+          viewer: 'screenshots/failed-restore-100ms-viewer.png',
+        },
+        contextEvents: fr100Events,
+      };
+
+      const { promise: p3500, resolve: r3500 } = Promise.withResolvers<void>();
+      setTimeout(r3500, 3400);
+      await p3500;
+
+      const fr3500Full = await browser.screenshot('failed-restore-3500ms-full');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-3500ms-full.png'), fr3500Full);
+      const fr3500Viewer = await browser.screenshotCrop('.otio-view');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-3500ms-viewer.png'), fr3500Viewer);
+      const fr3500Attrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+        "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+      );
+      const fr3500Diags = await browser.evaluate<string[]>(
+        "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+      );
+      const fr3500Readback = await browser.readVisibleWithState();
+      if (fr3500Readback.pixels) {
+        writeFileSync(join(outDir, 'pixels/failed-restore-3500ms.rgba'), fr3500Readback.pixels);
+      }
+      const fr3500Events = await browser.getContextEvents();
+
+      statesResult['failedRestore3500ms'] = {
+        dataReady: fr3500Attrs.ready ?? null,
+        dataBuffering: fr3500Attrs.buffering ?? null,
+        diagnostics: fr3500Diags,
+        readbackSha: fr3500Readback.pixelsSha256,
+        readbackClass: classifyReadbackSha(fr3500Readback.pixelsSha256 ?? ''),
+        isContextLost: fr3500Readback.isContextLost,
+        screenshots: {
+          full: 'screenshots/failed-restore-3500ms-full.png',
+          viewer: 'screenshots/failed-restore-3500ms-viewer.png',
+        },
+        contextEvents: fr3500Events,
+      };
+
+      await browser.evaluate(`(() => {
+        const canvas = document.querySelector('canvas.otio-canvas');
+        if (canvas) {
+          canvas.dispatchEvent(new Event('contextrestored'));
+        }
+      })()`);
+
+      const { promise: prepaint, resolve: rrepaint } = Promise.withResolvers<void>();
+      setTimeout(rrepaint, 250);
+      await prepaint;
+
+      const frRepaintFull = await browser.screenshot('failed-restore-after-restored-full');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-after-restored-full.png'), frRepaintFull);
+      const frRepaintViewer = await browser.screenshotCrop('.otio-view');
+      writeFileSync(join(outDir, 'screenshots/failed-restore-after-restored-viewer.png'), frRepaintViewer);
+      const frRepaintAttrs = await browser.evaluate<{ ready?: string; buffering?: string }>(
+        "(() => { const v = document.querySelector('.otio-view'); return { ready: v?.dataset?.ready, buffering: v?.dataset?.buffering }; })()"
+      );
+      const frRepaintDiags = await browser.evaluate<string[]>(
+        "Array.from(document.querySelectorAll('.otio-diagnostics .otio-diagnostic')).map(e => e.textContent || '')"
+      );
+      const frRepaintReadback = await browser.readVisibleWithState();
+      if (frRepaintReadback.pixels) {
+        writeFileSync(join(outDir, 'pixels/failed-restore-after-restored.rgba'), frRepaintReadback.pixels);
+      }
+      const frRepaintEvents = await browser.getContextEvents();
+
+      statesResult['failedRestoreAfterRepaint'] = {
+        dataReady: frRepaintAttrs.ready ?? null,
+        dataBuffering: frRepaintAttrs.buffering ?? null,
+        diagnostics: frRepaintDiags,
+        readbackSha: frRepaintReadback.pixelsSha256,
+        readbackClass: classifyReadbackSha(frRepaintReadback.pixelsSha256 ?? ''),
+        isContextLost: frRepaintReadback.isContextLost,
+        screenshots: {
+          full: 'screenshots/failed-restore-after-restored-full.png',
+          viewer: 'screenshots/failed-restore-after-restored-viewer.png',
+        },
+        contextEvents: frRepaintEvents,
+      };
+
+      await browser.close();
+    } finally {
+      await server.stop();
+    }
+  }
+
+  const manifest = {
+    subcommand: 'r1-states',
+    config: {
+      label: config.label,
+      productSha: config.productSha,
+    },
+    states: statesResult,
+  };
+  writeFileSync(join(outDir, 'states.json'), JSON.stringify(manifest, null, 2), 'utf8');
+
+  console.log('\n[r1-states] Completed state captures.');
+  console.log(`Manifest written to: ${join(outDir, 'states.json')}`);
+}
+
 
 
 // CLI Entrypoint
@@ -3877,8 +4304,27 @@ async function main(): Promise<void> {
     }
 
     await runR1Stress(configPaths, outDir, trials, seeks);
+  } else if (command === 'r1-states') {
+    let configPath = '';
+    let outDir = '';
+
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--config' && i + 1 < args.length) {
+        configPath = resolve(args[++i] ?? '');
+      } else if (arg === '--out' && i + 1 < args.length) {
+        outDir = resolve(args[++i] ?? '');
+      }
+    }
+
+    if (!configPath || !outDir) {
+      console.error('Usage: otio-resource-browser.ts r1-states --config <config.json> --out <outDir>');
+      process.exit(1);
+    }
+
+    await runR1States(configPath, outDir);
   } else {
-    console.error('Unknown command. Available commands: record, compare, official-repeat, r1-repeat, r1-provoke, r1-stress');
+    console.error('Unknown command. Available commands: record, compare, official-repeat, r1-repeat, r1-provoke, r1-stress, r1-states');
     process.exit(1);
   }
 }
