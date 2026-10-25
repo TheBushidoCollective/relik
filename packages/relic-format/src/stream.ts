@@ -139,6 +139,12 @@ export async function openRelicStream(
       if (!entry) {
         throw new MalformedContainerError('envelope carries no entries');
       }
+      if (
+        options.maxContentBytes !== undefined &&
+        entry.length > options.maxContentBytes
+      ) {
+        throw new ContentTooLargeError(entry.length, options.maxContentBytes);
+      }
       contentLength = entry.length;
       options.onEnvelope?.(envelope);
       options.onProgress?.({
@@ -147,12 +153,6 @@ export async function openRelicStream(
         openedContentBytes,
         contentLength,
       });
-      if (
-        options.maxContentBytes !== undefined &&
-        entry.length > options.maxContentBytes
-      ) {
-        throw new ContentTooLargeError(entry.length, options.maxContentBytes);
-      }
 
       record0Processed = true;
 

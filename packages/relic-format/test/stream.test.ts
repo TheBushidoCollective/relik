@@ -136,6 +136,42 @@ describe('openRelicStream', () => {
     );
   });
 
+  test('content exceeding maxContentBytes throws ContentTooLargeError without firing onEnvelope', async () => {
+    const content = bytes(100);
+    const key = generateKey();
+    const container = await encryptRelic({
+      content,
+      filename: 'a.txt',
+      mimetype: 'text/plain',
+      key,
+      rs: RS,
+    });
+
+    let envelopeFired = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(container);
+        controller.close();
+      },
+    });
+
+    let err: unknown;
+    try {
+      await openRelicStream(stream, key, {
+        objectLength: container.length,
+        maxContentBytes: 50,
+        onEnvelope: () => {
+          envelopeFired = true;
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(err).toBeInstanceOf(ContentTooLargeError);
+    expect(envelopeFired).toBe(false);
+  });
+
   test('stream that closes early or rejects throws TransferIncompleteError', async () => {
     const content = bytes(CAPACITY * 3);
     const key = generateKey();

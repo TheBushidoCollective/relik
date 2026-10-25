@@ -569,18 +569,14 @@ export async function load(
         cachedCiphertext: cachedPrefixData,
       };
     }
-
-    if (envelopeFired) {
-      return {
-        kind: 'dead',
-        dead: {
-          headline: DAMAGED_TITLE,
-          detail: DAMAGED_DETAIL,
-          action: 'retry-report',
-          code: 'content_damaged',
-        },
-        resume: { fragment, mint: mintResponse },
-      };
+    if (error instanceof ContentTooLargeError) {
+      return dead(
+        'This relic is too large to open here',
+        `It holds up to ${formatBytes(error.declaredBytes)}, past what this viewer will ` +
+          'load into a browser tab.',
+        'none',
+        'too_large'
+      );
     }
 
     if (error instanceof KeyIdPresentError) {
@@ -602,16 +598,18 @@ export async function load(
       );
     }
 
-    if (error instanceof ContentTooLargeError) {
-      return dead(
-        'This relic is too large to open here',
-        `It holds up to ${formatBytes(error.declaredBytes)}, past what this viewer will ` +
-          'load into a browser tab.',
-        'none',
-        'too_large'
-      );
+    if (envelopeFired) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: DAMAGED_TITLE,
+          detail: DAMAGED_DETAIL,
+          action: 'retry-report',
+          code: 'content_damaged',
+        },
+        resume: { fragment, mint: mintResponse },
+      };
     }
-
     return dead(
       'This relic could not be read',
       'Its contents are not in a shape this viewer understands.',
@@ -1451,24 +1449,6 @@ export async function openRelicWithKey(
       },
     };
   } catch (error) {
-    if (error instanceof DecryptFailedError && error.recordSeq === 0) {
-      return {
-        kind: 'wrong_key',
-        message: 'That key does not open this relic.',
-        cachedPrefix: newCachedPrefix,
-      };
-    }
-    if (envelopeFired) {
-      return {
-        kind: 'dead',
-        dead: {
-          headline: DAMAGED_TITLE,
-          detail: DAMAGED_DETAIL,
-          action: 'retry-report',
-          code: 'content_damaged',
-        },
-      };
-    }
     if (error instanceof TransferIncompleteError) {
       return {
         kind: 'dead',
@@ -1479,6 +1459,26 @@ export async function openRelicWithKey(
             'problem with the link.',
           action: 'retry',
           code: 'truncated_transfer',
+        },
+      };
+    }
+    if (error instanceof DecryptFailedError && error.recordSeq === 0) {
+      return {
+        kind: 'wrong_key',
+        message: 'That key does not open this relic.',
+        cachedPrefix: newCachedPrefix,
+      };
+    }
+    if (error instanceof ContentTooLargeError) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: 'This relic is too large to open here',
+          detail:
+            `It holds up to ${formatBytes(error.declaredBytes)}, past what this viewer will ` +
+            'load into a browser tab.',
+          action: 'none',
+          code: 'too_large',
         },
       };
     }
@@ -1506,16 +1506,14 @@ export async function openRelicWithKey(
         },
       };
     }
-    if (error instanceof ContentTooLargeError) {
+    if (envelopeFired) {
       return {
         kind: 'dead',
         dead: {
-          headline: 'This relic is too large to open here',
-          detail:
-            `It holds up to ${formatBytes(error.declaredBytes)}, past what this viewer will ` +
-            'load into a browser tab.',
-          action: 'none',
-          code: 'too_large',
+          headline: DAMAGED_TITLE,
+          detail: DAMAGED_DETAIL,
+          action: 'retry-report',
+          code: 'content_damaged',
         },
       };
     }

@@ -4,6 +4,7 @@ import {
   encryptRelic,
   FORMAT_VERSION,
   generateKey,
+  generateRelicId,
 } from '@relic/format';
 import { keyToMnemonic } from '@relic/format/mnemonic';
 import { boot, buildBar, renderDashboard, renderDead } from '../src/main.ts';
@@ -929,15 +930,17 @@ describe('Network security: no key material sent in any request', () => {
       locationHref: 'https://relic.example/r1',
     };
 
+    const testId1 = generateRelicId();
     const resultFragment = await openRelicWithKey(
-      'relic_test_1',
+      testId1,
       fragment,
       deps
     );
     expect(resultFragment.kind).toBe('ready');
 
+    const testId2 = generateRelicId();
     const resultMnemonic = await openRelicWithKey(
-      'relic_test_2',
+      testId2,
       mnemonicWords.join(' '),
       deps
     );

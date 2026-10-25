@@ -32,6 +32,7 @@ import {
   INSECURE_TITLE,
   INSECURE_DETAIL,
   encryptRelic,
+  generateRelicId,
 } from '@relic/format';
 
 class ElementStub {
@@ -482,9 +483,10 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
 
     rootBody.append(shellBar, shellPlate);
 
+    const relicId1 = generateRelicId();
     const root = new ElementStub('div');
     root.id = 'relic-root';
-    root.setAttribute('data-relic-id', 'r1');
+    root.setAttribute('data-relic-id', relicId1);
     root.setAttribute('data-usercontent-origin', 'https://usercontent.example');
     rootBody.appendChild(root);
 
@@ -501,7 +503,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
 
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      locationHref: `https://relic.example/r1#${fragment}`,
+      locationHref: `https://relic.example/${relicId1}#${fragment}`,
       keyVault: makeMockVault(),
       fetch: (async (input: RequestInfo | URL) => {
         const url = String(input);
@@ -555,9 +557,10 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
   });
 
   test('2. Before the mint promise resolves, the plate reads Opening…. Without a shell plate, the plate is in the DOM before the first fetch call.', async () => {
+    const relicId2 = generateRelicId();
     const root = new ElementStub('div');
     root.id = 'relic-root';
-    root.setAttribute('data-relic-id', 'r1');
+    root.setAttribute('data-relic-id', relicId2);
     root.setAttribute('data-usercontent-origin', 'https://usercontent.example');
     rootBody.appendChild(root);
 
@@ -570,7 +573,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
 
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      locationHref: `https://relic.example/r1#${fragment}`,
+      locationHref: `https://relic.example/${relicId2}#${fragment}`,
       keyVault: makeMockVault(),
       fetch: (async (input: RequestInfo | URL) => {
         const url = String(input);
@@ -696,9 +699,10 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       locationHref: 'https://relic.example/r1',
     };
 
-    const plateHandles = adoptOrMountPlate('relic_damaged');
+    const relicId5 = generateRelicId();
+    const plateHandles = adoptOrMountPlate(relicId5);
     plateHandles.remove();
-    renderDead(dead, 'relic_damaged', 'https://usercontent.example', deps);
+    renderDead(dead, relicId5, 'https://usercontent.example', deps);
 
     // Headline and detail
     const headline = rootBody.querySelector('.card-title');
@@ -727,11 +731,11 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     expect(policyLink).not.toBeNull();
     expect(abuseLink).not.toBeNull();
   });
-
   test('6. Try again calls load with resume, re-mounts the plate, and never calls window.location.reload', async () => {
+    const relicId6 = generateRelicId();
     const root = new ElementStub('div');
     root.id = 'relic-root';
-    root.setAttribute('data-relic-id', 'r_retry');
+    root.setAttribute('data-relic-id', relicId6);
     root.setAttribute('data-usercontent-origin', 'https://usercontent.example');
     rootBody.appendChild(root);
 
@@ -743,7 +747,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
 
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      locationHref: `https://relic.example/r_retry#${fragment}`,
+      locationHref: `https://relic.example/${relicId6}#${fragment}`,
       keyVault: makeMockVault(),
       fetch: (async (input: RequestInfo | URL) => {
         loadCalls++;

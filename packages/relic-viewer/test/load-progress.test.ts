@@ -3,6 +3,7 @@ import {
   encryptRelic,
   encodeFragment,
   generateKey,
+  generateRelicId,
   RECORD_SIZE,
   recordCapacity,
   HEADER_BYTES,
@@ -20,6 +21,7 @@ import {
 } from '../src/viewer.ts';
 
 const CAPACITY = recordCapacity(RECORD_SIZE);
+const R1 = generateRelicId();
 
 function bytes(length: number, seed = 42): Uint8Array {
   const out = new Uint8Array(length);
@@ -87,7 +89,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       secureContext: () => false,
     };
 
-    const res = await load('r1', deps);
+    const res = await load(R1, deps);
     expect(res.kind).toBe('dead');
     if (res.kind === 'dead') {
       expect(res.dead.code).toBe('insecure_context');
@@ -153,7 +155,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
     };
 
     const events: LoadProgress[] = [];
-    const res = await load('r1', deps, (p) => {
+    const res = await load(R1, deps, (p) => {
       events.push(p);
     });
 
@@ -258,7 +260,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       }) as typeof globalThis.fetch,
     };
 
-    const res = await load('r1', deps);
+    const res = await load(R1, deps);
     expect(res.kind).toBe('dead');
     if (res.kind === 'dead') {
       expect(res.dead.code).toBe('decrypt_failed');
@@ -278,14 +280,14 @@ describe('Spec B: Viewer load progress and early key check', () => {
     const fragment = encodeFragment(key);
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      locationHref: `https://relic.example/r1#${fragment}`,
+      locationHref: `https://relic.example/${R1}#${fragment}`,
       keyVault: makeMockVault(),
       fetch: (async () => {
         throw new Error('connection refused');
       }) as unknown as typeof globalThis.fetch,
     };
 
-    const res = await load('r1', deps);
+    const res = await load(R1, deps);
     expect(res.kind).toBe('dead');
     if (res.kind === 'dead') {
       expect(res.dead.code).toBe('service_unreachable');
@@ -341,7 +343,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       }) as typeof globalThis.fetch,
     };
 
-    const res = await load('r1', deps);
+    const res = await load(R1, deps);
     expect(res.kind).toBe('dead');
     if (res.kind === 'dead') {
       expect(res.dead.code).toBe('truncated_transfer');
@@ -368,7 +370,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       tampered[HEADER_BYTES + 2 * RECORD_SIZE + 10]! ^ 0xff;
 
     const vault = makeMockVault();
-    vault.remember('r1', fragment);
+    vault.remember(R1, fragment);
 
     const mintResp: MintResponse = {
       url: 'https://storage.example/blob',
@@ -383,7 +385,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
 
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      locationHref: 'https://relic.example/r1', // no fragment in URL, loads from vault
+      locationHref: `https://relic.example/${R1}`, // no fragment in URL, loads from vault
       keyVault: vault,
       fetch: (async (input) => {
         const url = String(input);
@@ -393,7 +395,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       }) as typeof globalThis.fetch,
     };
 
-    const res = await load('r1', deps);
+    const res = await load(R1, deps);
     expect(res.kind).toBe('dead');
     if (res.kind === 'dead') {
       expect(res.dead.code).toBe('content_damaged');
@@ -406,7 +408,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       expect(res.resume?.fragment).toBe(fragment);
     }
     // Key in vault must NOT be forgotten:
-    expect(vault.recall('r1')).toBe(fragment);
+    expect(vault.recall(R1)).toBe(fragment);
   });
 
   test('stored object missing its final record with mint object_length matching stored gives content_damaged', async () => {
@@ -446,7 +448,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       }) as typeof globalThis.fetch,
     };
 
-    const res = await load('r1', deps);
+    const res = await load(R1, deps);
     expect(res.kind).toBe('dead');
     if (res.kind === 'dead') {
       expect(res.dead.code).toBe('content_damaged');
@@ -503,7 +505,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
 
     // 1. Wrong key with cachedPrefix -> 0 fetch calls
     const resWrong = await openRelicWithKey(
-      'r1',
+      R1,
       encodeFragment(wrongKey),
       deps,
       {
@@ -516,7 +518,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
 
     // 2. Right key with valid cachedPrefix URL -> exactly 1 storage GET, 0 mints
     const resRight = await openRelicWithKey(
-      'r1',
+      R1,
       encodeFragment(rightKey),
       deps,
       {
@@ -536,7 +538,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
     mintCount = 0;
     storageCount = 0;
     const resExpired = await openRelicWithKey(
-      'r1',
+      R1,
       encodeFragment(rightKey),
       deps,
       {
@@ -586,7 +588,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       }) as unknown as typeof globalThis.fetch,
     };
 
-    const res1 = await openRelicWithKey('r1', encodeFragment(wrongKey), deps);
+    const res1 = await openRelicWithKey(R1, encodeFragment(wrongKey), deps);
     expect(res1.kind).toBe('wrong_key');
     if (res1.kind === 'wrong_key') {
       expect(res1.cachedPrefix).toBeDefined();
@@ -595,7 +597,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       // Now pass it back with another wrong key -> 0 fetches!
       const initialFetches = fetchCount;
       const res2 = await openRelicWithKey(
-        'r1',
+        R1,
         encodeFragment(generateKey()),
         deps,
         res1.cachedPrefix
@@ -657,7 +659,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       }) as unknown as typeof globalThis.fetch,
     };
 
-    const res = await load('r1', deps, undefined, {
+    const res = await load(R1, deps, undefined, {
       fragment,
       mint: mintResp,
     });
@@ -718,7 +720,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
 
     const events: LoadProgress[] = [];
     const res = await loadHistoricalVersion(
-      'r1',
+      R1,
       2,
       currentReady,
       deps,
@@ -738,6 +740,50 @@ describe('Spec B: Viewer load progress and early key check', () => {
     expect(fetchingEvents.length).toBeGreaterThan(0);
     for (const f of fetchingEvents) {
       expect(f.total).toBe(container.length);
+    }
+  });
+
+  test('openRelicWithKey: dropped download after record 0 returns truncated_transfer not content_damaged', async () => {
+    const relicId = generateRelicId();
+    const content = bytes(100_000);
+    const key = generateKey();
+    const fragment = encodeFragment(key);
+    const container = await encryptRelic({
+      content,
+      filename: 'multi.bin',
+      mimetype: 'application/octet-stream',
+      key,
+    });
+
+    const mintResp: MintResponse = {
+      url: 'https://storage.example/blob',
+      url_expires_at: new Date(Date.now() + 300_000).toISOString(),
+      relic_expires_at: null,
+      object_length: container.length,
+      object_crc32c: '0',
+      mints_remaining: 5,
+      version: 1,
+      current_version: 1,
+    };
+
+    const cutOffContainer = container.subarray(0, HEADER_BYTES + RECORD_SIZE + 100);
+
+    const deps: ViewerDeps = {
+      serviceOrigin: 'https://relic.example',
+      locationHref: 'https://relic.example/r1',
+      keyVault: makeMockVault(),
+      fetch: (async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/mint')) return Response.json(mintResp);
+        if (url.includes('/blob')) return new Response(cutOffContainer as unknown as BodyInit);
+        return new Response('', { status: 404 });
+      }) as unknown as typeof globalThis.fetch,
+    };
+
+    const res = await openRelicWithKey(relicId, fragment, deps);
+    expect(res.kind).toBe('dead');
+    if (res.kind === 'dead') {
+      expect(res.dead.code).toBe('truncated_transfer');
     }
   });
 });
