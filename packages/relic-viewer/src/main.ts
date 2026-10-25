@@ -142,6 +142,8 @@ import {
   diffModeForRoute,
   diffModeForRoutes,
   type TextDiffPart,
+  uncomparableClassNoun,
+  unpromptedComparisonNotice,
   versionHistoryAvailability,
 } from './diff.ts';
 import {
@@ -1304,16 +1306,18 @@ export function renderMediaView(view: ReadyView): HTMLElement {
 
 export function buildCurrentStage(
   view: ReadyView,
-  usercontentOrigin: string
+  usercontentOrigin: string,
+  options: { comparisonNotice?: boolean } = {}
 ): HTMLElement {
   const main = document.createElement('main');
   main.className = `stage stage-${view.route}`;
 
-  const availability = comparisonAvailability(view);
-  if (availability.kind === 'unavailable') {
-    main.appendChild(notice(availability.detail));
+  if (options.comparisonNotice !== false) {
+    const unprompted = unpromptedComparisonNotice(view);
+    if (unprompted) {
+      main.appendChild(notice(unprompted));
+    }
   }
-
   if (view.downgradeNotice !== undefined) {
     main.appendChild(notice(view.downgradeNotice));
   }
@@ -2525,6 +2529,21 @@ export function uncomparableReason(
   historical: ReadyView,
   selectedVersion: number
 ): string {
+  const histNoun = uncomparableClassNoun(historical.route);
+  if (histNoun !== undefined) {
+    return (
+      `Relik cannot show version ${selectedVersion} of this ${histNoun} ` +
+      `beside version ${current.version}. It is open here on its own.`
+    );
+  }
+  const currNoun = uncomparableClassNoun(current.route);
+  if (currNoun !== undefined) {
+    return (
+      `Relik cannot show version ${current.version} of this ${currNoun} ` +
+      `beside version ${selectedVersion}. Version ${selectedVersion} is ` +
+      'open here on its own.'
+    );
+  }
   if (diffModeForRoute(historical.route) === undefined) {
     return (
       `Version ${selectedVersion} is download-only, so it cannot be shown ` +
@@ -2570,7 +2589,9 @@ export function renderSingleVersion(
   label.textContent = `Version ${view.version}: ${view.filename}`;
   wrap.appendChild(label);
 
-  wrap.appendChild(buildCurrentStage(view, usercontentOrigin));
+  wrap.appendChild(
+    buildCurrentStage(view, usercontentOrigin, { comparisonNotice: false })
+  );
   return wrap;
 }
 

@@ -80,10 +80,12 @@ export type ComparisonAvailability =
   | { readonly kind: 'available'; readonly mode: DiffMode }
   | {
       readonly kind: 'unavailable';
-      readonly code: 'comparison_not_renderable' | 'comparison_too_large';
+      readonly code:
+        | 'comparison_not_renderable'
+        | 'comparison_not_supported'
+        | 'comparison_too_large';
       readonly detail: string;
     };
-
 export interface VersionHistoryCopy {
   readonly headline: string;
   readonly detail: string;
@@ -307,6 +309,41 @@ export function versionHistoryAvailability(
 }
 
 /**
+ * Maps routes that play or render in the browser to their class noun.
+ */
+export function uncomparableClassNoun(route: RenderRoute): string | undefined {
+  switch (route) {
+    case 'otio':
+      return 'timeline';
+    case 'media':
+      return 'recording';
+    case 'pdf':
+      return 'PDF';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Returns the unprompted comparison notice for download-only and oversize relics.
+ * For classes that play in the browser (otio, media, pdf) and comparable classes,
+ * returns undefined.
+ */
+export function unpromptedComparisonNotice(
+  view: ReadyView
+): string | undefined {
+  const availability = comparisonAvailability(view);
+  if (
+    availability.kind === 'unavailable' &&
+    (availability.code === 'comparison_not_renderable' ||
+      availability.code === 'comparison_too_large')
+  ) {
+    return availability.detail;
+  }
+  return undefined;
+}
+
+/**
  * Whether two versions of this relic can be shown side by side.
  *
  * Answers only that. A caller that wants to know whether earlier versions
@@ -319,6 +356,26 @@ export function comparisonAvailability(
 ): ComparisonAvailability {
   if (!Number.isInteger(view.currentVersion) || view.currentVersion <= 1) {
     return { kind: 'none' };
+  }
+
+  const noun = uncomparableClassNoun(view.route);
+  if (noun !== undefined) {
+    let detail = '';
+    if (view.route === 'otio') {
+      detail =
+        'Relik plays this timeline in your browser but cannot show two versions of it side by side. Each version can still be opened on its own.';
+    } else if (view.route === 'media') {
+      detail =
+        'Relik plays this recording in your browser but cannot show two versions of it side by side. Each version can still be opened on its own.';
+    } else if (view.route === 'pdf') {
+      detail =
+        'Relik shows this PDF in your browser but cannot show two versions of it side by side. Each version can still be opened on its own.';
+    }
+    return {
+      kind: 'unavailable',
+      code: 'comparison_not_supported',
+      detail,
+    };
   }
 
   const mode = diffModeForRoute(view.route);
