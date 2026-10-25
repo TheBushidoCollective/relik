@@ -538,6 +538,15 @@ export function createMediaPlayer(
 
   const togglePlay = (): void => {
     if (media.paused) {
+      if (
+        media.ended ||
+        (Number.isFinite(media.duration) &&
+          media.duration > 0 &&
+          media.currentTime >= media.duration - STEP_SECONDS / 2)
+      ) {
+        media.currentTime = 0;
+        updateTimeDisplay();
+      }
       const playPromise = media.play();
       if (playPromise && typeof playPromise.catch === 'function') {
         playPromise.catch(() => {});

@@ -3355,4 +3355,118 @@ describe('otio playback controller', () => {
       playback?.dispose();
     }
   });
+
+  test('play at or past duration restarts from 0 and advances', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument({ rate: 24, frames: 48 }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      // Seek to the end of the timeline
+      await playback.seek({ value: 48, rate: 24 });
+      expect(playback.getState().time.value).toBe(48);
+      expect(playback.getState().playing).toBe(false);
+
+      // Hitting play at the end should reset time to 0 and start playing
+      await playback.play();
+      expect(playback.getState().time.value).toBe(0);
+      expect(playback.getState().playing).toBe(true);
+
+      // Advance clock with animation frame tick
+      expect(raf).not.toBeNull();
+      raf?.(0);
+      raf?.(500); // 0.5s at 24fps = 12 frames
+      expect(playback.getState().time.value).toBe(12);
+      expect(playback.getState().playing).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('play at last frame (duration minus one frame) restarts from 0 and advances', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument({ rate: 24, frames: 48 }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      // Last reachable frame on scrubber / Next frame is frame 47 (48 - 1)
+      await playback.seek({ value: 47, rate: 24 });
+      expect(playback.getState().time.value).toBe(47);
+      expect(playback.getState().playing).toBe(false);
+
+      // Hitting play on the last frame should reset time to 0 and start playing
+      await playback.play();
+      expect(playback.getState().time.value).toBe(0);
+      expect(playback.getState().playing).toBe(true);
+
+      // Advance clock with animation frame tick
+      expect(raf).not.toBeNull();
+      raf?.(0);
+      raf?.(500); // 0.5s at 24fps = 12 frames
+      expect(playback.getState().time.value).toBe(12);
+      expect(playback.getState().playing).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('play mid-timeline keeps current position', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument({ rate: 24, frames: 48 }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      await playback.seek({ value: 20, rate: 24 });
+      expect(playback.getState().time.value).toBe(20);
+      expect(playback.getState().playing).toBe(false);
+
+      await playback.play();
+      expect(playback.getState().time.value).toBe(20);
+      expect(playback.getState().playing).toBe(true);
+
+      raf?.(0);
+      raf?.(250); // 0.25s at 24fps = 6 frames
+      expect(playback.getState().time.value).toBe(26);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('play after natural end (tick reaching duration) restarts from 0 and advances', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument({ rate: 24, frames: 48 }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      // Start near the end (frame 40 out of 48)
+      await playback.seek({ value: 40, rate: 24 });
+      await playback.play();
+      expect(playback.getState().playing).toBe(true);
+
+      // Tick past the duration (48 frames = 2 seconds)
+      raf?.(0);
+      raf?.(1000); // 1.0s elapsed = 24 frames -> reaches end (40+24 = 64 >= 48)
+      expect(playback.getState().playing).toBe(false);
+      expect(playback.getState().time.value).toBe(48);
+
+      // Play again after natural end
+      await playback.play();
+      expect(playback.getState().time.value).toBe(0);
+      expect(playback.getState().playing).toBe(true);
+
+      raf?.(1500);
+      raf?.(2000); // 0.5s elapsed = 12 frames
+      expect(playback.getState().time.value).toBe(12);
+    } finally {
+      playback.dispose();
+    }
+  });
 });

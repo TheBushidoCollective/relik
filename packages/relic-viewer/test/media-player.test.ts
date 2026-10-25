@@ -583,6 +583,60 @@ describe('custom media player and comment timeline', () => {
     expect(video.muted).toBe(false);
   });
 
+  test('hitting play when at the end restarts playback from 0', () => {
+    const video = new MediaTestNode('video');
+    video.duration = 100;
+    video.currentTime = 100;
+    const player = createMediaPlayer(video as unknown as HTMLMediaElement, {
+      isAudio: false,
+    });
+    const chrome = player.chrome as unknown as TestNode;
+    const playBtn = requireNode(
+      chrome.querySelector('.media-play-btn'),
+      'playBtn'
+    );
+    const scrubber = requireNode(
+      chrome.querySelector('.media-scrubber'),
+      'scrubber'
+    );
+
+    // 1. Play button at end (after scrub / jump to duration)
+    playBtn.click();
+    expect(video.currentTime).toBe(0);
+    expect(video.paused).toBe(false);
+
+    // Pause and seek back to end
+    video.paused = true;
+    video.currentTime = 100;
+
+    // 2. Space key on scrubber at end
+    scrubber.dispatchEvent({
+      type: 'keydown',
+      key: ' ',
+      preventDefault: () => {},
+    });
+    expect(video.currentTime).toBe(0);
+    expect(video.paused).toBe(false);
+
+    // Pause and seek back to end
+    video.paused = true;
+    video.currentTime = 100;
+
+    // 3. 'k' key on scrubber at end
+    scrubber.dispatchEvent({
+      type: 'keydown',
+      key: 'k',
+      preventDefault: () => {},
+    });
+    expect(video.currentTime).toBe(0);
+    expect(video.paused).toBe(false);
+    // 4. Play button near end / within last frame tolerance (e.g. 99.98 on 100 duration)
+    video.paused = true;
+    video.currentTime = 99.98;
+    playBtn.click();
+    expect(video.currentTime).toBe(0);
+    expect(video.paused).toBe(false);
+  });
   test('hover affordance displays timecode without seeking the media', () => {
     const video = new MediaTestNode('video');
     video.currentTime = 10;
