@@ -349,17 +349,17 @@ export async function launchProofBrowser(
     await evaluate<void>(`(() => {
       const container = document.querySelector('[data-decision-signin]');
       if (!container) throw new Error('data-decision-signin container not found');
-      const input = container.querySelector('input[type="email"]') as HTMLInputElement | null;
-      if (!input) throw new Error('email input not found in data-decision-signin');
+      const input = container.querySelector('input[type="email"]');
+      if (!input || !(input instanceof HTMLInputElement)) throw new Error('email input not found in data-decision-signin');
       input.value = ${JSON.stringify(email)};
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
       const form = container.querySelector('form');
       if (form) {
-        const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
-        if (submitBtn) {
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn && submitBtn instanceof HTMLElement) {
           submitBtn.click();
-        } else {
+        } else if (typeof form.requestSubmit === 'function') {
           form.requestSubmit();
         }
       }
