@@ -860,3 +860,35 @@ Reviewers can anchor point comments or half-open range comments to specific trac
 **One name for the phrase.** The field called it a recovery phrase while relic-mcp calls it the key phrase. It is the key phrase everywhere now.
 
 **Collapsed taskbar actions keep their names.** Below 34rem the action labels were hidden with `display: none`, which removed the accessible name of every action without an `aria-label` or `title`: Copy link, Download and Report. The labels are now visually hidden, so the row looks the same and each control still has a name.
+## 2026-10-24: Decisions are a deliberate stamp, bound to a passkey and a version
+
+Authorised by Jason Waldrip on 2026-10-24: "I think we need to add decisions to the relik system ... Comments mean no approval, and a stamp/button of approval means an approval."
+
+The passkey binding was requested by backlot and accepted 2026-10-24.
+
+**The problem.** Backlot (Jason's video production harness) requires explicit human approval before committing paid production runs. Comments are discussion, feedback, and notes; they cannot mean approval, and inferring approval from keywords (such as "looks good" or "GREENLIGHT") or an absence of comments is unsafe. Approval must be a deliberate act in the viewer, distinct from commenting.
+
+**The decision record.**
+`{ id, relicId, version, verdict: 'approve' | 'reject', author, createdAt, versionDigest, credentialId }`.
+- `verdict`: `'approve' | 'reject'`.
+- `author`: the normalized verified reader email address (`normalizeEmail(session.email)`).
+- `version`: the integer version number viewed (1 through `row.version`). Decisions apply strictly to the specific version rendered. Republishing increments the version counter; the new version starts with zero decisions, and earlier decisions remain attached to their respective versions.
+- `versionDigest`: the lowercase hex SHA-256 of that version's stored ciphertext container object. This binds the decision to exact content bytes without decrypting server-side.
+- `append-only`: decisions are never edited or deleted. Each author's latest record on a version is their current decision. When an operator deletes a relic, its decisions are swept with it (`decisions_deleted`).
+
+**A factor beyond the mailbox: passkey binding.**
+Agents operating on the approver's machine can read mailboxes. Relying solely on magic-link email verification would allow an agent to approve work autonomously. To ensure that an approval represents a human act, recording a decision requires confirmation by a WebAuthn passkey registered to the reader's verified email address, with user verification (UV) required.
+- The service stores the passkey public key (ES256 or RS256), credential id, signature counter, and timestamps under `m/passkey/{sha256Hex(normalizedEmail)}.json`.
+- Trust on first use (TOFU): the first passkey registered for a verified address is trusted on first use.
+- Adding subsequent passkeys requires an assertion from an existing registered passkey (`assertedBy`).
+- The service never receives or stores a private key.
+
+**Cryptographic content binding via version digest.**
+To ensure approval applies to exact content, the server computes the SHA-256 of the stored ciphertext object upon upload completion (`complete`) or lazily at first stat or mint. The viewer hashes the downloaded ciphertext container bytes and verifies `options.version_digest == view.versionDigest`. A mismatch refuses recording with `409 decision_digest_mismatch`. Both `relic_publish` and `relic_republish` return `version_digest` matching what decisions on that version carry.
+
+**MCP read tool and zero-write invariant.**
+No MCP tool can record a decision. Decisions are recorded only by human readers in the web viewer. A new MCP tool `relic_read_decisions` allows backlot to inspect decisions. It requires local publish state to derive the HKDF share proof, calls `POST /api/relics/{id}/decisions/list`, and spends zero download opens.
+
+**Residuals:**
+- First use is trusted (TOFU): the approver should register their passkey once in the viewer before downstream automation depends on decisions.
+- Relics published before relic-mcp 0.11.0 lack a registered `shareVerifier` and return `409 decision_unavailable` until republished once.

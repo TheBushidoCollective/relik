@@ -22,6 +22,7 @@
 import type { RendererClass } from '@relic/format';
 
 import { sha256Hex } from './gcs.ts';
+import { ProblemError } from './problems.ts';
 import {
   type AbuseReport,
   type AuthLinkRow,
@@ -29,16 +30,20 @@ import {
   type CommentedRelic,
   type CommentPatch,
   type CommentRow,
+  type DecisionRow,
   type DedupEntry,
   looksLikeEmail,
   type MintLogEntry,
+  normalizeEmail,
   type OptOutRow,
+  type PasskeyRecord,
   type RelicCover,
   type RelicRow,
   type RelicStore,
   type SessionRow,
   type ShareRow,
   type Tombstone,
+  type WebauthnChallengeRow,
 } from './store.ts';
 
 export interface GcsStoreOptions {
@@ -177,18 +182,55 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     return true;
   }
 
-  async function remove(name: string): Promise<void> {
+  async function remove(name: string, generation?: string): Promise<boolean> {
+    const params = new URLSearchParams();
+    if (generation !== undefined) {
+      params.set('ifGenerationMatch', generation);
+    }
+    const qs = params.toString();
     const url =
       `${host}/storage/v1/b/${encodeURIComponent(options.bucket)}` +
-      `/o/${encodeURIComponent(name)}`;
+      `/o/${encodeURIComponent(name)}${qs ? `?${qs}` : ''}`;
     const response = await authorized(url, { method: 'DELETE' });
+    if (
+      generation !== undefined &&
+      (response.status === 412 || response.status === 404)
+    ) {
+      return false;
+    }
     if (!response.ok && response.status !== 404) {
       throw new Error(`gcs delete ${name} returned ${response.status}`);
     }
+    return true;
+  }
+
+  async function mapConcurrent<TIn, TOut>(
+    items: readonly TIn[],
+    limit: number,
+    fn: (item: TIn) => Promise<TOut>
+  ): Promise<TOut[]> {
+    const results: TOut[] = new Array(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(limit, items.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= items.length) break;
+        const item = items[index];
+        if (item !== undefined) {
+          results[index] = await fn(item);
+        }
+      }
+    });
+    await Promise.all(workers);
+    return results;
   }
 
   /** Every object under a prefix, following pagination to the end. */
-  async function list<T>(under: string): Promise<readonly T[]> {
+  async function list<T>(
+    under: string,
+    concurrency = 16
+  ): Promise<readonly T[]> {
     const names: string[] = [];
     let pageToken: string | undefined;
 
@@ -213,7 +255,9 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       pageToken = body.nextPageToken;
     } while (pageToken !== undefined);
 
-    const docs = await Promise.all(names.map((name) => get<T>(name)));
+    const docs = await mapConcurrent(names, concurrency, (name) =>
+      get<T>(name)
+    );
     return docs
       .filter((d): d is Versioned<T> => d !== undefined)
       .map((d) => d.value);
@@ -924,6 +968,135 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         );
       }
       return new Uint8Array(Buffer.from(readBack.value.key, 'base64url'));
+    },
+
+    async recordVersionDigest(
+      id: string,
+      version: number,
+      sha256: string
+    ): Promise<string | undefined> {
+      const vKey = String(version);
+      const name = key('relic', `${id}.json`);
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<RelicRow>(name);
+        if (current === undefined) return undefined;
+        const existing = current.value.versionDigests?.[vKey];
+        if (existing !== undefined) {
+          return existing;
+        }
+        const next: RelicRow = {
+          ...current.value,
+          versionDigests: {
+            ...(current.value.versionDigests ?? {}),
+            [vKey]: sha256,
+          },
+        };
+        if (await put(name, next, current.generation)) {
+          return sha256;
+        }
+      }
+      throw new Error(
+        `gcs relic ${id} lost ${casAttempts} compare-and-swap races; refusing to record version digest`
+      );
+    },
+
+    async appendDecision(row: DecisionRow): Promise<void> {
+      const name = key('decision', row.relicId, `${row.id}.json`);
+      const ok = await put(name, row, '0');
+      if (!ok) {
+        throw new Error(`decision ${row.id} already exists`);
+      }
+    },
+
+    async listDecisions(relicId: string): Promise<readonly DecisionRow[]> {
+      const prefixUnder = `${key('decision', relicId)}/`;
+      const rows = await list<DecisionRow>(prefixUnder, 16);
+      return [...rows].sort(
+        (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)
+      );
+    },
+
+    async deleteDecisionsForRelic(relicId: string): Promise<number> {
+      const prefixUnder = `${key('decision', relicId)}/`;
+      const names = await listObjectNames(prefixUnder);
+      for (const name of names) {
+        await remove(name);
+      }
+      return names.length;
+    },
+
+    async deleteDecision(
+      relicId: string,
+      decisionId: string
+    ): Promise<boolean> {
+      const name = key('decision', relicId, `${decisionId}.json`);
+      return remove(name);
+    },
+    async getPasskeys(email: string): Promise<PasskeyRecord | undefined> {
+      const norm = normalizeEmail(email);
+      const hash = await sha256Hex(norm);
+      const name = key('passkey', `${hash}.json`);
+      return (await get<PasskeyRecord>(name))?.value;
+    },
+
+    async createPasskeys(record: PasskeyRecord): Promise<boolean> {
+      const norm = normalizeEmail(record.email);
+      const hash = await sha256Hex(norm);
+      const name = key('passkey', `${hash}.json`);
+      return put(name, record, '0');
+    },
+
+    async updatePasskeys(
+      email: string,
+      change: (r: PasskeyRecord) => PasskeyRecord
+    ): Promise<PasskeyRecord | undefined> {
+      const norm = normalizeEmail(email);
+      const hash = await sha256Hex(norm);
+      const name = key('passkey', `${hash}.json`);
+
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<PasskeyRecord>(name);
+        if (current === undefined) return undefined;
+
+        const next = change(current.value);
+
+        for (const nextCred of next.credentials) {
+          const stored = current.value.credentials.find(
+            (c) => c.credentialId === nextCred.credentialId
+          );
+          if (stored !== undefined) {
+            if (nextCred.signCount < stored.signCount) {
+              throw new ProblemError('passkey_verification_failed', {
+                passkey_check: 'counter',
+              });
+            }
+          }
+        }
+
+        if (await put(name, next, current.generation)) {
+          return next;
+        }
+      }
+
+      throw new Error(
+        `gcs passkey ${email} lost ${casAttempts} compare-and-swap races; refusing to write passkey derived from stale state`
+      );
+    },
+
+    async putWebauthnChallenge(row: WebauthnChallengeRow): Promise<void> {
+      const name = key('challenge', 'webauthn', `${row.challengeHash}.json`);
+      await put(name, row);
+    },
+
+    async consumeWebauthnChallenge(
+      challengeHash: string
+    ): Promise<WebauthnChallengeRow | undefined> {
+      const name = key('challenge', 'webauthn', `${challengeHash}.json`);
+      const found = await get<WebauthnChallengeRow>(name);
+      if (found === undefined) return undefined;
+      const deleted = await remove(name, found.generation);
+      if (!deleted) return undefined;
+      return found.value;
     },
   };
 

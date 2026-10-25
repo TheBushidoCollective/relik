@@ -173,6 +173,8 @@ version, and each comment names the version it was made on, so remarks left
 on content a republish removed do not read as if they were about what is
 latest now.
 
+Approval decisions are read back with `relic_read_decisions`. Decisions are recorded only by human readers in the web viewer confirmed by a passkey: no MCP tool can record a decision, and comment text never creates one. The tool takes a relic id and an optional version (or `'*'` for every version) and returns the verdicts, verified authors, creation timestamps, and version digests. Reading decisions costs no opens and runs only on the machine that published the relic, where the decryption key is held locally to generate the required share proof.
+
 ```bash
 npx -y relic-mcp@latest   # nothing to clone, nothing to build
 ```

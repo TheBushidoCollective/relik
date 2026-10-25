@@ -20,6 +20,7 @@
  * unusable in most of the agents this product exists to serve.
  */
 
+import type { DecisionList } from '@relic/format';
 import type { CoverKind, CoverReport } from '@relic/format/cover';
 import { MNEMONIC_WORDS } from '@relic/format/mnemonic';
 import {
@@ -62,6 +63,7 @@ import {
   ServerRefusal,
 } from './publish.ts';
 import { type RepublishAddressEntry, republish } from './republish.ts';
+import { readDecisions } from './decisions.ts';
 import { shareRelic } from './share.ts';
 
 export type { JsonRpcRequest, JsonRpcResponse };
@@ -189,6 +191,13 @@ export const COMMENT_TOOL_NAME = 'relic_comment';
 export const EDIT_COMMENT_TOOL_NAME = 'relic_edit_comment';
 
 export const RESOLVE_COMMENT_TOOL_NAME = 'relic_resolve_comment';
+
+export const READ_DECISIONS_TOOL_NAME = 'relic_read_decisions';
+
+const DECISION_MACHINE_BOUNDARY =
+  'Only works for a relic this machine published: the share proof is derived ' +
+  "from that relic's key, which lives in local publish state and nowhere the " +
+  'service can reach.';
 
 /**
  * The one sentence about comments an agent has to have before it reads any,
@@ -341,6 +350,12 @@ export const TOOL_DEFINITION = {
         minimum: 1,
         description: 'Always 1 from this tool; republish counts upward.',
       },
+      version_digest: {
+        type: 'string',
+        pattern: '^[0-9a-f]{64}$',
+        description:
+          'Lowercase hex SHA-256 digest of the encrypted ciphertext container.',
+      },
       relic_expires_at: { type: ['string', 'null'] },
       renderer_class: { type: 'string' },
       filename: { type: 'string' },
@@ -369,6 +384,7 @@ export const TOOL_DEFINITION = {
       'url',
       'relic_id',
       'version',
+      'version_digest',
       'relic_expires_at',
       'renderer_class',
       'filename',
@@ -491,6 +507,12 @@ export const REPUBLISH_TOOL_DEFINITION = {
         minimum: 2,
         description: 'The version just published.',
       },
+      version_digest: {
+        type: 'string',
+        pattern: '^[0-9a-f]{64}$',
+        description:
+          'Lowercase hex SHA-256 digest of the encrypted ciphertext container.',
+      },
       relic_expires_at: { type: ['string', 'null'] },
       renderer_class: { type: 'string' },
       filename: { type: 'string' },
@@ -522,6 +544,7 @@ export const REPUBLISH_TOOL_DEFINITION = {
     required: [
       'relic_id',
       'version',
+      'version_digest',
       'relic_expires_at',
       'renderer_class',
       'filename',
@@ -1600,6 +1623,73 @@ export const RESOLVE_COMMENT_TOOL_DEFINITION = {
     additionalProperties: false,
   },
 } as const;
+export const READ_DECISIONS_TOOL_DEFINITION = {
+  name: READ_DECISIONS_TOOL_NAME,
+  title: "Read a relic's decisions",
+  description:
+    'Read the approval and rejection decisions recorded for a relic. ' +
+    'Decisions are made by a person in the viewer confirmed with a passkey; ' +
+    'no tool records them, and comment text never creates one. ' +
+    'Returns each decision with its verdict, author address, timestamp, and ' +
+    'the version digest it verified. ' +
+    DECISION_MACHINE_BOUNDARY +
+    ' Takes the relic id, never the share URL.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: {
+        type: 'string',
+        description: 'The 26-character relic id returned when published.',
+      },
+      version: {
+        description:
+          'Optional. An integer version (1 or greater) to read decisions for that version, ' +
+          'or "*" to read all versions. Defaults to the current version.',
+        oneOf: [
+          { type: 'integer', minimum: 1 },
+          { type: 'string', enum: ['*'] },
+        ],
+      },
+    },
+    required: ['relic_id'],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: { type: 'string' },
+      current_version: { type: 'integer' },
+      decisions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            version: { type: 'integer' },
+            verdict: { type: 'string', enum: ['approve', 'reject'] },
+            author: { type: 'string' },
+            created_at: { type: 'string' },
+            version_digest: {
+              type: 'string',
+              pattern: '^[0-9a-f]{64}$',
+            },
+          },
+          required: [
+            'id',
+            'version',
+            'verdict',
+            'author',
+            'created_at',
+            'version_digest',
+          ],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['relic_id', 'current_version', 'decisions'],
+    additionalProperties: false,
+  },
+} as const;
 
 export const DESCRIBE_TOOL_DEFINITION = {
   name: DESCRIBE_TOOL_NAME,
@@ -1686,7 +1776,10 @@ pathname fallback. See relic_describe_client for tested systems.
 never the key; pass notify: false to skip it. relic_share returns a share email \
 with the full link to draft in the sharer's mailbox but never sends it. Readers \
 holding the link can also share from the viewer once this client version has \
-published or republished the relic.`;
+published or republished the relic.
+10. Decisions are made by a person in the viewer with a passkey; no tool \
+records them; comment text never creates one; a person's latest record on a \
+version is their current decision.`;
 
 /**
  * Handle one JSON-RPC message.
@@ -1764,6 +1857,7 @@ export async function handleMessage(
             EDIT_COMMENT_TOOL_DEFINITION,
             RESOLVE_COMMENT_TOOL_DEFINITION,
             DESCRIBE_TOOL_DEFINITION,
+            READ_DECISIONS_TOOL_DEFINITION,
           ],
         },
       };
@@ -1893,6 +1987,10 @@ async function callTool(
 
   if (params['name'] === RESOLVE_COMMENT_TOOL_NAME) {
     return callResolveComment(id, params, deps);
+  }
+
+  if (params['name'] === READ_DECISIONS_TOOL_NAME) {
+    return callReadDecisions(id, params, deps);
   }
 
   if (params['name'] !== TOOL_NAME) {
@@ -2807,6 +2905,82 @@ async function callResolveComment(
     return { jsonrpc: '2.0', id, result: toolError(error) };
   }
 }
+async function callReadDecisions(
+  id: string | number | null,
+  params: Record<string, unknown>,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+  const relicId = args['relic_id'];
+  if (typeof relicId !== 'string' || relicId.length === 0) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`relic_id` is required and must be a string'
+    );
+  }
+
+  const rawVersion = args['version'];
+  if (
+    rawVersion !== undefined &&
+    rawVersion !== '*' &&
+    (typeof rawVersion !== 'number' ||
+      !Number.isSafeInteger(rawVersion) ||
+      rawVersion < 1)
+  ) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`version` must be a positive version number, the literal "*", or omitted'
+    );
+  }
+
+  try {
+    const result = await readDecisions(relicId, deps, {
+      version: rawVersion,
+    });
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: decisionTranscript(result, rawVersion),
+          },
+        ],
+        structuredContent: result,
+        isError: false,
+      },
+    };
+  } catch (error) {
+    return { jsonrpc: '2.0', id, result: toolError(error) };
+  }
+}
+
+function decisionTranscript(
+  result: DecisionList,
+  requestedVersion?: number | '*' | undefined
+): string {
+  if (result.decisions.length === 0) {
+    const scopeNote =
+      requestedVersion === '*'
+        ? 'any version'
+        : requestedVersion !== undefined
+          ? `version ${requestedVersion}`
+          : `version ${result.current_version}`;
+    return `No decisions recorded on ${scopeNote} of relic ${result.relic_id} yet.`;
+  }
+
+  const lines = result.decisions.map((d) => {
+    return `${d.created_at} ${d.author}: ${d.verdict} version ${d.version} (digest: ${d.version_digest})`;
+  });
+
+  return (
+    `Decisions for relic ${result.relic_id} (current version ${result.current_version}):\n\n` +
+    lines.join('\n')
+  );
+}
 
 /**
  * The one line that says what a comment is attached to.
@@ -3030,6 +3204,15 @@ const REFUSAL_GUIDANCE: Readonly<Record<string, string>> = {
     'Every entry must be one email address, and a call takes at most share_max_per_call of them.',
   share_rate_limited:
     'The refusal carries retry_after_seconds; wait it out rather than retrying in a loop.',
+  decision_unavailable:
+    'Decisions are unavailable on this relic until it is republished. ' +
+    'republish once with relic_republish; the link does not change.',
+  invalid_share_proof:
+    'The share proof was rejected by the service. The encryption key on ' +
+    'this machine may not match the published relic.',
+  decision_rate_limited:
+    'The service is rate limiting decisions on that relic. The refusal ' +
+    'carries retry_after_seconds; wait it out rather than retrying in a loop.',
 };
 
 /**

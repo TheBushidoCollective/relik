@@ -16,12 +16,12 @@ The pin isn't housekeeping. Tool-result semantics are revision-dependent, so a d
 
 ### 1.1 The tool names
 
-**The tools are named `relic_publish`, `relic_list`, `relic_show`, `relic_lookup_source`, `relic_republish`, `relic_share`, `relic_read_comments`, `relic_comment`, `relic_edit_comment`, `relic_resolve_comment`, and `relic_describe_client`.** Each name is stable across releases, and renaming one is a breaking change because saved agent instructions and project prompts reference it by string.
+**The tools are named `relic_publish`, `relic_list`, `relic_show`, `relic_lookup_source`, `relic_republish`, `relic_share`, `relic_read_comments`, `relic_comment`, `relic_edit_comment`, `relic_resolve_comment`, `relic_read_decisions`, and `relic_describe_client`.** Each name is stable across releases, and renaming one is a breaking change because saved agent instructions and project prompts reference it by string.
 The spec allows a wide field: names run "between 1 and 128 characters in length (inclusive)", are case-sensitive, and are limited to ASCII letters, digits, underscore, hyphen, and dot ([MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)). Uniqueness is only guaranteed inside one server. The spec then names the hazard directly: clients that aggregate tools from multiple servers may hit collisions and should implement "a disambiguation strategy such as prefixing tool names with a server identifier", and the server's own `name` "is not guaranteed to be unique across servers" so it can't be leaned on for that.
 
 A bare `publish` collides with incumbent publishing MCP servers, and the consequence is a security outcome produced by a naming decision. The model asks for `publish`, the client disambiguates to whichever server it prefers, and the file lands on a service with different encryption or none. The publisher sees a URL come back and has no way to tell which service produced it. Prefixing with the product name makes that collision essentially impossible, and it's the spec's own remedy taken literally rather than a house convention: a prefix is the leading segment, so "prefixing tool names with a server identifier" puts the identifier first, which is what `relic_publish` spells. Putting the product first also groups every Relic tool together in an aggregated list, which is what a human scanning `/mcp` actually reads.
 
-`relic_lookup_source` and `relic_republish` follow the same naming rule. A bare `lookup_source` can resolve against another server's state, and a bare `republish` can update the wrong service. The product prefix keeps the read and write on Relic's local surface. So do `relic_read_comments` and `relic_comment`: a bare `comment` is among the most collidable verbs an aggregated tool list can carry, and the failure it produces is a comment posted to a different service under a credential that service should never have seen.
+`relic_lookup_source` and `relic_republish` follow the same naming rule. A bare `lookup_source` can resolve against another server's state, and a bare `republish` can update the wrong service. The product prefix keeps the read and write on Relic's local surface. So do `relic_read_comments`, `relic_comment`, and `relic_read_decisions`: a bare `comment` or `decisions` is among the most collidable verbs an aggregated tool list can carry, and prefixing ensures operations remain bound to Relic.
 
 ### 1.2 The input schema
 
@@ -66,7 +66,7 @@ A bare `publish` collides with incumbent publishing MCP servers, and the consequ
 
 ### 1.3 The result shape
 
-Success returns `structuredContent` with eleven members, all required:
+Success returns `structuredContent` with twelve members, all required:
 
 - **`url`** the full URL including the fragment. Without the fragment the model can't produce a usable link, which is the product.
 - **`relic_id`** the normalized canonical ID, separately. Every operator-facing workflow takes the ID with the fragment already stripped: abuse reports, takedown requests, support tickets. Making a caller slice it out of a URL means somebody eventually slices wrong.
@@ -78,6 +78,7 @@ Success returns `structuredContent` with eleven members, all required:
 - **`report_url`** the stable `/abuse` URL.
 - **`disclosure_url`** the published statement `service.md` section 5 specifies.
 - **`version`** the relic's version, `1` on a first publish. The row counts publishes (`format.md` 3.12); a republish result carries the new number. It counts relic versions, never format revisions, which live in the fragment marker on a different axis (`format.md` 2.2).
+- **`version_digest`** the 64-character lowercase hex SHA-256 of this version's stored ciphertext container bytes, computed by the server or client, matching the digest decisions on this version carry.
 - **`cover`** a structured `CoverReport` carrying `status` (`'uploaded' | 'declined' | 'skipped'`), plus optional `kind`, `type`, `url`, `bytes`, `reason`, and `detail`.
 
 **No expiry for the grant, no signed URL, no object length, and no key as a separate field.** The grant's clock is internal to section 3, and a key in its own member is a second copy of something already in `url`.
@@ -130,9 +131,9 @@ One property is load-bearing and easy to get backwards: **progress defeats the i
 
 **When no progress token is supplied, the server can't keep the call warm and doesn't try.** The orphan risk returns in full, and the mitigation is section 4.7: the client generated the ID and the key before anything left the machine, so the URL exists in the tool's own hands regardless of what happens to the response.
 
-### 1.6 Eleven tools, and why there's still no delete tool
+### 1.6 Twelve tools, and why there's still no delete tool
 
-**The surface is ten workflow tools plus one inspection tool.** `relic_publish` creates a new encrypted URL. `relic_list` enumerates relics published by this machine. `relic_show` inspects one relic in detail and decrypts it. `relic_lookup_source` reads local state to recover the id for an existing source. `relic_republish` updates that id under its original key and token. `relic_share` registers email addresses for comment and change notices and composes a share email. `relic_read_comments` reads what people left on a relic. `relic_comment` answers them. `relic_edit_comment` edits a comment. `relic_resolve_comment` settles an open comment. `relic_describe_client` explains the client without reading a source or calling the service. Lookup stays separate because the agent needs the id before it chooses a write; hiding lookup inside either write makes the answer observable only after choosing. The comment tools stay separate from each other for the narrower version of the same reason: the read needs no credential and the write spends the publish token, so folding them together makes an agent that only wants to read present a write credential to find out. The naming rule of 1.1 applies to all eleven.
+**The surface is eleven workflow tools plus one inspection tool.** `relic_publish` creates a new encrypted URL. `relic_list` enumerates relics published by this machine. `relic_show` inspects one relic in detail and decrypts it. `relic_lookup_source` reads local state to recover the id for an existing source. `relic_republish` updates that id under its original key and token. `relic_share` registers email addresses for comment and change notices and composes a share email. `relic_read_comments` reads what people left on a relic. `relic_comment` answers them. `relic_edit_comment` edits a comment. `relic_resolve_comment` settles an open comment. `relic_read_decisions` reads approval decisions recorded for a relic. `relic_describe_client` explains the client without reading a source or calling the service. Lookup stays separate because the agent needs the id before it chooses a write; hiding lookup inside either write makes the answer observable only after choosing. The comment tools stay separate from each other for the narrower version of the same reason: the read needs no credential and the write spends the publish token, so folding them together makes an agent that only wants to read present a write credential to find out. The naming rule of 1.1 applies to all twelve.
 **A publisher still cannot delete their own relic, and the reasoning had to be restated rather than left where it was, because the reversal broke half of it.** With no publisher account, a publisher-side delete has to be authorized by something the publisher holds, and there were exactly two candidates. Authorizing on anything derivable from the URL means every recipient can delete the relic, which hands a link-holder a destructive capability the publisher never granted and reproduces the burn-after-reading failure the frame ruled out for the first release. That candidate is dead on arrival and nothing reversed it. The other was a separately stored token, and the old objection was that keeping durable per-relic state on disk is a relic list under another name with no locked surface to house it. That objection is spent: republish pays exactly that cost, the key and token persisted on the publishing machine, so the state exists and the token is in hand. What keeps self-delete out of this change is not architecture but the abuse posture: deletion is the takedown primitive, it is operator-audited end to end (section 4 of `service.md`), and a publisher-side path through the same machinery would sit beside the audit trail rather than inside it. The token makes a self-delete tool specifiable where it used to be foreclosed; if a later station adds one, that station owns the audit question, and this paragraph is what it reopens.
 
 So deletion stays operator-only through `/abuse` (`service.md` section 4), which already works on the ID alone and needs no key. A publisher who wants their own relic gone reports it with its ID. The mandatory TTL used to bound the exposure in the meantime, which was why this was deferrable rather than a hole; that bound is gone, and what bounds exposure now is the per-object download cap and operator delete. The gap that leaves is named rather than papered over: a publisher who wants their own never-expiring relic gone waits on an operator. If a later station adds publisher self-delete, the delete tool becomes specifiable and this section is what it reopens.
@@ -194,6 +195,42 @@ Success returns `structuredContent` with seven members, all required:
 - Server refusals: `service_paused` (kill switch active), `share_rate_limited` (rate limited by IP), `invalid_relic_id` (malformed id), `relic_removed` (relic was taken down), `relic_not_found` (relic does not exist), `invalid_publish_token` (token mismatch), `relic_expired` or `download_cap_exhausted` (relic no longer available), `invalid_share` (malformed email syntax), and `share_limit_reached` (relic reached 50 address cap).
 
 Readers holding the link can also share from the viewer once the relic was published or republished by a client that supplies a share verifier.
+
+### 1.9 The decisions read tool: `relic_read_decisions`
+
+`relic_read_decisions` reads approval and rejection decisions recorded for a relic.
+
+**Decisions are human-only and viewer-only.** Decisions are made by a person in the viewer with a passkey. No MCP tool records decisions, and comment text never creates one. A person's latest record on a version is their current decision. This tool is read-only.
+
+**Input schema:**
+- `relic_id`: string (required). Canonical Crockford base32 relic id.
+- `version`: integer >= 1 or `"*"` (optional). An integer restricts the listing to decisions recorded for that specific version. `"*"` returns decisions across every version. When omitted, it defaults to the relic's current version.
+
+**Execution flow:**
+1. *Local state check:* Reads local publish state for `relic_id` to retrieve the relic's decryption key. If no local record exists, refuses with `no_local_publish_state`. Passing a full share URL instead of an id is also refused locally.
+2. *Proof derivation:* Derives the 32-byte HKDF share proof from the fragment key: `deriveShareProof(keyBytes)` (`format.md` 3.14).
+3. *Service request:* Sends `POST /api/relics/{id}/decisions/list` with `{ share_proof, version }`.
+4. *Zero opens consumed:* The list endpoint does not mint and never touches `mintsUsed`. It is allowed on expired relics.
+
+**Output schema:**
+Success returns `structuredContent` with three members, all required:
+- `relic_id`: string.
+- `current_version`: integer. The relic's current published version number on the server.
+- `decisions`: array of decision objects, each carrying:
+  - `id`: string. Base64url 16-byte decision id.
+  - `version`: integer >= 1.
+  - `verdict`: `'approve' | 'reject'`.
+  - `author`: string. Normalized verified email address of the approver.
+  - `created_at`: string (RFC 3339 UTC).
+  - `version_digest`: string (64-character lowercase hex SHA-256).
+
+**Text formatting:** The text content block summarizes the active verdicts per version, reporting latest verdicts per author, and names the version digest so downstream automation can compare it against expected artifacts.
+
+**Refusals:**
+- `no_local_publish_state`: The relic was not published from this machine, or the id was not found in local publish state.
+- `decision_unavailable`: The relic was published before sharing and decisions were supported. Guidance: "republish once with relic_republish; the link does not change".
+- `invalid_share_proof`: The derived key proof failed verification against the stored verifier.
+- `decision_rate_limited`: The read rate limit (600 per IP per hour) was exceeded.
 
 ## 2. Error mapping, and the two legs the app server is not in
 
@@ -383,7 +420,7 @@ The cost is that an honest publisher whose upload fails still spent quota, and a
 
 **Republish is a grant hop with the token standing where the challenge stood.** The endpoint is `POST /api/relics/{id}/republish`, the body is `{ publish_token, renderer_class, declared_size_bytes, declared_ciphertext_bytes }`, plus `ttl_days` when the caller set one, optional `title`, optional `cover`, optional `notify` boolean (absent means true; any other type is refused with `400 invalid_publish_metadata`, pointing at `service.md` section 8), and optional `share_verifier` (a 64-character lowercase hex string registering the verifier for web sharing, else `400 invalid_publish_metadata`). That `ttl_days` member is carried, not read: a relic's lifetime is fixed at its first grant, and the body says what the publisher asked for rather than letting a version silently re-decide it. A publisher who wants a different lifetime publishes a new relic. `title` on republish follows a three-state rule: absent means leave the stored title unchanged; empty after trim means clear it, leaving the relic untitled; a valid value replacing it must satisfy `isStorableTitle`, failing which the server returns `400 invalid_publish_metadata` with `{ relic_id }`. The client always sends the `title` key on republish, with `""` meaning clear. The response mirrors the grant: a signed upload target and its constraints. There is no challenge round trip, because the challenge exists to price an anonymous grant and this one is not anonymous; the bearer token is the authorization, and the publish token proves it.
 
-**The result mirrors `relic_publish` with one omission: no `url`.** It returns `structuredContent` with ten members, including `title: string | null` reporting the current stored title (or `null` when untitled) and `cover: CoverReport` reporting the cover status. The URL is unchanged by a new version, and reprinting it would reprint the key into a transcript that needed no second copy. The text says the existing link now serves the new content, and `version` carries the number just landed. Republishing with `cover: false` clears and deletes any stored cover server-side and clears any local cover record. If `cover` is true or omitted, the client renders and uploads a new cover for the new version via `POST /api/relics/{id}/cover` after republish completes, updating the content-addressed URL.
+**The result mirrors `relic_publish` with one omission: no `url`.** It returns `structuredContent` with eleven members, including `title: string | null` reporting the current stored title (or `null` when untitled), `cover: CoverReport` reporting the cover status, `version: number` reporting the version just landed, and `version_digest: string` reporting the SHA-256 of the new version's ciphertext container bytes. The URL is unchanged by a new version, and reprinting it would reprint the key into a transcript that needed no second copy. The text says the existing link now serves the new content, `version` carries the number just landed, and `version_digest` carries the digest matching decisions on that version. Republishing with `cover: false` clears and deletes any stored cover server-side and clears any local cover record. If `cover` is true or omitted, the client renders and uploads a new cover for the new version via `POST /api/relics/{id}/cover` after republish completes, updating the content-addressed URL.
 
 **The server derives the version; the client never names one.** The row's version increments, the object lands at `{ciphertext_prefix}/{id}/v{n}` under that path's own existence refusal (`format.md` 3.12, `format.md` 1.4), and the relic id comes from the path rather than being redrawn. A collision redraw is a publish concept with no republish analogue, because the id is not being claimed here, only re-used.
 
@@ -393,13 +430,24 @@ The cost is that an honest publisher whose upload fails still spent quota, and a
 
 ## 4. Completion, retry, and failure
 
-### 4.1 Lazy discovery at first mint confirms completion
+### 4.1 Explicit upload completion and lazy discovery at first mint
 
-**Nothing confirms completion at publish time. The server learns whether an object landed at the first mint, and not before.**
+**The upload complete notification and response.** When ciphertext upload finishes, the client calls `reportComplete` (`POST /api/relics/{id}/complete`). The server stats the object, computes its SHA-256 digest, and returns `200` with JSON:
+```json
+{
+  "relic_id": "<id>",
+  "object_length": 12345,
+  "object_crc32c": "<crc>",
+  "relic_expires_at": null,
+  "version": 3,
+  "version_digest": "<64 hex>"
+}
+```
+`version` carries the server's authoritative version number (`row.version`), and `version_digest` carries the SHA-256 of the stored ciphertext object. If `version_digest` differs from the local container digest computed by the client, the client raises `PublishError('version_digest_mismatch')`.
 
-The alternatives both cost more than they return. An explicit completion call strands a relic whose call failed: the object landed, the confirmation didn't, and the server now believes nothing landed for an ID that's serving. A storage-side finalize notification adds an infrastructure dependency and an eventually-consistent window with no name, which is the shape of gap that later gets papered over with a retry loop. Lazy discovery is free, rides the mint the viewer performs anyway, and records telemetry for relics that never landed, since the server holds a grant record with no object.
+**Lazy discovery remains the fallback.** If the complete call is dropped or fails over the network, the object still landed and the link is valid. The server discovers the object lazily upon the first mint request (`POST /api/relics/{id}/mint`), deriving the version digest at that time.
 
-**The honest limit, and it matters for anyone reading the number.** The server's knowledge of "did this land" is only as fresh as the first mint. A relic nobody ever opens is indistinguishable from a relic that never landed, so the count of never-landed relics is a lagging figure that overstates until someone tries each one. Nobody downstream reads it as a real-time upload failure rate.
+**The honest limit, and it matters for anyone reading the number.** The server's knowledge of "did this land" is only as fresh as the complete call or first mint. A relic nobody ever opens is indistinguishable from a relic that never landed, so the count of never-landed relics is a lagging figure that overstates until someone tries each one. Nobody downstream reads it as a real-time upload failure rate.
 
 ### 4.2 Grants that are never used
 
