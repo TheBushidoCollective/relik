@@ -7392,10 +7392,12 @@ export function renderReady(
       return;
     }
 
-    let versionPill = document.querySelector(
-      'div.render-status[data-version-progress]'
-    ) as HTMLElement | null;
-    if (!versionPill) {
+    let versionPill = document.querySelector
+      ? (document.querySelector(
+          'div.render-status[data-version-progress]'
+        ) as HTMLElement | null)
+      : null;
+    if (!versionPill && document.createElement) {
       versionPill = document.createElement('div');
       versionPill.className = 'render-status';
       versionPill.dataset['versionProgress'] = '';
@@ -7404,17 +7406,19 @@ export function renderReady(
       label.className = 'render-status-label';
       label.textContent = `Opening version ${v}`;
       versionPill.appendChild(label);
-      document.body.appendChild(versionPill);
-    } else {
+      if (document.body?.appendChild) {
+        document.body.appendChild(versionPill);
+      }
+    } else if (versionPill) {
       const label =
-        versionPill.querySelector('.render-status-label') ?? versionPill;
+        versionPill.querySelector?.('.render-status-label') ?? versionPill;
       label.textContent = `Opening version ${v}`;
     }
 
     const res = await loadHistoricalVersion(relicId, v, view, deps, (p) => {
       if (versionPill) {
         const label =
-          versionPill.querySelector('.render-status-label') ?? versionPill;
+          versionPill.querySelector?.('.render-status-label') ?? versionPill;
         if (p.phase === 'opening') {
           label.textContent = `Opening version ${v}`;
         } else if (p.phase === 'fetching') {
@@ -7423,7 +7427,7 @@ export function renderReady(
       }
     });
 
-    versionPill?.remove();
+    versionPill?.remove?.();
 
     if (res.kind === 'ready') {
       loadedViews.set(v, res.view);
@@ -7483,6 +7487,20 @@ interface PlateHandles {
 }
 
 export function adoptOrMountPlate(relicId: string): PlateHandles {
+  if (typeof document === 'undefined' || !document.querySelector) {
+    return {
+      bar: null as unknown as HTMLElement,
+      plate: null as unknown as HTMLElement,
+      phaseEl: null,
+      meterEl: null,
+      transferEl: null,
+      contentsEl: null,
+      custodyEl: null,
+      paint: () => {},
+      remove: () => {},
+    };
+  }
+
   let bar = document.querySelector(
     'header.bar[data-load-bar]'
   ) as HTMLElement | null;
@@ -7531,7 +7549,11 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
 
     actions.append(policy, abuse);
     bar.append(mark, identity, actions);
-    document.body.prepend(bar);
+    if (document.body?.prepend) {
+      document.body.prepend(bar);
+    } else if (document.body?.appendChild) {
+      document.body.appendChild(bar);
+    }
   }
 
   let plate = document.querySelector(
@@ -7571,20 +7593,30 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
 
     card.append(phase, meter, transfer, contents, note);
     plate.appendChild(card);
-    bar.after(plate);
+    if (bar.after) {
+      bar.after(plate);
+    } else if (bar.parentElement) {
+      bar.parentElement.insertBefore(plate, bar.nextSibling);
+    } else if (document.body?.appendChild) {
+      document.body.appendChild(plate);
+    }
   }
 
-  const phaseEl = plate.querySelector('.load-phase') as HTMLElement | null;
-  const meterEl = plate.querySelector('.load-meter') as HTMLElement | null;
-  const transferEl = plate.querySelector(
-    '[data-load-transfer]'
-  ) as HTMLElement | null;
-  const contentsEl = plate.querySelector(
-    '[data-load-contents]'
-  ) as HTMLElement | null;
-  const custodyEl = bar.querySelector(
-    '[data-load-custody]'
-  ) as HTMLElement | null;
+  const phaseEl = plate?.querySelector
+    ? (plate.querySelector('.load-phase') as HTMLElement | null)
+    : null;
+  const meterEl = plate?.querySelector
+    ? (plate.querySelector('.load-meter') as HTMLElement | null)
+    : null;
+  const transferEl = plate?.querySelector
+    ? (plate.querySelector('[data-load-transfer]') as HTMLElement | null)
+    : null;
+  const contentsEl = plate?.querySelector
+    ? (plate.querySelector('[data-load-contents]') as HTMLElement | null)
+    : null;
+  const custodyEl = bar?.querySelector
+    ? (bar.querySelector('[data-load-custody]') as HTMLElement | null)
+    : null;
 
   let pendingProgress: LoadProgress | null = null;
   let rafId: number | null = null;
@@ -7692,13 +7724,18 @@ export function trackRenderState(
   stageWrap: HTMLElement,
   route: RenderRoute
 ): void {
+  if (typeof document === 'undefined' || !document.querySelector) {
+    return;
+  }
   stage.dataset['renderState'] = 'rendering';
   stageWrap.setAttribute('aria-busy', 'true');
 
-  let statusPill = document.querySelector(
-    'div.render-status[data-render-status]'
-  ) as HTMLElement | null;
-  if (!statusPill) {
+  let statusPill = document.querySelector
+    ? (document.querySelector(
+        'div.render-status[data-render-status]'
+      ) as HTMLElement | null)
+    : null;
+  if (!statusPill && document.createElement) {
     statusPill = document.createElement('div');
     statusPill.className = 'render-status';
     statusPill.dataset['renderStatus'] = '';
@@ -7707,7 +7744,9 @@ export function trackRenderState(
     label.className = 'render-status-label';
     label.textContent = PHASE_RENDERING;
     statusPill.appendChild(label);
-    document.body.appendChild(statusPill);
+    if (document.body?.appendChild) {
+      document.body.appendChild(statusPill);
+    }
   }
 
   let settled = false;
@@ -7717,7 +7756,8 @@ export function trackRenderState(
     settled = true;
     stage.dataset['renderState'] = 'ready';
     stageWrap.setAttribute('aria-busy', 'false');
-    statusPill?.remove();
+    if (statusPill?.remove) statusPill.remove();
+    else statusPill?.parentElement?.removeChild?.(statusPill);
   };
 
   const setError = () => {
@@ -7725,7 +7765,8 @@ export function trackRenderState(
     settled = true;
     stage.dataset['renderState'] = 'error';
     stageWrap.setAttribute('aria-busy', 'false');
-    statusPill?.remove();
+    if (statusPill?.remove) statusPill.remove();
+    else statusPill?.parentElement?.removeChild?.(statusPill);
   };
 
   switch (route) {
@@ -7852,18 +7893,28 @@ export function renderDead(
   cachedPrefix?: CachedPrefix,
   onRetry?: () => void
 ): void {
-  let bar = document.querySelector('header.bar') as HTMLElement | null;
-  if (!bar) {
+  if (typeof document === 'undefined') return;
+
+  let bar = document.querySelector
+    ? (document.querySelector('header.bar') as HTMLElement | null)
+    : null;
+  if (!bar && document.createElement) {
     bar = document.createElement('header');
     bar.className = 'bar';
     const mark = document.createElement('div');
     mark.className = 'mark';
     mark.textContent = WORDMARK;
     bar.appendChild(mark);
-    document.body.prepend(bar);
+    if (document.body?.prepend) {
+      document.body.prepend(bar);
+    } else if (document.body?.appendChild) {
+      document.body.appendChild(bar);
+    }
   }
 
-  document.querySelectorAll('main.stage').forEach((s) => s.remove());
+  if (document.querySelectorAll) {
+    document.querySelectorAll('main.stage').forEach((s) => s.remove());
+  }
 
   const main = document.createElement('main');
   main.className = 'stage stage-dead';
@@ -7884,7 +7935,9 @@ export function renderDead(
   const actionsDiv = document.createElement('div');
   actionsDiv.className = 'card-actions';
 
+  let hasActions = false;
   if (dead.action === 'retry' || dead.action === 'retry-report') {
+    hasActions = true;
     const retry = button('Try again', ICONS.rendered, () => {
       if (onRetry) {
         onRetry();
@@ -7897,6 +7950,7 @@ export function renderDead(
     actionsDiv.appendChild(retry);
   }
   if (dead.action === 'report' || dead.action === 'retry-report') {
+    hasActions = true;
     const link = document.createElement('a');
     link.className = dead.action === 'report' ? 'action primary' : 'action';
     link.href = `${SERVICE_ORIGIN}/abuse`;
@@ -7905,10 +7959,9 @@ export function renderDead(
     actionsDiv.appendChild(link);
   }
 
-  if (actionsDiv.childNodes.length > 0) {
+  if (hasActions) {
     card.appendChild(actionsDiv);
   }
-
   if (isKeyEntryRecoverable(dead.code) && relicId && deps) {
     const keySection = document.createElement('div');
     keySection.className = 'key-entry';

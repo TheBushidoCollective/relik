@@ -233,14 +233,26 @@ export function shareUrlFor(href: string, fragment: string): string {
 function teeAndDigest(source: ReadableStream<Uint8Array>) {
   const chunks: Uint8Array[] = [];
   let totalLength = 0;
-  const stream = source.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        chunks.push(chunk);
-        totalLength += chunk.length;
-        controller.enqueue(chunk);
+  const reader = source.getReader();
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        if (value) {
+          chunks.push(value);
+          totalLength += value.length;
+          controller.enqueue(value);
+        }
       },
-    })
+      async cancel(reason) {
+        await reader.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 }
   );
   const computeDigest = async (): Promise<string> => {
     const full = new Uint8Array(totalLength);
