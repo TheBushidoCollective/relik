@@ -324,6 +324,42 @@ describe('the shell', () => {
     );
   });
 
+  test('GET /{id} emits static plate with data-load-plate, opening phase, bar, explanation, and accession', async () => {
+    const { id } = await publish();
+    const response = await app.fetch(req(`/${id}`));
+    const body = await response.text();
+
+    expect(body).toContain('data-load-plate');
+    expect(body).toContain('data-load-phase="opening"');
+    expect(body).toContain('data-load-bar');
+    expect(body).toContain('The file in this link is decrypted in your browser.');
+    expect(body).toContain('Report this relic');
+    expect(body).toContain('How Relic handles your data');
+    expect(body).toContain(`<span class="accession">${id}</span>`);
+
+    // noscript styles and card
+    expect(body).toContain(
+      '<noscript><style>.stage-loading{display:none}</style></noscript>'
+    );
+    expect(body).toContain('This page needs JavaScript to open a relic.');
+    expect(body).toContain(
+      'Relic decrypts the file in your browser, so with JavaScript off there is nothing here to decrypt it with.'
+    );
+  });
+
+  test('an angle-bracket path segment is escaped in the plate', async () => {
+    const response = await app.fetch(req('/<script>'));
+    const body = await response.text();
+    expect(body).toContain('&lt;script&gt;');
+    expect(body).not.toContain('<span class="accession"><script>');
+  });
+
+  test('the dashboard shell has no data-load-plate', async () => {
+    const response = await app.fetch(req('/dashboard'));
+    const body = await response.text();
+    expect(body).not.toContain('data-load-plate');
+  });
+
   test('a relic published as markdown serves the Markdown phrase and browser tail; one published as archive serves the archive phrase and download tail', async () => {
     const { id: mdId } = await publish({ rendererClass: 'markdown' });
     const mdResponse = await app.fetch(req(`/${mdId}`));
@@ -644,8 +680,10 @@ describe('reserved segments beat ids at the router', () => {
     );
     expect(body).toContain('Sharing gives us addresses, never the link.');
     expect(body).toContain('One stop link stops every email about that relic.');
+    expect(body).toContain(
+      'A link whose key does not open a relic stops downloading after the first block'
+    );
   });
-
   test('/install on a self-hosted deployment names the origin to point at', async () => {
     // A self-hoster needs it: without the variable their client resolves the
     // hosted default and publishes to somebody else's service.
