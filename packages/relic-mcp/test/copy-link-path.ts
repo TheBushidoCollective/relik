@@ -612,6 +612,30 @@ async function verifyBandAtWidth(
   }
 }
 
+async function assertKeyDoesNotSplit(
+  cdp: CdpConnection,
+  sessionId: string
+): Promise<void> {
+  const rectsCount = await evaluate<number>(
+    cdp,
+    sessionId,
+    `(() => {
+      const keyEl = document.querySelector('.copy-link-key');
+      if (!keyEl) return 0;
+      const oldText = keyEl.textContent;
+      keyEl.textContent = '#r1-AbCdEfGhIjKlMnOpQrStU';
+      const count = keyEl.getClientRects().length;
+      keyEl.textContent = oldText;
+      return count;
+    })()`
+  );
+  assert.equal(
+    rectsCount,
+    1,
+    'key with hyphens split across multiple line boxes'
+  );
+}
+
 try {
   // Launch primary browser
   const b1 = await launchBrowser();
@@ -752,6 +776,7 @@ try {
   );
   assert.ok(step2.scrollWidthOk, 'horizontal overflow observed');
   assert.equal(step2.clipboardWritesCount, 0, 'clipboard written on open');
+  await assertKeyDoesNotSplit(b1.cdp, b1.sessionId);
   console.log('Step 2 passed: panel opened and checked');
 
   // Shot: panel 1440 light
@@ -1255,6 +1280,7 @@ try {
   );
   assert.ok(step10_390.allLiSingleLine, 'li broke into multiple lines at 390');
   assert.ok(step10_390.scrollWidthOk, 'horizontal overflow at 390');
+  await assertKeyDoesNotSplit(b1.cdp, b1.sessionId);
 
   await pressKey(b1.cdp, b1.sessionId, 'Escape', 'Escape', 27);
   await waitForCondition(async () => {
@@ -1330,6 +1356,7 @@ try {
   );
   assert.ok(step10_320.allLiSingleLine, 'li broke into multiple lines at 320');
   assert.ok(step10_320.scrollWidthOk, 'horizontal overflow at 320');
+  await assertKeyDoesNotSplit(b1.cdp, b1.sessionId);
 
   // Shot: toast over panel at 320
   await pressKey(b1.cdp, b1.sessionId, 'Enter', 'Enter', 13);

@@ -3577,6 +3577,8 @@ canvas.relic-page {
 }
 
 .copy-link-key {
+  display: inline-block;
+  line-height: normal;
   color: var(--oxide);
   background: var(--diff-removed);
   -webkit-box-decoration-break: clone;
