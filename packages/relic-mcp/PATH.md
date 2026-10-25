@@ -354,3 +354,74 @@ Success ends with:
 ```text
 OTIO_PATH_OK
 ```
+
+## Passkey-confirmed decisions
+
+Run the full loopback proof from the repository root:
+
+```bash
+RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/decision-path.ts
+```
+
+The command starts a service on loopback with `MemoryStore` and `MemoryStorage`,
+serving built viewer assets. It binds 127.0.0.1 but browses with
+`serviceOrigin = http://localhost:<port>` so WebAuthn RP ID checks pass.
+Every MCP operation runs through a fresh Node stdio process with `title: ""`,
+`cover: false`, and `ttl_days: 1`.
+
+It exercises:
+1. Publishing v1, republishing v2, and republishing v3, recording the v3 `version_digest`.
+2. Opening the relic in headless Chrome over a CDP pipe with an attached virtual CTAP2 authenticator.
+3. Requesting a sign-in magic link from the decisions panel, extracting it from the captured mailer, and following it in the same browser context.
+4. Opening the decision panel, choosing Approve, completing trust-on-first-use (TOFU) passkey registration, and confirming the decision with a user-verified assertion.
+5. Verifying check (a): `relic_read_decisions` for v3 returns the reader address, `approve`, and matching `version_digest`.
+6. Verifying check (b): direct POST with `publish_token` is refused with 403 `decision_requires_reader`.
+7. Verifying check (d): recording Reject on v3; read returns two records with the latest being `reject`.
+8. Verifying check (c): republishing v4; v4 starts empty and v3 retains both decision records.
+9. Verifying check (e): posting a reader comment and publisher `relic_comment` both reading "GREENLIGHT"; wildcard decisions readback remains 2.
+10. Negative controls: posting a v2 digest for v3 gives 409 `decision_digest_mismatch`, a second authenticator with `isUserVerified: false` gives 403 `user_verified`, and replaying the captured assertion gives 403 `challenge`.
+
+Success ends with:
+
+```text
+DECISION_A_OK version=3 verdict=approve author=<email>
+DECISION_B_OK code=decision_requires_reader status=403
+DECISION_D_OK count=2 latest=reject
+DECISION_C_OK v4_count=0 v3_count=2
+DECISION_E_OK total_decisions=2
+DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403
+DECISION_PATH_OK
+```
+
+## Decisions on the live service
+
+Run against the live deployment from the repository root:
+
+```bash
+RELIC_DECISION_PROBE_MAILBOX=user@example.com bun packages/relic-mcp/test/decision-live-probe.ts
+```
+
+The probe exercises passkey-confirmed decisions against a live service deployment (defaulting to `https://relik.link`).
+It reads the base recipient address from `RELIC_DECISION_PROBE_MAILBOX` and derives a fresh per-run plus-addressed email `<local>+relic-decision-<runId>@<domain>`.
+The probe refuses to run without a plus-tag, ensuring test passkeys never claim TOFU for a real mailbox.
+
+It respects:
+- `RELIC_SERVICE_ORIGIN`: destination service, defaults to `https://relik.link`
+- `RELIC_DECISION_PROBE_CLIENT`: `'source'` or `'npx:<version>'` (defaults to `npx:0.14.0`)
+- `RELIC_PUBLISH_STATE`: optional fixed state path (defaults to scratch)
+- `RELIC_CHROME_PATH`: optional browser executable path
+
+The probe prints `PROBE_AWAIT_MAGIC_LINK email=<addr>` and blocks on stdin. The operator retrieves the magic link from the destination mailbox and pastes it into stdin.
+The probe never prints the relic URL or key. It executes all five checks and negative controls against the live service.
+
+Success ends with:
+
+```text
+DECISION_A_OK version=3 verdict=approve author=<email>
+DECISION_B_OK code=decision_requires_reader status=403
+DECISION_D_OK count=2 latest=reject
+DECISION_C_OK v4_count=0 v3_count=2
+DECISION_E_OK total_decisions=2
+DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403
+DECISION_LIVE_OK relic=<id> client=relic-mcp@<version>
+```

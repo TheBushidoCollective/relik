@@ -1,6 +1,6 @@
 ---
 name: relic
-description: Publish a local file as an encrypted, shareable link when someone outside this session needs to see it. Use when the user says "share this", "send this to X", "publish this", "give me a link for this", "make this shareable", or has just been handed a generated report, HTML page, deck, image, or export and needs it somewhere a person can open. Also covers sending a relic to named people (relic_share), republishing a new version of an existing relic, reading the comments people leave on one and answering them, what the recipient sees, how long a link lives, and what the service can and cannot read.
+description: Publish a local file as an encrypted, shareable link when someone outside this session needs to see it. Use when the user says "share this", "send this to X", "publish this", "give me a link for this", "make this shareable", or has just been handed a generated report, HTML page, deck, image, or export and needs it somewhere a person can open. Also covers sending a relic to named people (relic_share), republishing a new version of an existing relic, reading the comments people leave on one and answering them, reading approval decisions (relic_read_decisions), what the recipient sees, how long a link lives, and what the service can and cannot read.
 ---
 
 # Relic
@@ -227,6 +227,28 @@ it cannot read. What it does learn is who commented on which relic and when,
 which for a human commenter is a verified email address. Worth saying plainly
 if somebody asks what commenting costs them: the content stays private and the
 participation does not.
+## Decisions
+
+Readers can record approval or rejection decisions in the viewer, confirmed with a passkey. Decisions are separate from comments: comment text never creates a decision, and no MCP tool records one.
+
+Read decisions with:
+
+```json
+{
+  "name": "relic_read_decisions",
+  "arguments": { "relic_id": "0a2c..." }
+}
+```
+
+Optional `version` takes a version number (`1`, `2`, ...) to read decisions for that specific version, or `"*"` to read decisions across all versions. When omitted, it defaults to the relic's current version.
+
+Four things to know:
+
+- **Decisions are made by a person in the viewer with a passkey.** No tool can approve or reject a relic.
+- **A person's latest record on a version is their current decision.** If someone approves and later rejects the same version, both records are kept and the latest reflects their current verdict.
+- **Each decision binds to an exact version and ciphertext digest.** A decision on version 1 applies to version 1 only, not to later republished versions.
+- **Works only on the machine that published the relic.** Reading decisions requires the share proof derived from the encryption key, which lives in the local publish state file.
+
 
 ## Say this when you hand over the link
 

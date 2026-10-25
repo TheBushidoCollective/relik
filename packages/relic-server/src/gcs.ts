@@ -19,6 +19,7 @@
  * window is a cost-control parameter, not a convenience one.
  */
 
+import { createHash } from 'node:crypto';
 import type { ObjectStat, ObjectStorage, SignedUpload } from './storage.ts';
 
 /**
@@ -455,6 +456,22 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       if (!response.ok && response.status !== 404) {
         throw new Error(`delete failed with ${response.status}`);
       }
+    },
+
+    async digest(relicId: string): Promise<string | undefined> {
+      const url = await sign('GET', relicId, 60, Date.now());
+      const response = await fetch(url);
+      if (response.status === 404) return undefined;
+      if (!response.ok) {
+        throw new Error(`digest failed with ${response.status}`);
+      }
+      const hash = createHash('sha256');
+      if (response.body) {
+        for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+          hash.update(chunk);
+        }
+      }
+      return hash.digest('hex');
     },
   };
 }

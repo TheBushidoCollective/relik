@@ -61,7 +61,17 @@ export type ProblemCode =
   | 'share_limit_reached'
   | 'share_unavailable'
   | 'invalid_share_proof'
-  | 'sign_in_required';
+  | 'sign_in_required'
+  | 'decision_requires_reader'
+  | 'invalid_decision'
+  | 'decision_unavailable'
+  | 'decision_digest_mismatch'
+  | 'decision_rate_limited'
+  | 'passkey_required'
+  | 'passkey_assertion_required'
+  | 'invalid_passkey'
+  | 'passkey_verification_failed'
+  | 'passkey_rate_limited';
 
 const STATUS: Readonly<Record<ProblemCode, number>> = {
   relic_not_found: 404,
@@ -95,6 +105,16 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   share_unavailable: 409,
   invalid_share_proof: 403,
   sign_in_required: 401,
+  decision_requires_reader: 403,
+  invalid_decision: 400,
+  decision_unavailable: 409,
+  decision_digest_mismatch: 409,
+  decision_rate_limited: 429,
+  passkey_required: 409,
+  passkey_assertion_required: 409,
+  invalid_passkey: 400,
+  passkey_verification_failed: 403,
+  passkey_rate_limited: 429,
 };
 
 /** `title` SHOULD NOT change from occurrence to occurrence, per RFC 9457. */
@@ -130,6 +150,18 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   share_unavailable: 'Share unavailable',
   invalid_share_proof: 'Invalid share proof',
   sign_in_required: 'Sign-in required',
+  decision_requires_reader:
+    'A decision needs a signed-in reader, never the publish token',
+  invalid_decision: 'Invalid decision request',
+  decision_unavailable: 'Decisions unavailable until the publisher republishes',
+  decision_digest_mismatch:
+    'The stored version is not the version this page shows',
+  decision_rate_limited: 'Too many decision requests',
+  passkey_required: 'No passkey is registered for this address',
+  passkey_assertion_required: 'Adding a passkey needs one you already have',
+  invalid_passkey: 'Invalid passkey payload',
+  passkey_verification_failed: 'Passkey did not verify',
+  passkey_rate_limited: 'Too many passkey requests',
 };
 
 export interface ProblemExtensions {
@@ -147,6 +179,9 @@ export interface ProblemExtensions {
   readonly share_limit?: number;
   readonly shared_count?: number;
   readonly share_max_per_call?: number;
+  readonly version?: number;
+  readonly version_digest?: string;
+  readonly passkey_check?: string;
 }
 
 export interface ProblemOptions extends ProblemExtensions {
