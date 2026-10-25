@@ -4965,3 +4965,23 @@ canvas.relic-page {
 .decision-refusal > .action.primary {
   justify-self: start;
 }
+
+/*
+ * The real band carries Compare versions, which the mock's did not, so the
+ * mock's narrow rules alone left the filename narrower than before Decisions
+ * arrived. Measured filename width before Decisions / with these rules:
+ * 31 / 31 px at 390, 104 / 105 at 360, 64 / 65 at 320. A tighter tally chip
+ * buys the 8px at 390; a tighter action padding at the floor buys the rest.
+ */
+@media (max-width: 34rem) {
+  .action .decision-tally > span {
+    gap: 0.1rem;
+    padding: 0 0.2rem;
+  }
+}
+
+@media (max-width: 24rem) {
+  .actions .action {
+    padding: 0 0.4rem;
+  }
+}
