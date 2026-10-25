@@ -2,8 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { createApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { gcsStore } from '../src/gcsstore.ts';
+import { ProblemError } from '../src/problems.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import type { RelicRow } from '../src/store.ts';
+import {
+  MemoryStore,
+  type PasskeyCredential,
+  type RelicRow,
+} from '../src/store.ts';
 
 /**
  * A fake GCS that models the one behaviour the store depends on for
@@ -95,6 +100,14 @@ function fakeGcs() {
       const name = decodeURIComponent(objectMatch[1]);
 
       if (method === 'DELETE') {
+        const precondition = url.searchParams.get('ifGenerationMatch');
+        if (precondition !== null) {
+          const existing = objects.get(name);
+          const current = existing === undefined ? 0 : existing.generation;
+          if (String(current) !== precondition) {
+            return new Response('precondition failed', { status: 412 });
+          }
+        }
         objects.delete(name);
         media.delete(name);
         return new Response('', { status: 204 });
@@ -1288,6 +1301,270 @@ describe('gcsStore', () => {
       );
       expect(gcs.objects.has('m/commenter/r_sweep/_complete.json')).toBe(false);
       expect(await store.listCommenters('r_sweep')).toEqual([]);
+    });
+  });
+  describe('decisions, passkeys, and challenges', () => {
+    test('recordVersionDigest records and preserves first writer', async () => {
+      const gcs = fakeGcs();
+      const store = storeOn(gcs);
+      await store.putRelic(row({ id: 'r_dig' }));
+
+      const d1 = await store.recordVersionDigest('r_dig', 1, 'sha_first');
+      expect(d1).toBe('sha_first');
+
+      const d2 = await store.recordVersionDigest('r_dig', 1, 'sha_second');
+      expect(d2).toBe('sha_first');
+
+      const readBack = await store.getRelic('r_dig');
+      expect(readBack?.versionDigests?.['1']).toBe('sha_first');
+    });
+
+    test('appendDecision, listDecisions, and deleteDecisionsForRelic', async () => {
+      const gcs = fakeGcs();
+      const store = storeOn(gcs);
+
+      await store.appendDecision({
+        id: 'dec2',
+        relicId: 'r_dec',
+        version: 1,
+        verdict: 'approve',
+        author: 'a@example.com',
+        createdAt: 2000,
+        versionDigest: 'sha1',
+        credentialId: 'cred1',
+      });
+
+      await store.appendDecision({
+        id: 'dec1',
+        relicId: 'r_dec',
+        version: 1,
+        verdict: 'reject',
+        author: 'b@example.com',
+        createdAt: 1000,
+        versionDigest: 'sha1',
+        credentialId: 'cred2',
+      });
+
+      // Duplicate decision id throws
+      await expect(
+        store.appendDecision({
+          id: 'dec1',
+          relicId: 'r_dec',
+          version: 1,
+          verdict: 'approve',
+          author: 'b@example.com',
+          createdAt: 3000,
+          versionDigest: 'sha1',
+          credentialId: 'cred2',
+        })
+      ).rejects.toThrow();
+
+      // Ordered by createdAt, then id
+      const list = await store.listDecisions('r_dec');
+      expect(list.map((d) => d.id)).toEqual(['dec1', 'dec2']);
+
+      const deleted = await store.deleteDecisionsForRelic('r_dec');
+      expect(deleted).toBe(2);
+      expect(await store.listDecisions('r_dec')).toEqual([]);
+    });
+
+    test('listDecisions caps fan-out concurrency to 16 with > 16 decisions and preserves ordering', async () => {
+      const gcs = fakeGcs();
+      let activeGets = 0;
+      let maxActiveGets = 0;
+      const origFetch = gcs.fetch.bind(gcs);
+      gcs.fetch = (async (
+        input: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1]
+      ) => {
+        const url = new URL(
+          typeof input === 'string' ? input : input.toString()
+        );
+        const isObjectGet =
+          !url.pathname.startsWith('/upload/') &&
+          !url.pathname.endsWith('/o') &&
+          (init?.method === undefined || init.method === 'GET');
+        if (isObjectGet) {
+          activeGets++;
+          if (activeGets > maxActiveGets) maxActiveGets = activeGets;
+          await Promise.resolve();
+          try {
+            return await origFetch(input, init);
+          } finally {
+            activeGets--;
+          }
+        }
+        return origFetch(input, init);
+      }) as unknown as typeof fetch;
+
+      const store = storeOn(gcs);
+      for (let i = 25; i >= 1; i--) {
+        await store.appendDecision({
+          id: `dec_${String(i).padStart(2, '0')}`,
+          relicId: 'r_many',
+          version: 1,
+          verdict: 'approve',
+          author: `user${i}@example.com`,
+          createdAt: i * 1000,
+          versionDigest: 'sha1',
+          credentialId: `cred${i}`,
+        });
+      }
+
+      const list = await store.listDecisions('r_many');
+      expect(list.length).toBe(25);
+      expect(maxActiveGets).toBe(16);
+      for (let i = 0; i < 25; i++) {
+        expect(list[i]?.createdAt).toBe((i + 1) * 1000);
+        expect(list[i]?.id).toBe(`dec_${String(i + 1).padStart(2, '0')}`);
+      }
+    });
+
+    test('createPasskeys TOFU and updatePasskeys counter check', async () => {
+      const gcs = fakeGcs();
+      const store = storeOn(gcs);
+
+      const jwk: JsonWebKey = { kty: 'EC', crv: 'P-256', x: 'abc', y: 'def' };
+      const cred0: PasskeyCredential = {
+        credentialId: 'cred1',
+        publicKeyJwk: jwk,
+        alg: -7,
+        signCount: 1,
+        createdAt: 1000,
+      };
+      const firstPasskey = {
+        email: 'user@example.com',
+        userHandle: 'handle1',
+        credentials: [cred0],
+      };
+
+      expect(await store.createPasskeys(firstPasskey)).toBe(true);
+      // Second createPasskeys with same email fails TOFU
+      expect(await store.createPasskeys(firstPasskey)).toBe(false);
+
+      const readBack = await store.getPasskeys('USER@example.com');
+      expect(readBack?.userHandle).toBe('handle1');
+
+      let counterError: ProblemError | undefined;
+      try {
+        await store.updatePasskeys('user@example.com', (curr) => ({
+          ...curr,
+          credentials: [{ ...cred0, signCount: 0 }],
+        }));
+      } catch (err) {
+        if (err instanceof ProblemError) {
+          counterError = err;
+        }
+      }
+      expect(counterError?.code).toBe('passkey_verification_failed');
+      expect(counterError?.options.passkey_check).toBe('counter');
+
+      // Update with advancing counter succeeds
+      const updated = await store.updatePasskeys(
+        'user@example.com',
+        (curr) => ({
+          ...curr,
+          credentials: [{ ...cred0, signCount: 2 }],
+        })
+      );
+      expect(updated?.credentials[0]?.signCount).toBe(2);
+    });
+
+    test('two concurrent createPasskeys calls return exactly one true', async () => {
+      const gcs = fakeGcs();
+      const store1 = storeOn(gcs);
+      const store2 = storeOn(gcs);
+
+      const record = {
+        email: 'race@example.com',
+        userHandle: 'h_race',
+        credentials: [],
+      };
+
+      const [r1, r2] = await Promise.all([
+        store1.createPasskeys(record),
+        store2.createPasskeys(record),
+      ]);
+
+      expect(r1 !== r2).toBe(true);
+      expect(r1 === true || r2 === true).toBe(true);
+    });
+
+    test('two concurrent consumeWebauthnChallenge calls return exactly one row', async () => {
+      const gcs = fakeGcs();
+      const store1 = storeOn(gcs);
+      const store2 = storeOn(gcs);
+
+      const challengeRow = {
+        challengeHash: 'hash123',
+        email: 'test@example.com',
+        purpose: 'register' as const,
+        expiresAt: Date.now() + 60_000,
+      };
+
+      await store1.putWebauthnChallenge(challengeRow);
+
+      const [c1, c2] = await Promise.all([
+        store1.consumeWebauthnChallenge('hash123'),
+        store2.consumeWebauthnChallenge('hash123'),
+      ]);
+
+      const count = (c1 !== undefined ? 1 : 0) + (c2 !== undefined ? 1 : 0);
+      expect(count).toBe(1);
+      const winner = c1 ?? c2;
+      expect(winner?.challengeHash).toBe('hash123');
+    });
+
+    test('versionDigests survives beginVersion, markPublished, consumeMint, claimVersionNotice, reserveShares, and putCover in both stores', async () => {
+      const stores = [storeOn(fakeGcs()), new MemoryStore()];
+
+      for (const store of stores) {
+        const r = row({ id: 'r_surv', version: 1, noticePending: true });
+        await store.putRelic(r);
+        await store.recordVersionDigest('r_surv', 1, 'digest_v1');
+
+        // markPublished
+        await store.markPublished('r_surv', 2000, 100, 'crc');
+        let cur = await store.getRelic('r_surv');
+        expect(cur?.versionDigests?.['1']).toBe('digest_v1');
+
+        // consumeMint
+        await store.consumeMint('r_surv');
+        cur = await store.getRelic('r_surv');
+        expect(cur?.versionDigests?.['1']).toBe('digest_v1');
+
+        // claimVersionNotice
+        await store.claimVersionNotice('r_surv', 1);
+        cur = await store.getRelic('r_surv');
+        expect(cur?.versionDigests?.['1']).toBe('digest_v1');
+
+        // reserveShares
+        await store.reserveShares('r_surv', 1, 10);
+        cur = await store.getRelic('r_surv');
+        expect(cur?.versionDigests?.['1']).toBe('digest_v1');
+
+        // putCover
+        await store.putCover(
+          'r_surv',
+          {
+            version: 1,
+            sha256: 'cover_sha',
+            type: 'image/png',
+            kind: 'image',
+            bytes: 3,
+            uploadedAt: 1000,
+          },
+          new Uint8Array([1, 2, 3])
+        );
+        cur = await store.getRelic('r_surv');
+        expect(cur?.versionDigests?.['1']).toBe('digest_v1');
+
+        // beginVersion
+        await store.beginVersion('r_surv', 'markdown', 200);
+        cur = await store.getRelic('r_surv');
+        expect(cur?.version).toBe(2);
+        expect(cur?.versionDigests?.['1']).toBe('digest_v1');
+      }
     });
   });
 });

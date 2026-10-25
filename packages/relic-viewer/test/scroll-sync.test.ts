@@ -262,6 +262,7 @@ function testView(
     shareUrl: 'https://relik.example/test#key',
     version,
     currentVersion,
+    versionDigest: '0'.repeat(64),
   };
 }
 

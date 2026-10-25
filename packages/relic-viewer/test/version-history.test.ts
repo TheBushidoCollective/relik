@@ -160,6 +160,7 @@ describe('loading a historical version', () => {
       shareUrl: `${SERVICE}/aaaaaaaaaaaaaaaaaaaaaaaaaa#${encodeFragment(generateKey())}`,
       version: 3,
       currentVersion: 3,
+      versionDigest: '0'.repeat(64),
     };
   }
 
