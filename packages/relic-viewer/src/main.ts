@@ -7888,7 +7888,7 @@ export function renderReady(
       bar,
       buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
-    thread?.attach(stage);
+    thread?.attach(wrap);
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
