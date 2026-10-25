@@ -1,0 +1,1862 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="icon" href="data:,">
+<title>field-notes.md · Relic · copy link panel mock</title>
+<!--
+  A local, clickable interaction mock of spec C (plan.md beside this file),
+  not the viewer. Tokens and chrome are copied from
+  packages/relic-viewer/src/styles.css at 76269ed5 so the file stands alone.
+  Fixture: the share mock's relic, field-notes.md version 2 of 2, with the
+  fake key r1CzBVep_E6Q4zWH2ix-wRNg. Its phrase was computed with
+  keyToMnemonic from @relic/format, and the pair opens nothing.
+
+  Kept from the viewer: the square accession band, hairline rules, the patina
+  rule on top of anything that drops from the band, mono for addresses and
+  catalog numbers, oxide for anything that warns.
+
+  Decisions this mock settles for C-I:
+  1. Both renderings of the key carry the oxide mark: the key part of the
+     link, and the left rule of the phrase slip. Patina stays for what can be
+     pressed, and the opener keeps a patina underline while its panel is open.
+  2. The link is for pasting, so it is set in mono. The phrase is for saying,
+     so its words are set in the interface face on a ruled slip numbered by
+     CSS counters: a number is read once and is never copied or selected.
+     Three columns of four lines where three of the widest words in the
+     wordlist fit; two columns of six below that, which is every 320 phone.
+  3. Two <wbr> break opportunities, after the origin and before the key.
+     Where the whole path fits, the key takes the next line by itself; where
+     it does not, the link reads origin, relic id, key, one to a line. The
+     key is never split, and nothing is added to copied or selected text.
+  4. While the phrase loads, the slip keeps its full height with its lines
+     drawn, so nothing below it moves when the words arrive.
+  5. A refused "Copy without the key" selects only the origin and path. The
+     whole link value would hand the key to a reader trying to keep it out.
+  6. Buttons in the panel draw their focus ring outside the button. The
+     band's inset patina ring disappears on the patina primary.
+  7. Inside the panel the collapsed band's visually hidden label rule is
+     undone, so every button keeps its label at 390 and 320.
+  Rejected: a modal (its backdrop would bury the copy toasts), a third accent
+  colour for the phrase, a lock or key illustration, and any wording not in
+  C1. The only other text is the viewer's own, unchanged.
+
+  Nothing here touches the clipboard, makes a request, or stores the phrase.
+  localStorage keeps the colour scheme and whether the mock controls are
+  collapsed, and nothing else.
+-->
+<style>
+/*
+ * Relic viewer.
+ *
+ * The art direction comes from the subject rather than a template. A relic is
+ * a catalogued object with a fixed lifespan, so the chrome is an accession
+ * label: a hairline-ruled band carrying a catalog number in monospace, over a
+ * reading surface. Nothing is rounded, nothing glows, and the only saturated
+ * colour in the system is a patina teal used for interaction.
+ */
+
+:root {
+  color-scheme: light;
+
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --diff-added: #dfeeea;
+  --diff-added-strong: #a7d6ca;
+  --diff-removed: #f3e5df;
+  --diff-removed-strong: #ddb6a6;
+
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino,
+    "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+    Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --bar-height: 3.25rem;
+}
+
+/* The viewer follows the system only. The mock can also be forced either way,
+   so both schemes can be reviewed side by side. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #101314;
+  --surface: #171b1c;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #2a3032;
+  --rule-strong: #3b4345;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  --oxide: #c98058;
+  --diff-added: #15332f;
+  --diff-added-strong: #24564e;
+  --diff-removed: #34231d;
+  --diff-removed-strong: #684331;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #101314;
+    --surface: #171b1c;
+    --ink: #e6e9e7;
+    --ink-soft: #969e9d;
+    --rule: #2a3032;
+    --rule-strong: #3b4345;
+    --patina: #4fb3a6;
+    --patina-ink: #a7ded6;
+    --oxide: #c98058;
+    --diff-added: #15332f;
+    --diff-added-strong: #24564e;
+    --diff-removed: #34231d;
+    --diff-removed-strong: #684331;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+
+.relic-row {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.stage-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ---------- the accession band ---------- */
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: none;
+  min-height: var(--bar-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.mark {
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  border-right: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.4rem 1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.filename {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accession {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+.identity-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.identity-meta .accession {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.version {
+  position: relative;
+  flex: none;
+}
+
+.version-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.version-trigger {
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+}
+
+.version-trigger:hover {
+  border-color: var(--patina);
+  color: var(--patina-ink);
+}
+
+.version-trigger:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.version-trigger .icon {
+  width: 10px;
+  height: 10px;
+}
+
+.version-short {
+  display: none;
+}
+
+.actions {
+  display: flex;
+  align-items: stretch;
+  border-left: 1px solid var(--rule);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.actions .action:last-child {
+  border-right: 0;
+}
+
+.action:hover {
+  background: var(--ground);
+  color: var(--patina-ink);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+/* Mock only: the ring a keyboard user would see, for states applied from a
+   mouse click on the mock controls. */
+.action.mock-ring:focus {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.action.primary {
+  background: var(--patina);
+  color: var(--surface);
+  border: 0;
+  padding: 0.55rem 1rem;
+  align-self: flex-start;
+}
+
+.action.primary:hover {
+  background: var(--patina-ink);
+  color: var(--surface);
+}
+
+.icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: currentColor;
+}
+
+.action-count {
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.action:hover .action-count {
+  border-color: var(--patina);
+  color: var(--patina-ink);
+}
+
+@media (max-width: 34rem) {
+  /* C3.1. Was `display: none`, which took Copy link, Download and Report out
+     of the accessibility tree along with their text. Visually hidden instead:
+     absolutely positioned, so the span takes no room in the row and the band
+     measures exactly as it did. */
+  .action span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  /* Except the count, which is the whole point of the control. With the
+     visually hidden rule above it has every property to give back, not only
+     `display`: position, size, margin, padding, overflow, clip and border. */
+  .action span.action-count {
+    position: static;
+    display: inline-block;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 0 0.25rem;
+    overflow: visible;
+    clip-path: none;
+    border: 1px solid var(--rule-strong);
+  }
+  .action {
+    padding: 0 0.75rem;
+  }
+  .mark {
+    display: none;
+  }
+  .version-long {
+    display: none;
+  }
+  .version-short {
+    display: inline;
+  }
+  .identity {
+    padding: 0.4rem 0.7rem;
+  }
+  .identity-meta {
+    gap: 0.4rem;
+  }
+}
+
+@media (max-width: 24rem) {
+  .action-comments,
+  .action-relics {
+    display: none;
+  }
+}
+
+/* ---------- the reading surface ---------- */
+
+.stage {
+  padding: 2rem 1.25rem 5rem;
+}
+
+.doc {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.stage-markdown .doc {
+  max-width: 8.5in;
+}
+
+.toggle-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.toggle-row .action {
+  border: 1px solid var(--rule);
+  padding: 0.35rem 0.7rem;
+}
+
+.prose {
+  font-family: var(--serif);
+  font-size: 1.06rem;
+  line-height: 1.7;
+}
+
+.prose h1,
+.prose h2 {
+  font-family: var(--sans);
+  line-height: 1.25;
+  margin: 2rem 0 0.6rem;
+  letter-spacing: -0.01em;
+}
+
+.prose h1 {
+  font-size: 1.7rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.prose h2 {
+  font-size: 1.32rem;
+}
+
+.prose p {
+  margin: 0 0 1.1rem;
+}
+
+.raw {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 1rem;
+  margin: 0;
+}
+
+/* ---------- the dead card, and key entry on it ---------- */
+
+.card {
+  max-width: 34rem;
+  margin: 3rem auto;
+  padding: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--rule-strong);
+}
+
+.card-title {
+  font-family: var(--sans);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+  word-break: break-word;
+}
+
+.card-note {
+  margin: 1.25rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.stage-dead .card {
+  border-top-color: var(--oxide);
+}
+
+.stage-dead .accession {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--rule);
+}
+
+.key-entry {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.key-entry-prompt {
+  margin: 0 0 0.75rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.key-entry-form {
+  margin: 0;
+}
+
+.key-entry-label {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.35rem;
+}
+
+.key-entry-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.key-entry-input {
+  flex: 1 1 auto;
+}
+
+.key-entry-submit {
+  flex-shrink: 0;
+}
+
+.key-entry-feedback {
+  margin-top: 0.5rem;
+  font-size: 0.86rem;
+  color: var(--oxide);
+  min-height: 1.2rem;
+}
+
+.compose-input {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.compose-input:focus-visible,
+.compose-input.mock-ring:focus {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+/* ---------- toast ---------- */
+
+/* C3.3. Above the copy-link panel (20), because the panel is not modal and
+   the toast is how each copy reports. On a short phone the sheet reaches the
+   bottom of the screen and the toast lands on top of it.
+   Proposed with it: `width: max-content`. Fixed at `left: 50%` with no
+   width, the toast shrink-wraps into the half of the screen right of centre,
+   160px on a 320 phone, and a copy note stacks four lines deep over the
+   phrase. With a content width, the existing max-width is what limits it. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  z-index: 30;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  padding: 0.7rem 1rem;
+  background: var(--ink);
+  color: var(--ground);
+  font-size: 0.84rem;
+  border-left: 3px solid var(--patina);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast {
+    animation: rise 180ms ease-out;
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 0.5rem);
+    }
+  }
+}
+
+/* ---------- the copy-link panel ---------- */
+
+/* A slip that drops from the band under Copy link: the link and the same key
+   in twelve words, each with its own copy. Not modal, unlike Share: copying
+   is a moment rather than an errand, the reader may want the relic in view
+   while reading the words aloud, and the toast that reports each copy has to
+   land on the page rather than under a backdrop. Same chrome family as the
+   share panel: square, hairline, the patina rule on top, the version list's
+   shadow. */
+.copy-panel {
+  position: fixed;
+  top: var(--copy-top, var(--bar-height));
+  right: var(--copy-right, 0);
+  z-index: 20;
+  width: min(26rem, calc(100vw - 1rem));
+  max-height: calc(100dvh - var(--copy-top, var(--bar-height)) - 0.5rem);
+  margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  font-family: var(--sans);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--patina);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+/* The opener stays marked while its panel is open: the band's hover ground
+   and a patina underline that meets the panel's own patina rule. */
+.bar .action[data-action="copy-link"][aria-expanded="true"] {
+  background: var(--ground);
+  color: var(--patina-ink);
+  box-shadow: inset 0 -2px 0 var(--patina);
+}
+
+.copy-panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.copy-panel-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.copy-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.copy-panel-close:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+}
+
+.copy-panel-close:focus-visible,
+.copy-panel-close.mock-ring:focus {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.copy-panel-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.copy-panel-body > * {
+  min-width: 0;
+}
+
+.copy-row {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.copy-row + .copy-row {
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+/* Set as the viewer's field labels are, so "Key phrase" reads the same here
+   as it does over the recipient's key entry. */
+.copy-label {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.copy-value {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+}
+
+/* The key part. Oxide, the viewer's colour for a caution, and a tint that
+   carries across a line break. The # and LINK_NOTE say it in words too, so
+   colour is never the only signal. */
+.copy-link-key {
+  color: var(--oxide);
+  background: var(--diff-removed);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.copy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+/* Inside the panel every action is a bordered button, as in the share panel:
+   the band's divider rules mean nothing away from the band. */
+.copy-panel .action {
+  justify-content: center;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--rule-strong);
+}
+
+.copy-panel .action.primary {
+  border: 1px solid var(--patina);
+  align-self: auto;
+}
+
+.copy-panel .action:disabled {
+  color: var(--ink-soft);
+  background: var(--ground);
+  border-color: var(--rule);
+  cursor: default;
+}
+
+/* Outside the button rather than inset: an inset patina ring is invisible on
+   the patina primary, which is where focus lands when the panel opens. */
+.copy-panel .action:focus-visible,
+.copy-panel .action.mock-ring:focus {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+/* The collapsed band's visually hidden rule reaches these labels too; give
+   them back. */
+.copy-panel .action span {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+}
+
+.copy-note {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+/* The method, after both rows: quiet, in ink rather than ink-soft, on the
+   neutral rule the reading surface uses for an aside. */
+.copy-split {
+  padding: 0.6rem 0.75rem;
+  color: var(--ink);
+  font-size: 0.82rem;
+  background: var(--ground);
+  border-left: 2px solid var(--rule-strong);
+}
+
+/* The phrase: a ruled slip, three words to a line where three fit and two
+   where they do not (below). The words never break; the numbers come from a
+   counter, so they are read once, never selected, never copied. The slip's
+   left rule is the key part's oxide. */
+.copy-row[data-copy-row="phrase"] {
+  container: copy-phrase / inline-size;
+}
+
+.copy-phrase {
+  --copy-phrase-line: 2.25rem;
+  --copy-phrase-rows: 4;
+  counter-reset: copy-phrase;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(max-content, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--oxide);
+}
+
+/* Each line runs from the oxide rule to the slip's edge, as ruled paper does;
+   the first column takes the margin instead of the slip. */
+.copy-phrase li {
+  counter-increment: copy-phrase;
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  height: var(--copy-phrase-line);
+  padding: 0.5rem 0.5rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--rule);
+}
+
+.copy-phrase li:nth-child(3n + 1) {
+  padding-left: 0.75rem;
+}
+
+.copy-phrase li:nth-last-child(-n + 3) {
+  border-bottom: 0;
+}
+
+.copy-phrase li::before {
+  content: counter(copy-phrase);
+  min-width: 2ch;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 400;
+  text-align: right;
+}
+
+/* While the slip holds a note instead of words it is not a grid. Spanning
+   max-content tracks, a sentence would size the columns to its own unwrapped
+   width and push the slip, and everything under it, out of the panel. */
+.copy-phrase:has(> .copy-phrase-status) {
+  display: block;
+}
+
+/* Loading: the slip at full height with its lines drawn and the note on the
+   first line, so the button and notes below do not move when the words
+   arrive. The lines are drawn between rows only; the slip's own border is
+   the last one, as it is once the words are in. */
+.copy-phrase .copy-phrase-status {
+  counter-increment: none;
+  align-items: flex-start;
+  height: calc(var(--copy-phrase-line) * var(--copy-phrase-rows));
+  padding: 0.5rem 0.5rem 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  font-weight: 400;
+  white-space: normal;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--copy-phrase-line) - 1px),
+    var(--rule) calc(var(--copy-phrase-line) - 1px) var(--copy-phrase-line)
+  );
+  background-size: 100% calc(var(--copy-phrase-line) * (var(--copy-phrase-rows) - 1));
+  background-repeat: no-repeat;
+  border-bottom: 0;
+}
+
+.copy-phrase .copy-phrase-status::before {
+  content: none;
+}
+
+/* Failed: no words are coming, so the slip gives up its lines and its
+   height and says so in oxide. */
+.copy-phrase .copy-phrase-status.is-failed {
+  height: auto;
+  padding: 0.55rem 0.5rem 0.55rem 0.75rem;
+  color: var(--oxide);
+  background: none;
+}
+
+/* Three columns only where three of the widest words in the wordlist fit.
+   Measured over all 2048 words: "mushroom" is widest, 112px in the first
+   column (it carries the margin) and 100px in the others, so three need
+   19.75rem with the borders. The column count is decided by width, never by
+   which words a relic happens to get: below 20.5rem, every 320 phone, the
+   slip is two columns of six. Thresholds in rem move with the font. */
+@container copy-phrase (max-width: 20.5rem) {
+  .copy-phrase {
+    --copy-phrase-rows: 6;
+    grid-template-columns: repeat(2, minmax(max-content, 1fr));
+  }
+  .copy-phrase li:nth-child(3n + 1) {
+    padding-left: 0;
+  }
+  .copy-phrase li:nth-child(2n + 1) {
+    padding-left: 0.75rem;
+  }
+  .copy-phrase li:nth-last-child(-n + 3) {
+    border-bottom: 1px solid var(--rule);
+  }
+  .copy-phrase li:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+}
+
+/* A phone gets the whole width under the band, and the buttons stack so each
+   is a full-width target. */
+@media (max-width: 34rem) {
+  .copy-panel {
+    right: 0;
+    left: 0;
+    width: auto;
+    border-left: 0;
+    border-right: 0;
+  }
+  .copy-panel-head {
+    padding-left: 1rem;
+  }
+  .copy-panel-body {
+    padding: 0.9rem 1rem 1.1rem;
+  }
+  .copy-actions .action {
+    flex: 1 1 100%;
+  }
+}
+
+/* ---------- mock controls, not part of the viewer ---------- */
+
+.mock-states {
+  position: fixed;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 5;
+  width: min(19rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - var(--bar-height) - 2rem);
+  overflow-y: auto;
+  padding: 0.6rem 0.7rem 0.7rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.74rem;
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+}
+.mock-states h2 {
+  margin: 0 0 0.2rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.mock-states p {
+  margin: 0 0 0.5rem;
+  color: var(--ink-soft);
+}
+.mock-states .group {
+  margin: 0.55rem 0 0.25rem;
+  font-weight: 600;
+}
+.mock-states ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mock-states button,
+.mock-states select {
+  padding: 0.2rem 0.45rem;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  cursor: pointer;
+}
+.mock-states button[aria-pressed="true"] {
+  color: var(--surface);
+  background: var(--patina);
+  border-color: var(--patina);
+}
+.mock-states .collapse {
+  float: right;
+}
+.mock-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  margin: 0 0 0.5rem;
+}
+.mock-fields label {
+  color: var(--ink-soft);
+}
+.mock-clip {
+  overflow-wrap: anywhere;
+}
+.mock-clip output {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+.mock-states.is-collapsed ul,
+.mock-states.is-collapsed p,
+.mock-states.is-collapsed .group,
+.mock-states.is-collapsed .mock-fields {
+  display: none;
+}
+</style>
+</head>
+<body>
+<aside class="mock-states" id="mock-states" aria-label="Mock controls">
+  <h2>Mock controls <button type="button" class="collapse" id="mock-collapse" aria-expanded="true">Hide</button></h2>
+  <p>Not part of the viewer. Press Copy link in the band, or jump to a state. Every state is also reachable by clicking through the panel, with the switches below.</p>
+  <div class="mock-fields">
+    <label for="mock-theme">Colours</label>
+    <select id="mock-theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+    <label for="mock-clipboard">Clipboard</label>
+    <select id="mock-clipboard"><option value="allow">Accepts writes</option><option value="refuse">Refuses writes</option></select>
+    <label for="mock-phrase">Key phrase</label>
+    <select id="mock-phrase"><option value="loads">Loads</option><option value="loading">Never finishes loading</option><option value="fails">Fails to load</option></select>
+  </div>
+  <p class="mock-clip">Mock clipboard: <output id="mock-clip" for="mock-clipboard">empty</output></p>
+  <div class="group">Reader</div>
+  <ul data-group="reader"></ul>
+  <div class="group">Recipient of the link without the key</div>
+  <ul data-group="recipient"></ul>
+</aside>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- fixture ----------
+  const SHARE_URL = 'https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg';
+  const RELIC_ID = 'q7m2c9x4tz8hb3ka1w6pd5rn0e';
+  const FILENAME = 'field-notes.md';
+  const WORDMARK = 'relik.link';
+  // keyToMnemonic(parseFragment('#r1CzBVep_E6Q4zWH2ix-wRNg').key), computed
+  // once with @relic/format. The viewer computes it on open and never keeps
+  // it; this constant stands in for the lazily imported wordlist.
+  const FIXTURE_WORDS = ['arctic', 'live', 'gadget', 'display', 'excess', 'mandate', 'sniff', 'autumn', 'people', 'disorder', 'affair', 'horn'];
+  const SOURCE = [
+    '# Quarterly field notes',
+    '',
+    'A short memo used to exercise the copy link panel. It has a heading, a few paragraphs, and a list, so the reading surface looks like a real relic.',
+    '',
+    '## What changed',
+    '',
+    '- The intake form now asks for a delivery window.',
+    '- Returns are logged against the original order.',
+    '- The weekly summary goes out on Mondays.',
+    '',
+    'Nothing here is confidential; it exists only for this mock.',
+  ].join('\n');
+
+  // ---------- C1, verbatim ----------
+  const COPY_PANEL_TITLE = 'Link and key phrase';
+  const LINK_LABEL = 'Link';
+  const LINK_NOTE = 'Everything after the # is the key.';
+  const COPY_LINK_LABEL = 'Copy link';
+  const COPY_KEYLESS_LABEL = 'Copy without the key';
+  const PHRASE_LABEL = 'Key phrase';
+  const PHRASE_NOTE = 'The same key in 12 words. Anyone who hears or reads it can open this relic.';
+  const COPY_PHRASE_LABEL = 'Copy phrase';
+  const SPLIT_NOTE = 'To keep the key out of a message, send the link without the key and say the phrase. They type it in where the page asks for the key.';
+  const PHRASE_LOADING_NOTE = 'Loading the key phrase.';
+  const PHRASE_FAILED_NOTE = 'The key phrase could not be loaded. The link above still works.';
+  const LINK_COPIED_NOTE = 'Link copied. It contains the decryption key.';
+  const KEYLESS_COPIED_NOTE = 'Link copied without the key. Say the key phrase separately.';
+  const PHRASE_COPIED_NOTE = 'Key phrase copied. It is the decryption key.';
+  const KEY_ENTRY_PROMPT = 'If you have the key phrase or the full link for this relic, enter it here.';
+  const KEY_ENTRY_LABEL = 'Key phrase or link';
+  const KEY_ENTRY_PLACEHOLDER = 'The 12 words, or the whole link';
+
+  // popover.ts:565-567, reused unchanged for every refused write.
+  const COPY_FAILED_NOTE =
+    'This browser would not let the page write to the clipboard. The text is ' +
+    'still selected, so a copy from the keyboard will work.';
+
+  // The viewer's own wording, unchanged by C (viewer.ts:216-222, 885, 1042).
+  const MISSING_KEY_HEADLINE = 'This link is missing its key';
+  const MISSING_KEY_DETAIL =
+    'The part of the link after the # is the decryption key, and it ' +
+    'is not here. This usually means the page was reloaded, which ' +
+    'drops it. Open the original link again.';
+  const NOT_A_KEY = 'That is not a key.';
+  const WRONG_KEY = 'That key does not open this relic.';
+
+  const COPY_LINK_PANEL_ID = 'copy-link-panel';
+
+  const ICONS = {
+    copy: 'M5 2h7a1 1 0 0 1 1 1v8h-1V3H5V2zM3 4h7a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 1v8h7V5H3z',
+    compare: 'M2 4h9L9 2l.7-.7L13 4.5 9.7 8 9 7.3l2-2H2V4zm12 8H5l2 2-.7.7L3 11.5 6.3 8l.7.7-2 2h9V12z',
+    download: 'M7.5 1h1v7.3l2.6-2.6.7.7L8 10.2 4.2 6.4l.7-.7 2.6 2.6V1zM2 12h12v1H2v-1z',
+    source: 'M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z',
+    rendered: 'M2 3h12v1H2V3zm0 3h12v1H2V6zm0 3h8v1H2V9zm0 3h10v1H2v-1z',
+    flag: 'M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z',
+    chevron: 'M3.4 5.7 8 10.3l4.6-4.6-.7-.7L8 8.9 4.1 5l-.7.7z',
+    comment: 'M2 2h12v9H7.5L4 14v-3H2V2zm1 1v7h2v2.1L7.1 10H13V3H3z',
+    grid: 'M2 2h4.5v4.5H2V2zm7.5 0H14v4.5H9.5V2zM2 9.5h4.5V14H2V9.5zm7.5 0H14V14H9.5V9.5z',
+    share: 'M1.5 3h13v10h-13zm1.3 1L8 7.6 13.2 4zM2.5 5.2V12h11V5.2L8 9z',
+    close: 'M4.2 3.5 8 7.3l3.8-3.8.7.7L8.7 8l3.8 3.8-.7.7L8 8.7l-3.8 3.8-.7-.7L7.3 8 3.5 4.2z',
+  };
+
+  // ---------- small DOM helpers, as main.ts builds them ----------
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function icon(path) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.classList.add('icon');
+    const node = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    node.setAttribute('d', path);
+    svg.appendChild(node);
+    return svg;
+  }
+
+  function button(label, iconPath, onClick) {
+    const element = el('button', 'action');
+    element.type = 'button';
+    if (iconPath) element.appendChild(icon(iconPath));
+    element.appendChild(el('span', '', label));
+    element.addEventListener('click', onClick);
+    return element;
+  }
+
+  // ---------- mock switches ----------
+  const mock = {
+    clipboard: 'allow', // what the fake clipboard does with a write
+    phrase: 'loads', // how the fake lazy import of the wordlist settles
+    scripted: false, // a state is being applied: no delays, toasts stay
+    clip: null, // what the fake clipboard holds
+  };
+
+  const controls = document.getElementById('mock-states');
+  const clipOut = document.getElementById('mock-clip');
+  const themeSelect = document.getElementById('mock-theme');
+  const clipboardSelect = document.getElementById('mock-clipboard');
+  const phraseSelect = document.getElementById('mock-phrase');
+
+  function inControls(node) {
+    return node instanceof Node && controls.contains(node);
+  }
+
+  // ---------- C1 functions, faked where the real ones reach outside ----------
+  function keylessLink(shareUrl) {
+    const url = new URL(shareUrl);
+    url.hash = '';
+    return url.href;
+  }
+
+  // Stands in for `await import('@relic/format/mnemonic')` and keyToMnemonic.
+  function keyPhraseWords() {
+    if (mock.phrase === 'loading') return new Promise(() => {});
+    const delay = mock.scripted ? 0 : 450;
+    if (mock.phrase === 'fails') {
+      return new Promise((_, reject) => setTimeout(() => reject(new Error('The wordlist chunk did not load.')), delay));
+    }
+    return new Promise((resolve) => setTimeout(() => resolve(FIXTURE_WORDS.slice()), delay));
+  }
+
+  // Stands in for popover.ts copyText: never touches navigator.clipboard.
+  function copyText(text) {
+    const ok = mock.clipboard === 'allow';
+    if (ok) {
+      mock.clip = text;
+      clipOut.textContent = text;
+    }
+    return Promise.resolve(ok);
+  }
+
+  // main.ts:341-349. A scripted state holds its toast for review until the
+  // reviewer next presses something in the page, then it leaves as usual.
+  function toast(message) {
+    document.querySelector('.toast')?.remove();
+    const element = el('div', 'toast', message);
+    element.setAttribute('role', 'status');
+    document.body.appendChild(element);
+    const expire = () => window.setTimeout(() => element.remove(), 4000);
+    if (!mock.scripted) expire();
+    else document.addEventListener('pointerdown', expire, { once: true, capture: true });
+  }
+
+  function selectContents(node) {
+    const selection = window.getSelection();
+    if (selection === null) return;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  // ---------- C2: the panel ----------
+  let current = null;
+
+  function syncOpeners() {
+    const open = document.getElementById(COPY_LINK_PANEL_ID) !== null;
+    for (const opener of document.querySelectorAll('.bar [data-action="copy-link"]')) {
+      opener.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) opener.setAttribute('aria-controls', COPY_LINK_PANEL_ID);
+      else opener.removeAttribute('aria-controls');
+    }
+  }
+
+  function toggleCopyLinkPanel(shareUrl, opener) {
+    if (current !== null && current.element.isConnected) {
+      current.close(false);
+      return undefined;
+    }
+    document.getElementById(COPY_LINK_PANEL_ID)?.remove();
+    return openCopyLinkPanel(shareUrl, opener);
+  }
+
+  function openCopyLinkPanel(shareUrl, opener) {
+    const panel = el('section', 'copy-panel');
+    panel.id = COPY_LINK_PANEL_ID;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-labelledby', 'copy-link-title');
+
+    const head = el('div', 'copy-panel-head');
+    const title = el('h2', 'copy-panel-title', COPY_PANEL_TITLE);
+    title.id = 'copy-link-title';
+    const dismiss = el('button', 'copy-panel-close');
+    dismiss.type = 'button';
+    dismiss.setAttribute('aria-label', 'Close');
+    dismiss.appendChild(icon(ICONS.close));
+    head.append(title, dismiss);
+
+    const body = el('div', 'copy-panel-body');
+
+    const keyless = keylessLink(shareUrl);
+    const linkRow = el('div', 'copy-row');
+    linkRow.dataset.copyRow = 'link';
+    const linkValue = el('p', 'copy-value');
+    linkValue.dataset.copyValue = 'link';
+    const parts = new URL(shareUrl);
+    // Two break opportunities, not characters: after the origin, and before
+    // the key. Where the whole path fits, the key takes the next line by
+    // itself; where it does not, the link reads origin, relic id, key, one to
+    // a line, and no line ever splits the key. The text is still exactly the
+    // share URL, so a copy or a selection carries nothing extra.
+    const pathPart = el('span');
+    pathPart.append(`${parts.origin}/`, document.createElement('wbr'), keyless.slice(parts.origin.length + 1));
+    const keyPart = el('span', 'copy-link-key', parts.hash);
+    linkValue.append(pathPart, document.createElement('wbr'), keyPart);
+    const linkActions = el('div', 'copy-actions');
+    const copyLink = button(COPY_LINK_LABEL, ICONS.copy, () => copy('link'));
+    copyLink.classList.add('primary');
+    copyLink.dataset.copy = 'link';
+    const copyKeyless = button(COPY_KEYLESS_LABEL, null, () => copy('keyless'));
+    copyKeyless.dataset.copy = 'keyless';
+    linkActions.append(copyLink, copyKeyless);
+    linkRow.append(el('p', 'copy-label', LINK_LABEL), linkValue, linkActions, el('p', 'copy-note', LINK_NOTE));
+
+    const phraseRow = el('div', 'copy-row');
+    phraseRow.dataset.copyRow = 'phrase';
+    const list = el('ol', 'copy-phrase');
+    list.dataset.copyValue = 'phrase';
+    list.setAttribute('aria-label', 'Key phrase, 12 words');
+    // Implicit for an ol, but WebKit drops list semantics from a list styled
+    // `list-style: none`, and VoiceOver would then lose "12 items".
+    list.setAttribute('role', 'list');
+    list.setAttribute('aria-busy', 'true');
+    const status = el('li', 'copy-phrase-status', PHRASE_LOADING_NOTE);
+    list.append(status);
+    const phraseActions = el('div', 'copy-actions');
+    const copyPhrase = button(COPY_PHRASE_LABEL, ICONS.copy, () => copy('phrase'));
+    copyPhrase.dataset.copy = 'phrase';
+    copyPhrase.disabled = true;
+    phraseActions.append(copyPhrase);
+    phraseRow.append(el('p', 'copy-label', PHRASE_LABEL), list, phraseActions, el('p', 'copy-note', PHRASE_NOTE));
+
+    body.append(linkRow, phraseRow, el('p', 'copy-note copy-split', SPLIT_NOTE));
+    panel.append(head, body);
+
+    // Each button writes inside its own click handler; the words come back
+    // out of this panel's DOM, never out of a variable.
+    function copy(kind) {
+      const text =
+        kind === 'link'
+          ? shareUrl
+          : kind === 'keyless'
+            ? keylessLink(shareUrl)
+            : Array.from(list.querySelectorAll('li:not(.copy-phrase-status)'), (li) => li.textContent).join(' ');
+      void copyText(text).then((ok) => {
+        if (ok) {
+          toast(kind === 'link' ? LINK_COPIED_NOTE : kind === 'keyless' ? KEYLESS_COPIED_NOTE : PHRASE_COPIED_NOTE);
+          return;
+        }
+        if (panel.isConnected) selectContents(kind === 'link' ? linkValue : kind === 'keyless' ? pathPart : list);
+        toast(COPY_FAILED_NOTE);
+      });
+    }
+
+    let closed = false;
+    let frame = 0;
+
+    function place() {
+      frame = 0;
+      if (!panel.isConnected) return;
+      const bar = document.querySelector('header.bar');
+      const top = bar === null ? 0 : Math.round(bar.getBoundingClientRect().bottom);
+      const viewport = document.documentElement.clientWidth;
+      const inset = 0.5 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const width = panel.getBoundingClientRect().width;
+      const anchor = opener.isConnected ? opener : document.querySelector('.bar [data-action="copy-link"]');
+      const wanted = anchor === null ? inset : viewport - anchor.getBoundingClientRect().right;
+      const right = Math.min(Math.max(wanted, inset), Math.max(inset, viewport - width - inset));
+      panel.style.setProperty('--copy-top', `${top}px`);
+      panel.style.setProperty('--copy-right', `${Math.round(right)}px`);
+    }
+
+    function onResize() {
+      if (frame === 0) frame = requestAnimationFrame(place);
+    }
+
+    function onDocumentKeydown(event) {
+      if (event.key === 'Escape') close(true);
+    }
+
+    // The opener counts as inside, whether it is the one that was pressed or
+    // the one in a band rebuilt since.
+    function insideEither(node) {
+      if (!(node instanceof Node)) return false;
+      if (panel.contains(node) || opener.contains(node)) return true;
+      const anchor = document.querySelector('.bar [data-action="copy-link"]');
+      return anchor !== null && anchor.contains(node);
+    }
+
+    function onPointerDown(event) {
+      const target = event.target;
+      // Mock only: the controls sit outside the viewer and do not count.
+      if (inControls(target)) return;
+      if (!insideEither(target)) close(false);
+    }
+
+    function teardown() {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', onDocumentKeydown);
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('resize', onResize);
+      observer.disconnect();
+      panel.remove();
+      if (current !== null && current.element === panel) current = null;
+      syncOpeners();
+    }
+
+    function close(returnFocus) {
+      if (closed) return;
+      closed = true;
+      teardown();
+      if (returnFocus) {
+        const target = opener.isConnected ? opener : document.querySelector('.bar [data-action="copy-link"]');
+        target?.focus();
+      }
+    }
+
+    // A body replacement (a version switch, a dead page) detaches the panel
+    // without calling close; this sees it and lets go of everything at once.
+    const observer = new MutationObserver(() => {
+      if (!panel.isConnected && !closed) {
+        closed = true;
+        teardown();
+      }
+    });
+
+    dismiss.addEventListener('click', () => close(true));
+    panel.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      // Before the document hears it, so a comment card behind stays open.
+      event.stopPropagation();
+      close(true);
+    });
+    panel.addEventListener('focusout', (event) => {
+      const next = event.relatedTarget;
+      if (!(next instanceof Node) || inControls(next)) return;
+      if (!insideEither(next)) close(false);
+    });
+    document.addEventListener('keydown', onDocumentKeydown);
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('resize', onResize);
+
+    const bar = document.querySelector('header.bar');
+    if (bar !== null) bar.after(panel);
+    else document.body.appendChild(panel);
+    observer.observe(document.body, { childList: true });
+    syncOpeners();
+    place();
+    copyLink.focus();
+
+    const ready = keyPhraseWords(shareUrl).then(
+      (words) => {
+        if (closed) return;
+        list.replaceChildren(...words.map((word) => el('li', '', word)));
+        list.removeAttribute('aria-busy');
+        copyPhrase.disabled = false;
+      },
+      () => {
+        if (closed) return;
+        status.textContent = PHRASE_FAILED_NOTE;
+        status.classList.add('is-failed');
+        list.removeAttribute('aria-busy');
+      }
+    );
+
+    current = { element: panel, ready, close };
+    return current;
+  }
+
+  // ---------- the reader's page ----------
+  function buildBar() {
+    const bar = el('header', 'bar');
+    bar.appendChild(el('div', 'mark', WORDMARK));
+
+    const identity = el('div', 'identity');
+    const name = el('div', 'filename', FILENAME);
+    name.title = FILENAME;
+    const meta = el('div', 'identity-meta');
+    meta.appendChild(el('div', 'accession', RELIC_ID));
+    const version = el('div', 'version');
+    // Inert in this mock: the version list is not what is being reviewed.
+    const trigger = el('button', 'version-label version-trigger');
+    trigger.type = 'button';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-label', 'Version 2 of 2. Choose a version to view');
+    const long = el('span', 'version-long', 'Version 2 of 2');
+    const short = el('span', 'version-short', 'v2/2');
+    short.setAttribute('aria-hidden', 'true');
+    trigger.append(long, short, icon(ICONS.chevron));
+    version.appendChild(trigger);
+    meta.appendChild(version);
+    identity.append(name, meta);
+    bar.appendChild(identity);
+
+    const actions = el('div', 'actions');
+
+    const marker = el('a', 'action marker');
+    marker.href = '#policy';
+    marker.setAttribute('aria-label', 'Rendered as text, no author code');
+    marker.title = 'Rendered as text, no author code. What Relic knows.';
+    marker.append(icon(ICONS.source), el('span', '', 'Rendered as text, no author code'));
+    actions.appendChild(marker);
+
+    const relics = el('a', 'action action-relics');
+    relics.href = '#dashboard';
+    relics.setAttribute('aria-label', 'Relics list');
+    relics.title = 'Relics list. Open your saved and commented relics in a new tab.';
+    relics.append(icon(ICONS.grid), el('span', '', 'Relics'));
+    actions.appendChild(relics);
+
+    const comments = button('Comments', ICONS.comment, () => {});
+    comments.classList.add('action-comments');
+    comments.appendChild(el('span', 'action-count', '0'));
+    comments.title = 'No comments';
+    actions.appendChild(comments);
+
+    const compare = button('Compare versions', ICONS.compare, () => {});
+    compare.setAttribute('aria-pressed', 'false');
+    compare.setAttribute('aria-label', 'Compare version 2 with its history');
+    compare.title = 'Compare version 2 with its history';
+    actions.appendChild(compare);
+
+    // C2 opener: writes nothing to the clipboard; it opens or closes the panel.
+    const copyLink = button('Copy link', ICONS.copy, () => {
+      toggleCopyLinkPanel(SHARE_URL, copyLink);
+    });
+    copyLink.dataset.action = 'copy-link';
+    copyLink.setAttribute('aria-haspopup', 'dialog');
+    copyLink.setAttribute('aria-expanded', document.getElementById(COPY_LINK_PANEL_ID) === null ? 'false' : 'true');
+    actions.appendChild(copyLink);
+
+    const share = button('Share', ICONS.share, () => {});
+    share.classList.add('action-share');
+    share.setAttribute('aria-haspopup', 'dialog');
+    share.title = 'Share this relic with people by email';
+    actions.appendChild(share);
+
+    actions.appendChild(button('Download', ICONS.download, () => {}));
+
+    const report = el('a', 'action');
+    report.href = '#abuse';
+    report.append(icon(ICONS.flag), el('span', '', 'Report'));
+    actions.appendChild(report);
+
+    bar.appendChild(actions);
+    return bar;
+  }
+
+  function buildRelic() {
+    const row = el('div', 'relic-row');
+    const wrap = el('div', 'stage-wrap');
+    const main = el('main', 'stage stage-markdown');
+    const doc = el('div', 'doc');
+
+    const prose = el('article', 'prose');
+    prose.append(
+      el('h1', '', 'Quarterly field notes'),
+      el('p', '', 'A short memo used to exercise the copy link panel. It has a heading, a few paragraphs, and a list, so the reading surface looks like a real relic.'),
+      el('h2', '', 'What changed')
+    );
+    const items = el('ul');
+    items.append(
+      el('li', '', 'The intake form now asks for a delivery window.'),
+      el('li', '', 'Returns are logged against the original order.'),
+      el('li', '', 'The weekly summary goes out on Mondays.')
+    );
+    prose.append(items, el('p', '', 'Nothing here is confidential; it exists only for this mock.'));
+
+    const raw = el('pre', 'raw', SOURCE);
+    raw.hidden = true;
+
+    let showingSource = false;
+    const toggle = button('View source', ICONS.source, () => {
+      showingSource = !showingSource;
+      prose.hidden = showingSource;
+      raw.hidden = !showingSource;
+      toggle.querySelector('span').textContent = showingSource ? 'View rendered' : 'View source';
+      toggle.replaceChild(icon(showingSource ? ICONS.rendered : ICONS.source), toggle.querySelector('svg'));
+    });
+    const toggleRow = el('div', 'toggle-row');
+    toggleRow.appendChild(toggle);
+
+    doc.append(toggleRow, prose, raw);
+    main.appendChild(doc);
+    wrap.appendChild(main);
+    row.appendChild(wrap);
+    return row;
+  }
+
+  function showReader() {
+    document.body.replaceChildren(buildBar(), buildRelic(), controls);
+  }
+
+  // ---------- the recipient's page: renderDead for fragment_missing ----------
+  function showRecipient() {
+    const bar = el('header', 'bar');
+    bar.appendChild(el('div', 'mark', WORDMARK));
+
+    const main = el('main', 'stage stage-dead');
+    const card = el('div', 'card');
+    card.append(el('h1', 'card-title', MISSING_KEY_HEADLINE), el('p', 'card-note', MISSING_KEY_DETAIL));
+
+    const keySection = el('div', 'key-entry');
+    const prompt = el('p', 'key-entry-prompt', KEY_ENTRY_PROMPT);
+    const form = el('form', 'key-entry-form');
+    const label = el('label', 'key-entry-label', KEY_ENTRY_LABEL);
+    label.htmlFor = 'relic-key-input';
+    const inputRow = el('div', 'key-entry-row');
+    const input = el('input', 'compose-input key-entry-input');
+    input.type = 'text';
+    input.id = 'relic-key-input';
+    input.name = 'key';
+    input.placeholder = KEY_ENTRY_PLACEHOLDER;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.required = true;
+    const submit = el('button', 'action primary key-entry-submit', 'Open relic');
+    submit.type = 'submit';
+    inputRow.append(input, submit);
+    const feedback = el('div', 'key-entry-feedback');
+    feedback.setAttribute('role', 'alert');
+    form.append(label, inputRow, feedback);
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const entered = input.value;
+      if (entered.trim().length === 0) return;
+      submit.disabled = true;
+      feedback.replaceChildren();
+      // Stands in for openRelicWithKey: the fixture's phrase or a link or
+      // fragment carrying its key opens it, other words are the wrong key.
+      const words = entered.trim().toLowerCase().split(/\s+/);
+      const opens =
+        entered.includes('#r1CzBVep_E6Q4zWH2ix-wRNg') ||
+        entered.trim() === 'r1CzBVep_E6Q4zWH2ix-wRNg' ||
+        words.join(' ') === FIXTURE_WORDS.join(' ');
+      const outcome = opens ? 'ready' : words.length === 12 && /^[a-z ]+$/.test(words.join(' ')) ? WRONG_KEY : NOT_A_KEY;
+      const settle = () => {
+        submit.disabled = false;
+        if (outcome === 'ready') showReader();
+        else feedback.textContent = outcome;
+      };
+      if (mock.scripted) settle();
+      else setTimeout(settle, 350);
+    });
+
+    keySection.append(prompt, form);
+    card.appendChild(keySection);
+    card.appendChild(el('div', 'accession', 'fragment_missing'));
+    main.appendChild(card);
+    document.body.replaceChildren(bar, main, controls);
+  }
+
+  // ---------- states ----------
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // The ring a keyboard user sees. A state applied from a mouse click on the
+  // controls would not match :focus-visible, so the mock marks it instead.
+  function ring(element) {
+    if (element === null) return;
+    element.focus();
+    element.classList.add('mock-ring');
+    element.addEventListener('blur', () => element.classList.remove('mock-ring'), { once: true });
+  }
+
+  function setMode(key, value) {
+    mock[key] = value;
+    if (key === 'clipboard') clipboardSelect.value = value;
+    if (key === 'phrase') phraseSelect.value = value;
+  }
+
+  function opener() {
+    return document.querySelector('.bar [data-action="copy-link"]');
+  }
+
+  async function openFromBar() {
+    showReader();
+    opener().click();
+    return current;
+  }
+
+  async function press(handle, kind) {
+    const target = handle.element.querySelector(`[data-copy="${kind}"]`);
+    target.focus();
+    target.click();
+    await wait(20);
+    ring(target);
+  }
+
+  function typePhrase() {
+    const input = document.getElementById('relic-key-input');
+    input.value = FIXTURE_WORDS.join(' ');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    ring(input);
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.scrollLeft = input.scrollWidth;
+  }
+
+  const STATES = {
+    reader: [
+      ['bar-closed', async () => {
+        showReader();
+      }],
+      ['panel-open', async () => {
+        const handle = await openFromBar();
+        await handle.ready;
+        ring(handle.element.querySelector('[data-copy="link"]'));
+      }],
+      ['phrase-loading', async () => {
+        setMode('phrase', 'loading');
+        const handle = await openFromBar();
+        ring(handle.element.querySelector('[data-copy="link"]'));
+      }],
+      ['phrase-failed', async () => {
+        setMode('phrase', 'fails');
+        const handle = await openFromBar();
+        await handle.ready;
+        ring(handle.element.querySelector('[data-copy="link"]'));
+      }],
+      ['copied-link', async () => {
+        const handle = await openFromBar();
+        await handle.ready;
+        await press(handle, 'link');
+      }],
+      ['copied-keyless', async () => {
+        const handle = await openFromBar();
+        await handle.ready;
+        await press(handle, 'keyless');
+      }],
+      ['copied-phrase', async () => {
+        const handle = await openFromBar();
+        await handle.ready;
+        await press(handle, 'phrase');
+      }],
+      ['copy-refused', async () => {
+        setMode('clipboard', 'refuse');
+        const handle = await openFromBar();
+        await handle.ready;
+        await press(handle, 'link');
+      }],
+      ['copy-refused-keyless', async () => {
+        setMode('clipboard', 'refuse');
+        const handle = await openFromBar();
+        await handle.ready;
+        await press(handle, 'keyless');
+      }],
+      ['copy-refused-phrase', async () => {
+        setMode('clipboard', 'refuse');
+        const handle = await openFromBar();
+        await handle.ready;
+        await press(handle, 'phrase');
+      }],
+      ['closed-again', async () => {
+        const handle = await openFromBar();
+        await handle.ready;
+        const focused = handle.element.querySelector('[data-copy="link"]');
+        focused.focus();
+        focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        ring(opener());
+      }],
+    ],
+    recipient: [
+      ['recipient-missing-key', async () => {
+        showRecipient();
+      }],
+      ['recipient-typed', async () => {
+        showRecipient();
+        typePhrase();
+      }],
+      ['recipient-open', async () => {
+        showRecipient();
+        typePhrase();
+        document.querySelector('.key-entry-form').requestSubmit();
+      }],
+    ],
+  };
+
+  const byName = new Map();
+  const stateButtons = [];
+  let running = Promise.resolve();
+
+  function run(requested) {
+    const name = byName.has(requested) ? requested : 'bar-closed';
+    const apply = byName.get(name);
+    running = running
+      .then(async () => {
+        document.documentElement.dataset.mockReady = '';
+        current?.close(false);
+        window.getSelection()?.removeAllRanges();
+        document.querySelector('.toast')?.remove();
+        setMode('clipboard', 'allow');
+        setMode('phrase', 'loads');
+        mock.scripted = true;
+        try {
+          await apply();
+          await wait(30);
+        } finally {
+          mock.scripted = false;
+        }
+        for (const b of stateButtons) b.setAttribute('aria-pressed', b.textContent === name ? 'true' : 'false');
+        document.documentElement.dataset.mockReady = name;
+      })
+      .catch((error) => {
+        document.documentElement.dataset.mockReady = 'error';
+        console.error(error);
+      });
+    return running;
+  }
+
+  for (const [group, list] of Object.entries(STATES)) {
+    const ul = controls.querySelector(`ul[data-group="${group}"]`);
+    for (const [name, apply] of list) {
+      byName.set(name, apply);
+      const li = el('li');
+      const b = el('button', '', name);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', () => {
+        history.replaceState(null, '', `#state=${name}`);
+        void run(name);
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+      stateButtons.push(b);
+    }
+  }
+
+  // ---------- controls ----------
+  const STORE = 'relic-copy-link-mock:';
+  function remember(key, value) {
+    try { localStorage.setItem(STORE + key, value); } catch {}
+  }
+  function recall(key) {
+    try { return localStorage.getItem(STORE + key); } catch { return null; }
+  }
+
+  function setTheme(value) {
+    const theme = ['system', 'light', 'dark'].includes(value) ? value : 'system';
+    document.documentElement.dataset.theme = theme;
+    themeSelect.value = theme;
+  }
+
+  themeSelect.addEventListener('change', () => {
+    setTheme(themeSelect.value);
+    remember('theme', themeSelect.value);
+  });
+  clipboardSelect.addEventListener('change', () => setMode('clipboard', clipboardSelect.value));
+  phraseSelect.addEventListener('change', () => setMode('phrase', phraseSelect.value));
+
+  const collapse = document.getElementById('mock-collapse');
+  function setCollapsed(collapsed) {
+    controls.classList.toggle('is-collapsed', collapsed);
+    collapse.textContent = collapsed ? 'Show' : 'Hide';
+    collapse.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+  collapse.addEventListener('click', () => {
+    const collapsed = !controls.classList.contains('is-collapsed');
+    setCollapsed(collapsed);
+    remember('collapsed', collapsed ? 'true' : 'false');
+  });
+  // On a phone the open controls would cover the card, so they start folded
+  // there unless the reviewer has opened them before.
+  const storedCollapse = recall('collapsed');
+  setCollapsed(storedCollapse === null ? window.matchMedia('(max-width: 34rem)').matches : storedCollapse === 'true');
+
+  // Deep links for screenshots and review:
+  // mockup.html#state=<name>&theme=<system|light|dark>&controls=hide
+  function applyHash() {
+    const params = new URLSearchParams(location.hash.slice(1));
+    setTheme(params.get('theme') ?? recall('theme') ?? 'system');
+    controls.hidden = params.get('controls') === 'hide';
+    return run(params.get('state') ?? 'bar-closed');
+  }
+  window.addEventListener('hashchange', () => void applyHash());
+  void applyHash();
+})();
+</script>
+</body>
+</html>

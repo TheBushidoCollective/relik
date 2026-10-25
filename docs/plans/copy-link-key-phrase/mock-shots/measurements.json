@@ -1,0 +1,3924 @@
+{
+  "mock": "docs/plans/copy-link-key-phrase/mockup.html",
+  "spec": "docs/plans/copy-link-key-phrase/plan.md, section 6 C-M",
+  "branch": "slice/c-m-mock",
+  "browser": "HeadlessChrome/149.0.7827.55",
+  "method": "Isolated chrome-headless-shell, throwaway profile, private CDP port, focus emulated. The page was served from a loopback server that logged every request. Viewport screenshots at deviceScaleFactor 1, scrollbars hidden as on phones and macOS. Each load: mockup.html?n=<k>#state=<name>&theme=system&controls=hide with prefers-color-scheme emulated.",
+  "files": "mock-shots/<spec state>-<state name>-<width>-<scheme>.png. Spec state 3 is split into 3a loading and 3b failed, 7 into 7a link, 7b without the key and 7c phrase, 9 into 9a landed, 9b typed and 9c open.",
+  "checks": {
+    "oneRequest": "exactly one request per load, the document, in both the browser and the server log",
+    "noErrors": "no page errors, console errors or console warnings",
+    "ready": "the state applied",
+    "noHOverflow": "documentElement and body scrollWidth no wider than the viewport",
+    "dashFree": "no en or em dash in any text on the page",
+    "noPhraseOutsidePanel": "no phrase word in any text outside the panel",
+    "toastClean": "no toast contains the fragment or a phrase word",
+    "panelInside": "panel inside the viewport, and neither the panel nor the phrase slip overflows sideways",
+    "wordsWhole": "every phrase word renders on one line, inside its cell, with no overlap; numbers come from a CSS counter",
+    "copyLinkVisible": "with the sheet unscrolled, the primary Copy link sits wholly inside the panel and the viewport",
+    "pressedInView": "320 only, states 6 and 7c: the pressed Copy phrase is focused and wholly visible under the pinned head",
+    "underBar": "panel top within 1px of the band bottom",
+    "placement": "1440: panel right edge within 1px of the opener right edge; 390 and 320: panel spans the viewport",
+    "columns": "phrase slip is three columns at 1440 and 390, two at 320",
+    "keyWhole": "the key part of the link renders as one unbroken fragment",
+    "linkText": "link value text is exactly the share URL",
+    "expanded": "opener has aria-expanded=\"true\" and aria-controls=\"copy-link-panel\" while the panel is open",
+    "c1Text": "every C1 string the panel shows is present word for word",
+    "toastAbove": "toast z-index 30 and elementFromPoint at its centre is the toast",
+    "keyEntryText": "KEY_ENTRY_PROMPT, KEY_ENTRY_LABEL and KEY_ENTRY_PLACEHOLDER word for word"
+  },
+  "summary": {
+    "shots": 84,
+    "passing": 84
+  },
+  "forcedScheme": [
+    {
+      "state": "panel-open",
+      "viewport": "1440x900",
+      "darkSettingMatchesSystemDark": true
+    },
+    {
+      "state": "copy-refused-keyless",
+      "viewport": "390x844",
+      "darkSettingMatchesSystemDark": true
+    }
+  ],
+  "clickThrough": {
+    "note": "Real CDP mouse, touch and keyboard input starting from bar-closed, no deep links. fv is :focus-visible on the focused element.",
+    "desktop1440": [
+      "click opener: loading first: panel=true words=0 status=Loading the key phrase. busy=true expanded=true focus=copy:link fv=false toast=- clipboard=empty selection=\"\"",
+      "click opener: words in: panel=true words=12 status=- busy=- expanded=true focus=copy:link fv=false toast=- clipboard=empty selection=\"\"",
+      "click Copy link: panel=true words=12 status=- busy=- expanded=true focus=copy:link fv=false toast=Link copied. It contains the decryption key. clipboard=https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg selection=\"\"",
+      "click Copy without the key: panel=true words=12 status=- busy=- expanded=true focus=copy:keyless fv=false toast=Link copied without the key. Say the key phrase separately. clipboard=https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e selection=\"\"",
+      "click Copy phrase: panel=true words=12 status=- busy=- expanded=true focus=copy:phrase fv=false toast=Key phrase copied. It is the decryption key. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "controls: clipboard refuses (panel stays): panel=true words=12 status=- busy=- expanded=true focus=copy:phrase fv=false toast=Key phrase copied. It is the decryption key. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "click Copy link, refused: panel=true words=12 status=- busy=- expanded=true focus=copy:link fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg\"",
+      "click Copy without the key, refused: panel=true words=12 status=- busy=- expanded=true focus=copy:keyless fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e\"",
+      "click Copy phrase, refused: panel=true words=12 status=- busy=- expanded=true focus=copy:phrase fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"arctic\\nlive\\ngadget\\ndisplay\\nexcess\\nmandate\\nsniff\\nautumn\\npeople\\ndisorder\\naffair\\nhorn\"",
+      "Escape inside panel: panel=false words=0 status=- busy=- expanded=false focus=action:copy-link fv=true toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "Enter on focused opener (keyboard): panel=true words=12 status=- busy=- expanded=true focus=copy:link fv=true toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "Tab: panel=true words=12 status=- busy=- expanded=true focus=copy:keyless fv=true toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "Tab: panel=true words=12 status=- busy=- expanded=true focus=copy:phrase fv=true toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "Tab past last control: panel=false words=0 status=- busy=- expanded=false focus=action fv=true toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "reopen by click: panel=true words=12 status=- busy=- expanded=true focus=copy:link fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "second press on opener: panel=false words=0 status=- busy=- expanded=false focus=action:copy-link fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "press outside: panel=false words=0 status=- busy=- expanded=false focus=BODY fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "close button: panel=false words=0 status=- busy=- expanded=false focus=action:copy-link fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "phrase fails: panel=true words=0 status=The key phrase could not be loaded. The link above still works. busy=- expanded=true focus=copy:link fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
+      "phrase never finishes: panel=true words=0 status=Loading the key phrase. busy=true expanded=true focus=copy:link fv=false toast=- clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\""
+    ],
+    "recipient390": [
+      "eleven words, Enter: value=\"arctic live gadget display excess mandate sniff autumn people disorder affair\" feedback=\"That is not a key.\" relicOpen=false",
+      "twelve words, one wrong, Enter: value=\"arctic live gadget display excess mandate sniff autumn people disorder affair hornet\" feedback=\"That key does not open this relic.\" relicOpen=false",
+      "the keyless link pasted back, Enter: value=\"https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e\" feedback=\"That is not a key.\" relicOpen=false",
+      "the 12 words typed: value=\"arctic live gadget display excess mandate sniff autumn people disorder affair horn\" feedback=\"That is not a key.\" relicOpen=false",
+      "tap Open relic: value=null feedback=null relicOpen=true"
+    ],
+    "touch320": [
+      {
+        "step": "tap opener",
+        "panel": [
+          0,
+          320,
+          63,
+          560
+        ],
+        "copyLink": [
+          16,
+          304,
+          237.6,
+          276
+        ],
+        "vw": 320,
+        "vh": 568,
+        "words": 12
+      },
+      {
+        "step": "tap Copy without the key",
+        "toast": "Link copied without the key. Say the key phrase separately.",
+        "clip": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e"
+      }
+    ],
+    "requests": [
+      "http://127.0.0.1:49970/mockup.html?n=25#state=bar-closed",
+      "http://127.0.0.1:49970/mockup.html?n=29#state=recipient-missing-key",
+      "http://127.0.0.1:49970/mockup.html?n=26#state=recipient-missing-key",
+      "http://127.0.0.1:49970/mockup.html?n=27#state=bar-closed"
+    ]
+  },
+  "bandC31": {
+    "note": "The band with the C3.1 visually hidden label rule, against the same page with the old display:none rule swapped back in: position and size of every element of the band, and the accessible names of its buttons and links.",
+    "w320": {
+      "identicalGeometry": true,
+      "namesBefore": [
+        "Version 2 of 2. Choose a version to view",
+        "Rendered as text, no author code",
+        "Compare version 2 with its history",
+        "",
+        "Share this relic with people by email",
+        "",
+        "",
+        ""
+      ],
+      "namesAfter": [
+        "Version 2 of 2. Choose a version to view",
+        "Rendered as text, no author code",
+        "Compare version 2 with its history",
+        "Copy link",
+        "Share",
+        "Download",
+        "Report",
+        "View source"
+      ]
+    },
+    "w390": {
+      "identicalGeometry": true,
+      "before": "Comments named '0'; Copy link, Download, Report and View source unnamed",
+      "after": "Comments 0, Copy link, Share, Download, Report and View source all named"
+    },
+    "w544": {
+      "identicalGeometry": true
+    }
+  },
+  "phraseWidths": "All 2048 wordlist words measured in a slip cell: mushroom is widest at 112.3px in the first column (with the margin) and 100.3px in the others, so three columns need 19.75rem with borders. Slip interiors are 285px at 320, 355px at 390 and 371px at 1440.",
+  "contrast": {
+    "light": {
+      "title": 17.07,
+      "linkPath": 15.74,
+      "linkKey": 5.45,
+      "note": 6.1,
+      "number": 5.62,
+      "primary": 6.06,
+      "failedNote": 5.96,
+      "loadingNote": 5.62,
+      "toast": 15.74
+    },
+    "dark": {
+      "title": 14.19,
+      "linkPath": 15.26,
+      "linkKey": 4.78,
+      "note": 6.34,
+      "number": 6.82,
+      "primary": 6.89,
+      "failedNote": 5.96,
+      "loadingNote": 6.82,
+      "toast": 15.26
+    }
+  },
+  "shotsList": [
+    {
+      "file": "1-bar-closed-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "1-bar-closed-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "1-bar-closed-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "1-bar-closed-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "1-bar-closed-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "1-bar-closed-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "2-panel-open-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "2-panel-open-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "2-panel-open-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      }
+    },
+    {
+      "file": "2-panel-open-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      }
+    },
+    {
+      "file": "2-panel-open-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      }
+    },
+    {
+      "file": "2-panel-open-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      }
+    },
+    {
+      "file": "3a-phrase-loading-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "3a-phrase-loading-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "3a-phrase-loading-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      }
+    },
+    {
+      "file": "3a-phrase-loading-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      }
+    },
+    {
+      "file": "3a-phrase-loading-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      }
+    },
+    {
+      "file": "3a-phrase-loading-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      }
+    },
+    {
+      "file": "3b-phrase-failed-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 548.7,
+        "r": 1151,
+        "b": 611.7
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "3b-phrase-failed-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 548.7,
+        "r": 1151,
+        "b": 611.7
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "3b-phrase-failed-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 611.5,
+        "r": 390,
+        "b": 674.5
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      }
+    },
+    {
+      "file": "3b-phrase-failed-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 611.5,
+        "r": 390,
+        "b": 674.5
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      }
+    },
+    {
+      "file": "3b-phrase-failed-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      }
+    },
+    {
+      "file": "3b-phrase-failed-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      }
+    },
+    {
+      "file": "4-copied-link-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "Link copied. It contains the decryption key.",
+        "rect": {
+          "x": 569.2,
+          "y": 832.8,
+          "w": 301.6,
+          "h": 43.2,
+          "r": 870.8,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "4-copied-link-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "Link copied. It contains the decryption key.",
+        "rect": {
+          "x": 569.2,
+          "y": 832.8,
+          "w": 301.6,
+          "h": 43.2,
+          "r": 870.8,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "4-copied-link-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied. It contains the decryption key.",
+        "rect": {
+          "x": 44.2,
+          "y": 776.8,
+          "w": 301.6,
+          "h": 43.2,
+          "r": 345.8,
+          "b": 820
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "4-copied-link-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied. It contains the decryption key.",
+        "rect": {
+          "x": 44.2,
+          "y": 776.8,
+          "w": 301.6,
+          "h": 43.2,
+          "r": 345.8,
+          "b": 820
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "4-copied-link-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied. It contains the decryption key.",
+        "rect": {
+          "x": 16,
+          "y": 480,
+          "w": 288,
+          "h": 64,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "4-copied-link-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied. It contains the decryption key.",
+        "rect": {
+          "x": 16,
+          "y": 480,
+          "w": 288,
+          "h": 64,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "5-copied-keyless-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "Link copied without the key. Say the key phrase separately.",
+        "rect": {
+          "x": 519.1,
+          "y": 832.8,
+          "w": 401.8,
+          "h": 43.2,
+          "r": 920.9,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "5-copied-keyless-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "Link copied without the key. Say the key phrase separately.",
+        "rect": {
+          "x": 519.1,
+          "y": 832.8,
+          "w": 401.8,
+          "h": 43.2,
+          "r": 920.9,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "5-copied-keyless-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied without the key. Say the key phrase separately.",
+        "rect": {
+          "x": 16,
+          "y": 756,
+          "w": 358,
+          "h": 64,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "5-copied-keyless-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied without the key. Say the key phrase separately.",
+        "rect": {
+          "x": 16,
+          "y": 756,
+          "w": 358,
+          "h": 64,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "5-copied-keyless-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied without the key. Say the key phrase separately.",
+        "rect": {
+          "x": 16,
+          "y": 480,
+          "w": 288,
+          "h": 64,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "5-copied-keyless-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "Link copied without the key. Say the key phrase separately.",
+        "rect": {
+          "x": 16,
+          "y": 480,
+          "w": 288,
+          "h": 64,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "6-copied-phrase-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "Key phrase copied. It is the decryption key.",
+        "rect": {
+          "x": 568.8,
+          "y": 832.8,
+          "w": 302.4,
+          "h": 43.2,
+          "r": 871.2,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "6-copied-phrase-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "Key phrase copied. It is the decryption key.",
+        "rect": {
+          "x": 568.8,
+          "y": 832.8,
+          "w": 302.4,
+          "h": 43.2,
+          "r": 871.2,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "6-copied-phrase-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "Key phrase copied. It is the decryption key.",
+        "rect": {
+          "x": 43.8,
+          "y": 776.8,
+          "w": 302.4,
+          "h": 43.2,
+          "r": 346.2,
+          "b": 820
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "6-copied-phrase-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "Key phrase copied. It is the decryption key.",
+        "rect": {
+          "x": 43.8,
+          "y": 776.8,
+          "w": 302.4,
+          "h": 43.2,
+          "r": 346.2,
+          "b": 820
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "6-copied-phrase-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove",
+        "pressedInView"
+      ],
+      "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
+      "focus": "copy:phrase",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": -55.4,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": -17
+      },
+      "toast": {
+        "text": "Key phrase copied. It is the decryption key.",
+        "rect": {
+          "x": 16,
+          "y": 480,
+          "w": 288,
+          "h": 64,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "6-copied-phrase-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove",
+        "pressedInView"
+      ],
+      "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
+      "focus": "copy:phrase",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": -55.4,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": -17
+      },
+      "toast": {
+        "text": "Key phrase copied. It is the decryption key.",
+        "rect": {
+          "x": 16,
+          "y": 480,
+          "w": 288,
+          "h": 64,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7a-copy-refused-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 322.4,
+          "y": 832.8,
+          "w": 795.3,
+          "h": 43.2,
+          "r": 1117.6,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7a-copy-refused-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 322.4,
+          "y": 832.8,
+          "w": 795.3,
+          "h": 43.2,
+          "r": 1117.6,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7a-copy-refused-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 735.1,
+          "w": 358,
+          "h": 84.9,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7a-copy-refused-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 735.1,
+          "w": 358,
+          "h": 84.9,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7a-copy-refused-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 438.3,
+          "w": 288,
+          "h": 105.7,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7a-copy-refused-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:link",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 438.3,
+          "w": 288,
+          "h": 105.7,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7b-copy-refused-keyless-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 322.4,
+          "y": 832.8,
+          "w": 795.3,
+          "h": 43.2,
+          "r": 1117.6,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7b-copy-refused-keyless-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 322.4,
+          "y": 832.8,
+          "w": 795.3,
+          "h": 43.2,
+          "r": 1117.6,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7b-copy-refused-keyless-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 735.1,
+          "w": 358,
+          "h": 84.9,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7b-copy-refused-keyless-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 735.1,
+          "w": 358,
+          "h": 84.9,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7b-copy-refused-keyless-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 438.3,
+          "w": 288,
+          "h": 105.7,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7b-copy-refused-keyless-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:keyless",
+      "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 438.3,
+          "w": 288,
+          "h": 105.7,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7c-copy-refused-phrase-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 322.4,
+          "y": 832.8,
+          "w": 795.3,
+          "h": 43.2,
+          "r": 1117.6,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7c-copy-refused-phrase-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "panel": {
+        "x": 735,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1151,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 756,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 862.7,
+        "b": 257.1
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 322.4,
+          "y": 832.8,
+          "w": 795.3,
+          "h": 43.2,
+          "r": 1117.6,
+          "b": 876
+        },
+        "overPanel": false,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7c-copy-refused-phrase-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 735.1,
+          "w": 358,
+          "h": 84.9,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7c-copy-refused-phrase-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove"
+      ],
+      "focus": "copy:phrase",
+      "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 697.9,
+        "r": 390,
+        "b": 760.9
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 16,
+        "y": 237.6,
+        "w": 358,
+        "h": 38.3,
+        "r": 374,
+        "b": 276
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 735.1,
+          "w": 358,
+          "h": 84.9,
+          "r": 374,
+          "b": 820
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7c-copy-refused-phrase-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove",
+        "pressedInView"
+      ],
+      "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
+      "focus": "copy:phrase",
+      "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": -55.4,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": -17
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 438.3,
+          "w": 288,
+          "h": 105.7,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "7c-copy-refused-phrase-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "panelInside",
+        "wordsWhole",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text",
+        "toastAbove",
+        "pressedInView"
+      ],
+      "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
+      "focus": "copy:phrase",
+      "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "r": 320,
+        "b": 560
+      },
+      "rightVsOpener": 116,
+      "topVsBar": 0.5,
+      "phraseColumns": 2,
+      "panelScrolls": true,
+      "copyLink": {
+        "x": 16,
+        "y": -55.4,
+        "w": 288,
+        "h": 38.3,
+        "r": 304,
+        "b": -17
+      },
+      "toast": {
+        "text": "This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work.",
+        "rect": {
+          "x": 16,
+          "y": 438.3,
+          "w": 288,
+          "h": 105.7,
+          "r": 304,
+          "b": 544
+        },
+        "overPanel": true,
+        "onTop": true
+      }
+    },
+    {
+      "file": "8-closed-again-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "action:copy-link"
+    },
+    {
+      "file": "8-closed-again-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "action:copy-link"
+    },
+    {
+      "file": "8-closed-again-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "action:copy-link"
+    },
+    {
+      "file": "8-closed-again-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "action:copy-link"
+    },
+    {
+      "file": "8-closed-again-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "action:copy-link"
+    },
+    {
+      "file": "8-closed-again-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "action:copy-link"
+    },
+    {
+      "file": "9a-recipient-missing-key-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "BODY",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "",
+        "input": {
+          "x": 477,
+          "y": 370.3,
+          "w": 383.7,
+          "h": 40.3,
+          "r": 860.7,
+          "b": 410.6
+        }
+      }
+    },
+    {
+      "file": "9a-recipient-missing-key-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "BODY",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "",
+        "input": {
+          "x": 477,
+          "y": 370.3,
+          "w": 383.7,
+          "h": 40.3,
+          "r": 860.7,
+          "b": 410.6
+        }
+      }
+    },
+    {
+      "file": "9a-recipient-missing-key-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "BODY",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "",
+        "input": {
+          "x": 49,
+          "y": 412.9,
+          "w": 189.7,
+          "h": 40.3,
+          "r": 238.7,
+          "b": 453.2
+        }
+      }
+    },
+    {
+      "file": "9a-recipient-missing-key-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "BODY",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "",
+        "input": {
+          "x": 49,
+          "y": 412.9,
+          "w": 189.7,
+          "h": 40.3,
+          "r": 238.7,
+          "b": 453.2
+        }
+      }
+    },
+    {
+      "file": "9a-recipient-missing-key-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "BODY",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "",
+        "input": {
+          "x": 49,
+          "y": 434.2,
+          "w": 119.7,
+          "h": 40.3,
+          "r": 168.7,
+          "b": 474.6
+        }
+      }
+    },
+    {
+      "file": "9a-recipient-missing-key-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "BODY",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "",
+        "input": {
+          "x": 49,
+          "y": 434.2,
+          "w": 119.7,
+          "h": 40.3,
+          "r": 168.7,
+          "b": 474.6
+        }
+      }
+    },
+    {
+      "file": "9b-recipient-typed-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "relic-key-input",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "arctic live gadget display excess mandate sniff autumn people disorder affair horn",
+        "input": {
+          "x": 477,
+          "y": 370.3,
+          "w": 383.7,
+          "h": 40.3,
+          "r": 860.7,
+          "b": 410.6
+        }
+      }
+    },
+    {
+      "file": "9b-recipient-typed-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "relic-key-input",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "arctic live gadget display excess mandate sniff autumn people disorder affair horn",
+        "input": {
+          "x": 477,
+          "y": 370.3,
+          "w": 383.7,
+          "h": 40.3,
+          "r": 860.7,
+          "b": 410.6
+        }
+      }
+    },
+    {
+      "file": "9b-recipient-typed-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "relic-key-input",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "arctic live gadget display excess mandate sniff autumn people disorder affair horn",
+        "input": {
+          "x": 49,
+          "y": 412.9,
+          "w": 189.7,
+          "h": 40.3,
+          "r": 238.7,
+          "b": 453.2
+        }
+      }
+    },
+    {
+      "file": "9b-recipient-typed-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "relic-key-input",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "arctic live gadget display excess mandate sniff autumn people disorder affair horn",
+        "input": {
+          "x": 49,
+          "y": 412.9,
+          "w": 189.7,
+          "h": 40.3,
+          "r": 238.7,
+          "b": 453.2
+        }
+      }
+    },
+    {
+      "file": "9b-recipient-typed-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "relic-key-input",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "arctic live gadget display excess mandate sniff autumn people disorder affair horn",
+        "input": {
+          "x": 49,
+          "y": 434.2,
+          "w": 119.7,
+          "h": 40.3,
+          "r": 168.7,
+          "b": 474.6
+        }
+      }
+    },
+    {
+      "file": "9b-recipient-typed-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "keyEntryText"
+      ],
+      "focus": "relic-key-input",
+      "keyEntry": {
+        "prompt": "If you have the key phrase or the full link for this relic, enter it here.",
+        "label": "Key phrase or link",
+        "placeholder": "The 12 words, or the whole link",
+        "value": "arctic live gadget display excess mandate sniff autumn people disorder affair horn",
+        "input": {
+          "x": 49,
+          "y": 434.2,
+          "w": 119.7,
+          "h": 40.3,
+          "r": 168.7,
+          "b": 474.6
+        }
+      }
+    },
+    {
+      "file": "9c-recipient-open-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "9c-recipient-open-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "9c-recipient-open-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "9c-recipient-open-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "9c-recipient-open-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    },
+    {
+      "file": "9c-recipient-open-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean"
+      ],
+      "focus": "BODY"
+    }
+  ]
+}
