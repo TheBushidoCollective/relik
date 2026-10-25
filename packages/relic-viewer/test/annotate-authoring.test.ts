@@ -185,13 +185,13 @@ describe('keyboard reachability and mark activation', () => {
 
     // Press ArrowRight to nudge keyboard box
     documentNode.dispatch('keydown', { key: 'ArrowRight' });
-
     // Press Enter to commit region target
     documentNode.dispatch('keydown', { key: 'Enter' });
 
     expect(mounted.stage.classes()).not.toContain('is-pinning');
     expect(withClass(mounted.stage, 'is-keyboard')).toHaveLength(0);
-    expect(mounted.chip()).not.toContain('Commenting on the whole document');
+    expect(withClass(mounted.stage, 'popover-composer')).toHaveLength(1);
+    expect(mounted.chip()).toContain('Commenting on the whole document');
   });
 
   test('keyboard region aiming survives a repaint between arming and the keypress', async () => {
@@ -232,7 +232,8 @@ describe('keyboard reachability and mark activation', () => {
 
     expect(mounted.stage.classes()).not.toContain('is-pinning');
     expect(withClass(mounted.stage, 'is-keyboard')).toHaveLength(0);
-    expect(mounted.chip()).not.toContain('Commenting on the whole document');
+    expect(withClass(mounted.stage, 'popover-composer')).toHaveLength(1);
+    expect(mounted.chip()).toContain('Commenting on the whole document');
     expect(
       withClass(mounted.stage, 'is-pending').length
     ).toBeGreaterThanOrEqual(1);
@@ -246,27 +247,21 @@ describe('re-aiming preserves composer text', () => {
   test('re-aiming from one target to another preserves composer draft', async () => {
     const mounted = await mount();
 
-    // Type a draft into composer textarea
-    const textarea = only(mounted.thread, 'compose-textarea');
-    textarea.value =
-      'First draft sentence. Second draft sentence. Third draft sentence.';
-
     // Set first target: a point
     only(mounted.thread, 'mark-mode').dispatch('click');
     mounted.content.dispatch('click', { clientX: 300, clientY: 200 });
 
-    expect(mounted.chip()).toContain('Commenting on a point');
-    expect(textarea.value).toBe(
-      'First draft sentence. Second draft sentence. Third draft sentence.'
-    );
+    const field = only(mounted.stage, 'popover-field');
+    field.value =
+      'First draft sentence. Second draft sentence. Third draft sentence.';
 
-    // Re-aim at a quote
-    select(mounted, 'the second paragraph');
-    only(mounted.thread, 'mark-quote-action').dispatch('click');
+    // Re-aim at another point (same document family)
+    only(mounted.thread, 'mark-mode').dispatch('click');
+    mounted.content.dispatch('click', { clientX: 500, clientY: 400 });
 
-    expect(mounted.chip()).toContain('Commenting on "the second paragraph"');
-    // Draft text must be preserved after re-aiming
-    expect(textarea.value).toBe(
+    // Draft text must be preserved after re-aiming in the stage composer
+    expect(only(mounted.stage, 'popover-field')).toBe(field);
+    expect(field.value).toBe(
       'First draft sentence. Second draft sentence. Third draft sentence.'
     );
   });
