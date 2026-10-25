@@ -43,9 +43,18 @@
      Decisions and copy-link sheets were given back with `display` alone,
      which cannot undo a visually hidden rule's position, size and clip, so
      they are kept out of it rather than given back.
+  8. The band never overflows and never crushes its identity, from 320 to
+     1920 with every control at once (state band-full-set): the marker
+     sentence goes first, then the secondary labels, then every label, then
+     the wordmark and the long version, and on a phone the four controls
+     that anchor nothing move into More, the version list's chrome. The
+     identity keeps a floor of 12rem, 8rem or 5.5rem. The stages and their
+     measurements are in "the band at every width" below.
   Rejected: a modal (its backdrop would bury the copy toasts), a third accent
-  colour for the phrase, a lock or key illustration, and any wording not in
-  C1. The only other text is the viewer's own, unchanged.
+  colour for the phrase, a lock or key illustration, a second row for the
+  band on a phone (it would cost every reader the height of a row), and any
+  wording not in C1 or the viewer. The only words added are the band's More
+  and the three tooltips that repeat a control's own label.
 
   Nothing here touches the clipboard, makes a request, or stores the phrase.
   localStorage keeps the colour scheme and whether the mock controls are
@@ -285,6 +294,19 @@ body {
   display: none;
 }
 
+.version-list {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 20;
+  min-width: 8rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
 .actions {
   display: flex;
   align-items: stretch;
@@ -377,8 +399,8 @@ body {
      against the merged stylesheet at 390, the unscoped rule clips every one
      of them to a pixel and shrinks Comments from 59px to 34px. So they are
      left out of the rule instead of given back. A new sheet that shows its
-     buttons' words joins the second list. */
-  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel) span) {
+     buttons' words joins the second list, as the band's More list does. */
+  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list) span) {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -503,6 +525,185 @@ body {
 @media (max-width: 24rem) {
   .actions .action {
     padding: 0 0.4rem;
+  }
+}
+
+/* ---------- the band at every width ---------- */
+
+/*
+ * The band with every control it can carry never overflows, and never
+ * crushes the identity it exists to show.
+ *
+ * Measured on main at 8ae3b3c3 with the full set (OTIO on version 2: the
+ * longest marker sentence, Relics, Comments with a count, Decisions with a
+ * tally, Earlier versions, Copy link, Share, Download, Report): the band
+ * overflowed from 552px to 1438px wide, the identity fell to 32px and the
+ * version chip slid 118px over the marker. Labelled, the actions want 1315px;
+ * as icons, 505px. So the words leave in order of what they cost a reader:
+ *
+ *   A  above 110rem  everything labelled
+ *   B  110rem        the marker sentence (a fact: its name and title carry it)
+ *   C  88rem         Relics, the version history control, Download, Report
+ *   D  70rem         every label on the band (counts and tallies stay)
+ *   E  52rem         the wordmark, then the long version label, and the
+ *                    phone's tighter padding, earlier than before
+ *   F  34rem         the four controls that open nothing on the band move
+ *                    into More: the marker, Relics, Download, Report
+ *   G  24rem         as before: Comments leaves for its handle on the stage
+ *
+ * The identity keeps a floor: 12rem while the long version label shows,
+ * 8rem with the short one, 5.5rem on a phone. Each floor holds its version
+ * chip whole and the start of the filename, so the chip can never slide
+ * over a neighbour; the stages above guarantee the floor is never the thing
+ * that gives.
+ *
+ * Breakpoints are sized for the full set with two-digit counts, and checked
+ * every 8px from 320 to 1920 in the system face and in a wider sans standing
+ * in for Linux. Narrowest spare room left in each stage, wide face, two-digit
+ * counts: A 91px, B 72px, C 60px, D 33px, E 34px, F 17px, G 9px. A relic
+ * with fewer controls collapses at the same widths, with room to spare.
+ */
+.identity {
+  min-width: 12rem;
+}
+
+@media (max-width: 110rem) {
+  .bar .actions > .action.marker > span:not([class]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (max-width: 88rem) {
+  .bar .actions > .action-relics > span:not([class]),
+  .bar .actions > .action-history > span:not([class]),
+  .bar .actions > .action-download > span:not([class]),
+  .bar .actions > .action-report > span:not([class]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (max-width: 70rem) {
+  .bar .actions > .action > span:not([class]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (max-width: 52rem) {
+  .identity {
+    min-width: 8rem;
+    padding: 0.4rem 0.7rem;
+  }
+  .identity-meta {
+    gap: 0.4rem;
+  }
+  .mark,
+  .version-long {
+    display: none;
+  }
+  .version-short {
+    display: inline;
+  }
+  .actions .action {
+    padding: 0 0.6rem;
+  }
+  .action span.decision-tally,
+  .action .decision-tally > span {
+    display: inline-flex;
+  }
+  .action .decision-tally > span {
+    gap: 0.1rem;
+    padding: 0 0.2rem;
+  }
+  .action-decisions > .icon {
+    display: none;
+  }
+  .action-decisions:not([data-decision-approvals]) > .icon {
+    display: inline-block;
+  }
+}
+
+/* More: the version list's chrome, dropped from the band's last control and
+   aligned to its right edge. A disclosure rather than a menu: its four
+   entries are an ordinary link or button each, reached with Tab. */
+.band-more-wrap {
+  position: relative;
+  display: none;
+}
+
+.band-more-list {
+  right: 0;
+  left: auto;
+  width: max-content;
+  min-width: 12rem;
+  max-width: calc(100vw - 1rem);
+  max-height: none;
+}
+
+.band-more-list .action {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  border: 0;
+  white-space: normal;
+  text-align: left;
+}
+
+.band-more-list .action + .action {
+  border-top: 1px solid var(--rule);
+}
+
+.band-more-list .action .icon {
+  margin-top: 0.2rem;
+}
+
+.band-more-list .action:focus-visible,
+.band-more-list .action.mock-ring:focus {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.action-more[aria-expanded="true"] {
+  background: var(--ground);
+  color: var(--patina-ink);
+}
+
+@media (max-width: 34rem) {
+  .identity {
+    min-width: 5.5rem;
+  }
+  .bar .actions > .action.marker,
+  .bar .actions > .action-relics,
+  .bar .actions > .action-download,
+  .bar .actions > .action-report {
+    display: none;
+  }
+  .band-more-wrap {
+    display: flex;
   }
 }
 
@@ -1135,6 +1336,8 @@ body {
   <ul data-group="reader"></ul>
   <div class="group">Recipient of the link without the key</div>
   <ul data-group="recipient"></ul>
+  <div class="group">Band with every control, OTIO on version 2</div>
+  <ul data-group="band"></ul>
 </aside>
 
 <script>
@@ -1214,6 +1417,8 @@ body {
     stamp: 'M5.5 1h5v4L9 6.5V8h4.5v3h-11V8H7V6.5L5.5 5V1zM2 12.5h12V14H2v-1.5z',
     approve: 'M6.2 11.6 2.6 8l1-1 2.6 2.6 6.2-6.2 1 1z',
     reject: 'M4 3 8 7l4-4 1 1-4 4 4 4-1 1-4-4-4 4-1-1 4-4-4-4z',
+    // Three square points on the band's 16-unit grid: nothing here is round.
+    more: 'M2.5 7h2.2v2.2H2.5zm4.4 0h2.2v2.2H6.9zm4.4 0h2.2v2.2h-2.2z',
   };
 
   // ---------- small DOM helpers, as main.ts builds them ----------
@@ -1529,13 +1734,47 @@ body {
   }
 
   // ---------- the reader's page ----------
+
+  // Two bands. `markdown` is this mock's relic. `full` is every control the
+  // band can carry at once: OTIO on version 2 (the longest marker sentence),
+  // Relics, Comments with a count, Decisions with a tally, Earlier versions,
+  // Copy link, Share, Download and Report. The labels are main's own.
+  const BANDS = {
+    markdown: {
+      filename: FILENAME,
+      marker: 'Rendered as text, no author code',
+      comments: 0,
+      approve: 0,
+      reject: 0,
+      history: 'Compare versions',
+      historyName: 'Compare version 2 with its history',
+    },
+    full: {
+      filename: 'feature-edit.otio',
+      marker: 'Plays its timeline in your browser, no author code',
+      comments: 3,
+      approve: 2,
+      reject: 1,
+      history: 'Earlier versions',
+      historyName: 'Open an earlier version of this relic',
+    },
+  };
+  let band = BANDS.markdown;
+
+  function link(className, href, iconPath, label) {
+    const a = el('a', className);
+    a.href = href;
+    a.append(icon(iconPath), el('span', '', label));
+    return a;
+  }
+
   function buildBar() {
     const bar = el('header', 'bar');
     bar.appendChild(el('div', 'mark', WORDMARK));
 
     const identity = el('div', 'identity');
-    const name = el('div', 'filename', FILENAME);
-    name.title = FILENAME;
+    const name = el('div', 'filename', band.filename);
+    name.title = band.filename;
     const meta = el('div', 'identity-meta');
     meta.appendChild(el('div', 'accession', RELIC_ID));
     const version = el('div', 'version');
@@ -1556,29 +1795,25 @@ body {
 
     const actions = el('div', 'actions');
 
-    const marker = el('a', 'action marker');
-    marker.href = '#policy';
-    marker.setAttribute('aria-label', 'Rendered as text, no author code');
-    marker.title = 'Rendered as text, no author code. What Relic knows.';
-    marker.append(icon(ICONS.source), el('span', '', 'Rendered as text, no author code'));
+    const marker = link('action marker', '#policy', ICONS.source, band.marker);
+    marker.setAttribute('aria-label', band.marker);
+    marker.title = `${band.marker}. What Relic knows.`;
     actions.appendChild(marker);
 
-    const relics = el('a', 'action action-relics');
-    relics.href = '#dashboard';
+    const relics = link('action action-relics', '#dashboard', ICONS.grid, 'Relics');
     relics.setAttribute('aria-label', 'Relics list');
     relics.title = 'Relics list. Open your saved and commented relics in a new tab.';
-    relics.append(icon(ICONS.grid), el('span', '', 'Relics'));
     actions.appendChild(relics);
 
     const comments = button('Comments', ICONS.comment, () => {});
     comments.classList.add('action-comments');
-    comments.appendChild(el('span', 'action-count', '0'));
-    comments.title = 'No comments';
+    comments.appendChild(el('span', 'action-count', String(band.comments)));
+    comments.title = band.comments === 0 ? 'No comments' : band.comments === 1 ? '1 comment' : `${band.comments} comments`;
     actions.appendChild(comments);
 
-    // As main at 8ae3b3c3 builds it for a relic with decisions open and none
-    // recorded on version 2 (decorateDecisionControl). Inert here: the
-    // decisions sheet is not what this mock reviews.
+    // As main at 8ae3b3c3 builds it for a relic with decisions open
+    // (decorateDecisionControl). Inert here: the decisions sheet is not what
+    // this mock reviews.
     const decide = button('Decisions', ICONS.stamp, () => {});
     decide.classList.add('action-decisions');
     decide.setAttribute('data-decision-open', '');
@@ -1586,33 +1821,40 @@ body {
     decide.setAttribute('aria-controls', 'decision-panel');
     decide.setAttribute('aria-expanded', 'false');
     decide.title = 'Approve or reject this version';
-    decide.setAttribute('data-decision-approvals', '0');
-    decide.setAttribute('data-decision-rejections', '0');
-    decide.setAttribute('aria-label', 'Decisions on version 2: 0 approved, 0 rejected');
+    decide.setAttribute('data-decision-approvals', String(band.approve));
+    decide.setAttribute('data-decision-rejections', String(band.reject));
+    decide.setAttribute('aria-label', `Decisions on version 2: ${band.approve} approved, ${band.reject} rejected`);
     const chip = el('span', 'decision-tally');
     chip.setAttribute('aria-hidden', 'true');
     for (const verdict of ['approve', 'reject']) {
       const part = el('span', `tally-${verdict}`);
-      part.setAttribute('data-zero', 'true');
-      part.append(icon(ICONS[verdict]), '0');
+      part.setAttribute('data-zero', String(band[verdict] === 0));
+      part.append(icon(ICONS[verdict]), String(band[verdict]));
       chip.appendChild(part);
     }
     decide.appendChild(chip);
     actions.appendChild(decide);
 
-    const compare = button('Compare versions', ICONS.compare, () => {});
-    compare.setAttribute('aria-pressed', 'false');
-    compare.setAttribute('aria-label', 'Compare version 2 with its history');
-    compare.title = 'Compare version 2 with its history';
-    actions.appendChild(compare);
+    // The band fix names the three controls the stages select on:
+    // action-history, action-download and action-report.
+    const history = button(band.history, ICONS.compare, () => {});
+    history.classList.add('action-history');
+    history.setAttribute('aria-pressed', 'false');
+    history.setAttribute('aria-label', band.historyName);
+    history.title = band.historyName;
+    actions.appendChild(history);
 
     // C2 opener: writes nothing to the clipboard; it opens or closes the panel.
+    // The band fix gives it, Download and Report a title: they are the three
+    // controls that had a label and no tooltip, and from 70rem down every
+    // label is gone.
     const copyLink = button('Copy link', ICONS.copy, () => {
       toggleCopyLinkPanel(SHARE_URL, copyLink);
     });
     copyLink.dataset.action = 'copy-link';
     copyLink.setAttribute('aria-haspopup', 'dialog');
     copyLink.setAttribute('aria-expanded', document.getElementById(COPY_LINK_PANEL_ID) === null ? 'false' : 'true');
+    copyLink.title = 'Copy link';
     actions.appendChild(copyLink);
 
     const share = button('Share', ICONS.share, () => {});
@@ -1621,20 +1863,87 @@ body {
     share.title = 'Share this relic with people by email';
     actions.appendChild(share);
 
-    actions.appendChild(button('Download', ICONS.download, () => {}));
+    const download = button('Download', ICONS.download, () => {});
+    download.classList.add('action-download');
+    download.title = 'Download';
+    actions.appendChild(download);
 
-    const report = el('a', 'action');
-    report.href = '#abuse';
-    report.append(icon(ICONS.flag), el('span', '', 'Report'));
+    const report = link('action action-report', '#abuse', ICONS.flag, 'Report');
+    report.title = 'Report';
     actions.appendChild(report);
 
+    actions.appendChild(buildMore());
     bar.appendChild(actions);
     return bar;
+  }
+
+  // On a phone the four controls that open nothing anchored to the band, the
+  // marker, Relics, Download and Report, move into More. Each copy here is
+  // hidden whenever its band twin shows, so one of each is ever on the page.
+  function buildMore() {
+    const wrap = el('div', 'band-more-wrap');
+    const more = button('More', ICONS.more, () => setOpen(list.hidden));
+    more.classList.add('action-more');
+    more.setAttribute('aria-expanded', 'false');
+    more.setAttribute('aria-controls', 'band-more');
+    more.title = 'More';
+    const list = el('div', 'version-list band-more-list');
+    list.id = 'band-more';
+    list.hidden = true;
+    const policy = link('action', '#policy', ICONS.source, band.marker);
+    const relics = link('action', '#dashboard', ICONS.grid, 'Relics');
+    relics.title = 'Relics list. Open your saved and commented relics in a new tab.';
+    // Download acts in place, so the list closes and focus goes back to More
+    // rather than falling to the page with the hidden entry.
+    const download = button('Download', ICONS.download, () => {
+      setOpen(false);
+      more.focus();
+    });
+    const report = link('action', '#abuse', ICONS.flag, 'Report');
+    list.append(policy, relics, download, report);
+    wrap.append(more, list);
+
+    function setOpen(open) {
+      list.hidden = !open;
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) {
+        document.addEventListener('pointerdown', onOutside, true);
+        document.addEventListener('keydown', onKey);
+      } else {
+        document.removeEventListener('pointerdown', onOutside, true);
+        document.removeEventListener('keydown', onKey);
+      }
+    }
+    // A rebuilt band takes this list with it; the first event after that
+    // finds it detached and lets go of the document.
+    function onOutside(event) {
+      if (!wrap.isConnected) return setOpen(false);
+      if (!wrap.contains(event.target) && !inControls(event.target)) setOpen(false);
+    }
+    function onKey(event) {
+      if (!wrap.isConnected) return setOpen(false);
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setOpen(false);
+      more.focus();
+    }
+    wrap.addEventListener('focusout', (event) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && !wrap.contains(next) && !inControls(next)) setOpen(false);
+    });
+    wrap.open = setOpen;
+    return wrap;
   }
 
   function buildRelic() {
     const row = el('div', 'relic-row');
     const wrap = el('div', 'stage-wrap');
+    if (band !== BANDS.markdown) {
+      // The full set is about the band; its OTIO stage is not reviewed here.
+      wrap.appendChild(el('main', 'stage'));
+      row.appendChild(wrap);
+      return row;
+    }
     const main = el('main', 'stage stage-markdown');
     const doc = el('div', 'doc');
 
@@ -1673,7 +1982,8 @@ body {
     return row;
   }
 
-  function showReader() {
+  function showReader(which = 'markdown') {
+    band = BANDS[which];
     document.body.replaceChildren(buildBar(), buildRelic(), controls);
   }
 
@@ -1761,8 +2071,8 @@ body {
     return document.querySelector('.bar [data-action="copy-link"]');
   }
 
-  async function openFromBar() {
-    showReader();
+  async function openFromBar(which = 'markdown') {
+    showReader(which);
     opener().click();
     return current;
   }
@@ -1859,6 +2169,26 @@ body {
         showRecipient();
         typePhrase();
         document.querySelector('.key-entry-form').requestSubmit();
+      }],
+    ],
+    band: [
+      ['band-full-set', async () => {
+        showReader('full');
+      }],
+      ['band-full-set-more', async () => {
+        showReader('full');
+        const wrap = document.querySelector('.band-more-wrap');
+        const more = wrap.querySelector('.action-more');
+        // More only exists on a phone; wider, this state is band-full-set.
+        if (getComputedStyle(wrap).display === 'none') return;
+        more.focus();
+        more.click();
+        ring(more);
+      }],
+      ['band-full-set-panel', async () => {
+        const handle = await openFromBar('full');
+        await handle.ready;
+        ring(handle.element.querySelector('[data-copy="link"]'));
       }],
     ],
   };

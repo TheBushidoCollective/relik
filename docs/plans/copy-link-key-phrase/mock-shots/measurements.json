@@ -4,7 +4,7 @@
   "branch": "slice/c-m-mock, with origin/main 8ae3b3c3 (PR #118 Decisions) merged in",
   "browser": "HeadlessChrome/149.0.7827.55",
   "method": "Isolated chrome-headless-shell, throwaway profile, private CDP port, focus emulated. The page was served from a loopback server that logged every request. Viewport screenshots at deviceScaleFactor 1, scrollbars hidden as on phones and macOS. Each load: mockup.html?n=<k>#state=<name>&theme=system&controls=hide with prefers-color-scheme emulated.",
-  "files": "mock-shots/<spec state>-<state name>-<width>-<scheme>.png. Spec state 3 is split into 3a loading and 3b failed, 7 into 7a link, 7b without the key and 7c phrase, 9 into 9a landed, 9b typed and 9c open.",
+  "files": "mock-shots/<spec state>-<state name>-<width>-<scheme>.png. Spec state 3 is split into 3a loading and 3b failed, 7 into 7a link, 7b without the key and 7c phrase, 9 into 9a landed, 9b typed and 9c open. 10a to 10c are the band with every control: closed at 1920 to 320, More open on a phone, and the copy panel under the collapsed band.",
   "band": "The band is main at 8ae3b3c3 for this fixture: a fresh relic has decisions open and none recorded, so Decisions shows a zero tally beside Comments. Mock filename widths 31.3px at 390 and 65.2px at 320 match the 31px and 64 to 65px the Decisions stylesheet records for the real band.",
   "checks": {
     "oneRequest": "exactly one request per load, the document, in both the browser and the server log",
@@ -27,11 +27,16 @@
     "c1Text": "every C1 string the panel shows is present word for word",
     "toastAbove": "toast z-index 30 and elementFromPoint at its centre is the toast",
     "keyEntryText": "KEY_ENTRY_PROMPT, KEY_ENTRY_LABEL and KEY_ENTRY_PLACEHOLDER word for word",
-    "decisionsTally": "the Decisions tally chip on the band is displayed, unclipped and wider than 40px"
+    "decisionsTally": "the Decisions tally chip on the band is displayed, unclipped and wider than 40px",
+    "bandFits": "band scrollWidth no wider than clientWidth, and every shown control inside the viewport",
+    "identityFloor": "identity at least 192px above 832px, 128px above 544px, 88px at or below 544px (12rem, 8rem, 5.5rem)",
+    "versionClear": "version chip wholly inside the identity and clear of the first control",
+    "controlsNamed": "every shown control has an accessible name, and every one showing no words has a title",
+    "moreOpen": "More disclosure open: aria-expanded true, its list inside the viewport, four entries each with words"
   },
   "summary": {
-    "shots": 84,
-    "passing": 84
+    "shots": 106,
+    "passing": 106
   },
   "forcedScheme": [
     {
@@ -130,7 +135,7 @@
     "w1440WithoutDecisions": 0
   },
   "clickThrough": {
-    "note": "Real CDP mouse, touch and keyboard input on the final file, starting from bar-closed, no deep links. fv is :focus-visible on the focused element.",
+    "note": "Real CDP mouse, touch and keyboard input on the final file, starting from a closed band, no deep links. fv is :focus-visible on the focused element.",
     "desktop1440": [
       "click opener: loading first: panel=true words=0 status=Loading the key phrase. busy=true expanded=true focus=copy:link fv=false toast=- clipboard=empty selection=\"\"",
       "click opener: words in: panel=true words=12 status=- busy=- expanded=true focus=copy:link fv=false toast=- clipboard=empty selection=\"\"",
@@ -151,8 +156,7 @@
       "press outside: panel=false words=0 status=- busy=- expanded=false focus=BODY fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
       "close button: panel=false words=0 status=- busy=- expanded=false focus=action:copy-link fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
       "phrase fails: panel=true words=0 status=The key phrase could not be loaded. The link above still works. busy=- expanded=true focus=copy:link fv=false toast=This browser would not let the page write to the clipboard. The text is still selected, so a copy from the keyboard will work. clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
-      "phrase never finishes: panel=true words=0 status=Loading the key phrase. busy=true expanded=true focus=copy:link fv=false toast=- clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\"",
-      "controls: switch to the recipient of the keyless link: panel=false words=0 status=- busy=- expanded=null focus=BODY fv=false toast=- clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\""
+      "phrase never finishes: panel=true words=0 status=Loading the key phrase. busy=true expanded=true focus=copy:link fv=false toast=- clipboard=arctic live gadget display excess mandate sniff autumn people disorder affair horn selection=\"\""
     ],
     "recipient390": [
       "eleven words, Enter: value=\"arctic live gadget display excess mandate sniff autumn people disorder affair\" feedback=\"That is not a key.\" relicOpen=false",
@@ -184,10 +188,23 @@
         "clip": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e"
       }
     ],
+    "moreDisclosure390": [
+      "tap More: open=true aria-expanded=true focus=More fv=false",
+      "Tab: open=true aria-expanded=true focus=entry: Plays its timeline in yo fv=true",
+      "Tab: open=true aria-expanded=true focus=entry: Relics fv=true",
+      "Tab: open=true aria-expanded=true focus=entry: Download fv=true",
+      "Tab: open=true aria-expanded=true focus=entry: Report fv=true",
+      "Escape: open=false aria-expanded=false focus=More fv=true",
+      "Enter on More: open=true aria-expanded=true focus=More fv=true",
+      "tap outside: open=false aria-expanded=false focus=BODY fv=false",
+      "tap Download in the list: open=false aria-expanded=false focus=More fv=false"
+    ],
     "requests": [
-      "http://127.0.0.1:57009/mockup.html?n=234#state=bar-closed",
-      "http://127.0.0.1:57009/mockup.html?n=235#state=recipient-missing-key",
-      "http://127.0.0.1:57009/mockup.html?n=236#state=bar-closed"
+      "http://127.0.0.1:60391/mockup.html?n=535#state=bar-closed",
+      "http://127.0.0.1:60391/mockup.html?n=536#state=recipient-missing-key",
+      "http://127.0.0.1:60391/mockup.html?n=537#state=bar-closed",
+      "http://127.0.0.1:60391/mockup.html?n=538#state=band-full-set",
+      "http://127.0.0.1:60391/mockup.html?n=544#state=band-full-set"
     ],
     "errors": []
   },
@@ -241,9 +258,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      }
     },
     {
       "file": "1-bar-closed-1440-dark.png",
@@ -259,9 +287,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      }
     },
     {
       "file": "1-bar-closed-390-light.png",
@@ -277,9 +316,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
     },
     {
       "file": "1-bar-closed-390-dark.png",
@@ -295,9 +345,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
     },
     {
       "file": "1-bar-closed-320-light.png",
@@ -313,9 +374,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
     },
     {
       "file": "1-bar-closed-320-dark.png",
@@ -331,9 +403,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
     },
     {
       "file": "2-panel-open-1440-light.png",
@@ -349,6 +432,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -362,12 +449,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -375,11 +469,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       }
     },
@@ -397,6 +491,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -410,12 +508,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -423,11 +528,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       }
     },
@@ -445,6 +550,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -458,6 +567,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -466,7 +582,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -493,6 +609,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -506,6 +626,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -514,7 +641,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -541,6 +668,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -554,6 +685,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -562,7 +700,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -589,6 +727,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -602,6 +744,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -610,7 +759,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -637,6 +786,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -650,12 +803,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -663,11 +823,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       }
     },
@@ -685,6 +845,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -698,12 +862,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -711,11 +882,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       }
     },
@@ -733,6 +904,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -746,6 +921,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -754,7 +936,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -781,6 +963,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -794,6 +980,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -802,7 +995,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -829,6 +1022,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -842,6 +1039,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -850,7 +1054,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": true,
@@ -877,6 +1081,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -890,6 +1098,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -898,7 +1113,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": true,
@@ -925,6 +1140,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -938,12 +1157,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 548.7,
-        "r": 1151,
+        "r": 1150,
         "b": 611.7
       },
       "rightVsOpener": -0.3,
@@ -951,11 +1177,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       }
     },
@@ -973,6 +1199,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -986,12 +1216,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 548.7,
-        "r": 1151,
+        "r": 1150,
         "b": 611.7
       },
       "rightVsOpener": -0.3,
@@ -999,11 +1236,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       }
     },
@@ -1021,6 +1258,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1034,6 +1275,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1042,7 +1290,7 @@
         "r": 390,
         "b": 674.5
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -1069,6 +1317,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1082,6 +1334,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1090,7 +1349,7 @@
         "r": 390,
         "b": 674.5
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -1117,6 +1376,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1130,6 +1393,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1138,7 +1408,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": true,
@@ -1165,6 +1435,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1178,6 +1452,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1186,7 +1467,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": true,
@@ -1213,6 +1494,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1227,12 +1512,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -1240,11 +1532,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -1275,6 +1567,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1289,12 +1585,19 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -1302,11 +1605,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -1337,6 +1640,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1351,6 +1658,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1359,7 +1673,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -1399,6 +1713,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1413,6 +1731,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1421,7 +1746,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -1461,6 +1786,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1475,6 +1804,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1483,7 +1819,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -1523,6 +1859,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1537,6 +1877,13 @@
         "decisionsTally"
       ],
       "focus": "copy:link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1545,7 +1892,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -1585,6 +1932,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1599,12 +1950,19 @@
         "decisionsTally"
       ],
       "focus": "copy:keyless",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -1612,11 +1970,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -1647,6 +2005,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1661,12 +2023,19 @@
         "decisionsTally"
       ],
       "focus": "copy:keyless",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -1674,11 +2043,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -1709,6 +2078,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1723,6 +2096,13 @@
         "decisionsTally"
       ],
       "focus": "copy:keyless",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1731,7 +2111,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -1771,6 +2151,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1785,6 +2169,13 @@
         "decisionsTally"
       ],
       "focus": "copy:keyless",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1793,7 +2184,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -1833,6 +2224,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1847,6 +2242,13 @@
         "decisionsTally"
       ],
       "focus": "copy:keyless",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1855,7 +2257,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -1895,6 +2297,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1909,6 +2315,13 @@
         "decisionsTally"
       ],
       "focus": "copy:keyless",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -1917,7 +2330,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -1957,6 +2370,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -1971,12 +2388,19 @@
         "decisionsTally"
       ],
       "focus": "copy:phrase",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -1984,11 +2408,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -2019,6 +2443,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2033,12 +2461,19 @@
         "decisionsTally"
       ],
       "focus": "copy:phrase",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -2046,11 +2481,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -2081,6 +2516,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2095,6 +2534,13 @@
         "decisionsTally"
       ],
       "focus": "copy:phrase",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2103,7 +2549,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -2143,6 +2589,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2157,6 +2607,13 @@
         "decisionsTally"
       ],
       "focus": "copy:phrase",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2165,7 +2622,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -2205,6 +2662,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "underBar",
@@ -2220,6 +2681,13 @@
       ],
       "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
       "focus": "copy:phrase",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2228,7 +2696,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -2268,6 +2736,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "underBar",
@@ -2283,6 +2755,13 @@
       ],
       "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
       "focus": "copy:phrase",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2291,7 +2770,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -2331,6 +2810,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2346,12 +2829,19 @@
       ],
       "focus": "copy:link",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -2359,11 +2849,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -2394,6 +2884,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2409,12 +2903,19 @@
       ],
       "focus": "copy:link",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -2422,11 +2923,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -2457,6 +2958,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2472,6 +2977,13 @@
       ],
       "focus": "copy:link",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2480,7 +2992,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -2520,6 +3032,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2535,6 +3051,13 @@
       ],
       "focus": "copy:link",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2543,7 +3066,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -2583,6 +3106,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2598,6 +3125,13 @@
       ],
       "focus": "copy:link",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2606,7 +3140,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -2646,6 +3180,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2661,6 +3199,13 @@
       ],
       "focus": "copy:link",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2669,7 +3214,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -2709,6 +3254,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2724,12 +3273,19 @@
       ],
       "focus": "copy:keyless",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -2737,11 +3293,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -2772,6 +3328,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2787,12 +3347,19 @@
       ],
       "focus": "copy:keyless",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -2800,11 +3367,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -2835,6 +3402,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2850,6 +3421,13 @@
       ],
       "focus": "copy:keyless",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2858,7 +3436,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -2898,6 +3476,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2913,6 +3495,13 @@
       ],
       "focus": "copy:keyless",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2921,7 +3510,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -2961,6 +3550,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -2976,6 +3569,13 @@
       ],
       "focus": "copy:keyless",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -2984,7 +3584,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -3024,6 +3624,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -3039,6 +3643,13 @@
       ],
       "focus": "copy:keyless",
       "selection": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -3047,7 +3658,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -3087,6 +3698,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -3102,12 +3717,19 @@
       ],
       "focus": "copy:phrase",
       "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -3115,11 +3737,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -3150,6 +3772,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -3165,12 +3791,19 @@
       ],
       "focus": "copy:phrase",
       "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      },
       "panel": {
-        "x": 735,
+        "x": 734,
         "y": 63,
         "w": 416,
         "h": 635.1,
-        "r": 1151,
+        "r": 1150,
         "b": 698.1
       },
       "rightVsOpener": -0.3,
@@ -3178,11 +3811,11 @@
       "phraseColumns": 3,
       "panelScrolls": false,
       "copyLink": {
-        "x": 756,
+        "x": 755,
         "y": 218.8,
         "w": 106.7,
         "h": 38.3,
-        "r": 862.7,
+        "r": 861.7,
         "b": 257.1
       },
       "toast": {
@@ -3213,6 +3846,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -3228,6 +3865,13 @@
       ],
       "focus": "copy:phrase",
       "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -3236,7 +3880,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -3276,6 +3920,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "copyLinkVisible",
@@ -3291,6 +3939,13 @@
       ],
       "focus": "copy:phrase",
       "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -3299,7 +3954,7 @@
         "r": 390,
         "b": 760.9
       },
-      "rightVsOpener": 101.6,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 3,
       "panelScrolls": false,
@@ -3339,6 +3994,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "underBar",
@@ -3355,6 +4014,13 @@
       "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
       "focus": "copy:phrase",
       "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -3363,7 +4029,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -3403,6 +4069,10 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "panelInside",
         "wordsWhole",
         "underBar",
@@ -3419,6 +4089,13 @@
       "note": "Copy phrase is below the fold at 320x568, so pressing it scrolled the sheet; copyLinkVisible is replaced by pressedInView here.",
       "focus": "copy:phrase",
       "selection": "arctic\nlive\ngadget\ndisplay\nexcess\nmandate\nsniff\nautumn\npeople\ndisorder\naffair\nhorn",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      },
       "panel": {
         "x": 0,
         "y": 63,
@@ -3427,7 +4104,7 @@
         "r": 320,
         "b": 560
       },
-      "rightVsOpener": 82.3,
+      "rightVsOpener": 68.4,
       "topVsBar": 0.5,
       "phraseColumns": 2,
       "panelScrolls": true,
@@ -3467,9 +4144,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "action:copy-link"
+      "focus": "action:copy-link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      }
     },
     {
       "file": "8-closed-again-1440-dark.png",
@@ -3485,9 +4173,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "action:copy-link"
+      "focus": "action:copy-link",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      }
     },
     {
       "file": "8-closed-again-390-light.png",
@@ -3503,9 +4202,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "action:copy-link"
+      "focus": "action:copy-link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
     },
     {
       "file": "8-closed-again-390-dark.png",
@@ -3521,9 +4231,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "action:copy-link"
+      "focus": "action:copy-link",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
     },
     {
       "file": "8-closed-again-320-light.png",
@@ -3539,9 +4260,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "action:copy-link"
+      "focus": "action:copy-link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
     },
     {
       "file": "8-closed-again-320-dark.png",
@@ -3557,9 +4289,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "action:copy-link"
+      "focus": "action:copy-link",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
     },
     {
       "file": "9a-recipient-missing-key-1440-light.png",
@@ -3959,9 +4702,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      }
     },
     {
       "file": "9c-recipient-open-1440-dark.png",
@@ -3977,9 +4731,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 322,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 290
+      }
     },
     {
       "file": "9c-recipient-open-390-light.png",
@@ -3995,9 +4760,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
     },
     {
       "file": "9c-recipient-open-390-dark.png",
@@ -4013,9 +4789,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
     },
     {
       "file": "9c-recipient-open-320-light.png",
@@ -4031,9 +4818,20 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
     },
     {
       "file": "9c-recipient-open-320-dark.png",
@@ -4049,9 +4847,974 @@
         "dashFree",
         "noPhraseOutsidePanel",
         "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
         "decisionsTally"
       ],
-      "focus": "BODY"
+      "focus": "BODY",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
+    },
+    {
+      "file": "10a-band-full-set-1920-light.png",
+      "viewport": "1920x1080",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 513,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 9,
+        "filename": 481
+      }
+    },
+    {
+      "file": "10a-band-full-set-1920-dark.png",
+      "viewport": "1920x1080",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 513,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 9,
+        "filename": 481
+      }
+    },
+    {
+      "file": "10a-band-full-set-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 339,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 307
+      }
+    },
+    {
+      "file": "10a-band-full-set-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 339,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 307
+      }
+    },
+    {
+      "file": "10a-band-full-set-1280-light.png",
+      "viewport": "1280x800",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 438,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 4,
+        "filename": 406
+      }
+    },
+    {
+      "file": "10a-band-full-set-1280-dark.png",
+      "viewport": "1280x800",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 438,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 4,
+        "filename": 406
+      }
+    },
+    {
+      "file": "10a-band-full-set-1024-light.png",
+      "viewport": "1024x768",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 428,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 0,
+        "filename": 396
+      }
+    },
+    {
+      "file": "10a-band-full-set-1024-dark.png",
+      "viewport": "1024x768",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 428,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 0,
+        "filename": 396
+      }
+    },
+    {
+      "file": "10a-band-full-set-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
+    },
+    {
+      "file": "10a-band-full-set-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
+    },
+    {
+      "file": "10a-band-full-set-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
+    },
+    {
+      "file": "10a-band-full-set-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed"
+      ],
+      "focus": "BODY",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
+    },
+    {
+      "file": "10b-band-full-set-more-390-light.png",
+      "viewport": "390x844",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "moreOpen"
+      ],
+      "focus": "BUTTON",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
+    },
+    {
+      "file": "10b-band-full-set-more-390-dark.png",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "moreOpen"
+      ],
+      "focus": "BUTTON",
+      "band": {
+        "identity": 121,
+        "identityFloor": 88,
+        "controls": 6,
+        "labelled": 0,
+        "filename": 99
+      }
+    },
+    {
+      "file": "10b-band-full-set-more-320-light.png",
+      "viewport": "320x568",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "moreOpen"
+      ],
+      "focus": "BUTTON",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
+    },
+    {
+      "file": "10b-band-full-set-more-320-dark.png",
+      "viewport": "320x568",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "moreOpen"
+      ],
+      "focus": "BUTTON",
+      "band": {
+        "identity": 110,
+        "identityFloor": 88,
+        "controls": 5,
+        "labelled": 0,
+        "filename": 88
+      }
+    },
+    {
+      "file": "10c-band-full-set-panel-1440-light.png",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "band": {
+        "identity": 339,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 307
+      },
+      "panel": {
+        "x": 734,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1150,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 755,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 861.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "10c-band-full-set-panel-1440-dark.png",
+      "viewport": "1440x900",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "band": {
+        "identity": 339,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 8,
+        "filename": 307
+      },
+      "panel": {
+        "x": 734,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1150,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 755,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 861.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "10c-band-full-set-panel-1280-light.png",
+      "viewport": "1280x800",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "band": {
+        "identity": 438,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 4,
+        "filename": 406
+      },
+      "panel": {
+        "x": 690,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1106,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 711,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 817.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "10c-band-full-set-panel-1280-dark.png",
+      "viewport": "1280x800",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "band": {
+        "identity": 438,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 4,
+        "filename": 406
+      },
+      "panel": {
+        "x": 690,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 1106,
+        "b": 698.1
+      },
+      "rightVsOpener": -0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 711,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 817.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "10c-band-full-set-panel-1024-light.png",
+      "viewport": "1024x768",
+      "scheme": "light",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "band": {
+        "identity": 428,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 0,
+        "filename": 396
+      },
+      "panel": {
+        "x": 477,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 893,
+        "b": 698.1
+      },
+      "rightVsOpener": 0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 498,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 604.7,
+        "b": 257.1
+      }
+    },
+    {
+      "file": "10c-band-full-set-panel-1024-dark.png",
+      "viewport": "1024x768",
+      "scheme": "dark",
+      "requests": 1,
+      "pass": true,
+      "checked": [
+        "oneRequest",
+        "noErrors",
+        "ready",
+        "noHOverflow",
+        "dashFree",
+        "noPhraseOutsidePanel",
+        "toastClean",
+        "bandFits",
+        "identityFloor",
+        "versionClear",
+        "controlsNamed",
+        "panelInside",
+        "wordsWhole",
+        "copyLinkVisible",
+        "underBar",
+        "placement",
+        "columns",
+        "keyWhole",
+        "linkText",
+        "expanded",
+        "c1Text"
+      ],
+      "focus": "copy:link",
+      "band": {
+        "identity": 428,
+        "identityFloor": 192,
+        "controls": 9,
+        "labelled": 0,
+        "filename": 396
+      },
+      "panel": {
+        "x": 477,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "r": 893,
+        "b": 698.1
+      },
+      "rightVsOpener": 0.3,
+      "topVsBar": 0.5,
+      "phraseColumns": 3,
+      "panelScrolls": false,
+      "copyLink": {
+        "x": 498,
+        "y": 218.8,
+        "w": 106.7,
+        "h": 38.3,
+        "r": 604.7,
+        "b": 257.1
+      }
     }
-  ]
+  ],
+  "bandFix": {
+    "fullSet": "OTIO on version 2 of 2: marker \"Plays its timeline in your browser, no author code\", Relics, Comments with a count, Decisions with a tally, Earlier versions, Copy link, Share, Download, Report.",
+    "mainAt8ae3b3c3": {
+      "320": {
+        "barScroll": 320,
+        "barClient": 320,
+        "identity": 88,
+        "filename": 65,
+        "versionOverlapPx": 0,
+        "offScreen": [],
+        "hidden": [
+          "Relics list",
+          "Comments3"
+        ]
+      },
+      "390": {
+        "barScroll": 390,
+        "barClient": 390,
+        "identity": 54,
+        "filename": 31,
+        "versionOverlapPx": 19,
+        "offScreen": [],
+        "hidden": [
+          "Relics list"
+        ]
+      },
+      "1024": {
+        "barScroll": 1438,
+        "barClient": 1024,
+        "identity": 32,
+        "filename": 0,
+        "versionOverlapPx": 118,
+        "offScreen": [
+          "Open an earlier versio",
+          "Copy link",
+          "Share",
+          "Download",
+          "Report"
+        ],
+        "hidden": []
+      },
+      "1280": {
+        "barScroll": 1438,
+        "barClient": 1280,
+        "identity": 32,
+        "filename": 0,
+        "versionOverlapPx": 118,
+        "offScreen": [
+          "Download",
+          "Report"
+        ],
+        "hidden": []
+      },
+      "1440": {
+        "barScroll": 1440,
+        "barClient": 1440,
+        "identity": 34,
+        "filename": 2,
+        "versionOverlapPx": 116,
+        "offScreen": [],
+        "hidden": []
+      },
+      "1920": {
+        "barScroll": 1920,
+        "barClient": 1920,
+        "identity": 514,
+        "filename": 482,
+        "versionOverlapPx": 0,
+        "offScreen": [],
+        "hidden": []
+      },
+      "note": "main markup and stylesheet as merged, full set, typical counts"
+    },
+    "stages": {
+      "A": "above 110rem: everything labelled",
+      "B": "max-width 110rem: marker sentence visually hidden",
+      "C": "max-width 88rem: Relics, history (Compare or Earlier versions), Download, Report visually hidden",
+      "D": "max-width 70rem: every label on the band visually hidden; counts and tallies stay",
+      "E": "max-width 52rem: wordmark and long version label hidden, identity 0.7rem padding and 8rem floor, actions 0.6rem padding, Decisions stamp yields to its tally",
+      "F": "max-width 34rem: marker, Relics, Download, Report move into More; identity floor 5.5rem",
+      "G": "max-width 24rem: unchanged from main (actions 0.4rem padding, Comments leaves for its stage handle)"
+    },
+    "spareAtNarrowestWidthOfEachStage": {
+      "note": "wide face standing in for Linux, two-digit counts; the identity absorbs the spare",
+      "A": "91px at 1768",
+      "B": "72px at 1416",
+      "C": "60px at 1128",
+      "D": "33px at 840",
+      "E": "34px at 552",
+      "F": "17px at 392",
+      "G": "9px at 320"
+    },
+    "handoverCssOnMergedStylesheet": {
+      "note": "The mock's 'band at every width' section, pasted after main's merged styles.css with the scoped C3.1 rule, on the mock's own full-set band markup. Every 8px from 320 to 1920.",
+      "merged + proposal, system face": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      },
+      "merged + proposal, system face, two-digit": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      },
+      "merged + proposal, wide face": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      },
+      "merged + proposal, wide face, two-digit": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      }
+    },
+    "mockSweeps": {
+      "full": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      },
+      "fullWide": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      },
+      "markdown": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      },
+      "markdownWide": {
+        "widths": 201,
+        "from": 320,
+        "to": 1920,
+        "step": 8,
+        "failing": 0
+      }
+    }
+  }
 }
