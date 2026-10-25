@@ -802,7 +802,10 @@ export function buildBar(
   const copyBtn = button('Copy link', ICONS.copy, () => {
     toggleCopyLinkPanel(view.shareUrl, copyBtn);
   });
-  copyBtn.dataset.action = 'copy-link';
+  if (copyBtn.dataset) {
+    copyBtn.dataset.action = 'copy-link';
+  }
+  copyBtn.setAttribute('data-action', 'copy-link');
   copyBtn.setAttribute('aria-haspopup', 'dialog');
   const panelOpen =
     typeof document.getElementById === 'function' &&
@@ -873,7 +876,7 @@ export function buildBar(
 
   const moreList = document.createElement('div');
   moreList.id = 'band-more';
-  moreList.className = 'version-list band-more-list';
+  moreList.className = 'band-more-list';
   moreList.hidden = true;
 
   const moreMarker = document.createElement('a');
@@ -6890,7 +6893,6 @@ export function buildRelicRow(
   return row;
 }
 
-
 /* ---------- the copy-link panel ---------- */
 
 export const COPY_LINK_PANEL_ID = 'copy-link-panel';
@@ -6979,11 +6981,7 @@ export function toggleCopyLinkPanel(
   const relicPath = originAndPath.slice(originSlash.length);
 
   const pathSpan = document.createElement('span');
-  pathSpan.append(
-    originSlash,
-    document.createElement('wbr'),
-    relicPath
-  );
+  pathSpan.append(originSlash, document.createElement('wbr'), relicPath);
   linkValue.appendChild(pathSpan);
 
   if (fragment.length > 0) {

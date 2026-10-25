@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import {
-  encodeFragment,
-  generateKey,
-  parseFragment,
-} from '@relic/format';
+import { encodeFragment, generateKey, parseFragment } from '@relic/format';
 import { mnemonicToKey } from '@relic/format/mnemonic';
 import {
   COPY_KEYLESS_LABEL,
@@ -35,8 +31,6 @@ import {
 import { COPY_FAILED_NOTE } from '../src/popover.ts';
 import type { DeadView, ReadyView, ViewerDeps } from '../src/viewer.ts';
 
-// Bun tests run without a browser DOM, so this stub carries what the copy-link
-// panel and bar touch: elements, attributes, dataset, events, and tree operations.
 class ElementStub {
   readonly tagName: string;
   className = '';
@@ -46,7 +40,7 @@ class ElementStub {
     return this.children.map((c) => c.textContent ?? '').join('');
   }
   set textContent(val: string) {
-    this._textContent = val;
+    this._textContent = val ?? '';
     this.children.length = 0;
   }
   id = '';
@@ -116,7 +110,10 @@ class ElementStub {
     }
   }
 
-  insertBefore(newChild: ElementStub, refChild: ElementStub | null): ElementStub {
+  insertBefore(
+    newChild: ElementStub,
+    refChild: ElementStub | null
+  ): ElementStub {
     newChild.parent = this;
     if (!refChild) {
       this.children.push(newChild);
@@ -136,7 +133,7 @@ class ElementStub {
       child.parent = undefined;
     }
     this.children.length = 0;
-    this.textContent = '';
+    this._textContent = '';
     this.append(...children);
   }
 
@@ -188,15 +185,20 @@ class ElementStub {
     return false;
   }
 
-  querySelector<T extends ElementStub = ElementStub>(selector: string): T | null {
-    return (querySelectorStub(this, selector) as T) ?? null;
+  querySelector(selector: string): ElementStub | null {
+    return querySelectorStub(this, selector);
   }
 
-  querySelectorAll<T extends ElementStub = ElementStub>(selector: string): T[] {
-    return querySelectorAllStub(this, selector) as T[];
+  querySelectorAll(selector: string): ElementStub[] {
+    return querySelectorAllStub(this, selector);
   }
 
-  getBoundingClientRect(): { bottom: number; right: number; width: number; height: number } {
+  getBoundingClientRect(): {
+    bottom: number;
+    right: number;
+    width: number;
+    height: number;
+  } {
     return { bottom: 50, right: 300, width: 100, height: 40 };
   }
 
@@ -204,7 +206,7 @@ class ElementStub {
     if (!this.parent) return null;
     const idx = this.parent.children.indexOf(this);
     if (idx === -1 || idx === this.parent.children.length - 1) return null;
-    return this.parent.children[idx + 1];
+    return this.parent.children[idx + 1] ?? null;
   }
 
   get parentNode(): ElementStub | null {
@@ -224,22 +226,24 @@ function matchesSelector(el: ElementStub, selector: string): boolean {
     if (attrMatch) {
       const attrName = attrMatch[1];
       const attrVal = attrMatch[2];
-      if (attrName.startsWith('data-')) {
-        const camel = attrName
-          .slice(5)
-          .replace(/-([a-z])/g, (_, g) => g.toUpperCase());
-        const val = el.dataset[camel];
-        if (attrVal === undefined) return val !== undefined;
+      if (attrName) {
+        if (attrName.startsWith('data-')) {
+          const camel = attrName
+            .slice(5)
+            .replace(/-([a-z])/g, (_, g) => g.toUpperCase());
+          const val = el.dataset[camel];
+          if (attrVal === undefined) return val !== undefined;
+          return val === attrVal;
+        }
+        const val = el.getAttribute(attrName);
+        if (attrVal === undefined) return val !== null;
         return val === attrVal;
       }
-      const val = el.getAttribute(attrName);
-      if (attrVal === undefined) return val !== null;
-      return val === attrVal;
     }
   }
   if (selector.includes(' ')) {
     const parts = selector.split(/\s+/);
-    if (parts.length === 2 && parts[0] === '.bar') {
+    if (parts.length === 2 && parts[0] === '.bar' && parts[1]) {
       let p = el.parent;
       let insideBar = false;
       while (p) {
@@ -252,7 +256,10 @@ function matchesSelector(el: ElementStub, selector: string): boolean {
   return el.tagName.toLowerCase() === selector.toLowerCase();
 }
 
-function querySelectorStub(root: ElementStub, selector: string): ElementStub | null {
+function querySelectorStub(
+  root: ElementStub,
+  selector: string
+): ElementStub | null {
   for (const child of root.children) {
     if (matchesSelector(child, selector)) return child;
     const found = querySelectorStub(child, selector);
@@ -261,7 +268,10 @@ function querySelectorStub(root: ElementStub, selector: string): ElementStub | n
   return null;
 }
 
-function querySelectorAllStub(root: ElementStub, selector: string): ElementStub[] {
+function querySelectorAllStub(
+  root: ElementStub,
+  selector: string
+): ElementStub[] {
   const result: ElementStub[] = [];
   for (const child of root.children) {
     if (matchesSelector(child, selector)) result.push(child);
@@ -307,7 +317,10 @@ function installDom(): void {
     },
     querySelectorAll: (sel: string) => dom.body.querySelectorAll(sel),
     addEventListener: (type: string, listener: (event: unknown) => void) => {
-      dom.docListeners.set(type, [...(dom.docListeners.get(type) ?? []), listener]);
+      dom.docListeners.set(type, [
+        ...(dom.docListeners.get(type) ?? []),
+        listener,
+      ]);
     },
     removeEventListener: (type: string, listener: (event: unknown) => void) => {
       const list = dom.docListeners.get(type);
@@ -332,7 +345,10 @@ function installDom(): void {
     },
     cancelAnimationFrame: () => {},
     addEventListener: (type: string, listener: (event: unknown) => void) => {
-      dom.winListeners.set(type, [...(dom.winListeners.get(type) ?? []), listener]);
+      dom.winListeners.set(type, [
+        ...(dom.winListeners.get(type) ?? []),
+        listener,
+      ]);
     },
     removeEventListener: (type: string, listener: (event: unknown) => void) => {
       const list = dom.winListeners.get(type);
@@ -365,13 +381,16 @@ describe('Copy link panel (Spec C)', () => {
   const shareUrl = `https://relik.link/testrelic123${fragment}`;
 
   const view: ReadyView = {
-    kind: 'ready',
-    version: 1,
-    shareUrl,
-    content: new Uint8Array([1, 2, 3]),
-    rendererClass: 'markdown',
     filename: 'doc.md',
-    mimeType: 'text/markdown',
+    declaredMimetype: 'text/markdown',
+    content: new Uint8Array([1, 2, 3]),
+    route: 'markdown',
+    downgradeNotice: undefined,
+    shareUrl,
+    version: 1,
+    currentVersion: 1,
+    versionDigest:
+      '0000000000000000000000000000000000000000000000000000000000000000',
   };
 
   beforeEach(() => {
@@ -383,9 +402,15 @@ describe('Copy link panel (Spec C)', () => {
   });
 
   test('1. keylessLink removes fragment and never contains #', () => {
-    expect(keylessLink('https://relik.link/abc#r1X')).toBe('https://relik.link/abc');
-    expect(keylessLink('https://relik.link/abc#')).toBe('https://relik.link/abc');
-    expect(keylessLink('https://relik.link/abc')).toBe('https://relik.link/abc');
+    expect(keylessLink('https://relik.link/abc#r1X')).toBe(
+      'https://relik.link/abc'
+    );
+    expect(keylessLink('https://relik.link/abc#')).toBe(
+      'https://relik.link/abc'
+    );
+    expect(keylessLink('https://relik.link/abc')).toBe(
+      'https://relik.link/abc'
+    );
     expect(keylessLink(shareUrl).includes('#')).toBe(false);
   });
 
@@ -398,16 +423,16 @@ describe('Copy link panel (Spec C)', () => {
   });
 
   test('3. Clicking Copy link opens #copy-link-panel with role dialog and title, writes nothing to clipboard', () => {
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
     dom.body.appendChild(bar);
 
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]');
+    const opener = bar.querySelector('[data-action="copy-link"]');
     expect(opener).not.toBeNull();
     if (!opener) throw new Error('no opener');
 
     opener.fire('click');
 
-    const panel = dom.body.querySelector<ElementStub>('#copy-link-panel');
+    const panel = dom.body.querySelector('#copy-link-panel');
     expect(panel).not.toBeNull();
     expect(panel?.getAttribute('role')).toBe('dialog');
     const title = panel?.querySelector('#copy-link-title');
@@ -417,11 +442,11 @@ describe('Copy link panel (Spec C)', () => {
   });
 
   test('4. Opener aria attributes and bar rebuild while open', () => {
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
     dom.body.appendChild(bar);
 
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]');
-    expect(opener?.dataset.action).toBe('copy-link');
+    const opener = bar.querySelector('[data-action="copy-link"]');
+    expect(opener?.dataset['action']).toBe('copy-link');
     expect(opener?.getAttribute('aria-haspopup')).toBe('dialog');
     expect(opener?.getAttribute('aria-expanded')).toBe('false');
     expect(opener?.getAttribute('aria-controls')).toBeNull();
@@ -431,20 +456,23 @@ describe('Copy link panel (Spec C)', () => {
     expect(opener?.getAttribute('aria-controls')).toBe(COPY_LINK_PANEL_ID);
 
     // Rebuild bar while panel is open
-    const rebuiltBar = buildBar(view, { kind: 'none' }, {});
-    const rebuiltOpener = rebuiltBar.querySelector<ElementStub>(
-      '[data-action="copy-link"]'
-    );
+    const rebuiltBar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
+    const rebuiltOpener = rebuiltBar.querySelector('[data-action="copy-link"]');
     expect(rebuiltOpener?.getAttribute('aria-expanded')).toBe('true');
-    expect(rebuiltOpener?.getAttribute('aria-controls')).toBe(COPY_LINK_PANEL_ID);
+    expect(rebuiltOpener?.getAttribute('aria-controls')).toBe(
+      COPY_LINK_PANEL_ID
+    );
   });
 
   test('5. After ready, link value equals shareUrl and list holds 12 words in order', async () => {
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
     dom.body.appendChild(bar);
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+    const opener = bar.querySelector('[data-action="copy-link"]')!;
 
-    const handle = toggleCopyLinkPanel(shareUrl, opener);
+    const handle = toggleCopyLinkPanel(
+      shareUrl,
+      opener as unknown as HTMLElement
+    );
     expect(handle).toBeDefined();
     await handle?.ready;
 
@@ -457,21 +485,24 @@ describe('Copy link panel (Spec C)', () => {
     expect(lis.length).toBe(12);
     const words = await keyPhraseWords(shareUrl);
     for (let i = 0; i < 12; i++) {
-      expect(lis[i].textContent).toBe(words[i]);
+      expect(lis[i]?.textContent).toBe(words[i]!);
     }
   });
 
   test('6. Copy link, Copy without key, and Copy phrase write expected text and toast', async () => {
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
     dom.body.appendChild(bar);
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+    const opener = bar.querySelector('[data-action="copy-link"]')!;
 
-    const handle = toggleCopyLinkPanel(shareUrl, opener)!;
+    const handle = toggleCopyLinkPanel(
+      shareUrl,
+      opener as unknown as HTMLElement
+    )!;
     await handle.ready;
     const panel = handle.element as unknown as ElementStub;
 
     // 1. Copy link
-    const copyLinkBtn = panel.querySelector<ElementStub>('[data-copy="link"]')!;
+    const copyLinkBtn = panel.querySelector('[data-copy="link"]')!;
     copyLinkBtn.fire('click');
     await Promise.resolve();
     await Promise.resolve();
@@ -480,7 +511,7 @@ describe('Copy link panel (Spec C)', () => {
     expect(toast1?.textContent).toBe(LINK_COPIED_NOTE);
 
     // 2. Copy keyless
-    const copyKeylessBtn = panel.querySelector<ElementStub>('[data-copy="keyless"]')!;
+    const copyKeylessBtn = panel.querySelector('[data-copy="keyless"]')!;
     copyKeylessBtn.fire('click');
     await Promise.resolve();
     await Promise.resolve();
@@ -489,7 +520,7 @@ describe('Copy link panel (Spec C)', () => {
     expect(toast2?.textContent).toBe(KEYLESS_COPIED_NOTE);
 
     // 3. Copy phrase
-    const copyPhraseBtn = panel.querySelector<ElementStub>('[data-copy="phrase"]')!;
+    const copyPhraseBtn = panel.querySelector('[data-copy="phrase"]')!;
     copyPhraseBtn.fire('click');
     await Promise.resolve();
     await Promise.resolve();
@@ -501,15 +532,18 @@ describe('Copy link panel (Spec C)', () => {
 
   test('7. Rejected clipboard write toasts COPY_FAILED_NOTE and no success note', async () => {
     clipboardShouldReject = true;
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
     dom.body.appendChild(bar);
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+    const opener = bar.querySelector('[data-action="copy-link"]')!;
 
-    const handle = toggleCopyLinkPanel(shareUrl, opener)!;
+    const handle = toggleCopyLinkPanel(
+      shareUrl,
+      opener as unknown as HTMLElement
+    )!;
     await handle.ready;
     const panel = handle.element as unknown as ElementStub;
 
-    const copyLinkBtn = panel.querySelector<ElementStub>('[data-copy="link"]')!;
+    const copyLinkBtn = panel.querySelector('[data-copy="link"]')!;
     copyLinkBtn.fire('click');
     await Promise.resolve();
     await Promise.resolve();
@@ -517,7 +551,7 @@ describe('Copy link panel (Spec C)', () => {
     const toasts = dom.body.querySelectorAll('.toast');
     expect(toasts.length).toBeGreaterThan(0);
     const lastToast = toasts[toasts.length - 1];
-    expect(lastToast.textContent).toBe(COPY_FAILED_NOTE);
+    expect(lastToast?.textContent).toBe(COPY_FAILED_NOTE);
     for (const t of toasts) {
       expect(t.textContent).not.toBe(LINK_COPIED_NOTE);
     }
@@ -526,46 +560,57 @@ describe('Copy link panel (Spec C)', () => {
   test('8. No toast text contains fragment or any phrase word', async () => {
     const fixedUrl =
       'https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg';
-    const bar = buildBar({ ...view, shareUrl: fixedUrl }, { kind: 'none' }, {});
+    const bar = buildBar(
+      { ...view, shareUrl: fixedUrl },
+      'markdown',
+      {}
+    ) as unknown as ElementStub;
     dom.body.appendChild(bar);
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+    const opener = bar.querySelector('[data-action="copy-link"]')!;
 
-    const handle = toggleCopyLinkPanel(fixedUrl, opener)!;
+    const handle = toggleCopyLinkPanel(
+      fixedUrl,
+      opener as unknown as HTMLElement
+    )!;
     await handle.ready;
     const panel = handle.element as unknown as ElementStub;
     const words = await keyPhraseWords(fixedUrl);
-    panel.querySelector<ElementStub>('[data-copy="link"]')!.fire('click');
+    panel.querySelector('[data-copy="link"]')!.fire('click');
     await Promise.resolve();
     await Promise.resolve();
     const t1 = dom.body.querySelectorAll('.toast').pop();
     expect(t1?.textContent.includes('#r1')).toBe(false);
-    for (const w of words) expect(t1?.textContent.split(/\s+/)).not.toContain(w);
+    for (const w of words)
+      expect(t1?.textContent.split(/\s+/)).not.toContain(w);
 
-    panel.querySelector<ElementStub>('[data-copy="keyless"]')!.fire('click');
+    panel.querySelector('[data-copy="keyless"]')!.fire('click');
     await Promise.resolve();
     await Promise.resolve();
     const t2 = dom.body.querySelectorAll('.toast').pop();
     expect(t2?.textContent.includes('#r1')).toBe(false);
-    for (const w of words) expect(t2?.textContent.split(/\s+/)).not.toContain(w);
+    for (const w of words)
+      expect(t2?.textContent.split(/\s+/)).not.toContain(w);
 
-    panel.querySelector<ElementStub>('[data-copy="phrase"]')!.fire('click');
+    panel.querySelector('[data-copy="phrase"]')!.fire('click');
     await Promise.resolve();
     await Promise.resolve();
     const t3 = dom.body.querySelectorAll('.toast').pop();
     expect(t3?.textContent.includes('#r1')).toBe(false);
-    for (const w of words) expect(t3?.textContent.split(/\s+/)).not.toContain(w);
+    for (const w of words)
+      expect(t3?.textContent.split(/\s+/)).not.toContain(w);
   });
+
   test('9. Escape removes panel and sets aria-expanded=false; toggle opener closes and opens', () => {
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
     dom.body.appendChild(bar);
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+    const opener = bar.querySelector('[data-action="copy-link"]')!;
 
     opener.fire('click');
     expect(dom.body.querySelector('#copy-link-panel')).not.toBeNull();
     expect(opener.getAttribute('aria-expanded')).toBe('true');
 
     // Escape inside panel
-    const panel = dom.body.querySelector<ElementStub>('#copy-link-panel')!;
+    const panel = dom.body.querySelector('#copy-link-panel')!;
     panel.fire('keydown', { key: 'Escape' });
     expect(dom.body.querySelector('#copy-link-panel')).toBeNull();
     expect(opener.getAttribute('aria-expanded')).toBe('false');
@@ -581,9 +626,9 @@ describe('Copy link panel (Spec C)', () => {
 
   test('10. Phrase words only present inside open panel', async () => {
     const words = await keyPhraseWords(shareUrl);
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
     dom.body.appendChild(bar);
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+    const opener = bar.querySelector('[data-action="copy-link"]')!;
 
     const countWordsOutside = () => {
       let count = 0;
@@ -591,7 +636,11 @@ describe('Copy link panel (Spec C)', () => {
         if (el.id === COPY_LINK_PANEL_ID) return;
         if (el.children.length === 0) {
           for (const w of words) {
-            if (typeof el.textContent === 'string' && el.textContent.includes(w)) count++;
+            if (
+              typeof el.textContent === 'string' &&
+              el.textContent.includes(w)
+            )
+              count++;
           }
         } else {
           for (const child of el.children) walk(child);
@@ -601,7 +650,10 @@ describe('Copy link panel (Spec C)', () => {
       return count;
     };
     const beforeCount = countWordsOutside();
-    const handle = toggleCopyLinkPanel(shareUrl, opener)!;
+    const handle = toggleCopyLinkPanel(
+      shareUrl,
+      opener as unknown as HTMLElement
+    )!;
     await handle.ready;
 
     const duringCount = countWordsOutside();
@@ -634,16 +686,19 @@ describe('Copy link panel (Spec C)', () => {
     }) as unknown as typeof fetch;
 
     try {
-      const bar = buildBar(view, { kind: 'none' }, {});
+      const bar = buildBar(view, 'markdown', {}) as unknown as ElementStub;
       dom.body.appendChild(bar);
-      const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+      const opener = bar.querySelector('[data-action="copy-link"]')!;
 
-      const handle = toggleCopyLinkPanel(shareUrl, opener)!;
+      const handle = toggleCopyLinkPanel(
+        shareUrl,
+        opener as unknown as HTMLElement
+      )!;
       await handle.ready;
       const panel = handle.element as unknown as ElementStub;
-      panel.querySelector<ElementStub>('[data-copy="link"]')!.fire('click');
-      panel.querySelector<ElementStub>('[data-copy="keyless"]')!.fire('click');
-      panel.querySelector<ElementStub>('[data-copy="phrase"]')!.fire('click');
+      panel.querySelector('[data-copy="link"]')!.fire('click');
+      panel.querySelector('[data-copy="keyless"]')!.fire('click');
+      panel.querySelector('[data-copy="phrase"]')!.fire('click');
       handle.close(false);
 
       expect(storageCalled).toBe(false);
@@ -662,13 +717,16 @@ describe('Copy link panel (Spec C)', () => {
       code: 'fragment_missing',
     };
     const deps: ViewerDeps = {
+      serviceOrigin: 'https://relik.example',
       fetch: globalThis.fetch,
-      decrypt: async () => new Uint8Array(),
+      takeFragment: () => '',
+      stripFragment: () => {},
+      locationHref: 'https://relik.example/relic123',
       keyVault: {
-        get: async () => null,
-        put: async () => {},
-        remove: async () => {},
-        list: async () => [],
+        remember: () => {},
+        recall: () => undefined,
+        forget: () => {},
+        list: () => [],
       },
     };
 
@@ -680,17 +738,24 @@ describe('Copy link panel (Spec C)', () => {
     const label = dom.body.querySelector('.key-entry-label');
     expect(label?.textContent).toBe(KEY_ENTRY_LABEL);
 
-    const input = dom.body.querySelector<ElementStub>('.key-entry-input');
+    const input = dom.body.querySelector('.key-entry-input');
     expect(input?.placeholder).toBe(KEY_ENTRY_PLACEHOLDER);
   });
 
   test('13. URL with query string preserves query in link value and keyless copy', () => {
     const queryUrl = 'https://relik.link/testrelic123?utm_source=review#r1X';
-    const bar = buildBar({ ...view, shareUrl: queryUrl }, { kind: 'none' }, {});
+    const bar = buildBar(
+      { ...view, shareUrl: queryUrl },
+      'markdown',
+      {}
+    ) as unknown as ElementStub;
     dom.body.appendChild(bar);
-    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+    const opener = bar.querySelector('[data-action="copy-link"]')!;
 
-    const handle = toggleCopyLinkPanel(queryUrl, opener)!;
+    const handle = toggleCopyLinkPanel(
+      queryUrl,
+      opener as unknown as HTMLElement
+    )!;
     const panel = handle.element as unknown as ElementStub;
     const linkValue = panel.querySelector('[data-copy-value="link"]');
     expect(linkValue?.textContent).toBe(queryUrl);

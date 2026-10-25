@@ -22,8 +22,7 @@ export const SPLIT_NOTE =
 export const PHRASE_LOADING_NOTE = 'Loading the key phrase.';
 export const PHRASE_FAILED_NOTE =
   'The key phrase could not be loaded. The link above still works.';
-export const LINK_COPIED_NOTE =
-  'Link copied. It contains the decryption key.';
+export const LINK_COPIED_NOTE = 'Link copied. It contains the decryption key.';
 export const KEYLESS_COPIED_NOTE =
   'Link copied without the key. Say the key phrase separately.';
 export const PHRASE_COPIED_NOTE =

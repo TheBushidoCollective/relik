@@ -90,12 +90,7 @@
   "toast320": {
     "asTheProofCaptures": {
       "text": "Link copied. It contains the decryption key.",
-      "rect": [
-        16,
-        488,
-        288,
-        64
-      ],
+      "rect": [16, 488, 288, 64],
       "opacity": "0",
       "transform": "matrix(1, 0, 0, 1, -144, 8)",
       "z": "30",
@@ -110,24 +105,14 @@
     },
     "settled": {
       "text": "Link copied. It contains the decryption key.",
-      "rect": [
-        16,
-        480,
-        288,
-        64
-      ],
+      "rect": [16, 480, 288, 64],
       "opacity": "1",
       "transform": "matrix(1, 0, 0, 1, -144, 0)",
       "z": "30",
       "hitIsToast": true,
       "anim": []
     },
-    "mockRect": [
-      16,
-      480,
-      288,
-      64
-    ],
+    "mockRect": [16, 480, 288, 64],
     "pixelAlphaOfToastBox": {
       "proofShot": 0.16,
       "realAtAppearance": 0.15,
@@ -237,12 +222,7 @@
     "w390": {
       "open": true,
       "expanded": "true",
-      "rect": [
-        145,
-        66,
-        390,
-        153
-      ],
+      "rect": [145, 66, 390, 153],
       "inside": true,
       "entries": [
         "Rendered as text, no author code (20px)",
@@ -255,12 +235,7 @@
     "w320": {
       "open": true,
       "expanded": "true",
-      "rect": [
-        81,
-        66,
-        320,
-        153
-      ],
+      "rect": [81, 66, 320, 153],
       "inside": true,
       "entries": [
         "Rendered as text, no author code (20px)",
@@ -456,18 +431,9 @@
         "busy": "true",
         "phraseDisabled": true
       },
-      "slipH": [
-        146,
-        146
-      ],
-      "copyPhraseY": [
-        154,
-        154
-      ],
-      "panelH": [
-        635.1,
-        635.1
-      ]
+      "slipH": [146, 146],
+      "copyPhraseY": [154, 154],
+      "panelH": [635.1, 635.1]
     },
     "phrase-failed": {
       "real": {
@@ -486,18 +452,9 @@
         "busy": null,
         "phraseDisabled": true
       },
-      "slipH": [
-        59.6,
-        59.6
-      ],
-      "copyPhraseY": [
-        67.60000000000002,
-        67.59999999999997
-      ],
-      "panelH": [
-        591,
-        611.5
-      ]
+      "slipH": [59.6, 59.6],
+      "copyPhraseY": [67.60000000000002, 67.59999999999997],
+      "panelH": [591, 611.5]
     }
   },
   "keyboardFocusRing1440": {
@@ -518,9 +475,7 @@
       "viewerJsImports": "chunk-kncscd24.js",
       "wordlistInIt": true,
       "onTheWire": "37386 bytes",
-      "panelChunk": [
-        "/assets/chunk-n0fqdq27.js"
-      ]
+      "panelChunk": ["/assets/chunk-n0fqdq27.js"]
     },
     "main76269ed5": {
       "viewerJsImports": "chunk-djc1s81b.js",

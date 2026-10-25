@@ -3890,12 +3890,19 @@ canvas.relic-page {
 }
 
 .band-more-list {
+  position: absolute;
+  top: calc(100% + 0.3rem);
   right: 0;
   left: auto;
+  z-index: 20;
   width: max-content;
   min-width: 12rem;
   max-width: calc(100vw - 1rem);
   max-height: none;
+  overflow-y: auto;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
 }
 
 .bar .band-more-list .action {

@@ -168,18 +168,8 @@
     "touch320": [
       {
         "step": "tap opener",
-        "panel": [
-          0,
-          320,
-          63,
-          560
-        ],
-        "copyLink": [
-          16,
-          304,
-          238,
-          276
-        ],
+        "panel": [0, 320, 63, 560],
+        "copyLink": [16, 304, 238, 276],
         "words": 12
       },
       {
@@ -5673,10 +5663,7 @@
         "filename": 65,
         "versionOverlapPx": 0,
         "offScreen": [],
-        "hidden": [
-          "Relics list",
-          "Comments3"
-        ]
+        "hidden": ["Relics list", "Comments3"]
       },
       "390": {
         "barScroll": 390,
@@ -5685,9 +5672,7 @@
         "filename": 31,
         "versionOverlapPx": 19,
         "offScreen": [],
-        "hidden": [
-          "Relics list"
-        ]
+        "hidden": ["Relics list"]
       },
       "1024": {
         "barScroll": 1438,
@@ -5710,10 +5695,7 @@
         "identity": 32,
         "filename": 0,
         "versionOverlapPx": 118,
-        "offScreen": [
-          "Download",
-          "Report"
-        ],
+        "offScreen": ["Download", "Report"],
         "hidden": []
       },
       "1440": {

@@ -155,51 +155,17 @@
   "defect4Toast": {
     "proofShotPixels": {
       "size": "320x568",
-      "ground": [
-        241,
-        242,
-        240
-      ],
-      "box": [
-        [
-          22,
-          25,
-          26
-        ],
-        [
-          22,
-          25,
-          26
-        ],
-        [
-          22,
-          25,
-          26
-        ]
-      ],
-      "alpha": [
-        1,
-        1,
-        1
-      ],
+      "ground": [241, 242, 240],
+      "box": [[22, 25, 26], [22, 25, 26], [22, 25, 26]],
+      "alpha": [1, 1, 1],
       "toastTopRow": 480
     },
     "realSettled320": {
-      "rect": [
-        16,
-        480,
-        288,
-        64
-      ],
+      "rect": [16, 480, 288, 64],
       "opacity": "1",
       "onTop": true
     },
-    "mockRect": [
-      16,
-      480,
-      288,
-      64
-    ]
+    "mockRect": [16, 480, 288, 64]
   },
   "newDefectQueryString": {
     "asBuilt": {

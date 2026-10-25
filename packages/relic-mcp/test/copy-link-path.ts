@@ -19,7 +19,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable, Writable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { parseFragment } from '@relic/format';
 import { mnemonicToKey } from '@relic/format/mnemonic';
@@ -214,6 +214,7 @@ assert.equal(
   `no Chrome: ${foundChrome.kind === 'not_found' ? foundChrome.detail : foundChrome.kind}`
 );
 if (foundChrome.kind !== 'found') throw new Error('unreachable');
+const chromeBinaryPath = foundChrome.path;
 
 const runningBrowsers: Array<{
   child: ChildProcess;
@@ -229,7 +230,7 @@ async function launchBrowser(): Promise<{
   requests: Array<{ url: string; postData?: string }>;
 }> {
   const profile = await mkdtemp(join(tmpdir(), 'relic-copy-chrome-'));
-  const shared = chromeArgs(foundChrome.path, profile);
+  const shared = chromeArgs(chromeBinaryPath, profile);
   const launch = createBrowserHeadlessLaunch(
     [
       ...shared.map((arg) =>
@@ -243,7 +244,7 @@ async function launchBrowser(): Promise<{
     profile
   );
 
-  const child = spawn(foundChrome.path, launch.args, {
+  const child = spawn(chromeBinaryPath, launch.args, {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
   });
   const cdp = connectPipe(
@@ -279,7 +280,9 @@ async function launchBrowser(): Promise<{
       if (params.request?.url) {
         requests.push({
           url: params.request.url,
-          postData: params.request.postData,
+          ...(params.request.postData !== undefined
+            ? { postData: params.request.postData }
+            : {}),
         });
       }
     }
@@ -573,13 +576,28 @@ async function verifyBandAtWidth(
     })()`
   );
 
-  assert.ok(m.scrollWidthOk, `bar overflowed at ${width}px: scrollWidth > clientWidth`);
-  assert.ok(m.identityWidthOk, `identity width ${m.identityWidth}px < min at ${width}px`);
+  assert.ok(
+    m.scrollWidthOk,
+    `bar overflowed at ${width}px: scrollWidth > clientWidth`
+  );
+  assert.ok(
+    m.identityWidthOk,
+    `identity width ${m.identityWidth}px < min at ${width}px`
+  );
   assert.ok(m.versionInsideIdentity, `version outside identity at ${width}px`);
   assert.ok(m.versionClearOfActions, `version overlaps actions at ${width}px`);
-  assert.ok(m.allShownControlsInViewport, `controls outside viewport at ${width}px`);
-  assert.ok(m.allShownHaveNames, `controls missing accessible name at ${width}px`);
-  assert.ok(m.allHiddenSpanHaveTitle, `collapsed controls missing title at ${width}px`);
+  assert.ok(
+    m.allShownControlsInViewport,
+    `controls outside viewport at ${width}px`
+  );
+  assert.ok(
+    m.allShownHaveNames,
+    `controls missing accessible name at ${width}px`
+  );
+  assert.ok(
+    m.allHiddenSpanHaveTitle,
+    `collapsed controls missing title at ${width}px`
+  );
   assert.ok(m.moreCheckOk, `More button not shown at ${width}px`);
 
   if (width <= 544) {
@@ -589,7 +607,10 @@ async function verifyBandAtWidth(
       rect: { left: number; right: number };
       entryCount: number;
       allHaveVisibleWords: boolean;
-    }>(cdp, sessionId, `(() => {
+    }>(
+      cdp,
+      sessionId,
+      `(() => {
       const list = document.querySelector('.band-more-list');
       const r = list ? list.getBoundingClientRect() : { left: 0, right: 0 };
       const entries = list ? Array.from(list.querySelectorAll('.action')) : [];
@@ -603,11 +624,26 @@ async function verifyBandAtWidth(
         entryCount: entries.length,
         allHaveVisibleWords: visibleWords,
       };
-    })()`);
-    assert.equal(moreListCheck.hidden, false, `More list not open after click at ${width}px`);
-    assert.equal(moreListCheck.entryCount, 4, `More list entry count mismatch at ${width}px`);
-    assert.ok(moreListCheck.allHaveVisibleWords, `More list entries missing visible words at ${width}px`);
-    assert.ok(moreListCheck.rect.left >= -1 && moreListCheck.rect.right <= width + 1, `More list outside viewport at ${width}px`);
+    })()`
+    );
+    assert.equal(
+      moreListCheck.hidden,
+      false,
+      `More list not open after click at ${width}px`
+    );
+    assert.equal(
+      moreListCheck.entryCount,
+      4,
+      `More list entry count mismatch at ${width}px`
+    );
+    assert.ok(
+      moreListCheck.allHaveVisibleWords,
+      `More list entries missing visible words at ${width}px`
+    );
+    assert.ok(
+      moreListCheck.rect.left >= -1 && moreListCheck.rect.right <= width + 1,
+      `More list outside viewport at ${width}px`
+    );
     await pressKey(cdp, sessionId, 'Escape', 'Escape', 27);
   }
 }
@@ -644,34 +680,42 @@ try {
   // Navigate to relic URL
   console.log('Navigating to', shareUrl);
   await b1.cdp.send('Page.navigate', { url: shareUrl }, b1.sessionId);
-  await waitForCondition(async () => {
-    const info = await evaluate<{
-      actions: string[];
-      copyBtn: string | null;
-    }>(
-      b1.cdp,
-      b1.sessionId,
-      `(() => {
+  await waitForCondition(
+    async () => {
+      const info = await evaluate<{
+        actions: string[];
+        copyBtn: string | null;
+      }>(
+        b1.cdp,
+        b1.sessionId,
+        `(() => {
         const acts = Array.from(document.querySelectorAll('.bar .action')).map(b => b.outerHTML);
         const copy = document.querySelector('[data-action="copy-link"]');
         return { actions: acts, copyBtn: copy ? copy.outerHTML : null };
       })()`
-    );
-    console.log('Bar actions:', info);
-    return info.copyBtn !== null;
-  }, 5000, 1000);
+      );
+      console.log('Bar actions:', info);
+      return info.copyBtn !== null;
+    },
+    'bar copy-link ready',
+    5000,
+    1000
+  );
 
   // Read the 12 words of this relic
-  const phraseWords = (
-    await evaluate<string[]>(
-      b1.cdp,
-      b1.sessionId,
-      `(() => {
+  const phraseWords =
+    (
+      await evaluate<string[]>(
+        b1.cdp,
+        b1.sessionId,
+        `(() => {
         // Compute from in-memory key via format if needed, or we have parsedKey
         return [];
       })()`
-    )
-  ).length > 0 ? [] : (await import('@relic/format/mnemonic')).keyToMnemonic(parsedKey);
+      )
+    ).length > 0
+      ? []
+      : (await import('@relic/format/mnemonic')).keyToMnemonic(parsedKey);
   assert.equal(phraseWords.length, 12);
 
   // 1. Baseline
@@ -703,14 +747,21 @@ try {
   );
 
   // 2. Click Copy link
-  const openerRect = await evaluate<any>(b1.cdp, b1.sessionId, `(() => {
+  const openerRect = await evaluate<any>(
+    b1.cdp,
+    b1.sessionId,
+    `(() => {
     const el = document.querySelector('[data-action="copy-link"]');
     return el ? el.getBoundingClientRect() : null;
-  })()`);
+  })()`
+  );
   console.log('Opener rect before click:', openerRect);
   await clickElement(b1.cdp, b1.sessionId, '[data-action="copy-link"]');
   await Bun.sleep(200);
-  const afterClick = await evaluate<any>(b1.cdp, b1.sessionId, `(() => {
+  const afterClick = await evaluate<any>(
+    b1.cdp,
+    b1.sessionId,
+    `(() => {
     const panel = document.getElementById('copy-link-panel');
     const opener = document.querySelector('[data-action="copy-link"]');
     return {
@@ -718,7 +769,8 @@ try {
       panelHTML: panel ? panel.outerHTML.slice(0, 300) : null,
       openerExpanded: opener ? opener.getAttribute('aria-expanded') : null,
     };
-  })()`);
+  })()`
+  );
   console.log('After click state:', afterClick);
   await waitForCondition(async () => {
     return (
@@ -765,7 +817,11 @@ try {
     'link',
     'focus not on [data-copy="link"]'
   );
-  assert.equal(step2.openerExpanded, 'true', 'opener aria-expanded is not true');
+  assert.equal(
+    step2.openerExpanded,
+    'true',
+    'opener aria-expanded is not true'
+  );
   assert.ok(
     step2.panelRect.left >= 0 && step2.panelRect.right <= step2.innerWidth + 1,
     'panel is outside horizontal viewport'
@@ -925,21 +981,29 @@ try {
 
   // 6. Escape closes panel
   console.log('Step 6: Escape');
-  const escapeDebug = await evaluate<any>(b1.cdp, b1.sessionId, `(() => {
+  const escapeDebug = await evaluate<any>(
+    b1.cdp,
+    b1.sessionId,
+    `(() => {
     return {
       activeElement: document.activeElement ? document.activeElement.outerHTML.slice(0, 100) : null,
       panel: Boolean(document.getElementById('copy-link-panel')),
     };
-  })()`);
+  })()`
+  );
   console.log('Before Escape:', escapeDebug);
   await pressKey(b1.cdp, b1.sessionId, 'Escape', 'Escape', 27);
   await Bun.sleep(200);
-  const afterEscape = await evaluate<any>(b1.cdp, b1.sessionId, `(() => {
+  const afterEscape = await evaluate<any>(
+    b1.cdp,
+    b1.sessionId,
+    `(() => {
     return {
       activeElement: document.activeElement ? document.activeElement.outerHTML.slice(0, 100) : null,
       panel: Boolean(document.getElementById('copy-link-panel')),
     };
-  })()`);
+  })()`
+  );
   console.log('After Escape:', afterEscape);
   await waitForCondition(async () => {
     return (
@@ -1050,18 +1114,15 @@ try {
       break;
     }
   }
-  await waitForCondition(
-    async () => {
-      return (
-        (await evaluate<boolean>(
-          b1.cdp,
-          b1.sessionId,
-          `document.getElementById('copy-link-panel') === null`
-        )) === true
-      );
-    },
-    'tab out closed panel'
-  );
+  await waitForCondition(async () => {
+    return (
+      (await evaluate<boolean>(
+        b1.cdp,
+        b1.sessionId,
+        `document.getElementById('copy-link-panel') === null`
+      )) === true
+    );
+  }, 'tab out closed panel');
 
   // Reopen and click stage
   await clickElement(b1.cdp, b1.sessionId, '[data-action="copy-link"]');
@@ -1369,11 +1430,15 @@ try {
       )) === true
     );
   });
-  await evaluate(b1.cdp, b1.sessionId, `(() => {
+  await evaluate(
+    b1.cdp,
+    b1.sessionId,
+    `(() => {
     const toast = document.querySelector('.toast');
     if (!toast) return Promise.resolve();
     return Promise.all(toast.getAnimations().map(a => a.finished));
-  })()`);
+  })()`
+  );
   await Bun.sleep(50);
   const toastCenterIsToast320 = await evaluate<boolean>(
     b1.cdp,
@@ -1468,6 +1533,7 @@ try {
         )) === true
       );
     },
+    'relic heading open after key entry',
     15000,
     100
   );
