@@ -63,7 +63,7 @@ export type LoadProgress =
       readonly phase: 'fetching';
       readonly received: number;
       readonly total: number;
-      readonly contents?: LoadContents;
+      readonly contents?: LoadContents | undefined;
     }
   | {
       readonly phase: 'decrypting';
@@ -78,7 +78,7 @@ export interface CachedPrefix {
 
 export interface LoadResume {
   readonly fragment: string;
-  readonly mint?: MintResponse;
+  readonly mint?: MintResponse | undefined;
 }
 
 export type ViewerState =
@@ -86,9 +86,9 @@ export type ViewerState =
   | {
       kind: 'dead';
       dead: DeadView;
-      cachedPrefix?: CachedPrefix;
-      cachedCiphertext?: CachedPrefix;
-      resume?: LoadResume;
+      cachedPrefix?: CachedPrefix | undefined;
+      cachedCiphertext?: CachedPrefix | undefined;
+      resume?: LoadResume | undefined;
     };
 
 export interface ReadyView {
@@ -1180,7 +1180,7 @@ export type KeyEntryAttemptResult =
   | {
       readonly kind: 'wrong_key';
       readonly message: string;
-      readonly cachedPrefix?: CachedPrefix;
+      readonly cachedPrefix?: CachedPrefix | undefined;
     }
   | { readonly kind: 'dead'; readonly dead: DeadView };
 

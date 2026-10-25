@@ -729,12 +729,12 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: (async (input) => {
+      fetch: (async (input: RequestInfo | URL) => {
         if (String(input).includes('/blob')) {
-          return new Response(ciphertext);
+          return new Response(ciphertext as unknown as BodyInit);
         }
         return globalThis.fetch(input);
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
@@ -799,12 +799,12 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: (async (input) => {
+      fetch: (async (input: RequestInfo | URL) => {
         if (String(input).includes('/blob')) {
-          return new Response(ciphertext);
+          return new Response(ciphertext as unknown as BodyInit);
         }
         return globalThis.fetch(input);
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},

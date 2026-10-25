@@ -16,9 +16,18 @@
 
 import {
   type CommentAnchor,
+  CONTENTS_LABEL,
   deriveCommentKey,
+  LOAD_EXPLANATION,
+  LOAD_OPENING,
   parseFragment,
+  PHASE_DECRYPTING,
+  PHASE_FETCHING,
+  PHASE_RENDERING,
+  POLICY_LINK_LABEL,
+  REPORT_LINK_LABEL,
   shareMailtoUrl,
+  TRANSFER_LABEL,
 } from '@relic/format';
 import { registerBuiltInAnchorAdapters } from './anchor-adapters.ts';
 import {
@@ -180,19 +189,27 @@ import {
 } from './share.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
+  type CachedPrefix,
+  DAMAGED_DETAIL,
+  DAMAGED_TITLE,
   type DeadView,
   formatBytes,
+  formatTransfer,
   type HistoricalVersionState,
   isAudioMedia,
   isKeyEntryRecoverable,
   load,
+  type LoadProgress,
+  type LoadResume,
   loadCommentedRelics,
   loadHistoricalVersion,
   type MintResponse,
   openRelicWithKey,
+  progressLine,
   type ReadyView,
   type RenderRoute,
   type ViewerDeps,
+  type ViewerState,
 } from './viewer.ts';
 
 const SERVICE_ORIGIN =
@@ -1164,6 +1181,12 @@ export function renderPdfView(view: ReadyView): HTMLElement {
       void mountPdf(wrapper, view.content, view.filename);
     })
     .catch(() => {
+      wrapper.dispatchEvent(
+        new CustomEvent('relic:render-state', {
+          detail: 'error',
+          bubbles: true,
+        })
+      );
       loading.replaceChildren();
       const errTitle = document.createElement('p');
       errTitle.className = 'pdf-status-title';
@@ -2807,14 +2830,21 @@ export function renderComparison(
   }
 
   const getVersion = async (
-    version: number
+    version: number,
+    onProg?: (p: LoadProgress) => void
   ): Promise<HistoricalVersionState> => {
     if (version === current.version) {
       return { kind: 'ready', view: current };
     }
     const cached = versionCache.get(version);
     if (cached !== undefined) return cached;
-    const loaded = await loadHistoricalVersion(relicId, version, current, deps);
+    const loaded = await loadHistoricalVersion(
+      relicId,
+      version,
+      current,
+      deps,
+      onProg
+    );
     versionCache.set(version, loaded);
     return loaded;
   };
@@ -2852,9 +2882,14 @@ export function renderComparison(
     loading.textContent = `Loading comparison: version ${leftVersion} and version ${rightVersion}.`;
     scaffold.result.replaceChildren(loading);
 
+    const updateLoadingLine = (version: number, p: LoadProgress) => {
+      if (thisRequest !== request) return;
+      loading.textContent = `Loading comparison: version ${leftVersion} and version ${rightVersion}. Version ${version}: ${progressLine(p)}`;
+    };
+
     const [leftRes, rightRes] = await Promise.all([
-      getVersion(leftVersion),
-      getVersion(rightVersion),
+      getVersion(leftVersion, (p) => updateLoadingLine(leftVersion, p)),
+      getVersion(rightVersion, (p) => updateLoadingLine(rightVersion, p)),
     ]);
     if (thisRequest !== request) return;
     if (typeof document === 'undefined') return;
@@ -7222,6 +7257,7 @@ export function renderReady(
       buildRelicRow(stage, thread?.element, thread?.resizer, thread?.tab)
     );
     thread?.attach(stage);
+    trackRenderState(stage, stage.parentElement ?? stage, viewToShow.route);
   };
 
   const showVersion = async (v: number): Promise<void> => {
@@ -7234,10 +7270,45 @@ export function renderReady(
       showSingle(cached);
       return;
     }
-    const res = await loadHistoricalVersion(relicId, v, view, deps);
+
+    let versionPill = document.querySelector(
+      'div.render-status[data-version-progress]'
+    ) as HTMLElement | null;
+    if (!versionPill) {
+      versionPill = document.createElement('div');
+      versionPill.className = 'render-status';
+      versionPill.dataset['versionProgress'] = '';
+      versionPill.setAttribute('role', 'status');
+      const label = document.createElement('span');
+      label.className = 'render-status-label';
+      label.textContent = `Opening version ${v}`;
+      versionPill.appendChild(label);
+      document.body.appendChild(versionPill);
+    } else {
+      const label =
+        versionPill.querySelector('.render-status-label') ?? versionPill;
+      label.textContent = `Opening version ${v}`;
+    }
+
+    const res = await loadHistoricalVersion(relicId, v, view, deps, (p) => {
+      if (versionPill) {
+        const label =
+          versionPill.querySelector('.render-status-label') ?? versionPill;
+        if (p.phase === 'opening') {
+          label.textContent = `Opening version ${v}`;
+        } else if (p.phase === 'fetching') {
+          label.textContent = `Version ${v}: ${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+        }
+      }
+    });
+
+    versionPill?.remove();
+
     if (res.kind === 'ready') {
       loadedViews.set(v, res.view);
       showSingle(res.view);
+    } else if (res.kind === 'unavailable') {
+      toast(res.detail);
     }
   };
 
@@ -7277,20 +7348,400 @@ export function renderReady(
   showSingle(activeView);
 }
 
+interface PlateHandles {
+  readonly bar: HTMLElement;
+  readonly plate: HTMLElement;
+  readonly phaseEl: HTMLElement | null;
+  readonly meterEl: HTMLElement | null;
+  readonly transferEl: HTMLElement | null;
+  readonly contentsEl: HTMLElement | null;
+  readonly custodyEl: HTMLElement | null;
+  paint(p: LoadProgress): void;
+  remove(): void;
+}
+
+export function adoptOrMountPlate(relicId: string): PlateHandles {
+  let bar = document.querySelector(
+    'header.bar[data-load-bar]'
+  ) as HTMLElement | null;
+  if (!bar) {
+    bar = document.createElement('header');
+    bar.className = 'bar';
+    bar.dataset['loadBar'] = '';
+
+    const mark = document.createElement('div');
+    mark.className = 'mark';
+    mark.textContent = WORDMARK;
+
+    const identity = document.createElement('div');
+    identity.className = 'identity';
+    const custody = document.createElement('div');
+    custody.className = 'filename';
+    custody.dataset['loadCustody'] = '';
+    custody.textContent = LOAD_OPENING;
+    const meta = document.createElement('div');
+    meta.className = 'identity-meta';
+    const accession = document.createElement('span');
+    accession.className = 'accession';
+    accession.textContent = relicId;
+    meta.appendChild(accession);
+    identity.append(custody, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const policy = document.createElement('a');
+    policy.className = 'action';
+    policy.href = `${SERVICE_ORIGIN}/policy`;
+    policy.setAttribute('aria-label', POLICY_LINK_LABEL);
+    policy.appendChild(icon(ICONS.source));
+    const policySpan = document.createElement('span');
+    policySpan.textContent = POLICY_LINK_LABEL;
+    policy.appendChild(policySpan);
+
+    const abuse = document.createElement('a');
+    abuse.className = 'action';
+    abuse.href = `${SERVICE_ORIGIN}/abuse`;
+    abuse.setAttribute('aria-label', REPORT_LINK_LABEL);
+    abuse.appendChild(icon(ICONS.flag));
+    const abuseSpan = document.createElement('span');
+    abuseSpan.textContent = REPORT_LINK_LABEL;
+    abuse.appendChild(abuseSpan);
+
+    actions.append(policy, abuse);
+    bar.append(mark, identity, actions);
+    document.body.prepend(bar);
+  }
+
+  let plate = document.querySelector(
+    'main.stage.stage-loading[data-load-plate]'
+  ) as HTMLElement | null;
+  if (!plate) {
+    plate = document.createElement('main');
+    plate.className = 'stage stage-loading';
+    plate.dataset['loadPlate'] = '';
+    plate.dataset['loadPhase'] = 'opening';
+
+    const card = document.createElement('div');
+    card.className = 'card load-card';
+
+    const phase = document.createElement('p');
+    phase.className = 'load-phase';
+    phase.setAttribute('role', 'status');
+    phase.setAttribute('aria-live', 'polite');
+    phase.textContent = LOAD_OPENING;
+
+    const meter = document.createElement('div');
+    meter.className = 'load-meter';
+    meter.setAttribute('role', 'progressbar');
+    meter.setAttribute('aria-valuemin', '0');
+    meter.setAttribute('aria-valuemax', '105298736');
+
+    const transfer = document.createElement('p');
+    transfer.dataset['loadTransfer'] = '';
+
+    const contents = document.createElement('p');
+    contents.dataset['loadContents'] = '';
+    contents.hidden = true;
+
+    const note = document.createElement('p');
+    note.className = 'card-note';
+    note.textContent = LOAD_EXPLANATION;
+
+    card.append(phase, meter, transfer, contents, note);
+    plate.appendChild(card);
+    bar.after(plate);
+  }
+
+  const phaseEl = plate.querySelector('.load-phase') as HTMLElement | null;
+  const meterEl = plate.querySelector('.load-meter') as HTMLElement | null;
+  const transferEl = plate.querySelector(
+    '[data-load-transfer]'
+  ) as HTMLElement | null;
+  const contentsEl = plate.querySelector(
+    '[data-load-contents]'
+  ) as HTMLElement | null;
+  const custodyEl = bar.querySelector(
+    '[data-load-custody]'
+  ) as HTMLElement | null;
+
+  let pendingProgress: LoadProgress | null = null;
+  let rafId: number | null = null;
+
+  const applyProgress = (p: LoadProgress) => {
+    plate.dataset['loadPhase'] = p.phase;
+    if (phaseEl) {
+      if (p.phase === 'opening') {
+        phaseEl.textContent = LOAD_OPENING;
+      } else if (p.phase === 'fetching') {
+        phaseEl.textContent = PHASE_FETCHING;
+      } else if (p.phase === 'decrypting') {
+        phaseEl.textContent = PHASE_DECRYPTING;
+      }
+    }
+
+    if (p.phase === 'opening') {
+      meterEl?.removeAttribute('aria-valuenow');
+      meterEl?.removeAttribute('aria-valuetext');
+      meterEl?.style.removeProperty('--load-fraction');
+    } else if (p.phase === 'fetching') {
+      if (meterEl) {
+        meterEl.setAttribute('aria-valuemax', String(p.total));
+        meterEl.setAttribute('aria-valuenow', String(p.received));
+        meterEl.setAttribute(
+          'aria-valuetext',
+          formatTransfer(p.received, p.total)
+        );
+        const frac = Math.min(1, Math.max(0, p.received / p.total));
+        meterEl.style.setProperty('--load-fraction', String(frac));
+      }
+      if (transferEl) {
+        transferEl.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+      }
+      if (p.contents) {
+        if (contentsEl) {
+          contentsEl.hidden = false;
+          contentsEl.textContent = `${CONTENTS_LABEL} ${formatBytes(p.contents.length)}`;
+        }
+        if (custodyEl) {
+          custodyEl.textContent = p.contents.filename;
+        }
+      }
+    } else if (p.phase === 'decrypting') {
+      if (meterEl) {
+        meterEl.setAttribute('aria-valuemax', String(p.contents.length));
+        meterEl.setAttribute('aria-valuenow', String(p.opened));
+        meterEl.setAttribute(
+          'aria-valuetext',
+          formatTransfer(p.opened, p.contents.length)
+        );
+        const frac = Math.min(1, Math.max(0, p.opened / p.contents.length));
+        meterEl.style.setProperty('--load-fraction', String(frac));
+      }
+      if (transferEl) {
+        transferEl.textContent = `${PHASE_DECRYPTING} ${formatTransfer(p.opened, p.contents.length)}`;
+      }
+      if (contentsEl) {
+        contentsEl.hidden = false;
+        contentsEl.textContent = `${CONTENTS_LABEL} ${formatBytes(p.contents.length)}`;
+      }
+      if (custodyEl) {
+        custodyEl.textContent = p.contents.filename;
+      }
+    }
+  };
+
+  const paint = (p: LoadProgress) => {
+    pendingProgress = p;
+    if (typeof requestAnimationFrame === 'function') {
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          if (pendingProgress) applyProgress(pendingProgress);
+        });
+      }
+    } else {
+      applyProgress(p);
+    }
+  };
+
+  const remove = () => {
+    if (rafId !== null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    plate?.remove();
+  };
+
+  return {
+    bar,
+    plate,
+    phaseEl,
+    meterEl,
+    transferEl,
+    contentsEl,
+    custodyEl,
+    paint,
+    remove,
+  };
+}
+
+export function trackRenderState(
+  stage: HTMLElement,
+  stageWrap: HTMLElement,
+  route: RenderRoute
+): void {
+  stage.dataset['renderState'] = 'rendering';
+  stageWrap.setAttribute('aria-busy', 'true');
+
+  let statusPill = document.querySelector(
+    'div.render-status[data-render-status]'
+  ) as HTMLElement | null;
+  if (!statusPill) {
+    statusPill = document.createElement('div');
+    statusPill.className = 'render-status';
+    statusPill.dataset['renderStatus'] = '';
+    statusPill.setAttribute('role', 'status');
+    const label = document.createElement('span');
+    label.className = 'render-status-label';
+    label.textContent = PHASE_RENDERING;
+    statusPill.appendChild(label);
+    document.body.appendChild(statusPill);
+  }
+
+  let settled = false;
+
+  const setReady = () => {
+    if (settled) return;
+    settled = true;
+    stage.dataset['renderState'] = 'ready';
+    stageWrap.setAttribute('aria-busy', 'false');
+    statusPill?.remove();
+  };
+
+  const setError = () => {
+    if (settled) return;
+    settled = true;
+    stage.dataset['renderState'] = 'error';
+    stageWrap.setAttribute('aria-busy', 'false');
+    statusPill?.remove();
+  };
+
+  switch (route) {
+    case 'image': {
+      const img = stage.querySelector(
+        'img.relic-image'
+      ) as HTMLImageElement | null;
+      if (img) {
+        if (img.complete && img.naturalWidth > 0) {
+          setReady();
+        } else {
+          img.addEventListener('load', () => setReady(), { once: true });
+          img.addEventListener('error', () => setError(), { once: true });
+        }
+      } else {
+        setReady();
+      }
+      break;
+    }
+    case 'media': {
+      const media = stage.querySelector(
+        'video.relic-media, audio.relic-media'
+      ) as HTMLMediaElement | null;
+      if (media) {
+        if (media.readyState >= 1) {
+          setReady();
+        } else {
+          media.addEventListener('loadedmetadata', () => setReady(), {
+            once: true,
+          });
+          media.addEventListener('error', () => setError(), { once: true });
+        }
+      } else {
+        setReady();
+      }
+      break;
+    }
+    case 'pdf': {
+      const onRenderState = (event: Event) => {
+        const detail = (event as CustomEvent).detail;
+        if (detail === 'ready') setReady();
+        else if (detail === 'error') setError();
+      };
+      stage.addEventListener('relic:render-state', onRenderState, {
+        once: true,
+      });
+      break;
+    }
+    case 'otio': {
+      const otioView = stage.querySelector('.otio-view') as HTMLElement | null;
+      const readyAttr = otioView?.dataset['ready'];
+      if (
+        readyAttr === 'true' ||
+        readyAttr === 'diagnostic' ||
+        readyAttr === 'structural'
+      ) {
+        setReady();
+      } else if (readyAttr === 'error') {
+        setError();
+      } else {
+        const onOtioReady = () => setReady();
+        stage.addEventListener('relic:otio-ready', onOtioReady, { once: true });
+
+        if (otioView && typeof MutationObserver !== 'undefined') {
+          const obs = new MutationObserver(() => {
+            const val = otioView.dataset['ready'];
+            if (
+              val === 'true' ||
+              val === 'diagnostic' ||
+              val === 'structural'
+            ) {
+              obs.disconnect();
+              setReady();
+            } else if (val === 'error') {
+              obs.disconnect();
+              setError();
+            }
+          });
+          obs.observe(otioView, {
+            attributes: true,
+            attributeFilter: ['data-ready'],
+          });
+        }
+      }
+      break;
+    }
+    case 'sandboxed-html':
+    case 'sandboxed-jsx': {
+      const frame = stage.querySelector(
+        'iframe.usercontent-frame'
+      ) as HTMLIFrameElement | null;
+      if (frame) {
+        const onMessage = (event: MessageEvent) => {
+          if (
+            frame.contentWindow &&
+            event.source === frame.contentWindow &&
+            event.data?.type === 'relic:tree'
+          ) {
+            window.removeEventListener('message', onMessage);
+            setReady();
+          }
+        };
+        window.addEventListener('message', onMessage);
+      } else {
+        setReady();
+      }
+      break;
+    }
+    case 'markdown':
+    case 'code':
+    case 'download':
+    default: {
+      setReady();
+      break;
+    }
+  }
+}
+
 export function renderDead(
   dead: DeadView,
   relicId?: string,
   usercontentOrigin?: string,
   deps?: ViewerDeps,
-  cachedCiphertext?: { bytes: Uint8Array; mint: MintResponse }
+  cachedPrefix?: CachedPrefix,
+  onRetry?: () => void
 ): void {
-  const bar = document.createElement('header');
-  bar.className = 'bar';
-  const mark = document.createElement('div');
-  mark.className = 'mark';
-  mark.textContent = WORDMARK;
-  bar.appendChild(mark);
-  document.body.replaceChildren(bar);
+  let bar = document.querySelector('header.bar') as HTMLElement | null;
+  if (!bar) {
+    bar = document.createElement('header');
+    bar.className = 'bar';
+    const mark = document.createElement('div');
+    mark.className = 'mark';
+    mark.textContent = WORDMARK;
+    bar.appendChild(mark);
+    document.body.prepend(bar);
+  }
+
+  document.querySelectorAll('main.stage').forEach((s) => s.remove());
 
   const main = document.createElement('main');
   main.className = 'stage stage-dead';
@@ -7308,19 +7759,32 @@ export function renderDead(
 
   card.append(headline, detail);
 
-  if (dead.action === 'retry') {
-    const retry = button('Try again', ICONS.rendered, () =>
-      window.location.reload()
-    );
+  const actionsDiv = document.createElement('div');
+  actionsDiv.className = 'card-actions';
+
+  if (dead.action === 'retry' || dead.action === 'retry-report') {
+    const retry = button('Try again', ICONS.rendered, () => {
+      if (onRetry) {
+        onRetry();
+      } else {
+        window.location.reload();
+      }
+    });
     retry.classList.add('primary');
-    card.appendChild(retry);
+    retry.dataset['deadAction'] = 'retry';
+    actionsDiv.appendChild(retry);
   }
-  if (dead.action === 'report') {
+  if (dead.action === 'report' || dead.action === 'retry-report') {
     const link = document.createElement('a');
-    link.className = 'action primary';
+    link.className = dead.action === 'report' ? 'action primary' : 'action';
     link.href = `${SERVICE_ORIGIN}/abuse`;
-    link.textContent = 'Contact us';
-    card.appendChild(link);
+    link.dataset['deadAction'] = 'report';
+    link.textContent = 'Report this relic';
+    actionsDiv.appendChild(link);
+  }
+
+  if (actionsDiv.childNodes.length > 0) {
+    card.appendChild(actionsDiv);
   }
 
   if (isKeyEntryRecoverable(dead.code) && relicId && deps) {
@@ -7360,13 +7824,17 @@ export function renderDead(
 
     inputRow.append(input, submit);
 
+    const progressEl = document.createElement('p');
+    progressEl.className = 'key-entry-progress';
+    progressEl.setAttribute('role', 'status');
+
     const feedback = document.createElement('div');
     feedback.className = 'key-entry-feedback';
     feedback.setAttribute('role', 'alert');
 
-    form.append(label, inputRow, feedback);
+    form.append(label, inputRow, progressEl, feedback);
 
-    const cached = cachedCiphertext;
+    let activeCachedPrefix = cachedPrefix;
 
     form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -7375,10 +7843,20 @@ export function renderDead(
 
       submit.disabled = true;
       feedback.replaceChildren();
+      progressEl.textContent = '';
 
-      void openRelicWithKey(relicId, enteredValue, deps, cached).then(
+      void openRelicWithKey(
+        relicId,
+        enteredValue,
+        deps,
+        activeCachedPrefix,
+        (p) => {
+          progressEl.textContent = progressLine(p);
+        }
+      ).then(
         (result) => {
           submit.disabled = false;
+          progressEl.textContent = '';
           if (result.kind === 'ready') {
             renderReady(result.view, relicId, usercontentOrigin ?? '', deps);
             return;
@@ -7387,12 +7865,16 @@ export function renderDead(
             feedback.textContent = result.message;
           } else if (result.kind === 'wrong_key') {
             feedback.textContent = result.message;
+            if (result.cachedPrefix) {
+              activeCachedPrefix = result.cachedPrefix;
+            }
           } else if (result.kind === 'dead') {
             feedback.textContent = result.dead.detail;
           }
         },
         () => {
           submit.disabled = false;
+          progressEl.textContent = '';
           feedback.textContent = 'Decryption could not be completed.';
         }
       );
@@ -7807,19 +8289,64 @@ export async function boot(
     return;
   }
 
-  const state = await load(relicId, deps);
+  const runOpen = async (resume?: LoadResume): Promise<void> => {
+    const plate = adoptOrMountPlate(relicId);
+    let state: ViewerState;
+    try {
+      state = await load(relicId, deps, (p) => plate.paint(p), resume);
+    } catch {
+      plate.remove();
+      renderDead(
+        {
+          headline: 'This relic could not be opened',
+          detail: 'Something went wrong reaching the service.',
+          action: 'retry',
+          code: 'service_unreachable',
+        },
+        relicId,
+        usercontentOrigin,
+        deps,
+        undefined,
+        () => void runOpen()
+      );
+      return;
+    }
 
-  if (state.kind === 'ready') {
-    renderReady(state.view, relicId, usercontentOrigin, deps);
-  } else if (state.kind === 'dead') {
-    renderDead(
-      state.dead,
-      relicId,
-      usercontentOrigin,
-      deps,
-      state.cachedCiphertext
-    );
-  }
+    try {
+      if (state.kind === 'ready') {
+        plate.remove();
+        renderReady(state.view, relicId, usercontentOrigin, deps);
+      } else if (state.kind === 'dead') {
+        plate.remove();
+        const deadResume = state.resume;
+        renderDead(
+          state.dead,
+          relicId,
+          usercontentOrigin,
+          deps,
+          state.cachedPrefix,
+          () => void runOpen(deadResume)
+        );
+      }
+    } catch {
+      plate.remove();
+      renderDead(
+        {
+          headline: 'This relic could not be opened',
+          detail: 'Something went wrong rendering the document.',
+          action: 'retry',
+          code: 'render_failed',
+        },
+        relicId,
+        usercontentOrigin,
+        deps,
+        undefined,
+        () => void runOpen()
+      );
+    }
+  };
+
+  await runOpen();
 }
 
 if (typeof document !== 'undefined') {

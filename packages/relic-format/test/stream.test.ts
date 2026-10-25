@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  type Envelope,
-  encryptRelic,
-  openRelic,
-} from '../src/container.ts';
+import { encryptRelic, openRelic } from '../src/container.ts';
+import type { Envelope } from '../src/envelope.ts';
 import {
   ContentTooLargeError,
   DecryptFailedError,

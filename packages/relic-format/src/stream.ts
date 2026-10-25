@@ -256,13 +256,12 @@ export async function openRelicStream(
 
   try {
     while (true) {
-      let readResult: ReadableStreamDefaultReadResult<Uint8Array>;
+      let readResult: { done: boolean; value?: Uint8Array | undefined };
       try {
         readResult = await reader.read();
       } catch {
         throw new TransferIncompleteError(receivedBytes, objectLength);
       }
-
       if (readResult.done) {
         break;
       }
@@ -309,7 +308,7 @@ export async function openRelicStream(
       throw new TruncatedContainerError('container ended prematurely');
     }
 
-    const entry = envelope?.entries[0];
+    const entry = (envelope as Envelope | undefined)?.entries[0];
     if (!entry || openedContentBytes !== entry.length) {
       throw new TruncatedContainerError(
         `container ended with ${openedContentBytes} content bytes, expected ${entry?.length ?? 0}`

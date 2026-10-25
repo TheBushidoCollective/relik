@@ -82,7 +82,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       fetch: (async () => {
         fetchCalls++;
         return new Response('');
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
       keyVault: makeMockVault(),
       secureContext: () => false,
     };
@@ -276,7 +276,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       keyVault: makeMockVault(),
       fetch: (async () => {
         throw new Error('connection refused');
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
     };
 
     const res = await load('r1', deps);
@@ -477,7 +477,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       serviceOrigin: 'https://relic.example',
       locationHref: 'https://relic.example/r1',
       keyVault: makeMockVault(),
-      fetch: (async (input) => {
+      fetch: (async (input: RequestInfo | URL) => {
         fetchCount++;
         const url = String(input);
         if (url.endsWith('/mint')) {
@@ -486,10 +486,10 @@ describe('Spec B: Viewer load progress and early key check', () => {
         }
         if (url.includes('/blob')) {
           storageCount++;
-          return new Response(container);
+          return new Response(container as unknown as BodyInit);
         }
         return new Response('', { status: 404 });
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
     };
 
     // 1. Wrong key with cachedPrefix -> 0 fetch calls
@@ -552,13 +552,13 @@ describe('Spec B: Viewer load progress and early key check', () => {
       serviceOrigin: 'https://relic.example',
       locationHref: 'https://relic.example/r1',
       keyVault: makeMockVault(),
-      fetch: (async (input) => {
+      fetch: (async (input: RequestInfo | URL) => {
         fetchCount++;
         const url = String(input);
         if (url.endsWith('/mint')) return Response.json(validMint);
-        if (url.includes('/blob')) return new Response(container);
+        if (url.includes('/blob')) return new Response(container as unknown as BodyInit);
         return new Response('', { status: 404 });
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
     };
 
     const res1 = await openRelicWithKey('r1', encodeFragment(wrongKey), deps);
@@ -613,7 +613,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       stripFragment: () => {
         stripCalled = true;
       },
-      fetch: (async (input) => {
+      fetch: (async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith('/mint')) {
           mintCalled = true;
@@ -621,10 +621,10 @@ describe('Spec B: Viewer load progress and early key check', () => {
         }
         if (url.includes('/blob')) {
           storageCalled = true;
-          return new Response(container);
+          return new Response(container as unknown as BodyInit);
         }
         return new Response('', { status: 404 });
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
     };
 
     const res = await load('r1', deps, undefined, {
@@ -676,12 +676,12 @@ describe('Spec B: Viewer load progress and early key check', () => {
       serviceOrigin: 'https://relic.example',
       locationHref: 'https://relic.example/r1',
       keyVault: makeMockVault(),
-      fetch: (async (input) => {
+      fetch: (async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith('/mint')) return Response.json(mintResp);
-        if (url.includes('/v2-blob')) return new Response(container);
+        if (url.includes('/v2-blob')) return new Response(container as unknown as BodyInit);
         return new Response('', { status: 404 });
-      }) as typeof globalThis.fetch,
+      }) as unknown as typeof globalThis.fetch,
     };
 
     const events: LoadProgress[] = [];
