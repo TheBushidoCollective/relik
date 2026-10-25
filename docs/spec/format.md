@@ -173,7 +173,9 @@ An attacker who can write the object can alter `rs` and cause mis-framing, or al
 Nobody may read a successfully parsed header as evidence of anything. Two consequences:
 
 - The residual is bounded by who can write the object. Under a single-use grant bound to one object path that's the original publisher and the operator, and the operator can already delete the object, so header malleability grants the operator no capability it lacked.
-- **A tag failure is indistinguishable from a wrong key** from the recipient's side. The viewer must not claim "wrong key" on a decrypt failure when tampering and truncation produce the identical symptom.
+- **A record-0 tag failure is indistinguishable from a wrong key** from the recipient's side. The viewer must not claim "wrong key" on it, because tampering produces the identical symptom.
+- **Record 0 authenticating proves the key.** A tag failure after it belongs to the stored object, not the link, and the viewer says so (`viewer.md` §6.4).
+- **A container ends with its final record.** The last record carries padding delimiter 2, nothing follows it, and the content records decrypt to exactly the envelope's declared length. A container that breaks any of the three is refused rather than returned short. Records sit at fixed offsets, so an object cut at a record boundary authenticates record by record, and until 2026-10-24 it was accepted.
 
 ### 3.6 The renderer class is not in the container
 
