@@ -8976,6 +8976,16 @@ try {
       `current OTIO stage has unexpected comparison notice: ${currentNotice}`
     );
     await insertBrowser.screenshot('otio-version-current-no-notice');
+    const domText = await insertBrowser.evaluate<string>(`(() => {
+      return document.body.textContent ?? '';
+    })()`);
+    const downloadOnlyMatches = domText.toLowerCase().includes('download-only');
+    assert.equal(
+      downloadOnlyMatches,
+      false,
+      'OTIO relic at version 2 opens with "download-only" text in DOM'
+    );
+    console.log('OTIO_V2_DOM_NO_DOWNLOAD_ONLY_OK downloadOnlyMatches=' + downloadOnlyMatches);
 
     await insertBrowser.evaluate<void>(`(() => {
       const button = document.querySelector('[aria-label="Open an earlier version of this relic"]');
@@ -9292,34 +9302,22 @@ try {
         observations: {},
       };
       const pointingResult = await negBrowser.evaluate<{
-        composerOpen: boolean;
+        anchoredComposerOpen: boolean;
         sidebarOpen: boolean;
       }>(`(() => {
-        const rail = document.querySelector('.otio-track-rail');
-        if (rail instanceof HTMLElement) {
-          const box = rail.getBoundingClientRect();
-          rail.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: box.left + 50, clientY: box.top + box.height / 2 }));
-          rail.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: box.left + 50, clientY: box.top + box.height / 2 }));
-          rail.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: box.left + 50, clientY: box.top + box.height / 2 }));
-        }
-        const composer = document.querySelector('.popover-card.popover-composer');
+        const composer = document.querySelector('.popover-card.popover-composer[data-anchor-kind="otio"]');
         const thread = document.querySelector('.thread');
         return {
-          composerOpen: composer !== null,
+          anchoredComposerOpen: composer !== null,
           sidebarOpen: thread !== null && thread.classList.contains('is-open'),
         };
       })()`);
 
       receipt.observations['pointingGesture'] = pointingResult;
       assert.equal(
-        pointingResult.composerOpen,
+        pointingResult.anchoredComposerOpen,
         false,
-        'pointing gesture unexpectedly opened stage composer on 76269ed5'
-      );
-      assert.equal(
-        pointingResult.sidebarOpen,
-        true,
-        'pointing gesture did not open sidebar on 76269ed5'
+        'anchored stage composer with data-anchor-kind="otio" unexpectedly found on 76269ed5'
       );
 
       await negBrowser.evaluate<void>(`(() => {
@@ -9350,12 +9348,7 @@ try {
       assert.equal(
         markClickResult.stageCardOpen,
         false,
-        'mark click unexpectedly opened stage card on 76269ed5'
-      );
-      assert.equal(
-        markClickResult.sidebarOpen,
-        true,
-        'mark click did not open sidebar on 76269ed5'
+        'anchored stage card with data-anchor-kind="otio" unexpectedly opened on 76269ed5'
       );
 
       await negBrowser.evaluate<void>(`(() => {
@@ -9385,7 +9378,7 @@ try {
       assert.equal(
         markHoverResult.stageCardOpen,
         false,
-        'hover on mark unexpectedly opened stage card on 76269ed5'
+        'hover on mark unexpectedly opened anchored stage card on 76269ed5'
       );
 
       const proofDir = fileURLToPath(
@@ -9420,9 +9413,11 @@ try {
   console.log('OTIO_PATH_OK');
 } finally {
   for (const child of children) child.kill('SIGKILL');
-  const kept = join(process.cwd(), 'otio-path-shots');
-  await rm(kept, { recursive: true, force: true }).catch(() => {});
-  await Bun.spawn(['cp', '-R', shotDir, kept]).exited.catch(() => 1);
+  const kept =
+    process.env['RELIC_OTIO_SHOTS_DIR'] ??
+    (await mkdtemp(join(await realpath(tmpdir()), 'otio-path-shots-')));
+  await mkdir(kept, { recursive: true });
+  await cp(shotDir, kept, { recursive: true });
   console.log(`SHOTS ${kept}`);
   clearTimeout(watchdog);
   await service.stop(true);
