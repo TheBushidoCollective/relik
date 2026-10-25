@@ -46,7 +46,7 @@ const execFileAsync = promisify(execFile);
 
 const CHUNK_SIZE = 16384;
 const CHUNK_DELAY_MS = Number(
-  process.env['RELIC_LOAD_PROOF_CHUNK_DELAY_MS'] ?? 15
+  process.env['RELIC_LOAD_PROOF_CHUNK_DELAY_MS'] ?? 25
 );
 
 const viewerDist =
