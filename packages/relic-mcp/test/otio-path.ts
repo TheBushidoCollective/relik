@@ -1830,7 +1830,7 @@ async function openBrowser(
       [
         ...shared.map((arg) =>
           arg === '--proxy-bypass-list=<-loopback>'
-            ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${service.port}`
+            ? `--proxy-bypass-list=<-loopback>;127.0.0.1`
             : arg === '--host-resolver-rules=MAP * ~NOTFOUND'
               ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
               : arg
@@ -2115,7 +2115,7 @@ async function openBrowser(
     );
     assert.equal(
       (landed['result'] as { value?: unknown } | undefined)?.value,
-      origin,
+      new URL(url).origin,
       'browser did not land on the service origin'
     );
     return {
@@ -9229,9 +9229,8 @@ try {
       return;
     }
 
-    let negServerOrigin = 'http://127.0.0.1:0';
     const negApp = createApp({
-      config: { ...app.config, serviceOrigin: negServerOrigin },
+      config: { ...app.config, serviceOrigin: origin },
       store,
       storage,
       now: () => loopbackNow,
@@ -9239,8 +9238,28 @@ try {
       assets: diskAssets(originMainViewerDist),
       mailer: { send: async () => {}, sendMail: async () => {} },
     });
-    const negServer = Bun.serve({ fetch: negApp.fetch, port: 0 });
-    negServerOrigin = `http://127.0.0.1:${negServer.port}`;
+    const oldHandler = handler;
+    handler = async (request: Request): Promise<Response> => {
+      const url = new URL(request.url);
+      if (
+        url.pathname.startsWith('/__storage/upload/') &&
+        request.method === 'PUT'
+      ) {
+        const relicId = url.pathname.slice('/__storage/upload/'.length);
+        storage.put(relicId, new Uint8Array(await request.arrayBuffer()));
+        return new Response(null, { status: 200 });
+      }
+      if (url.pathname.startsWith('/__storage/o/') && request.method === 'GET') {
+        const relicId = url.pathname.slice('/__storage/o/'.length);
+        const bytes = await storage.read(relicId);
+        if (!bytes) return new Response('Not found', { status: 404 });
+        return new Response(Buffer.from(bytes), {
+          status: 200,
+          headers: { 'content-type': 'application/octet-stream' },
+        });
+      }
+      return negApp.fetch(request);
+    };
 
     const negToken = `neg-token-${Math.random().toString(16).slice(2)}`;
     await store.putSession({
@@ -9250,10 +9269,7 @@ try {
       expiresAt: loopbackNow + app.config.sessionTtlSeconds * 1000,
     });
 
-    const relPath = shareUrl.slice(origin.length);
-    const negUrl = `${negServerOrigin}${relPath}`;
-
-    const negBrowser = await openBrowser(negUrl, negToken, {
+    const negBrowser = await openBrowser(shareUrl, negToken, {
       label: 'negative-control-76269ed5',
     });
 
@@ -9385,7 +9401,7 @@ try {
       );
     } finally {
       await negBrowser.close();
-      await negServer.stop(true);
+      handler = oldHandler;
     }
   }
   await runNegativeControlAgainstMain();

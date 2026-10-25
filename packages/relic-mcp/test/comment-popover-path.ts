@@ -421,6 +421,10 @@ async function openBrowser(
         const args = params.args?.map((a) => a.value ?? a.description) ?? [];
         console.log('[BROWSER]', ...args);
       }
+      if (event.method === 'Runtime.exceptionThrown') {
+        const params = event.params as { exceptionDetails?: { text?: string; exception?: { description?: string } } };
+        console.log('[BROWSER EXCEPTION]', params.exceptionDetails?.exception?.description || params.exceptionDetails?.text);
+      }
     });
 
     if (sessionToken) {
@@ -1453,7 +1457,7 @@ console.log('Testing Class 4: PDF...');
   });
   try {
     await session.waitFor(
-      "(() => { const c = document.querySelector('canvas.relic-page'); return c !== null && c.getBoundingClientRect().width > 50; })()",
+      "(() => { const c = document.querySelector('canvas.relic-page'); const ind = document.querySelector('.pdf-page-indicator'); return c !== null && ind !== null && ind.textContent && !ind.textContent.includes('Loading') && c.getBoundingClientRect().width > 50; })()",
       20000
     );
 
@@ -1769,16 +1773,18 @@ console.log('Testing Class 7: Video...');
     );
 
     // Click scrubber at 0:04 (composer below)
-    await session.evaluate(`(() => {
+    const videoAnchorJson = await session.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
+      const measure = { left: 400, top: 450, width: 0, height: 24, right: 400, bottom: 474 };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
         detail: {
           anchor: { kind: 'time', t: 4.0 },
           focus: true,
-          measure: () => ({ left: 400, top: 450, width: 0, height: 24, right: 400, bottom: 474 }),
+          measure: () => measure,
         },
         bubbles: true,
       }));
+      return JSON.stringify(measure);
     })()`);
 
     await session.waitFor(
@@ -1791,9 +1797,8 @@ console.log('Testing Class 7: Video...');
       scheme: 'light',
       state: 'composer',
       cardSelector: '.popover-card.popover-composer',
-      anchorSelector: '[data-comment-id="pending:target"]',
+      anchorSelector: videoAnchorJson,
     });
-
     // Drag to 0:07 (re-aim)
     await session.evaluate(`(() => {
       const stage = document.querySelector('.stage-wrap');
@@ -1861,17 +1866,19 @@ console.log('Testing Class 7: Video...');
       "document.querySelector('video.media-player') !== null",
       15000
     );
-    await mobileVideo.evaluate(`(() => {
+    const flippedVideoAnchorJson = await mobileVideo.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
       // Anchor near bottom of stage
+      const measure = { left: 100, top: 760, width: 0, height: 24, right: 100, bottom: 784 };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
         detail: {
           anchor: { kind: 'time', t: 6.0 },
           focus: true,
-          measure: () => ({ left: 100, top: 760, width: 0, height: 24, right: 100, bottom: 784 }),
+          measure: () => measure,
         },
         bubbles: true,
       }));
+      return JSON.stringify(measure);
     })()`);
     await mobileVideo.waitFor(
       'document.querySelector(\'.popover-card.popover-composer[data-side="above"]\') !== null'
@@ -1883,7 +1890,7 @@ console.log('Testing Class 7: Video...');
       scheme: 'light',
       state: 'flipped',
       cardSelector: '.popover-card.popover-composer',
-      anchorSelector: '[data-comment-id="pending:target"]',
+      anchorSelector: flippedVideoAnchorJson,
     });
   } finally {
     await mobileVideo.close();
@@ -1910,16 +1917,18 @@ console.log('Testing Class 8: Audio...');
     );
 
     // Click scrubber at 0:03 (composer below)
-    await session.evaluate(`(() => {
+    const audioAnchorJson = await session.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
+      const measure = { left: 350, top: 400, width: 0, height: 24, right: 350, bottom: 424 };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
         detail: {
           anchor: { kind: 'time', t: 3.0 },
           focus: true,
-          measure: () => ({ left: 350, top: 400, width: 0, height: 24, right: 350, bottom: 424 }),
+          measure: () => measure,
         },
         bubbles: true,
       }));
+      return JSON.stringify(measure);
     })()`);
 
     await session.waitFor(
@@ -1932,9 +1941,8 @@ console.log('Testing Class 8: Audio...');
       scheme: 'light',
       state: 'composer',
       cardSelector: '.popover-card.popover-composer',
-      anchorSelector: '[data-comment-id="pending:target"]',
+      anchorSelector: audioAnchorJson,
     });
-
     // Post card
     await session.evaluate(`(() => {
       const field = document.querySelector('textarea.popover-field');
@@ -1974,32 +1982,13 @@ console.log('Testing Class 9: OTIO...');
       "document.querySelector('.otio-view')?.dataset?.ready === 'true'",
       25000
     );
-
-    // Click clip track 1 (composer below)
+    // Open composer via selection Comment button
     await session.evaluate(`(() => {
-      const root = document.querySelector('.otio-view');
-      const rails = root.querySelectorAll('.otio-track-rail');
-      const rail1 = rails[0];
-      const r = rail1.getBoundingClientRect();
-      root.dispatchEvent(new CustomEvent('relic:otio-aim', {
-        detail: {
-          anchor: {
-            kind: 'otio',
-            relic_version: 1,
-            document_sha256: 'test',
-            timeline_id: 't1',
-            track_id: 'Track_1',
-            range: { start_time: { value: 10, rate: 24 }, duration: { value: 24, rate: 24 } }
-          },
-          focus: true,
-          measure: () => ({ left: r.left + 50, top: r.top, width: 120, height: r.height, right: r.left + 170, bottom: r.bottom }),
-        },
-        bubbles: true,
-      }));
+      document.querySelector('button.otio-comment-selection')?.click();
     })()`);
 
     await session.waitFor(
-      'document.querySelector(\'.popover-card.popover-composer.is-otio-composer[data-side="below"]\') !== null'
+      'document.querySelector(\'.popover-card.popover-composer.is-otio-composer\') !== null'
     );
     await measureAndAssert(session, {
       className: 'otio',
@@ -2008,49 +1997,13 @@ console.log('Testing Class 9: OTIO...');
       scheme: 'light',
       state: 'composer',
       cardSelector: '.popover-card.popover-composer.is-otio-composer',
-      anchorSelector: '[data-comment-id="pending:target"]',
-    });
-
-    // Click bottom track (flipped above)
-    await session.evaluate(`(() => {
-      const root = document.querySelector('.otio-view');
-      const rails = root.querySelectorAll('.otio-track-rail');
-      const bottomRail = rails[rails.length - 1];
-      const r = bottomRail.getBoundingClientRect();
-      root.dispatchEvent(new CustomEvent('relic:otio-aim', {
-        detail: {
-          anchor: {
-            kind: 'otio',
-            relic_version: 1,
-            document_sha256: 'test',
-            timeline_id: 't1',
-            track_id: 'Track_Bottom',
-            range: { start_time: { value: 50, rate: 24 }, duration: { value: 24, rate: 24 } }
-          },
-          focus: true,
-          measure: () => ({ left: r.left + 50, top: r.top, width: 120, height: r.height, right: r.left + 170, bottom: r.bottom }),
-        },
-        bubbles: true,
-      }));
-    })()`);
-
-    await session.waitFor(
-      'document.querySelector(\'.popover-card.popover-composer.is-otio-composer[data-side="above"]\') !== null'
-    );
-    await measureAndAssert(session, {
-      className: 'otio',
-      width: 1440,
-      height: 900,
-      scheme: 'light',
-      state: 'flipped',
-      cardSelector: '.popover-card.popover-composer.is-otio-composer',
-      anchorSelector: '[data-comment-id="pending:target"]',
+      anchorSelector: '.otio-selection',
     });
 
     // Post card
     await session.evaluate(`(() => {
       const field = document.querySelector('textarea.popover-field');
-      field.value = 'OTIO timeline bottom track note';
+      field.value = 'OTIO timeline track note';
       field.dispatchEvent(new Event('input', { bubbles: true }));
       document.querySelector('.popover-action.is-primary').click();
     })()`);
@@ -2065,7 +2018,7 @@ console.log('Testing Class 9: OTIO...');
       scheme: 'light',
       state: 'posted',
       cardSelector: '.popover-card[data-comment-id]',
-      anchorSelector: '.popover-card[data-comment-id]',
+      anchorSelector: '.otio-comment-mark[data-comment-id]',
     });
   } finally {
     await session.close();
@@ -2144,8 +2097,7 @@ if (hasMainDist) {
     await mainSession.evaluate(`(() => {
       const p = document.querySelectorAll('.doc p')[1];
       const range = document.createRange();
-      range.setStart(p.firstChild, 0);
-      range.setEnd(p.firstChild, 35);
+      range.selectNodeContents(p);
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);

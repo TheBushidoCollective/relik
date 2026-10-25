@@ -5425,8 +5425,6 @@ export function buildThread(
       paintMarks(lastEntries);
     },
     compose: (anchor, box, options) => {
-      // Refused rather than half-offered when there is no identity yet:
-      // verifying one is the sidebar's flow, and the caller falls back to it.
       if (host === undefined || popover === undefined) return false;
       if (session.kind !== 'verified' || cipher === undefined) return false;
       const targetBox = anchorBoxFor(PENDING_MARK_ID) ?? box;
@@ -5981,42 +5979,23 @@ export function buildThread(
       }
     }
 
-    if (id !== PENDING_MARK_ID) {
-      for (const node of host.querySelectorAll<HTMLElement>(
-        `[data-comment-id="${id}"]`
-      )) {
-        if (!node.closest('.popover')) {
-          const painted =
-            node.closest<HTMLElement>('[data-cluster-members]') ?? node;
-          const rect = painted.getBoundingClientRect();
-          return chooseTargetBox(
-            anchorFromClientRect(rect, host.getBoundingClientRect(), host),
-            undefined,
-            viewHeight
-          );
-        }
+    const candidates: HTMLElement[] = [];
+    for (const node of host.querySelectorAll<HTMLElement>(
+      `[data-comment-id="${id}"]`
+    )) {
+      if (!node.closest('.popover')) {
+        const painted =
+          node.closest<HTMLElement>('[data-cluster-members]') ?? node;
+        candidates.push(painted);
       }
     }
-
-    const candidates: HTMLElement[] = [];
-    if (id === PENDING_MARK_ID) {
+    if (candidates.length === 0 && id === PENDING_MARK_ID) {
       for (const node of host.querySelectorAll<HTMLElement>(
-        '.relic-text-mark.is-pending, .comment-pin.is-pending, .comment-region.is-pending, .relic-page-selection'
+        '.relic-text-mark.is-pending, .comment-pin.is-pending, .comment-region.is-pending, .relic-page-selection, .mark-page.is-pending'
       )) {
         if (!node.closest('.popover')) candidates.push(node);
       }
-    } else {
-      for (const node of host.querySelectorAll<HTMLElement>(
-        `[data-comment-id="${id}"]`
-      )) {
-        if (!node.closest('.popover')) {
-          const painted =
-            node.closest<HTMLElement>('[data-cluster-members]') ?? node;
-          candidates.push(painted);
-        }
-      }
     }
-
     if (candidates.length === 0) return undefined;
 
     const isText = candidates.some(
@@ -8189,7 +8168,7 @@ export function renderReady(
       bar,
       buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
-    thread?.attach(stage);
+    thread?.attach(wrap);
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
