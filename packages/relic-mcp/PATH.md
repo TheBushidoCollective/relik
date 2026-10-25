@@ -293,6 +293,46 @@ Success for phase 1 ends with:
 PROBE relic_id=<id> version=2
 ```
 
+## Loading phases and the first-record key check
+
+Run the local headless proof across every class and network condition:
+
+```bash
+mise exec -- bun packages/relic-mcp/test/load-progress-path.ts
+```
+
+A reader opening any relic link on a slow connection sees the Relik bar and a named phase, with bytes against the total, from the first painted frame until the content appears. A link whose key does not open the relic stops downloading after the first block and says the relic could not be opened. A relic whose start decrypts but whose later blocks fail says the link is fine and the stored file is damaged.
+
+At startup, the proof launches an isolated headless Chrome instance over `--remote-debugging-pipe`. It publishes one relic per class, serves storage through a throttled chunked pull stream, and asserts that no blank frames occur, that phases appear in order, that early cancellation bounds transfer size on wrong keys to at most 262,144 bytes, and that damaged files offer retry and report without key entry.
+
+Success ends with:
+
+```text
+LOAD_PROGRESS_PATH_OK classes=12 runs=<n>
+```
+
+## Loading on the live service
+
+Run the live service loading probe against production or a designated origin:
+
+```bash
+RELIC_LOAD_PROBE_CONFIRM=publish-one-1-day-relic \
+  mise exec -- bun packages/relic-mcp/test/load-live-probe.ts
+```
+
+The probe verifies progress indications and early cancellation against a live deployment.
+It requires `RELIC_LOAD_PROBE_CONFIRM=publish-one-1-day-relic` to prevent unprompted writes,
+publishes exactly one 1-day, untitled relic with `cover: false`, and tests:
+1. Throttled valid open: phases in order through ready, with progressive data transfer.
+2. Wrong key: stops download within 1 MB and confirms storage cancellation.
+3. Mobile viewport (390px): no blank frames and no horizontal overflow.
+
+It never prints the share URL or key. Success ends with:
+
+```text
+LOAD_LIVE_OK relic_id=<id> progress_steps=<n> cancel_bytes=<n> object_length=<n>
+```
+
 ## OpenTimelineIO end-to-end path
 
 Run the full source proof from the repository root with an explicit Chrome:
