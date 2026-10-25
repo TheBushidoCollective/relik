@@ -151,7 +151,7 @@ describe('tools/list and tool definitions', () => {
       /decision|approv|reject|verdict/i.test(t.name)
     );
     expect(matching.length).toBe(1);
-    expect(matching[0].name).toBe('relic_read_decisions');
+    expect(matching[0]?.name).toBe('relic_read_decisions');
   });
 
   test('relic_read_decisions definition matches spec §4.7 input and output schemas', () => {
@@ -361,8 +361,8 @@ describe('wire protocol and mint safety', () => {
     expect(result.structuredContent.relic_id).toBe(pub.relic_id);
     expect(result.structuredContent.current_version).toBe(1);
     expect(result.structuredContent.decisions.length).toBe(1);
-    expect(result.structuredContent.decisions[0].verdict).toBe('approve');
-    expect(result.content[0].text).toContain(
+    expect(result.structuredContent.decisions[0]?.verdict).toBe('approve');
+    expect(result.content[0]?.text).toContain(
       'alice@example.com: approve version 1'
     );
   });
@@ -404,7 +404,7 @@ describe('wire protocol and mint safety', () => {
     };
     expect(result.isError).toBe(false);
     expect(result.structuredContent.decisions).toEqual([]);
-    expect(result.content[0].text).toContain(
+    expect(result.content[0]?.text).toContain(
       'No decisions recorded on any version'
     );
   });
@@ -641,7 +641,7 @@ describe('REFUSAL_GUIDANCE', () => {
       content: Array<{ text: string }>;
     };
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain(
+    expect(r.content[0]?.text).toContain(
       'republish once with relic_republish; the link does not change'
     );
   });
@@ -678,10 +678,10 @@ describe('REFUSAL_GUIDANCE', () => {
       content: Array<{ text: string }>;
     };
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain(
+    expect(r.content[0]?.text).toContain(
       'The service is rate limiting decisions'
     );
-    expect(r.content[0].text).toContain('retry_after_seconds');
+    expect(r.content[0]?.text).toContain('retry_after_seconds');
   });
 
   test('invalid_share_proof provides share proof guidance', async () => {
@@ -715,7 +715,7 @@ describe('REFUSAL_GUIDANCE', () => {
       content: Array<{ text: string }>;
     };
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain(
+    expect(r.content[0]?.text).toContain(
       'The share proof was rejected by the service'
     );
   });
