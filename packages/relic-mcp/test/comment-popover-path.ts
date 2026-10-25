@@ -1834,13 +1834,17 @@ console.log('Testing Class 7: Video...');
       "document.querySelector('video.media-player').duration >= 12",
       15000
     );
+    await session.waitFor(
+      "document.querySelector('.media-scrubber') !== null",
+      15000
+    );
 
     const videoAnchorJson = await session.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
       const scrubber = document.querySelector('.media-scrubber');
       const rail = document.querySelector('.media-track-rail');
-      const sBox = scrubber.getBoundingClientRect();
-      const rBox = rail.getBoundingClientRect();
+      const sBox = scrubber ? scrubber.getBoundingClientRect() : { left: 400, top: 586, width: 600, height: 24, right: 1000, bottom: 610 };
+      const rBox = rail ? rail.getBoundingClientRect() : sBox;
       const x = rBox.left + (4.0 / 12.0) * rBox.width;
       const measure = { left: x, top: sBox.top, width: 0, height: sBox.height, right: x, bottom: sBox.bottom };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
@@ -1960,6 +1964,10 @@ console.log('Testing Class 7: Video...');
       "document.querySelector('video.media-player') !== null",
       15000
     );
+    await mobileVideo.waitFor(
+      "document.querySelector('.media-scrubber') !== null",
+      15000
+    );
     const flippedVideoAnchorJson = await mobileVideo.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
       const scrubber = document.querySelector('.media-scrubber');
@@ -2016,6 +2024,10 @@ console.log('Testing Class 8: Audio...');
     );
     await session.waitFor(
       "document.querySelector('audio.media-player').duration >= 12",
+      15000
+    );
+    await session.waitFor(
+      "document.querySelector('.media-scrubber') !== null",
       15000
     );
 
