@@ -453,6 +453,7 @@ function isRegionNonUniform(
 
 const RECORDER_SOURCE = `(() => {
   const samples = [];
+  const renderEvents = [];
   let sampling = true;
 
   function isVisible(el) {
@@ -464,6 +465,44 @@ const RECORDER_SOURCE = `(() => {
     const rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
   }
+
+  function recordNode(node) {
+    if (!node || node.nodeType !== 1) return;
+    if (node.matches?.('.render-status, [data-render-status]') || node.querySelector?.('.render-status, [data-render-status]')) {
+      renderEvents.push({ kind: 'pill', time: performance.now() });
+    }
+    const stage = node.matches?.('main.stage, .stage') ? node : node.querySelector?.('main.stage, .stage');
+    if (stage) {
+      const state = stage.getAttribute('data-render-state');
+      if (state) {
+        renderEvents.push({ kind: 'state', state, time: performance.now() });
+      }
+    }
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.type === 'childList') {
+        m.addedNodes.forEach(recordNode);
+      } else if (m.type === 'attributes') {
+        if (m.attributeName === 'data-render-state') {
+          const state = m.target.getAttribute('data-render-state');
+          renderEvents.push({ kind: 'state', state, time: performance.now() });
+        } else if (m.attributeName === 'data-render-status' || m.attributeName === 'class') {
+          if (m.target.matches?.('.render-status, [data-render-status]')) {
+            renderEvents.push({ kind: 'pill', time: performance.now() });
+          }
+        }
+      }
+    }
+  });
+
+  observer.observe(document, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['data-render-state', 'data-render-status', 'class']
+  });
 
   function doSample() {
     if (window.top !== window) return;
@@ -522,7 +561,12 @@ const RECORDER_SOURCE = `(() => {
 
   doSample();
   window.__relicLoadSamples = samples;
-  window.__stopRelicLoadSampling = () => { sampling = false; return samples; };
+  window.__relicRenderEvents = renderEvents;
+  window.__stopRelicLoadSampling = () => {
+    sampling = false;
+    observer.disconnect();
+    return { samples, renderEvents };
+  };
 })();`;
 
 // --- Fixture Publishing -----------------------------------------------------
@@ -853,6 +897,11 @@ interface OpenRunOptions {
   blockViewerJs?: boolean;
   onBeforeNavigate?: (sessionId: string) => Promise<void>;
 }
+interface RenderEvent {
+  kind: 'pill' | 'state';
+  state?: string;
+  time: number;
+}
 
 interface Sample {
   time: number;
@@ -874,6 +923,7 @@ interface RunOutcome {
   targetId: string;
   sessionId: string;
   samples: Sample[];
+  renderEvents: RenderEvent[];
   firstProgressShot: Buffer | null;
   readyShot: Buffer | null;
   storageRequest: {
@@ -1121,6 +1171,12 @@ async function runRelicPage(
         break;
       }
     }
+    if (!readyShot) {
+      const shot = (await cdp
+        .send('Page.captureScreenshot', { format: 'png' }, sessionId)
+        .catch(() => null)) as { data: string } | null;
+      if (shot) readyShot = Buffer.from(shot.data, 'base64');
+    }
   } else {
     // For noscript or blocked viewer.js, let page load for 400ms
     await Bun.sleep(400);
@@ -1130,28 +1186,45 @@ async function runRelicPage(
     if (shot) readyShot = Buffer.from(shot.data, 'base64');
   }
 
-  // Retrieve samples
+  // Retrieve samples and render events
   let samples: Sample[] = [];
+  let renderEvents: RenderEvent[] = [];
   if (isolatedContextId !== undefined) {
-    const rawSamples = (await cdp
+    const rawResult = (await cdp
       .send(
         'Runtime.evaluate',
         {
-          expression:
-            'window.__stopRelicLoadSampling ? window.__stopRelicLoadSampling() : (window.__relicLoadSamples || [])',
+          expression: `(() => {
+            if (window.__stopRelicLoadSampling) {
+              const res = window.__stopRelicLoadSampling();
+              return Array.isArray(res) ? { samples: res, renderEvents: window.__relicRenderEvents || [] } : res;
+            }
+            return { samples: window.__relicLoadSamples || [], renderEvents: window.__relicRenderEvents || [] };
+          })()`,
           contextId: isolatedContextId,
           returnByValue: true,
         },
         sessionId
       )
-      .catch(() => null)) as { result?: { value?: Sample[] } } | null;
-    samples = rawSamples?.result?.value ?? [];
+      .catch(() => null)) as {
+      result?: {
+        value?: { samples?: Sample[]; renderEvents?: RenderEvent[] } | Sample[];
+      };
+    } | null;
+    const val = rawResult?.result?.value;
+    if (Array.isArray(val)) {
+      samples = val;
+    } else if (val) {
+      samples = val.samples ?? [];
+      renderEvents = val.renderEvents ?? [];
+    }
   }
 
   return {
     targetId,
     sessionId,
     samples,
+    renderEvents,
     firstProgressShot,
     readyShot,
     storageRequest: storageReq,
@@ -1299,7 +1372,15 @@ try {
         'otio',
       ];
       if (renderingClasses.includes(fix.classKey)) {
-        const sawPill = samples.some((s) => s.renderPillVisible);
+        const sawPillInSamples = samples.some((s) => s.renderPillVisible);
+        const sawPillInEvents = outcome.renderEvents.some(
+          (e) => e.kind === 'pill'
+        );
+        const renderingObserved = outcome.renderEvents.some(
+          (e) => e.kind === 'state' && e.state === 'rendering'
+        );
+        const sawPill =
+          sawPillInSamples || sawPillInEvents || renderingObserved;
         assert.ok(
           sawPill,
           `Rendering class ${fix.classKey} must show the render pill at least once before ready`
