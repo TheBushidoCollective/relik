@@ -17,9 +17,11 @@ import {
   MAX_HEADER_BYTES,
 } from '../src/envelope.ts';
 import {
+  ContentTooLargeError,
   DecryptFailedError,
   KeyIdPresentError,
   MalformedContainerError,
+  RelicFormatError,
   StrictParseError,
   TruncatedContainerError,
   VersionMismatchError,
@@ -459,6 +461,48 @@ describe('refusals', () => {
     await expect(openRelic(longContainer, key)).rejects.toBeInstanceOf(
       MalformedContainerError
     );
+  });
+
+  test('openRelic bounds declared entry.length and throws a format error rather than RangeError', async () => {
+    const key = generateKey();
+    const salt = new Uint8Array(16);
+    crypto.getRandomValues(salt);
+    const keys = await deriveKeys(key, salt);
+    const rs = 256;
+    const capacity = recordCapacity(rs);
+
+    const declaredLength = Number.MAX_SAFE_INTEGER;
+    const envelopeBytes = encodeEnvelope({
+      version: 1,
+      entries: [
+        {
+          filename: 'huge.bin',
+          mimetype: 'application/octet-stream',
+          offset: 0,
+          length: declaredLength,
+        },
+      ],
+    });
+
+    const headerBytes = encodeHeader(salt, rs);
+    const rec0 = await encryptRecord(keys, 0, envelopeBytes, false, capacity);
+    const rec1 = await encryptRecord(keys, 1, bytes(capacity), true);
+
+    const container = new Uint8Array(
+      headerBytes.length + rec0.length + rec1.length
+    );
+    container.set(headerBytes, 0);
+    container.set(rec0, headerBytes.length);
+    container.set(rec1, headerBytes.length + rec0.length);
+
+    let thrownError: unknown;
+    try {
+      await openRelic(container, key);
+    } catch (err) {
+      thrownError = err;
+    }
+    expect(thrownError).toBeInstanceOf(ContentTooLargeError);
+    expect(thrownError).not.toBeInstanceOf(RangeError);
   });
 
   test('a set keyid is refused', async () => {

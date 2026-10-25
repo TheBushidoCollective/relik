@@ -115,7 +115,8 @@ export interface OpenedRelic {
 export async function openRelic(
   container: Uint8Array,
   key: Uint8Array,
-  fragmentVersion: number = FORMAT_VERSION
+  fragmentVersion: number = FORMAT_VERSION,
+  options?: { readonly maxContentBytes?: number }
 ): Promise<OpenedRelic> {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -126,6 +127,7 @@ export async function openRelic(
   return openRelicStream(stream, key, {
     objectLength: container.length,
     fragmentVersion,
+    maxContentBytes: options?.maxContentBytes ?? PLAINTEXT_CAP_BYTES,
   });
 }
 
