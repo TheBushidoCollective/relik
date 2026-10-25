@@ -12,7 +12,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
-import { discoverChrome } from '../src/cover/chrome.ts';
 
 if (process.env['RELIC_LOAD_PROBE_CONFIRM'] !== 'publish-one-1-day-relic') {
   console.error(
