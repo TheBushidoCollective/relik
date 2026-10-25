@@ -1824,7 +1824,9 @@ export function openDecisionPanel(
           version: decisionOptions.version,
           verdict,
           share_proof: await options.shareProof(),
-          version_digest: decisionOptions.versionDigest,
+          // The digest of the bytes this page decrypted, never the service's
+          // echo: the binding must not rest on the equality check above.
+          version_digest: view.versionDigest,
           credential: json,
         });
         if (!open) return;
