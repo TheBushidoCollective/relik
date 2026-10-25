@@ -1053,12 +1053,15 @@ export class MemoryStore implements RelicStore {
         (c) => c.credentialId === nextCred.credentialId
       );
       if (stored !== undefined) {
-        if (stored.signCount > 0 || nextCred.signCount > 0) {
-          if (nextCred.signCount <= stored.signCount) {
-            throw new ProblemError('passkey_verification_failed', {
-              passkey_check: 'counter',
-            });
-          }
+        const isRegression = nextCred.signCount < stored.signCount;
+        const isRepeatedAssertion =
+          nextCred.signCount === stored.signCount &&
+          (stored.signCount > 0 || nextCred.signCount > 0) &&
+          nextCred.lastUsedAt !== stored.lastUsedAt;
+        if (isRegression || isRepeatedAssertion) {
+          throw new ProblemError('passkey_verification_failed', {
+            passkey_check: 'counter',
+          });
         }
       }
     }
