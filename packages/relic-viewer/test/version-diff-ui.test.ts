@@ -62,6 +62,9 @@ class ElementStub {
   max = '';
   value = '';
   readonly children: ElementStub[] = [];
+  get firstElementChild(): ElementStub | null {
+    return this.children[0] ?? null;
+  }
   readonly attributes = new Map<string, string>();
   readonly dataset: Record<string, string> = {};
   readonly style = { setProperty: (): void => {} };
@@ -302,6 +305,23 @@ describe('version comparison affordance', () => {
     expect(withClass(docBody, 'compare-picker')).toHaveLength(0);
     expect(withClass(docBody, 'bar')).toHaveLength(1);
     expect(withClass(docBody, 'stage-code')).toHaveLength(1);
+  });
+
+  test('attaches the comment thread to the scrolling stage wrap, not inner stage', () => {
+    const current = view('code', 3);
+    renderReady(
+      current,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'https://relik-usercontent.example',
+      dummyDeps()
+    );
+
+    const docBody = getBody();
+    const wrap = withClass(docBody, 'stage-wrap')[0];
+    const stage = withClass(docBody, 'stage-code')[0];
+    if (!wrap || !stage) throw new Error('missing wrap or stage');
+    expect(wrap.dataset['pairBind']).toBe('1');
+    expect(stage.dataset['pairBind']).toBeUndefined();
   });
 
   test('the taskbar carries the version label, never a comparison dropdown', () => {
