@@ -280,6 +280,8 @@ Run from the repository root:
 mise exec -- bun packages/relic-mcp/test/copy-link-path.ts
 ```
 
+`RELIC_PROOF_CHROME_PATH` chooses the browser; on a workstation, point it at a `chrome-headless-shell` binary (e.g. `~/Library/Caches/ms-playwright/chromium_headless_shell-<n>/chrome-headless-shell-mac-arm64/chrome-headless-shell`); without it the script starts the first installed Chrome it finds; a run that has not finished after 120 seconds stops with `COPY_LINK_PATH_TIMEOUT`, the step it was on, and the CDP calls still waiting.
+
 Output ends:
 
 ```text
