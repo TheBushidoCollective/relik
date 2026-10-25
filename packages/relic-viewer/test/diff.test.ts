@@ -26,6 +26,7 @@ function ready(
     shareUrl: 'https://relik.example/aaaaaaaaaaaaaaaaaaaaaaaaaa#key',
     version: currentVersion,
     currentVersion,
+    versionDigest: '0'.repeat(64),
   };
 }
 
