@@ -36,6 +36,27 @@ import {
 import { captureSelectionQuote } from './annotate-quote.ts';
 import { isImageElement } from './annotate-region.ts';
 import { formatTimecode, formatTimecodeTenths } from './annotate-time.ts';
+import {
+  COPY_KEYLESS_LABEL,
+  COPY_LINK_LABEL,
+  COPY_PANEL_TITLE,
+  COPY_PHRASE_LABEL,
+  KEY_ENTRY_LABEL,
+  KEY_ENTRY_PLACEHOLDER,
+  KEY_ENTRY_PROMPT,
+  KEYLESS_COPIED_NOTE,
+  LINK_COPIED_NOTE,
+  LINK_LABEL,
+  LINK_NOTE,
+  PHRASE_COPIED_NOTE,
+  PHRASE_FAILED_NOTE,
+  PHRASE_LABEL,
+  PHRASE_LOADING_NOTE,
+  PHRASE_NOTE,
+  SPLIT_NOTE,
+  keylessLink,
+  keyPhraseWords,
+} from './copy-link.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import { createMediaPlayer, type TimeAimDetail } from './media-player.ts';
 import {
@@ -746,14 +767,19 @@ export function buildBar(
 
   // The fragment was stripped from the address bar, so re-sharing has to come
   // from somewhere. This is that affordance, backed by the in-memory key.
-  actions.appendChild(
-    button('Copy link', ICONS.copy, () => {
-      void navigator.clipboard.writeText(view.shareUrl).then(
-        () => toast('Link copied. It contains the decryption key.'),
-        () => toast('Could not copy. Copy the link from where you opened it.')
-      );
-    })
-  );
+  const copyBtn = button('Copy link', ICONS.copy, () => {
+    toggleCopyLinkPanel(view.shareUrl, copyBtn);
+  });
+  copyBtn.dataset.action = 'copy-link';
+  copyBtn.setAttribute('aria-haspopup', 'dialog');
+  const panelOpen =
+    typeof document.getElementById === 'function' &&
+    document.getElementById(COPY_LINK_PANEL_ID) !== null;
+  copyBtn.setAttribute('aria-expanded', panelOpen ? 'true' : 'false');
+  if (panelOpen) {
+    copyBtn.setAttribute('aria-controls', COPY_LINK_PANEL_ID);
+  }
+  actions.appendChild(copyBtn);
 
   // Beside Copy link because it is the same errand done for somebody else:
   // the link still goes out in the reader's own mail, and Relic only learns
@@ -6718,6 +6744,360 @@ export function buildRelicRow(
   return row;
 }
 
+
+/* ---------- the copy-link panel ---------- */
+
+export const COPY_LINK_PANEL_ID = 'copy-link-panel';
+
+export interface CopyLinkPanelHandle {
+  readonly element: HTMLElement;
+  /** Settles when the phrase, or its failure note, is painted. */
+  readonly ready: Promise<void>;
+  readonly close: (returnFocus: boolean) => void;
+}
+
+function selectElementText(target: Node): void {
+  const selection = window.getSelection();
+  if (selection) {
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+}
+
+/** Opens the panel, or closes the open one and returns undefined. */
+export function toggleCopyLinkPanel(
+  shareUrl: string,
+  opener: HTMLElement
+): CopyLinkPanelHandle | undefined {
+  const existing = document.getElementById(COPY_LINK_PANEL_ID);
+  if (existing !== null) {
+    existing.remove();
+    const currentOpener =
+      document.querySelector<HTMLElement>('.bar [data-action="copy-link"]') ??
+      opener;
+    currentOpener.setAttribute('aria-expanded', 'false');
+    currentOpener.removeAttribute('aria-controls');
+    return undefined;
+  }
+
+  let open = true;
+
+  const section = document.createElement('section');
+  section.id = COPY_LINK_PANEL_ID;
+  section.className = 'copy-panel';
+  section.setAttribute('role', 'dialog');
+  section.setAttribute('aria-labelledby', 'copy-link-title');
+
+  const head = document.createElement('div');
+  head.className = 'copy-panel-head';
+
+  const title = document.createElement('h2');
+  title.id = 'copy-link-title';
+  title.className = 'copy-panel-title';
+  title.textContent = COPY_PANEL_TITLE;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'copy-panel-close';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.appendChild(icon(ICONS.close));
+  closeBtn.addEventListener('click', () => close(true));
+
+  head.append(title, closeBtn);
+
+  const body = document.createElement('div');
+  body.className = 'copy-panel-body';
+
+  // Link row
+  const linkRow = document.createElement('div');
+  linkRow.className = 'copy-row';
+  linkRow.dataset.copyRow = 'link';
+
+  const linkLabel = document.createElement('p');
+  linkLabel.className = 'copy-label';
+  linkLabel.textContent = LINK_LABEL;
+
+  const linkValue = document.createElement('p');
+  linkValue.className = 'copy-value';
+  linkValue.dataset.copyValue = 'link';
+
+  const hashIndex = shareUrl.indexOf('#');
+  const originAndPath =
+    hashIndex === -1 ? shareUrl : shareUrl.slice(0, hashIndex);
+  const fragment = hashIndex === -1 ? '' : shareUrl.slice(hashIndex);
+
+  const pathSpan = document.createElement('span');
+  pathSpan.textContent = originAndPath;
+  linkValue.appendChild(pathSpan);
+
+  if (fragment.length > 0) {
+    const keySpan = document.createElement('span');
+    keySpan.className = 'copy-link-key';
+    keySpan.textContent = fragment;
+    linkValue.appendChild(keySpan);
+  }
+
+  const linkActions = document.createElement('div');
+  linkActions.className = 'copy-actions';
+
+  const copyLinkBtn = button(COPY_LINK_LABEL, ICONS.copy, () => {
+    void copyText(shareUrl).then((copied) => {
+      if (copied) {
+        toast(LINK_COPIED_NOTE);
+      } else {
+        selectElementText(linkValue);
+        toast(COPY_FAILED_NOTE);
+      }
+    });
+  });
+  copyLinkBtn.classList.add('primary');
+  copyLinkBtn.dataset.copy = 'link';
+
+  const copyKeylessBtn = document.createElement('button');
+  copyKeylessBtn.type = 'button';
+  copyKeylessBtn.className = 'action';
+  copyKeylessBtn.dataset.copy = 'keyless';
+  const copyKeylessSpan = document.createElement('span');
+  copyKeylessSpan.textContent = COPY_KEYLESS_LABEL;
+  copyKeylessBtn.appendChild(copyKeylessSpan);
+  copyKeylessBtn.addEventListener('click', () => {
+    const keyless = keylessLink(shareUrl);
+    void copyText(keyless).then((copied) => {
+      if (copied) {
+        toast(KEYLESS_COPIED_NOTE);
+      } else {
+        selectElementText(pathSpan);
+        toast(COPY_FAILED_NOTE);
+      }
+    });
+  });
+
+  linkActions.append(copyLinkBtn, copyKeylessBtn);
+
+  const linkNote = document.createElement('p');
+  linkNote.className = 'copy-note';
+  linkNote.textContent = LINK_NOTE;
+
+  linkRow.append(linkLabel, linkValue, linkActions, linkNote);
+
+  // Phrase row
+  const phraseRow = document.createElement('div');
+  phraseRow.className = 'copy-row';
+  phraseRow.dataset.copyRow = 'phrase';
+
+  const phraseLabel = document.createElement('p');
+  phraseLabel.className = 'copy-label';
+  phraseLabel.textContent = PHRASE_LABEL;
+
+  const phraseList = document.createElement('ol');
+  phraseList.className = 'copy-phrase';
+  phraseList.dataset.copyValue = 'phrase';
+  phraseList.setAttribute('aria-label', 'Key phrase, 12 words');
+  phraseList.setAttribute('role', 'list');
+  phraseList.setAttribute('aria-busy', 'true');
+
+  const loadingStatus = document.createElement('li');
+  loadingStatus.className = 'copy-phrase-status';
+  loadingStatus.textContent = PHRASE_LOADING_NOTE;
+  phraseList.appendChild(loadingStatus);
+
+  const phraseActions = document.createElement('div');
+  phraseActions.className = 'copy-actions';
+
+  const copyPhraseBtn = button(COPY_PHRASE_LABEL, ICONS.copy, () => {
+    const lis = phraseList.querySelectorAll('li');
+    const words = Array.from(lis)
+      .map((li) => li.textContent?.trim() ?? '')
+      .filter((w) => w.length > 0 && !w.includes(' '));
+    const phrase = words.join(' ');
+    void copyText(phrase).then((copied) => {
+      if (copied) {
+        toast(PHRASE_COPIED_NOTE);
+      } else {
+        selectElementText(phraseList);
+        toast(COPY_FAILED_NOTE);
+      }
+    });
+  });
+  copyPhraseBtn.dataset.copy = 'phrase';
+  copyPhraseBtn.disabled = true;
+
+  phraseActions.appendChild(copyPhraseBtn);
+
+  const phraseNote = document.createElement('p');
+  phraseNote.className = 'copy-note';
+  phraseNote.textContent = PHRASE_NOTE;
+
+  phraseRow.append(phraseLabel, phraseList, phraseActions, phraseNote);
+
+  const splitNote = document.createElement('p');
+  splitNote.className = 'copy-note copy-split';
+  splitNote.textContent = SPLIT_NOTE;
+
+  body.append(linkRow, phraseRow, splitNote);
+  section.append(head, body);
+
+  const reposition = (): void => {
+    const bar = document.querySelector('.bar');
+    if (bar !== null && typeof bar.getBoundingClientRect === 'function') {
+      section.style.setProperty(
+        '--copy-top',
+        `${Math.round(bar.getBoundingClientRect().bottom)}px`
+      );
+    }
+    const currentOpener =
+      document.querySelector<HTMLElement>('.bar [data-action="copy-link"]') ??
+      opener;
+    if (
+      currentOpener !== null &&
+      typeof currentOpener.getBoundingClientRect === 'function'
+    ) {
+      const openerRect = currentOpener.getBoundingClientRect();
+      const rightOffset = Math.max(8, window.innerWidth - openerRect.right);
+      section.style.setProperty('--copy-right', `${Math.round(rightOffset)}px`);
+    }
+  };
+
+  let resizeRaf: number | undefined;
+  const onResize = (): void => {
+    if (resizeRaf !== undefined) return;
+    if (typeof requestAnimationFrame === 'function') {
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = undefined;
+        reposition();
+      });
+    } else {
+      reposition();
+    }
+  };
+  window.addEventListener('resize', onResize);
+
+  const onDocKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      close(true);
+    }
+  };
+  document.addEventListener('keydown', onDocKeyDown);
+
+  section.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      close(true);
+    }
+  });
+
+  const onPointerDown = (e: MouseEvent | PointerEvent): void => {
+    const target = e.target as Node | null;
+    if (!target) return;
+    const currentOpener =
+      document.querySelector<HTMLElement>('.bar [data-action="copy-link"]') ??
+      opener;
+    if (
+      section.contains(target) ||
+      (currentOpener && currentOpener.contains(target))
+    ) {
+      return;
+    }
+    close(false);
+  };
+  document.addEventListener('pointerdown', onPointerDown);
+
+  section.addEventListener('focusout', (e: FocusEvent) => {
+    const nextTarget = e.relatedTarget as Node | null;
+    const currentOpener =
+      document.querySelector<HTMLElement>('.bar [data-action="copy-link"]') ??
+      opener;
+    if (
+      nextTarget !== null &&
+      !section.contains(nextTarget) &&
+      !(currentOpener && currentOpener.contains(nextTarget))
+    ) {
+      close(false);
+    }
+  });
+
+  let observer: MutationObserver | undefined;
+  if (typeof MutationObserver === 'function' && document.body) {
+    observer = new MutationObserver(() => {
+      if (!document.body.contains(section)) {
+        close(false);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  const close = (returnFocus: boolean): void => {
+    if (!open) return;
+    open = false;
+    window.removeEventListener('resize', onResize);
+    document.removeEventListener('keydown', onDocKeyDown);
+    document.removeEventListener('pointerdown', onPointerDown);
+    if (observer) {
+      observer.disconnect();
+      observer = undefined;
+    }
+    section.remove();
+
+    const currentOpener =
+      document.querySelector<HTMLElement>('.bar [data-action="copy-link"]') ??
+      opener;
+    if (currentOpener) {
+      currentOpener.setAttribute('aria-expanded', 'false');
+      currentOpener.removeAttribute('aria-controls');
+      if (returnFocus && typeof currentOpener.focus === 'function') {
+        currentOpener.focus();
+      }
+    }
+  };
+
+  const bar =
+    document.querySelector('header.bar') ?? document.querySelector('.bar');
+  if (bar !== null && bar.parentNode) {
+    bar.parentNode.insertBefore(section, bar.nextSibling);
+  } else {
+    document.body.appendChild(section);
+  }
+
+  reposition();
+
+  opener.setAttribute('aria-expanded', 'true');
+  opener.setAttribute('aria-controls', COPY_LINK_PANEL_ID);
+  if (typeof copyLinkBtn.focus === 'function') {
+    copyLinkBtn.focus();
+  }
+
+  const ready = keyPhraseWords(shareUrl).then(
+    (words) => {
+      if (!open) return;
+      phraseList.removeAttribute('aria-busy');
+      phraseList.replaceChildren();
+      for (const word of words) {
+        const li = document.createElement('li');
+        li.textContent = word;
+        phraseList.appendChild(li);
+      }
+      copyPhraseBtn.disabled = false;
+    },
+    () => {
+      if (!open) return;
+      phraseList.removeAttribute('aria-busy');
+      phraseList.replaceChildren();
+      const failed = document.createElement('li');
+      failed.className = 'copy-phrase-status is-failed';
+      failed.textContent = PHRASE_FAILED_NOTE;
+      phraseList.appendChild(failed);
+      copyPhraseBtn.disabled = true;
+    }
+  );
+
+  return {
+    element: section,
+    ready,
+    close,
+  };
+}
 /* ---------- the share panel ---------- */
 
 export interface SharePanelHandle {
@@ -7329,8 +7709,7 @@ export function renderDead(
 
     const prompt = document.createElement('p');
     prompt.className = 'key-entry-prompt';
-    prompt.textContent =
-      'If you have the decryption key or recovery phrase for this relic, enter it below.';
+    prompt.textContent = KEY_ENTRY_PROMPT;
 
     const form = document.createElement('form');
     form.className = 'key-entry-form';
@@ -7338,7 +7717,7 @@ export function renderDead(
     const label = document.createElement('label');
     label.className = 'key-entry-label';
     label.htmlFor = 'relic-key-input';
-    label.textContent = 'Key, share link, or recovery phrase';
+    label.textContent = KEY_ENTRY_LABEL;
 
     const inputRow = document.createElement('div');
     inputRow.className = 'key-entry-row';
@@ -7348,7 +7727,7 @@ export function renderDead(
     input.id = 'relic-key-input';
     input.name = 'key';
     input.className = 'compose-input key-entry-input';
-    input.placeholder = 'Paste link, #r1..., or recovery words';
+    input.placeholder = KEY_ENTRY_PLACEHOLDER;
     input.autocomplete = 'off';
     input.spellcheck = false;
     input.required = true;
