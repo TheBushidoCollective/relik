@@ -267,7 +267,12 @@ describe('a bounded OTIO composer', () => {
       },
       snapshot: { timeline: 'A', track: 'A', item: null },
     };
-    aimOtio(mounted, base, true, { left: 20, top: 30, width: 400, height: 220 });
+    aimOtio(mounted, base, true, {
+      left: 20,
+      top: 30,
+      width: 400,
+      height: 220,
+    });
     const panel = only(mounted.stage, 'popover-card');
     const field = only(panel, 'popover-field');
     field.value = 'The fullscreen draft remains.';

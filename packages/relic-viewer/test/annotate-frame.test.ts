@@ -132,7 +132,14 @@ class MockNode {
   set id(val: string) {
     this.attributes.id = val;
   }
-  getBoundingClientRect(): { left: number; top: number; width: number; height: number; right: number; bottom: number } {
+  getBoundingClientRect(): {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    right: number;
+    bottom: number;
+  } {
     const left = parseFloat(this.style.left || '0') || 0;
     const top = parseFloat(this.style.top || '0') || 0;
     const width = parseFloat(this.style.width || '0') || 0;
@@ -146,7 +153,14 @@ class MockNode {
       bottom: top + height,
     };
   }
-  getClientRects(): Array<{ left: number; top: number; width: number; height: number; right: number; bottom: number }> {
+  getClientRects(): Array<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    right: number;
+    bottom: number;
+  }> {
     const b = this.getBoundingClientRect();
     if (b.width > 0 || b.height > 0) return [b];
     return [];
@@ -563,38 +577,38 @@ describe('frame message validation', () => {
   });
 
   test('validates well-formed frame point messages', () => {
-     expect(
+    expect(
       isFramePointMessage({
         type: 'relic:frame-point',
         x: 0.5,
         y: 0.25,
         box: { left: 10, top: 20, width: 20, height: 20 },
       })
-     ).toBe(true);
-     expect(isFramePointMessage({ type: 'relic:frame-point', x: 0, y: 1 })).toBe(
-       true
-     );
-   });
+    ).toBe(true);
+    expect(isFramePointMessage({ type: 'relic:frame-point', x: 0, y: 1 })).toBe(
+      true
+    );
+  });
 
-   test('rejects malformed frame point messages', () => {
-     expect(isFramePointMessage(null)).toBe(false);
-     expect(
-       isFramePointMessage({ type: 'relic:frame-point', x: -0.1, y: 0.5 })
-     ).toBe(false);
-     expect(
-       isFramePointMessage({ type: 'relic:frame-point', x: 1.1, y: 0.5 })
-     ).toBe(false);
-     expect(
-       isFramePointMessage({ type: 'relic:frame-point', x: Number.NaN, y: 0.5 })
-     ).toBe(false);
-     expect(
-       isFramePointMessage({
-         type: 'relic:frame-point',
-         x: 0.5,
-         y: Number.POSITIVE_INFINITY,
-       })
-     ).toBe(false);
-     expect(isFramePointMessage({ type: 'other', x: 0.5, y: 0.5 })).toBe(false);
+  test('rejects malformed frame point messages', () => {
+    expect(isFramePointMessage(null)).toBe(false);
+    expect(
+      isFramePointMessage({ type: 'relic:frame-point', x: -0.1, y: 0.5 })
+    ).toBe(false);
+    expect(
+      isFramePointMessage({ type: 'relic:frame-point', x: 1.1, y: 0.5 })
+    ).toBe(false);
+    expect(
+      isFramePointMessage({ type: 'relic:frame-point', x: Number.NaN, y: 0.5 })
+    ).toBe(false);
+    expect(
+      isFramePointMessage({
+        type: 'relic:frame-point',
+        x: 0.5,
+        y: Number.POSITIVE_INFINITY,
+      })
+    ).toBe(false);
+    expect(isFramePointMessage({ type: 'other', x: 0.5, y: 0.5 })).toBe(false);
     expect(
       isFramePointMessage({
         type: 'relic:frame-point',
@@ -603,38 +617,38 @@ describe('frame message validation', () => {
         box: { left: 0, top: 0, width: -1, height: 20 },
       })
     ).toBe(false);
-   });
+  });
 
-   test('validates well-formed frame region messages', () => {
-     expect(
-       isFrameRegionMessage({
-         type: 'relic:frame-region',
-         rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+  test('validates well-formed frame region messages', () => {
+    expect(
+      isFrameRegionMessage({
+        type: 'relic:frame-region',
+        rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
         box: { left: 10, top: 20, width: 30, height: 40 },
-       })
-     );
-     expect(
-       isFrameRegionMessage({
-         type: 'relic:frame-region',
-         rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
-       })
-     ).toBe(true);
-   });
+      })
+    );
+    expect(
+      isFrameRegionMessage({
+        type: 'relic:frame-region',
+        rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+      })
+    ).toBe(true);
+  });
 
-   test('rejects malformed frame region messages', () => {
-     expect(isFrameRegionMessage(null)).toBe(false);
-     expect(
-       isFrameRegionMessage({
-         type: 'relic:frame-region',
-         rect: { x: 0.1, y: 0.2, w: 0, h: 0.4 },
-       })
-     ).toBe(false);
-     expect(
-       isFrameRegionMessage({
-         type: 'relic:frame-region',
-         rect: { x: 0.8, y: 0.2, w: 0.5, h: 0.4 },
-       })
-     ).toBe(false);
+  test('rejects malformed frame region messages', () => {
+    expect(isFrameRegionMessage(null)).toBe(false);
+    expect(
+      isFrameRegionMessage({
+        type: 'relic:frame-region',
+        rect: { x: 0.1, y: 0.2, w: 0, h: 0.4 },
+      })
+    ).toBe(false);
+    expect(
+      isFrameRegionMessage({
+        type: 'relic:frame-region',
+        rect: { x: 0.8, y: 0.2, w: 0.5, h: 0.4 },
+      })
+    ).toBe(false);
     expect(
       isFrameRegionMessage({
         type: 'relic:frame-region',
@@ -642,13 +656,21 @@ describe('frame message validation', () => {
         box: { left: 0, top: 0, width: 10, height: Number.NaN },
       })
     ).toBe(false);
-   });
+  });
 
   test('validates track mark messages', () => {
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 'm1' })).toBe(true);
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: null })).toBe(true);
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: '' })).toBe(false);
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 123 })).toBe(false);
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 'm1' })).toBe(
+      true
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: null })).toBe(
+      true
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: '' })).toBe(
+      false
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 123 })).toBe(
+      false
+    );
     expect(isTrackMarkMessage(null)).toBe(false);
   });
 
@@ -661,7 +683,9 @@ describe('frame message validation', () => {
         first: { left: 10, top: 20, width: 30, height: 20 },
       })
     ).toBe(true);
-    expect(isFrameMarkRectMessage({ type: 'relic:frame-mark-rect', id: 'm1' })).toBe(true);
+    expect(
+      isFrameMarkRectMessage({ type: 'relic:frame-mark-rect', id: 'm1' })
+    ).toBe(true);
     expect(
       isFrameMarkRectMessage({
         type: 'relic:frame-mark-rect',
@@ -1164,7 +1188,7 @@ describe('pointing at a long framed document', () => {
         box: { left: 144, top: 431, width: 20, height: 20 },
       },
     ]);
-   });
+  });
 
   test('a region release posts relic:frame-region with the drawn element getBoundingClientRect', () => {
     sizeDocument(1000, 2000);
@@ -1220,7 +1244,11 @@ describe('pointing at a long framed document', () => {
     const rects3 = messages.filter(isFrameMarkRectMessage);
     expect(rects3.length).toBeGreaterThan(rects2.length);
 
-    interaction.onPaintMark({ kind: 'region', id: 'm1', rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 } });
+    interaction.onPaintMark({
+      kind: 'region',
+      id: 'm1',
+      rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+    });
     const rects4 = messages.filter(isFrameMarkRectMessage);
     expect(rects4.length).toBeGreaterThan(rects3.length);
 

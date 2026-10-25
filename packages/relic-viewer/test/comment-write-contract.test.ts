@@ -263,10 +263,18 @@ describe('the geometry the frame reports', () => {
   });
 
   test('track mark message accepts null, valid id, and rejects non-strings', () => {
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: null })).toBe(true);
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 'm1' })).toBe(true);
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: '' })).toBe(false);
-    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 42 })).toBe(false);
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: null })).toBe(
+      true
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 'm1' })).toBe(
+      true
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: '' })).toBe(
+      false
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 42 })).toBe(
+      false
+    );
     expect(isTrackMarkMessage(null)).toBe(false);
   });
 

@@ -723,7 +723,9 @@ export async function mountOtioView(
         (trackId ? rails.get(trackId) : null) ??
         root.querySelector<HTMLElement>('.otio-track-rail');
       const row = rail?.closest('.otio-track-row') as HTMLElement | null;
-      const label = row?.querySelector('.otio-track-label') as HTMLElement | null;
+      const label = row?.querySelector(
+        '.otio-track-label'
+      ) as HTMLElement | null;
       const labelWidth = label?.getBoundingClientRect().width ?? 170;
       const areaWidth = Math.max(1, scroll.clientWidth - labelWidth);
 
@@ -739,10 +741,7 @@ export async function mountOtioView(
         } else if (selStart < scroll.scrollLeft + 16) {
           scroll.scrollLeft = Math.max(0, selStart - 16);
         } else if (selStart + selWidth > scroll.scrollLeft + areaWidth - 16) {
-          scroll.scrollLeft = Math.max(
-            0,
-            selStart + selWidth - areaWidth + 16
-          );
+          scroll.scrollLeft = Math.max(0, selStart + selWidth - areaWidth + 16);
         }
       }
     }

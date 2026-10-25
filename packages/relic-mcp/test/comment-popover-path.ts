@@ -34,7 +34,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable, Writable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { PDFDocument } from 'pdf-lib';
@@ -431,10 +431,18 @@ async function openBrowser(
           },
           sessionId
         );
-        const exception = res['exceptionDetails'] as
-          | { text?: string; exception?: { description?: string } }
+        const exception = res['exceptionDetails'] as {
+          text?: string;
+          exception?: { description?: string };
+        };
         if (exception) {
-          console.error('EVAL EXCEPTION:', exception.text, exception.exception?.description, '\nEXPR:', expression.slice(0, 200));
+          console.error(
+            'EVAL EXCEPTION:',
+            exception.text,
+            exception.exception?.description,
+            '\nEXPR:',
+            expression.slice(0, 200)
+          );
         }
         assert.ok(
           !exception,
@@ -674,7 +682,17 @@ async function measureAndAssert(
     `(${MEASURE_PROBE_SCRIPT})('${params.cardSelector}', '${params.anchorSelector}')`
   );
   if (!result.noOverlap) {
-    console.log('OVERLAP DEBUG:', params.className, params.state, 'card:', result.card, 'anchor:', result.anchor, 'side:', result.side);
+    console.log(
+      'OVERLAP DEBUG:',
+      params.className,
+      params.state,
+      'card:',
+      result.card,
+      'anchor:',
+      result.anchor,
+      'side:',
+      result.side
+    );
   }
   assert.ok(
     result.found,
@@ -716,8 +734,9 @@ async function measureAndAssert(
 console.log('Generating test fixtures...');
 // 1. Markdown: long markdown with a 600px tall paragraph at 320 wide
 const tallText =
-  'Detailed architecture analysis and continuous integration evaluation across multi-tiered services. '
-    .repeat(90);
+  'Detailed architecture analysis and continuous integration evaluation across multi-tiered services. '.repeat(
+    90
+  );
 const markdownContent = `# Long Markdown Document
 
 Introduction to the review document with architectural findings.
@@ -881,11 +900,11 @@ const verifiedToken = await createSession('reviewer@example.test');
 // =========================================================================
 console.log('Testing Class 1: Markdown...');
 {
-  const session = await openBrowser(
-    getRelic('markdown'),
-    verifiedToken,
-    { width: 1440, height: 900, scheme: 'light' }
-  );
+  const session = await openBrowser(getRelic('markdown'), verifiedToken, {
+    width: 1440,
+    height: 900,
+    scheme: 'light',
+  });
   try {
     await session.waitFor(
       "document.querySelectorAll('.doc p').length >= 3",
@@ -904,22 +923,51 @@ console.log('Testing Class 1: Markdown...');
       p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
     })()`);
 
-    console.log('Who:', await session.evaluate("fetch('/api/auth/session').then(r => r.json())"));
+    console.log(
+      'Who:',
+      await session.evaluate("fetch('/api/auth/session').then(r => r.json())")
+    );
     await session.waitFor("document.querySelector('.popover-offer') !== null");
-    console.log('Offer:', await session.evaluate("document.querySelector('.popover-offer')?.outerHTML"));
+    console.log(
+      'Offer:',
+      await session.evaluate(
+        "document.querySelector('.popover-offer')?.outerHTML"
+      )
+    );
     await session.evaluate(`(() => {
       const btn = document.querySelector('.popover-comment');
       btn.click();
     })()`);
     await Bun.sleep(500);
-    console.log('Popover after click:', await session.evaluate("document.querySelector('.popover')?.outerHTML"));
-    console.log('Thread is-open:', await session.evaluate("document.querySelector('.thread')?.className"));
-    console.log('Compose target:', await session.evaluate("document.querySelector('.compose-target')?.outerHTML"));
+    console.log(
+      'Popover after click:',
+      await session.evaluate("document.querySelector('.popover')?.outerHTML")
+    );
+    console.log(
+      'Thread is-open:',
+      await session.evaluate("document.querySelector('.thread')?.className")
+    );
+    console.log(
+      'Compose target:',
+      await session.evaluate(
+        "document.querySelector('.compose-target')?.outerHTML"
+      )
+    );
     await session.waitFor(
       "document.querySelector('.popover-card.popover-composer') !== null"
     );
-    console.log('Pending target:', await session.evaluate("document.querySelector('[data-comment-id=\"pending:target\"]')?.outerHTML"));
-    console.log('Composer attributes:', await session.evaluate("document.querySelector('.popover-card.popover-composer')?.outerHTML.slice(0, 150)"));
+    console.log(
+      'Pending target:',
+      await session.evaluate(
+        'document.querySelector(\'[data-comment-id="pending:target"]\')?.outerHTML'
+      )
+    );
+    console.log(
+      'Composer attributes:',
+      await session.evaluate(
+        "document.querySelector('.popover-card.popover-composer')?.outerHTML.slice(0, 150)"
+      )
+    );
     await measureAndAssert(session, {
       className: 'markdown',
       width: 1440,
@@ -1019,11 +1067,11 @@ console.log('Testing Class 1: Markdown...');
   }
 
   // 320x480 tall paragraph test (attached line 1, capped)
-  const mobileSession = await openBrowser(
-    getRelic('markdown'),
-    verifiedToken,
-    { width: 320, height: 480, scheme: 'light' }
-  );
+  const mobileSession = await openBrowser(getRelic('markdown'), verifiedToken, {
+    width: 320,
+    height: 480,
+    scheme: 'light',
+  });
   try {
     await mobileSession.waitFor(
       "document.querySelectorAll('.doc p').length >= 3",
@@ -1045,7 +1093,9 @@ console.log('Testing Class 1: Markdown...');
     await mobileSession.evaluate(
       `document.querySelector('.popover-comment').click()`
     );
-    await mobileSession.waitFor("document.querySelector('.popover-card.popover-composer') !== null");
+    await mobileSession.waitFor(
+      "document.querySelector('.popover-card.popover-composer') !== null"
+    );
     await measureAndAssert(mobileSession, {
       className: 'markdown',
       width: 320,
@@ -1245,7 +1295,7 @@ console.log('Testing Class 3: Image...');
     })()`);
 
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer[data-anchor-kind=\"pin\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer[data-anchor-kind="pin"]\') !== null'
     );
     await measureAndAssert(session, {
       className: 'image',
@@ -1310,7 +1360,7 @@ console.log('Testing Class 3: Image...');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     })()`);
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer[data-anchor-kind=\"region\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer[data-anchor-kind="region"]\') !== null'
     );
     await session.pressEscape();
     await session.waitFor("document.querySelector('.popover-card') === null");
@@ -1350,7 +1400,7 @@ console.log('Testing Class 4: PDF...');
     })()`);
 
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer[data-anchor-kind=\"page\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer[data-anchor-kind="page"]\') !== null'
     );
     await measureAndAssert(session, {
       className: 'pdf',
@@ -1557,7 +1607,7 @@ console.log('Testing Class 6: SVG...');
     })()`);
 
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer[data-anchor-kind=\"pin\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer[data-anchor-kind="pin"]\') !== null'
     );
     await measureAndAssert(session, {
       className: 'svg',
@@ -1627,7 +1677,7 @@ console.log('Testing Class 7: Video...');
     })()`);
 
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer[data-side=\"below\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer[data-side="below"]\') !== null'
     );
     await measureAndAssert(session, {
       className: 'video',
@@ -1696,11 +1746,11 @@ console.log('Testing Class 7: Video...');
   }
 
   // At 390 width, scrubber at bottom of stage flips above
-  const mobileVideo = await openBrowser(
-    getRelic('video'),
-    verifiedToken,
-    { width: 390, height: 844, scheme: 'light' }
-  );
+  const mobileVideo = await openBrowser(getRelic('video'), verifiedToken, {
+    width: 390,
+    height: 844,
+    scheme: 'light',
+  });
   try {
     await mobileVideo.waitFor(
       "document.querySelector('video.media-player') !== null",
@@ -1719,7 +1769,7 @@ console.log('Testing Class 7: Video...');
       }));
     })()`);
     await mobileVideo.waitFor(
-      "document.querySelector('.popover-card.popover-composer[data-side=\"above\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer[data-side="above"]\') !== null'
     );
     await measureAndAssert(mobileVideo, {
       className: 'video',
@@ -1768,7 +1818,7 @@ console.log('Testing Class 8: Audio...');
     })()`);
 
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer[data-side=\"below\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer[data-side="below"]\') !== null'
     );
     await measureAndAssert(session, {
       className: 'audio',
@@ -1844,7 +1894,7 @@ console.log('Testing Class 9: OTIO...');
     })()`);
 
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer.is-otio-composer[data-side=\"below\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer.is-otio-composer[data-side="below"]\') !== null'
     );
     await measureAndAssert(session, {
       className: 'otio',
@@ -1880,7 +1930,7 @@ console.log('Testing Class 9: OTIO...');
     })()`);
 
     await session.waitFor(
-      "document.querySelector('.popover-card.popover-composer.is-otio-composer[data-side=\"above\"]') !== null"
+      'document.querySelector(\'.popover-card.popover-composer.is-otio-composer[data-side="above"]\') !== null'
     );
     await measureAndAssert(session, {
       className: 'otio',
@@ -1931,7 +1981,9 @@ const hasMainDist = await access(join(mainDist, 'viewer.js'), constants.R_OK)
   .catch(() => false);
 
 if (hasMainDist) {
-  console.log('Running negative control against origin/main 76269ed5 viewer...');
+  console.log(
+    'Running negative control against origin/main 76269ed5 viewer...'
+  );
   const mainReceiptPath = join(
     proofDir,
     'comment-popover-negative-receipt.txt'
@@ -1956,10 +2008,7 @@ if (hasMainDist) {
 
   handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    if (
-      url.pathname.startsWith('/__storage/o/') &&
-      request.method === 'GET'
-    ) {
+    if (url.pathname.startsWith('/__storage/o/') && request.method === 'GET') {
       const relicId = url.pathname.slice('/__storage/o/'.length);
       const bytes = await storage.read(relicId);
       if (!bytes) return new Response('Not found', { status: 404 });
@@ -1971,11 +2020,11 @@ if (hasMainDist) {
     return mainApp.fetch(request);
   };
 
-  const mainSession = await openBrowser(
-    getRelic('markdown'),
-    verifiedToken,
-    { width: 1440, height: 900, scheme: 'light' }
-  );
+  const mainSession = await openBrowser(getRelic('markdown'), verifiedToken, {
+    width: 1440,
+    height: 900,
+    scheme: 'light',
+  });
 
   try {
     await mainSession.waitFor(
@@ -2035,17 +2084,13 @@ if (hasMainDist) {
     await Bun.sleep(300);
 
     receiptLines.push('');
-    receiptLines.push(
-      'CHECK 2: Mark press behavior on origin/main'
-    );
+    receiptLines.push('CHECK 2: Mark press behavior on origin/main');
     receiptLines.push(
       '  Result: Marks on main dispatched relic:frame-mark-click or called aim(), taking the reader to the sidebar.'
     );
 
     receiptLines.push('');
-    receiptLines.push(
-      'CHECK 3: Frame mark hover on origin/main'
-    );
+    receiptLines.push('CHECK 3: Frame mark hover on origin/main');
     receiptLines.push(
       '  Result: Frame mark hover did not open an unpinned popover card on the stage without active-mark geometry echo.'
     );

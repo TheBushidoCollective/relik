@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
- import {
-   comparisonAvailability,
-   createImageDiff,
-   createTextDiff,
-   diffCeilingFor,
-   diffModeForRoutes,
-   MAX_DIFF_BYTES,
+import {
+  comparisonAvailability,
+  createImageDiff,
+  createTextDiff,
+  diffCeilingFor,
+  diffModeForRoutes,
+  MAX_DIFF_BYTES,
   uncomparableClassNoun,
   unpromptedComparisonNotice,
-   versionHistoryCopy,
- } from '../src/diff.ts';
+  versionHistoryCopy,
+} from '../src/diff.ts';
 import type { ReadyView } from '../src/viewer.ts';
 
 const encoder = new TextEncoder();
@@ -166,7 +166,9 @@ describe('comparison availability', () => {
       ['pdf', 'PDF'],
     ] as const) {
       expect(uncomparableClassNoun(route)).toBe(expectedNoun);
-      const result = comparisonAvailability(ready(route, encoder.encode('bytes'), 2));
+      const result = comparisonAvailability(
+        ready(route, encoder.encode('bytes'), 2)
+      );
       expect(result.kind).toBe('unavailable');
       if (result.kind !== 'unavailable') return;
       expect(result.code).toBe('comparison_not_supported');

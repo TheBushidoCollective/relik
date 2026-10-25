@@ -4830,11 +4830,7 @@ async function assertCommentMarkPointerClick(
     );
     const clickTarget = freshCenter ?? exposure.after.center;
     if (clickTarget !== null && captureInstalled) {
-      await clickWithRealPointer(
-        browser,
-        clickTarget.x,
-        clickTarget.y
-      );
+      await clickWithRealPointer(browser, clickTarget.x, clickTarget.y);
       card = await waitForCommentMarkPopover(
         browser,
         pointerCase.expectedId,
@@ -9157,7 +9153,9 @@ try {
       join(originMainViewerDist, 'viewer.js')
     ).exists();
     if (!hasOriginDist) {
-      console.log(`[negative-control] skipped: ${originMainViewerDist} not found`);
+      console.log(
+        `[negative-control] skipped: ${originMainViewerDist} not found`
+      );
       return;
     }
 

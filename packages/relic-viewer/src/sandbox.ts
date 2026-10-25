@@ -819,12 +819,17 @@ export function setupFrameInteraction(
   let trackedId: string | null = null;
   let trackRaf: number | undefined;
 
-  const reportMarkRect = (document: Document, id: string): FrameMarkRectMessage => {
+  const reportMarkRect = (
+    document: Document,
+    id: string
+  ): FrameMarkRectMessage => {
     if (!document.body) {
       return { type: 'relic:frame-mark-rect', id };
     }
     const matching: HTMLElement[] = [];
-    for (const el of Array.from(document.body.querySelectorAll('[data-comment-id]'))) {
+    for (const el of Array.from(
+      document.body.querySelectorAll('[data-comment-id]')
+    )) {
       if ((el as HTMLElement).dataset?.commentId === id) {
         matching.push(el as HTMLElement);
       }
@@ -867,8 +872,12 @@ export function setupFrameInteraction(
       const firstRect = allRects[0]!;
       const minLeft = Math.min(...allRects.map((r) => r.left));
       const minTop = Math.min(...allRects.map((r) => r.top));
-      const maxRight = Math.max(...allRects.map((r) => r.right ?? r.left + r.width));
-      const maxBottom = Math.max(...allRects.map((r) => r.bottom ?? r.top + r.height));
+      const maxRight = Math.max(
+        ...allRects.map((r) => r.right ?? r.left + r.width)
+      );
+      const maxBottom = Math.max(
+        ...allRects.map((r) => r.bottom ?? r.top + r.height)
+      );
       const unionRect: FrameRect = {
         left: minLeft,
         top: minTop,
@@ -957,7 +966,9 @@ export function setupFrameInteraction(
   // has always had.
   if (typeof win.addEventListener === 'function') {
     win.addEventListener('scroll', handleScroll, { passive: true });
-    win.addEventListener('scroll', () => scheduleTrackReport(), { passive: true });
+    win.addEventListener('scroll', () => scheduleTrackReport(), {
+      passive: true,
+    });
     win.addEventListener('resize', () => scheduleTrackReport());
   }
   doc.addEventListener('click', (event: MouseEvent) => {

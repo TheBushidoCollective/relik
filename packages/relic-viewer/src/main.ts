@@ -4032,10 +4032,7 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       tellPlayer(host, 'relic:time-selection', next);
     }
   };
-  const aimOnStage = (
-    next: CommentAnchor,
-    box?: AnchorBox
-  ): void => {
+  const aimOnStage = (next: CommentAnchor, box?: AnchorBox): void => {
     dismiss();
     disarm();
     disarmSpan();
@@ -5612,11 +5609,15 @@ export function buildThread(
 
   const awaitFrameRect = (id: string): Promise<AnchorBox | undefined> => {
     return new Promise((resolve) => {
-      const frame = host?.querySelector<HTMLIFrameElement>('iframe.usercontent-frame');
+      const frame = host?.querySelector<HTMLIFrameElement>(
+        'iframe.usercontent-frame'
+      );
       const existing = frameRects.get(id);
       if (existing?.rect && frame && host) {
         const frameBox = frameAnchorBox(frame, existing.rect, host);
-        const firstBox = existing.first ? frameAnchorBox(frame, existing.first, host) : undefined;
+        const firstBox = existing.first
+          ? frameAnchorBox(frame, existing.first, host)
+          : undefined;
         resolve(chooseTargetBox(frameBox, firstBox, host.clientHeight));
         return;
       }
@@ -5634,7 +5635,9 @@ export function buildThread(
           clearTimeout(timer);
           frame.removeEventListener('relic:frame-mark-rect', onRect);
           const frameBox = frameAnchorBox(frame, detail.rect, host);
-          const firstBox = detail.first ? frameAnchorBox(frame, detail.first, host) : undefined;
+          const firstBox = detail.first
+            ? frameAnchorBox(frame, detail.first, host)
+            : undefined;
           resolve(chooseTargetBox(frameBox, firstBox, host.clientHeight));
         }
       };
@@ -5734,7 +5737,8 @@ export function buildThread(
     setActiveMark(undefined);
     frameWindow()?.postMessage({ type: 'relic:track-mark', id: null }, '*');
     if (returnFocusTarget && returnFocusTarget.isConnected) {
-      const active = typeof document === 'undefined' ? null : document.activeElement;
+      const active =
+        typeof document === 'undefined' ? null : document.activeElement;
       if (!active || active === document.body) {
         returnFocusTarget.focus({ preventScroll: true });
       }
@@ -5748,12 +5752,16 @@ export function buildThread(
     if (host === undefined) return undefined;
     const viewHeight = host.clientHeight;
 
-    const frame = host.querySelector<HTMLIFrameElement>('iframe.usercontent-frame');
+    const frame = host.querySelector<HTMLIFrameElement>(
+      'iframe.usercontent-frame'
+    );
     if (frame !== null) {
       const held = frameRects.get(id);
       if (held?.rect) {
         const frameBox = frameAnchorBox(frame, held.rect, host);
-        const firstBox = held.first ? frameAnchorBox(frame, held.first, host) : undefined;
+        const firstBox = held.first
+          ? frameAnchorBox(frame, held.first, host)
+          : undefined;
         const frameRect = frame.getBoundingClientRect();
         if (
           held.rect.left + held.rect.width > 0 &&
@@ -5772,9 +5780,15 @@ export function buildThread(
     if (otioView !== null) {
       const controller = otioControllerFor(host);
       if (controller?.measure) {
-        const measured = controller.measure(id === PENDING_MARK_ID ? undefined : id);
+        const measured = controller.measure(
+          id === PENDING_MARK_ID ? undefined : id
+        );
         if (measured) {
-          return anchorFromClientRect(measured, host.getBoundingClientRect(), host);
+          return anchorFromClientRect(
+            measured,
+            host.getBoundingClientRect(),
+            host
+          );
         }
       }
     }
@@ -5804,9 +5818,12 @@ export function buildThread(
         if (!node.closest('.popover')) candidates.push(node);
       }
     } else {
-      for (const node of host.querySelectorAll<HTMLElement>(`[data-comment-id="${id}"]`)) {
+      for (const node of host.querySelectorAll<HTMLElement>(
+        `[data-comment-id="${id}"]`
+      )) {
         if (!node.closest('.popover')) {
-          const painted = node.closest<HTMLElement>('[data-cluster-members]') ?? node;
+          const painted =
+            node.closest<HTMLElement>('[data-cluster-members]') ?? node;
           candidates.push(painted);
         }
       }
@@ -5814,14 +5831,18 @@ export function buildThread(
 
     if (candidates.length === 0) return undefined;
 
-    const isText = candidates.some((el) => el.tagName === 'MARK' || el.classList.contains('relic-text-mark'));
+    const isText = candidates.some(
+      (el) => el.tagName === 'MARK' || el.classList.contains('relic-text-mark')
+    );
     if (isText) {
       const allRects: DOMRect[] = [];
       let firstRect: DOMRect | undefined;
       for (const el of candidates) {
         let rects: DOMRect[] = [];
         try {
-          rects = Array.from(el.getClientRects()).filter((r) => r.width > 0 || r.height > 0);
+          rects = Array.from(el.getClientRects()).filter(
+            (r) => r.width > 0 || r.height > 0
+          );
         } catch {
           rects = [];
         }
@@ -5841,9 +5862,20 @@ export function buildThread(
       const minTop = Math.min(...allRects.map((r) => r.top));
       const maxRight = Math.max(...allRects.map((r) => r.right));
       const maxBottom = Math.max(...allRects.map((r) => r.bottom));
-      const unionClient = new DOMRect(minLeft, minTop, maxRight - minLeft, maxBottom - minTop);
-      const full = anchorFromClientRect(unionClient, host.getBoundingClientRect(), host);
-      const first = firstRect ? anchorFromClientRect(firstRect, host.getBoundingClientRect(), host) : undefined;
+      const unionClient = new DOMRect(
+        minLeft,
+        minTop,
+        maxRight - minLeft,
+        maxBottom - minTop
+      );
+      const full = anchorFromClientRect(
+        unionClient,
+        host.getBoundingClientRect(),
+        host
+      );
+      const first = firstRect
+        ? anchorFromClientRect(firstRect, host.getBoundingClientRect(), host)
+        : undefined;
       return chooseTargetBox(full, first, viewHeight);
     }
 
@@ -6073,7 +6105,8 @@ export function buildThread(
       },
     });
 
-    const cardKind = entry.kind === 'open' && entry.anchor ? entry.anchor.kind : 'text';
+    const cardKind =
+      entry.kind === 'open' && entry.anchor ? entry.anchor.kind : 'text';
     const card = popoverCard({ content: rows, actions, commentId: id });
     card.dataset['anchorKind'] = cardKind;
     holdOnHover(card);

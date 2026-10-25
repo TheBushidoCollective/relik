@@ -352,9 +352,7 @@ export function isTrackMarkMessage(data: unknown): data is TrackMarkMessage {
   if (msg.type !== 'relic:track-mark') return false;
   if (msg.id === null) return true;
   return (
-    typeof msg.id === 'string' &&
-    msg.id.length > 0 &&
-    msg.id.length <= 256
+    typeof msg.id === 'string' && msg.id.length > 0 && msg.id.length <= 256
   );
 }
 

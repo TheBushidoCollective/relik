@@ -140,23 +140,42 @@ describe('revealScrollTop test table (R1 to R5)', () => {
   const h = 160;
 
   test('R1: anchor top 300, height 20', () => {
-    expect(revealScrollTop({ left: 200, top: 300, width: 120, height: 20 }, h, host)).toBe(0);
+    expect(
+      revealScrollTop({ left: 200, top: 300, width: 120, height: 20 }, h, host)
+    ).toBe(0);
   });
 
   test('R2: anchor top 900, height 54', () => {
-    expect(revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, host)).toBe(362);
+    expect(
+      revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, host)
+    ).toBe(362);
   });
 
   test('R3: scrollTop 1000, anchor top 900, height 54', () => {
-    expect(revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, { ...host, scrollTop: 1000 })).toBe(892);
+    expect(
+      revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, {
+        ...host,
+        scrollTop: 1000,
+      })
+    ).toBe(892);
   });
 
   test('R4: clientHeight 200, anchor top 900, height 54', () => {
-    expect(revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, { ...host, clientHeight: 200 })).toBe(762);
+    expect(
+      revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, {
+        ...host,
+        clientHeight: 200,
+      })
+    ).toBe(762);
   });
 
   test('R5: scrollHeight 1000, anchor top 980, height 20', () => {
-    expect(revealScrollTop({ left: 200, top: 980, width: 120, height: 20 }, h, { ...host, scrollHeight: 1000 })).toBe(400);
+    expect(
+      revealScrollTop({ left: 200, top: 980, width: 120, height: 20 }, h, {
+        ...host,
+        scrollHeight: 1000,
+      })
+    ).toBe(400);
   });
 });
 
@@ -176,7 +195,12 @@ describe('chooseTargetBox test table (T1 to T4)', () => {
 
   test('T3: full {0,100,200,400}, no first', () => {
     const full = { left: 0, top: 100, width: 200, height: 400 };
-    expect(chooseTargetBox(full, undefined, viewHeight)).toEqual({ left: 0, top: 100, width: 200, height: 0 });
+    expect(chooseTargetBox(full, undefined, viewHeight)).toEqual({
+      left: 0,
+      top: 100,
+      width: 200,
+      height: 0,
+    });
   });
 
   test('T4: full {0,100,200,300}, first {20,100,180,20}', () => {
@@ -198,7 +222,8 @@ describe('popoverLayer behavior', () => {
       clientHeight: { value: 600 },
       scrollHeight: { value: 2000 },
     });
-    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 } as DOMRect);
+    host.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect;
 
     const layer = popoverLayer(host);
     const panel = document.createElement('div');
@@ -238,7 +263,8 @@ describe('popoverLayer behavior', () => {
       clientHeight: { value: 300 },
       scrollHeight: { value: 1000 },
     });
-    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 300 } as DOMRect);
+    host.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 300 }) as DOMRect;
 
     const layer = popoverLayer(host);
     const panel = document.createElement('div');
@@ -247,7 +273,11 @@ describe('popoverLayer behavior', () => {
       offsetHeight: { value: 240 },
     });
 
-    layer.show(panel, { left: 200, top: 120, width: 120, height: 40 }, { prefer: 'above' });
+    layer.show(
+      panel,
+      { left: 200, top: 120, width: 120, height: 40 },
+      { prefer: 'above' }
+    );
     expect(panel.style.maxHeight).toBe('124px');
     expect(panel.dataset['capped']).toBe('true');
     layer.hide();
@@ -258,12 +288,18 @@ describe('popoverLayer behavior', () => {
     let st = 0;
     Object.defineProperties(host, {
       scrollLeft: { value: 0, writable: true },
-      scrollTop: { get: () => st, set: (v) => { st = v; } },
+      scrollTop: {
+        get: () => st,
+        set: (v) => {
+          st = v;
+        },
+      },
       clientWidth: { value: 800 },
       clientHeight: { value: 600 },
       scrollHeight: { value: 2000 },
     });
-    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 } as DOMRect);
+    host.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect;
 
     const layer = popoverLayer(host);
     const panel = document.createElement('div');
@@ -272,7 +308,11 @@ describe('popoverLayer behavior', () => {
       offsetHeight: { value: 160 },
     });
 
-    layer.show(panel, { left: 200, top: 900, width: 120, height: 54 }, { reveal: true, prefer: 'above' });
+    layer.show(
+      panel,
+      { left: 200, top: 900, width: 120, height: 54 },
+      { reveal: true, prefer: 'above' }
+    );
     // revealScrollTop gives 362. At scrollTop = 362, vt is 370. Panel top is 900 - 8 - 160 = 732.
     expect(host.scrollTop).toBe(362);
     layer.hide();
@@ -287,7 +327,8 @@ describe('popoverLayer behavior', () => {
       clientHeight: { value: 600 },
       scrollHeight: { value: 2000 },
     });
-    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 } as DOMRect);
+    host.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect;
 
     const layer = popoverLayer(host);
     const panel = document.createElement('div');
@@ -297,9 +338,16 @@ describe('popoverLayer behavior', () => {
     });
 
     let connected = true;
-    layer.show(panel, { left: 200, top: 300, width: 120, height: 20 }, {
-      follow: () => (connected ? { left: 200, top: 300, width: 120, height: 20 } : undefined),
-    });
+    layer.show(
+      panel,
+      { left: 200, top: 300, width: 120, height: 20 },
+      {
+        follow: () =>
+          connected
+            ? { left: 200, top: 300, width: 120, height: 20 }
+            : undefined,
+      }
+    );
 
     const left = panel.style.left;
     const top = panel.style.top;

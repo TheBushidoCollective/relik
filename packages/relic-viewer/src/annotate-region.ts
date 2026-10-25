@@ -79,9 +79,7 @@ export const regionAdapter: AnchorAdapter<'region'> = {
         ).length + 1;
       badge.textContent = String(count);
       region.appendChild(badge);
-
     }
-
 
     overlay.appendChild(region);
     return true;
