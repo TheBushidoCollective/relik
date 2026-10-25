@@ -670,6 +670,7 @@ describe('Spec B: Viewer load progress and early key check', () => {
       shareUrl: `https://relic.example/r1#${fragment}`,
       version: 3,
       currentVersion: 3,
+      versionDigest: '0'.repeat(64),
     };
 
     const deps: ViewerDeps = {

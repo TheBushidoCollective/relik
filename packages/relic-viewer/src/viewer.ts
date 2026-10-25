@@ -230,6 +230,30 @@ export function shareUrlFor(href: string, fragment: string): string {
   return url.toString();
 }
 
+function teeAndDigest(source: ReadableStream<Uint8Array>) {
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
+  const stream = source.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        chunks.push(chunk);
+        totalLength += chunk.length;
+        controller.enqueue(chunk);
+      },
+    })
+  );
+  const computeDigest = async (): Promise<string> => {
+    const full = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const c of chunks) {
+      full.set(c, offset);
+      offset += c.length;
+    }
+    return versionDigest(full);
+  };
+  return { stream, computeDigest };
+}
+
 export async function load(
   relicId: string,
   deps: ViewerDeps,
@@ -398,14 +422,14 @@ export async function load(
       { fragment, mint: mintResponse }
     );
   }
-  const digest = await versionDigest(bytes);
+  const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
 
   let cachedPrefixData: CachedPrefix | undefined = undefined;
   let envelopeFired = false;
   let loadContents: LoadContents | undefined = undefined;
 
   try {
-    const opened = await openRelicStream(fetched.body, key, {
+    const opened = await openRelicStream(bodyStream, key, {
       objectLength: mintResponse.object_length,
       fragmentVersion: version,
       maxContentBytes: MAX_RENDER_BYTES,
@@ -467,6 +491,7 @@ export async function load(
       { title: entry.filename, renderer: route.route }
     );
 
+    const digest = await computeDigest();
     return {
       kind: 'ready',
       view: {
@@ -723,12 +748,12 @@ export async function loadHistoricalVersion(
         `${current.version} remains open.`,
     };
   }
-  const digest = await versionDigest(bytes);
+  const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
 
   let loadContents: LoadContents | undefined = undefined;
 
   try {
-    const opened = await openRelicStream(fetched.body, key, {
+    const opened = await openRelicStream(bodyStream, key, {
       objectLength: mintResponse.object_length,
       fragmentVersion: formatVersion,
       maxContentBytes: MAX_RENDER_BYTES,
@@ -787,6 +812,7 @@ export async function loadHistoricalVersion(
     }
 
     const route = routeFor(entry.filename, entry.mimetype, opened.content);
+    const digest = await computeDigest();
     return {
       kind: 'ready',
       view: {
@@ -1243,7 +1269,7 @@ export async function openRelicWithKey(
     }
     mintResponse = minted.mint;
   }
-  const digest = await versionDigest(bytes);
+
 
   const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
   if (upperBound > MAX_RENDER_BYTES) {
@@ -1306,7 +1332,8 @@ export async function openRelicWithKey(
   let loadContents: LoadContents | undefined = undefined;
 
   try {
-    const opened = await openRelicStream(fetched.body, key, {
+    const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
+    const opened = await openRelicStream(bodyStream, key, {
       objectLength: mintResponse.object_length,
       fragmentVersion: version,
       maxContentBytes: MAX_RENDER_BYTES,
@@ -1373,6 +1400,7 @@ export async function openRelicWithKey(
       renderer: route.route,
     });
 
+    const digest = await computeDigest();
     return {
       kind: 'ready',
       view: {
