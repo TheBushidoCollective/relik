@@ -408,8 +408,10 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
         POPOVER_MARGIN,
         options?.prefer ?? 'above'
       );
+      console.log('PERFORM_FULL_PLACE REVEAL:', JSON.stringify({ targetBox, panelHeight, nextScroll, before: host.scrollTop }));
       if (Math.abs(host.scrollTop - nextScroll) > 0.5) {
         host.scrollTop = nextScroll;
+        console.log('AFTER SET SCROLL:', host.scrollTop);
       }
     }
 

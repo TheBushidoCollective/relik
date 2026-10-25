@@ -506,8 +506,8 @@ async function callMcp(
     const writeResult = child.stdin.write(packet);
     const endResult = child.stdin.end();
     const [stdout, stderr, exit] = await Promise.all([
-      child.stdout.text(),
-      child.stderr.text(),
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
       child.exited,
     ]);
     if (exit !== 0) {
@@ -536,7 +536,7 @@ async function callMcp(
     const lines = stdout
       .trim()
       .split('\n')
-      .filter((line) => line.trim().length > 0);
+      .filter((line: string) => line.trim().length > 0);
     assert.ok(
       lines.length > 0,
       `no JSON-RPC response from ${toolName}: ${transport}`

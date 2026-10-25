@@ -415,6 +415,13 @@ async function openBrowser(
         )
         .catch(() => {});
     });
+    cdp.onEvent((event) => {
+      if (event.method === 'Runtime.consoleAPICalled') {
+        const params = event.params as { args?: Array<{ value?: unknown; description?: string }> };
+        const args = params.args?.map((a) => a.value ?? a.description) ?? [];
+        console.log('[BROWSER]', ...args);
+      }
+    });
 
     if (sessionToken) {
       await cdp.send(
@@ -702,6 +709,7 @@ const MEASURE_PROBE_SCRIPT = `
     preference,
     card: { left: cRect.left, top: cRect.top, width: cRect.width, height: cRect.height },
     anchor: { left: aRect.left, top: aRect.top, width: aRect.width, height: aRect.height },
+    host: { left: hRect.left, top: hRect.top, right: hRect.right, bottom: hRect.bottom },
   };
 })
 `;
@@ -733,20 +741,27 @@ async function measureAndAssert(
     preference: boolean;
     card: { left: number; top: number; width: number; height: number };
     anchor: { left: number; top: number; width: number; height: number };
+    host: { left: number; top: number; right: number; bottom: number };
   }>(
     `(${MEASURE_PROBE_SCRIPT})('${params.cardSelector}', '${params.anchorSelector}')`
   );
-  if (!result.noOverlap) {
+  if (!result.inside || !result.noOverlap) {
     console.log(
-      'OVERLAP DEBUG:',
+      'MEASURE DEBUG:',
       params.className,
       params.state,
+      'inside:',
+      result.inside,
+      'overlap:',
+      result.noOverlap,
       'card:',
       result.card,
       'anchor:',
       result.anchor,
       'side:',
-      result.side
+      result.side,
+      'host:',
+      result.host
     );
   }
   assert.ok(
@@ -1240,6 +1255,17 @@ console.log('Testing Class 2: Code...');
         }
       }
     })()`);
+    const scrollInfo = await session.evaluate(`(() => {
+      const wrap = document.querySelector('.stage-wrap');
+      const doc = document.querySelector('.doc');
+      const code = document.querySelector('.code');
+      return {
+        wrap: { sh: wrap?.scrollHeight, ch: wrap?.clientHeight, st: wrap?.scrollTop, overflow: getComputedStyle(wrap).overflowY },
+        doc: { sh: doc?.scrollHeight, ch: doc?.clientHeight, st: doc?.scrollTop, overflow: getComputedStyle(doc).overflowY },
+        code: { sh: code?.scrollHeight, ch: code?.clientHeight, st: code?.scrollTop, overflow: getComputedStyle(code).overflowY },
+      };
+    })()`);
+    console.log('CODE SCROLL INFO:', scrollInfo);
 
     await session.waitFor("document.querySelector('.popover-offer') !== null");
     await session.evaluate(
