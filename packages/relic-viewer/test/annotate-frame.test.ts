@@ -1648,6 +1648,8 @@ describe('frame mark geometry and selection reporting', () => {
       top: 60,
       width: 70,
       height: 80,
+      right: 120,
+      bottom: 140,
     });
 
     region.dispatchEvent({ type: 'mouseenter' });

@@ -72,6 +72,7 @@
   "devDependencies": {
     "@relic/format": "workspace:*",
     "@relic/server": "workspace:*",
-    "@relic/viewer": "workspace:*"
+    "@relic/viewer": "workspace:*",
+    "pdf-lib": "^1.17.1"
   }
 }
