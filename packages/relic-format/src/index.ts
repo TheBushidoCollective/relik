@@ -9,6 +9,7 @@
 
 export * from './comments.ts';
 export * from './container.ts';
+export * from './decision.ts';
 export * from './envelope.ts';
 export * from './errors.ts';
 export * from './fragment.ts';
@@ -21,6 +22,7 @@ export * from './otio-sequence.ts';
 export * from './otio-timing.ts';
 export * from './otio-types.ts';
 export * from './otio-zip.ts';
+export * from './passkey.ts';
 export * from './renderer-class.ts';
 export * from './rfc8188.ts';
 export * from './share.ts';
