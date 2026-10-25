@@ -1,0 +1,302 @@
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+bun install v1.4.3 (c6da4a4d3)
+
++ @types/bun@1.3.14
++ typescript@5.9.3
+
+35 packages installed [340.00ms]
+mise WARN  deprecated [setting.task_run_auto_install]: Use task.run_auto_install instead. This will be removed in mise 2027.2.0.
+$ bun run lint && bun run typecheck && bun run test
+$ biome check .
+docs/plans/otio/proof/auxiliary-clock-positive-5a4bd6d/shots/native-controls-measurements.json check ━━━━━━━━━━
+
+  i The size of the file is 1.6 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+docs/plans/otio/proof/auxiliary-seed-eleven-83dec3e/native-controls-measurements.json check ━━━━━━━━━━
+
+  i The size of the file is 1.4 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+docs/plans/otio/proof/context-allocation-auto-747591e/native-controls-measurements.json check ━━━━━━━━━━
+
+  i The size of the file is 1.6 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+docs/plans/otio/proof/source-original-15cae60/native-controls-measurements.json check ━━━━━━━━━━━━━━
+
+  i The size of the file is 1.4 MiB, which exceeds the configured maximum of 1.0 MiB for this project.
+    Use the `files.maxSize` configuration to change the maximum size of files processed, or `files.includes` to ignore the file.
+  
+
+packages/relic-mcp/test/otio-path.ts:1985:27 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    1983 │         .catch(() => {});
+    1984 │     });
+  > 1985 │     const webCodecsTrap = String.raw`(() => {
+         │                           ^^^^^^^^^^^^^^^^^^^
+  > 1986 │     for (const name of ['VideoDecoder', 'AudioDecoder']) {
+          ...
+  > 1995 │     }
+  > 1996 │   })();`;
+         │   ^^^^^^
+    1997 │     const pagePrelude = [
+    1998 │       options.recordMediaSeekTargets
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:1999:11 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    1997 │     const pagePrelude = [
+    1998 │       options.recordMediaSeekTargets
+  > 1999 │         ? String.raw`(() => {
+         │           ^^^^^^^^^^^^^^^^^^^
+  > 2000 │           const key = '__relicOtioMediaSeekTargets';
+          ...
+  > 2018 │           });
+  > 2019 │         })();`
+         │         ^^^^^^
+    2020 │         : '',
+    2021 │       contextEventLogPrelude,
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:2673:7 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    2671 │   if (posted !== 'posted') {
+    2672 │     const failure = await browser.evaluate<Record<string, unknown>>(
+  > 2673 │       String.raw`(() => {
+         │       ^^^^^^^^^^^^^^^^^^^
+  > 2674 │         const card = document.querySelector('.popover-card');
+          ...
+  > 2741 │         };
+  > 2742 │       })()`
+         │       ^^^^^
+    2743 │     );
+    2744 │     await browser.screenshot('otio-post-composer-failure');
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:2765:6 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    2763 │     readonly sidebarUntouched: boolean;
+    2764 │     readonly focusInside: boolean;
+  > 2765 │   }>(String.raw`(() => {
+         │      ^^^^^^^^^^^^^^^^^^^
+  > 2766 │     const card = document.querySelector('.popover-card[data-comment-id]');
+          ...
+  > 2836 │     };
+  > 2837 │   })()`);
+         │   ^^^^^
+    2838 │ 
+    2839 │   assert.equal(postedCard.present, true, 'posted comment card is not present');
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:3261:54 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    3259 │   browser: ChromeSession
+    3260 │ ): Promise<ClosedNativeControlsProbe> {
+  > 3261 │   return browser.evaluate<ClosedNativeControlsProbe>(String.raw`(async () => {
+         │                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 3262 │     const stage = document.querySelector('.stage-wrap');
+          ...
+  > 3384 │     };
+  > 3385 │   })()`);
+         │   ^^^^^
+    3386 │ }
+    3387 │ 
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:3389:41 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    3388 │ async function measureSidebar(browser: ChromeSession): Promise<SidebarProbe> {
+  > 3389 │   return browser.evaluate<SidebarProbe>(String.raw`(async () => {
+         │                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 3390 │     const row = document.querySelector('.relic-row');
+          ...
+  > 3445 │     };
+  > 3446 │   })()`);
+         │   ^^^^^
+    3447 │ }
+    3448 │ 
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:4330:55 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    4328 │   expectedId: string
+    4329 │ ): Promise<CommentMarkPointerPosition> {
+  > 4330 │   return browser.evaluate<CommentMarkPointerPosition>(String.raw`(() => {
+         │                                                       ^^^^^^^^^^^^^^^^^^^
+  > 4331 │     const empty = {
+          ...
+  > 4433 │     };
+  > 4434 │   })()`);
+         │   ^^^^^
+    4435 │ }
+    4436 │ 
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:4441:55 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    4439 │   expectedId: string
+    4440 │ ): Promise<CommentMarkPointerExposure> {
+  > 4441 │   return browser.evaluate<CommentMarkPointerExposure>(String.raw`(async () => {
+         │                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+  > 4442 │     const empty = {
+          ...
+  > 4639 │     };
+  > 4640 │   })()`);
+         │   ^^^^^
+    4641 │ }
+    4642 │ 
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:4647:36 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    4645 │   expectedId: string
+    4646 │ ): Promise<boolean> {
+  > 4647 │   return browser.evaluate<boolean>(String.raw`(() => {
+         │                                    ^^^^^^^^^^^^^^^^^^^
+  > 4648 │     const prior = window.__otioPointerClickCapture;
+          ...
+  > 4687 │     return true;
+  > 4688 │   })()`);
+         │   ^^^^^
+    4689 │ }
+    4690 │ 
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:4719:52 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    4717 │   body?: string
+    4718 │ ): Promise<CommentMarkPopoverProbe> {
+  > 4719 │   return browser.evaluate<CommentMarkPopoverProbe>(String.raw`(() => {
+         │                                                    ^^^^^^^^^^^^^^^^^^^
+  > 4720 │     const expectedId = ${JSON.stringify(expectedId)};
+          ...
+  > 4790 │     };
+  > 4791 │   })()`);
+         │   ^^^^^
+    4792 │ }
+    4793 │ 
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:4871:7 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    4869 │     };
+    4870 │     const freshCenter = await browser.evaluate<{ x: number; y: number } | null>(
+  > 4871 │       String.raw`(() => {
+         │       ^^^^^^^^^^^^^^^^^^^
+  > 4872 │         const mark = document.querySelector('.otio-comment-mark[data-comment-id="' + ${JSON.stringify(pointerCase.expectedId)} + '"]');
+          ...
+  > 4880 │         return { x, y: r.top + r.height / 2 };
+  > 4881 │       })()`
+         │       ^^^^^
+    4882 │     );
+    4883 │     const clickTarget = freshCenter ?? exposure.after.center;
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:4895:9 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    4893 │         y: number;
+    4894 │       } | null>(
+  > 4895 │         String.raw`(() => {
+         │         ^^^^^^^^^^^^^^^^^^^
+  > 4896 │           const mark = document.querySelector('.otio-comment-mark[data-comment-id="' + ${JSON.stringify(pointerCase.expectedId)} + '"]');
+          ...
+  > 4904 │           return { x, y: r.top + r.height / 2 };
+  > 4905 │         })()`
+         │         ^^^^^
+    4906 │       );
+    4907 │       const target = adjustedCenter ?? clickTarget;
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:5049:36 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    5047 │     );
+    5048 │     if (savedScroll !== null) {
+  > 5049 │       await browser.evaluate<void>(String.raw`(() => {
+         │                                    ^^^^^^^^^^^^^^^^^^^
+  > 5050 │         const stage = document.querySelector('.stage-wrap');
+          ...
+  > 5055 │         timeline.scrollLeft = ${savedScroll.timelineScrollLeft};
+  > 5056 │       })()`);
+         │       ^^^^^
+    5057 │     }
+    5058 │     receipt['restoredScroll'] = await browser.evaluate<Record<string, unknown>>(
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:5127:58 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+  i String.raw is useless when the raw string doesn't contain any escape sequence.
+  
+    5125 │   expectedIds: readonly string[]
+    5126 │ ): Promise<AuxiliaryCoincidentMarksProbe> {
+  > 5127 │   return browser.evaluate<AuxiliaryCoincidentMarksProbe>(String.raw`(() => {
+         │                                                          ^^^^^^^^^^^^^^^^^^^
+  > 5128 │     const expectedIds = ${JSON.stringify(expectedIds)};
+          ...
+  > 5218 │     return promise;
+  > 5219 │   })()`);
+         │   ^^^^^
+    5220 │ }
+    5221 │ 
+  
+  i Remove the String.raw call because it's useless here, String.raw can deal with string which contains escape sequence like \n, \t, \r, \\, \", \'.
+  
+
+packages/relic-mcp/test/otio-path.ts:5226:57 lint/complexity/noUselessStringRaw ━━━━━━━━━━━━━━━━━━━━
+
+[Showing lines 1-300 of 482. Use :301 to continue]

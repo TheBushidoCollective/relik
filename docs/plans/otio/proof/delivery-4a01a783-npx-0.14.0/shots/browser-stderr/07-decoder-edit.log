@@ -1,0 +1,2 @@
+[1025/070605.488544:INFO:CONSOLE:14] "Unsupported edit list entry: media rate must be 1.", source: http://127.0.0.1:55888/assets/otio-video-timing-worker.js (14)
+[1025/070605.540160:INFO:CONSOLE:14] "Unsupported edit list: multiple edits are not currently supported. Only using first edit.", source: http://127.0.0.1:55888/assets/otio-video-timing-worker.js (14)

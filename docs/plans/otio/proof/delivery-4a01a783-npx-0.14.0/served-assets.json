@@ -1,0 +1,120 @@
+{
+  "origin": "https://relik.link",
+  "sourceHead": "4a01a783ce830556a889b8c29ffc92abc6fa4ff0",
+  "otioMerge": "1f7b186edab1d9e1acdbe7c426463dbcd389322e",
+  "deployRun": 40190129533,
+  "readOnly": true,
+  "observedAt": "2026-10-25T13:05:55.265Z",
+  "assets": [
+    {
+      "name": "chunk-n5cpa70a.js",
+      "status": 200,
+      "localSha256": "dca7869b7a92ce2340d76f75ad0cb74a6f9205882bc1743530e01716d2de482b",
+      "servedSha256": "dca7869b7a92ce2340d76f75ad0cb74a6f9205882bc1743530e01716d2de482b",
+      "bytes": 115469,
+      "exact": true
+    },
+    {
+      "name": "chunk-sc2586d5.js",
+      "status": 200,
+      "localSha256": "572f35d2b1c0c86be98e9c00b8b9f2e7bb4718e9875afc1fcae022dff0205b2c",
+      "servedSha256": "572f35d2b1c0c86be98e9c00b8b9f2e7bb4718e9875afc1fcae022dff0205b2c",
+      "bytes": 377404,
+      "exact": true
+    },
+    {
+      "name": "styles.css",
+      "status": 200,
+      "localSha256": "37377dd53b56c65c4ef09806b903c7293fba577de33c269d970de222d95e4d1f",
+      "servedSha256": "37377dd53b56c65c4ef09806b903c7293fba577de33c269d970de222d95e4d1f",
+      "bytes": 138992,
+      "exact": true
+    },
+    {
+      "name": "chunk-6tshvp1n.js",
+      "status": 200,
+      "localSha256": "7f9112bb801b9d789d8f13449c75b2498fe9800253535c9e739864787f2d9e7d",
+      "servedSha256": "7f9112bb801b9d789d8f13449c75b2498fe9800253535c9e739864787f2d9e7d",
+      "bytes": 60842,
+      "exact": true
+    },
+    {
+      "name": "pdf.worker.js",
+      "status": 200,
+      "localSha256": "c964e291707ad492e6e90ff7f4f352b75e05ea2734c3dd3a80b94983b1b7ce3d",
+      "servedSha256": "c964e291707ad492e6e90ff7f4f352b75e05ea2734c3dd3a80b94983b1b7ce3d",
+      "bytes": 1039207,
+      "exact": true
+    },
+    {
+      "name": "chunk-vjdk663h.js",
+      "status": 200,
+      "localSha256": "7646e8c59629dafd61f1f08cf5f6a386a6c5fc0748e73606251f9437b5c44196",
+      "servedSha256": "7646e8c59629dafd61f1f08cf5f6a386a6c5fc0748e73606251f9437b5c44196",
+      "bytes": 27784,
+      "exact": true
+    },
+    {
+      "name": "home.js",
+      "status": 200,
+      "localSha256": "111f77d72a8b0f6d75e65a58fc8118f45612ac668316c1b57a33d547500d1066",
+      "servedSha256": "111f77d72a8b0f6d75e65a58fc8118f45612ac668316c1b57a33d547500d1066",
+      "bytes": 7182,
+      "exact": true
+    },
+    {
+      "name": "viewer.js",
+      "status": 200,
+      "localSha256": "44cb58e392e92a4ab371b8550704adfa401d89f2961bd49c3cf5d88f3404b67a",
+      "servedSha256": "44cb58e392e92a4ab371b8550704adfa401d89f2961bd49c3cf5d88f3404b67a",
+      "bytes": 459715,
+      "exact": true
+    },
+    {
+      "name": "main.js",
+      "status": 200,
+      "localSha256": "44cb58e392e92a4ab371b8550704adfa401d89f2961bd49c3cf5d88f3404b67a",
+      "servedSha256": "44cb58e392e92a4ab371b8550704adfa401d89f2961bd49c3cf5d88f3404b67a",
+      "bytes": 459715,
+      "exact": true
+    },
+    {
+      "name": "otio-video-timing-worker.js",
+      "status": 200,
+      "localSha256": "61044b49afbae420065d181f64527df2da5b332b008a95f98f528bbcd4a1e7f9",
+      "servedSha256": "61044b49afbae420065d181f64527df2da5b332b008a95f98f528bbcd4a1e7f9",
+      "bytes": 212017,
+      "exact": true
+    },
+    {
+      "name": "chunk-k0z1vgvd.js",
+      "status": 200,
+      "localSha256": "ac4301ea150c3907d8eb3c019802dbc34627be1bdf4a382444854f5d1e00435c",
+      "servedSha256": "ac4301ea150c3907d8eb3c019802dbc34627be1bdf4a382444854f5d1e00435c",
+      "bytes": 173,
+      "exact": true
+    },
+    {
+      "name": "sandbox.js",
+      "status": 200,
+      "localSha256": "cc9ee055453dae74e73b738f31c051e69b67805e484c2817dd77a4df7cfaf58c",
+      "servedSha256": "cc9ee055453dae74e73b738f31c051e69b67805e484c2817dd77a4df7cfaf58c",
+      "bytes": 225909,
+      "exact": true
+    },
+    {
+      "name": "sw.js",
+      "status": 200,
+      "localSha256": "300623cc1c9b184d389ef5e121c37fba0c4062d50e0ec033632285d06babcf36",
+      "servedSha256": "300623cc1c9b184d389ef5e121c37fba0c4062d50e0ec033632285d06babcf36",
+      "bytes": 901,
+      "exact": true
+    }
+  ],
+  "policy": {
+    "status": 200,
+    "bytes": 11776,
+    "sha256": "b05e493c299219e09eb890055e75e8e82a2966bed6a3ae94ea5e57530fbe587f",
+    "mentionsOtio": true
+  }
+}
