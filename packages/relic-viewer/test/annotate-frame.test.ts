@@ -1236,14 +1236,17 @@ describe('pointing at a long framed document', () => {
       first: { left: 50, top: 100, width: 80, height: 20 },
     });
 
-    mockWin.listeners.get('scroll')?.forEach((h) => h(new Event('scroll')));
+    mockWin.listeners.get('scroll')?.forEach((h) => {
+      h(new Event('scroll'));
+    });
     const rects2 = messages.filter(isFrameMarkRectMessage);
     expect(rects2.length).toBeGreaterThan(1);
 
-    mockWin.listeners.get('resize')?.forEach((h) => h(new Event('resize')));
+    mockWin.listeners.get('resize')?.forEach((h) => {
+      h(new Event('resize'));
+    });
     const rects3 = messages.filter(isFrameMarkRectMessage);
     expect(rects3.length).toBeGreaterThan(rects2.length);
-
     interaction.onPaintMark({
       kind: 'region',
       id: 'm1',
@@ -1254,7 +1257,9 @@ describe('pointing at a long framed document', () => {
 
     interaction.onTrackMark(null);
     const countBefore = messages.filter(isFrameMarkRectMessage).length;
-    mockWin.listeners.get('scroll')?.forEach((h) => h(new Event('scroll')));
+    mockWin.listeners.get('scroll')?.forEach((h) => {
+      h(new Event('scroll'));
+    });
     expect(messages.filter(isFrameMarkRectMessage)).toHaveLength(countBefore);
   });
 
@@ -1288,7 +1293,9 @@ describe('pointing at a long framed document', () => {
     });
 
     messages.length = 0;
-    mockWin.listeners.get('scroll')?.forEach((h) => h(new Event('scroll')));
+    mockWin.listeners.get('scroll')?.forEach((h) => {
+      h(new Event('scroll'));
+    });
     const scrollReports = messages.filter(isFrameMarkRectMessage);
     expect(scrollReports).toHaveLength(1);
     expect(scrollReports[0]!.id).toBe('tracked1');

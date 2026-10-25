@@ -49,7 +49,6 @@ import {
   isArmPointingMessage,
   isClearMarkMessage,
   isClearMarksMessage,
-  isFrameMarkRectMessage,
   isPaintMarkMessage,
   isPaintMarksMessage,
   isQuietMarksMessage,
@@ -59,7 +58,6 @@ import {
   type RevealMarkMessage,
   takeHeadUtf8,
   takeTailUtf8,
-  type TrackMarkMessage,
 } from './annotate-frame.ts';
 import { isSetScrollMessage } from './frame-scroll.ts';
 import {

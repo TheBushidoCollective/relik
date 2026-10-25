@@ -13,7 +13,6 @@ import type {
   OtioBundleEntryName,
   OtioDiagnostic,
   OtioDocumentV1,
-  OtioEffect,
   OtioEvaluationResult,
   OtioMediaReference,
   OtioNode,
@@ -1051,7 +1050,7 @@ function buildVideoContribution(
 }
 
 function buildAudioContribution(
-  document: OtioDocumentV1,
+  _document: OtioDocumentV1,
   node: OtioNode,
   ancestry: readonly string[],
   track: OtioNode,

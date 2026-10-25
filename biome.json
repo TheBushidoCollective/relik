@@ -18,7 +18,8 @@
       "!**/node_modules",
       "!**/dist",
       "!**/.terraform",
-      "!**/.terraform.lock.hcl"
+      "!**/.terraform.lock.hcl",
+      "!docs/plans"
     ],
     "ignoreUnknown": true
   },
@@ -34,7 +35,8 @@
       "recommended": true,
       "complexity": {
         "useLiteralKeys": "off",
-        "useSimpleNumberKeys": "off"
+        "useSimpleNumberKeys": "off",
+        "noUselessStringRaw": "off"
       },
       "style": {
         "noNonNullAssertion": "off"

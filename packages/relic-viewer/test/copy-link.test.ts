@@ -2,23 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { encodeFragment, generateKey, parseFragment } from '@relic/format';
 import { mnemonicToKey } from '@relic/format/mnemonic';
 import {
-  COPY_KEYLESS_LABEL,
-  COPY_LINK_LABEL,
   COPY_PANEL_TITLE,
-  COPY_PHRASE_LABEL,
   KEY_ENTRY_LABEL,
   KEY_ENTRY_PLACEHOLDER,
   KEY_ENTRY_PROMPT,
   KEYLESS_COPIED_NOTE,
   LINK_COPIED_NOTE,
-  LINK_LABEL,
-  LINK_NOTE,
   PHRASE_COPIED_NOTE,
-  PHRASE_FAILED_NOTE,
-  PHRASE_LABEL,
-  PHRASE_LOADING_NOTE,
-  PHRASE_NOTE,
-  SPLIT_NOTE,
   keylessLink,
   keyPhraseWords,
 } from '../src/copy-link.ts';

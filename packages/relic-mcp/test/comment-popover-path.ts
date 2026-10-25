@@ -27,7 +27,6 @@ import {
   cp,
   mkdir,
   mkdtemp,
-  readFile,
   realpath,
   rm,
   writeFile,
@@ -556,7 +555,7 @@ interface MeasurementEntry {
 
 const measurements: MeasurementEntry[] = [];
 
-const MEASURE_PROBE_SCRIPT = String.raw`
+const MEASURE_PROBE_SCRIPT = `
 (function(cardSel, anchorSel, hostSel = '.stage-wrap') {
   const card = document.querySelector(cardSel);
   const host = document.querySelector(hostSel) || document.body;
@@ -2095,7 +2094,7 @@ if (hasMainDist) {
       '  Result: Frame mark hover did not open an unpinned popover card on the stage without active-mark geometry echo.'
     );
 
-    await writeFile(mainReceiptPath, receiptLines.join('\n') + '\n');
+    await writeFile(mainReceiptPath, `${receiptLines.join('\n')}\n`);
     console.log(
       `Negative control verified. Receipt saved to ${mainReceiptPath}`
     );

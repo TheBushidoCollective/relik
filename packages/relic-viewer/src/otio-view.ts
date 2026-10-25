@@ -802,7 +802,7 @@ export async function mountOtioView(
     for (const [index, range] of ranges.entries()) {
       const mark = element(
         'div',
-        'otio-selection' + (range.duration.value === 0 ? ' is-point' : '')
+        `otio-selection${range.duration.value === 0 ? ' is-point' : ''}`
       );
       mark.dataset['start'] = String(range.start_time.value);
       mark.dataset['duration'] = String(range.duration.value);
@@ -930,7 +930,7 @@ export async function mountOtioView(
       const id = node?.id ?? null;
       const row = element(
         'div',
-        'otio-track-row' + (!lane ? ' otio-composition-row' : '')
+        `otio-track-row${!lane ? ' otio-composition-row' : ''}`
       );
       row.dataset['trackId'] = id ?? '';
       row.dataset['depth'] = String(lane?.depth ?? 0);
@@ -1729,7 +1729,7 @@ export async function mountOtioView(
       for (const [index, range] of target.ranges.entries()) {
         const mark = element(
           'button',
-          'otio-comment-mark' + (range.duration.value === 0 ? ' is-point' : '')
+          `otio-comment-mark${range.duration.value === 0 ? ' is-point' : ''}`
         );
         mark.type = 'button';
         mark.dataset['commentId'] = id;

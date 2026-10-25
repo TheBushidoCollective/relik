@@ -1236,7 +1236,7 @@ else:
     raise SystemExit("unknown command")
 `;
 
-async function oracle(args: string[], input?: string): Promise<string> {
+async function oracle(args: string[], _input?: string): Promise<string> {
   const script = join(scratch, 'official-otio.py');
   await writeFile(
     emptyManifest,
@@ -9159,9 +9159,9 @@ try {
       return;
     }
 
-    let negServerOrigin = '';
+    let negServerOrigin = 'http://127.0.0.1:0';
     const negApp = createApp({
-      config: { serviceOrigin: () => negServerOrigin },
+      config: { ...app.config, serviceOrigin: negServerOrigin },
       store,
       storage,
       now: () => loopbackNow,
@@ -9196,12 +9196,15 @@ try {
         mobile: false,
       });
 
-      const receipt: Record<string, unknown> = {
+      const receipt: {
+        baseCommit: string;
+        viewerDist: string;
+        observations: Record<string, unknown>;
+      } = {
         baseCommit: '76269ed5',
         viewerDist: originMainViewerDist,
         observations: {},
       };
-
       const pointingResult = await negBrowser.evaluate<{
         composerOpen: boolean;
         sidebarOpen: boolean;
