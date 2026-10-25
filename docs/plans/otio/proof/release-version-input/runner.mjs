@@ -289,6 +289,7 @@ async function createRuntime(caseDirectory) {
   const npmCache = path.join(runtime, "npm-cache");
   const npmPrefix = path.join(runtime, "npm-prefix");
   const npmrc = path.join(runtime, "npmrc");
+  const globalNpmrc = path.join(runtime, "global-npmrc");
   const summary = path.join(runtime, "github-step-summary.md");
   const output = path.join(runtime, "github-output.txt");
   await Promise.all([home, tmp, runnerTemp, npmCache, npmPrefix].map((target) => mkdir(target, { recursive: true })));
@@ -305,8 +306,9 @@ async function createRuntime(caseDirectory) {
     ].join("\n"),
   );
   await writeText(summary, "");
+  await writeText(globalNpmrc, "");
   await writeText(output, "");
-  return { runtime, home, tmp, runnerTemp, npmCache, npmPrefix, npmrc, summary, output };
+  return { runtime, home, tmp, runnerTemp, npmCache, npmPrefix, npmrc, globalNpmrc, summary, output };
 }
 
 function isolatedEnvironment(runtime, { releaseVersion, injectionSentinel } = {}) {
@@ -321,7 +323,7 @@ function isolatedEnvironment(runtime, { releaseVersion, injectionSentinel } = {}
     GITHUB_OUTPUT: runtime.output,
     npm_config_cache: runtime.npmCache,
     npm_config_userconfig: runtime.npmrc,
-    npm_config_globalconfig: runtime.npmrc,
+    npm_config_globalconfig: runtime.globalNpmrc,
     npm_config_prefix: runtime.npmPrefix,
     npm_config_offline: "true",
     npm_config_ignore_scripts: "true",
@@ -696,7 +698,7 @@ async function runRejectedVersion(evidence, cases, validator, { id, version }) {
       step: validator,
       env: isolatedEnvironment(runtime, { releaseVersion: version }),
     });
-    assert(result.exitCode !== 0, `${id}: validator unexpectedly accepted the rejected value`);
+    assert(Number.isInteger(result.exitCode) && result.exitCode > 0, `${id}: validator did not reject with a real nonzero exit`);
     const after = await packageState(fixture.packageJson);
     assert(before.sha256 === after.sha256, `${id}: rejected input changed the release-copy package`);
     record.states = { before, after };
@@ -747,7 +749,7 @@ async function runRepairedExploitRejection(evidence, cases, validator) {
       step: validator,
       env: isolatedEnvironment(runtime, { releaseVersion: exploitPayload, injectionSentinel: sentinel }),
     });
-    assert(result.exitCode !== 0, "repaired validator unexpectedly accepted the injection payload");
+    assert(Number.isInteger(result.exitCode) && result.exitCode > 0, "repaired validator did not reject with a real nonzero exit");
     await requireNoSentinel(sentinel, "repaired validator");
     const after = await packageState(fixture.packageJson);
     assert(before.sha256 === after.sha256, "repaired validator changed package.json after rejecting the payload");
