@@ -1,0 +1,241 @@
+diff --git a/packages/relic-server/src/app.ts b/packages/relic-server/src/app.ts
+index 397b8b21..858d6882 100644
+--- a/packages/relic-server/src/app.ts
++++ b/packages/relic-server/src/app.ts
+@@ -4758,7 +4758,7 @@ async function shell(
+ <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="/assets/styles.css">${
+     typeof target === 'string'
+-      ? '\n<noscript><style>.stage-loading{display:none}</style></noscript>'
++      ? '\n<noscript><style>.stage-loading,[data-load-custody]{display:none}</style></noscript>'
+       : ''
+   }${
+     typeof target === 'string'
+@@ -4775,21 +4775,21 @@ async function shell(
+ </header>
+ <main class="stage stage-loading" data-load-plate data-load-phase="opening">
+ <div class="card load-card">
+-<p class="load-phase" role="status" aria-live="polite">${escapeHtml(LOAD_OPENING)}</p>
+-<div class="load-meter" role="progressbar" aria-valuemin="0" aria-valuemax="105298736"></div>
++<p id="load-phase" class="load-phase" role="status" aria-live="polite">${escapeHtml(LOAD_OPENING)}</p>
++<div class="load-meter" role="progressbar" aria-labelledby="load-phase"></div>
+ <p data-load-transfer></p>
+ <p data-load-contents hidden></p>
+ <p class="card-note">${escapeHtml(LOAD_EXPLANATION)}</p>
+ </div>
+ </main>
+ <noscript>
+-<main class="stage stage-dead">
++<main class="stage stage-noscript">
+ <div class="card">
+ <h1 class="card-title">${escapeHtml(NOSCRIPT_TITLE)}</h1>
+ <p class="card-note">${escapeHtml(NOSCRIPT_DETAIL)}</p>
+-<div class="actions">
+-<a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
+-<a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
++<div class="card-actions">
++<a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
++<a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
+ </div>
+ </div>
+ </main>
+diff --git a/packages/relic-viewer/src/main.ts b/packages/relic-viewer/src/main.ts
+index b97b431d..70e2c214 100644
+--- a/packages/relic-viewer/src/main.ts
++++ b/packages/relic-viewer/src/main.ts
+@@ -7876,14 +7876,15 @@ export function renderReady(
+     } else {
+       thread = undefined;
+     }
+-    const stage = buildStageWrap(viewToShow, usercontentOrigin);
++    const wrap = buildStageWrap(viewToShow, usercontentOrigin);
++    const stage = (wrap.firstElementChild as HTMLElement) ?? wrap;
+     disposeOtioViews(document.body);
+     document.body.replaceChildren(
+       bar,
+-      buildRelicRow(stage, thread?.element, thread?.resizer, thread?.tab)
++      buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
+     );
+     thread?.attach(stage);
+-    trackRenderState(stage, stage.parentElement ?? stage, viewToShow.route);
++    trackRenderState(stage, wrap, viewToShow.route);
+   };
+ 
+   const showVersion = async (v: number): Promise<void> => {
+@@ -7910,8 +7911,11 @@ export function renderReady(
+       const label = document.createElement('span');
+       label.className = 'render-status-label';
+       label.textContent = `Opening version ${v}`;
+-      versionPill.appendChild(label);
+-      if (document.body?.appendChild) {
++      if (bar?.after) {
++        bar.after(versionPill);
++      } else if (bar?.parentElement?.insertBefore) {
++        bar.parentElement.insertBefore(versionPill, bar.nextSibling);
++      } else if (document.body?.appendChild) {
+         document.body.appendChild(versionPill);
+       }
+     } else if (versionPill) {
+@@ -7927,7 +7931,13 @@ export function renderReady(
+         if (p.phase === 'opening') {
+           label.textContent = `Opening version ${v}`;
+         } else if (p.phase === 'fetching') {
+-          label.textContent = `Version ${v}: ${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
++          label.replaceChildren();
++          const vSpan = document.createElement('span');
++          vSpan.className = 'render-status-version';
++          vSpan.textContent = `Version ${v}: `;
++          const progSpan = document.createElement('span');
++          progSpan.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
++          label.append(vSpan, progSpan);
+         }
+       }
+     });
+@@ -8074,6 +8084,7 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
+     card.className = 'card load-card';
+ 
+     const phase = document.createElement('p');
++    phase.id = 'load-phase';
+     phase.className = 'load-phase';
+     phase.setAttribute('role', 'status');
+     phase.setAttribute('aria-live', 'polite');
+@@ -8082,8 +8093,7 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
+     const meter = document.createElement('div');
+     meter.className = 'load-meter';
+     meter.setAttribute('role', 'progressbar');
+-    meter.setAttribute('aria-valuemin', '0');
+-    meter.setAttribute('aria-valuemax', '105298736');
++    meter.setAttribute('aria-labelledby', 'load-phase');
+ 
+     const transfer = document.createElement('p');
+     transfer.dataset['loadTransfer'] = '';
+@@ -8154,7 +8164,11 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
+         meterEl.style.setProperty('--load-fraction', String(frac));
+       }
+       if (transferEl) {
+-        transferEl.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
++        if (p.received === 0) {
++          transferEl.textContent = `${TRANSFER_LABEL} ${formatBytes(p.total)}`;
++        } else {
++          transferEl.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
++        }
+       }
+       if (p.contents) {
+         if (contentsEl) {
+@@ -8249,7 +8263,13 @@ export function trackRenderState(
+     label.className = 'render-status-label';
+     label.textContent = PHASE_RENDERING;
+     statusPill.appendChild(label);
+-    if (document.body?.appendChild) {
++    const bar =
++      document.querySelector('header.bar') ?? document.querySelector('.bar');
++    if (bar?.after) {
++      bar.after(statusPill);
++    } else if (bar?.parentElement?.insertBefore) {
++      bar.parentElement.insertBefore(statusPill, bar.nextSibling);
++    } else if (document.body?.appendChild) {
+       document.body.appendChild(statusPill);
+     }
+   }
+@@ -8417,6 +8437,13 @@ export function renderDead(
+     }
+   }
+ 
++  const custodyEl = bar?.querySelector?.(
++    '[data-load-custody]'
++  ) as HTMLElement | null;
++  if (custodyEl) {
++    custodyEl.textContent = '';
++  }
++
+   if (document.querySelectorAll) {
+     document.querySelectorAll('main.stage').forEach((s) => s.remove());
+   }
+@@ -8430,12 +8457,14 @@ export function renderDead(
+   const headline = document.createElement('h1');
+   headline.className = 'card-title';
+   headline.textContent = dead.headline;
+-
+-  const detail = document.createElement('p');
+-  detail.className = 'card-note';
+-  detail.textContent = dead.detail;
+-
+-  card.append(headline, detail);
++  const paragraphs = dead.detail.split('\n\n');
++  card.append(headline);
++  for (const para of paragraphs) {
++    const p = document.createElement('p');
++    p.className = 'card-note';
++    p.textContent = para;
++    card.appendChild(p);
++  }
+ 
+   const actionsDiv = document.createElement('div');
+   actionsDiv.className = 'card-actions';
+@@ -8455,12 +8484,15 @@ export function renderDead(
+     actionsDiv.appendChild(retry);
+   }
+   if (dead.action === 'report' || dead.action === 'retry-report') {
+-    hasActions = true;
+     const link = document.createElement('a');
+     link.className = dead.action === 'report' ? 'action primary' : 'action';
+     link.href = `${SERVICE_ORIGIN}/abuse`;
+     link.dataset['deadAction'] = 'report';
+-    link.textContent = 'Report this relic';
++    link.setAttribute('aria-label', REPORT_LINK_LABEL);
++    link.appendChild(icon(ICONS.flag));
++    const span = document.createElement('span');
++    span.textContent = REPORT_LINK_LABEL;
++    link.appendChild(span);
+     actionsDiv.appendChild(link);
+   }
+ 
+@@ -8511,7 +8543,7 @@ export function renderDead(
+     feedback.className = 'key-entry-feedback';
+     feedback.setAttribute('role', 'alert');
+ 
+-    form.append(label, inputRow, progressEl, feedback);
++    form.append(label, inputRow, feedback);
+ 
+     let activeCachedPrefix = cachedPrefix;
+ 
+@@ -8559,7 +8591,7 @@ export function renderDead(
+       );
+     });
+ 
+-    keySection.append(prompt, form);
++    keySection.append(prompt, form, progressEl);
+     card.appendChild(keySection);
+   }
+ 
+diff --git a/packages/relic-viewer/src/viewer.ts b/packages/relic-viewer/src/viewer.ts
+index c2190727..823c4e3a 100644
+--- a/packages/relic-viewer/src/viewer.ts
++++ b/packages/relic-viewer/src/viewer.ts
+@@ -388,6 +388,11 @@ export async function load(
+     }
+     mintResponse = minted.mint;
+   }
++  onProgress?.({
++    phase: 'fetching',
++    received: 0,
++    total: mintResponse.object_length,
++  });
+ 
+   const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
+   if (upperBound > MAX_RENDER_BYTES) {
+diff --git a/packages/relic-viewer/test/load-plate.test.ts b/packages/relic-viewer/test/load-plate.test.ts
+index a11bb0d3..b7e9d170 100644
+--- a/packages/relic-viewer/test/load-plate.test.ts
++++ b/packages/relic-viewer/test/load-plate.test.ts
+@@ -498,6 +498,10 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
+       fetch: (async (input: RequestInfo | URL) => {
+         const url = String(input);
+         if (url.endsWith('/mint')) {
++          const phase = shellPlate.dataset['loadPhase'];
++          if (phase && !phasesSeen.includes(phase)) {
++            phasesSeen.push(phase);
++          }
+           return Response.json({
+             url: 'https://storage.example/blob',
+             url_expires_at: new Date(Date.now() + 300_000).toISOString(),

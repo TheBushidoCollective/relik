@@ -1,0 +1,55 @@
+diff --git relik-load-progress/packages/relic-viewer/src/main.ts relik-load-progress-review-9bfed0d8/packages/relic-viewer/src/main.ts
+index 70e2c21..d405b3a 100644
+--- relik-load-progress/packages/relic-viewer/src/main.ts
++++ relik-load-progress-review-9bfed0d8/packages/relic-viewer/src/main.ts
+@@ -7911,6 +7911,7 @@ export function renderReady(
+       const label = document.createElement('span');
+       label.className = 'render-status-label';
+       label.textContent = `Opening version ${v}`;
++      versionPill.appendChild(label);
+       if (bar?.after) {
+         bar.after(versionPill);
+       } else if (bar?.parentElement?.insertBefore) {
+@@ -8440,7 +8441,7 @@ export function renderDead(
+   const custodyEl = bar?.querySelector?.(
+     '[data-load-custody]'
+   ) as HTMLElement | null;
+-  if (custodyEl) {
++  if (custodyEl && custodyEl.textContent === LOAD_OPENING) {
+     custodyEl.textContent = '';
+   }
+ 
+@@ -8484,6 +8485,7 @@ export function renderDead(
+     actionsDiv.appendChild(retry);
+   }
+   if (dead.action === 'report' || dead.action === 'retry-report') {
++    hasActions = true;
+     const link = document.createElement('a');
+     link.className = dead.action === 'report' ? 'action primary' : 'action';
+     link.href = `${SERVICE_ORIGIN}/abuse`;
+diff --git relik-load-progress/packages/relic-viewer/src/styles.css relik-load-progress-review-9bfed0d8/packages/relic-viewer/src/styles.css
+index 251116f..28965b8 100644
+--- relik-load-progress/packages/relic-viewer/src/styles.css
++++ relik-load-progress-review-9bfed0d8/packages/relic-viewer/src/styles.css
+@@ -717,7 +717,7 @@ body {
+      width while the actions lost their labels, which pushed Report off the
+      row at 420px. Its accessible name carries the meaning when the text
+      goes. */
+-  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list) span) {
++  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list, .card-actions) span) {
+     position: absolute;
+     width: 1px;
+     height: 1px;
+diff --git relik-load-progress/packages/relic-viewer/src/viewer.ts relik-load-progress-review-9bfed0d8/packages/relic-viewer/src/viewer.ts
+index 823c4e3..6395787 100644
+--- relik-load-progress/packages/relic-viewer/src/viewer.ts
++++ relik-load-progress-review-9bfed0d8/packages/relic-viewer/src/viewer.ts
+@@ -284,7 +284,7 @@ export async function load(
+       kind: 'dead',
+       dead: {
+         headline: INSECURE_TITLE,
+-        detail: `${INSECURE_DETAIL} ${INSECURE_ADVICE}`,
++        detail: `${INSECURE_DETAIL}\n\n${INSECURE_ADVICE}`,
+         action: 'none',
+         code: 'insecure_context',
+       },

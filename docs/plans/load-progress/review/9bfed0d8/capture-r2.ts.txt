@@ -1,0 +1,1627 @@
+/**
+ * Local headless proof for Relic loading progress and early key cancellation.
+ * Written for Spec B (§5.P).
+ *
+ * Runs 12 classes across viewports and dark/light modes, exercising:
+ * 1. Progress phases (opening, fetching, decrypting, rendering/ready)
+ * 2. Meter aria-valuenow progression on multi-chunk downloads
+ * 3. Static plate from first paint (no blank frames)
+ * 4. Early cancellation on wrong key (< 262,144 bytes) and key-entry recovery
+ * 5. Mid-stream abort and Try again in place (no reload, no new mint)
+ * 6. Damaged card on tag failure after record 0 (content_damaged)
+ * 7. Damaged card on truncated container
+ * 8. Noscript plate and hidden loading stage when scripts disabled
+ * 9. Static plate when viewer.js is blocked
+ * 10. Version switching preserving stage until ready
+ *
+ * Output: prints LOAD_PROGRESS_PATH_OK classes=12 runs=31
+ */
+
+import assert from 'node:assert/strict';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { deflateSync, inflateSync } from 'node:zlib';
+
+import { createApp } from '@relic/server/src/app.ts';
+import { diskAssets } from '@relic/server/src/assets.ts';
+import { MemoryStorage } from '@relic/server/src/storage.ts';
+import { MemoryStore } from '@relic/server/src/store.ts';
+import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
+import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
+import {
+  attestBrowserHeadless,
+  createBrowserHeadlessLaunch,
+} from './browser-headless.ts';
+
+const execFileAsync = promisify(execFile);
+
+// --- Configuration & Paths --------------------------------------------------
+
+const CHUNK_SIZE = 16384;
+const CHUNK_DELAY_MS = Number(
+  process.env['RELIC_LOAD_PROOF_CHUNK_DELAY_MS'] ?? 15
+);
+
+const viewerDist =
+  process.env['RELIC_VIEWER_DIST'] ??
+  fileURLToPath(new URL('../../relic-viewer/dist/', import.meta.url));
+const relicMcpBundlePath = fileURLToPath(
+  new URL('../dist/relic-mcp.js', import.meta.url)
+);
+const otioFixtureDir = fileURLToPath(
+  new URL(
+    '../../relic-format/test/fixtures/otio/standard-sample.otiod/',
+    import.meta.url
+  )
+);
+
+const scratch = await mkdtemp(join(tmpdir(), 'relic-load-proof-'));
+const statePath = join(scratch, 'state.json');
+
+// Discover git HEAD for proof output directory
+let shortSha = 'test';
+try {
+  const { stdout } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD']);
+  shortSha = stdout.trim();
+} catch {}
+
+const proofDir =
+  process.env['RELIC_LOAD_PROOF_DIR'] ??
+  fileURLToPath(
+    new URL(`../../../docs/plans/load-progress/proof/${shortSha}/`, import.meta.url)
+  );
+
+await mkdir(proofDir, { recursive: true });
+
+// --- Loopback App & Storage Setup -------------------------------------------
+
+let serverMintCount = 0;
+const relicMintCounts = new Map<string, number>();
+
+interface StorageRequestLog {
+  readonly id: string;
+  readonly relicId: string;
+  enqueuedBytes: number;
+  cancelled: boolean;
+  completed: boolean;
+  aborted: boolean;
+  cancelReason?: unknown;
+}
+
+const storageLogs: StorageRequestLog[] = [];
+const activeAbortAfterBytes = new Map<string, number>();
+const activeChunkDelayMs = new Map<string, number>();
+const activeFirstByteDelayMs = new Map<string, number>();
+let extraMintDelayMs = 0;
+
+const usercontentService = Bun.serve({
+  port: 0,
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/sandbox.html') {
+      return new Response(Bun.file(join(viewerDist, 'sandbox.html')), {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+          'content-security-policy':
+            "default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+        },
+      });
+    }
+    if (url.pathname === '/sandbox.js') {
+      return new Response(Bun.file(join(viewerDist, 'sandbox.js')), {
+        headers: { 'content-type': 'application/javascript; charset=utf-8' },
+      });
+    }
+    const assetPath = join(viewerDist, url.pathname.slice(1));
+    if (existsSync(assetPath)) {
+      return new Response(Bun.file(assetPath));
+    }
+    return new Response('Not found', { status: 404 });
+  },
+});
+const usercontentOrigin = `http://127.0.0.1:${usercontentService.port}`;
+
+let handler: ((request: Request) => Promise<Response>) | undefined;
+const service = Bun.serve({
+  port: 0,
+  async fetch(request) {
+    if (!handler) return new Response('Not ready', { status: 503 });
+    return handler(request);
+  },
+});
+const origin = `http://127.0.0.1:${service.port}`;
+
+const store = new MemoryStore();
+const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
+const storage = new MemoryStorage(`${origin}/__storage`);
+
+const app = createApp({
+  config: {
+    serviceOrigin: origin,
+    usercontentOrigin,
+  },
+  store,
+  storage,
+  now: () => Date.now(),
+  operatorTokens,
+  assets: diskAssets(viewerDist),
+});
+
+handler = async (request: Request): Promise<Response> => {
+  const url = new URL(request.url);
+  if (url.pathname === '/sw.js' || url.pathname === '/assets/register-sw.js') {
+    return new Response(null, { status: 404 });
+  }
+  if (request.method === 'POST' && url.pathname.includes('/mint')) {
+    serverMintCount++;
+    const parts = url.pathname.split('/');
+    const rIdx = parts.indexOf('relics');
+    if (rIdx !== -1 && parts[rIdx + 2] === 'mint') {
+      const id = parts[rIdx + 1]!;
+      relicMintCounts.set(id, (relicMintCounts.get(id) ?? 0) + 1);
+    }
+    await Bun.sleep(100);
+    if (extraMintDelayMs > 0) await Bun.sleep(extraMintDelayMs);
+  }
+
+  // Storage upload
+  if (
+    url.pathname.startsWith('/__storage/upload/') &&
+    request.method === 'PUT'
+  ) {
+    const objectKey = decodeURIComponent(
+      url.pathname.slice('/__storage/upload/'.length).split('?')[0] ?? ''
+    );
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    storage.put(objectKey, bytes);
+    return new Response(null, { status: 200 });
+  }
+
+  // Storage download (chunked with tracking and abort capability)
+  if (url.pathname.startsWith('/__storage/o/') && request.method === 'GET') {
+    const objectKey = decodeURIComponent(
+      url.pathname.slice('/__storage/o/'.length).split('?')[0] ?? ''
+    );
+    const bytes = await storage.read(objectKey);
+    if (!bytes) return new Response('Not found', { status: 404 });
+
+    const reqId = `${objectKey}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const log: StorageRequestLog = {
+      id: reqId,
+      relicId: objectKey,
+      enqueuedBytes: 0,
+      cancelled: false,
+      completed: false,
+      aborted: false,
+    };
+    storageLogs.push(log);
+
+    const abortAfter = activeAbortAfterBytes.get(objectKey);
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        let offset = 0;
+        const firstByteDelay = activeFirstByteDelayMs.get(objectKey);
+        if (firstByteDelay) await Bun.sleep(firstByteDelay);
+        const chunkDelay = activeChunkDelayMs.get(objectKey) ?? CHUNK_DELAY_MS;
+        while (offset < bytes.length) {
+          if (request.signal.aborted || log.cancelled) {
+            log.cancelled = true;
+            return;
+          }
+          if (abortAfter !== undefined && offset >= abortAfter) {
+            log.aborted = true;
+            controller.error(new Error('Simulated mid-stream abort'));
+            return;
+          }
+          const end = Math.min(offset + CHUNK_SIZE, bytes.length);
+          const chunk = bytes.subarray(offset, end);
+          controller.enqueue(chunk);
+          log.enqueuedBytes += chunk.length;
+          offset = end;
+          if (offset < bytes.length && chunkDelay > 0) {
+            await Bun.sleep(chunkDelay);
+          }
+        }
+        log.completed = true;
+        controller.close();
+      },
+      cancel(reason) {
+        log.cancelled = true;
+        log.cancelReason = reason;
+      },
+    });
+
+    request.signal.addEventListener('abort', () => {
+      log.cancelled = true;
+    });
+
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': String(bytes.length),
+      },
+    });
+  }
+
+  return app.fetch(request);
+};
+
+// --- Fresh Node stdio MCP caller --------------------------------------------
+
+async function callMcp(
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const child = Bun.spawn(['node', relicMcpBundlePath], {
+    cwd: scratch,
+    env: {
+      ...process.env,
+      RELIC_SERVICE_ORIGIN: origin,
+      RELIC_PUBLISH_STATE: statePath,
+      RELIC_CLIENT_NAME: 'relic-mcp/load-progress-path',
+      RELIC_CHROME_PATH: 'none',
+    },
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  const request = {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: {
+      name: toolName,
+      arguments: args,
+    },
+  };
+
+  child.stdin.write(`${JSON.stringify(request)}\n`);
+  child.stdin.end();
+
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+
+  assert.equal(exit, 0, `relic-mcp exited with code ${exit}: ${stderr}`);
+  const lines = stdout
+    .trim()
+    .split('\n')
+    .filter((l) => l.trim().length > 0);
+  const raw = lines[lines.length - 1];
+  assert.ok(raw !== undefined, 'relic-mcp returned empty output');
+  const response = JSON.parse(raw) as {
+    error?: unknown;
+    result?: { structuredContent?: Record<string, unknown> } & Record<
+      string,
+      unknown
+    >;
+  };
+  if (response.error) {
+    throw new Error(`MCP error: ${JSON.stringify(response.error)}`);
+  }
+  const result = response.result?.structuredContent ?? response.result;
+  assert.ok(result !== undefined, 'missing result in MCP response');
+  return result;
+}
+
+// --- Fixture Generators -----------------------------------------------------
+
+function buildPngBuffer(width = 200, height = 150): Buffer {
+  function makeChunk(type: string, data: Buffer): Buffer {
+    const len = data.length;
+    const chunk = Buffer.alloc(4 + 4 + len + 4);
+    chunk.writeUInt32BE(len, 0);
+    chunk.write(type, 4, 4, 'ascii');
+    data.copy(chunk, 8);
+    let c = 0xffffffff;
+    const sub = chunk.subarray(4, 8 + len);
+    for (let i = 0; i < sub.length; i++) {
+      c ^= sub[i]!;
+      for (let j = 0; j < 8; j++) c = (c >>> 1) ^ (c & 1 ? 0xedb88320 : 0);
+    }
+    chunk.writeUInt32BE((c ^ 0xffffffff) >>> 0, 8 + len);
+    return chunk;
+  }
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2; // RGB
+  const ihdrChunk = makeChunk('IHDR', ihdr);
+  const raw = Buffer.alloc(height * (1 + width * 3));
+  const rand = randomBytes(height * width * 3);
+  let rIdx = 0;
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * (1 + width * 3);
+    raw[rowOffset] = 0;
+    rand.copy(raw, rowOffset + 1, rIdx, rIdx + width * 3);
+    rIdx += width * 3;
+  }
+  const idat = makeChunk('IDAT', deflateSync(raw));
+  const iend = makeChunk('IEND', Buffer.alloc(0));
+  return Buffer.concat([sig, ihdrChunk, idat, iend]);
+}
+
+function buildPdfBuffer(numPages = 15): Buffer {
+  let out = '%PDF-1.4\n';
+  const offsets = [0];
+  offsets.push(out.length);
+  out += '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+  offsets.push(out.length);
+  const kids: string[] = [];
+  for (let p = 0; p < numPages; p++) kids.push(`${3 + p * 2} 0 R`);
+  out += `2 0 obj\n<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${numPages} >>\nendobj\n`;
+  for (let p = 0; p < numPages; p++) {
+    const pageObjNum = 3 + p * 2;
+    const contentObjNum = pageObjNum + 1;
+    offsets.push(out.length);
+    out += `${pageObjNum} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${contentObjNum} 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>\nendobj\n`;
+    let pageText = 'BT /F1 14 Tf 16 TL 50 750 Td ';
+    for (let l = 0; l < 50; l++) {
+      pageText += `(Page ${p + 1} Line ${l}: Relik PDF progressive loading proof verification text line.) ' `;
+    }
+    pageText += 'ET';
+    offsets.push(out.length);
+    out += `${contentObjNum} 0 obj\n<< /Length ${pageText.length} >>\nstream\n${pageText}\nendstream\nendobj\n`;
+  }
+  const xrefOffset = out.length;
+  const totalObjs = 2 + numPages * 2;
+  out += `xref\n0 ${totalObjs + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= totalObjs; i++) {
+    out += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  out += `trailer\n<< /Size ${totalObjs + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(out);
+}
+
+function makeWavBuffer(numSeconds = 1.5, sampleRate = 44100): Buffer {
+  const numChannels = 2;
+  const bitsPerSample = 16;
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+  const blockAlign = (numChannels * bitsPerSample) / 8;
+  const numSamples = Math.floor(numSeconds * sampleRate);
+  const dataSize = numSamples * blockAlign;
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + dataSize, 4);
+  buf.write('WAVE', 8);
+  buf.write('fmt ', 12);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20); // PCM
+  buf.writeUInt16LE(numChannels, 22);
+  buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(byteRate, 28);
+  buf.writeUInt16LE(blockAlign, 32);
+  buf.writeUInt16LE(bitsPerSample, 34);
+  buf.write('data', 36);
+  buf.writeUInt32LE(dataSize, 40);
+  for (let i = 0; i < numSamples; i++) {
+    const sample = Math.sin((2 * Math.PI * 440 * i) / sampleRate) * 0x7fff;
+    buf.writeInt16LE(sample, 44 + i * 4);
+    buf.writeInt16LE(sample, 44 + i * 4 + 2);
+  }
+  return buf;
+}
+
+// --- Pixel Non-Uniformity Checker -------------------------------------------
+
+function isRegionNonUniform(
+  pngBuffer: Buffer,
+  minY: number,
+  maxY: number
+): boolean {
+  const width = pngBuffer.readUInt32BE(16);
+  const height = pngBuffer.readUInt32BE(20);
+  let pos = 8;
+  const idats: Buffer[] = [];
+  while (pos < pngBuffer.length) {
+    const len = pngBuffer.readUInt32BE(pos);
+    const type = pngBuffer.subarray(pos + 4, pos + 8).toString('ascii');
+    if (type === 'IDAT') idats.push(pngBuffer.subarray(pos + 8, pos + 8 + len));
+    pos += 8 + len + 4;
+  }
+  const decompressed = inflateSync(Buffer.concat(idats));
+  const rowBytes = 1 + width * 4;
+  const vals = new Set<number>();
+  for (let y = minY; y < Math.min(maxY, height); y++) {
+    const rowOffset = y * rowBytes + 1;
+    for (let x = 0; x < width * 4; x += 4) {
+      const r = decompressed[rowOffset + x]!;
+      const g = decompressed[rowOffset + x + 1]!;
+      const b = decompressed[rowOffset + x + 2]!;
+      vals.add((r << 16) | (g << 8) | b);
+      if (vals.size > 1) return true;
+    }
+  }
+  return vals.size > 1;
+}
+
+// --- Isolated World Recorder Script -----------------------------------------
+
+const RECORDER_SOURCE = `(() => {
+  const samples = [];
+  let sampling = true;
+
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') <= 0) {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function doSample() {
+    if (window.top !== window) return;
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') {
+      if (sampling) requestAnimationFrame(doSample);
+      return;
+    }
+    const body = document.body;
+    if (body) {
+      const bar = document.querySelector('header.bar');
+      const plate = document.querySelector('[data-load-plate]');
+      const meter = plate ? plate.querySelector('.load-meter, [role="progressbar"]') : null;
+      const custody = document.querySelector('[data-load-custody], header.bar .identity .filename');
+      const pill = document.querySelector('.render-status, [data-render-status]');
+      const contentStage = document.querySelector('main.stage:not(.stage-loading):not(.stage-dead), .stage-wrap');
+      const deadCard = document.querySelector('main.stage-dead .card, .stage.stage-dead .card, main.stage-dead');
+
+      samples.push({
+        time: performance.now(),
+        bodyPresent: true,
+        barVisible: isVisible(bar),
+        plateVisible: isVisible(plate),
+        platePhase: plate ? (plate.getAttribute('data-load-phase') || null) : null,
+        meterValuenow: meter ? meter.getAttribute('aria-valuenow') : null,
+        custodyText: custody ? (custody.textContent || '').trim() : null,
+        renderPillVisible: isVisible(pill),
+        renderPillText: pill ? (pill.textContent || '').trim() : null,
+        contentStageVisible: isVisible(contentStage),
+        deadCardVisible: isVisible(deadCard),
+        scrollWidth: document.documentElement ? document.documentElement.scrollWidth : 0,
+        innerWidth: window.innerWidth,
+        url: location.href,
+      });
+    } else {
+      samples.push({
+        time: performance.now(),
+        bodyPresent: false,
+        barVisible: false,
+        plateVisible: false,
+        platePhase: null,
+        meterValuenow: null,
+        custodyText: null,
+        renderPillVisible: false,
+        renderPillText: null,
+        contentStageVisible: false,
+        deadCardVisible: false,
+        scrollWidth: 0,
+        innerWidth: window.innerWidth,
+      });
+    }
+
+    if (sampling) {
+      requestAnimationFrame(doSample);
+    }
+  }
+
+  doSample();
+  window.__relicLoadSamples = samples;
+  window.__stopRelicLoadSampling = () => { sampling = false; return samples; };
+})();`;
+
+// --- Fixture Publishing -----------------------------------------------------
+
+interface FixtureInfo {
+  readonly classKey: string;
+  readonly filename: string;
+  readonly path: string;
+  relicId: string;
+  key: string;
+  shareUrl: string;
+  bytesLength: number;
+}
+
+const fixtures: FixtureInfo[] = [
+  { classKey: 'md', filename: 'report.md', path: join(scratch, 'report.md'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'ts', filename: 'sample.ts', path: join(scratch, 'sample.ts'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'png', filename: 'image.png', path: join(scratch, 'image.png'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'svg', filename: 'logo.svg', path: join(scratch, 'logo.svg'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'html', filename: 'page.html', path: join(scratch, 'page.html'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'jsx', filename: 'Widget.jsx', path: join(scratch, 'Widget.jsx'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'pdf', filename: 'doc.pdf', path: join(scratch, 'doc.pdf'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'mp4', filename: 'clip.mp4', path: join(scratch, 'clip.mp4'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'wav', filename: 'tone.wav', path: join(scratch, 'tone.wav'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'otio', filename: 'standard-sample.otiod', path: otioFixtureDir, relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'zip', filename: 'bundle.zip', path: join(scratch, 'bundle.zip'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+  { classKey: 'bin', filename: 'blob.bin', path: join(scratch, 'blob.bin'), relicId: '', key: '', shareUrl: '', bytesLength: 0 },
+];
+
+console.log('Generating test fixtures...');
+
+// 1. md
+const mdLines = ['# Relik Load Progress Report\n\nExecutive summary of loading telemetry.\n'];
+for (let i = 0; i < 2000; i++) {
+  mdLines.push(`## Heading ${i}\nParagraph of text describing report metrics and progress testing content for verification.\n`);
+}
+await writeFile(fixtures[0]!.path, mdLines.join('\n'));
+
+// 2. ts
+const tsLines = ['export function computeMetrics() {\n'];
+for (let i = 0; i < 1500; i++) {
+  tsLines.push(`  const metric_${i} = ${i} * 42;\n  console.log(metric_${i});\n`);
+}
+tsLines.push('}\n');
+await writeFile(fixtures[1]!.path, tsLines.join('\n'));
+
+// 3. png
+await writeFile(fixtures[2]!.path, buildPngBuffer(200, 150));
+
+// 4. svg
+const svgLines = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="1440" height="900">\n<rect width="100%" height="100%" fill="#161b22"/>\n'];
+for (let i = 0; i < 500; i++) {
+  svgLines.push(`<circle cx="${(i * 17) % 1400}" cy="${(i * 23) % 850}" r="${(i % 30) + 5}" fill="hsl(${i % 360}, 70%, 50%)"/>\n`);
+}
+svgLines.push('</svg>\n');
+await writeFile(fixtures[3]!.path, svgLines.join('\n'));
+
+// 5. html
+const htmlLines = ['<!DOCTYPE html><html><head><meta charset="utf-8"><title>HTML Document</title></head><body><h1>Loaded HTML Document</h1>\n'];
+for (let i = 0; i < 1000; i++) {
+  htmlLines.push(`<p>Section ${i}: Standard sandboxed HTML document content for progressive loading proof.</p>\n`);
+}
+htmlLines.push('</body></html>\n');
+await writeFile(fixtures[4]!.path, htmlLines.join('\n'));
+
+// 6. jsx
+const jsxLines = ['export default function Widget() {\n  return (\n    <div style={{ padding: "32px", fontFamily: "sans-serif" }}>\n      <h1>Interactive JSX Component</h1>\n'];
+for (let i = 0; i < 1000; i++) {
+  jsxLines.push(`      <div key={${i}}>Item ${i}: Detailed description of widget item.</div>\n`);
+}
+jsxLines.push('    </div>\n  );\n}\n');
+await writeFile(fixtures[5]!.path, jsxLines.join('\n'));
+
+// 7. pdf
+await writeFile(fixtures[6]!.path, buildPdfBuffer(15));
+
+// 8. mp4
+await execFileAsync('ffmpeg', [
+  '-y',
+  '-f',
+  'lavfi',
+  '-i',
+  'testsrc2=size=320x240:rate=10',
+  '-t',
+  '2',
+  '-c:v',
+  'libx264',
+  '-pix_fmt',
+  'yuv420p',
+  fixtures[7]!.path,
+]);
+
+// 9. wav
+await writeFile(fixtures[8]!.path, makeWavBuffer(1.5, 44100));
+
+// 10. otio (uses otioFixtureDir)
+
+// 11. zip
+const zipDir = join(scratch, 'zip-src');
+await mkdir(join(zipDir, 'dir'), { recursive: true });
+for (let i = 0; i < 50; i++) {
+  await writeFile(
+    join(zipDir, 'dir', `file-${i}.txt`),
+    `File ${i} contents with padding text to make the zip bundle sufficiently sized for progress.\n`.repeat(20)
+  );
+}
+await execFileAsync('zip', ['-q', '-r', fixtures[10]!.path, '.'], {
+  cwd: zipDir,
+});
+
+// 12. bin
+await writeFile(fixtures[11]!.path, randomBytes(65536));
+
+// 6 MB random bin for early cancel measurement
+const sixMbBinPath = join(scratch, 'large.bin');
+await writeFile(sixMbBinPath, randomBytes(6 * 1024 * 1024));
+
+console.log('Publishing 12 classes through stdio relic-mcp...');
+for (const fix of fixtures) {
+  const res = await callMcp('relic_publish', {
+    path: fix.path,
+    cover: false,
+    title: '',
+  });
+  const relicId = String(res['relic_id'] ?? '');
+  const rawUrl = String(res['url'] ?? res['share_url'] ?? '');
+  fix.relicId = relicId;
+  fix.shareUrl = rawUrl;
+  const hashIdx = rawUrl.indexOf('#');
+  fix.key = hashIdx !== -1 ? rawUrl.slice(hashIdx + 1) : '';
+  const stored = await storage.read(fix.relicId);
+  fix.bytesLength = stored ? stored.length : 0;
+}
+
+// Publish 6 MB bin
+console.log('Publishing 6 MB bin...');
+const sixMbRes = await callMcp('relic_publish', {
+  path: sixMbBinPath,
+  cover: false,
+  title: '',
+});
+const sixMbRawUrl = String(sixMbRes['url'] ?? sixMbRes['share_url'] ?? '');
+const sixMbInfo = {
+  relicId: String(sixMbRes['relic_id'] ?? ''),
+  shareUrl: sixMbRawUrl,
+  key: sixMbRawUrl.split('#')[1] ?? '',
+  bytesLength: 6 * 1024 * 1024,
+};
+
+// Republish md to version 2
+console.log('Republishing md to version 2...');
+const mdV2Content =
+  '# Version 2 Document\n\nUpdated contents for version switch proof.\n' +
+  'New paragraph text for second edition.\n'.repeat(4000);
+await writeFile(fixtures[0]!.path, mdV2Content);
+const repubRes = await callMcp('relic_republish', {
+  path: fixtures[0]!.path,
+  relic_id: fixtures[0]!.relicId,
+  notify: false,
+  cover: false,
+});
+assert.equal(repubRes['version'], 2, 'md republish must advance to version 2');
+
+// --- Chrome Launch ----------------------------------------------------------
+
+const defaultOwnedShell =
+  '/Users/jwaldrip/.omp/owned-shells/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+const chromeCandidate =
+  process.env['RELIC_PROOF_CHROME_PATH'] ??
+  process.env['RELIC_CHROME_PATH'] ??
+  (existsSync(defaultOwnedShell) ? defaultOwnedShell : undefined);
+
+const foundChrome = await discoverChrome(chromeCandidate);
+assert.equal(
+  foundChrome.kind,
+  'found',
+  `Could not find headless Chrome: ${foundChrome.kind === 'not_found' ? foundChrome.detail : foundChrome.kind}`
+);
+if (foundChrome.kind !== 'found') throw new Error('unreachable');
+
+const profileDir = await mkdtemp(join(tmpdir(), 'relic-load-chrome-'));
+const sharedArgs = chromeArgs(foundChrome.path, profileDir);
+const launch = createBrowserHeadlessLaunch(
+  [
+    ...sharedArgs.map((arg) =>
+      arg === '--proxy-bypass-list=<-loopback>'
+        ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${service.port};127.0.0.1:${usercontentService.port};insecure.test:${service.port}`
+        : arg === '--host-resolver-rules=MAP * ~NOTFOUND'
+          ? '--host-resolver-rules=MAP insecure.test 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
+          : arg
+    ),
+    '--autoplay-policy=no-user-gesture-required',
+    '--disable-service-workers',
+  ],
+  profileDir
+);
+
+const child = spawn(foundChrome.path, launch.args, {
+  stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
+});
+const cdp = connectPipe(child.stdio[3], child.stdio[4]);
+await attestBrowserHeadless(cdp, launch);
+
+// Helper to open a page session with recorder and assertions
+interface OpenRunOptions {
+  viewport?: { width: number; height: number; mobile?: boolean };
+  colorScheme?: 'light' | 'dark';
+  disableScripts?: boolean;
+  blockViewerJs?: boolean;
+  onBeforeNavigate?: (sessionId: string) => Promise<void>;
+}
+
+interface Sample {
+  time: number;
+  bodyPresent: boolean;
+  barVisible: boolean;
+  plateVisible: boolean;
+  platePhase: string | null;
+  meterValuenow: string | null;
+  custodyText: string | null;
+  renderPillVisible: boolean;
+  renderPillText: string | null;
+  contentStageVisible: boolean;
+  deadCardVisible: boolean;
+  scrollWidth: number;
+  innerWidth: number;
+}
+
+interface RunOutcome {
+  targetId: string;
+  sessionId: string;
+  samples: Sample[];
+  firstProgressShot: Buffer | null;
+  readyShot: Buffer | null;
+  storageRequest: {
+    requestId?: string;
+    requestWillBeSent: boolean;
+    responseReceived: boolean;
+    dataReceivedBytes: number;
+    encodedDataLength: number;
+    loadingFinished: boolean;
+    loadingFailed?: { errorText: string; canceled: boolean };
+  };
+  close: () => Promise<void>;
+}
+
+async function runRelicPage(
+  url: string,
+  options: OpenRunOptions = {}
+): Promise<RunOutcome> {
+  const created = (await cdp.send('Target.createTarget', {
+    url: 'about:blank',
+  })) as { targetId: string };
+  const targetId = created.targetId;
+  const attached = (await cdp.send('Target.attachToTarget', {
+    targetId,
+    flatten: true,
+  })) as { sessionId: string };
+  const sessionId = attached.sessionId;
+
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send('Runtime.enable', {}, sessionId);
+  await cdp.send('Network.enable', {}, sessionId);
+  await cdp.send('DOM.enable', {}, sessionId);
+  await cdp.send('CSS.enable', {}, sessionId);
+  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true }, sessionId);
+
+  const vp = options.viewport ?? { width: 1440, height: 900, mobile: false };
+  await cdp.send(
+    'Emulation.setDeviceMetricsOverride',
+    {
+      width: vp.width,
+      height: vp.height,
+      deviceScaleFactor: 1,
+      mobile: vp.mobile ?? false,
+    },
+    sessionId
+  );
+
+  await cdp.send(
+    'Emulation.setEmulatedMedia',
+    {
+      media: 'screen',
+      features: [
+        {
+          name: 'prefers-color-scheme',
+          value: options.colorScheme ?? 'light',
+        },
+      ],
+    },
+    sessionId
+  );
+
+  if (options.disableScripts) {
+    await cdp.send(
+      'Emulation.setScriptExecutionDisabled',
+      { value: true },
+      sessionId
+    );
+  }
+
+  if (options.blockViewerJs) {
+    await cdp.send(
+      'Fetch.enable',
+      { patterns: [{ urlPattern: '*viewer.js*', requestStage: 'Request' }] },
+      sessionId
+    );
+    cdp.onEvent((e) => {
+      if (e.method === 'Fetch.requestPaused' && e.sessionId === sessionId) {
+        const reqId = (e.params as { requestId: string }).requestId;
+        void cdp
+          .send('Fetch.failRequest', { requestId: reqId, errorReason: 'BlockedByClient' }, sessionId)
+          .catch(() => {});
+      }
+    });
+  }
+
+  let isolatedContextId: number | undefined;
+  const stopContextListener = cdp.onEvent((e) => {
+    if (e.method === 'Runtime.executionContextCreated' && e.sessionId === sessionId) {
+      const ctx = (e.params as { context: { id: number; name: string } }).context;
+      if (ctx.name === 'relic-load-proof' && isolatedContextId === undefined) {
+        isolatedContextId = ctx.id;
+      }
+    }
+  });
+
+  const storageReq = {
+    requestId: undefined as string | undefined,
+    requestWillBeSent: false,
+    responseReceived: false,
+    dataReceivedBytes: 0,
+    encodedDataLength: 0,
+    loadingFinished: false,
+    loadingFailed: undefined as { errorText: string; canceled: boolean } | undefined,
+  };
+
+  const stopNetListener = cdp.onEvent((e) => {
+    if (e.sessionId !== sessionId) return;
+    const params = e.params;
+    if (!params || typeof params !== 'object') return;
+
+    if (e.method === 'Network.requestWillBeSent') {
+      if ('request' in params && params.request && typeof params.request === 'object' && 'url' in params.request) {
+        const reqUrl = String(params.request.url);
+        if (reqUrl.includes('/__storage/o/')) {
+          storageReq.requestId = String(params['requestId']);
+          storageReq.requestWillBeSent = true;
+        }
+      }
+    }
+    if (e.method === 'Network.responseReceived') {
+      if (params['requestId'] === storageReq.requestId) {
+        storageReq.responseReceived = true;
+      }
+    }
+    if (e.method === 'Network.dataReceived') {
+      if (params['requestId'] === storageReq.requestId) {
+        const dLen = typeof params['dataLength'] === 'number' ? params['dataLength'] : 0;
+        const eLen = typeof params['encodedDataLength'] === 'number' ? params['encodedDataLength'] : 0;
+        storageReq.dataReceivedBytes += dLen || eLen;
+        storageReq.encodedDataLength += eLen || dLen;
+      }
+    }
+    if (e.method === 'Network.loadingFinished') {
+      if (params['requestId'] === storageReq.requestId) {
+        storageReq.loadingFinished = true;
+      }
+    }
+    if (e.method === 'Network.loadingFailed') {
+      if (params['requestId'] === storageReq.requestId) {
+        storageReq.loadingFailed = {
+          errorText: String(params['errorText'] ?? ''),
+          canceled: params['canceled'] === true,
+        };
+      }
+    }
+  });
+
+  await cdp.send(
+    'Page.addScriptToEvaluateOnNewDocument',
+    { source: RECORDER_SOURCE, worldName: 'relic-load-proof' },
+    sessionId
+  );
+
+  if (options.onBeforeNavigate) {
+    await options.onBeforeNavigate(sessionId);
+  }
+
+  console.log(`[DEBUG] Navigating to: ${url}`);
+  const navRes = await cdp.send('Page.navigate', { url }, sessionId);
+  console.log(`[DEBUG] Nav result:`, navRes);
+  let firstProgressShot: Buffer | null = null;
+  let readyShot: Buffer | null = null;
+
+  // Poll for completion or settling
+  if (!options.disableScripts && !options.blockViewerJs) {
+    const start = Date.now();
+    let settled = false;
+
+    while (Date.now() - start < 30_000) {
+      await Bun.sleep(25);
+      if (isolatedContextId === undefined) continue;
+
+      const evalRes = (await cdp
+        .send(
+          'Runtime.evaluate',
+          {
+            expression: `(() => {
+              const s = window.__relicLoadSamples || [];
+              const latest = s[s.length - 1];
+              return {
+                len: s.length,
+                hasValuenow: s.some(x => x.meterValuenow !== null),
+                latest
+              };
+            })()`,
+            contextId: isolatedContextId,
+            returnByValue: true,
+          },
+          sessionId
+        )
+        .catch(() => null)) as { result?: { value?: { len: number; hasValuenow: boolean; latest?: Sample } } } | null;
+
+      const state = evalRes?.result?.value;
+      if (!state || !state.latest) continue;
+
+      // Capture first progress shot
+      if (!firstProgressShot && (state.hasValuenow || state.latest.platePhase === 'fetching')) {
+        const shot = (await cdp
+          .send('Page.captureScreenshot', { format: 'png' }, sessionId)
+          .catch(() => null)) as { data: string } | null;
+        if (shot) firstProgressShot = Buffer.from(shot.data, 'base64');
+      }
+
+      // Check if ready or dead card
+      if (
+        (state.latest.contentStageVisible && !state.latest.renderPillVisible) ||
+        state.latest.deadCardVisible
+      ) {
+        await Bun.sleep(100);
+        const shot = (await cdp
+          .send('Page.captureScreenshot', { format: 'png' }, sessionId)
+          .catch(() => null)) as { data: string } | null;
+        if (shot) readyShot = Buffer.from(shot.data, 'base64');
+        settled = true;
+        break;
+      }
+    }
+  } else {
+    // For noscript or blocked viewer.js, let page load for 400ms
+    await Bun.sleep(400);
+    const shot = (await cdp
+      .send('Page.captureScreenshot', { format: 'png' }, sessionId)
+      .catch(() => null)) as { data: string } | null;
+    if (shot) readyShot = Buffer.from(shot.data, 'base64');
+  }
+
+  // Retrieve samples
+  let samples: Sample[] = [];
+  if (isolatedContextId !== undefined) {
+    const rawSamples = (await cdp
+      .send(
+        'Runtime.evaluate',
+        {
+          expression: 'window.__stopRelicLoadSampling ? window.__stopRelicLoadSampling() : (window.__relicLoadSamples || [])',
+          contextId: isolatedContextId,
+          returnByValue: true,
+        },
+        sessionId
+      )
+      .catch(() => null)) as { result?: { value?: Sample[] } } | null;
+    samples = rawSamples?.result?.value ?? [];
+  }
+
+  return {
+    targetId,
+    sessionId,
+    samples,
+    firstProgressShot,
+    readyShot,
+    storageRequest: storageReq,
+    close: async () => {
+      stopContextListener();
+      stopNetListener();
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+    },
+  };
+}
+
+
+// ===========================================================================
+// Slice R second pass: rendered review of 9bfed0d8 plus the uncommitted
+// working-tree diff (sha256 c3a9ee77...), whose viewer build is byte-identical
+// to the one P ran (viewer.js 8ddbdb5d..., styles.css 43562b52...).
+// Same server, fixtures, chunked storage and owned headless shell as P. It
+// renders the states P's run never screenshots: every render pill, the version
+// pill, the version failure toast, the comparison line, every dead card,
+// noscript, the static plate and the plate's phases, at 1440, 390 and 320 in
+// light and dark. Harness-only changes, all outside the viewer: a per-object
+// chunk delay and first-byte delay, an optional extra mint delay, and
+// insecure.test mapped to loopback so the shell can load in an insecure
+// context. It is evidence, not a test.
+// ===========================================================================
+
+const OUTX = process.env['RELIC_REVIEW_OUT'] ?? '/tmp/relik-r2/frames';
+await mkdir(OUTX, { recursive: true });
+
+type Cfg = {
+  name: string;
+  viewport: { width: number; height: number; mobile?: boolean };
+  colorScheme: 'light' | 'dark';
+};
+const C1440L: Cfg = { name: '1440-light', viewport: { width: 1440, height: 900 }, colorScheme: 'light' };
+const C1440D: Cfg = { name: '1440-dark', viewport: { width: 1440, height: 900 }, colorScheme: 'dark' };
+const C390L: Cfg = { name: '390-light', viewport: { width: 390, height: 844, mobile: true }, colorScheme: 'light' };
+const C390D: Cfg = { name: '390-dark', viewport: { width: 390, height: 844, mobile: true }, colorScheme: 'dark' };
+const C320L: Cfg = { name: '320-light', viewport: { width: 320, height: 568, mobile: true }, colorScheme: 'light' };
+const C320D: Cfg = { name: '320-dark', viewport: { width: 320, height: 568, mobile: true }, colorScheme: 'dark' };
+const ALL: Cfg[] = [C1440L, C1440D, C390L, C390D, C320L, C320D];
+
+const MEASURE = `(() => {
+  const rr = (b) => ({ x: Math.round(b.left * 10) / 10, y: Math.round(b.top * 10) / 10, w: Math.round(b.width * 10) / 10, h: Math.round(b.height * 10) / 10, r: Math.round(b.right * 10) / 10, b: Math.round(b.bottom * 10) / 10 });
+  const r = (el) => (el ? rr(el.getBoundingClientRect()) : null);
+  const visible = (el) => {
+    if (!el || !el.isConnected) return false;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false;
+    const b = el.getBoundingClientRect();
+    return b.width > 0 && b.height > 0;
+  };
+  const inkRect = (el) => {
+    if (!el) return null;
+    const boxes = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      if (!n.textContent.trim()) continue;
+      const pe = n.parentElement;
+      if (pe && !visible(pe)) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const q of range.getClientRects()) if (q.width > 0 && q.height > 0) boxes.push(q);
+    }
+    for (const s of el.querySelectorAll('svg')) if (visible(s)) boxes.push(s.getBoundingClientRect());
+    if (!boxes.length) return null;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const q of boxes) { x1 = Math.min(x1, q.left); y1 = Math.min(y1, q.top); x2 = Math.max(x2, q.right); y2 = Math.max(y2, q.bottom); }
+    return rr({ left: x1, top: y1, width: x2 - x1, height: y2 - y1, right: x2, bottom: y2 });
+  };
+  const inter = (a, b) => {
+    if (!a || !b) return 0;
+    const w = Math.min(a.r, b.r) - Math.max(a.x, b.x);
+    const h = Math.min(a.b, b.b) - Math.max(a.y, b.y);
+    return w > 0 && h > 0 ? Math.round(w * h * 10) / 10 : 0;
+  };
+  const tagOf = (e) => (e ? e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\\s+/).join('.') : '') : null);
+  const bar = document.querySelector('header.bar');
+  const barRect = r(bar);
+  const barItems = bar ? [...bar.querySelectorAll('.mark, .identity .filename, .identity .accession, .action, select, .version-control, .version-chip')].filter(visible).map((a) => ({ el: tagOf(a), text: (a.innerText || a.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 48), ariaLabel: a.getAttribute('aria-label'), rect: r(a), ink: inkRect(a) })) : [];
+  const media = [...document.querySelectorAll('iframe, canvas, img, video, audio, .otio-view, .doc-pdf, .stage-pdf .page')].filter(visible).map((m) => ({ el: tagOf(m), rect: r(m) }));
+  const pills = [...document.querySelectorAll('.render-status')].map((p) => {
+    const label = p.querySelector('.render-status-label');
+    const ink = inkRect(p);
+    const holder = label ?? p;
+    const cs = getComputedStyle(holder);
+    const prefix = p.querySelector('.render-status-version');
+    const pb = prefix ? prefix.getBoundingClientRect() : null;
+    return {
+      rect: r(p), labelRect: r(label), ink, text: p.textContent,
+      hasLabel: !!label, directText: [...p.childNodes].filter((n) => n.nodeType === 3 && n.textContent.trim()).map((n) => n.textContent),
+      children: [...p.children].map(tagOf), attrs: [...p.attributes].map((a) => a.name + '=' + a.value).join(' '),
+      prev: tagOf(p.previousElementSibling), next: tagOf(p.nextElementSibling), parent: tagOf(p.parentElement),
+      marginTop: getComputedStyle(p).marginTop, height: getComputedStyle(p).height,
+      font: cs.fontFamily.slice(0, 40), fontSize: cs.fontSize, color: cs.color, background: cs.backgroundColor,
+      prefixShown: pb ? pb.width > 1 && pb.height > 1 : null,
+      vsBarItems: barItems.map((it) => ({ el: it.el, text: it.text, area: inter(ink, it.ink) })).filter((o) => o.area > 0),
+      stripVsMedia: media.map((m) => ({ el: m.el, area: inter(r(p), m.rect) })).filter((o) => o.area > 0),
+      inkVsMedia: media.map((m) => ({ el: m.el, area: inter(ink, m.rect) })).filter((o) => o.area > 0),
+      inkInsideBar: !!(ink && barRect && ink.y >= barRect.y - 0.5 && ink.b <= barRect.b + 0.5),
+      stripInsideBar: !!(barRect && r(p).y >= barRect.y - 0.5 && r(p).b <= barRect.b + 0.5),
+    };
+  });
+  const custody = document.querySelector('[data-load-custody]');
+  const meter = document.querySelector('.load-meter');
+  const stage = document.querySelector('main.stage');
+  const wrap = document.querySelector('.stage-wrap');
+  const row = document.querySelector('.relic-row');
+  const card = document.querySelector('main.stage .card');
+  const actions = card ? [...card.querySelectorAll('.card-actions > *, :scope > .action, :scope > button')].map((a) => ({ el: tagOf(a), text: (a.innerText || '').trim(), ariaLabel: a.getAttribute('aria-label'), dead: a.getAttribute('data-dead-action'), rect: r(a), ink: inkRect(a), hasIcon: !!a.querySelector('svg') })) : [];
+  const over = [];
+  for (const el of document.querySelectorAll('body *')) {
+    const b = el.getBoundingClientRect();
+    if (b.width > 0 && b.right > innerWidth + 0.5) over.push(tagOf(el).slice(0, 60) + ' r=' + Math.round(b.right));
+    if (over.length > 12) break;
+  }
+  return {
+    url: location.href.split('#')[0], innerWidth, innerHeight, scrollWidth: document.documentElement.scrollWidth,
+    bodyChildren: document.body ? [...document.body.children].map(tagOf) : [],
+    bar: barRect, barItems, media, pills,
+    stage: r(stage), stageClass: stage ? stage.className : null, renderState: stage ? stage.getAttribute('data-render-state') : null,
+    wrapRenderState: wrap ? wrap.getAttribute('data-render-state') : null, wrapBusy: wrap ? wrap.getAttribute('aria-busy') : null, rowBusy: row ? row.getAttribute('aria-busy') : null,
+    custody: custody ? { text: custody.textContent, hidden: custody.hidden, display: getComputedStyle(custody).display, title: custody.getAttribute('title'), rect: r(custody) } : null,
+    plate: document.querySelector('[data-load-plate]') ? document.querySelector('[data-load-plate]').getAttribute('data-load-phase') : null,
+    phase: (document.querySelector('.load-phase') || {}).textContent ?? null,
+    transfer: (document.querySelector('[data-load-transfer]') || {}).textContent ?? null,
+    contents: document.querySelector('[data-load-contents]') ? { text: document.querySelector('[data-load-contents]').textContent, hidden: document.querySelector('[data-load-contents]').hidden } : null,
+    meter: meter ? [...meter.attributes].map((a) => a.name + '=' + a.value).join(' ') : null,
+    card: card ? { rect: r(card), text: card.innerText, children: [...card.children].map(tagOf), topBorder: getComputedStyle(card).borderTopColor } : null,
+    actions,
+    keyEntry: document.querySelector('.key-entry') ? { form: r(document.querySelector('.key-entry-form')), feedback: r(document.querySelector('.key-entry-feedback')), progress: r(document.querySelector('.key-entry-progress')), progressText: document.querySelector('.key-entry-progress').textContent, order: [...document.querySelector('.key-entry').children].map(tagOf) } : null,
+    toast: [...document.querySelectorAll('.toast')].filter(visible).map((t) => ({ text: t.textContent, rect: r(t) })),
+    diffLoading: (document.querySelector('.diff-loading') || {}).textContent ?? null,
+    overflowing: over,
+  };
+})()`;
+
+const CONTRAST = `(() => {
+  const cvs = document.createElement('canvas');
+  cvs.width = 1; cvs.height = 1;
+  const ctx = cvs.getContext('2d', { willReadFrequently: true });
+  const rgba = (c) => {
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = '#000';
+    ctx.fillStyle = c;
+    ctx.fillRect(0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2], d[3] / 255];
+  };
+  const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat([1]);
+  const bgOf = (el) => {
+    const stack = [];
+    for (let e = el; e; e = e.parentElement) {
+      const c = rgba(getComputedStyle(e).backgroundColor);
+      if (c[3] > 0) stack.push(c);
+      if (c[3] >= 1) break;
+    }
+    let base = [255, 255, 255, 1];
+    for (let i = stack.length - 1; i >= 0; i--) base = over(stack[i], base);
+    return base;
+  };
+  const lum = (c) => {
+    const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  };
+  const ratio = (a, b) => { const la = lum(a), lb = lum(b); return Math.round(((Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)) * 100) / 100; };
+  const out = [];
+  const pair = (name, el) => {
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return;
+    const bg = bgOf(el);
+    const fg = over(rgba(cs.color), bg);
+    out.push({ name, fg: fg.slice(0, 3).map(Math.round), bg: bg.slice(0, 3).map(Math.round), ratio: ratio(fg, bg) });
+  };
+  pair('card-title', document.querySelector('main.stage .card-title'));
+  document.querySelectorAll('main.stage .card-note').forEach((e, i) => pair('card-note-' + i, e));
+  pair('load-phase', document.querySelector('.load-phase'));
+  pair('transfer', document.querySelector('[data-load-transfer]'));
+  pair('contents', document.querySelector('[data-load-contents]:not([hidden])'));
+  pair('card-accession', document.querySelector('main.stage .card .accession'));
+  pair('bar-custody', document.querySelector('[data-load-custody]'));
+  pair('bar-accession', document.querySelector('header.bar .accession'));
+  document.querySelectorAll('header.bar .actions .action span').forEach((e, i) => pair('bar-action-' + i, e));
+  document.querySelectorAll('main.stage .card-actions > *').forEach((e, i) => pair('card-action-' + i + (e.classList.contains('primary') ? '-primary' : ''), e));
+  pair('key-prompt', document.querySelector('.key-entry-prompt'));
+  pair('key-label', document.querySelector('.key-entry-label'));
+  pair('key-progress', document.querySelector('.key-entry-progress'));
+  document.querySelectorAll('.render-status').forEach((p, i) => pair('pill-' + i, p.querySelector('.render-status-label') ?? p));
+  document.querySelectorAll('.toast').forEach((t, i) => pair('toast-' + i, t));
+  pair('diff-loading', document.querySelector('.diff-loading'));
+  const meter = document.querySelector('.load-meter');
+  if (meter) {
+    const track = bgOf(meter);
+    const fillC = rgba(getComputedStyle(meter, '::before').backgroundColor);
+    const fill = over(fillC, track);
+    out.push({ name: 'meter-fill-vs-track', fg: fill.slice(0, 3).map(Math.round), bg: track.slice(0, 3).map(Math.round), ratio: ratio(fill, track) });
+    const border = over(rgba(getComputedStyle(meter).borderTopColor), bgOf(meter.parentElement));
+    out.push({ name: 'meter-border-vs-card', fg: border.slice(0, 3).map(Math.round), bg: bgOf(meter.parentElement).slice(0, 3).map(Math.round), ratio: ratio(border, bgOf(meter.parentElement)) });
+  }
+  return out;
+})()`;
+
+interface RPage {
+  sessionId: string;
+  targetId: string;
+  evalv: <T = unknown>(expr: string) => Promise<T | undefined>;
+  shot: (name: string, note?: string) => Promise<unknown>;
+  close: () => Promise<void>;
+}
+
+const measurements: Record<string, unknown> = {};
+const missed: string[] = [];
+
+async function openPage(
+  url: string,
+  cfg: Cfg,
+  opts: { cpu?: number; disableScripts?: boolean; failPatterns?: string[]; navigate?: boolean; reducedMotion?: boolean } = {}
+): Promise<RPage> {
+  const created = (await cdp.send('Target.createTarget', { url: 'about:blank' })) as { targetId: string };
+  const targetId = created.targetId;
+  const attached = (await cdp.send('Target.attachToTarget', { targetId, flatten: true })) as { sessionId: string };
+  const sessionId = attached.sessionId;
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send('Runtime.enable', {}, sessionId);
+  await cdp.send('Network.enable', {}, sessionId);
+  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true }, sessionId);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: cfg.viewport.width, height: cfg.viewport.height, deviceScaleFactor: 1, mobile: cfg.viewport.mobile ?? false }, sessionId);
+  const features = [{ name: 'prefers-color-scheme', value: cfg.colorScheme }];
+  if (opts.reducedMotion) features.push({ name: 'prefers-reduced-motion', value: 'reduce' });
+  await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features }, sessionId);
+  if (opts.cpu && opts.cpu > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: opts.cpu }, sessionId);
+  if (opts.disableScripts) await cdp.send('Emulation.setScriptExecutionDisabled', { value: true }, sessionId);
+  let stop: (() => void) | undefined;
+  if (opts.failPatterns && opts.failPatterns.length > 0) {
+    await cdp.send('Fetch.enable', { patterns: opts.failPatterns.map((p) => ({ urlPattern: p, requestStage: 'Request' })) }, sessionId);
+    stop = cdp.onEvent((e) => {
+      if (e.method === 'Fetch.requestPaused' && e.sessionId === sessionId) {
+        const reqId = (e.params as { requestId: string }).requestId;
+        void cdp.send('Fetch.failRequest', { requestId: reqId, errorReason: 'ConnectionRefused' }, sessionId).catch(() => {});
+      }
+    });
+  }
+  const evalv = async <T,>(expr: string): Promise<T | undefined> => {
+    const res = (await cdp
+      .send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, sessionId)
+      .catch(() => null)) as { result?: { value?: T } } | null;
+    return res?.result?.value;
+  };
+  const shot = async (name: string, note?: string) => {
+    const before = opts.disableScripts ? undefined : await evalv(MEASURE);
+    const s = (await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId).catch(() => null)) as { data: string } | null;
+    const after = opts.disableScripts ? undefined : await evalv(MEASURE);
+    const contrast = opts.disableScripts ? undefined : await evalv(CONTRAST);
+    if (s) await writeFile(join(OUTX, `${name}.png`), Buffer.from(s.data, 'base64'));
+    measurements[name] = { note, before, after, contrast };
+    console.log(`  shot ${name}`);
+    return after;
+  };
+  if (opts.navigate !== false) await cdp.send('Page.navigate', { url }, sessionId);
+  return {
+    sessionId,
+    targetId,
+    evalv,
+    shot,
+    close: async () => {
+      stop?.();
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+    },
+  };
+}
+
+async function waitFor(page: RPage, expr: string, timeoutMs = 20_000, stepMs = 4): Promise<boolean> {
+  const t = Date.now();
+  while (Date.now() - t < timeoutMs) {
+    if (await page.evalv<boolean>(expr)) return true;
+    await Bun.sleep(stepMs);
+  }
+  return false;
+}
+
+const RENDER_PILL = `!!document.querySelector('.render-status[data-render-status]')`;
+const READY = `(() => { const s = document.querySelector('main.stage:not(.stage-loading):not(.stage-dead)'); return !!s && !document.querySelector('.render-status') && s.getAttribute('data-render-state') !== 'rendering'; })()`;
+const DEAD = `!!document.querySelector('main.stage-dead .card')`;
+const AFTER_RECORD0 = `(() => { const c = document.querySelector('[data-load-contents]'); return !!c && !c.hidden; })()`;
+const TRANSFER_LINE = `/^TRANSFER /.test((document.querySelector('[data-load-transfer]') || {}).textContent || '')`;
+const FETCHING_BEFORE_RECORD0 = `(() => { const t = (document.querySelector('[data-load-transfer]') || {}).textContent || ''; const c = document.querySelector('[data-load-contents]'); return /^Fetching /.test(t) && !!c && c.hidden; })()`;
+const DECRYPTING = `(() => { const p = document.querySelector('[data-load-plate]'); return !!p && p.getAttribute('data-load-phase') === 'decrypting'; })()`;
+
+const byKey = (k: string) => fixtures.find((f) => f.classKey === k)!;
+const only = process.argv.find((a) => a.startsWith('--x='))?.slice(4);
+const want = (n: string) => !only || only.split(',').includes(n);
+
+try {
+  // A. Render pill per class at every size and scheme.
+  if (want('pill')) {
+    for (const cfg of ALL) {
+      for (const k of ['pdf', 'otio', 'html', 'svg', 'jsx', 'mp4', 'png']) {
+        const fix = byKey(k);
+        const page = await openPage(fix.shareUrl, cfg, { cpu: 6 });
+        const saw = await waitFor(page, RENDER_PILL, 30_000, 2);
+        if (saw) await page.shot(`A-pill-${k}-${cfg.name}`);
+        else missed.push(`A-pill-${k}-${cfg.name}`);
+        if (await waitFor(page, READY, 30_000, 20)) await page.shot(`A-ready-${k}-${cfg.name}`);
+        else missed.push(`A-ready-${k}-${cfg.name}`);
+        await page.close();
+      }
+    }
+  }
+
+  // B. Plate phases on the 2.1 MB OTIO relic, slowed so each phase holds.
+  if (want('plate')) {
+    const fix = byKey('otio');
+    for (const cfg of ALL) {
+      activeChunkDelayMs.set(fix.relicId, 70);
+      activeFirstByteDelayMs.set(fix.relicId, 1500);
+      extraMintDelayMs = 1200;
+      const page = await openPage(fix.shareUrl, cfg, {});
+      if (await waitFor(page, `(() => { const p = document.querySelector('[data-load-plate]'); return !!p && p.getAttribute('data-load-phase') === 'opening' && document.readyState === 'complete'; })()`, 5_000, 2)) await page.shot(`B-plate-opening-${cfg.name}`);
+      else missed.push(`B-plate-opening-${cfg.name}`);
+      if (await waitFor(page, TRANSFER_LINE, 10_000, 2)) await page.shot(`B-plate-transfer-${cfg.name}`);
+      else missed.push(`B-plate-transfer-${cfg.name}`);
+      if (await waitFor(page, FETCHING_BEFORE_RECORD0, 10_000, 2)) await page.shot(`B-plate-fetching-${cfg.name}`);
+      else missed.push(`B-plate-fetching-${cfg.name}`);
+      if (await waitFor(page, AFTER_RECORD0, 20_000, 2)) await page.shot(`B-plate-contents-${cfg.name}`);
+      else missed.push(`B-plate-contents-${cfg.name}`);
+      extraMintDelayMs = 0;
+      if (await waitFor(page, DECRYPTING, 30_000, 1)) await page.shot(`B-plate-decrypting-${cfg.name}`);
+      else missed.push(`B-plate-decrypting-${cfg.name}`);
+      await waitFor(page, READY, 30_000, 20);
+      await page.close();
+      activeChunkDelayMs.delete(fix.relicId);
+      activeFirstByteDelayMs.delete(fix.relicId);
+    }
+    extraMintDelayMs = 0;
+  }
+
+  // C. Version switch pill, opening then fetching, at every size and scheme.
+  if (want('version')) {
+    const md = byKey('md');
+    for (const cfg of ALL) {
+      const page = await openPage(md.shareUrl, cfg, {});
+      await waitFor(page, READY, 20_000, 20);
+      await Bun.sleep(200);
+      activeChunkDelayMs.set(md.relicId, 90);
+      extraMintDelayMs = 1500;
+      await page.evalv(`(() => { const o = document.querySelector('.version-option[data-version="1"]'); if (o) o.click(); return !!o; })()`);
+      if (await waitFor(page, `(() => { const p = document.querySelector('[data-version-progress]'); return !!p && /Opening version 1/.test(p.textContent); })()`, 5_000, 2)) await page.shot(`C-version-opening-${cfg.name}`);
+      else missed.push(`C-version-opening-${cfg.name}`);
+      if (await waitFor(page, `(() => { const p = document.querySelector('[data-version-progress]'); return !!p && /Fetching [0-9]/.test(p.textContent); })()`, 8_000, 2)) await page.shot(`C-version-fetching-${cfg.name}`);
+      else missed.push(`C-version-fetching-${cfg.name}`);
+      extraMintDelayMs = 0;
+      await waitFor(page, `!document.querySelector('[data-version-progress]')`, 30_000, 20);
+      await Bun.sleep(300);
+      await page.shot(`C-version-settled-${cfg.name}`);
+      activeChunkDelayMs.delete(md.relicId);
+      await page.close();
+    }
+    extraMintDelayMs = 0;
+  }
+
+  // D. Version switch failure: version 1 cut short, the switch ends in a toast.
+  if (want('versionfail')) {
+    const md = byKey('md');
+    for (const cfg of ALL) {
+      const page = await openPage(md.shareUrl, cfg, {});
+      await waitFor(page, READY, 20_000, 20);
+      await Bun.sleep(200);
+      activeAbortAfterBytes.set(md.relicId, 48 * 1024);
+      await page.evalv(`(() => { const o = document.querySelector('.version-option[data-version="1"]'); if (o) o.click(); return !!o; })()`);
+      if (await waitFor(page, `document.querySelectorAll('.toast').length > 0`, 10_000, 5)) {
+        await Bun.sleep(700);
+        await page.shot(`D-version-failed-${cfg.name}`);
+      } else missed.push(`D-version-failed-${cfg.name}`);
+      activeAbortAfterBytes.delete(md.relicId);
+      await page.close();
+    }
+  }
+
+  // E. Comparison loading line with bytes.
+  if (want('compare')) {
+    const md = byKey('md');
+    for (const cfg of ALL) {
+      const page = await openPage(md.shareUrl, cfg, {});
+      await waitFor(page, READY, 20_000, 20);
+      await Bun.sleep(200);
+      activeChunkDelayMs.set(md.relicId, 90);
+      const clicked = await page.evalv(`(() => { const c = [...document.querySelectorAll('.action-history')]; const b = c[0]; if (b) b.click(); return c.map((x) => x.tagName + '.' + x.className + ' | ' + (x.getAttribute('aria-label') || '') + ' | ' + (x.textContent || '').trim().slice(0, 40)); })()`);
+      measurements[`E-compare-click-${cfg.name}`] = clicked;
+      const seen: string[] = [];
+      const t0 = Date.now();
+      let shotTaken = false;
+      while (Date.now() - t0 < 8_000) {
+        const txt = await page.evalv<string | null>(`(document.querySelector('.diff-loading') || {}).textContent ?? null`);
+        if (txt && seen.at(-1) !== txt) seen.push(txt);
+        if (txt && /Fetching [0-9]/.test(txt) && !shotTaken) { await page.shot(`E-compare-loading-${cfg.name}`); shotTaken = true; }
+        if (shotTaken && seen.length > 3) break;
+        await Bun.sleep(3);
+      }
+      measurements[`E-compare-lines-${cfg.name}`] = seen;
+      if (!shotTaken) { await page.shot(`E-compare-NOLINE-${cfg.name}`); missed.push(`E-compare-loading-${cfg.name}`); }
+      activeChunkDelayMs.delete(md.relicId);
+      await page.close();
+    }
+  }
+
+  // F. Dead cards, noscript and the static plate at every size and scheme.
+  if (want('dead')) {
+    const rightKey = sixMbInfo.key;
+    const charIdx = rightKey.startsWith('r1') ? 2 : 0;
+    const wrongKey = rightKey.slice(0, charIdx) + (rightKey[charIdx] === 'A' ? 'B' : 'A') + rightKey.slice(charIdx + 1);
+    // One relic published only to be removed, for the report-only card.
+    const removedPath = join(scratch, 'removed.md');
+    await writeFile(removedPath, '# Removed\n\nThis relic is removed by the operator for the review.\n');
+    const removedRes = await callMcp('relic_publish', { path: removedPath, cover: false, title: '' });
+    const removedUrl = String(removedRes['url'] ?? removedRes['share_url'] ?? '');
+    const removedId = String(removedRes['relic_id'] ?? '');
+    const del = await fetch(`${origin}/api/relics/${removedId}?reason=abuse`, { method: 'DELETE', headers: { authorization: `Bearer ${operatorTokens.get('operator-token')}` } });
+    console.log(`  operator delete of ${removedId}: ${del.status}`);
+
+    for (const cfg of ALL) {
+      // could not be opened, then a typed key fetching under the form
+      {
+        const page = await openPage(`${origin}/${sixMbInfo.relicId}#${wrongKey}`, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`F-could-not-open-${cfg.name}`);
+        else missed.push(`F-could-not-open-${cfg.name}`);
+        activeChunkDelayMs.set(sixMbInfo.relicId, 40);
+        await page.evalv(`(() => { const i = document.querySelector('#relic-key-input'); i.value = ${JSON.stringify(rightKey)}; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.key-entry-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); return true; })()`);
+        if (await waitFor(page, `/Fetching [1-9]/.test((document.querySelector('.key-entry-progress') || {}).textContent || '')`, 8_000, 5)) {
+          await Bun.sleep(250);
+          await page.shot(`F-key-entry-fetching-${cfg.name}`);
+        } else missed.push(`F-key-entry-fetching-${cfg.name}`);
+        activeChunkDelayMs.delete(sixMbInfo.relicId);
+        await page.close();
+      }
+      // cut short after record 0 (the custody line should keep the filename)
+      {
+        const md = byKey('md');
+        activeAbortAfterBytes.set(md.relicId, 100 * 1024);
+        activeAbortAfterBytes.set(`${md.relicId}/v2`, 100 * 1024);
+        const page = await openPage(md.shareUrl, cfg, {});
+        let sawName = false;
+        const t0 = Date.now();
+        while (Date.now() - t0 < 20_000) {
+          const st = await page.evalv<{ custody: string | null; dead: boolean }>(`(() => ({ custody: (document.querySelector('[data-load-custody]') || {}).textContent ?? null, dead: !!document.querySelector('main.stage-dead .card') }))()`);
+          if (st?.custody === 'report.md') sawName = true;
+          if (st?.dead) break;
+          await Bun.sleep(3);
+        }
+        measurements[`F-cut-short-after-record0-${cfg.name}:custody-before-card`] = { sawFilenameBeforeCard: sawName };
+        if (await waitFor(page, DEAD, 5_000, 10)) await page.shot(`F-cut-short-after-record0-${cfg.name}`);
+        else missed.push(`F-cut-short-after-record0-${cfg.name}`);
+        activeAbortAfterBytes.delete(md.relicId);
+        activeAbortAfterBytes.delete(`${md.relicId}/v2`);
+        await page.close();
+      }
+      // cut short before record 0 (the custody line must clear)
+      {
+        const zip = byKey('zip');
+        activeAbortAfterBytes.set(zip.relicId, 16 * 1024);
+        const page = await openPage(zip.shareUrl, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`F-cut-short-before-record0-${cfg.name}`);
+        else missed.push(`F-cut-short-before-record0-${cfg.name}`);
+        activeAbortAfterBytes.delete(zip.relicId);
+        await page.close();
+      }
+      // damaged: a byte flipped in record 2 of the wav
+      {
+        const wav = byKey('wav');
+        const original = new Uint8Array((await storage.read(wav.relicId))!);
+        const corrupted = new Uint8Array(original);
+        corrupted[21 + 2 * 65536 + 10] ^= 0x01;
+        storage.put(wav.relicId, corrupted);
+        const page = await openPage(wav.shareUrl, cfg, {});
+        let sawName = false;
+        const t0 = Date.now();
+        while (Date.now() - t0 < 20_000) {
+          const st = await page.evalv<{ custody: string | null; dead: boolean }>(`(() => ({ custody: (document.querySelector('[data-load-custody]') || {}).textContent ?? null, dead: !!document.querySelector('main.stage-dead .card') }))()`);
+          if (st?.custody === 'tone.wav') sawName = true;
+          if (st?.dead) break;
+          await Bun.sleep(3);
+        }
+        measurements[`F-damaged-${cfg.name}:custody-before-card`] = { sawFilenameBeforeCard: sawName };
+        if (await waitFor(page, DEAD, 5_000, 10)) await page.shot(`F-damaged-${cfg.name}`);
+        else missed.push(`F-damaged-${cfg.name}`);
+        storage.put(wav.relicId, original);
+        await page.close();
+      }
+      // service unreachable: the mint request itself fails
+      {
+        const ts = byKey('ts');
+        const page = await openPage(ts.shareUrl, cfg, { failPatterns: ['*/mint*'] });
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`F-service-unreachable-${cfg.name}`);
+        else missed.push(`F-service-unreachable-${cfg.name}`);
+        await page.close();
+      }
+      // insecure context: the same shell over plain http on a non-loopback name
+      {
+        const ts = byKey('ts');
+        const page = await openPage(`http://insecure.test:${service.port}/${ts.relicId}#${ts.key}`, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`F-insecure-${cfg.name}`);
+        else {
+          await page.shot(`F-insecure-NOCARD-${cfg.name}`);
+          missed.push(`F-insecure-${cfg.name}`);
+        }
+        await page.close();
+      }
+      // removed by the operator: the report-only card
+      {
+        const page = await openPage(removedUrl, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`F-removed-${cfg.name}`);
+        else {
+          await page.shot(`F-removed-NOCARD-${cfg.name}`);
+          missed.push(`F-removed-${cfg.name}`);
+        }
+        await page.close();
+      }
+      // noscript
+      {
+        const md = byKey('md');
+        const page = await openPage(md.shareUrl, cfg, { disableScripts: true });
+        await Bun.sleep(600);
+        await page.shot(`F-noscript-${cfg.name}`);
+        await page.close();
+      }
+      // static plate, viewer.js blocked
+      {
+        const md = byKey('md');
+        const page = await openPage(md.shareUrl, cfg, { failPatterns: ['*viewer.js*'] });
+        await Bun.sleep(600);
+        await page.shot(`F-static-plate-${cfg.name}`);
+        await page.close();
+      }
+    }
+  }
+
+  // G. DOM checks the frames cannot show.
+  if (want('verify')) {
+    const DOMQ = `(() => {
+      const at = (sel, name) => { const el = document.querySelector(sel); return el ? el.getAttribute(name) : 'NO-ELEMENT'; };
+      return {
+        mainStageRenderState: at('main.stage', 'data-render-state'),
+        stageWrapRenderState: at('.stage-wrap', 'data-render-state'),
+        stageWrapBusy: at('.stage-wrap', 'aria-busy'),
+        relicRowBusy: at('.relic-row', 'aria-busy'),
+        pill: !!document.querySelector('.render-status'),
+        pillPrev: (() => { const p = document.querySelector('.render-status'); return p && p.previousElementSibling ? p.previousElementSibling.tagName.toLowerCase() + '.' + p.previousElementSibling.className : null; })(),
+      };
+    })()`;
+    {
+      const otio = byKey('otio');
+      const page = await openPage(otio.shareUrl, C1440L, { cpu: 6 });
+      await waitFor(page, RENDER_PILL, 30_000, 2);
+      measurements['G-render-state-rendering'] = await page.evalv(DOMQ);
+      await waitFor(page, READY, 30_000, 20);
+      measurements['G-render-state-ready'] = await page.evalv(DOMQ);
+      await page.close();
+    }
+    for (const cfg of [C1440L, C390D, C320L]) {
+      const md = byKey('md');
+      const page = await openPage(md.shareUrl, cfg, { disableScripts: true });
+      await Bun.sleep(600);
+      await cdp.send('DOM.enable', {}, page.sessionId);
+      const doc = (await cdp.send('DOM.getDocument', { depth: -1, pierce: true }, page.sessionId)) as { root: { nodeId: number } };
+      const q = (await cdp.send('DOM.querySelectorAll', { nodeId: doc.root.nodeId, selector: 'main.stage-noscript a.action, main.stage-noscript a.action span, header.bar a.action, [data-load-custody]' }, page.sessionId)) as { nodeIds: number[] };
+      const boxes = [];
+      for (const id of q.nodeIds) {
+        const bm = (await cdp.send('DOM.getBoxModel', { nodeId: id }, page.sessionId).catch(() => null)) as { model?: { width: number; height: number; content: number[] } } | null;
+        const html = (await cdp.send('DOM.getOuterHTML', { nodeId: id }, page.sessionId).catch(() => null)) as { outerHTML?: string } | null;
+        boxes.push({ html: (html?.outerHTML ?? '').slice(0, 140), box: bm?.model ? { w: bm.model.width, h: bm.model.height, x: bm.model.content[0], y: bm.model.content[1] } : 'no box' });
+      }
+      measurements[`G-noscript-boxes-${cfg.name}`] = boxes;
+      await page.close();
+    }
+    {
+      const md = byKey('md');
+      const page = await openPage(md.shareUrl, C1440L, { failPatterns: ['*viewer.js*'] });
+      await Bun.sleep(600);
+      await cdp.send('DOM.enable', {}, page.sessionId);
+      const doc = (await cdp.send('DOM.getDocument', { depth: -1 }, page.sessionId)) as { root: { nodeId: number } };
+      const q = (await cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '.load-card' }, page.sessionId)) as { nodeId: number };
+      const html = (await cdp.send('DOM.getOuterHTML', { nodeId: q.nodeId }, page.sessionId)) as { outerHTML: string };
+      measurements['G-static-plate-card-html'] = html.outerHTML;
+      await page.close();
+    }
+    {
+      const otio = byKey('otio');
+      activeChunkDelayMs.set(otio.relicId, 70);
+      activeFirstByteDelayMs.set(otio.relicId, 1500);
+      const page = await openPage(otio.shareUrl, C1440L, {});
+      if (await waitFor(page, TRANSFER_LINE, 10_000, 2)) measurements['G-meter-at-transfer'] = await page.evalv(`(() => { const m = document.querySelector('.load-meter'); return m ? m.outerHTML : null; })()`);
+      if (await waitFor(page, FETCHING_BEFORE_RECORD0, 10_000, 2)) measurements['G-meter-at-fetching'] = await page.evalv(`(() => { const m = document.querySelector('.load-meter'); return m ? m.outerHTML : null; })()`);
+      if (await waitFor(page, AFTER_RECORD0, 20_000, 2)) measurements['G-custody-after-record0'] = await page.evalv(`(() => { const c = document.querySelector('[data-load-custody]'); return c ? c.outerHTML : null; })()`);
+      activeChunkDelayMs.delete(otio.relicId);
+      activeFirstByteDelayMs.delete(otio.relicId);
+      await waitFor(page, READY, 30_000, 20);
+      await page.close();
+    }
+    {
+      const md = byKey('md');
+      const page = await openPage(md.shareUrl, C1440L, { failPatterns: ['*viewer.js*'], reducedMotion: true });
+      await Bun.sleep(600);
+      await page.shot('G-static-plate-reduced-motion-1440-light');
+      await page.close();
+    }
+    {
+      const html = byKey('html');
+      const page = await openPage(html.shareUrl, C1440L, { cpu: 6, reducedMotion: true });
+      if (await waitFor(page, RENDER_PILL, 30_000, 2)) await page.shot('G-pill-reduced-motion-html-1440-light');
+      else missed.push('G-pill-reduced-motion-html-1440-light');
+      await page.close();
+    }
+  }
+
+  await writeFile(join(OUTX, 'measurements.json'), JSON.stringify({ missed, measurements }, null, 2));
+  console.log(`REVIEW_CAPTURE_DONE shots=${Object.keys(measurements).length} missed=${missed.length}`);
+} finally {
+  child.kill('SIGKILL');
+  service.stop(true);
+  usercontentService.stop(true);
+  await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+  await rm(scratch, { recursive: true, force: true }).catch(() => {});
+}
