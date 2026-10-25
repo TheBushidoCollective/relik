@@ -19,6 +19,7 @@ import {
   normalizeTitle,
   type RendererClass,
   shareVerifierFor,
+  versionDigest,
 } from '@relic/format';
 import type { CoverOutcome, CoverReport } from '@relic/format/cover';
 import { keyToMnemonic } from '@relic/format/mnemonic';
@@ -94,6 +95,8 @@ export interface RepublishResult {
    * many times this relic has changed.
    */
   readonly version: number;
+  /** Lowercase hex SHA-256 digest of the encrypted ciphertext container. */
+  readonly version_digest: string;
   /** Null when the relic has no lifetime, which is now the default. */
   readonly relic_expires_at: string | null;
   readonly renderer_class: RendererClass;
@@ -401,6 +404,7 @@ export async function republish(
     mimetype: guessMimetype(filename, rendererClass),
     key: decodeKey(state.key),
   });
+  const localVersionDigest = await versionDigest(container);
 
   // 1. The republish grant: same shape as a first grant, authorized by the
   //    publish token instead of a challenge nonce, aiming the upload at the
@@ -432,12 +436,31 @@ export async function republish(
   );
 
   // 3. Completion, with the same survivability as a first publish.
-  await reportComplete(deps, input.relic_id);
+  const complete = await reportComplete(deps, input.relic_id);
+  const serverDigest = complete?.['version_digest'];
 
-  // 4. Count the version locally before reporting it. The service does not
-  //    return one, so this file is the only ledger; if the count drifts, the
-  //    number reported drifts with it, and nothing else does.
-  const version = state.version + 1;
+  // 4. The reported republish version is complete.version ?? grant.version ?? state.version + 1.
+  const version =
+    typeof complete?.['version'] === 'number'
+      ? (complete['version'] as number)
+      : typeof grant['version'] === 'number'
+        ? (grant['version'] as number)
+        : state.version + 1;
+
+  if (typeof serverDigest === 'string' && serverDigest !== localVersionDigest) {
+    throw new PublishError(
+      'version_digest_mismatch',
+      `the version digest computed by the server (${serverDigest}) does not match the local container digest (${localVersionDigest})`,
+      {
+        relic_id: input.relic_id,
+        version,
+        local: localVersionDigest,
+        server: serverDigest,
+      }
+    );
+  }
+  const resolvedVersionDigest =
+    typeof serverDigest === 'string' ? serverDigest : localVersionDigest;
   try {
     // The filename tracks the newest version, because that is the one the
     // link now serves and the one an inventory should name. `published_at`
@@ -515,6 +538,7 @@ export async function republish(
   return {
     relic_id: input.relic_id,
     version,
+    version_digest: resolvedVersionDigest,
     relic_expires_at:
       grant['relic_expires_at'] == null
         ? null

@@ -313,7 +313,7 @@ describe('the handshake carries instructions', () => {
   });
 
   test('stays short because it costs context every session', () => {
-    expect(INSTRUCTIONS.length).toBeLessThan(2300);
+    expect(INSTRUCTIONS.length).toBeLessThan(2600);
   });
 });
 

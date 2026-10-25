@@ -902,7 +902,7 @@ export async function resolveComment(
  * machine never published is refused here rather than after a round trip that
  * could only end the same way.
  */
-async function localState(relicId: string): Promise<PublishState> {
+export async function localState(relicId: string): Promise<PublishState> {
   if (!isValidRelicId(relicId)) {
     throw new PublishError(
       'no_local_publish_state',
