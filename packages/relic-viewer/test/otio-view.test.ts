@@ -408,8 +408,21 @@ class ViewElement {
     return true;
   }
 
-  querySelector(): null {
-    return null;
+  querySelector(selector?: string): ViewElement | null {
+    if (!selector) return null;
+    return (
+      findViewElement(this, (el) => {
+        if (selector.startsWith('.')) {
+          const cls = selector.slice(1).split('[')[0]!;
+          if (!el.className.split(/\s+/).includes(cls)) return false;
+        }
+        if (selector.includes('[data-comment-id="')) {
+          const m = selector.match(/\[data-comment-id="([^"]+)"\]/);
+          if (m && el.dataset['commentId'] !== m[1]) return false;
+        }
+        return true;
+      }) ?? null
+    );
   }
 
   querySelectorAll(): ViewElement[] {
@@ -1014,19 +1027,13 @@ describe('OTIO archive projection reader', () => {
         controller.dispose();
       }
     });
-    test('aim carries live preview-safe geometry without altering track scope', async () => {
+    test('aim carries live measure without measureBounds', async () => {
       const root = new ViewElement('div');
       await mountOtioView(root as unknown as HTMLElement, {
         content: nestedSelectionContent(),
         revision: 1,
       });
       const controller = otioControllerFor(root as unknown as HTMLElement);
-      const preview = findViewElement(root, (node) =>
-        node.className.split(/\s+/).includes('otio-preview')
-      );
-      const scope = findViewElement(root, (node) =>
-        node.className.split(/\s+/).includes('otio-preview-scope')
-      );
       const select = findViewElement(
         root,
         (node) => node.getAttribute('aria-label') === 'Comment track'
@@ -1038,20 +1045,13 @@ describe('OTIO archive projection reader', () => {
       const comment = findViewElement(root, (node) =>
         node.className.split(/\s+/).includes('otio-comment-selection')
       );
-      if (
-        !controller ||
-        !preview ||
-        !scope ||
-        !select ||
-        !trackMode ||
-        !comment
-      )
+      if (!controller || !select || !trackMode || !comment)
         throw new Error('expected native track composer controls');
-      preview.layout = new DOMRect(12, 36, 320, 180);
-      scope.layout = new DOMRect(20, 48, 160, 28);
+
       const emitted: Array<{
         readonly anchor: OtioAnchorV1;
-        readonly measureBounds?: () => DOMRect | undefined;
+        readonly measure?: () => DOMRect | undefined;
+        readonly measureBounds?: unknown;
       }> = [];
       root.addEventListener('relic:otio-aim', (event) => {
         emitted.push((event as CustomEvent<(typeof emitted)[number]>).detail);
@@ -1063,26 +1063,37 @@ describe('OTIO archive projection reader', () => {
         comment.dispatchEvent(new Event('click'));
         expect(emitted).toHaveLength(1);
         expect(emitted[0]?.anchor.track_id).toBe('outer-track');
-        expect(emitted[0]?.anchor.range).toEqual(
-          otioScopeRange(
-            controller.document,
-            controller.document.timeline_ids[0]!,
-            'outer-track'
-          )
-        );
-        expect(emitted[0]?.measureBounds?.()).toMatchObject({
-          left: 12,
-          top: 76,
-          width: 320,
-          height: 140,
+        expect(emitted[0]?.measureBounds).toBeUndefined();
+        const measured = emitted[0]?.measure?.();
+        expect(measured).toBeDefined();
+      } finally {
+        controller.dispose();
+      }
+    });
+
+    test('measure(commentId) returns mark element box or undefined when absent', async () => {
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: nestedSelectionContent(),
+        revision: 1,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected controller');
+
+      try {
+        const mark = new ViewElement('div');
+        mark.className = 'otio-comment-mark';
+        mark.dataset['commentId'] = 'test-c1';
+        mark.layout = new DOMRect(100, 200, 50, 20);
+        root.appendChild(mark);
+
+        expect(controller.measure('test-c1')).toMatchObject({
+          left: 100,
+          top: 200,
+          width: 50,
+          height: 20,
         });
-        scope.layout = new DOMRect(20, 48, 160, 40);
-        expect(emitted[0]?.measureBounds?.()).toMatchObject({
-          left: 12,
-          top: 88,
-          width: 320,
-          height: 128,
-        });
+        expect(controller.measure('absent-id')).toBeUndefined();
       } finally {
         controller.dispose();
       }

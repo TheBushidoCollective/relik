@@ -648,73 +648,113 @@ export async function mountOtioView(
     seekFrame(rescaleTime(range.start_time, rate).value);
     if (focus) emitAim(true);
   }
-  function previewSafeBand(): DOMRect | undefined {
-    const frame = preview.getBoundingClientRect();
-    if (frame.width <= 0 || frame.height <= 0) return undefined;
-    const exclusions = [
-      sdr,
-      ...preview.querySelectorAll<HTMLElement>(
-        '.otio-preview-block, .otio-preview-base'
-      ),
-    ]
-      .filter((node) => {
-        const box = node.getBoundingClientRect();
-        return (
-          !node.hidden &&
-          box.width > 0 &&
-          box.height > 0 &&
-          box.bottom > frame.top &&
-          box.top < frame.bottom
-        );
-      })
-      .map((node) => {
-        const box = node.getBoundingClientRect();
-        return {
-          top: Math.max(frame.top, box.top),
-          bottom: Math.min(frame.bottom, box.bottom),
-        };
-      });
-    const edges = [
-      frame.top,
-      frame.bottom,
-      ...exclusions.flatMap(({ top, bottom }) => [top, bottom]),
-    ].sort((a, b) => a - b);
-    const anchor =
-      root
-        .querySelector<HTMLElement>('.otio-selection')
-        ?.getBoundingClientRect() ?? comment.getBoundingClientRect();
-    const aimY = anchor.top + anchor.height / 2;
-    const bands = edges
-      .slice(0, -1)
-      .map((top, index) => ({ top, bottom: edges[index + 1]! }))
-      .filter(
-        ({ top, bottom }) =>
-          bottom > top &&
-          !exclusions.some((box) => box.top < bottom && box.bottom > top)
+  function measure(commentId?: string): DOMRect | undefined {
+    if (commentId !== undefined) {
+      const mark = root.querySelector<HTMLElement>(
+        `.otio-comment-mark[data-comment-id="${commentId}"]`
       );
-    bands.sort(
-      (a, b) =>
-        b.bottom - b.top - (a.bottom - a.top) ||
-        Math.abs((a.top + a.bottom) / 2 - aimY) -
-          Math.abs((b.top + b.bottom) / 2 - aimY)
-    );
-    const band = bands[0];
-    return (
-      band &&
-      new DOMRect(frame.left, band.top, frame.width, band.bottom - band.top)
-    );
+      return mark?.getBoundingClientRect();
+    }
+
+    const anchor = projectedSelection?.anchor ?? selected;
+    if (!anchor) return undefined;
+
+    const trackId = projectedSelection?.target
+      ? projectedSelection.target.track
+      : anchor.track_id;
+    const rail =
+      (trackId ? rails.get(trackId) : null) ??
+      root.querySelector<HTMLElement>('.otio-track-rail');
+    if (!rail) return undefined;
+
+    const row = rail.closest('.otio-track-row') as HTMLElement | null;
+    const label = row?.querySelector('.otio-track-label') as HTMLElement | null;
+    const scrollRect = scroll.getBoundingClientRect();
+    const labelRect = label?.getBoundingClientRect();
+    const railRect = rail.getBoundingClientRect();
+
+    const clipLeft = labelRect ? labelRect.right : scrollRect.left;
+    const clipRight = scrollRect.right;
+    const clipTop = railRect.top;
+    const clipBottom = railRect.bottom;
+    const trackHeight = clipBottom - clipTop;
+
+    const selNode =
+      rail.querySelector<HTMLElement>('.otio-selection') ??
+      root.querySelector<HTMLElement>('.otio-selection');
+    const selRect = selNode?.getBoundingClientRect();
+    if (!selRect) {
+      return new DOMRect(clipLeft, clipTop, 0, trackHeight);
+    }
+
+    const clampedLeft = Math.max(clipLeft, selRect.left);
+    const clampedRight = Math.min(clipRight, selRect.right);
+    const width = Math.max(0, clampedRight - clampedLeft);
+
+    if (width > 0) {
+      return new DOMRect(
+        clampedLeft,
+        selRect.top,
+        width,
+        selRect.height || trackHeight
+      );
+    }
+
+    if (selRect.right <= clipLeft) {
+      return new DOMRect(clipLeft, clipTop, 0, trackHeight);
+    }
+    if (selRect.left >= clipRight) {
+      return new DOMRect(clipRight, clipTop, 0, trackHeight);
+    }
+    return new DOMRect(clampedLeft, clipTop, 0, trackHeight);
+  }
+
+  function alignSelection(focus: boolean): void {
+    const trackId = selected?.track_id;
+    if (focus && trackId) {
+      expandTrack(trackId);
+    }
+
+    const currentBox = measure();
+    const clippedEmpty = !currentBox || currentBox.width === 0;
+
+    if (focus || clippedEmpty) {
+      const rail =
+        (trackId ? rails.get(trackId) : null) ??
+        root.querySelector<HTMLElement>('.otio-track-rail');
+      const row = rail?.closest('.otio-track-row') as HTMLElement | null;
+      const label = row?.querySelector('.otio-track-label') as HTMLElement | null;
+      const labelWidth = label?.getBoundingClientRect().width ?? 170;
+      const areaWidth = Math.max(1, scroll.clientWidth - labelWidth);
+
+      const selNode = rail?.querySelector<HTMLElement>('.otio-selection');
+      if (selNode && rail) {
+        const railRect = rail.getBoundingClientRect();
+        const selRect = selNode.getBoundingClientRect();
+        const selStart = selRect.left - railRect.left + scroll.scrollLeft;
+        const selWidth = selRect.width;
+
+        if (selWidth > areaWidth - 32) {
+          scroll.scrollLeft = Math.max(0, selStart - 16);
+        } else if (selStart < scroll.scrollLeft + 16) {
+          scroll.scrollLeft = Math.max(0, selStart - 16);
+        } else if (selStart + selWidth > scroll.scrollLeft + areaWidth - 16) {
+          scroll.scrollLeft = Math.max(
+            0,
+            selStart + selWidth - areaWidth + 16
+          );
+        }
+      }
+    }
   }
 
   function emitAim(focus: boolean): void {
     if (!selected) return;
+    alignSelection(focus);
     const detail: OtioAimDetail = {
       anchor: selected,
       focus,
-      measure: () =>
-        root
-          .querySelector<HTMLElement>('.otio-selection')
-          ?.getBoundingClientRect() ?? comment.getBoundingClientRect(),
-      measureBounds: previewSafeBand,
+      measure: () => measure(),
     };
     root.dispatchEvent(
       new CustomEvent('relic:otio-aim', { detail, bubbles: true })
@@ -1772,6 +1812,9 @@ export async function mountOtioView(
       marks.clear();
       for (const band of commentBands.values()) band.style.height = '0px';
       queueCommentRepack();
+    },
+    measure(commentId?: string) {
+      return measure(commentId);
     },
     async project(anchor, content) {
       const projectionKey = projectionsKey(anchor);
