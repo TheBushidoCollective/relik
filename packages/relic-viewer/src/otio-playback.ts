@@ -2100,7 +2100,15 @@ export function createOtioPlayback(
         notify();
         return;
       }
-      if (compareRationalTimes(currentTime, clock.duration) >= 0) {
+      const lastFrameTime: OtioRationalTime = {
+        value: Math.max(0, clock.duration.value - 1),
+        rate: clock.rate,
+      };
+      if (
+        clock.known &&
+        (compareRationalTimes(currentTime, lastFrameTime) >= 0 ||
+          compareRationalTimes(currentTime, clock.duration) >= 0)
+      ) {
         const gen = ++renderGeneration;
         currentTime = { value: 0, rate: clock.rate };
         clockAnchor = null;
