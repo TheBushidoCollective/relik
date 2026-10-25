@@ -670,11 +670,11 @@ describe('renderDead and Key Entry Form (DOM)', () => {
       locationHref: 'https://relic.example/r1',
     };
 
-    const cachedCiphertext = {
-      bytes: ciphertext,
+    const cachedPrefix = {
+      prefix: ciphertext.slice(0, 21 + 65536),
       mint: {
         url: 'https://storage.example/blob',
-        url_expires_at: '2026-09-16T00:00:00Z',
+        url_expires_at: new Date(Date.now() + 300_000).toISOString(),
         relic_expires_at: null,
         object_length: ciphertext.length,
         object_crc32c: '0',
@@ -689,7 +689,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
       'relic123',
       'https://usercontent.example',
       deps,
-      cachedCiphertext
+      cachedPrefix
     );
 
     const input = rootBody.querySelector('.key-entry-input') as ElementStub;
@@ -729,18 +729,23 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: globalThis.fetch,
+      fetch: (async (input) => {
+        if (String(input).includes('/blob')) {
+          return new Response(ciphertext);
+        }
+        return globalThis.fetch(input);
+      }) as typeof globalThis.fetch,
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
       locationHref: 'https://relic.example/r1',
     };
 
-    const cachedCiphertext = {
-      bytes: ciphertext,
+    const cachedPrefix = {
+      prefix: ciphertext.slice(0, 21 + 65536),
       mint: {
         url: 'https://storage.example/blob',
-        url_expires_at: '2026-09-16T00:00:00Z',
+        url_expires_at: new Date(Date.now() + 300_000).toISOString(),
         relic_expires_at: null,
         object_length: ciphertext.length,
         object_crc32c: '0',
@@ -755,9 +760,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
       'relic123',
       'https://usercontent.example',
       deps,
-      cachedCiphertext
+      cachedPrefix
     );
-
     const input = rootBody.querySelector('.key-entry-input') as ElementStub;
     const form = rootBody.querySelector('.key-entry-form') as ElementStub;
 
@@ -795,18 +799,23 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: globalThis.fetch,
+      fetch: (async (input) => {
+        if (String(input).includes('/blob')) {
+          return new Response(ciphertext);
+        }
+        return globalThis.fetch(input);
+      }) as typeof globalThis.fetch,
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
       locationHref: 'https://relic.example/r1',
     };
 
-    const cachedCiphertext = {
-      bytes: ciphertext,
+    const cachedPrefix = {
+      prefix: ciphertext.slice(0, 21 + 65536),
       mint: {
         url: 'https://storage.example/blob',
-        url_expires_at: '2026-09-16T00:00:00Z',
+        url_expires_at: new Date(Date.now() + 300_000).toISOString(),
         relic_expires_at: null,
         object_length: ciphertext.length,
         object_crc32c: '0',
@@ -821,9 +830,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
       'relic123',
       'https://usercontent.example',
       deps,
-      cachedCiphertext
+      cachedPrefix
     );
-
     const input = rootBody.querySelector('.key-entry-input') as ElementStub;
     const form = rootBody.querySelector('.key-entry-form') as ElementStub;
 

@@ -141,7 +141,12 @@ export async function openRelicStream(
       }
       contentLength = entry.length;
       options.onEnvelope?.(envelope);
-
+      options.onProgress?.({
+        receivedBytes,
+        objectLength,
+        openedContentBytes,
+        contentLength,
+      });
       if (
         options.maxContentBytes !== undefined &&
         entry.length > options.maxContentBytes
@@ -274,21 +279,32 @@ export async function openRelicStream(
         bufferedChunks.push(chunk);
         bufferedLength += chunk.length;
 
-        options.onProgress?.({
-          receivedBytes,
-          objectLength,
-          openedContentBytes,
-          contentLength,
-        });
+        const recordsBefore = nextRecordSeq;
+        const envelopeBefore = record0Processed;
 
         await processAvailableRecords();
+
+        if (!record0Processed) {
+          options.onProgress?.({
+            receivedBytes,
+            objectLength,
+            openedContentBytes,
+            contentLength,
+          });
+        } else if (envelopeBefore && nextRecordSeq === recordsBefore) {
+          options.onProgress?.({
+            receivedBytes,
+            objectLength,
+            openedContentBytes,
+            contentLength,
+          });
+        }
       }
     }
 
     if (receivedBytes < objectLength) {
       throw new TransferIncompleteError(receivedBytes, objectLength);
     }
-
     if (!record0Processed || processedBytes < objectLength) {
       throw new TruncatedContainerError('container ended prematurely');
     }
