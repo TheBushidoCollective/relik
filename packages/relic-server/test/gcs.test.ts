@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, test } from 'bun:test';
 import {
   buildSignedRequest,
@@ -231,5 +232,56 @@ describe('the storage adapter', () => {
     await expect(
       storage().signDownload('abc123', MAX_EXPIRES_SECONDS + 1, NOW)
     ).rejects.toThrow(/ceiling/);
+  });
+
+  test('digest streams a chunked body and computes sha256', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      const chunk1 = new TextEncoder().encode('hello ');
+      const chunk2 = new TextEncoder().encode('world');
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk1);
+          controller.enqueue(chunk2);
+          controller.close();
+        },
+      });
+      globalThis.fetch = (async () => {
+        return new Response(stream, { status: 200 });
+      }) as unknown as typeof fetch;
+
+      const digest = await storage().digest('abc123');
+      const expected = createHash('sha256').update('hello world').digest('hex');
+      expect(digest).toBe(expected);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('digest returns undefined on 404', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => {
+        return new Response('not found', { status: 404 });
+      }) as unknown as typeof fetch;
+
+      const digest = await storage().digest('missing');
+      expect(digest).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('digest throws on other non-200 status', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => {
+        return new Response('server error', { status: 500 });
+      }) as unknown as typeof fetch;
+
+      await expect(storage().digest('error')).rejects.toThrow(/500/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
