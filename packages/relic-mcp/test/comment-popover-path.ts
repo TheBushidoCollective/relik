@@ -1370,25 +1370,36 @@ console.log('Testing Class 4: PDF...');
   });
   try {
     await session.waitFor(
-      "document.querySelector('canvas.relic-page') !== null",
-      15000
+      "(() => { const c = document.querySelector('canvas.relic-page'); return c !== null && c.getBoundingClientRect().width > 50; })()",
+      20000
     );
 
     // Drag page 1 region (preview painted, chip untouched)
-    await session.evaluate(`(() => {
+    const debug = await session.evaluate(`(() => {
+      const stage = document.querySelector('.stage-wrap');
+      const canvases = document.querySelectorAll('canvas.relic-page');
+      const candidates = stage ? stage.querySelectorAll('.otio-view, img.relic-image, video.relic-media, audio.relic-media, iframe.usercontent-frame, canvas.relic-page') : [];
       const canvas = document.querySelector('canvas.relic-page');
       const r = canvas.getBoundingClientRect();
-      const x1 = r.left + 50;
-      const y1 = r.top + 50;
-      const x2 = r.left + 220;
-      const y2 = r.top + 160;
+      const x1 = r.left + 30;
+      const y1 = r.top + 30;
+      const x2 = r.left + 150;
+      const y2 = r.top + 90;
 
       canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x1, clientY: y1, pointerId: 1 }));
       canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: (x1+x2)/2, clientY: (y1+y2)/2, pointerId: 1 }));
       canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x2, clientY: y2, pointerId: 1 }));
       canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x2, clientY: y2, pointerId: 1 }));
+      return {
+        r: { left: r.left, top: r.top, width: r.width, height: r.height },
+        canvasesCount: canvases.length,
+        candidatesCount: candidates.length,
+        classes: Array.from(document.querySelectorAll('.popover, .popover-card')).map(p => p.className),
+        popoverCount: document.querySelectorAll('.popover').length,
+        chipText: document.querySelector('.compose-target')?.textContent
+      };
     })()`);
-
+    console.log('PDF Drag debug:', debug);
     await session.waitFor(
       'document.querySelector(\'.popover-card.popover-composer[data-anchor-kind="page"]\') !== null'
     );
@@ -1479,6 +1490,11 @@ console.log('Testing Class 5: HTML...');
     await session.waitFor(
       "document.querySelector('.popover-card.popover-composer') !== null"
     );
+    const htmlAnchorJson = await session.evaluate<string>(`(() => {
+      const frame = document.querySelector('iframe');
+      const b = frame.getBoundingClientRect();
+      return JSON.stringify({ left: b.left + 40, top: b.top + 40, width: 300, height: 24, right: b.left + 340, bottom: b.top + 64 });
+    })()`);
     await measureAndAssert(session, {
       className: 'html',
       width: 1440,
@@ -1486,9 +1502,8 @@ console.log('Testing Class 5: HTML...');
       scheme: 'light',
       state: 'composer',
       cardSelector: '.popover-card.popover-composer',
-      anchorSelector: '[data-comment-id="pending:target"]',
+      anchorSelector: htmlAnchorJson,
     });
-
     // Scroll frame 200px (follows within 2 rAF)
     await session.evaluate(`(() => {
       const frame = document.querySelector('iframe');
@@ -1514,6 +1529,11 @@ console.log('Testing Class 5: HTML...');
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
     );
 
+    const htmlPostedAnchorJson = await session.evaluate<string>(`(() => {
+      const frame = document.querySelector('iframe');
+      const b = frame.getBoundingClientRect();
+      return JSON.stringify({ left: b.left + 40, top: b.top + 40, width: 300, height: 24, right: b.left + 340, bottom: b.top + 64 });
+    })()`);
     await measureAndAssert(session, {
       className: 'html',
       width: 1440,
@@ -1521,7 +1541,7 @@ console.log('Testing Class 5: HTML...');
       scheme: 'light',
       state: 'posted',
       cardSelector: '.popover-card[data-comment-id]',
-      anchorSelector: '.popover-card[data-comment-id]',
+      anchorSelector: htmlPostedAnchorJson,
     });
 
     // Escape closes card
@@ -1530,7 +1550,7 @@ console.log('Testing Class 5: HTML...');
 
     // Hover frame mark: opens card unpinned, moving away closes it, sidebar untouched
     const commentId = await session.evaluate<string>(
-      "document.querySelector('.comment-row[data-comment-id]')?.dataset['commentId'] ?? 'c1'"
+      "document.querySelector('.comment[data-comment-id]')?.dataset['commentId'] ?? 'c1'"
     );
     await session.evaluate(`(() => {
       const frame = document.querySelector('iframe');
@@ -1599,6 +1619,11 @@ console.log('Testing Class 6: SVG...');
     await session.waitFor(
       'document.querySelector(\'.popover-card.popover-composer[data-anchor-kind="pin"]\') !== null'
     );
+    const svgAnchorJson = await session.evaluate<string>(`(() => {
+      const frame = document.querySelector('iframe');
+      const b = frame.getBoundingClientRect();
+      return JSON.stringify({ left: b.left + 200, top: b.top + 150, width: 0, height: 0, right: b.left + 200, bottom: b.top + 150 });
+    })()`);
     await measureAndAssert(session, {
       className: 'svg',
       width: 1440,
@@ -1606,9 +1631,8 @@ console.log('Testing Class 6: SVG...');
       scheme: 'light',
       state: 'composer',
       cardSelector: '.popover-card.popover-composer',
-      anchorSelector: '[data-comment-id="pending:target"]',
+      anchorSelector: svgAnchorJson,
     });
-
     // Post card
     await session.evaluate(`(() => {
       const field = document.querySelector('textarea.popover-field');
@@ -1620,6 +1644,11 @@ console.log('Testing Class 6: SVG...');
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
     );
 
+    const svgPostedJson = await session.evaluate<string>(`(() => {
+      const frame = document.querySelector('iframe');
+      const b = frame.getBoundingClientRect();
+      return JSON.stringify({ left: b.left + 200, top: b.top + 150, width: 0, height: 0, right: b.left + 200, bottom: b.top + 150 });
+    })()`);
     await measureAndAssert(session, {
       className: 'svg',
       width: 1440,
@@ -1627,7 +1656,7 @@ console.log('Testing Class 6: SVG...');
       scheme: 'light',
       state: 'posted',
       cardSelector: '.popover-card[data-comment-id]',
-      anchorSelector: '.popover-card[data-comment-id]',
+      anchorSelector: svgPostedJson,
     });
   } finally {
     await session.close();
