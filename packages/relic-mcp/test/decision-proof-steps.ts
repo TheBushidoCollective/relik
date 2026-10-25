@@ -34,7 +34,6 @@ import {
   deriveShareProof,
   encodeKey,
   encryptComment,
-  versionDigest,
 } from '@relic/format';
 import type {
   AuthenticationResponseJSON,
@@ -182,13 +181,17 @@ export async function launchProofBrowser(
       '--autoplay-policy=no-user-gesture-required',
     ];
   } else {
+    // The live service hands the viewer signed URLs on the object store, so
+    // the ciphertext download leaves the service host. Without this host the
+    // viewer never reaches a ready view and no band control renders.
+    const storageHost = 'storage.googleapis.com';
     customArgs = [
       ...shared.map((arg) => {
         if (arg === '--proxy-bypass-list=<-loopback>') {
-          return `--proxy-bypass-list=<-loopback>;${host};*.${host}`;
+          return `--proxy-bypass-list=<-loopback>;${host};*.${host};${storageHost}`;
         }
         if (arg === '--host-resolver-rules=MAP * ~NOTFOUND') {
-          return `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE ${host}, EXCLUDE *.${host}`;
+          return `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE ${host}, EXCLUDE *.${host}, EXCLUDE ${storageHost}`;
         }
         if (arg.startsWith('--proxy-server=')) {
           return '--no-proxy-server';
@@ -475,11 +478,13 @@ export async function runDecisionProofSequence(
       cover: false,
     }
   );
-  const v2Digest =
-    (repub2['version_digest'] as string | undefined) ??
-    (await versionDigest(
-      new TextEncoder().encode('Relic Decision Proof Version 2\n')
-    ));
+  // The digest must come from the client's republish result: a digest of the
+  // plaintext would never match the server's digest of the ciphertext.
+  const v2Digest = repub2['version_digest'];
+  assert.ok(
+    typeof v2Digest === 'string' && /^[0-9a-f]{64}$/.test(v2Digest),
+    'relic_republish returned no version_digest for v2'
+  );
 
   const repub3 = await callMcp(
     mcpCommand,
@@ -494,12 +499,11 @@ export async function runDecisionProofSequence(
       cover: false,
     }
   );
-  const v3Digest =
-    (repub3['version_digest'] as string | undefined) ??
-    (await versionDigest(
-      new TextEncoder().encode('Relic Decision Proof Version 3\n')
-    ));
-  assert.ok(v3Digest, 'version_digest missing for v3');
+  const v3Digest = repub3['version_digest'];
+  assert.ok(
+    typeof v3Digest === 'string' && /^[0-9a-f]{64}$/.test(v3Digest),
+    'relic_republish returned no version_digest for v3'
+  );
   console.log(`STEP_1_PUBLISH_OK relic_id=${relicId} v3_digest=${v3Digest}`);
 
   // Step 2: Open /<id>#r1<key> in headless browser over CDP pipe.
