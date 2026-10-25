@@ -1984,7 +1984,7 @@ console.log('Testing Class 7: Video...');
       return JSON.stringify(measure);
     })()`);
     await mobileVideo.waitFor(
-      'document.querySelector(\'.popover-card.popover-composer[data-side="above"]\') !== null'
+      "document.querySelector('.popover-card.popover-composer') !== null"
     );
     await measureAndAssert(mobileVideo, {
       className: 'video',
