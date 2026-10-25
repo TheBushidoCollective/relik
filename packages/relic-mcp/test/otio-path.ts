@@ -68,6 +68,8 @@ import {
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
 const OTIO_PIN = 'opentimelineio==0.18.1';
+const captureDecoderTrace =
+  process.env['RELIC_OTIO_CAPTURE_DECODER_TRACE'] === '1';
 
 const viewerDist = fileURLToPath(
   new URL('../../relic-viewer/dist/', import.meta.url)
@@ -149,6 +151,7 @@ const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 const mails: { to: string; mail: OutboundMail }[] = [];
 const children = new Set<ChildProcess>();
 const packetCanvasMeasurements: Array<Record<string, unknown>> = [];
+const decoderTraceObservations: Array<Record<string, unknown>> = [];
 
 interface PendingMcpLoopbackReceipt {
   readonly callOrdinal: number;
@@ -1586,10 +1589,37 @@ interface ChromeSession {
   continuedNonLoopback: string[];
   cspHeaders: string[];
   workerUrls: string[];
+  captureDecoderTrace: boolean;
 }
+
+interface DecoderTraceCanvasRead {
+  readonly rgb: readonly number[] | null;
+  readonly alpha: {
+    readonly sample_count: number;
+    readonly min: number;
+    readonly max: number;
+    readonly mean: number;
+    readonly zero_count: number;
+    readonly opaque_count: number;
+  } | null;
+  readonly root: {
+    readonly frame: string | null;
+    readonly buffering: string | null;
+    readonly ready: string | null;
+    readonly preview_state: string | null;
+    readonly preview_blocked: string | null;
+  } | null;
+  readonly diagnostics: readonly string[];
+  readonly selected_canvas_id: string | null;
+  readonly native_videos: readonly Record<string, unknown>[];
+  readonly trace: Record<string, unknown> | null;
+}
+
+const decoderTraceSamples = new WeakMap<ChromeSession, DecoderTraceCanvasRead>();
 
 interface OpenBrowserOptions {
   readonly recordMediaSeekTargets?: boolean;
+  readonly captureDecoderTrace?: boolean;
   readonly blockWebCodecs?: boolean;
 }
 
@@ -1759,6 +1789,297 @@ async function openBrowser(
         },
       });
     }
+  })()`;
+    const decoderTracePrelude = String.raw`(() => {
+    const key = '__relicOtioDecoderTrace';
+    const capacity = 512;
+    const ids = {
+      media: new WeakMap(),
+      canvas: new WeakMap(),
+      drawable: new WeakMap(),
+    };
+    const idCounters = { media: 0, canvas: 0, drawable: 0 };
+    const state = {
+      nextSequence: 0,
+      events: [],
+      overflow: { dropped: 0, firstDroppedSequence: null },
+      installationErrors: [],
+      runtimeErrors: [],
+    };
+    const errorText = (error) => {
+      try {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'name' in error &&
+          'message' in error
+        ) {
+          return String(error.name) + ': ' + String(error.message);
+        }
+        return String(error);
+      } catch {
+        return '[unreadable error]';
+      }
+    };
+    const safe = (read) => {
+      try {
+        return read();
+      } catch {
+        return null;
+      }
+    };
+    const numberOrNull = (value) =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    const booleanOrNull = (value) =>
+      typeof value === 'boolean' ? value : null;
+    const stableId = (value, kind) => {
+      if (
+        !value ||
+        (typeof value !== 'object' && typeof value !== 'function')
+      ) {
+        return null;
+      }
+      const map = ids[kind];
+      let id = map.get(value);
+      if (!id) {
+        idCounters[kind] += 1;
+        id = kind + '-' + idCounters[kind];
+        map.set(value, id);
+      }
+      return id;
+    };
+    const record = (event, fields = {}) => {
+      const sequence = state.nextSequence;
+      state.nextSequence += 1;
+      if (state.events.length >= capacity) {
+        state.overflow.dropped += 1;
+        if (state.overflow.firstDroppedSequence === null) {
+          state.overflow.firstDroppedSequence = sequence;
+        }
+        return;
+      }
+      state.events.push({
+        sequence,
+        browser_time_ms: safe(() => performance.now()) ?? 0,
+        event,
+        ...fields,
+      });
+    };
+    const mediaError = (video) => {
+      const error = safe(() => video.error);
+      if (!error) return null;
+      return {
+        code: numberOrNull(safe(() => error.code)),
+        message: safe(() => String(error.message)),
+      };
+    };
+    const videoSnapshot = (video) => ({
+      media_id: stableId(video, 'media'),
+      current_time: numberOrNull(safe(() => video.currentTime)),
+      seeking: booleanOrNull(safe(() => video.seeking)),
+      ready_state: numberOrNull(safe(() => video.readyState)),
+      network_state: numberOrNull(safe(() => video.networkState)),
+      video_width: numberOrNull(safe(() => video.videoWidth)),
+      video_height: numberOrNull(safe(() => video.videoHeight)),
+      error: mediaError(video),
+    });
+    const canvasSnapshot = (canvas) => ({
+      canvas_id: stableId(canvas, 'canvas'),
+      width: numberOrNull(safe(() => canvas.width)),
+      height: numberOrNull(safe(() => canvas.height)),
+    });
+    const drawableSnapshot = (value) => {
+      if (value instanceof HTMLVideoElement) {
+        return {
+          id: stableId(value, 'media'),
+          kind: 'video',
+          width: numberOrNull(safe(() => value.videoWidth)),
+          height: numberOrNull(safe(() => value.videoHeight)),
+        };
+      }
+      if (
+        value instanceof HTMLCanvasElement ||
+        (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)
+      ) {
+        return {
+          id: stableId(value, 'canvas'),
+          kind: 'canvas',
+          width: numberOrNull(safe(() => value.width)),
+          height: numberOrNull(safe(() => value.height)),
+        };
+      }
+      if (value instanceof HTMLImageElement) {
+        return {
+          id: stableId(value, 'drawable'),
+          kind: 'image',
+          width: numberOrNull(safe(() => value.naturalWidth)),
+          height: numberOrNull(safe(() => value.naturalHeight)),
+        };
+      }
+      return {
+        id: stableId(value, 'drawable'),
+        kind: safe(() => value?.constructor?.name) ?? typeof value,
+        width: numberOrNull(safe(() => value?.width)),
+        height: numberOrNull(safe(() => value?.height)),
+      };
+    };
+    const numericArguments = (values) =>
+      values.map((value) => numberOrNull(value));
+    const canvasOperation = (name, context, args) => {
+      const destination = canvasSnapshot(context.canvas);
+      if (name === 'drawImage') {
+        const source = args[0];
+        return {
+          source: drawableSnapshot(source),
+          destination,
+          arguments: numericArguments(args.slice(1)),
+          native_video:
+            source instanceof HTMLVideoElement ? videoSnapshot(source) : null,
+        };
+      }
+      return {
+        source: null,
+        destination,
+        rect: {
+          x: numberOrNull(args[0]),
+          y: numberOrNull(args[1]),
+          width: numberOrNull(args[2]),
+          height: numberOrNull(args[3]),
+        },
+      };
+    };
+    const install = (name, operation) => {
+      try {
+        operation();
+      } catch (error) {
+        const message = name + ': ' + errorText(error);
+        state.installationErrors.push(message);
+        record('instrumentation_install_error', { name, error: message });
+      }
+    };
+    const wrapCanvasMethod = (name) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        CanvasRenderingContext2D.prototype,
+        name
+      );
+      if (!descriptor || typeof descriptor.value !== 'function') {
+        throw new Error('missing CanvasRenderingContext2D.' + name);
+      }
+      const original = descriptor.value;
+      Object.defineProperty(CanvasRenderingContext2D.prototype, name, {
+        ...descriptor,
+        value: function (...args) {
+          let operation;
+          try {
+            operation = canvasOperation(name, this, args);
+          } catch (error) {
+            const message = name + ': ' + errorText(error);
+            state.runtimeErrors.push(message);
+            operation = { trace_error: message };
+          }
+          try {
+            const result = Reflect.apply(original, this, args);
+            record('canvas_' + name, { ...operation, outcome: 'returned' });
+            return result;
+          } catch (error) {
+            record('canvas_' + name, {
+              ...operation,
+              outcome: 'thrown',
+              error: errorText(error),
+            });
+            throw error;
+          }
+        },
+      });
+    };
+    const api = {
+      beginSeek(frame) {
+        state.events.length = 0;
+        state.overflow = { dropped: 0, firstDroppedSequence: null };
+        record('seek_before_input_dispatch', { frame });
+      },
+      mark(event, fields = {}) {
+        record(event, fields);
+      },
+      canvasId(canvas) {
+        return stableId(canvas, 'canvas');
+      },
+      snapshotVideo(video) {
+        return video instanceof HTMLVideoElement ? videoSnapshot(video) : null;
+      },
+      snapshot() {
+        return {
+          version: 1,
+          capacity,
+          next_sequence: state.nextSequence,
+          events: state.events.slice(),
+          overflow: { ...state.overflow },
+          installation_errors: state.installationErrors.slice(),
+          runtime_errors: state.runtimeErrors.slice(),
+        };
+      },
+    };
+    Reflect.set(globalThis, key, api);
+    install('media-current-time', () => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        HTMLMediaElement.prototype,
+        'currentTime'
+      );
+      if (!descriptor?.get || !descriptor.set || !descriptor.configurable) {
+        throw new Error('currentTime descriptor is not wrappable');
+      }
+      Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+        ...descriptor,
+        get() {
+          return descriptor.get.call(this);
+        },
+        set(value) {
+          if (!(this instanceof HTMLVideoElement)) {
+            return descriptor.set.call(this, value);
+          }
+          const before = videoSnapshot(this);
+          try {
+            const result = descriptor.set.call(this, value);
+            record('native_video_current_time', {
+              input: numberOrNull(Number(value)),
+              before,
+              after: videoSnapshot(this),
+              outcome: 'returned',
+            });
+            return result;
+          } catch (error) {
+            record('native_video_current_time', {
+              input: numberOrNull(Number(value)),
+              before,
+              after: videoSnapshot(this),
+              outcome: 'thrown',
+              error: errorText(error),
+            });
+            throw error;
+          }
+        },
+      });
+    });
+    install('media-events', () => {
+      for (const eventType of ['loadeddata', 'seeking', 'seeked', 'error']) {
+        document.addEventListener(
+          eventType,
+          (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLVideoElement)) return;
+            record('native_video_event', {
+              event_type: eventType,
+              video: videoSnapshot(target),
+            });
+          },
+          true
+        );
+      }
+    });
+    for (const name of ['fillRect', 'clearRect', 'drawImage']) {
+      install('canvas-' + name, () => wrapCanvasMethod(name));
+    }
+    record('instrumentation_ready', { capacity });
   })()`;
     const pagePrelude = [
       options.recordMediaSeekTargets
