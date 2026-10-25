@@ -8,15 +8,20 @@
  * only place it can be.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   anchorFromClientRect,
+  chooseTargetBox,
   OFFER_QUOTE_LIMIT,
+  placeLeft,
+  placePopover,
   POPOVER_GAP,
   POPOVER_MARGIN,
-  placePopover,
+  popoverLayer,
+  revealScrollTop,
   shortQuote,
 } from '../src/popover.ts';
+import { clearDom, installDom } from './annotate.test.ts';
 
 const HOST = {
   scrollLeft: 0,
@@ -27,139 +32,284 @@ const HOST = {
 
 const SIZE = { width: 320, height: 160 };
 
-describe('where the panel lands', () => {
-  test('above the anchor when there is room, clear of it', () => {
+describe('placePopover test table (P1 to P7)', () => {
+  test('P1: anchor {200,300,120,20}, prefer above', () => {
     const placed = placePopover(
       { left: 200, top: 300, width: 120, height: 20 },
       SIZE,
-      HOST
+      HOST,
+      8,
+      8,
+      'above'
     );
     expect(placed.side).toBe('above');
-    expect(placed.top).toBe(300 - POPOVER_GAP - SIZE.height);
+    expect(placed.top).toBe(132);
+    expect(placed.left).toBe(100);
   });
 
-  test('below when the anchor is near the top, so the head stays visible', () => {
-    const placed = placePopover(
-      { left: 200, top: 12, width: 120, height: 20 },
-      SIZE,
-      HOST
-    );
-    expect(placed.side).toBe('below');
-    expect(placed.top).toBe(12 + 20 + POPOVER_GAP);
-  });
-
-  test('centred on the anchor', () => {
+  test('P2: P1 with prefer: below', () => {
     const placed = placePopover(
       { left: 200, top: 300, width: 120, height: 20 },
       SIZE,
-      HOST
+      HOST,
+      8,
+      8,
+      'below'
     );
-    expect(placed.left).toBe(200 + 60 - 160);
+    expect(placed.side).toBe('below');
+    expect(placed.top).toBe(328);
+    expect(placed.left).toBe(100);
   });
 
-  test('clamped inside the left edge rather than into the clipped overflow', () => {
+  test('P3: anchor {200,500,120,54}, prefer: below flips to above', () => {
     const placed = placePopover(
-      { left: 0, top: 300, width: 40, height: 20 },
+      { left: 200, top: 500, width: 120, height: 54 },
       SIZE,
-      HOST
-    );
-    expect(placed.left).toBe(POPOVER_MARGIN);
-  });
-
-  test('clamped inside the right edge', () => {
-    const placed = placePopover(
-      { left: 780, top: 300, width: 20, height: 20 },
-      SIZE,
-      HOST
-    );
-    expect(placed.left).toBe(800 - SIZE.width - POPOVER_MARGIN);
-  });
-
-  test('the scroll offset moves the visible box, not just the anchor', () => {
-    const scrolled = { ...HOST, scrollTop: 1_000, scrollLeft: 0 };
-    const placed = placePopover(
-      { left: 200, top: 1_300, width: 120, height: 20 },
-      SIZE,
-      scrolled
+      HOST,
+      8,
+      8,
+      'below'
     );
     expect(placed.side).toBe('above');
-    expect(placed.top).toBe(1_300 - POPOVER_GAP - SIZE.height);
+    expect(placed.top).toBe(332);
   });
 
-  test('an anchor scrolled to the top of the visible box goes below', () => {
-    const scrolled = { ...HOST, scrollTop: 1_000 };
+  test('P4: clientHeight 300, anchor {200,120,120,40} caps maxHeight 124, below, top 168', () => {
     const placed = placePopover(
-      { left: 200, top: 1_004, width: 120, height: 20 },
+      { left: 200, top: 120, width: 120, height: 40 },
       SIZE,
-      scrolled
+      { ...HOST, clientHeight: 300 },
+      8,
+      8,
+      'above'
     );
     expect(placed.side).toBe('below');
+    expect(placed.maxHeight).toBe(124);
+    expect(placed.top).toBe(168);
   });
 
-  test('a panel taller than the stage still shows its own top', () => {
-    const tall = { width: 320, height: 900 };
+  test('P5: anchor {200,700,120,20} entirely below visible frame', () => {
     const placed = placePopover(
-      { left: 200, top: 300, width: 120, height: 20 },
-      tall,
-      HOST
+      { left: 200, top: 700, width: 120, height: 20 },
+      SIZE,
+      HOST,
+      8,
+      8,
+      'above'
     );
-    expect(placed.top).toBe(POPOVER_MARGIN);
+    expect(placed.side).toBe('above');
+    expect(placed.top).toBe(532);
   });
 
-  test('a panel wider than the stage is pinned to the left margin', () => {
-    const wide = { width: 900, height: 160 };
+  test('P6: scrollTop 1000, anchor {200,900,120,20}, prefer: below', () => {
+    const placed = placePopover(
+      { left: 200, top: 900, width: 120, height: 20 },
+      SIZE,
+      { ...HOST, scrollTop: 1000 },
+      8,
+      8,
+      'below'
+    );
+    expect(placed.side).toBe('below');
+    expect(placed.top).toBe(928);
+  });
+
+  test('P7: panel {320,900}, anchor as P1 caps maxHeight 284, top 8', () => {
     const placed = placePopover(
       { left: 200, top: 300, width: 120, height: 20 },
-      wide,
-      HOST
+      { width: 320, height: 900 },
+      HOST,
+      8,
+      8,
+      'above'
     );
-    expect(placed.left).toBe(POPOVER_MARGIN);
+    expect(placed.side).toBe('above');
+    expect(placed.maxHeight).toBe(284);
+    expect(placed.top).toBe(8);
   });
 });
-describe('bounded OTIO placement', () => {
+
+describe('revealScrollTop test table (R1 to R5)', () => {
   const host = {
-    scrollLeft: 40,
-    scrollTop: 500,
+    scrollLeft: 0,
+    scrollTop: 0,
     clientWidth: 800,
     clientHeight: 600,
+    scrollHeight: 2000,
   };
-  const safe = { left: 90, top: 620, width: 420, height: 240 };
+  const h = 160;
 
-  test('keeps an off-preview selection anchored but clamps the card into preview', () => {
-    const point = { left: 460, top: 960, width: 0, height: 16 };
-    const placed = placePopover(
-      point,
-      { width: 280, height: 160 },
-      host,
-      POPOVER_GAP,
-      POPOVER_MARGIN,
-      safe
-    );
-    expect(placed.left).toBe(222);
-    expect(placed.top).toBe(692);
-    expect(placed.side).toBe('above');
+  test('R1: anchor top 300, height 20', () => {
+    expect(revealScrollTop({ left: 200, top: 300, width: 120, height: 20 }, h, host)).toBe(0);
   });
 
-  test('applies both scroll offsets and the 8px clearance once', () => {
-    const placed = placePopover(
-      { left: 44, top: 510, width: 4, height: 6 },
-      { width: 360, height: 200 },
-      host,
-      POPOVER_GAP,
-      POPOVER_MARGIN,
-      safe
-    );
-    expect(placed.left).toBe(98);
-    expect(placed.top).toBe(628);
-    expect(placed.side).toBe('below');
+  test('R2: anchor top 900, height 54', () => {
+    expect(revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, host)).toBe(362);
   });
 
-  test('existing callers without bounds still clamp to the entire stage', () => {
-    const anchor = { left: 460, top: 960, width: 0, height: 16 };
-    expect(placePopover(anchor, SIZE, host)).toEqual(
-      placePopover(anchor, SIZE, host, POPOVER_GAP, POPOVER_MARGIN)
-    );
-    expect(placePopover(anchor, SIZE, host).top).toBe(792);
+  test('R3: scrollTop 1000, anchor top 900, height 54', () => {
+    expect(revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, { ...host, scrollTop: 1000 })).toBe(892);
+  });
+
+  test('R4: clientHeight 200, anchor top 900, height 54', () => {
+    expect(revealScrollTop({ left: 200, top: 900, width: 120, height: 54 }, h, { ...host, clientHeight: 200 })).toBe(762);
+  });
+
+  test('R5: scrollHeight 1000, anchor top 980, height 20', () => {
+    expect(revealScrollTop({ left: 200, top: 980, width: 120, height: 20 }, h, { ...host, scrollHeight: 1000 })).toBe(400);
+  });
+});
+
+describe('chooseTargetBox test table (T1 to T4)', () => {
+  const viewHeight = 600;
+
+  test('T1: full {0,100,200,40}', () => {
+    const full = { left: 0, top: 100, width: 200, height: 40 };
+    expect(chooseTargetBox(full, undefined, viewHeight)).toEqual(full);
+  });
+
+  test('T2: full {0,100,200,400}, first {20,100,180,20}', () => {
+    const full = { left: 0, top: 100, width: 200, height: 400 };
+    const first = { left: 20, top: 100, width: 180, height: 20 };
+    expect(chooseTargetBox(full, first, viewHeight)).toEqual(first);
+  });
+
+  test('T3: full {0,100,200,400}, no first', () => {
+    const full = { left: 0, top: 100, width: 200, height: 400 };
+    expect(chooseTargetBox(full, undefined, viewHeight)).toEqual({ left: 0, top: 100, width: 200, height: 0 });
+  });
+
+  test('T4: full {0,100,200,300}, first {20,100,180,20}', () => {
+    const full = { left: 0, top: 100, width: 200, height: 300 };
+    const first = { left: 20, top: 100, width: 180, height: 20 };
+    expect(chooseTargetBox(full, first, viewHeight)).toEqual(full);
+  });
+});
+
+describe('popoverLayer behavior', () => {
+  beforeEach(installDom);
+  afterEach(clearDom);
+  test('in-place tracking: inner scroller moving horizontally triggers track() and updates left while top stays within 0.1px', () => {
+    const host = document.createElement('div');
+    Object.defineProperties(host, {
+      scrollLeft: { value: 0, writable: true },
+      scrollTop: { value: 0, writable: true },
+      clientWidth: { value: 800 },
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 2000 },
+    });
+    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 } as DOMRect);
+
+    const layer = popoverLayer(host);
+    const panel = document.createElement('div');
+    Object.defineProperties(panel, {
+      offsetWidth: { value: 320 },
+      offsetHeight: { value: 160 },
+    });
+
+    let currentTarget = { left: 200, top: 300, width: 120, height: 20 };
+    layer.show(panel, currentTarget, {
+      follow: () => currentTarget,
+      prefer: 'above',
+    });
+
+    const initialTop = parseFloat(panel.style.top);
+    const initialLeft = parseFloat(panel.style.left);
+    expect(initialLeft).toBe(100);
+    expect(initialTop).toBe(132);
+
+    // Move target horizontally by 50px
+    currentTarget = { left: 250, top: 300, width: 120, height: 20 };
+    layer.track();
+
+    const updatedTop = parseFloat(panel.style.top);
+    const updatedLeft = parseFloat(panel.style.left);
+    expect(updatedLeft).toBe(150);
+    expect(Math.abs(updatedTop - initialTop)).toBeLessThan(0.1);
+    layer.hide();
+  });
+
+  test('height cap: a host with height 300, natural height 240 and anchor at {200,120,120,40} gets max-height: 124px and data-capped="true"', () => {
+    const host = document.createElement('div');
+    Object.defineProperties(host, {
+      scrollLeft: { value: 0, writable: true },
+      scrollTop: { value: 0, writable: true },
+      clientWidth: { value: 800 },
+      clientHeight: { value: 300 },
+      scrollHeight: { value: 1000 },
+    });
+    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 300 } as DOMRect);
+
+    const layer = popoverLayer(host);
+    const panel = document.createElement('div');
+    Object.defineProperties(panel, {
+      offsetWidth: { value: 320 },
+      offsetHeight: { value: 240 },
+    });
+
+    layer.show(panel, { left: 200, top: 120, width: 120, height: 40 }, { prefer: 'above' });
+    expect(panel.style.maxHeight).toBe('124px');
+    expect(panel.dataset['capped']).toBe('true');
+    layer.hide();
+  });
+
+  test('reveal: an anchor below the visible box scrolls the host so the panel top sits at vt', () => {
+    const host = document.createElement('div');
+    let st = 0;
+    Object.defineProperties(host, {
+      scrollLeft: { value: 0, writable: true },
+      scrollTop: { get: () => st, set: (v) => { st = v; } },
+      clientWidth: { value: 800 },
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 2000 },
+    });
+    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 } as DOMRect);
+
+    const layer = popoverLayer(host);
+    const panel = document.createElement('div');
+    Object.defineProperties(panel, {
+      offsetWidth: { value: 320 },
+      offsetHeight: { value: 160 },
+    });
+
+    layer.show(panel, { left: 200, top: 900, width: 120, height: 54 }, { reveal: true, prefer: 'above' });
+    // revealScrollTop gives 362. At scrollTop = 362, vt is 370. Panel top is 900 - 8 - 160 = 732.
+    expect(host.scrollTop).toBe(362);
+    layer.hide();
+  });
+
+  test('disconnected target: track() when follow() returns undefined leaves left and top unchanged', () => {
+    const host = document.createElement('div');
+    Object.defineProperties(host, {
+      scrollLeft: { value: 0, writable: true },
+      scrollTop: { value: 0, writable: true },
+      clientWidth: { value: 800 },
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 2000 },
+    });
+    host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 } as DOMRect);
+
+    const layer = popoverLayer(host);
+    const panel = document.createElement('div');
+    Object.defineProperties(panel, {
+      offsetWidth: { value: 320 },
+      offsetHeight: { value: 160 },
+    });
+
+    let connected = true;
+    layer.show(panel, { left: 200, top: 300, width: 120, height: 20 }, {
+      follow: () => (connected ? { left: 200, top: 300, width: 120, height: 20 } : undefined),
+    });
+
+    const left = panel.style.left;
+    const top = panel.style.top;
+
+    connected = false;
+    layer.track();
+
+    expect(panel.style.left).toBe(left);
+    expect(panel.style.top).toBe(top);
+    layer.hide();
   });
 });
 

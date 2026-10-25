@@ -355,6 +355,36 @@ body {
   margin-top: 0.5rem;
 }
 
+.popover-bounded-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.popover-card.popover-composer[data-capped="true"],
+.popover-composer[data-capped="true"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.popover-card.popover-composer[data-capped="true"] .popover-bounded-body,
+.popover-composer[data-capped="true"] .popover-bounded-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.popover-card.popover-composer[data-capped="true"] .popover-field,
+.popover-composer[data-capped="true"] .popover-field {
+  flex: none;
+}
+
+.popover-card.popover-composer[data-capped="true"] .popover-tools,
+.popover-composer[data-capped="true"] .popover-tools {
+  flex: none;
+}
+
 .popover-field {
   width: 100%;
   min-height: 4.5rem;
