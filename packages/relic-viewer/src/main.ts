@@ -300,6 +300,7 @@ const ICONS = {
   // A rubber stamp seen side on, handle and foot, because a decision here is
   // an impression pressed onto one exact version.
   stamp: 'M5.5 1h5v4L9 6.5V8h4.5v3h-11V8H7V6.5L5.5 5V1zM2 12.5h12V14H2v-1.5z',
+  more: 'M2.5 7h2.2v2.2H2.5zm4.4 0h2.2v2.2H6.9zm4.4 0h2.2v2.2h-2.2z',
 } as const;
 
 function icon(path: string): SVGSVGElement {
@@ -792,6 +793,7 @@ export function buildBar(
         : canCompare
           ? `Compare version ${view.version} with its history`
           : 'Open an earlier version of this relic';
+    compare.classList.add('action-history');
     actions.appendChild(compare);
   }
 
@@ -809,6 +811,7 @@ export function buildBar(
   if (panelOpen) {
     copyBtn.setAttribute('aria-controls', COPY_LINK_PANEL_ID);
   }
+  copyBtn.title = 'Copy link';
   actions.appendChild(copyBtn);
 
   // Beside Copy link because it is the same errand done for somebody else:
@@ -823,19 +826,132 @@ export function buildBar(
     actions.appendChild(share);
   }
 
-  actions.appendChild(
-    button('Download', ICONS.download, () => downloadContent(view))
+  const downloadBtn = button('Download', ICONS.download, () =>
+    downloadContent(view)
   );
+  downloadBtn.classList.add('action-download');
+  downloadBtn.title = 'Download';
+  actions.appendChild(downloadBtn);
 
   const report = document.createElement('a');
-  report.className = 'action';
+  report.className = 'action action-report';
   report.href = `${SERVICE_ORIGIN}/abuse`;
   report.rel = 'noopener noreferrer';
+  report.title = 'Report';
   report.appendChild(icon(ICONS.flag));
   const reportText = document.createElement('span');
   reportText.textContent = 'Report';
   report.appendChild(reportText);
   actions.appendChild(report);
+
+  const moreWrap = document.createElement('div');
+  moreWrap.className = 'band-more-wrap';
+
+  let moreOpen = false;
+
+  const setMoreOpen = (open: boolean): void => {
+    if (moreOpen === open) return;
+    moreOpen = open;
+    moreList.hidden = !open;
+    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      document.addEventListener('keydown', onMoreDocKeyDown);
+      document.addEventListener('pointerdown', onMoreDocPointerDown);
+    } else {
+      document.removeEventListener('keydown', onMoreDocKeyDown);
+      document.removeEventListener('pointerdown', onMoreDocPointerDown);
+    }
+  };
+
+  const moreBtn = button('More', ICONS.more, () => {
+    setMoreOpen(!moreOpen);
+  });
+  moreBtn.className = 'action action-more';
+  moreBtn.setAttribute('aria-expanded', 'false');
+  moreBtn.setAttribute('aria-controls', 'band-more');
+  moreBtn.title = 'More';
+
+  const moreList = document.createElement('div');
+  moreList.id = 'band-more';
+  moreList.className = 'version-list band-more-list';
+  moreList.hidden = true;
+
+  const moreMarker = document.createElement('a');
+  moreMarker.className = 'action';
+  moreMarker.href = `${SERVICE_ORIGIN}/policy`;
+  moreMarker.rel = 'noopener noreferrer';
+  moreMarker.setAttribute('aria-label', markerLabel);
+  moreMarker.title = `${markerLabel}. What Relic knows.`;
+  moreMarker.appendChild(icon(ICONS.source));
+  const moreMarkerText = document.createElement('span');
+  moreMarkerText.textContent = markerLabel;
+  moreMarker.appendChild(moreMarkerText);
+
+  const moreRelics = document.createElement('a');
+  moreRelics.className = 'action';
+  moreRelics.href = `${SERVICE_ORIGIN}/dashboard`;
+  moreRelics.target = '_blank';
+  moreRelics.rel = 'noopener';
+  moreRelics.title =
+    'Relics list. Open your saved and commented relics in a new tab.';
+  moreRelics.appendChild(icon(ICONS.grid));
+  const moreRelicsText = document.createElement('span');
+  moreRelicsText.textContent = 'Relics';
+  moreRelics.appendChild(moreRelicsText);
+
+  const moreDownload = button('Download', ICONS.download, () => {
+    setMoreOpen(false);
+    downloadContent(view);
+    if (typeof moreBtn.focus === 'function') moreBtn.focus();
+  });
+  moreDownload.title = 'Download';
+
+  const moreReport = document.createElement('a');
+  moreReport.className = 'action';
+  moreReport.href = `${SERVICE_ORIGIN}/abuse`;
+  moreReport.rel = 'noopener noreferrer';
+  moreReport.title = 'Report';
+  moreReport.appendChild(icon(ICONS.flag));
+  const moreReportText = document.createElement('span');
+  moreReportText.textContent = 'Report';
+  moreReport.appendChild(moreReportText);
+
+  moreList.append(moreMarker, moreRelics, moreDownload, moreReport);
+
+  const onMoreDocKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      setMoreOpen(false);
+      if (typeof moreBtn.focus === 'function') moreBtn.focus();
+    }
+  };
+
+  const onMoreDocPointerDown = (e: MouseEvent | PointerEvent): void => {
+    const target = e.target as Node | null;
+    if (target && !moreWrap.contains(target)) {
+      setMoreOpen(false);
+    }
+  };
+
+  moreWrap.addEventListener('focusout', (e: FocusEvent) => {
+    const nextTarget = e.relatedTarget as Node | null;
+    if (nextTarget !== null && !moreWrap.contains(nextTarget)) {
+      setMoreOpen(false);
+    }
+  });
+
+  if (typeof MutationObserver === 'function' && document.body) {
+    const observer = new MutationObserver(() => {
+      if (!document.body.contains(moreWrap)) {
+        setMoreOpen(false);
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  moreWrap.append(moreBtn, moreList);
+  actions.appendChild(moreWrap);
 
   bar.appendChild(actions);
   return bar;
@@ -7033,6 +7149,7 @@ export function toggleCopyLinkPanel(
     close(false);
   };
   document.addEventListener('pointerdown', onPointerDown);
+  document.addEventListener('mousedown', onPointerDown);
 
   section.addEventListener('focusout', (e: FocusEvent) => {
     const nextTarget = e.relatedTarget as Node | null;
@@ -7064,6 +7181,7 @@ export function toggleCopyLinkPanel(
     window.removeEventListener('resize', onResize);
     document.removeEventListener('keydown', onDocKeyDown);
     document.removeEventListener('pointerdown', onPointerDown);
+    document.removeEventListener('mousedown', onPointerDown);
     if (observer) {
       observer.disconnect();
       observer = undefined;
