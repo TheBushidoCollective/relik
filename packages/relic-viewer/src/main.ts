@@ -8302,7 +8302,11 @@ export function trackRenderState(
       ) as HTMLImageElement | null;
       if (img) {
         if (img.complete && img.naturalWidth > 0) {
-          setReady();
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => setReady());
+          } else {
+            setReady();
+          }
         } else {
           img.addEventListener('load', () => setReady(), { once: true });
           img.addEventListener('error', () => setError(), { once: true });
@@ -8318,7 +8322,11 @@ export function trackRenderState(
       ) as HTMLMediaElement | null;
       if (media) {
         if (media.readyState >= 1) {
-          setReady();
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => setReady());
+          } else {
+            setReady();
+          }
         } else {
           media.addEventListener('loadedmetadata', () => setReady(), {
             once: true,
@@ -8349,7 +8357,11 @@ export function trackRenderState(
         readyAttr === 'diagnostic' ||
         readyAttr === 'structural'
       ) {
-        setReady();
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => setReady());
+        } else {
+          setReady();
+        }
       } else if (readyAttr === 'error') {
         setError();
       } else {
