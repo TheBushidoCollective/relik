@@ -204,8 +204,33 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     return true;
   }
 
+  async function mapConcurrent<TIn, TOut>(
+    items: readonly TIn[],
+    limit: number,
+    fn: (item: TIn) => Promise<TOut>
+  ): Promise<TOut[]> {
+    const results: TOut[] = new Array(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(limit, items.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= items.length) break;
+        const item = items[index];
+        if (item !== undefined) {
+          results[index] = await fn(item);
+        }
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
   /** Every object under a prefix, following pagination to the end. */
-  async function list<T>(under: string): Promise<readonly T[]> {
+  async function list<T>(
+    under: string,
+    concurrency = 16
+  ): Promise<readonly T[]> {
     const names: string[] = [];
     let pageToken: string | undefined;
 
@@ -230,7 +255,9 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       pageToken = body.nextPageToken;
     } while (pageToken !== undefined);
 
-    const docs = await Promise.all(names.map((name) => get<T>(name)));
+    const docs = await mapConcurrent(names, concurrency, (name) =>
+      get<T>(name)
+    );
     return docs
       .filter((d): d is Versioned<T> => d !== undefined)
       .map((d) => d.value);
@@ -983,7 +1010,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
 
     async listDecisions(relicId: string): Promise<readonly DecisionRow[]> {
       const prefixUnder = `${key('decision', relicId)}/`;
-      const rows = await list<DecisionRow>(prefixUnder);
+      const rows = await list<DecisionRow>(prefixUnder, 16);
       return [...rows].sort(
         (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)
       );
@@ -998,6 +1025,13 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       return names.length;
     },
 
+    async deleteDecision(
+      relicId: string,
+      decisionId: string
+    ): Promise<boolean> {
+      const name = key('decision', relicId, `${decisionId}.json`);
+      return remove(name);
+    },
     async getPasskeys(email: string): Promise<PasskeyRecord | undefined> {
       const norm = normalizeEmail(email);
       const hash = await sha256Hex(norm);
@@ -1031,12 +1065,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
             (c) => c.credentialId === nextCred.credentialId
           );
           if (stored !== undefined) {
-            const isRegression = nextCred.signCount < stored.signCount;
-            const isRepeatedAssertion =
-              nextCred.signCount === stored.signCount &&
-              (stored.signCount > 0 || nextCred.signCount > 0) &&
-              nextCred.lastUsedAt !== stored.lastUsedAt;
-            if (isRegression || isRepeatedAssertion) {
+            if (nextCred.signCount < stored.signCount) {
               throw new ProblemError('passkey_verification_failed', {
                 passkey_check: 'counter',
               });

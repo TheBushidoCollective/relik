@@ -605,18 +605,37 @@ export async function verifyRegistration(
   if (alg === -257) {
     const n = coseKey.get(-1);
     const e = coseKey.get(-2);
-    if (
-      kty !== 3 ||
-      !(n instanceof Uint8Array) ||
-      n.byteLength < 256 ||
-      !(e instanceof Uint8Array)
-    ) {
+    if (kty !== 3 || !(n instanceof Uint8Array) || !(e instanceof Uint8Array)) {
       throw new WebauthnError('malformed', 'algorithm');
     }
+
+    let startN = 0;
+    while (startN < n.byteLength && n[startN] === 0) {
+      startN++;
+    }
+    const strippedN = n.subarray(startN);
+    if (strippedN.byteLength < 256 || strippedN.byteLength > 512) {
+      throw new WebauthnError('malformed', 'key');
+    }
+
+    let startE = 0;
+    while (startE < e.byteLength && e[startE] === 0) {
+      startE++;
+    }
+    const strippedE = e.subarray(startE);
+    const isE65537 =
+      strippedE.byteLength === 3 &&
+      strippedE[0] === 0x01 &&
+      strippedE[1] === 0x00 &&
+      strippedE[2] === 0x01;
+    if (!isE65537) {
+      throw new WebauthnError('malformed', 'key');
+    }
+
     const jwk: JsonWebKey = {
       kty: 'RSA',
-      n: Buffer.from(n).toString('base64url'),
-      e: Buffer.from(e).toString('base64url'),
+      n: Buffer.from(strippedN).toString('base64url'),
+      e: Buffer.from(strippedE).toString('base64url'),
     };
     try {
       await crypto.subtle.importKey(

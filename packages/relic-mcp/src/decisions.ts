@@ -10,11 +10,11 @@
  */
 
 import {
+  type DecisionList,
+  type DecisionRecord,
   decodeKey,
   deriveShareProof,
   encodeKey,
-  type DecisionList,
-  type DecisionRecord,
   isDecisionVerdict,
   isVersionDigest,
 } from '@relic/format';
@@ -22,8 +22,8 @@ import { localState } from './comments.ts';
 import {
   type PublishDeps,
   PublishError,
-  ServerRefusal,
   postJson,
+  ServerRefusal,
 } from './publish.ts';
 
 export interface ReadDecisionsOptions {
@@ -103,6 +103,7 @@ export async function readDecisions(
 
   if (
     typeof resRelicId !== 'string' ||
+    resRelicId !== relicId ||
     typeof currentVersion !== 'number' ||
     !Number.isSafeInteger(currentVersion) ||
     currentVersion < 1 ||

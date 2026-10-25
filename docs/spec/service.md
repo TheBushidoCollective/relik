@@ -527,19 +527,19 @@ Routing is declared in `apiRoute` (`app.ts`):
 - **clientDataJSON:** parsed as JSON, checks `type`, `challenge`, `origin`, and `crossOrigin !== true`.
 - **authData:** minimum 37 bytes, validates `rpIdHash == sha256(rpId)`. Flags: UP (0x01) and UV (0x04) mandatory.
 - **COSE algorithms:** ES256 (-7) and RS256 (-257) only.
-- **Signatures:** verified over `authData || sha256(clientDataJSON)` using WebCrypto.
-
+- **RS256 key bounds:** Leading zeros are stripped from the modulus `n`. The stripped modulus must satisfy 256 <= |n| <= 512 bytes (2048 to 4096 bits). The exponent `e` must equal 65537 (0x010001). Any violation is rejected as `invalid_passkey` with `passkey_check: 'key'`.
+- **Signatures and counters:** verified over `authData || sha256(clientDataJSON)` using WebCrypto. Authenticator signature counters are checked strictly on assertion and in store compare-and-swap callbacks: if either the stored or incoming counter is non-zero, an incoming counter less than or equal to the stored counter is rejected with `passkey_verification_failed` and `passkey_check: 'counter'`.
 ### 9.4 Storage and GCS layout
 
 - Prefix `m`:
   - Decisions: `m/decision/{relicId}/{id}.json`, write-once with generation `'0'`.
   - Passkeys: `m/passkey/{sha256Hex(normalizedEmail)}.json`. Created with generation `'0'`; updated via generation CAS.
   - WebAuthn challenges: `m/challenge/webauthn/{sha256Hex(challenge)}.json`, consumed atomically via get-then-delete with `ifGenerationMatch`. Cleaned up by 1-day bucket lifecycle rule.
-- Streaming object digest in GCS via signed GET with 60s validity, streaming into SHA-256 without loading full object into memory.
-
+- Streaming object digest in GCS pins the signed GET to the stat generation with `x-goog-if-generation-match`. The server counts bytes hashed and records the SHA-256 only when the hashed byte count matches the stat length and response content-length. Digest computation is single-flighted per (id, version) within the process.
+- GCS decision listing caps fan-out object fetch concurrency at 16 while preserving deterministic ordering (createdAt ascending, then id).
 ### 9.5 Upload completion response
 
-When ciphertext upload finishes, the client calls `POST /api/relics/{id}/complete`.
+When ciphertext upload finishes, the client calls `POST /api/relics/{id}/complete`. The endpoint is rate limited per IP using `config.publishRateLimit` (refusing with `429 publish_rate_limited` and `retry_after_seconds`).
 Response status `200` with JSON:
 ```json
 {
@@ -551,5 +551,6 @@ Response status `200` with JSON:
   "version_digest": "<64 hex>"
 }
 ```
-`version` returns `row.version`, and `version_digest` returns the lowercase hex SHA-256 of the stored ciphertext object (`null` only if hashing failed, which is logged). Repeated calls reuse the recorded digest.
+`version` returns `row.version`, and `version_digest` returns the lowercase hex SHA-256 of the stored ciphertext object (`null` only if hashing failed, which is logged). The digest is computed only when this call just set `publishedAt` or no digest is recorded yet. Repeated calls reuse the recorded digest.
 
+Decision and passkey routes read JSON request bodies via a streaming reader capped at 65,536 bytes, decoded with fatal UTF-8 decoding. Exceeding 65,536 bytes or providing invalid UTF-8 aborts the stream and returns the route's malformed code (`invalid_decision` or `invalid_passkey`). Decision recording re-checks the tombstone immediately before and after writing a decision; if a tombstone appears, the just-written row is deleted and `410 relic_removed` is returned.

@@ -67,7 +67,6 @@ import {
   type RelicRow,
   type RelicStore,
   type Tombstone,
-  type WebauthnChallengeRow,
 } from './store.ts';
 import {
   parseBase64url,
@@ -409,7 +408,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       third === 'complete' &&
       request.method === 'POST'
     ) {
-      return complete(second, now);
+      return complete(second, now, ip);
     }
     if (
       first === 'relics' &&
@@ -1024,7 +1023,22 @@ export function createApp(options: AppOptions = {}): RelicApp {
    * first genuine open, which is precisely the event the metric's first clause
    * exists to count.
    */
-  async function complete(rawId: string, now: number): Promise<Response> {
+  async function complete(
+    rawId: string,
+    now: number,
+    ip: string
+  ): Promise<Response> {
+    const verdict = limiter.check(
+      `complete ${ip}`,
+      config.publishRateLimit,
+      now
+    );
+    if (!verdict.allowed) {
+      return refuse('publish_rate_limited', {
+        retry_after_seconds: verdict.retryAfterSeconds,
+      });
+    }
+
     let relicId: string;
     try {
       relicId = parseRelicId(rawId);
@@ -1044,7 +1058,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     }
 
-    if (row.publishedAt === undefined) {
+    const justPublished = row.publishedAt === undefined;
+    if (justPublished) {
       await store.markPublished(relicId, now, object.length, object.crc32c);
     }
 
@@ -1058,9 +1073,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     let versionDigest: string | null =
       row.versionDigests?.[String(row.version)] ?? null;
-    if (versionDigest === null) {
+    if (
+      versionDigest === null &&
+      (justPublished || row.versionDigests?.[String(row.version)] === undefined)
+    ) {
       try {
-        const computed = await storage.digest(objectKey(relicId, row.version));
+        const computed = await singleFlightDigest(relicId, row.version);
         if (computed !== undefined) {
           const recorded = await store.recordVersionDigest(
             relicId,
@@ -3208,6 +3226,28 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
   // --- decisions and passkeys ---------------------------------------------
 
+  const inFlightDigests = new Map<string, Promise<string | undefined>>();
+
+  async function singleFlightDigest(
+    relicId: string,
+    version: number
+  ): Promise<string | undefined> {
+    const flightKey = `${relicId}:${version}`;
+    const inFlight = inFlightDigests.get(flightKey);
+    if (inFlight !== undefined) {
+      return inFlight;
+    }
+    const promise = (async () => {
+      try {
+        return await storage.digest(objectKey(relicId, version));
+      } finally {
+        inFlightDigests.delete(flightKey);
+      }
+    })();
+    inFlightDigests.set(flightKey, promise);
+    return promise;
+  }
+
   async function digestOnRecord(
     row: RelicRow,
     version: number
@@ -3225,7 +3265,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     }
 
-    const digest = await storage.digest(key);
+    const digest = await singleFlightDigest(row.id, version);
     if (digest === undefined) {
       throw new ProblemError('relic_not_yet_published', {
         relic_id: row.id,
@@ -3241,20 +3281,50 @@ export function createApp(options: AppOptions = {}): RelicApp {
     request: Request,
     malformedCode: ProblemError['code']
   ): Promise<unknown> {
+    const MAX_BOUNDED_JSON_BYTES = 65_536;
     const clHeader = request.headers.get('content-length');
     if (clHeader !== null) {
       const cl = Number.parseInt(clHeader, 10);
-      if (Number.isNaN(cl) || cl > 65_536) {
+      if (Number.isNaN(cl) || cl > MAX_BOUNDED_JSON_BYTES) {
         throw new ProblemError(malformedCode);
       }
     }
-    let text: string;
+    if (!request.body) {
+      return undefined;
+    }
+    let rawBytes: Uint8Array;
     try {
-      text = await request.text();
-    } catch {
+      const reader = request.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_BOUNDED_JSON_BYTES) {
+          await reader.cancel();
+          throw new ProblemError(malformedCode);
+        }
+        chunks.push(value);
+      }
+      rawBytes = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        rawBytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+    } catch (err) {
+      if (err instanceof ProblemError) throw err;
       throw new ProblemError(malformedCode);
     }
-    if (text.length > 65_536) {
+    if (rawBytes.byteLength === 0) {
+      return undefined;
+    }
+    let text: string;
+    try {
+      const decoder = new TextDecoder('utf-8', { fatal: true });
+      text = decoder.decode(rawBytes);
+    } catch {
       throw new ProblemError(malformedCode);
     }
     if (text.trim().length === 0) {
@@ -3581,14 +3651,28 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
 
       try {
-        await store.updatePasskeys(email, (current) => ({
-          ...current,
-          credentials: current.credentials.map((c) =>
-            c.credentialId === cred.credentialId
-              ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
-              : c
-          ),
-        }));
+        await store.updatePasskeys(email, (current) => {
+          const target = current.credentials.find(
+            (c) => c.credentialId === cred.credentialId
+          );
+          if (
+            target !== undefined &&
+            (target.signCount > 0 || assertion.signCount > 0) &&
+            assertion.signCount <= target.signCount
+          ) {
+            throw new ProblemError('passkey_verification_failed', {
+              passkey_check: 'counter',
+            });
+          }
+          return {
+            ...current,
+            credentials: current.credentials.map((c) =>
+              c.credentialId === cred.credentialId
+                ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
+                : c
+            ),
+          };
+        });
       } catch (err) {
         if (err instanceof ProblemError) {
           return refuse(err.code, err.options);
@@ -3619,8 +3703,28 @@ export function createApp(options: AppOptions = {}): RelicApp {
         versionDigest: recordDigest,
         credentialId: cred.credentialId,
       };
+      const tombstoneBefore = await store.getTombstone(relicId);
+      if (tombstoneBefore !== undefined) {
+        return refuse('relic_removed', {
+          relic_id: relicId,
+          report_url: `${config.serviceOrigin}/abuse`,
+        });
+      }
+
       await store.appendDecision(decisionRow);
 
+      const tombstoneAfter = await store.getTombstone(relicId);
+      if (tombstoneAfter !== undefined) {
+        try {
+          await store.deleteDecision(relicId, decisionId);
+        } catch {
+          // best-effort cleanup
+        }
+        return refuse('relic_removed', {
+          relic_id: relicId,
+          report_url: `${config.serviceOrigin}/abuse`,
+        });
+      }
       return json(
         {
           relic_id: relicId,
@@ -3879,14 +3983,28 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
 
       try {
-        await store.updatePasskeys(email, (current) => ({
-          ...current,
-          credentials: current.credentials.map((c) =>
-            c.credentialId === cred.credentialId
-              ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
-              : c
-          ),
-        }));
+        await store.updatePasskeys(email, (current) => {
+          const target = current.credentials.find(
+            (c) => c.credentialId === cred.credentialId
+          );
+          if (
+            target !== undefined &&
+            (target.signCount > 0 || assertion.signCount > 0) &&
+            assertion.signCount <= target.signCount
+          ) {
+            throw new ProblemError('passkey_verification_failed', {
+              passkey_check: 'counter',
+            });
+          }
+          return {
+            ...current,
+            credentials: current.credentials.map((c) =>
+              c.credentialId === cred.credentialId
+                ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
+                : c
+            ),
+          };
+        });
       } catch (err) {
         if (err instanceof ProblemError) {
           return refuse(err.code, err.options);

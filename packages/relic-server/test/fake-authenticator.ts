@@ -84,6 +84,7 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
     origin: string,
     userHandleOverride?: string | null
   ): Promise<AuthenticationResponseJSON>;
+  setSignCount(n: number): void;
   readonly credentialId: string;
 }> {
   const alg = init?.alg ?? -7;
@@ -258,6 +259,9 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
   return {
     register,
     assert,
+    setSignCount(n: number) {
+      currentSignCount = n;
+    },
     credentialId,
   };
 }

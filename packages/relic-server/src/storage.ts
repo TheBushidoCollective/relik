@@ -46,6 +46,7 @@ export interface ObjectStat {
    * bits and is never used as the abuse blocklist hash.
    */
   readonly crc32c: string;
+  readonly generation?: string | undefined;
 }
 
 export interface ObjectStorage {
@@ -119,10 +120,19 @@ export class MemoryStorage implements ObjectStorage {
   }
 
   async digest(relicId: string): Promise<string | undefined> {
+    const object = await this.stat(relicId);
+    if (object === undefined) return undefined;
     const bytes = this.objects.get(relicId);
     if (bytes === undefined) return undefined;
     const hash = createHash('sha256');
+    let bytesHashed = 0;
     hash.update(bytes);
+    bytesHashed += bytes.byteLength;
+    if (bytesHashed !== object.length) {
+      throw new Error(
+        `digest length mismatch: stat=${object.length}, hashed=${bytesHashed}`
+      );
+    }
     return hash.digest('hex');
   }
   /** Test seam: stand in for the client's direct-to-storage PUT. */

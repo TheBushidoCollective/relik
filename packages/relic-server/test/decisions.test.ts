@@ -14,10 +14,25 @@ import {
 import { createApp, type RelicApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { MemoryStore } from '../src/store.ts';
+import { MemoryStore, normalizeEmail, type Tombstone } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
 
 const OPERATOR = new Map([['jason', 'operator-secret']]);
+
+function mockTombstone(id: string): Tombstone {
+  return {
+    id,
+    publishIp: '127.0.0.1',
+    publishedAt: now,
+    publishingClient: 'test',
+    rendererClass: 'markdown',
+    ciphertextHash: 'hash',
+    deletedAt: now,
+    operator: 'operator',
+    reasonClass: 'abuse',
+    reportReference: undefined,
+  };
+}
 
 let now = Date.parse('2026-10-24T12:00:00.000Z');
 let storage: MemoryStorage;
@@ -334,7 +349,7 @@ describe('decisions and passkeys end to end (S2 acceptance)', () => {
   test('Approve on v3 is 201: author is normalized and digest equals complete', async () => {
     const relic = await publishRelic();
     await republishRelic(relic, 2, 'content v2');
-    const v3 = await republishRelic(relic, 3, 'content v3');
+    await republishRelic(relic, 3, 'content v3');
 
     const compRes = await app.fetch(
       req(`/api/relics/${relic.id}/complete`, { method: 'POST' })
@@ -712,7 +727,7 @@ describe('decisions and passkeys end to end (S2 acceptance)', () => {
   test('Republish to v4: listing v4 gives [], and v3 keeps its record; reject after approve leaves 2 records', async () => {
     const relic = await publishRelic();
     await republishRelic(relic, 2, 'content v2');
-    const v3 = await republishRelic(relic, 3, 'content v3');
+    await republishRelic(relic, 3, 'content v3');
 
     const cookie = await signIn('reader@example.com', relic.id);
     const auth = await fakeAuthenticator({ alg: -7 });
@@ -877,9 +892,9 @@ describe('decisions and passkeys end to end (S2 acceptance)', () => {
       })
     );
     expect(listRes.status).toBe(200);
-    expect(((await listRes.json()) as { decisions: any[] }).decisions).toEqual(
-      []
-    );
+    expect(
+      ((await listRes.json()) as { decisions: unknown[] }).decisions
+    ).toEqual([]);
   });
 
   test('with shareVerifier absent, options, record, and list all give 409 decision_unavailable', async () => {
@@ -1060,7 +1075,7 @@ describe('decisions and passkeys end to end (S2 acceptance)', () => {
     expect(digestCalls).toBe(1);
     const opt1 = (await optRes1.json()) as {
       version_digest: string;
-      public_key: any;
+      public_key: RequestOptionsJSON;
     };
 
     // Record decision 1
@@ -1097,5 +1112,404 @@ describe('decisions and passkeys end to end (S2 acceptance)', () => {
     expect(optRes2.status).toBe(200);
     // Still 1!
     expect(digestCalls).toBe(1);
+  });
+
+  test('chunked body exceeding 65,536 bytes is aborted and rejected with invalid_decision', async () => {
+    const relic = await publishRelic();
+    const largeChunk = new Uint8Array(40_000);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(largeChunk);
+        controller.enqueue(largeChunk); // 80,000 bytes > 65,536
+        controller.close();
+      },
+    });
+
+    const res = await app.fetch(
+      new Request(
+        `https://relic.example/api/relics/${relic.id}/decisions/list`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: stream,
+          duplex: 'half',
+        } as RequestInit
+      )
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('invalid_decision');
+  });
+
+  test('streamed body exceeding 65,536 bytes with <= 65,536 characters is rejected with 400', async () => {
+    const relic = await publishRelic();
+    // 30,000 euro signs = ~30,050 characters, but ~90,050 UTF-8 bytes
+    const jsonText = JSON.stringify({
+      share_proof: relic.shareProof,
+      pad: '€'.repeat(30_000),
+    });
+    const bytes = new TextEncoder().encode(jsonText);
+    const stream = new ReadableStream({
+      start(c) {
+        c.enqueue(bytes);
+        c.close();
+      },
+    });
+    const res = await app.fetch(
+      new Request(
+        `https://relic.example/api/relics/${relic.id}/decisions/list`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: stream,
+          duplex: 'half',
+        } as RequestInit
+      )
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('invalid_decision');
+  });
+
+  test('body with invalid UTF-8 bytes is rejected with malformed code', async () => {
+    const relic = await publishRelic();
+    const invalidUtf8 = new Uint8Array([0xff, 0xff, 0xff]);
+    const res = await app.fetch(
+      new Request(
+        `https://relic.example/api/relics/${relic.id}/decisions/list`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: invalidUtf8,
+        }
+      )
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('invalid_decision');
+  });
+
+  test('complete endpoint is rate limited per IP using publishRateLimit', async () => {
+    const limitedApp = createApp({
+      storage,
+      store,
+      now: () => now,
+      config: {
+        serviceOrigin: ORIGIN,
+        publishRateLimit: { limit: 2, windowSeconds: 60 },
+      },
+    });
+    const relic = await publishRelic();
+    const ip = '198.51.100.42';
+    const r1 = await limitedApp.fetch(
+      req(`/api/relics/${relic.id}/complete`, { method: 'POST', ip })
+    );
+    expect(r1.status).toBe(200);
+
+    const r2 = await limitedApp.fetch(
+      req(`/api/relics/${relic.id}/complete`, { method: 'POST', ip })
+    );
+    expect(r2.status).toBe(200);
+
+    const r3 = await limitedApp.fetch(
+      req(`/api/relics/${relic.id}/complete`, { method: 'POST', ip })
+    );
+    expect(r3.status).toBe(429);
+    const body = (await r3.json()) as {
+      code: string;
+      retry_after_seconds: number;
+    };
+    expect(body.code).toBe('publish_rate_limited');
+    expect(typeof body.retry_after_seconds).toBe('number');
+  });
+
+  test('concurrent complete calls single-flight digest computation', async () => {
+    const relic = await publishRelic();
+    let digestInvocations = 0;
+    const origDigest = storage.digest.bind(storage);
+    const { promise: unblock, resolve } = Promise.withResolvers<void>();
+    storage.digest = async (id: string) => {
+      digestInvocations++;
+      await unblock;
+      return origDigest(id);
+    };
+
+    try {
+      const calls = Array.from({ length: 5 }, () =>
+        app.fetch(req(`/api/relics/${relic.id}/complete`, { method: 'POST' }))
+      );
+      // Yield microtasks so all calls reach singleFlightDigest before resolving
+      await Promise.resolve();
+      await Promise.resolve();
+      resolve();
+      const responses = await Promise.all(calls);
+      for (const res of responses) {
+        expect(res.status).toBe(200);
+        const json = (await res.json()) as { version_digest: string };
+        expect(typeof json.version_digest).toBe('string');
+      }
+      expect(digestInvocations).toBe(1);
+    } finally {
+      storage.digest = origDigest;
+    }
+  });
+
+  test('digest mismatch throws in MemoryStorage and does not record version digest', async () => {
+    const relic = await publishRelic();
+    // Mutate stat length so it differs from storage bytes
+    const origStat = storage.stat.bind(storage);
+    storage.stat = async (id: string) => {
+      const real = await origStat(id);
+      if (real === undefined) return undefined;
+      return { ...real, length: real.length + 10 };
+    };
+
+    try {
+      await expect(storage.digest(relic.id)).rejects.toThrow(/mismatch/);
+
+      // In complete, digest computation failure leaves version_digest null
+      const compRes = await app.fetch(
+        req(`/api/relics/${relic.id}/complete`, { method: 'POST' })
+      );
+      expect(compRes.status).toBe(200);
+      const compBody = (await compRes.json()) as {
+        version_digest: string | null;
+      };
+      expect(compBody.version_digest).toBeNull();
+
+      const row = await store.getRelic(relic.id);
+      expect(row?.versionDigests?.['1']).toBeUndefined();
+    } finally {
+      storage.stat = origStat;
+    }
+  });
+
+  test('tombstone appearing immediately before appendDecision refuses with relic_removed and writes nothing', async () => {
+    const relic = await publishRelic();
+    const cookie = await signIn('reader@example.com', relic.id);
+    const auth = await fakeAuthenticator({ alg: -7 });
+    const optResReg = await app.fetch(
+      req('/api/auth/passkeys/options', { method: 'POST', headers: { cookie } })
+    );
+    const { public_key: createOpts } = (await optResReg.json()) as {
+      public_key: CreationOptionsJSON;
+    };
+    const regCred = await auth.register(createOpts, ORIGIN);
+    await app.fetch(
+      req('/api/auth/passkeys', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: regCred }),
+      })
+    );
+
+    const optRes = await app.fetch(
+      req(`/api/relics/${relic.id}/decisions/options`, {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({
+          version: 1,
+          verdict: 'approve',
+          share_proof: relic.shareProof,
+        }),
+      })
+    );
+    const optBody = (await optRes.json()) as {
+      public_key: RequestOptionsJSON;
+      version_digest: string;
+    };
+    const assertion = await auth.assert(optBody.public_key, ORIGIN);
+
+    const origGetTombstone = store.getTombstone.bind(store);
+    let calls = 0;
+    store.getTombstone = async (id: string) => {
+      calls++;
+      if (calls >= 2) {
+        return mockTombstone(id);
+      }
+      return origGetTombstone(id);
+    };
+
+    try {
+      const decRes = await app.fetch(
+        req(`/api/relics/${relic.id}/decisions`, {
+          method: 'POST',
+          headers: { cookie },
+          body: JSON.stringify({
+            version: 1,
+            verdict: 'approve',
+            share_proof: relic.shareProof,
+            version_digest: optBody.version_digest,
+            credential: assertion,
+          }),
+        })
+      );
+      expect(decRes.status).toBe(410);
+      const decBody = (await decRes.json()) as { code: string };
+      expect(decBody.code).toBe('relic_removed');
+
+      const decisions = await store.listDecisions(relic.id);
+      expect(decisions).toEqual([]);
+    } finally {
+      store.getTombstone = origGetTombstone;
+    }
+  });
+
+  test('tombstone appearing immediately after appendDecision deletes the just-written row and refuses with relic_removed', async () => {
+    const relic = await publishRelic();
+    const cookie = await signIn('reader@example.com', relic.id);
+    const auth = await fakeAuthenticator({ alg: -7 });
+    const optResReg = await app.fetch(
+      req('/api/auth/passkeys/options', { method: 'POST', headers: { cookie } })
+    );
+    const { public_key: createOpts } = (await optResReg.json()) as {
+      public_key: CreationOptionsJSON;
+    };
+    const regCred = await auth.register(createOpts, ORIGIN);
+    await app.fetch(
+      req('/api/auth/passkeys', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: regCred }),
+      })
+    );
+
+    const optRes = await app.fetch(
+      req(`/api/relics/${relic.id}/decisions/options`, {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({
+          version: 1,
+          verdict: 'approve',
+          share_proof: relic.shareProof,
+        }),
+      })
+    );
+    const optBody = (await optRes.json()) as {
+      public_key: RequestOptionsJSON;
+      version_digest: string;
+    };
+    const assertion = await auth.assert(optBody.public_key, ORIGIN);
+
+    const origGetTombstone = store.getTombstone.bind(store);
+    let calls = 0;
+    store.getTombstone = async (id: string) => {
+      calls++;
+      if (calls >= 3) {
+        return mockTombstone(id);
+      }
+      return origGetTombstone(id);
+    };
+
+    try {
+      const decRes = await app.fetch(
+        req(`/api/relics/${relic.id}/decisions`, {
+          method: 'POST',
+          headers: { cookie },
+          body: JSON.stringify({
+            version: 1,
+            verdict: 'approve',
+            share_proof: relic.shareProof,
+            version_digest: optBody.version_digest,
+            credential: assertion,
+          }),
+        })
+      );
+      expect(decRes.status).toBe(410);
+      const decBody = (await decRes.json()) as { code: string };
+      expect(decBody.code).toBe('relic_removed');
+
+      const decisions = await store.listDecisions(relic.id);
+      expect(decisions).toEqual([]);
+    } finally {
+      store.getTombstone = origGetTombstone;
+    }
+  });
+
+  test('concurrent assertion swap race: second assertion with equal counter is rejected by swap callback', async () => {
+    const relic = await publishRelic();
+    const cookie = await signIn('reader@example.com', relic.id);
+    const auth = await fakeAuthenticator({ alg: -7, signCount: 0 });
+    const optResReg = await app.fetch(
+      req('/api/auth/passkeys/options', { method: 'POST', headers: { cookie } })
+    );
+    const { public_key: createOpts } = (await optResReg.json()) as {
+      public_key: CreationOptionsJSON;
+    };
+    const regCred = await auth.register(createOpts, ORIGIN);
+    await app.fetch(
+      req('/api/auth/passkeys', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: regCred }),
+      })
+    );
+
+    const optRes = await app.fetch(
+      req(`/api/relics/${relic.id}/decisions/options`, {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({
+          version: 1,
+          verdict: 'approve',
+          share_proof: relic.shareProof,
+        }),
+      })
+    );
+    const optBody = (await optRes.json()) as {
+      public_key: RequestOptionsJSON;
+      version_digest: string;
+    };
+
+    // Authenticator asserts with counter = 5
+    auth.setSignCount(4); // 4 + 1 = 5
+    const assertion = await auth.assert(optBody.public_key, ORIGIN);
+
+    // Simulate another request having won the race and updated the stored counter to 5
+    // before postDecision enters updatePasskeys:
+    const origUpdatePasskeys = store.updatePasskeys.bind(store);
+    let raced = false;
+    store.updatePasskeys = async (email, change) => {
+      if (!raced) {
+        raced = true;
+        // The concurrent winner set signCount to 5
+        await origUpdatePasskeys(email, (curr) => ({
+          ...curr,
+          credentials: curr.credentials.map((c) => ({ ...c, signCount: 5 })),
+        }));
+      }
+      return origUpdatePasskeys(email, change);
+    };
+
+    try {
+      const decRes = await app.fetch(
+        req(`/api/relics/${relic.id}/decisions`, {
+          method: 'POST',
+          headers: { cookie },
+          body: JSON.stringify({
+            version: 1,
+            verdict: 'approve',
+            share_proof: relic.shareProof,
+            version_digest: optBody.version_digest,
+            credential: assertion,
+          }),
+        })
+      );
+      expect(decRes.status).toBe(403);
+      const decBody = (await decRes.json()) as {
+        code: string;
+        passkey_check: string;
+      };
+      expect(decBody.code).toBe('passkey_verification_failed');
+      expect(decBody.passkey_check).toBe('counter');
+    } finally {
+      store.updatePasskeys = origUpdatePasskeys;
+    }
+  });
+
+  test('normalizeEmail lowercases ASCII characters and preserves non-ASCII characters without Unicode folding', () => {
+    expect(normalizeEmail('  USER@EXAMPLE.COM  ')).toBe('user@example.com');
+    expect(normalizeEmail('İ@EXAMPLE.COM')).toBe('İ@example.com');
+    expect(normalizeEmail('MÜLLER@EXAMPLE.COM')).toBe('mÜller@example.com');
   });
 });
