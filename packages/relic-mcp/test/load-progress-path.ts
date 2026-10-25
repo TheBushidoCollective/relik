@@ -48,6 +48,13 @@ const CHUNK_SIZE = 16384;
 const CHUNK_DELAY_MS = Number(
   process.env['RELIC_LOAD_PROOF_CHUNK_DELAY_MS'] ?? 15
 );
+// The viewer paints progress at most once per animation frame (~16.7 ms), so
+// chunks paced faster than a frame can share one painted value. The first
+// PACED_CHUNKS chunks wait at least PACED_CHUNK_DELAY_MS (three frames), which
+// guarantees distinct painted values for every 3+ chunk object; later chunks
+// use CHUNK_DELAY_MS so the 6 MB fixture stays fast.
+const PACED_CHUNKS = 8;
+const PACED_CHUNK_DELAY_MS = 50;
 
 const viewerDist =
   process.env['RELIC_VIEWER_DIST'] ??
@@ -211,6 +218,7 @@ handler = async (request: Request): Promise<Response> => {
     const stream = new ReadableStream({
       async start(controller) {
         let offset = 0;
+        let sentChunks = 0;
         while (offset < bytes.length) {
           if (request.signal.aborted || log.cancelled) {
             log.cancelled = true;
@@ -226,8 +234,13 @@ handler = async (request: Request): Promise<Response> => {
           controller.enqueue(chunk);
           log.enqueuedBytes += chunk.length;
           offset = end;
-          if (offset < bytes.length && CHUNK_DELAY_MS > 0) {
-            await Bun.sleep(CHUNK_DELAY_MS);
+          sentChunks += 1;
+          const delay =
+            sentChunks <= PACED_CHUNKS
+              ? Math.max(CHUNK_DELAY_MS, PACED_CHUNK_DELAY_MS)
+              : CHUNK_DELAY_MS;
+          if (offset < bytes.length && delay > 0) {
+            await Bun.sleep(delay);
           }
         }
         log.completed = true;
