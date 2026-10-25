@@ -1,0 +1,322 @@
+{
+  "relic_id": "krfaqhaf2jz9fh55n03wmjbvcm",
+  "viewport": {
+    "width": 900,
+    "height": 900
+  },
+  "clock": {
+    "configuredLimit": 30,
+    "configuredWindowSeconds": 3600,
+    "initialBoundary": {
+      "before": 1792925761523,
+      "after": 1792929361523
+    },
+    "boundaries": [
+      {
+        "before": 1792929361523,
+        "after": 1792932961523,
+        "completedUiPosts": 30
+      }
+    ],
+    "completedUiPosts": 40,
+    "finalNow": 1792932961523
+  },
+  "measurements": [
+    {
+      "state": "auxiliary-coincident-sidebar-reveal",
+      "position": "spatial-top",
+      "expectedId": "ZmZIpB2WenWlixTceclPCg",
+      "expectedAnchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 0,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "beforeScreenshot": "auxiliary-coincident-spatial-top-sidebar-before",
+      "afterScreenshot": "auxiliary-coincident-spatial-top-sidebar-after",
+      "precondition": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "stageScrollTop": 0,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": 824.953125,
+            "right": 760,
+            "bottom": 1758.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 882.953125,
+            "right": 176.5,
+            "bottom": 896.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": false,
+          "markOffscreen": false,
+          "direction": null
+        },
+        "after": {
+          "stageScrollTop": 851,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": -26.046875,
+            "right": 760,
+            "bottom": 907.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 31.953125,
+            "right": 176.5,
+            "bottom": 45.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": true,
+          "markOffscreen": true,
+          "direction": "above"
+        }
+      },
+      "row": {
+        "missing": [],
+        "rowRect": {
+          "left": 569,
+          "top": 743.1875,
+          "right": 880,
+          "bottom": 899.734375,
+          "width": 311,
+          "height": 156.546875
+        },
+        "center": {
+          "x": 724.5,
+          "y": 821.4609375
+        },
+        "visible": true,
+        "hitOwned": true,
+        "stageBefore": 851,
+        "stageAfter": 851,
+        "timelineBefore": 0,
+        "timelineAfter": 0
+      },
+      "captureInstalled": true,
+      "trustedClickId": "ZmZIpB2WenWlixTceclPCg",
+      "trusted": true,
+      "after": {
+        "missing": [],
+        "markRect": {
+          "left": 171.5,
+          "top": 61.953125,
+          "right": 176.5,
+          "bottom": 75.953125,
+          "width": 5,
+          "height": 14
+        },
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 548,
+          "bottom": 900.0625,
+          "width": 548,
+          "height": 846
+        },
+        "center": {
+          "x": 174,
+          "y": 68.953125
+        },
+        "usableLeft": 174,
+        "usableRight": 548,
+        "hitId": "ZmZIpB2WenWlixTceclPCg",
+        "hitOwned": true,
+        "activeIds": ["ZmZIpB2WenWlixTceclPCg"],
+        "cardId": "ZmZIpB2WenWlixTceclPCg",
+        "cardVisible": true,
+        "bodyPresent": true,
+        "anchor": {
+          "trackId": "track-v2-duplicate",
+          "start": 0,
+          "duration": 0,
+          "rate": 24,
+          "durationRate": 24
+        },
+        "stageScrollTop": 821,
+        "timelineScrollLeft": 0,
+        "gap": 0,
+        "gapValid": true,
+        "horizontalCentred": true,
+        "overlapArea": 0
+      }
+    },
+    {
+      "state": "auxiliary-coincident-sidebar-reveal",
+      "position": "spatial-bottom",
+      "expectedId": "_G_OSiPG15lB_qEInLETXQ",
+      "expectedAnchor": {
+        "trackId": "track-v2-duplicate",
+        "start": 0,
+        "duration": 0,
+        "rate": 24,
+        "durationRate": 24
+      },
+      "beforeScreenshot": "auxiliary-coincident-spatial-bottom-sidebar-before",
+      "afterScreenshot": "auxiliary-coincident-spatial-bottom-sidebar-after",
+      "precondition": {
+        "missing": [],
+        "blocker": null,
+        "before": {
+          "stageScrollTop": 821,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": 3.953125,
+            "right": 760,
+            "bottom": 937.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 919.953125,
+            "right": 176.5,
+            "bottom": 933.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": true,
+          "markOffscreen": true,
+          "direction": null
+        },
+        "after": {
+          "stageScrollTop": 806,
+          "timelineScrollLeft": 0,
+          "stageContent": {
+            "left": 0,
+            "top": 54.0625,
+            "right": 548,
+            "bottom": 900.0625,
+            "width": 548,
+            "height": 846
+          },
+          "bodyRect": {
+            "left": 174,
+            "top": 18.953125,
+            "right": 760,
+            "bottom": 952.953125,
+            "width": 586,
+            "height": 934
+          },
+          "markRect": {
+            "left": 171.5,
+            "top": 934.953125,
+            "right": 176.5,
+            "bottom": 948.953125,
+            "width": 5,
+            "height": 14
+          },
+          "bodySpansStage": true,
+          "markOffscreen": true,
+          "direction": "below"
+        }
+      },
+      "row": {
+        "missing": [],
+        "rowRect": {
+          "left": 569,
+          "top": 743.734375,
+          "right": 880,
+          "bottom": 900.28125,
+          "width": 311,
+          "height": 156.546875
+        },
+        "center": {
+          "x": 724.5,
+          "y": 822.0078125
+        },
+        "visible": true,
+        "hitOwned": true,
+        "stageBefore": 806,
+        "stageAfter": 806,
+        "timelineBefore": 0,
+        "timelineAfter": 0
+      },
+      "captureInstalled": true,
+      "trustedClickId": "_G_OSiPG15lB_qEInLETXQ",
+      "trusted": true,
+      "after": {
+        "missing": [],
+        "markRect": {
+          "left": 171.5,
+          "top": 877.953125,
+          "right": 176.5,
+          "bottom": 891.953125,
+          "width": 5,
+          "height": 14
+        },
+        "stageContent": {
+          "left": 0,
+          "top": 54.0625,
+          "right": 548,
+          "bottom": 900.0625,
+          "width": 548,
+          "height": 846
+        },
+        "center": {
+          "x": 174,
+          "y": 884.953125
+        },
+        "usableLeft": 174,
+        "usableRight": 548,
+        "hitId": "_G_OSiPG15lB_qEInLETXQ",
+        "hitOwned": true,
+        "activeIds": ["_G_OSiPG15lB_qEInLETXQ"],
+        "cardId": "_G_OSiPG15lB_qEInLETXQ",
+        "cardVisible": true,
+        "bodyPresent": true,
+        "anchor": {
+          "trackId": "track-v2-duplicate",
+          "start": 0,
+          "duration": 0,
+          "rate": 24,
+          "durationRate": 24
+        },
+        "stageScrollTop": 863,
+        "timelineScrollLeft": 0,
+        "gap": 0.265625,
+        "gapValid": true,
+        "horizontalCentred": true,
+        "overlapArea": 0
+      }
+    }
+  ]
+}

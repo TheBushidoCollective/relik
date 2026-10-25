@@ -492,3 +492,19 @@ DECISION_E_OK total_decisions=2
 DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403
 DECISION_LIVE_OK relic=<id> client=relic-mcp@<version>
 ```
+
+## Anchored comment popovers on every class
+
+Run from the repository root:
+
+```bash
+bun packages/relic-mcp/test/comment-popover-path.ts
+```
+
+The harness exercises attached comment popovers and posted cards across all 9 classes (markdown, code, image, PDF, HTML, SVG, video, audio, and OTIO), verifying §5.8 assertions (adjacency, horizontal alignment, no overlap, anchor exposure, inside boundaries, usability, preference, capped scrolling, and follow tracking) on a loopback service without network calls.
+
+Success ends with:
+
+```text
+COMMENT_POPOVER_PATH_OK classes=9
+```

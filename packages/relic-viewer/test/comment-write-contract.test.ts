@@ -16,9 +16,13 @@ import {
   isActiveMarkMessage,
   isFrameMarkClickMessage,
   isFrameMarkHoverMessage,
+  isFrameMarkRectMessage,
+  isFramePointMessage,
   isFrameRect,
+  isFrameRegionMessage,
   isFrameSelectionClearedMessage,
   isFrameSelectionMessage,
+  isTrackMarkMessage,
 } from '../src/annotate-frame.ts';
 import {
   type CommentEntry,
@@ -220,6 +224,83 @@ describe('the geometry the frame reports', () => {
       true
     );
     expect(isActiveMarkMessage({ type: 'relic:active-mark' })).toBe(false);
+  });
+
+  test('frame point message accepts valid box and rejects malformed one', () => {
+    expect(
+      isFramePointMessage({
+        type: 'relic:frame-point',
+        x: 0.5,
+        y: 0.5,
+        box: { left: 10, top: 20, width: 20, height: 20 },
+      })
+    ).toBe(true);
+    expect(
+      isFramePointMessage({
+        type: 'relic:frame-point',
+        x: 0.5,
+        y: 0.5,
+        box: { left: 10, top: 20, width: -1, height: 20 },
+      })
+    ).toBe(false);
+  });
+
+  test('frame region message accepts valid box and rejects malformed one', () => {
+    expect(
+      isFrameRegionMessage({
+        type: 'relic:frame-region',
+        rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+        box: { left: 10, top: 20, width: 30, height: 40 },
+      })
+    ).toBe(true);
+    expect(
+      isFrameRegionMessage({
+        type: 'relic:frame-region',
+        rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+        box: { left: 10, top: 20, width: 30, height: 'bad' },
+      })
+    ).toBe(false);
+  });
+
+  test('track mark message accepts null, valid id, and rejects non-strings', () => {
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: null })).toBe(
+      true
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 'm1' })).toBe(
+      true
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: '' })).toBe(
+      false
+    );
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 42 })).toBe(
+      false
+    );
+    expect(isTrackMarkMessage(null)).toBe(false);
+  });
+
+  test('frame mark rect message accepts rect and first, and rejects malformed boxes', () => {
+    expect(
+      isFrameMarkRectMessage({
+        type: 'relic:frame-mark-rect',
+        id: 'm1',
+        rect: { left: 10, top: 20, width: 30, height: 40 },
+        first: { left: 10, top: 20, width: 30, height: 20 },
+      })
+    ).toBe(true);
+    expect(
+      isFrameMarkRectMessage({
+        type: 'relic:frame-mark-rect',
+        id: 'm1',
+        rect: { left: 'invalid', top: 20, width: 30, height: 40 },
+      })
+    ).toBe(false);
+    expect(
+      isFrameMarkRectMessage({
+        type: 'relic:frame-mark-rect',
+        id: 'm1',
+        first: { left: 10, top: 20, width: -5, height: 20 },
+      })
+    ).toBe(false);
   });
 });
 

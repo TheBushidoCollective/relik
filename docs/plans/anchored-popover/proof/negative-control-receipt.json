@@ -1,0 +1,17 @@
+{
+  "baseCommit": "76269ed5",
+  "viewerDist": "/Users/jwaldrip/.omp/wt/bootstrap-run-76269ed/packages/relic-viewer/dist",
+  "observations": {
+    "pointingGesture": {
+      "anchoredComposerOpen": false,
+      "sidebarOpen": false
+    },
+    "markClick": {
+      "stageCardOpen": false,
+      "sidebarOpen": true
+    },
+    "markHover": {
+      "stageCardOpen": false
+    }
+  }
+}

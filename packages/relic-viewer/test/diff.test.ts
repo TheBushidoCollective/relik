@@ -6,6 +6,8 @@ import {
   diffCeilingFor,
   diffModeForRoutes,
   MAX_DIFF_BYTES,
+  uncomparableClassNoun,
+  unpromptedComparisonNotice,
   versionHistoryCopy,
 } from '../src/diff.ts';
 import type { ReadyView } from '../src/viewer.ts';
@@ -155,6 +157,40 @@ describe('comparison availability', () => {
     if (result.kind !== 'unavailable') return;
     expect(result.code).toBe('comparison_not_renderable');
     expect(result.detail).toContain('download-only');
+  });
+
+  test('otio, media and pdf give comparison_not_supported naming the class noun without saying download-only', () => {
+    for (const [route, expectedNoun] of [
+      ['otio', 'timeline'],
+      ['media', 'recording'],
+      ['pdf', 'PDF'],
+    ] as const) {
+      expect(uncomparableClassNoun(route)).toBe(expectedNoun);
+      const result = comparisonAvailability(
+        ready(route, encoder.encode('bytes'), 2)
+      );
+      expect(result.kind).toBe('unavailable');
+      if (result.kind !== 'unavailable') return;
+      expect(result.code).toBe('comparison_not_supported');
+      expect(result.detail).not.toContain('download-only');
+      expect(result.detail).toContain(expectedNoun);
+    }
+  });
+
+  test('unpromptedComparisonNotice gives notice for download and oversize, undefined for otio, media, pdf and comparable', () => {
+    const downloadView = ready('download', encoder.encode('bytes'), 2);
+    expect(unpromptedComparisonNotice(downloadView)).toContain('download-only');
+
+    const oversizeView = ready('code', new Uint8Array(MAX_DIFF_BYTES + 1), 2);
+    expect(unpromptedComparisonNotice(oversizeView)).toContain('16 MiB');
+
+    for (const route of ['otio', 'media', 'pdf'] as const) {
+      const view = ready(route, encoder.encode('bytes'), 2);
+      expect(unpromptedComparisonNotice(view)).toBeUndefined();
+    }
+
+    const comparableView = ready('code', encoder.encode('code'), 2);
+    expect(unpromptedComparisonNotice(comparableView)).toBeUndefined();
   });
 
   test('refuses content over the diff ceiling without changing the current view', () => {

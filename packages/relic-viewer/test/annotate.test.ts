@@ -853,14 +853,15 @@ describe('pointing at a place in the document', () => {
     only(mounted.thread, 'mark-mode').dispatch('click');
     mounted.content.dispatch('click', { clientX: 400, clientY: 300 });
 
-    expect(mounted.chip()).toContain('Commenting on a point');
+    expect(withClass(mounted.stage, 'popover-composer')).toHaveLength(1);
+    expect(mounted.chip()).toContain('Commenting on the whole document');
     expect(only(mounted.thread, 'mark-mode').getAttribute('aria-pressed')).toBe(
       'false'
     );
     expect(mounted.stage.classes()).not.toContain('is-pinning');
     expect(withClass(mounted.stage, 'mark-hint')).toHaveLength(0);
 
-    const posted = await mounted.post('about this spot');
+    const posted = await mounted.postInPanel('about this spot');
     expect(posted.anchor).toEqual({ kind: 'pin', x: 0.4, y: 0.375 });
   });
 
@@ -870,7 +871,7 @@ describe('pointing at a place in the document', () => {
     mounted.content.dispatch('click', { clientX: 400, clientY: 300 });
     mounted.content.dispatch('click', { clientX: 800, clientY: 600 });
 
-    const posted = await mounted.post('about this spot');
+    const posted = await mounted.postInPanel('about this spot');
     expect(posted.anchor).toEqual({ kind: 'pin', x: 0.4, y: 0.375 });
   });
 
@@ -952,7 +953,7 @@ describe('showing the target before it is posted', () => {
     const mounted = await mount();
     only(mounted.thread, 'mark-mode').dispatch('click');
     mounted.content.dispatch('click', { clientX: 400, clientY: 300 });
-    await mounted.post('about this spot');
+    await mounted.postInPanel('about this spot');
 
     expect(withClass(mounted.stage, 'is-pending')).toHaveLength(0);
   });

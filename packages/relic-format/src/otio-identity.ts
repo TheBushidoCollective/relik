@@ -1385,9 +1385,7 @@ function findCurrentNode(
   const matches = Object.keys(current.nodes)
     .map((id) => nodeOf(current, id))
     .filter((node): node is OtioNode =>
-      Boolean(
-        node && node.fingerprint && node.fingerprint === source.fingerprint
-      )
+      Boolean(node?.fingerprint && node.fingerprint === source.fingerprint)
     );
   if (matches.length > 1) return { status: 'ambiguous' };
   const match = matches[0];

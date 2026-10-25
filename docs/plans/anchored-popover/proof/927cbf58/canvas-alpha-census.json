@@ -1,0 +1,857 @@
+{
+  "format": "relic-otio-canvas-alpha-census/v1",
+  "census": [
+    {
+      "sequence": 1,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925763375
+    },
+    {
+      "sequence": 2,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925763514
+    },
+    {
+      "sequence": 3,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925763573
+    },
+    {
+      "sequence": 4,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925764058
+    },
+    {
+      "sequence": 5,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925764122
+    },
+    {
+      "sequence": 6,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925764213
+    },
+    {
+      "sequence": 7,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770125
+    },
+    {
+      "sequence": 8,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770251
+    },
+    {
+      "sequence": 9,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770360
+    },
+    {
+      "sequence": 10,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770469
+    },
+    {
+      "sequence": 11,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770584
+    },
+    {
+      "sequence": 12,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770697
+    },
+    {
+      "sequence": 13,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770810
+    },
+    {
+      "sequence": 14,
+      "browser_label": "decoder-webm",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925771280
+    },
+    {
+      "sequence": 15,
+      "browser_label": "near-zero-control",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925771761
+    },
+    {
+      "sequence": 16,
+      "browser_label": "strict-negative",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772244
+    },
+    {
+      "sequence": 17,
+      "browser_label": "available-origin-cut",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772666
+    },
+    {
+      "sequence": 18,
+      "browser_label": "available-origin-cut",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772732
+    },
+    {
+      "sequence": 19,
+      "browser_label": "available-origin-cut",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772877
+    },
+    {
+      "sequence": 20,
+      "browser_label": "decoder-no-duration",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925773919
+    },
+    {
+      "sequence": 21,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925776992
+    },
+    {
+      "sequence": 22,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777168
+    },
+    {
+      "sequence": 23,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777242
+    },
+    {
+      "sequence": 24,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777303
+    },
+    {
+      "sequence": 25,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777366
+    }
+  ],
+  "observations": [
+    {
+      "sequence": 1,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925763375
+    },
+    {
+      "sequence": 2,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925763514
+    },
+    {
+      "sequence": 3,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925763573
+    },
+    {
+      "sequence": 4,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925764058
+    },
+    {
+      "sequence": 5,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925764122
+    },
+    {
+      "sequence": 6,
+      "browser_label": "qualification",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925764213
+    },
+    {
+      "sequence": 7,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770125
+    },
+    {
+      "sequence": 8,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770251
+    },
+    {
+      "sequence": 9,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770360
+    },
+    {
+      "sequence": 10,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770469
+    },
+    {
+      "sequence": 11,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770584
+    },
+    {
+      "sequence": 12,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770697
+    },
+    {
+      "sequence": 13,
+      "browser_label": "decoder-known",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925770810
+    },
+    {
+      "sequence": 14,
+      "browser_label": "decoder-webm",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925771280
+    },
+    {
+      "sequence": 15,
+      "browser_label": "near-zero-control",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925771761
+    },
+    {
+      "sequence": 16,
+      "browser_label": "strict-negative",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772244
+    },
+    {
+      "sequence": 17,
+      "browser_label": "available-origin-cut",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772666
+    },
+    {
+      "sequence": 18,
+      "browser_label": "available-origin-cut",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772732
+    },
+    {
+      "sequence": 19,
+      "browser_label": "available-origin-cut",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925772877
+    },
+    {
+      "sequence": 20,
+      "browser_label": "decoder-no-duration",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925773919
+    },
+    {
+      "sequence": 21,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925776992
+    },
+    {
+      "sequence": 22,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777168
+    },
+    {
+      "sequence": 23,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777242
+    },
+    {
+      "sequence": 24,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777303
+    },
+    {
+      "sequence": 25,
+      "browser_label": "state-occlusion",
+      "width": 160,
+      "height": 90,
+      "lost": false,
+      "alpha": {
+        "sample_count": 14400,
+        "min": 255,
+        "max": 255,
+        "mean": 255,
+        "zero_count": 0,
+        "opaque_count": 14400
+      },
+      "context_events": [],
+      "timestamp": 1792925777366
+    }
+  ]
+}

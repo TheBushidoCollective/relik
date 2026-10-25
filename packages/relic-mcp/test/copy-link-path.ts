@@ -844,7 +844,7 @@ try {
   );
 
   // 2. Click Copy link
-  const openerRect = await evaluate<any>(
+  const openerRect = await evaluate<Record<string, unknown> | null>(
     b1.cdp,
     b1.sessionId,
     `(() => {
@@ -855,7 +855,7 @@ try {
   console.log('Opener rect before click:', openerRect);
   await clickElement(b1.cdp, b1.sessionId, '[data-action="copy-link"]');
   await Bun.sleep(200);
-  const afterClick = await evaluate<any>(
+  const afterClick = await evaluate<Record<string, unknown>>(
     b1.cdp,
     b1.sessionId,
     `(() => {
@@ -1077,7 +1077,7 @@ try {
 
   // 6. Escape closes panel
   console.log('Step 6: Escape');
-  const escapeDebug = await evaluate<any>(
+  const escapeDebug = await evaluate<Record<string, unknown>>(
     b1.cdp,
     b1.sessionId,
     `(() => {
@@ -1090,7 +1090,7 @@ try {
   console.log('Before Escape:', escapeDebug);
   await pressKey(b1.cdp, b1.sessionId, 'Escape', 'Escape', 27);
   await Bun.sleep(200);
-  const afterEscape = await evaluate<any>(
+  const afterEscape = await evaluate<Record<string, unknown>>(
     b1.cdp,
     b1.sessionId,
     `(() => {

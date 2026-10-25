@@ -93,6 +93,14 @@ jobs:
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/cover-path.ts
       - name: Notify path
         run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/notify-path.ts
+      - name: Comment popover path
+        run: RELIC_POPOVER_CHROME_PATH="$(command -v google-chrome)" env -u DISPLAY -u WAYLAND_DISPLAY bun packages/relic-mcp/test/comment-popover-path.ts
+      - name: Upload comment popover shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comment-popover-path-shots
+          path: comment-popover-path-shots/
       - name: Decision path
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/decision-path.ts
 

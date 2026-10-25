@@ -7,13 +7,14 @@ function rationalLabel(time: OtioRationalTime): string {
 }
 
 export function otioTargetLabel(anchor: OtioAnchorV1): string {
-  const scope = anchor.snapshot.track ?? 'Composition';
+  const scope = anchor.snapshot?.track ?? anchor.track_id ?? 'Composition';
   const start = rationalLabel(anchor.range.start_time);
   const span =
     anchor.range.duration.value === 0
       ? `point ${start}`
       : `${start}, duration ${rationalLabel(anchor.range.duration)}`;
-  return `v${anchor.relic_version} · ${anchor.snapshot.timeline} · ${scope} · ${span}`;
+  const timeline = anchor.snapshot?.timeline ?? anchor.timeline_id ?? '';
+  return `v${anchor.relic_version} · ${timeline} · ${scope} · ${span}`;
 }
 
 export const otioAdapter: AnchorAdapter<'otio'> = {

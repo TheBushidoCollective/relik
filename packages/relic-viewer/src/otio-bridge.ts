@@ -11,6 +11,7 @@ export interface OtioUiController {
   paint(anchor: OtioAnchorV1, commentId: string): boolean;
   reveal(anchor: OtioAnchorV1, commentId?: string): void;
   clearMarks(): void;
+  measure(commentId?: string): DOMRect | undefined;
   project(
     anchor: OtioAnchorV1,
     originalContent: Uint8Array
@@ -23,7 +24,6 @@ export interface OtioAimDetail {
   readonly anchor: OtioAnchorV1;
   readonly focus?: boolean;
   readonly measure?: () => DOMRect | undefined;
-  readonly measureBounds?: () => DOMRect | undefined;
 }
 
 const controllers = new WeakMap<HTMLElement, OtioUiController>();

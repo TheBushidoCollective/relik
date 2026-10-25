@@ -38,6 +38,8 @@ export interface Placement {
   readonly left: number;
   readonly top: number;
   readonly side: 'above' | 'below';
+  /** Present only when the natural height fits on neither side. */
+  readonly maxHeight?: number;
 }
 
 /** Clearance between the panel and the thing it points at. */
@@ -47,16 +49,28 @@ export const POPOVER_GAP = 8;
 export const POPOVER_MARGIN = 8;
 
 /**
+ * Horizontal positioning rule: centred on the anchor, clamped to the
+ * visible bounds, pinned to the left limit when too wide.
+ */
+export function placeLeft(
+  anchor: AnchorBox,
+  width: number,
+  host: { readonly scrollLeft: number; readonly clientWidth: number },
+  margin = POPOVER_MARGIN
+): number {
+  const centred = anchor.left + anchor.width / 2 - width / 2;
+  const leftLimit = host.scrollLeft + margin;
+  const rightLimit = host.scrollLeft + host.clientWidth - width - margin;
+  if (width > host.clientWidth - 2 * margin) {
+    return leftLimit;
+  }
+  return Math.max(leftLimit, Math.min(centred, rightLimit));
+}
+
+/**
  * Where the panel goes.
  *
- * Above the anchor by preference, because a panel below covers the text a
- * reader is about to read next, and a comment about a sentence that hides
- * the following sentence trades one problem for another. Below when there is
- * no room above, which is the first line of every document.
- *
- * Both axes are clamped to the visible box rather than to the content, so a
- * panel on a mark at the right edge stays reachable instead of sitting in
- * the overflow the stage clips.
+ * Above or below depending on room and preference.
  */
 export function placePopover(
   anchor: AnchorBox,
@@ -64,39 +78,177 @@ export function placePopover(
   host: HostBox,
   gap = POPOVER_GAP,
   margin = POPOVER_MARGIN,
-  bounds?: AnchorBox
+  prefer: 'above' | 'below' = 'above'
 ): Placement {
-  const visibleTop = bounds
-    ? Math.max(host.scrollTop, bounds.top) + margin
-    : host.scrollTop + margin;
-  const visibleBottom = bounds
-    ? Math.min(host.scrollTop + host.clientHeight, bounds.top + bounds.height) -
-      margin
-    : host.scrollTop + host.clientHeight - margin;
-  const above = anchor.top - gap - size.height;
-  const below = anchor.top + anchor.height + gap;
-  const side: 'above' | 'below' = above >= visibleTop ? 'above' : 'below';
-  const wanted = side === 'above' ? above : below;
-  const top = Math.max(
-    visibleTop,
-    Math.min(wanted, Math.max(visibleTop, visibleBottom - size.height))
-  );
+  const vt = host.scrollTop + margin;
+  const vb = host.scrollTop + host.clientHeight - margin;
+  const a0 = anchor.top;
+  const a1 = anchor.top + anchor.height;
+  const roomAbove = a0 - gap - vt;
+  const roomBelow = vb - (a1 + gap);
 
-  const centred = anchor.left + anchor.width / 2 - size.width / 2;
-  const leftLimit = bounds
-    ? Math.max(host.scrollLeft, bounds.left) + margin
-    : host.scrollLeft + margin;
-  const rightLimit = bounds
-    ? Math.min(host.scrollLeft + host.clientWidth, bounds.left + bounds.width) -
-      size.width -
-      margin
-    : host.scrollLeft + host.clientWidth - size.width - margin;
-  const left = Math.max(
-    leftLimit,
-    Math.min(centred, Math.max(leftLimit, rightLimit))
-  );
+  let side: 'above' | 'below';
+  let top: number;
+  let maxHeight: number | undefined;
 
-  return { left, top, side };
+  if (a1 < vt || a0 > vb) {
+    side = prefer;
+    top = side === 'above' ? a0 - gap - size.height : a1 + gap;
+  } else {
+    const fitsAbove = roomAbove >= size.height;
+    const fitsBelow = roomBelow >= size.height;
+
+    if (prefer === 'above') {
+      if (fitsAbove) {
+        side = 'above';
+      } else if (fitsBelow) {
+        side = 'below';
+      } else {
+        side = roomAbove >= roomBelow ? 'above' : 'below';
+        const room = side === 'above' ? roomAbove : roomBelow;
+        maxHeight = Math.max(0, room);
+      }
+    } else {
+      if (fitsBelow) {
+        side = 'below';
+      } else if (fitsAbove) {
+        side = 'above';
+      } else {
+        side = roomBelow >= roomAbove ? 'below' : 'above';
+        const room = side === 'below' ? roomBelow : roomAbove;
+        maxHeight = Math.max(0, room);
+      }
+    }
+
+    const h = maxHeight !== undefined ? maxHeight : size.height;
+    top = side === 'above' ? a0 - gap - h : a1 + gap;
+  }
+
+  const left = placeLeft(anchor, size.width, host, margin);
+
+  return {
+    left,
+    top,
+    side,
+    ...(maxHeight !== undefined ? { maxHeight } : {}),
+  };
+}
+
+/**
+ * Computes the new scrollTop to reveal the anchor and its attached panel.
+ */
+export function revealScrollTop(
+  anchor: AnchorBox,
+  panelHeight: number,
+  host: HostBox & { readonly scrollHeight: number },
+  gap = POPOVER_GAP,
+  margin = POPOVER_MARGIN,
+  prefer: 'above' | 'below' = 'above'
+): number {
+  const vt = host.scrollTop + margin;
+  const vb = host.scrollTop + host.clientHeight - margin;
+  const a0 = anchor.top;
+  const a1 = anchor.top + anchor.height;
+  const h = panelHeight;
+
+  const roomAbove = a0 - gap - vt;
+  const roomBelow = vb - (a1 + gap);
+  if (a0 >= vt && a1 <= vb && (roomAbove >= h || roomBelow >= h)) {
+    return host.scrollTop;
+  }
+
+  const maxSpanHeight = host.clientHeight - 2 * margin;
+
+  interface SpanCandidate {
+    side: 'above' | 'below';
+    start: number;
+    end: number;
+    height: number;
+  }
+
+  const spans: SpanCandidate[] = [];
+  const spanAbove = {
+    side: 'above' as const,
+    start: a0 - gap - h,
+    end: a1,
+    height: a1 - (a0 - gap - h),
+  };
+  if (spanAbove.height <= maxSpanHeight) {
+    spans.push(spanAbove);
+  }
+  const spanBelow = {
+    side: 'below' as const,
+    start: a0,
+    end: a1 + gap + h,
+    height: a1 + gap + h - a0,
+  };
+  if (spanBelow.height <= maxSpanHeight) {
+    spans.push(spanBelow);
+  }
+
+  const scrollTargetFor = (start: number, end: number): number => {
+    const minSt = end - host.clientHeight + margin;
+    const maxSt = start - margin;
+    if (host.scrollTop < minSt) return minSt;
+    if (host.scrollTop > maxSt) return maxSt;
+    return host.scrollTop;
+  };
+
+  let chosenTarget: number;
+
+  if (spans.length === 0) {
+    chosenTarget = scrollTargetFor(a0, a1);
+  } else if (spans.length === 1) {
+    chosenTarget = scrollTargetFor(spans[0]!.start, spans[0]!.end);
+  } else {
+    const target0 = scrollTargetFor(spans[0]!.start, spans[0]!.end);
+    const target1 = scrollTargetFor(spans[1]!.start, spans[1]!.end);
+    const dist0 = Math.abs(target0 - host.scrollTop);
+    const dist1 = Math.abs(target1 - host.scrollTop);
+
+    if (dist0 < dist1) {
+      chosenTarget = target0;
+    } else if (dist1 < dist0) {
+      chosenTarget = target1;
+    } else {
+      const preferred = spans.find((s) => s.side === prefer) ?? spans[0]!;
+      chosenTarget = scrollTargetFor(preferred.start, preferred.end);
+    }
+  }
+
+  const maxScroll = Math.max(0, host.scrollHeight - host.clientHeight);
+  return Math.max(0, Math.min(chosenTarget, maxScroll));
+}
+
+/**
+ * Selects the target box for tall selections or regular targets.
+ */
+export function chooseTargetBox(
+  full: AnchorBox,
+  firstOrViewHeight: AnchorBox | undefined | number,
+  viewHeightOrFirst?: number | AnchorBox
+): AnchorBox {
+  let first: AnchorBox | undefined;
+  let viewHeight: number;
+
+  if (typeof firstOrViewHeight === 'number') {
+    viewHeight = firstOrViewHeight;
+    first =
+      typeof viewHeightOrFirst === 'object' && viewHeightOrFirst !== null
+        ? (viewHeightOrFirst as AnchorBox)
+        : undefined;
+  } else {
+    first = firstOrViewHeight;
+    viewHeight = typeof viewHeightOrFirst === 'number' ? viewHeightOrFirst : 0;
+  }
+
+  if (full.height <= viewHeight / 2) {
+    return full;
+  }
+  if (first !== undefined && (first.width > 0 || first.height > 0)) {
+    return first;
+  }
+  return { left: full.left, top: full.top, width: full.width, height: 0 };
 }
 
 /**
@@ -121,73 +273,33 @@ export function anchorFromClientRect(
 }
 
 export interface PopoverPlacementOptions {
-  readonly bounds?: () => AnchorBox | undefined;
+  readonly follow?: () => AnchorBox | undefined;
+  readonly reveal?: boolean;
+  readonly prefer?: 'above' | 'below';
 }
 
 export interface PopoverLayer {
-  /**
-   * Puts `content` on the stage over `anchor`, replacing anything open.
-   *
-   * Showing the panel that is already open moves it rather than rebuilding
-   * it, so a reader re-aiming a comment keeps the sentence they are typing
-   * and the focus they are typing it with.
-   */
   show(
     content: HTMLElement,
     anchor: AnchorBox,
     options?: PopoverPlacementOptions
   ): HTMLElement;
-  /** Takes it down. Safe to call when nothing is open. */
   hide(): void;
-  /** The open panel, or undefined. */
   current(): HTMLElement | undefined;
-  /** Whether a node is inside the open panel, for outside-press handling. */
   contains(node: Node | null): boolean;
-  /** Re-runs placement against the anchor the panel was opened on. */
   reposition(): void;
+  track(): void;
 }
 
-/**
- * One panel at a time, on one host.
- *
- * One rather than many because two open panels are two answers to "what is
- * the reader looking at", and the second one is always wrong.
- *
- * Anchors stay in the host's content coordinates whatever is on screen. When
- * part of the host is fullscreen, that element is the only thing painted, so
- * the panel is mounted inside it and the anchor translated into its
- * coordinates here. Every caller keeps measuring against the host, and none
- * of them has to know that fullscreen exists.
- */
 export function popoverLayer(host: HTMLElement): PopoverLayer {
   let open: HTMLElement | undefined;
   let anchored: AnchorBox | undefined;
   let mounted: HTMLElement | undefined;
-  let boundsProvider: (() => AnchorBox | undefined) | undefined;
+  let options: PopoverPlacementOptions | undefined;
+  let hasBeenPlaced = false;
   let observer: ResizeObserver | undefined;
-  const onBoundedChange = (): void => position();
-  const stopBounded = (): void => {
-    observer?.disconnect();
-    observer = undefined;
-    host.removeEventListener('scroll', onBoundedChange, true);
-    if (typeof window !== 'undefined')
-      window.removeEventListener('resize', onBoundedChange);
-  };
-  const watchBounded = (): void => {
-    stopBounded();
-    if (!boundsProvider || !open || !mounted) return;
-    host.addEventListener('scroll', onBoundedChange, true);
-    if (typeof window !== 'undefined')
-      window.addEventListener('resize', onBoundedChange);
-    if (typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(onBoundedChange);
-      observer.observe(open);
-      observer.observe(host);
-      if (mounted !== host) observer.observe(mounted);
-    }
-  };
+  let rafId: number | undefined;
 
-  /** Where a panel can be seen right now. */
   const mount = (): HTMLElement => {
     const shown = (
       typeof document === 'undefined' ? null : document.fullscreenElement
@@ -209,40 +321,98 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
     };
   };
 
-  const position = (): void => {
-    if (open === undefined || anchored === undefined || mounted === undefined)
-      return;
-    const bounds = boundsProvider?.();
-    let localBounds: AnchorBox | undefined;
-    if (boundsProvider) {
-      const local = bounds && translate(bounds);
-      localBounds = local;
-      const left = local && Math.max(local.left, mounted.scrollLeft);
-      const right =
-        local &&
-        Math.min(
-          local.left + local.width,
-          mounted.scrollLeft + mounted.clientWidth
-        );
-      const top = local && Math.max(local.top, mounted.scrollTop);
-      const bottom =
-        local &&
-        Math.min(
-          local.top + local.height,
-          mounted.scrollTop + mounted.clientHeight
-        );
-      if (
-        !local ||
-        right! - left! <= 2 * POPOVER_MARGIN ||
-        bottom! - top! <= 2 * POPOVER_MARGIN
-      ) {
-        open.style.visibility = 'hidden';
-        return;
-      }
-      open.style.maxWidth = `${right! - left! - 2 * POPOVER_MARGIN}px`;
-      open.style.maxHeight = `${bottom! - top! - 2 * POPOVER_MARGIN}px`;
-      open.style.visibility = '';
+  const performTrack = (): void => {
+    if (!open || !mounted) return;
+    const followFn = options?.follow;
+    if (!followFn) return;
+    const rawBox = followFn();
+    if (!rawBox) return;
+    anchored = rawBox;
+    const box = translate(rawBox);
+    const currentSide =
+      (open.dataset['side'] as 'above' | 'below') || options?.prefer || 'above';
+    const h = open.offsetHeight;
+    const left = placeLeft(
+      box,
+      open.offsetWidth,
+      {
+        scrollLeft: mounted.scrollLeft,
+        clientWidth: mounted.clientWidth,
+      },
+      POPOVER_MARGIN
+    );
+    const top =
+      currentSide === 'above'
+        ? box.top - POPOVER_GAP - h
+        : box.top + box.height + POPOVER_GAP;
+    open.style.left = `${left}px`;
+    open.style.top = `${top}px`;
+  };
+
+  const scheduleTrack = (): void => {
+    if (typeof requestAnimationFrame === 'function') {
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = undefined;
+        performTrack();
+      });
+    } else {
+      performTrack();
     }
+  };
+
+  const onInnerScroll = (event: Event): void => {
+    if (event.target !== host && host.contains(event.target as Node)) {
+      scheduleTrack();
+    }
+  };
+
+  const performFullPlace = (shouldReveal: boolean): void => {
+    if (!open || !mounted) return;
+
+    if (options?.follow) {
+      const raw = options.follow();
+      if (raw !== undefined) {
+        anchored = raw;
+        hasBeenPlaced = true;
+      } else {
+        if (hasBeenPlaced) {
+          return;
+        }
+        hasBeenPlaced = true;
+      }
+    } else {
+      hasBeenPlaced = true;
+    }
+
+    if (!anchored) return;
+
+    open.style.maxHeight = '';
+    delete open.dataset['capped'];
+
+    const targetBox = translate(anchored);
+
+    if (shouldReveal && mounted === host) {
+      const panelHeight = open.offsetHeight;
+      const nextScroll = revealScrollTop(
+        targetBox,
+        panelHeight,
+        {
+          scrollLeft: host.scrollLeft,
+          scrollTop: host.scrollTop,
+          clientWidth: host.clientWidth,
+          clientHeight: host.clientHeight,
+          scrollHeight: host.scrollHeight,
+        },
+        POPOVER_GAP,
+        POPOVER_MARGIN,
+        options?.prefer ?? 'above'
+      );
+      if (Math.abs(host.scrollTop - nextScroll) > 0.5) {
+        host.scrollTop = nextScroll;
+      }
+    }
+
     const placement = placePopover(
       translate(anchored),
       { width: open.offsetWidth, height: open.offsetHeight },
@@ -254,60 +424,114 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
       },
       POPOVER_GAP,
       POPOVER_MARGIN,
-      localBounds
+      options?.prefer ?? 'above'
     );
+
     open.style.left = `${placement.left}px`;
     open.style.top = `${placement.top}px`;
     open.dataset['side'] = placement.side;
+
+    if (placement.maxHeight !== undefined) {
+      open.style.maxHeight = `${placement.maxHeight}px`;
+      open.dataset['capped'] = 'true';
+    } else {
+      open.style.maxHeight = '';
+      delete open.dataset['capped'];
+    }
+  };
+
+  const onWindowResize = (): void => {
+    performFullPlace(options?.reveal === true);
+  };
+
+  const onResizeObserver = (): void => {
+    performFullPlace(false);
+  };
+
+  const startWatching = (): void => {
+    stopWatching();
+    host.addEventListener('scroll', onInnerScroll, true);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', onWindowResize);
+    }
+    if (typeof ResizeObserver !== 'undefined' && open) {
+      observer = new ResizeObserver(onResizeObserver);
+      observer.observe(host);
+      observer.observe(open);
+      for (const child of host.children) {
+        if (child !== open && child instanceof HTMLElement) {
+          observer.observe(child);
+        }
+      }
+      if (mounted && mounted !== host) {
+        observer.observe(mounted);
+      }
+    }
+  };
+
+  const stopWatching = (): void => {
+    if (rafId !== undefined) {
+      if (typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafId);
+      }
+      rafId = undefined;
+    }
+    observer?.disconnect();
+    observer = undefined;
+    host.removeEventListener('scroll', onInnerScroll, true);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', onWindowResize);
+    }
   };
 
   return {
-    show(content, anchor, options) {
-      if (open !== undefined && open !== content) {
-        stopBounded();
-        open.style.maxWidth = '';
+    show(content, anchor, opts) {
+      const isNewContent = open !== content;
+      if (open !== undefined && isNewContent) {
+        stopWatching();
         open.style.maxHeight = '';
-        open.style.visibility = '';
+        delete open.dataset['capped'];
         open.remove();
-        boundsProvider = undefined;
+        hasBeenPlaced = false;
       }
-      if (open !== content) boundsProvider = options?.bounds;
-      else if (options?.bounds !== undefined) boundsProvider = options.bounds;
+
+      if (isNewContent || opts !== undefined) {
+        options = opts;
+      }
+
       content.classList.add('popover');
       const into = mount();
-      if (open !== content || mounted !== into) {
-        // Moving a node drops the focus inside it, and the panel moving is
-        // never a reason for the reader to stop typing.
+
+      if (isNewContent || mounted !== into) {
         const active = (
           typeof document === 'undefined' ? null : document.activeElement
         ) as HTMLElement | null | undefined;
         const refocus = active && content.contains(active) ? active : undefined;
-        // Appended before measuring, because the panel's own height is what
-        // decides whether it fits above, and an element outside the document
-        // has no height to read.
         into.appendChild(content);
         refocus?.focus();
       }
-      const remounted = mounted !== into;
+
       open = content;
       anchored = anchor;
       mounted = into;
-      if (boundsProvider && (remounted || !observer)) watchBounded();
-      position();
+
+      startWatching();
+      performFullPlace(options?.reveal === true);
+
       return content;
     },
     hide() {
-      stopBounded();
-      open?.remove();
-      if (open && boundsProvider) {
-        open.style.maxWidth = '';
+      stopWatching();
+      if (open) {
         open.style.maxHeight = '';
-        open.style.visibility = '';
+        delete open.dataset['capped'];
+        open.remove();
       }
       open = undefined;
       anchored = undefined;
       mounted = undefined;
-      boundsProvider = undefined;
+      options = undefined;
+      hasBeenPlaced = false;
     },
     current() {
       return open;
@@ -315,7 +539,12 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
     contains(node) {
       return node !== null && open !== undefined && open.contains(node);
     },
-    reposition: position,
+    reposition() {
+      performFullPlace(options?.reveal === true);
+    },
+    track() {
+      scheduleTrack();
+    },
   };
 }
 

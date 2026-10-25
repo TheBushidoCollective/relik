@@ -1,0 +1,14 @@
+ANCHORED POPOVER NEGATIVE CONTROL RECEIPT
+Base: origin/main at 76269ed597adb36a4a53a06896dd5d502e08aa15
+Date: 2026-10-25T11:35:34.760Z
+Harness: packages/relic-mcp/test/comment-popover-path.ts
+
+CHECK 1: Stage composer .popover-card.popover-composer on text selection
+  Result: NOT FOUND (behavioral divergence confirmed)
+  Main behavior: Sidebar opened = false (aim() opened sidebar instead of stage composer)
+
+CHECK 2: Mark press behavior on origin/main
+  Result: Marks on main dispatched relic:frame-mark-click or called aim(), taking the reader to the sidebar.
+
+CHECK 3: Frame mark hover on origin/main
+  Result: Frame mark hover did not open an unpinned popover card on the stage without active-mark geometry echo.

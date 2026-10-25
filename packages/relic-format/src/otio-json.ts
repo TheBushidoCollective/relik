@@ -409,7 +409,7 @@ export function stringifyOtioJson(
       return val.raw;
     }
     if (typeof val === 'number') {
-      if (isNaN(val)) return 'NaN';
+      if (Number.isNaN(val)) return 'NaN';
       if (val === Infinity) return 'Infinity';
       if (val === -Infinity) return '-Infinity';
       return String(val);
@@ -423,13 +423,13 @@ export function stringifyOtioJson(
     if (Array.isArray(val)) {
       if (val.length === 0) return '[]';
       if (!isPretty) {
-        return '[' + val.map((item) => serialize(item, '')).join(',') + ']';
+        return `[${val.map((item) => serialize(item, '')).join(',')}]`;
       }
       const nextIndent = currentIndent + indentStr;
       const items = val
         .map((item) => nextIndent + serialize(item, nextIndent))
         .join(',\n');
-      return '[\n' + items + '\n' + currentIndent + ']';
+      return `[\n${items}\n${currentIndent}]`;
     }
     if (typeof val === 'object') {
       const keys = Object.keys(val as Record<string, unknown>);
@@ -437,11 +437,9 @@ export function stringifyOtioJson(
       if (!isPretty) {
         const entries = keys.map(
           (k) =>
-            JSON.stringify(k) +
-            ':' +
-            serialize((val as Record<string, unknown>)[k], '')
+            `${JSON.stringify(k)}:${serialize((val as Record<string, unknown>)[k], '')}`
         );
-        return '{' + entries.join(',') + '}';
+        return `{${entries.join(',')}}`;
       }
       const nextIndent = currentIndent + indentStr;
       const entries = keys
@@ -453,7 +451,7 @@ export function stringifyOtioJson(
             serialize((val as Record<string, unknown>)[k], nextIndent)
         )
         .join(',\n');
-      return '{\n' + entries + '\n' + currentIndent + '}';
+      return `{\n${entries}\n${currentIndent}}`;
     }
     return JSON.stringify(val);
   }

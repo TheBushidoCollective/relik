@@ -79,19 +79,6 @@ export const regionAdapter: AnchorAdapter<'region'> = {
         ).length + 1;
       badge.textContent = String(count);
       region.appendChild(badge);
-
-      // Clicking a posted region opens the thread and scrolls its comment
-      // row into view, matching the behaviour of pins.
-      region.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const row = document.querySelector(
-          `#comment-thread [data-comment-id="${commentId}"]`
-        );
-        if (row instanceof HTMLElement) {
-          row.scrollIntoView({ block: 'nearest' });
-        }
-      });
     }
 
     overlay.appendChild(region);

@@ -97,6 +97,7 @@ registerBuiltInAnchorAdapters();
 import {
   type FrameMarkClickMessage,
   type FrameMarkHoverMessage,
+  type FrameMarkRectMessage,
   type FrameOpenLinkMessage,
   type FramePointMessage,
   type FrameRect,
@@ -104,6 +105,7 @@ import {
   type FrameSelectionMessage,
   isFrameMarkClickMessage,
   isFrameMarkHoverMessage,
+  isFrameMarkRectMessage,
   isFrameOpenLinkMessage,
   isFramePointMessage,
   isFrameRegionMessage,
@@ -151,6 +153,7 @@ import {
 import {
   type AnchorBox,
   anchorFromClientRect,
+  chooseTargetBox,
   COPY_FAILED_NOTE,
   copyText,
   inlineComposer,
@@ -172,6 +175,8 @@ import {
   diffModeForRoute,
   diffModeForRoutes,
   type TextDiffPart,
+  uncomparableClassNoun,
+  unpromptedComparisonNotice,
   versionHistoryAvailability,
 } from './diff.ts';
 import {
@@ -1198,6 +1203,15 @@ function sandboxFrame(
       );
       return;
     }
+    if (isFrameMarkRectMessage(event.data)) {
+      frame.dispatchEvent(
+        new CustomEvent('relic:frame-mark-rect', {
+          detail: event.data,
+          bubbles: true,
+        })
+      );
+      return;
+    }
     if (isFrameOpenLinkMessage(event.data)) {
       openFrameExternalLink(event.data);
       return;
@@ -1480,16 +1494,18 @@ export function renderMediaView(view: ReadyView): HTMLElement {
 
 export function buildCurrentStage(
   view: ReadyView,
-  usercontentOrigin: string
+  usercontentOrigin: string,
+  options: { comparisonNotice?: boolean } = {}
 ): HTMLElement {
   const main = document.createElement('main');
   main.className = `stage stage-${view.route}`;
 
-  const availability = comparisonAvailability(view);
-  if (availability.kind === 'unavailable') {
-    main.appendChild(notice(availability.detail));
+  if (options.comparisonNotice !== false) {
+    const unprompted = unpromptedComparisonNotice(view);
+    if (unprompted) {
+      main.appendChild(notice(unprompted));
+    }
   }
-
   if (view.downgradeNotice !== undefined) {
     main.appendChild(notice(view.downgradeNotice));
   }
@@ -2701,6 +2717,21 @@ export function uncomparableReason(
   historical: ReadyView,
   selectedVersion: number
 ): string {
+  const histNoun = uncomparableClassNoun(historical.route);
+  if (histNoun !== undefined) {
+    return (
+      `Relik cannot show version ${selectedVersion} of this ${histNoun} ` +
+      `beside version ${current.version}. It is open here on its own.`
+    );
+  }
+  const currNoun = uncomparableClassNoun(current.route);
+  if (currNoun !== undefined) {
+    return (
+      `Relik cannot show version ${current.version} of this ${currNoun} ` +
+      `beside version ${selectedVersion}. Version ${selectedVersion} is ` +
+      'open here on its own.'
+    );
+  }
   if (diffModeForRoute(historical.route) === undefined) {
     return (
       `Version ${selectedVersion} is download-only, so it cannot be shown ` +
@@ -2746,7 +2777,9 @@ export function renderSingleVersion(
   label.textContent = `Version ${view.version}: ${view.filename}`;
   wrap.appendChild(label);
 
-  wrap.appendChild(buildCurrentStage(view, usercontentOrigin));
+  wrap.appendChild(
+    buildCurrentStage(view, usercontentOrigin, { comparisonNotice: false })
+  );
   return wrap;
 }
 
@@ -3885,6 +3918,10 @@ export interface MarkControls {
 }
 
 export interface MarkDeps {
+  /** Promise that resolves when the thread has finished initialising. */
+  readonly ready?: Promise<void>;
+  /** Whether the thread has finished initialising. */
+  readonly isReady?: () => boolean;
   /** Aiming a mark is the start of writing one, so the thread comes open. */
   readonly open: () => void;
   /** Where the reader types, once a target is locked. */
@@ -3909,7 +3946,7 @@ export interface MarkDeps {
    */
   readonly compose?: (
     anchor: CommentAnchor,
-    box: AnchorBox,
+    box: AnchorBox | undefined,
     options?: ComposeOptions
   ) => boolean;
 }
@@ -3927,8 +3964,6 @@ export interface ComposeOptions {
    * that moved under the panel: a stage going into fullscreen or coming out.
    */
   readonly reanchor?: () => AnchorBox | undefined;
-  /** Preview-safe band measured live in the host's scrolled content coordinates. */
-  readonly bounds?: () => AnchorBox | undefined;
 }
 
 /**
@@ -4049,6 +4084,7 @@ function afterSelection(run: () => void): void {
  */
 export function buildMarkControls(deps: MarkDeps): MarkControls {
   let anchor: CommentAnchor | null = null;
+  let previewTarget: CommentAnchor | null = null;
   let host: HTMLElement | undefined;
   let bubble: HTMLElement | undefined;
   let mode: HTMLElement | undefined;
@@ -4155,6 +4191,7 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
 
   const clear = (): void => {
     anchor = null;
+    previewTarget = null;
     dragOrigin = undefined;
     isDragging = false;
     suppressClick = false;
@@ -4186,6 +4223,25 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     if (next.kind === 'time' && host !== undefined) {
       tellPlayer(host, 'relic:time-selection', next);
     }
+  };
+  const aimOnStage = (next: CommentAnchor, box?: AnchorBox): void => {
+    dismiss();
+    disarm();
+    disarmSpan();
+    removeKeyboardBox();
+    if (deps.compose?.(next, box) === true) {
+      return;
+    }
+    if (deps.isReady && !deps.isReady() && deps.ready) {
+      void deps.ready.then(() => {
+        if (deps.compose?.(next, box) === true) {
+          return;
+        }
+        aim(next);
+      });
+      return;
+    }
+    aim(next);
   };
   const arm = (): void => {
     const surface = host;
@@ -4279,6 +4335,17 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           dismiss();
           return;
         }
+        if (deps.isReady && !deps.isReady() && deps.ready) {
+          dismiss();
+          void deps.ready.then(() => {
+            if (deps.compose?.(offered.target, offered.anchorBox) === true) {
+              return;
+            }
+            aim(offered.target);
+          });
+          return;
+        }
+        dismiss();
         aim(offered.target);
       },
       onCancel: () => {
@@ -4389,7 +4456,14 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     // A click the stage cannot place leaves the tool armed, because nothing
     // was placed and disarming would read as though something had been.
     if (fraction === undefined) return;
-    aim({ kind: 'pin', ...fraction });
+    const offsets = pinOffsets(fraction, surface);
+    const box = {
+      left: offsets.left - 10,
+      top: offsets.top - 10,
+      width: 20,
+      height: 20,
+    };
+    aimOnStage({ kind: 'pin', ...fraction }, box);
   };
 
   const onMouseDown = (event: MouseEvent): void => {
@@ -4495,7 +4569,8 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
         unitMinimumForPixels(surface, MIN_REGION_PX) ?? 0.005
       );
       if (rect === undefined) return;
-      aim({ kind: 'region', rect });
+      const box = boxFromUnit(surface, rect);
+      aimOnStage({ kind: 'region', rect }, box);
     }
   };
   const onTouchStart = (event: TouchEvent): void => {
@@ -4603,7 +4678,8 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
         unitMinimumForPixels(surface, MIN_REGION_PX) ?? 0.005
       );
       if (rect === undefined) return;
-      aim({ kind: 'region', rect });
+      const box = boxFromUnit(surface, rect);
+      aimOnStage({ kind: 'region', rect }, box);
     }
   };
 
@@ -4689,13 +4765,14 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
 
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        aim({ kind: 'region', rect: { ...keyboardRect } });
+        const box = s ? boxFromUnit(s, keyboardRect) : undefined;
+        aimOnStage({ kind: 'region', rect: { ...keyboardRect } }, box);
         return;
       }
     } else if (!isImg) {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        aim({ kind: 'pin', x: 0.5, y: 0.5 });
+        aimOnStage({ kind: 'pin', x: 0.5, y: 0.5 });
         return;
       }
     }
@@ -4712,7 +4789,7 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
   return {
     chip,
     tools,
-    target: () => anchor,
+    target: () => previewTarget ?? anchor,
     clear,
     attach: (next) => {
       const stageChanged = host !== next;
@@ -5109,30 +5186,25 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
         if (!armed()) return;
         const msg = event.detail;
         if (!msg) return;
-        // A point, exactly as a click places one on any other stage. It used
-        // to be a box three hundredths of the document on each side, which on
-        // a long document is a strip hundreds of pixels tall.
-        aim({ kind: 'pin', x: msg.x, y: msg.y });
+        const frame = event.target;
+        const box =
+          msg.box && frame instanceof HTMLElement
+            ? frameAnchorBox(frame, msg.box, next)
+            : undefined;
+        aimOnStage({ kind: 'pin', x: msg.x, y: msg.y }, box);
       }) as EventListener);
       next.addEventListener('relic:frame-region', ((
         event: CustomEvent<FrameRegionMessage>
       ) => {
         if (!armed()) return;
-        if (event.detail?.rect) {
-          aim({ kind: 'region', rect: event.detail.rect });
-        }
-      }) as EventListener);
-      next.addEventListener('relic:frame-mark-click', ((
-        event: CustomEvent<FrameMarkClickMessage>
-      ) => {
-        if (!event.detail?.id) return;
-        const row = document.querySelector(
-          `[data-comment-id="${event.detail.id}"]`
-        );
-        if (row instanceof HTMLElement) {
-          deps.open();
-          row.scrollIntoView({ block: 'nearest' });
-        }
+        const msg = event.detail;
+        if (!msg?.rect) return;
+        const frame = event.target;
+        const box =
+          msg.box && frame instanceof HTMLElement
+            ? frameAnchorBox(frame, msg.box, next)
+            : undefined;
+        aimOnStage({ kind: 'region', rect: msg.rect }, box);
       }) as EventListener);
       // A moment or a span on the scrubber. Written in a panel over the
       // scrubber, exactly as a selection is written over the words, and
@@ -5153,42 +5225,43 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           );
         };
         const box = reanchor();
-        const measureBounds =
-          'measureBounds' in detail ? detail.measureBounds : undefined;
-        const bounds = measureBounds
-          ? () => {
-              const measured = measureBounds();
-              return measured
-                ? anchorFromClientRect(
-                    measured,
-                    next.getBoundingClientRect(),
-                    next
-                  )
-                : undefined;
-            }
-          : undefined;
         if (
           box !== undefined &&
           deps.compose?.(detail.anchor, box, {
             focus,
             reanchor,
-            ...(bounds ? { bounds } : {}),
           }) === true
         ) {
           dismiss();
           return;
         }
-        // The sidebar is where an address is verified, and it cannot be
-        // seen from inside fullscreen, so a reader sent there is brought
-        // back out first. An adjustment of a span already drawn only moves
-        // the target and leaves the reader where they are.
-        if (focus) {
-          leaveStageFullscreen(next, () => {
-            aim(detail.anchor, false, true);
+        const fallbackToSidebar = (): void => {
+          if (focus) {
+            leaveStageFullscreen(next, () => {
+              aim(detail.anchor, false, true);
+            });
+            return;
+          }
+          aim(detail.anchor, false, false);
+        };
+        if (deps.isReady && !deps.isReady() && deps.ready) {
+          void deps.ready.then(() => {
+            const rebox = reanchor();
+            if (
+              rebox !== undefined &&
+              deps.compose?.(detail.anchor, rebox, {
+                focus,
+                reanchor,
+              }) === true
+            ) {
+              dismiss();
+              return;
+            }
+            fallbackToSidebar();
           });
           return;
         }
-        aim(detail.anchor, false, false);
+        fallbackToSidebar();
       }) as EventListener;
       next.addEventListener('relic:time-aim', aimTemporal);
       next.addEventListener('relic:otio-aim', aimTemporal);
@@ -5231,8 +5304,7 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
         );
         if (rect !== undefined) {
           isDragging = true;
-          anchor = { kind: 'page', page: dragPage, rect };
-          paintChip();
+          previewTarget = { kind: 'page', page: dragPage, rect };
           deps.repaint();
         }
       });
@@ -5243,6 +5315,7 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
         const start = dragStart;
         dragStart = null;
         isDragging = false;
+        previewTarget = null;
         if (!wasDragging) return;
         const surface = anchorSurfaceFor(next);
         if (surface === undefined) return;
@@ -5256,7 +5329,8 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
               )
             : undefined;
         if (rect !== undefined) {
-          aim({ kind: 'page', page: dragPage, rect });
+          const box = boxFromUnit(surface, rect);
+          aimOnStage({ kind: 'page', page: dragPage, rect }, box);
         }
       };
 
@@ -5264,6 +5338,8 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       next.addEventListener('pointercancel', () => {
         dragStart = null;
         isDragging = false;
+        previewTarget = null;
+        deps.repaint();
       });
     },
   };
@@ -5368,10 +5444,21 @@ export function buildThread(
   outcome.className = 'thread-outcome';
   outcome.setAttribute('aria-live', 'polite');
 
+  let settled = false;
+  let readyResolve: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    readyResolve = () => {
+      settled = true;
+      resolve();
+    };
+  });
+
   // The aiming controls, built here because two places carry a piece of them:
   // what a comment is about belongs in the composer, and arming the pin tool
   // belongs in the sidebar beside the conversation it will join.
   const marks = buildMarkControls({
+    ready,
+    isReady: () => settled,
     open: () => {
       setOpen(true);
     },
@@ -5389,11 +5476,11 @@ export function buildThread(
       paintMarks(lastEntries);
     },
     compose: (anchor, box, options) => {
-      // Refused rather than half-offered when there is no identity yet:
-      // verifying one is the sidebar's flow, and the caller falls back to it.
       if (host === undefined || popover === undefined) return false;
       if (session.kind !== 'verified' || cipher === undefined) return false;
-      openComposer(anchor, box, options);
+      const targetBox = anchorBoxFor(PENDING_MARK_ID) ?? box;
+      if (targetBox === undefined) return false;
+      openComposer(anchor, targetBox, options);
       return true;
     },
   });
@@ -5636,14 +5723,6 @@ export function buildThread(
         pin.style.left = `${offsets.left}px`;
         pin.style.top = `${offsets.top}px`;
         pin.title = entry.body;
-        pin.addEventListener('click', (event) => {
-          event.preventDefault();
-          setOpen(true);
-          const row = list.querySelector(`[data-comment-id="${entry.id}"]`);
-          if (row instanceof HTMLElement) {
-            row.scrollIntoView({ block: 'nearest' });
-          }
-        });
         pins.appendChild(pin);
         continue;
       }
@@ -5660,7 +5739,11 @@ export function buildThread(
         adapter.paint(surface, pins, entry.anchor, entry.id);
       if (!placed) unplaceable.add(entry.id);
     }
-    paintPendingMark(host, pins, marks.target());
+    const pendingTarget =
+      composing !== undefined && isDocKind(composing.anchor.kind)
+        ? composing.anchor
+        : marks.target();
+    paintPendingMark(host, pins, pendingTarget);
     host.appendChild(pins);
 
     // After every mark is painted rather than during, because a text mark is
@@ -5743,6 +5826,63 @@ export function buildThread(
   /** The comment whose card is pinned open, as opposed to merely hovered. */
   let stickyId: string | undefined;
   let activeId: string | undefined;
+  let returnFocusTarget: HTMLElement | undefined;
+
+  function preferFor(kind: string): 'above' | 'below' {
+    return kind === 'time' || kind === 'otio' ? 'below' : 'above';
+  }
+
+  function familyOf(kind: string): 'time' | 'otio' | 'document' {
+    if (kind === 'time') return 'time';
+    if (kind === 'otio') return 'otio';
+    return 'document';
+  }
+
+  function isDocKind(kind: string): boolean {
+    return familyOf(kind) === 'document';
+  }
+
+  const frameRects = new Map<string, { rect?: FrameRect; first?: FrameRect }>();
+
+  const awaitFrameRect = (id: string): Promise<AnchorBox | undefined> => {
+    return new Promise((resolve) => {
+      const frame = host?.querySelector<HTMLIFrameElement>(
+        'iframe.usercontent-frame'
+      );
+      const existing = frameRects.get(id);
+      if (existing?.rect && frame && host) {
+        const frameBox = frameAnchorBox(frame, existing.rect, host);
+        const firstBox = existing.first
+          ? frameAnchorBox(frame, existing.first, host)
+          : undefined;
+        resolve(chooseTargetBox(frameBox, firstBox, host.clientHeight));
+        return;
+      }
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve(undefined);
+      }, 1000);
+      const onRect = (e: Event) => {
+        const detail = (e as CustomEvent<FrameMarkRectMessage>).detail;
+        if (detail?.id === id && detail.rect && frame && host) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          frame.removeEventListener('relic:frame-mark-rect', onRect);
+          const frameBox = frameAnchorBox(frame, detail.rect, host);
+          const firstBox = detail.first
+            ? frameAnchorBox(frame, detail.first, host)
+            : undefined;
+          resolve(chooseTargetBox(frameBox, firstBox, host.clientHeight));
+        }
+      };
+      frame?.addEventListener('relic:frame-mark-rect', onRect);
+      frame?.contentWindow?.postMessage({ type: 'relic:track-mark', id }, '*');
+    });
+  };
+
   // The global timers rather than the ones hanging off `window`: a browser
   // gives you the same function either way, and the test's window stub is
   // deliberately partial, so reaching through it makes a real behaviour
@@ -5762,6 +5902,7 @@ export function buildThread(
         readonly panel: HTMLElement;
         readonly target: HTMLElement;
         readonly field: HTMLTextAreaElement;
+        readonly lastBox?: AnchorBox;
       }
     | undefined;
   /** Measures the open panel's target again, after the page moves under it. */
@@ -5818,6 +5959,8 @@ export function buildThread(
     composing = undefined;
     if (held.anchor.kind === 'time' && host !== undefined) {
       tellPlayer(host, 'relic:time-selection-cleared');
+    } else {
+      paintMarks(lastEntries);
     }
   };
 
@@ -5829,39 +5972,136 @@ export function buildThread(
     reanchor = undefined;
     dropComposing();
     setActiveMark(undefined);
+    frameWindow()?.postMessage({ type: 'relic:track-mark', id: null }, '*');
+    if (returnFocusTarget?.isConnected) {
+      const active =
+        typeof document === 'undefined' ? null : document.activeElement;
+      if (!active || active === document.body) {
+        returnFocusTarget.focus({ preventScroll: true });
+      }
+    }
   };
 
   /**
    * Where a painted mark sits, in the stage's content coordinates.
-   *
-   * The first match that is laid out rather than the first match. A comment
-   * inside a cluster on the timeline is carried by a hidden element, for
-   * pairing, and painted by the cluster around it; the open card carries the
-   * id as well and is never the thing it points at.
    */
   const anchorBoxFor = (id: string): AnchorBox | undefined => {
     if (host === undefined) return undefined;
-    let fallback: HTMLElement | undefined;
+    const viewHeight = host.clientHeight;
+
+    const frame = host.querySelector<HTMLIFrameElement>(
+      'iframe.usercontent-frame'
+    );
+    if (frame !== null) {
+      const held = frameRects.get(id);
+      if (held?.rect) {
+        const frameBox = frameAnchorBox(frame, held.rect, host);
+        const firstBox = held.first
+          ? frameAnchorBox(frame, held.first, host)
+          : undefined;
+        const frameRect = frame.getBoundingClientRect();
+        if (
+          held.rect.left + held.rect.width > 0 &&
+          held.rect.top + held.rect.height > 0 &&
+          held.rect.left < frameRect.width &&
+          held.rect.top < frameRect.height
+        ) {
+          return chooseTargetBox(frameBox, firstBox, viewHeight);
+        }
+        return undefined;
+      }
+      if (id !== PENDING_MARK_ID) return undefined;
+    }
+
+    const otioView = host.querySelector('.otio-view');
+    if (otioView !== null) {
+      const controller = otioControllerFor(host);
+      if (controller?.measure) {
+        const measured = controller.measure(
+          id === PENDING_MARK_ID ? undefined : id
+        );
+        if (measured) {
+          return anchorFromClientRect(
+            measured,
+            host.getBoundingClientRect(),
+            host
+          );
+        }
+      }
+    }
+
+    const candidates: HTMLElement[] = [];
     for (const node of host.querySelectorAll<HTMLElement>(
       `[data-comment-id="${id}"]`
     )) {
-      if (node.closest('.popover') !== null) continue;
-      const painted =
-        node.closest<HTMLElement>('[data-cluster-members]') ?? node;
-      fallback ??= painted;
-      const rect = painted.getBoundingClientRect();
-      if (rect.width > 0 || rect.height > 0) {
-        return anchorFromClientRect(rect, host.getBoundingClientRect(), host);
+      if (!node.closest('.popover')) {
+        const painted =
+          node.closest<HTMLElement>('[data-cluster-members]') ?? node;
+        candidates.push(painted);
       }
     }
-    if (fallback === undefined) return undefined;
-    return anchorFromClientRect(
-      fallback.getBoundingClientRect(),
-      host.getBoundingClientRect(),
-      host
-    );
-  };
+    if (candidates.length === 0 && id === PENDING_MARK_ID) {
+      for (const node of host.querySelectorAll<HTMLElement>(
+        '.relic-text-mark.is-pending, .comment-pin.is-pending, .comment-region.is-pending, .relic-page-selection, .mark-page.is-pending'
+      )) {
+        if (!node.closest('.popover')) candidates.push(node);
+      }
+    }
+    if (candidates.length === 0) return undefined;
 
+    const isText = candidates.some(
+      (el) => el.tagName === 'MARK' || el.classList.contains('relic-text-mark')
+    );
+    if (isText) {
+      const allRects: DOMRect[] = [];
+      let firstRect: DOMRect | undefined;
+      for (const el of candidates) {
+        let rects: DOMRect[] = [];
+        try {
+          rects = Array.from(el.getClientRects()).filter(
+            (r) => r.width > 0 || r.height > 0
+          );
+        } catch {
+          rects = [];
+        }
+        if (rects.length > 0) {
+          if (!firstRect) firstRect = rects[0];
+          allRects.push(...rects);
+        } else {
+          const b = el.getBoundingClientRect();
+          if (b.width > 0 || b.height > 0) {
+            if (!firstRect) firstRect = b;
+            allRects.push(b);
+          }
+        }
+      }
+      if (allRects.length === 0) return undefined;
+      const minLeft = Math.min(...allRects.map((r) => r.left));
+      const minTop = Math.min(...allRects.map((r) => r.top));
+      const maxRight = Math.max(...allRects.map((r) => r.right));
+      const maxBottom = Math.max(...allRects.map((r) => r.bottom));
+      const unionClient = new DOMRect(
+        minLeft,
+        minTop,
+        maxRight - minLeft,
+        maxBottom - minTop
+      );
+      const full = anchorFromClientRect(
+        unionClient,
+        host.getBoundingClientRect(),
+        host
+      );
+      const first = firstRect
+        ? anchorFromClientRect(firstRect, host.getBoundingClientRect(), host)
+        : undefined;
+      return chooseTargetBox(full, first, viewHeight);
+    }
+
+    const firstEl = candidates[0]!;
+    const rect = firstEl.getBoundingClientRect();
+    const full = anchorFromClientRect(rect, host.getBoundingClientRect(), host);
+    return chooseTargetBox(full, undefined, viewHeight);
+  };
   const entryById = (id: string): CommentEntry | undefined =>
     lastEntries.find((entry) => entry.id === id);
 
@@ -6020,9 +6260,15 @@ export function buildThread(
               })();
             },
           });
+          const editKind = entry.anchor ? entry.anchor.kind : 'text';
+          panel.dataset['anchorKind'] = editKind;
           panel.appendChild(composer.element);
-          layer.show(panel, box);
-          composer.field.focus();
+          layer.show(panel, box, {
+            follow: () => anchorBoxFor(id),
+            reveal: sticky,
+            prefer: preferFor(editKind),
+          });
+          composer.field.focus({ preventScroll: true });
         },
       });
     }
@@ -6077,14 +6323,20 @@ export function buildThread(
       },
     });
 
+    const cardKind =
+      entry.kind === 'open' && entry.anchor ? entry.anchor.kind : 'text';
     const card = popoverCard({ content: rows, actions, commentId: id });
+    card.dataset['anchorKind'] = cardKind;
     holdOnHover(card);
-    layer.show(card, box);
-    reanchor = () => anchorBoxFor(id);
+    layer.show(card, box, {
+      follow: () => anchorBoxFor(id),
+      reveal: sticky,
+      prefer: preferFor(cardKind),
+    });
     if (sticky) stickyId = id;
     setActiveMark(id);
+    frameWindow()?.postMessage({ type: 'relic:track-mark', id }, '*');
   };
-
   /**
    * Crossing the gap from a mark into its own card must not close it, and
    * the pointer leaving both must. Bound on the card rather than tracked
@@ -6191,13 +6443,17 @@ export function buildThread(
     wrapper.append(heading, list);
     const card = popoverCard({ content: wrapper, actions: [] });
     card.setAttribute('aria-label', label);
+    card.dataset['anchorKind'] = firstAnchor?.kind ?? 'time';
     holdOnHover(card);
-    layer.show(card, box);
+    layer.show(card, box, {
+      follow: () => anchorBoxFor(firstId),
+      reveal: sticky,
+      prefer: preferFor(firstAnchor?.kind ?? 'time'),
+    });
     reanchor = () => anchorBoxFor(firstId);
     if (sticky) stickyId = firstId;
     setActiveMark(firstId);
   };
-
   /**
    * Writing a new comment on the thing it is about.
    *
@@ -6220,29 +6476,54 @@ export function buildThread(
     const opener = cipher;
     if (layer === undefined || opener === undefined) return;
     const focus = options.focus ?? true;
-    const placement = options.bounds ? { bounds: options.bounds } : undefined;
+
+    if (!returnFocusTarget) {
+      const active =
+        typeof document === 'undefined'
+          ? null
+          : (document.activeElement as HTMLElement | null);
+      if (active && host?.contains(active) && !active.closest('.popover')) {
+        returnFocusTarget = active;
+      }
+    }
+
+    const isDoc = isDocKind(anchor.kind);
+    const followFn =
+      options.reanchor ??
+      (isDoc ? () => anchorBoxFor(PENDING_MARK_ID) : undefined);
 
     const held = composing;
     if (
       held !== undefined &&
       layer.current() === held.panel &&
-      ((held.anchor.kind === 'time' && anchor.kind === 'time') ||
-        (held.anchor.kind === 'otio' && anchor.kind === 'otio'))
+      familyOf(held.anchor.kind) === familyOf(anchor.kind)
     ) {
       held.anchor = anchor;
       held.target.textContent = markTargetLabel(anchor);
-      layer.show(held.panel, box, placement);
-      reanchor = options.reanchor;
-      if (focus) held.field.focus();
+      if (isDoc) {
+        paintMarks(lastEntries);
+      } else if (anchor.kind === 'time' && host !== undefined) {
+        tellPlayer(host, 'relic:time-selection', anchor);
+      }
+      layer.show(held.panel, followFn?.() ?? box, {
+        ...(followFn !== undefined ? { follow: followFn } : {}),
+        reveal: true,
+        prefer: preferFor(anchor.kind),
+      });
+      reanchor = followFn;
+      if (focus) held.field.focus({ preventScroll: true });
       return;
     }
 
     closeCard();
 
+    const boundedBody = document.createElement('div');
+    boundedBody.className = 'popover-bounded-body';
+
     const target = document.createElement('p');
     target.className = 'popover-target';
     target.textContent = markTargetLabel(anchor);
-    const panel = popoverCard({ content: target, actions: [] });
+    boundedBody.appendChild(target);
 
     const composer = inlineComposer({
       placeholder: 'What is wrong with this, or what should change.',
@@ -6254,8 +6535,6 @@ export function buildThread(
       },
       onSubmit: (body) => {
         composer.setBusy(true);
-        // Read at the press rather than captured at the open, because the
-        // target of a time composer can have moved since.
         const aimed = state.anchor;
         void (async () => {
           const result = await postComment(
@@ -6274,56 +6553,82 @@ export function buildThread(
             composer.setNote(result.refusal.headline);
             return;
           }
-          // The chip goes back to the whole document, because the target it
-          // was holding has been spent. Leaving it aimed would put the next
-          // comment on the last thing selected. A moment or a span never
-          // went through the chip, and clearing it would also put focus in
-          // the sidebar, which a fullscreen stage cannot even show.
-          if (aimed.kind !== 'time' && aimed.kind !== 'otio') marks.clear();
           window.getSelection()?.removeAllRanges();
-          closeCard();
           await refresh();
+
+          if (layer.current() === state.panel && result.commentId !== null) {
+            const commentId = result.commentId;
+            const entry = entryById(commentId);
+            dropComposing();
+            if (entry) {
+              let atBox: AnchorBox | undefined;
+              const frame = host?.querySelector<HTMLIFrameElement>(
+                'iframe.usercontent-frame'
+              );
+              if (frame) {
+                atBox = await awaitFrameRect(commentId);
+              }
+              if (!atBox) {
+                atBox = anchorBoxFor(commentId);
+              }
+              if (!atBox) {
+                atBox = box;
+              }
+              openCard(entry, atBox, true);
+              const card = layer.current();
+              if (card) {
+                card.tabIndex = -1;
+                card.focus({ preventScroll: true });
+              }
+              return;
+            }
+          }
+          closeCard();
         })();
       },
     });
-    if (options.bounds) {
-      const body = document.createElement('div');
-      body.className = 'popover-bounded-body';
-      body.append(target);
-      const disclosure = composer.element.querySelector('.popover-disclosure');
-      if (disclosure) body.append(disclosure);
-      const note = composer.element.querySelector('.popover-note');
-      if (note) body.append(note);
-      panel.append(body, ...Array.from(composer.element.children));
+
+    const disclosure = composer.element.querySelector('.popover-disclosure');
+    if (disclosure) boundedBody.appendChild(disclosure);
+    const note = composer.element.querySelector('.popover-note');
+    if (note) boundedBody.appendChild(note);
+
+    const panel = popoverCard({ content: boundedBody, actions: [] });
+    panel.classList.add('popover-composer');
+    if (anchor.kind === 'otio') {
       panel.classList.add('is-otio-composer');
-      // Keep existing composer selectors on the card now that its rows are
-      // direct flex children instead of descendants of the old wrapper.
-      panel.classList.add('popover-composer');
-    } else panel.appendChild(composer.element);
-    const state = { anchor, panel, target, field: composer.field };
-    if (options.bounds && host) {
-      const safe = options.bounds();
-      if (safe) {
-        const visibleTop = host.scrollTop;
-        const visibleBottom = visibleTop + host.clientHeight;
-        if (
-          safe.top + safe.height <= visibleTop ||
-          safe.top >= visibleBottom ||
-          Math.min(visibleBottom, safe.top + safe.height) -
-            Math.max(visibleTop, safe.top) <
-            Math.min(safe.height, host.clientHeight)
-        ) {
-          host.scrollTop = Math.max(0, safe.top - 8);
-        }
-      }
     }
-    layer.show(panel, options.reanchor?.() ?? box, placement);
+    panel.dataset['anchorKind'] = anchor.kind;
+    panel.appendChild(composer.field);
+    const tools = composer.element.querySelector('.popover-tools');
+    if (tools) panel.appendChild(tools);
+
+    const state = {
+      anchor,
+      panel,
+      target,
+      field: composer.field,
+      lastBox: box,
+    };
     composing = state;
-    reanchor = options.reanchor;
-    // Held open against hover, because a composer that vanished when the
-    // pointer wandered would take the sentence being typed with it.
     stickyId = COMPOSING;
-    if (focus) composer.field.focus();
+    if (isDoc) {
+      paintMarks(lastEntries);
+    }
+
+    layer.show(panel, followFn?.() ?? box, {
+      ...(followFn !== undefined ? { follow: followFn } : {}),
+      reveal: true,
+      prefer: preferFor(anchor.kind),
+    });
+    reanchor = followFn;
+
+    frameWindow()?.postMessage(
+      { type: 'relic:track-mark', id: PENDING_MARK_ID },
+      '*'
+    );
+
+    if (focus) composer.field.focus({ preventScroll: true });
   };
 
   /** Opens the card for a mark the reader is pointing at, by id. */
@@ -6399,24 +6704,23 @@ export function buildThread(
     });
     root.addEventListener('click', (event: Event) => {
       if (!(event.target instanceof Element)) return;
-      // Asked of the element rather than of the open panel, because a
-      // control inside a panel routinely replaces that panel: pressing
-      // Comment takes the offer down and puts a composer up in the same
-      // handler. A browser computes the propagation path before dispatch,
-      // so this listener still receives that press, by which time the
-      // element it came from is detached and no open panel contains it.
-      // Asking `popover.contains` alone therefore closed the composer the
-      // press had just opened.
       if (event.target.closest('.popover') !== null) return;
       if (popover?.contains(event.target) === true) return;
       const mark = event.target.closest<HTMLElement>('[data-comment-id]');
-      // Closing is not handled here. A press lands on the sidebar, the
-      // taskbar or the page around them as often as on the stage, and only
-      // one of those reaches this listener, so the rule lives at the
-      // document, where every press does.
       if (mark === null) return;
       event.preventDefault();
+      const isKeyboard = (event as MouseEvent).detail === 0;
+      if (isKeyboard) {
+        returnFocusTarget = mark;
+      }
       cardForMark(mark, true);
+      if (isKeyboard) {
+        const card = popover?.current();
+        const action = card?.querySelector<HTMLElement>(
+          '.popover-action, .popover-member'
+        );
+        action?.focus({ preventScroll: true });
+      }
     });
     root.addEventListener('relic:frame-mark-hover', ((
       event: CustomEvent<FrameMarkHoverMessage>
@@ -6456,8 +6760,26 @@ export function buildThread(
           : undefined;
       cardForId(msg.id, box, true);
     }) as EventListener);
+    root.addEventListener('relic:frame-mark-rect', ((
+      event: CustomEvent<FrameMarkRectMessage>
+    ) => {
+      const msg = event.detail;
+      if (!msg?.id) return;
+      const frameRect: FrameRect | undefined = msg.rect;
+      const firstRect: FrameRect | undefined = msg.first;
+      frameRects.set(msg.id, {
+        ...(frameRect !== undefined ? { rect: frameRect } : {}),
+        ...(firstRect !== undefined ? { first: firstRect } : {}),
+      });
+      const currentAnchor = composing?.anchor;
+      const isPending =
+        composing !== undefined && isDocKind(currentAnchor?.kind ?? '');
+      const followedId = stickyId ?? (isPending ? PENDING_MARK_ID : undefined);
+      if (msg.id === followedId) {
+        popover?.track();
+      }
+    }) as EventListener);
   };
-
   // Escape closes the conversation the same way it closes the offer, because
   // a reader who has learned one has learned the other.
   document.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -6541,8 +6863,17 @@ export function buildThread(
     // who clicked a row about one sentence in a paragraph of marked
     // sentences needs the second answer more than the first.
     setActiveMark(commentId);
-    const box = anchorBoxFor(commentId);
-    if (box !== undefined) openCard(entry, box, true);
+    const frame = host.querySelector<HTMLIFrameElement>(
+      'iframe.usercontent-frame'
+    );
+    if (frame !== null) {
+      void awaitFrameRect(commentId).then((box) => {
+        if (box !== undefined) openCard(entry, box, true);
+      });
+    } else {
+      const box = anchorBoxFor(commentId);
+      if (box !== undefined) openCard(entry, box, true);
+    }
   });
 
   const refresh = async (): Promise<void> => {
@@ -6792,44 +7123,50 @@ export function buildThread(
   };
 
   const initialise = async (): Promise<void> => {
-    status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
-    let key: Uint8Array;
     try {
-      key = parseFragment(fragment).key;
-    } catch {
-      // Unreachable from a ready view, which exists only because the fragment
-      // parsed. Caught rather than thrown because an error escaping here
-      // would be an error object holding the fragment, and section 1.8 rules
-      // that out.
-      status.replaceChildren(
-        threadRefusal(
-          {
-            code: 'no_comment_key',
-            headline: 'Comments need the key from your link',
-            detail:
-              'Comment text is sealed under a key derived from the one in ' +
-              'this link, and this page does not have it.',
-            retryable: false,
-          },
-          () => {}
-        )
-      );
-      return;
-    }
-    cipher = commentCipher(await deriveCommentKey(key));
-    const [, discovered] = await Promise.all([refresh(), readSession(deps)]);
-    if (typeof document === 'undefined') return;
-    session = discovered;
-    paintComposer();
-    if (
-      discovered.kind === 'verified' &&
-      typeof BroadcastChannel === 'function'
-    ) {
-      // Tells whichever tab asked for the link that it can stop waiting. The
-      // message is a bare marker: no address, and certainly no key.
-      const channel = new BroadcastChannel('relic:auth');
-      channel.postMessage('verified');
-      channel.close();
+      status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
+      let key: Uint8Array;
+      try {
+        key = parseFragment(fragment).key;
+      } catch {
+        // Unreachable from a ready view, which exists only because the fragment
+        // parsed. Caught rather than thrown because an error escaping here
+        // would be an error object holding the fragment, and section 1.8 rules
+        // that out.
+        status.replaceChildren(
+          threadRefusal(
+            {
+              code: 'no_comment_key',
+              headline: 'Comments need the key from your link',
+              detail:
+                'Comment text is sealed under a key derived from the one in ' +
+                'this link, and this page does not have it.',
+              retryable: false,
+            },
+            () => {}
+          )
+        );
+        return;
+      }
+      cipher = commentCipher(await deriveCommentKey(key));
+      const [, discovered] = await Promise.all([refresh(), readSession(deps)]);
+      if (typeof document === 'undefined') return;
+      session = discovered;
+      section.dataset['threadReady'] = 'true';
+      section.dataset['session'] = discovered.kind;
+      paintComposer();
+      if (
+        discovered.kind === 'verified' &&
+        typeof BroadcastChannel === 'function'
+      ) {
+        // Tells whichever tab asked for the link that it can stop waiting. The
+        // message is a bare marker: no address, and certainly no key.
+        const channel = new BroadcastChannel('relic:auth');
+        channel.postMessage('verified');
+        channel.close();
+      }
+    } finally {
+      readyResolve();
     }
   };
 
@@ -6847,8 +7184,7 @@ export function buildThread(
   // document that no longer exists, which is exactly what happened in CI:
   // two unhandled `document is not defined` errors between test files, from
   // a thread whose fetch outlived the test that started it.
-  const ready = initialise();
-  void ready;
+  void initialise();
 
   return {
     element: section,

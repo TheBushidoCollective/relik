@@ -1359,7 +1359,7 @@ export function createOtioPlayback(
   function acquireVideo(
     key: string,
     path: OtioBundleEntryName,
-    gen: number
+    _gen: number
   ): Promise<LoadedVideo | null> {
     const existing = videoPromises.get(key);
     if (existing) return existing;
@@ -1421,7 +1421,7 @@ export function createOtioPlayback(
     key: string,
     path: OtioBundleEntryName,
     trackId: string,
-    gen: number
+    _gen: number
   ): Promise<LoadedAudio | null> {
     const existing = audioPromises.get(key);
     if (existing) return existing;
@@ -1489,7 +1489,7 @@ export function createOtioPlayback(
 
   function acquireImage(
     path: OtioBundleEntryName,
-    gen: number
+    _gen: number
   ): Promise<LoadedImage | null> {
     const existing = imagePromises.get(path);
     if (existing) return existing;

@@ -355,6 +355,40 @@ body {
   margin-top: 0.5rem;
 }
 
+.popover-card.popover-composer {
+  margin-top: 0;
+}
+
+.popover-bounded-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.popover-card.popover-composer[data-capped="true"],
+.popover-composer[data-capped="true"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.popover-card.popover-composer[data-capped="true"] .popover-bounded-body,
+.popover-composer[data-capped="true"] .popover-bounded-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.popover-card.popover-composer[data-capped="true"] .popover-field,
+.popover-composer[data-capped="true"] .popover-field {
+  flex: none;
+}
+
+.popover-card.popover-composer[data-capped="true"] .popover-tools,
+.popover-composer[data-capped="true"] .popover-tools {
+  flex: none;
+}
+
 .popover-field {
   width: 100%;
   min-height: 4.5rem;
@@ -366,6 +400,11 @@ body {
   font-family: var(--serif);
   font-size: 0.9rem;
   resize: vertical;
+}
+
+.popover-field:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
 }
 
 .popover-note {
@@ -1972,15 +2011,17 @@ canvas.relic-page {
 .diff-toolbar {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   justify-content: space-between;
-  gap: 2rem;
+  gap: 1rem 2rem;
   padding: 0 0 0.75rem;
   border-bottom: 1px solid var(--rule-strong);
 }
 
 .diff-heading {
-  min-width: 0;
+  flex: 1 1 16rem;
+  min-width: 14rem;
 }
 
 .diff-eyebrow {

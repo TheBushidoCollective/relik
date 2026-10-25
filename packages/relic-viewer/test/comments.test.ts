@@ -687,7 +687,11 @@ describe('posting a comment', () => {
       commentCipher(await deriveCommentKey(KEY_BYTES))
     );
 
-    expect(result).toEqual({ kind: 'posted', author: 'ada@example.com' });
+    expect(result).toEqual({
+      kind: 'posted',
+      author: 'ada@example.com',
+      commentId: 'c9',
+    });
     const sentBody = calls[0]?.body ?? '';
     expect(sentBody).not.toContain('the operator must not read this');
     // The display name lives inside the envelope too, so it is not on the wire

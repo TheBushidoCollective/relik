@@ -267,12 +267,16 @@ describe('a bounded OTIO composer', () => {
       },
       snapshot: { timeline: 'A', track: 'A', item: null },
     };
-    const band = { left: 20, top: 30, width: 400, height: 220 };
-    aimOtio(mounted, base, true, band);
+    aimOtio(mounted, base, true, {
+      left: 20,
+      top: 30,
+      width: 400,
+      height: 220,
+    });
     const panel = only(mounted.stage, 'popover-card');
     const field = only(panel, 'popover-field');
     field.value = 'The fullscreen draft remains.';
-    expect(panel.style.top).toBe('214px');
+    expect(panel.style.top).toBe('532px');
     const preview = new Node('div');
     mounted.stage.appendChild(preview);
     expect(fullscreenListener).toBeDefined();
@@ -281,18 +285,20 @@ describe('a bounded OTIO composer', () => {
     expect(panel.parent).toBe(preview);
     expect(only(preview, 'popover-field')).toBe(field);
     expect(field.value).toBe('The fullscreen draft remains.');
-    expect(panel.style.top).toBe('214px');
+    expect(panel.style.top).toBe('532px');
     aimOtio(mounted, { ...base, track_id: 'track-b' }, false, {
-      ...band,
+      left: 20,
       top: 48,
+      width: 400,
+      height: 220,
     });
     expect(only(preview, 'popover-field')).toBe(field);
     expect(field.value).toBe('The fullscreen draft remains.');
-    expect(panel.style.top).toBe('232px');
+    expect(panel.style.top).toBe('532px');
     documentNode.dispatch('keydown', { key: 'Escape' });
     doc.fullscreenElement = null;
     aimAt(mounted, { kind: 'time', t: 6 });
-    expect(only(mounted.stage, 'popover-card').style.top).toBe('464px');
+    expect(only(mounted.stage, 'popover-card').style.top).toBe('532px');
   });
 });
 

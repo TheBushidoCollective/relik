@@ -302,6 +302,8 @@ export interface FramePointMessage {
   readonly type: 'relic:frame-point';
   readonly x: number;
   readonly y: number;
+  /** The placed pin's box, in frame viewport coordinates. */
+  readonly box?: FrameRect;
 }
 
 /** A unit coordinate on the frame's scrolling document: finite, in [0, 1]. */
@@ -315,12 +317,16 @@ export function isFramePointMessage(data: unknown): data is FramePointMessage {
   if (typeof data !== 'object' || data === null) return false;
   const msg = data as Record<string, unknown>;
   if (msg.type !== 'relic:frame-point') return false;
-  return isUnitPoint(msg.x, msg.y);
+  if (!isUnitPoint(msg.x, msg.y)) return false;
+  if (msg.box !== undefined && !isFrameRect(msg.box)) return false;
+  return true;
 }
 
 export interface FrameRegionMessage {
   readonly type: 'relic:frame-region';
   readonly rect: AnchorRect;
+  /** The drawn region at release, in frame viewport coordinates. */
+  readonly box?: FrameRect;
 }
 
 export function isFrameRegionMessage(
@@ -329,9 +335,52 @@ export function isFrameRegionMessage(
   if (typeof data !== 'object' || data === null) return false;
   const msg = data as Record<string, unknown>;
   if (msg.type !== 'relic:frame-region') return false;
-  return isValidAnchorRect(msg.rect);
+  if (!isValidAnchorRect(msg.rect)) return false;
+  if (msg.box !== undefined && !isFrameRect(msg.box)) return false;
+  return true;
 }
 
+/** Page to frame: report this mark's geometry now and after every scroll, resize or repaint, until told null. */
+export interface TrackMarkMessage {
+  readonly type: 'relic:track-mark';
+  readonly id: string | null;
+}
+
+export function isTrackMarkMessage(data: unknown): data is TrackMarkMessage {
+  if (typeof data !== 'object' || data === null) return false;
+  const msg = data as Record<string, unknown>;
+  if (msg.type !== 'relic:track-mark') return false;
+  if (msg.id === null) return true;
+  return (
+    typeof msg.id === 'string' && msg.id.length > 0 && msg.id.length <= 256
+  );
+}
+
+/** Frame to page: one mark's geometry in frame viewport coordinates. No rect when it is not laid out. */
+export interface FrameMarkRectMessage {
+  readonly type: 'relic:frame-mark-rect';
+  readonly id: string;
+  readonly rect?: FrameRect;
+  readonly first?: FrameRect;
+}
+
+export function isFrameMarkRectMessage(
+  data: unknown
+): data is FrameMarkRectMessage {
+  if (typeof data !== 'object' || data === null) return false;
+  const msg = data as Record<string, unknown>;
+  if (msg.type !== 'relic:frame-mark-rect') return false;
+  if (
+    typeof msg.id !== 'string' ||
+    msg.id.length === 0 ||
+    msg.id.length > 256
+  ) {
+    return false;
+  }
+  if (msg.rect !== undefined && !isFrameRect(msg.rect)) return false;
+  if (msg.first !== undefined && !isFrameRect(msg.first)) return false;
+  return true;
+}
 export interface FrameMarkClickMessage {
   readonly type: 'relic:frame-mark-click';
   readonly id: string;
