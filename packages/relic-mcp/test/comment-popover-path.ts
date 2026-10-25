@@ -560,17 +560,52 @@ async function openBrowser(
         const inner = res['result'] as { value?: T } | undefined;
         return inner?.value as T;
       },
-      waitFor(
+      async waitFor(
         fnExpression: string,
         timeoutMs = 15000,
         intervalMs = 50
       ): Promise<void> {
-        return waitForCondition(
-          () => session.evaluate<boolean>(`Boolean(${fnExpression})`),
-          `waitFor: ${fnExpression.slice(0, 60)}`,
-          timeoutMs,
-          intervalMs
-        );
+        try {
+          await waitForCondition(
+            () => session.evaluate<boolean>(`Boolean(${fnExpression})`),
+            `waitFor: ${fnExpression}`,
+            timeoutMs,
+            intervalMs
+          );
+        } catch (error) {
+          try {
+            const diag = await session.evaluate<
+              Record<string, unknown>
+            >(`(() => {
+              const thread = document.querySelector('.thread');
+              const popover = document.querySelector('.popover');
+              const offer = document.querySelector('.popover-offer');
+              const card = document.querySelector('.popover-card');
+              const composeTarget = document.querySelector('.compose-target');
+              const composeSlot = document.querySelector('.compose-slot');
+              const commentBtn = document.querySelector('.popover-comment');
+              const r = commentBtn?.getBoundingClientRect();
+              const el = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+              return {
+                url: location.href,
+                threadClasses: thread?.className,
+                isSidebarOpen: thread?.classList.contains('is-open'),
+                composeTargetText: composeTarget?.textContent,
+                composeSlotHtml: composeSlot?.innerHTML?.slice(0, 200),
+                popoverHtml: popover?.outerHTML?.slice(0, 200),
+                offerHtml: offer?.outerHTML?.slice(0, 200),
+                offerButtonRect: r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null,
+                elementFromPoint: el?.outerHTML?.slice(0, 100),
+                cardHtml: card?.outerHTML?.slice(0, 200),
+              };
+            })()`);
+            console.error(
+              '[DIAGNOSTICS ON TIMEOUT]',
+              JSON.stringify(diag, null, 2)
+            );
+          } catch {}
+          throw error;
+        }
       },
       async setViewport(
         width: number,
@@ -625,6 +660,17 @@ async function openBrowser(
         } catch {}
       },
     };
+    if (sessionToken) {
+      await session.waitFor(
+        "document.querySelector('textarea.compose-textarea') !== null",
+        15000
+      );
+    } else {
+      await session.waitFor(
+        "document.querySelector('form.compose') !== null",
+        15000
+      );
+    }
 
     return session;
   } catch (error) {
@@ -1056,6 +1102,19 @@ console.log('Testing Class 1: Markdown...');
         "document.querySelector('.popover-offer')?.outerHTML"
       )
     );
+    const clickDiagnostics = await session.evaluate<
+      Record<string, unknown>
+    >(`(() => {
+      const btn = document.querySelector('.popover-comment');
+      if (!btn) return { error: 'no popover-comment button' };
+      const r = btn.getBoundingClientRect();
+      const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return {
+        rect: { left: r.left, top: r.top, width: r.width, height: r.height },
+        elementFromPoint: el?.outerHTML?.slice(0, 100),
+      };
+    })()`);
+    console.log('Offer click diagnostics:', clickDiagnostics);
     await session.evaluate(`(() => {
       const btn = document.querySelector('.popover-comment');
       btn.click();

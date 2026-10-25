@@ -3918,6 +3918,10 @@ export interface MarkControls {
 }
 
 export interface MarkDeps {
+  /** Promise that resolves when the thread has finished initialising. */
+  readonly ready?: Promise<void>;
+  /** Whether the thread has finished initialising. */
+  readonly isReady?: () => boolean;
   /** Aiming a mark is the start of writing one, so the thread comes open. */
   readonly open: () => void;
   /** Where the reader types, once a target is locked. */
@@ -4228,6 +4232,15 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     if (deps.compose?.(next, box) === true) {
       return;
     }
+    if (deps.isReady && !deps.isReady() && deps.ready) {
+      void deps.ready.then(() => {
+        if (deps.compose?.(next, box) === true) {
+          return;
+        }
+        aim(next);
+      });
+      return;
+    }
     aim(next);
   };
   const arm = (): void => {
@@ -4322,6 +4335,17 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           dismiss();
           return;
         }
+        if (deps.isReady && !deps.isReady() && deps.ready) {
+          dismiss();
+          void deps.ready.then(() => {
+            if (deps.compose?.(offered.target, offered.anchorBox) === true) {
+              return;
+            }
+            aim(offered.target);
+          });
+          return;
+        }
+        dismiss();
         aim(offered.target);
       },
       onCancel: () => {
@@ -5211,17 +5235,33 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
           dismiss();
           return;
         }
-        // The sidebar is where an address is verified, and it cannot be
-        // seen from inside fullscreen, so a reader sent there is brought
-        // back out first. An adjustment of a span already drawn only moves
-        // the target and leaves the reader where they are.
-        if (focus) {
-          leaveStageFullscreen(next, () => {
-            aim(detail.anchor, false, true);
+        const fallbackToSidebar = (): void => {
+          if (focus) {
+            leaveStageFullscreen(next, () => {
+              aim(detail.anchor, false, true);
+            });
+            return;
+          }
+          aim(detail.anchor, false, false);
+        };
+        if (deps.isReady && !deps.isReady() && deps.ready) {
+          void deps.ready.then(() => {
+            const rebox = reanchor();
+            if (
+              rebox !== undefined &&
+              deps.compose?.(detail.anchor, rebox, {
+                focus,
+                reanchor,
+              }) === true
+            ) {
+              dismiss();
+              return;
+            }
+            fallbackToSidebar();
           });
           return;
         }
-        aim(detail.anchor, false, false);
+        fallbackToSidebar();
       }) as EventListener;
       next.addEventListener('relic:time-aim', aimTemporal);
       next.addEventListener('relic:otio-aim', aimTemporal);
@@ -5404,10 +5444,21 @@ export function buildThread(
   outcome.className = 'thread-outcome';
   outcome.setAttribute('aria-live', 'polite');
 
+  let settled = false;
+  let readyResolve: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    readyResolve = () => {
+      settled = true;
+      resolve();
+    };
+  });
+
   // The aiming controls, built here because two places carry a piece of them:
   // what a comment is about belongs in the composer, and arming the pin tool
   // belongs in the sidebar beside the conversation it will join.
   const marks = buildMarkControls({
+    ready,
+    isReady: () => settled,
     open: () => {
       setOpen(true);
     },
@@ -7072,44 +7123,50 @@ export function buildThread(
   };
 
   const initialise = async (): Promise<void> => {
-    status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
-    let key: Uint8Array;
     try {
-      key = parseFragment(fragment).key;
-    } catch {
-      // Unreachable from a ready view, which exists only because the fragment
-      // parsed. Caught rather than thrown because an error escaping here
-      // would be an error object holding the fragment, and section 1.8 rules
-      // that out.
-      status.replaceChildren(
-        threadRefusal(
-          {
-            code: 'no_comment_key',
-            headline: 'Comments need the key from your link',
-            detail:
-              'Comment text is sealed under a key derived from the one in ' +
-              'this link, and this page does not have it.',
-            retryable: false,
-          },
-          () => {}
-        )
-      );
-      return;
-    }
-    cipher = commentCipher(await deriveCommentKey(key));
-    const [, discovered] = await Promise.all([refresh(), readSession(deps)]);
-    if (typeof document === 'undefined') return;
-    session = discovered;
-    paintComposer();
-    if (
-      discovered.kind === 'verified' &&
-      typeof BroadcastChannel === 'function'
-    ) {
-      // Tells whichever tab asked for the link that it can stop waiting. The
-      // message is a bare marker: no address, and certainly no key.
-      const channel = new BroadcastChannel('relic:auth');
-      channel.postMessage('verified');
-      channel.close();
+      status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
+      let key: Uint8Array;
+      try {
+        key = parseFragment(fragment).key;
+      } catch {
+        // Unreachable from a ready view, which exists only because the fragment
+        // parsed. Caught rather than thrown because an error escaping here
+        // would be an error object holding the fragment, and section 1.8 rules
+        // that out.
+        status.replaceChildren(
+          threadRefusal(
+            {
+              code: 'no_comment_key',
+              headline: 'Comments need the key from your link',
+              detail:
+                'Comment text is sealed under a key derived from the one in ' +
+                'this link, and this page does not have it.',
+              retryable: false,
+            },
+            () => {}
+          )
+        );
+        return;
+      }
+      cipher = commentCipher(await deriveCommentKey(key));
+      const [, discovered] = await Promise.all([refresh(), readSession(deps)]);
+      if (typeof document === 'undefined') return;
+      session = discovered;
+      section.dataset['threadReady'] = 'true';
+      section.dataset['session'] = discovered.kind;
+      paintComposer();
+      if (
+        discovered.kind === 'verified' &&
+        typeof BroadcastChannel === 'function'
+      ) {
+        // Tells whichever tab asked for the link that it can stop waiting. The
+        // message is a bare marker: no address, and certainly no key.
+        const channel = new BroadcastChannel('relic:auth');
+        channel.postMessage('verified');
+        channel.close();
+      }
+    } finally {
+      readyResolve();
     }
   };
 
@@ -7127,8 +7184,7 @@ export function buildThread(
   // document that no longer exists, which is exactly what happened in CI:
   // two unhandled `document is not defined` errors between test files, from
   // a thread whose fetch outlived the test that started it.
-  const ready = initialise();
-  void ready;
+  void initialise();
 
   return {
     element: section,
