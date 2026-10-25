@@ -1,0 +1,5887 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<title>Harbor Lights, episode 3 · Relic · decisions panel mock</title>
+<!--
+  A local, clickable mock of the decisions control and panel, not the viewer.
+  The stylesheet below is packages/relic-viewer/src/styles.css copied whole,
+  so the band, the reading surface and the comment sidebar are the real ones.
+  Everything after the "decisions" marker is new and is what the viewer slice
+  appends. Nothing here calls a service: the passkey prompt, the options
+  fetch and the record are all simulated in this page.
+-->
+<style>
+/*
+ * Relic viewer.
+ *
+ * The art direction comes from the subject rather than a template. A relic is
+ * a catalogued object with a fixed lifespan, so the chrome is an accession
+ * label: a hairline-ruled band carrying a catalog number in monospace, over a
+ * reading surface. Nothing is rounded, nothing glows, and the only saturated
+ * colour in the system is a patina teal used for interaction.
+ *
+ * No webfonts, by necessity and by preference: the CSP blocks external
+ * requests and the viewer has to work offline once installed.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --diff-added: #dfeeea;
+  --diff-added-strong: #a7d6ca;
+  --diff-removed: #f3e5df;
+  --diff-removed-strong: #ddb6a6;
+
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino,
+    "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+    Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --bar-height: 3.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #101314;
+    --surface: #171b1c;
+    --ink: #e6e9e7;
+    --ink-soft: #969e9d;
+    --rule: #2a3032;
+    --rule-strong: #3b4345;
+    --patina: #4fb3a6;
+    --patina-ink: #a7ded6;
+    --oxide: #c98058;
+    --diff-added: #15332f;
+    --diff-added-strong: #24564e;
+    --diff-removed: #34231d;
+    --diff-removed-strong: #684331;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * `hidden` means hidden, everywhere.
+ *
+ * The attribute's own rule comes from the user agent stylesheet at the
+ * lowest possible weight, so any `display` here beats it and the element
+ * stays on screen with its `hidden` attribute set. That is how the swipe
+ * slider survived in side by side, where it controls nothing: a control a
+ * reader can drag with no effect is worse than no control. One rule rather
+ * than a per-element fix each time, because the next element to hit this
+ * would have hit it silently.
+ */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+
+.relic-row {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.stage-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.comment-pins {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.comment-pin {
+  position: absolute;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: var(--patina);
+  color: var(--surface);
+  font-family: var(--sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.relic-text-mark {
+  background: color-mix(in srgb, var(--patina) 22%, transparent);
+  border-bottom: 2px solid var(--patina);
+  color: inherit;
+}
+
+/* Hovering either half lights both, because a thread and a document are two
+   views of one set of remarks and nothing else joins them. Outline rather
+   than border on the mark: a border would reflow the line under the cursor. */
+.relic-text-mark.is-active {
+  background: color-mix(in srgb, var(--patina) 42%, transparent);
+  outline: 2px solid var(--patina);
+}
+
+.comment-pin.is-active {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.comment.is-active {
+  background: color-mix(in srgb, var(--patina) 10%, transparent);
+}
+
+/* A settled remark keeps its mark and loses its colour. Removing the mark
+   would make the page claim a conversation that did not happen; leaving it
+   at full strength would make a closed question look open. */
+.relic-text-mark.is-resolved {
+  background: none;
+  border-bottom: 1px dotted var(--rule-strong);
+}
+
+.comment-pin.is-resolved,
+.comment-region.is-resolved,
+.time-marker.is-resolved {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
+.comment.is-resolved {
+  opacity: 0.62;
+}
+
+.comment.is-resolved.is-active {
+  opacity: 1;
+}
+
+.comment-badge-resolved {
+  border-color: var(--patina);
+  color: var(--patina);
+}
+
+/* The target a reader has aimed and not yet posted. Dashed, because the thing
+   it marks is a sentence they are about to talk about rather than one anybody
+   has said anything about yet.
+
+   Heavier than a posted mark rather than lighter, which is how it read until
+   a comment aimed inside an existing mark was painted rather than dropped.
+   This is the one thing on the page the reader is working with, and it has to
+   stay identifiable where it lands on top of somebody else's mark, so the
+   difference from posted is one of kind (dashed, outlined) and not only of
+   degree. The outline is dashed where `is-active` is solid, so the provisional
+   target and a lit thread never read as the same state. */
+.relic-text-mark.is-pending {
+  background: color-mix(in srgb, var(--patina) 30%, transparent);
+  border-bottom: 2px dashed var(--patina);
+  outline: 2px dashed var(--patina);
+}
+
+.comment-pin.is-pending {
+  background: transparent;
+  border: 2px dashed var(--patina);
+  /* Nothing to press yet, so it must not answer a pointer or take the cursor
+     that says something is pressable. */
+  pointer-events: none;
+  cursor: default;
+}
+
+/* The armed pin tool, on the surface it is armed against. A reader who has
+   asked to point at something is told so where they are looking. */
+.stage-wrap.is-pinning {
+  cursor: crosshair;
+}
+
+/* Out of flow deliberately. A hint that took layout space would shift the
+   line under the cursor between arming the tool and the click that places the
+   point, which would move the point off the line it was meant for. */
+.mark-hint {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 6;
+  margin: 0;
+  /* With `left` set and no `right`, a shrink-to-fit box is capped at half the
+     container, so a sentence that fits on one line wrapped anyway. */
+  width: max-content;
+  max-width: calc(100% - 1.4rem);
+  padding: 0.35rem 0.7rem;
+  background: var(--patina);
+  color: var(--surface);
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  border-radius: 0 0 0.35rem 0.35rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/*
+ * The panel that opens on the thing a comment is about.
+ *
+ * One rule for both its uses, because a selection's offer and a comment's
+ * card are the same object in two states and styling them apart is how they
+ * start reading as two unrelated pieces of chrome.
+ *
+ * Positioned against the stage's scrolled content rather than the viewport,
+ * because the stage scrolls its own children and a panel placed against the
+ * visible box is correct only until somebody scrolls. Nothing is rounded,
+ * because nothing else in this system is.
+ */
+.popover {
+  position: absolute;
+  z-index: 8;
+  background: var(--surface);
+  /* Its own ink rather than whatever it inherits. Inside a fullscreen stage
+     the surface is dark and the page around it is not, and an inherited ink
+     put the comment's own words dark on dark. */
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 14%);
+  font-family: var(--sans);
+}
+
+.popover-offer {
+  display: flex;
+  align-items: stretch;
+}
+
+.popover-card {
+  width: min(22rem, calc(100vw - 2rem));
+  max-width: calc(100% - 1rem);
+  padding: 0.55rem 0.7rem 0.5rem;
+}
+
+.popover-action {
+  padding: 0.4rem 0.7rem;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.popover-offer .popover-action + .popover-action {
+  border-left: 1px solid var(--rule);
+}
+
+.popover-action:hover {
+  background: color-mix(in srgb, var(--patina) 12%, transparent);
+}
+
+.popover-action:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.popover-action:disabled {
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.popover-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--rule);
+}
+
+.popover-card .popover-action {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--rule-strong);
+  font-size: 0.8rem;
+}
+
+.popover-card .popover-action.is-primary {
+  background: var(--patina);
+  border-color: var(--patina);
+  color: var(--surface);
+}
+
+.popover-card .popover-action.is-quiet {
+  border-color: transparent;
+  color: var(--ink-soft);
+}
+
+/* The thread inside the panel is the sidebar's own rows, so it inherits
+   their look and drops only the list furniture. */
+.popover-thread {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The card lights the row it opened for, and the light runs edge to edge of
+   the row. The sidebar has margins around its rows; a card has none, so the
+   row brings its own and the author and the date stop touching the light. */
+.popover-thread .comment {
+  padding-right: 0.6rem;
+  padding-left: 0.6rem;
+}
+
+.popover-target {
+  margin: 0 0 0.4rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.popover-composer {
+  margin-top: 0.5rem;
+}
+
+.popover-field {
+  width: 100%;
+  min-height: 4.5rem;
+  padding: 0.4rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--serif);
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.popover-note {
+  margin: 0.4rem 0 0;
+  color: var(--oxide);
+  font-size: 0.76rem;
+}
+
+.popover-disclosure {
+  margin: 0.4rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+}
+
+/* The comments that share one cluster on the timeline. Each row opens that
+   comment's own card, so a row is a button that reads as the sidebar's
+   comment head shrunk to one line plus the start of what was said. */
+.popover-members {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.popover-members li + li {
+  border-top: 1px solid var(--rule);
+}
+
+.popover-member {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.6rem;
+  row-gap: 0.15rem;
+  width: 100%;
+  padding: 0.45rem 0.3rem;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.popover-member:hover {
+  background: color-mix(in srgb, var(--patina) 12%, transparent);
+}
+
+.popover-member:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.popover-member-time {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--patina);
+}
+
+.popover-member-author {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.popover-member-body {
+  grid-column: 1 / -1;
+  display: -webkit-box;
+  overflow: hidden;
+  font-family: var(--serif);
+  font-size: 0.86rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* ---------- the accession band ---------- */
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: none;
+  min-height: var(--bar-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.mark {
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  /* A domain reads as an address, so it is set tight. The wide tracking this
+     replaced was balancing a five-letter uppercase monogram. */
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  border-right: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.4rem 1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+/*
+ * One line of text, and not a thing to shrink.
+ *
+ * `overflow: hidden` is here for the horizontal ellipsis, and it has a second
+ * effect that is easy to miss: it removes this item's automatic minimum size,
+ * so a flex column with too little room crushes the filename to any height at
+ * all and then clips the glyphs with that same rule. Measured on a bar pinned
+ * to `--bar-height` with a version control present: the line needs 22.33px
+ * and rendered at 11.83px, with the top and bottom of every letter shaved.
+ *
+ * Refusing to shrink puts the pressure back where it belongs. The bar's
+ * height is a minimum, so it grows to fit a two-line identity zone rather
+ * than cropping the name of the thing on screen.
+ */
+.filename {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The relic id is a catalog number, so it is set like one. */
+.accession {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+/* The relic id and the version share one metadata line under the filename.
+   The id shrinks and ellipsizes; the version keeps its width, because a
+   truncated version number is worse than a truncated catalog number. */
+.identity-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+/* The id gives way, the version does not: this row is left packed so the
+   version sits against the catalog number it belongs with, rather than being
+   pushed to the far edge of the zone and reading as part of the actions. */
+.identity-meta .accession {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.version {
+  position: relative;
+  flex: none;
+}
+
+.version-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.version-trigger {
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+}
+
+.version-trigger:hover {
+  border-color: var(--patina);
+  color: var(--patina-ink);
+}
+
+.version-trigger:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.version-trigger .icon {
+  width: 10px;
+  height: 10px;
+}
+
+/* One label, two lengths. The stylesheet chooses, so nothing measures. */
+.version-short {
+  display: none;
+}
+
+.version-list {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 20;
+  min-width: 8rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.version-option {
+  padding: 0.4rem 0.7rem;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.version-option + .version-option {
+  border-top: 1px solid var(--rule);
+}
+
+.version-option:hover {
+  background: var(--ground);
+  color: var(--patina-ink);
+}
+
+/* Focus lands here only from a keyboard or a pointer inside an open list, so
+   the ring is drawn on :focus rather than :focus-visible: it is always
+   wanted, and a programmatic focus does not always match :focus-visible. */
+.version-option:focus {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.version-option[aria-selected='true'] {
+  border-left: 3px solid var(--patina);
+  font-weight: 700;
+}
+
+.actions {
+  display: flex;
+  align-items: stretch;
+  border-left: 1px solid var(--rule);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.actions .action:last-child {
+  border-right: 0;
+}
+
+.action:hover {
+  background: var(--ground);
+  color: var(--patina-ink);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.action.primary {
+  background: var(--patina);
+  color: var(--surface);
+  border: 0;
+  padding: 0.55rem 1rem;
+  align-self: flex-start;
+}
+
+.action.primary:hover {
+  background: var(--patina-ink);
+  color: var(--surface);
+}
+
+.icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: currentColor;
+}
+
+/* The comment count. A number rather than a dot, because "there is a thread"
+   is worth less than "there are two comments in it". */
+.action-count {
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.action:hover .action-count {
+  border-color: var(--patina);
+  color: var(--patina-ink);
+}
+
+/*
+ * The narrow hierarchy, re-derived twice: once because version added an
+ * element to a row that had already overflowed, and again because Comments
+ * added the eleventh.
+ *
+ * At 320px the row has 20rem. Five collapsed actions take about 11.9rem and
+ * the version chip about 3rem, which leaves nothing for a 6.7rem wordmark and
+ * a filename both. So the wordmark goes: the domain is in the address bar
+ * directly above it, while the filename, the version, and the four actions
+ * are not available anywhere else. Brand gives way before function.
+ */
+@media (max-width: 34rem) {
+  /* The marker collapses with the buttons. Exempting it kept a fact at full
+     width while the actions lost their labels, which pushed Report off the
+     row at 420px. Its accessible name carries the meaning when the text
+     goes. */
+  .action span {
+    display: none;
+  }
+  /* Except the count, which is the whole point of the control and is two
+     characters wide. A bare speech bubble says a thread might exist. */
+  .action span.action-count {
+    display: inline-block;
+  }
+  .action {
+    padding: 0 0.75rem;
+  }
+  .mark {
+    display: none;
+  }
+  .version-long {
+    display: none;
+  }
+  .version-short {
+    display: inline;
+  }
+  .identity {
+    padding: 0.4rem 0.7rem;
+  }
+  .identity-meta {
+    gap: 0.4rem;
+  }
+}
+
+/*
+ * The 320px floor, where the sixth action stops fitting.
+ *
+ * Six collapsed actions are about 14.6rem, and with the count badge nearer
+ * 15.2rem. Add the identity zone's 1.4rem of padding, its 0.4rem gap, and a
+ * 3rem version chip and the row wants 20rem before the filename gets a
+ * pixel. The filename is on the floor's must-survive list and Comments is
+ * deliberately not, so Comments is what leaves.
+ *
+ * It is the right one to lose because losing the taskbar entry costs nothing:
+ * the closed overlay leaves its compact handle on the stage at this same
+ * breakpoint. Every other candidate on the row leads somewhere that is only
+ * reachable through it.
+ */
+@media (max-width: 24rem) {
+  .action-comments,
+  .action-relics {
+    display: none;
+  }
+}
+
+/* ---------- the reading surface ---------- */
+
+.stage {
+  padding: 2rem 1.25rem 5rem;
+}
+
+.doc {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+/* A markdown relic is a document, so it gets the width of a document: a
+   letter page, the 8.5in sheet Google Docs lays out and a printer feeds. The
+   46rem column above is narrower than that page, and it read as a strip down
+   the middle of the window. The notice is widened with it so the explanation
+   above the document lines up with the document it explains. */
+.stage-markdown .doc,
+.stage-markdown .notice {
+  max-width: 8.5in;
+}
+
+.toggle-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.toggle-row .action {
+  border: 1px solid var(--rule);
+  padding: 0.35rem 0.7rem;
+}
+
+.notice {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  max-width: 46rem;
+  margin: 0 auto 1.5rem;
+  padding: 0.7rem 0.9rem;
+  border-left: 3px solid var(--oxide);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.notice .icon {
+  fill: var(--oxide);
+  margin-top: 0.2rem;
+}
+
+/* ---------- prose ---------- */
+
+.prose {
+  font-family: var(--serif);
+  font-size: 1.06rem;
+  line-height: 1.7;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  font-family: var(--sans);
+  line-height: 1.25;
+  margin: 2rem 0 0.6rem;
+  letter-spacing: -0.01em;
+}
+
+.prose h1 {
+  font-size: 1.7rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.prose h2 {
+  font-size: 1.32rem;
+}
+
+.prose h3 {
+  font-size: 1.1rem;
+}
+
+.prose p {
+  margin: 0 0 1.1rem;
+}
+
+.prose a {
+  color: var(--patina-ink);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.prose blockquote {
+  margin: 1.2rem 0;
+  padding-left: 1rem;
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-soft);
+}
+
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2rem 0;
+}
+
+.prose code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 0.05em 0.3em;
+}
+
+.prose pre {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-strong);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  margin: 1.2rem 0;
+}
+
+.prose pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
+.md-image {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  border: 1px dashed var(--rule-strong);
+  padding: 0.1em 0.4em;
+}
+
+/* Wide content scrolls inside its own container; the body never does. */
+.md-scroll {
+  overflow-x: auto;
+  margin: 1.2rem 0;
+  border: 1px solid var(--rule);
+}
+
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 0.88rem;
+}
+
+.prose th,
+.prose td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.prose th {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.raw {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 1rem;
+  margin: 0;
+}
+
+/* ---------- code ---------- */
+
+.code {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.gutter {
+  margin: 0;
+  padding: 1rem 0.75rem;
+  text-align: right;
+  color: var(--ink-soft);
+  background: var(--ground);
+  border-right: 1px solid var(--rule);
+  user-select: none;
+  flex: none;
+}
+
+.code-body {
+  margin: 0;
+  padding: 1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.tok-kw {
+  color: var(--patina-ink);
+  font-weight: 600;
+}
+
+.tok-str {
+  color: var(--oxide);
+}
+
+.tok-num {
+  color: var(--oxide);
+}
+
+.tok-com {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* ---------- image, html, download ---------- */
+
+.doc-image {
+  max-width: none;
+  display: flex;
+  justify-content: center;
+}
+
+.doc-image img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.doc-media {
+  max-width: 52rem;
+  margin: 2rem auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.media-player {
+  max-width: 100%;
+  width: 100%;
+  background: #000;
+  border: 1px solid var(--rule);
+}
+
+.media-video {
+  max-height: 48rem;
+}
+
+.media-audio {
+  background: var(--surface);
+}
+
+/* The picture and its controls, the element fullscreen takes. Inline it lays
+   them out exactly as the card did when they were its own children: full
+   width, stacked, the card's gap between them. */
+.media-stage {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.media-chrome {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.media-audio-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  box-sizing: border-box;
+}
+
+.media-audio-emblem {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border: 1px solid var(--rule);
+  color: var(--patina);
+  flex-shrink: 0;
+}
+
+.media-audio-emblem .media-icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.media-audio-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.media-audio-title {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.media-audio-state {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Scrubber */
+.media-scrubber-wrap {
+  width: 100%;
+  padding: 0.5rem 0.75rem 0.25rem;
+  box-sizing: border-box;
+}
+
+.media-scrubber {
+  position: relative;
+  width: 100%;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+
+.media-scrubber:focus-visible .media-track-rail {
+  outline: 1px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.media-track-rail {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  box-sizing: border-box;
+}
+
+.media-buffered-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0%;
+  background: color-mix(in srgb, var(--ink) 24%, transparent);
+  pointer-events: none;
+}
+
+.media-played-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0%;
+  background: var(--patina);
+  pointer-events: none;
+}
+
+/* Pending Selection */
+.media-pending-selection {
+  position: absolute;
+  top: -2px;
+  height: 8px;
+  background: color-mix(in srgb, var(--patina) 35%, transparent);
+  border-top: 1px dashed var(--patina);
+  border-bottom: 1px dashed var(--patina);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.media-pending-selection.is-hidden {
+  display: none !important;
+}
+
+.timeline-span-handle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 8px;
+  height: 16px;
+  transform: translate(50%, -50%);
+  background: var(--surface);
+  border: 1px solid var(--patina);
+  border-radius: 0;
+  padding: 0;
+  cursor: ew-resize;
+  pointer-events: auto;
+  z-index: 6;
+}
+
+.timeline-span-handle:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.pending-time-tag {
+  display: none;
+}
+
+/* Hover Indicator */
+.media-hover-indicator {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.media-hover-indicator.is-hidden {
+  display: none !important;
+}
+
+.hover-rule {
+  width: 1px;
+  height: 18px;
+  background: var(--ink);
+}
+
+.hover-timecode {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 1px 4px;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* A panel open over the scrubber already names the time it is about, and it
+   sits exactly where this readout does: the readout's lower edge would show
+   under the panel as a stray notch. The rule and the comment button stay, so
+   a reader can still aim somewhere else. */
+.stage-wrap:has(.popover) .hover-timecode {
+  visibility: hidden;
+}
+
+.timeline-hover-comment-btn {
+  position: absolute;
+  top: calc(100% + 4px);
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--patina);
+  border-radius: 0;
+  color: var(--patina);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.timeline-hover-comment-btn:hover {
+  background: var(--patina);
+  color: var(--surface);
+}
+
+.timeline-hover-comment-btn .media-icon {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+/* Controls Bar */
+.media-controls-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem 0.5rem;
+  gap: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
+}
+
+.media-controls-left,
+.media-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.media-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.1s ease, color 0.1s ease;
+}
+
+.media-btn:hover {
+  border-color: var(--patina);
+  color: var(--patina);
+}
+
+.media-btn:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.media-btn .media-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.media-timecode {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+.time-sep {
+  color: var(--ink-soft);
+}
+
+.time-duration {
+  color: var(--ink-soft);
+}
+
+.media-meta-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  gap: 1rem;
+}
+
+.media-meta-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.media-meta-name {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.media-meta-details {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  word-break: break-word;
+}
+
+/* ---------- media fullscreen ----------
+
+   Only the stage goes fullscreen, so this is the whole screen: the picture
+   letterboxed on black and the controls laid over the bottom of the frame on
+   a dark band. The band keeps the label's language, a hairline rule, square
+   corners and patina for interaction, and reads light on dark in either
+   scheme because the ground here is the film rather than the page. Every
+   control rule above takes its colours from these tokens, so redefining them
+   on the stage is the whole of the restyle. */
+
+.media-stage:fullscreen {
+  color-scheme: dark;
+  --surface: #171b1c;
+  /* Below the band rather than above it: a comment field in a panel on the
+     stage sits on the ground, and the page's light ground under the stage's
+     light ink made what was typed there unreadable. */
+  --ground: #0e1112;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #3b4345;
+  --rule-strong: #4d5759;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  display: block;
+  background: #000;
+}
+
+.media-stage::backdrop {
+  background: #000;
+}
+
+.media-stage:fullscreen .media-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  object-fit: contain;
+}
+
+.media-stage:fullscreen .media-chrome {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  padding: 0 1rem 0.5rem;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: rgb(8 10 11 / 0.82);
+}
+
+/* Idle playback leaves the bare frame. Markers, the span handle and the hover
+   button opt back into pointer events on their own, so the band's descendants
+   are released too: nothing invisible can be pressed. */
+.media-stage.is-idle:fullscreen {
+  cursor: none;
+}
+
+.media-stage.is-idle:fullscreen .media-chrome {
+  opacity: 0;
+}
+
+.media-stage.is-idle:fullscreen .media-chrome,
+.media-stage.is-idle:fullscreen .media-chrome * {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .media-stage:fullscreen .media-chrome {
+    transition: opacity 200ms ease;
+  }
+}
+
+.doc-html,
+.doc-jsx {
+  max-width: none;
+}
+
+/*
+ * No height here, deliberately. Every frame this class reaches is inside a
+ * sandboxed stage or a comparison pane, and both set their own: the only
+ * routes that build a frame are `sandboxed-html` and `sandboxed-jsx`, plus the
+ * two panes of a rendered comparison. This rule used to carry
+ * `calc(100vh - var(--bar-height) - 4rem)`, a third answer nothing ever read,
+ * which is how the same guess survived unnoticed in the rule below it.
+ */
+.usercontent-frame {
+  width: 100%;
+  border: 1px solid var(--rule);
+  background: #fff;
+}
+
+/*
+ * A published HTML document is already a page. It brings its own margins, its
+ * own background, and often a full-bleed hero that runs to the edge on
+ * purpose. Sitting it inside the reading gutter puts a second margin around a
+ * document that already decided how it wants to sit, and frames somebody's
+ * design in a border they did not ask for.
+ *
+ * So the HTML and component routes get the whole surface. Markdown and code
+ * keep the gutter, because that markup is generated here from a plain file
+ * and has no opinion of its own to respect.
+ */
+.stage-sandboxed-html,
+.stage-sandboxed-jsx {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+}
+
+/*
+ * The wrapper is in the chain and skipping it broke the viewer once.
+ *
+ * The frame is not a child of the stage: `renderSandboxedHtml` wraps it in a
+ * `.doc` first. An earlier attempt put the fill on the frame and the flex
+ * container on the stage, so the flex properties applied to something that
+ * was not a flex child and did nothing, while the height they replaced was
+ * the only thing sizing the iframe. It collapsed to its intrinsic 300x150 in
+ * production. This rule is the missing middle.
+ *
+ * A flex child rather than `height: 100%` so a notice above it takes its own
+ * height instead of being added to a frame already claiming the whole row.
+ */
+.stage-sandboxed-html .doc,
+.stage-sandboxed-jsx .doc {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.stage-sandboxed-html .usercontent-frame,
+.stage-sandboxed-jsx .usercontent-frame {
+  /* Block, or the iframe sits on the text baseline and leaves a strip of page
+     background under it that reads as one more stray margin. */
+  display: block;
+
+  /*
+   * Fills the wrapper rather than guessing at the chrome. This was
+   * `calc(100vh - var(--bar-height))`, and the reserve has to equal the real
+   * taskbar to the pixel. It does not: `.bar` carries a min-height and the
+   * identity zone stacks a filename over an accession number, so the frame
+   * ended up taller than the row, `.stage-wrap` grew a scrollbar for the
+   * overflow, and the iframe kept its own.
+   */
+  height: 100%;
+  border: 0;
+}
+
+/* The network notice sits above every frame, and a downgrade notice would
+   too if routing ever changed; either way it must not be jammed against the
+   window edge. */
+.stage-sandboxed-html .notice,
+.stage-sandboxed-jsx .notice {
+  margin: 1rem 1.25rem;
+}
+
+.card {
+  max-width: 34rem;
+  margin: 3rem auto;
+  padding: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--rule-strong);
+}
+
+.card-title {
+  font-family: var(--sans);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+  word-break: break-word;
+}
+
+.card-meta {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  margin-bottom: 1.25rem;
+  word-break: break-word;
+}
+
+.card-note {
+  margin: 1.25rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.stage-dead .card {
+  border-top-color: var(--oxide);
+}
+
+.stage-dead .accession {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--rule);
+}
+
+/* ---------- PDF stage and marks ---------- */
+
+.stage-pdf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: auto;
+  padding: 1.5rem 1rem;
+}
+
+.doc-pdf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.pdf-toolbar button {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.pdf-page-indicator {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.pdf-page-container {
+  position: relative;
+  display: inline-block;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  background: #ffffff;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+canvas.relic-page {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #ffffff;
+}
+
+.pdf-status-card {
+  max-width: 34rem;
+  margin: 3rem auto;
+  padding: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--patina);
+}
+
+.pdf-status-title {
+  font-family: var(--sans);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+
+.mark-page,
+.mark-region {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--patina);
+  background: rgba(31, 107, 100, 0.15);
+  border-radius: 2px;
+  pointer-events: auto;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.mark-page.is-active,
+.mark-region.is-active {
+  background: rgba(31, 107, 100, 0.35);
+  border-color: var(--patina-ink);
+  box-shadow: 0 0 0 2px rgba(31, 107, 100, 0.4);
+}
+
+.mark-page.is-pending,
+.mark-region.is-pending {
+  border-style: dashed;
+  background: rgba(31, 107, 100, 0.1);
+  pointer-events: none;
+}
+
+/* ---------- version history ---------- */
+
+.stage-diff {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: min(100%, 28rem);
+  min-height: 0;
+  padding: 1.25rem 1.25rem 0;
+  overflow: hidden;
+}
+
+/*
+ * A two-column comparison is the view that most needs width, so it opts out
+ * of the reading gutter the way `.doc-image` and `.doc-jsx` already do rather
+ * than inventing a cap of its own. It carried `width: min(78rem, 100%)`,
+ * which pinned the pane at 1248px and left roughly 425px of dead page beside
+ * it at a 1568px viewport.
+ *
+ * There is nothing left to declare: a block element already fills its parent,
+ * and `.stage-diff`'s padding is the only gutter wanted here.
+ */
+.diff-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+}
+
+.diff-toolbar {
+  flex: none;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 0 0 0.75rem;
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.diff-heading {
+  min-width: 0;
+}
+
+.diff-eyebrow {
+  margin-bottom: 0.25rem;
+  color: var(--patina-ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.diff-heading h1 {
+  margin: 0;
+  font-size: clamp(1.3rem, 2.5vw, 1.9rem);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+/*
+ * The heading takes focus when a comparison opens, so a screen reader lands on
+ * what changed rather than at the top of the taskbar. A mouse user should not
+ * see a ring for a focus they did not ask for, and a keyboard user must.
+ */
+.diff-heading h1:focus {
+  outline: none;
+}
+
+.diff-heading h1:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 4px;
+}
+
+.diff-history-note {
+  max-width: 52rem;
+  margin: 0.45rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+}
+
+.compare-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+}
+
+.compare-picker-side {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  position: relative;
+}
+
+.compare-picker-caption {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.compare-picker-separator {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--ink-soft);
+}
+
+.compare-picker-trigger {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+}
+
+.compare-picker-right .version-list {
+  left: auto;
+  right: 0;
+}
+
+.image-diff-control input:focus-visible,
+.compare-swipe input:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+/* ---------- the rendered comparison ---------- */
+
+/*
+ * Two panes showing the same artifact at two versions. Swipe stacks them and
+ * wipes between them, which is what answers "did the page move". Side by side
+ * puts them in two columns, which is what answers "what does it say now".
+ */
+.compare-stage {
+  --split: 50%;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+}
+
+.compare-stage[data-layout='swipe'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.compare-stage[data-layout='swipe'] .compare-pane {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.compare-stage[data-layout='swipe'] .compare-pane-current {
+  clip-path: inset(0 calc(100% - var(--split)) 0 0);
+}
+
+.compare-stage[data-layout='split'] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.compare-stage[data-layout='split'] .compare-pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.compare-stage[data-layout='split'] .compare-pane-before {
+  border-right: 1px solid var(--rule-strong);
+}
+
+.compare-stage[data-layout='split'] .compare-divider {
+  display: none;
+}
+
+.compare-pane {
+  overflow: auto;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Prose panes carry their own reading padding; a frame brings its own page. */
+.compare-pane .prose {
+  padding: 1.25rem 1.5rem;
+}
+
+.compare-pane .usercontent-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.compare-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--split);
+  width: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
+  pointer-events: none;
+}
+
+.compare-label {
+  position: absolute;
+  top: 0.6rem;
+  z-index: 2;
+  padding: 0.2rem 0.45rem;
+  background: rgb(16 19 20 / 82%);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  pointer-events: none;
+}
+
+/*
+ * Swipe reveals the current version from the left, so its label sits left and
+ * the historical one sits right. Side by side puts the panes in DOM order,
+ * historical then current, so the labels swap with them. They are stage
+ * children rather than pane children because a label inside the current pane
+ * would be clipped away with it at the far end of the swipe.
+ */
+.compare-label-before {
+  right: 0.6rem;
+}
+
+.compare-label-current {
+  left: 0.6rem;
+}
+
+.compare-stage[data-layout='split'] .compare-label-before {
+  right: auto;
+  left: 0.6rem;
+}
+
+.compare-stage[data-layout='split'] .compare-label-current {
+  left: auto;
+  right: 0.6rem;
+}
+
+.compare-controls {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-top: 0.75rem;
+}
+
+.compare-layout {
+  display: flex;
+  flex: none;
+  border: 1px solid var(--rule-strong);
+}
+
+.compare-layout .action {
+  padding: 0.35rem 0.7rem;
+}
+
+.compare-layout .action[aria-pressed='true'] {
+  background: var(--patina);
+  color: var(--surface);
+}
+
+/*
+ * Moving through the changes.
+ *
+ * Beside the layout control because they are the same kind of thing: what
+ * the comparison shows, and where in it you are.
+ */
+.compare-nav {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--rule-strong);
+}
+
+.compare-nav .action {
+  padding: 0.35rem 0.5rem;
+}
+
+/* The chevron is drawn pointing down, so each direction turns it. */
+.compare-nav-previous svg {
+  transform: rotate(90deg);
+}
+
+.compare-nav-next svg {
+  transform: rotate(-90deg);
+}
+
+.compare-nav-position {
+  padding: 0 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+/*
+ * The one you were sent to.
+ *
+ * Stronger than the outline every changed node already carries, because
+ * the question this answers is which of them you are looking at, and an
+ * outline identical to its neighbours answers nothing.
+ */
+[data-relic-change-id].is-current-change {
+  outline: 3px solid var(--patina);
+  outline-offset: 3px;
+}
+
+/* A row that takes you to the change it names says so by behaving like it. */
+.diff-change.is-linked {
+  cursor: pointer;
+}
+
+.diff-change.is-linked:hover,
+.diff-change.is-linked:focus-visible {
+  background: color-mix(in srgb, var(--patina) 10%, transparent);
+}
+
+.compare-swipe {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.compare-swipe span {
+  flex: none;
+}
+
+.compare-swipe input {
+  flex: 1;
+  min-width: 4rem;
+  accent-color: var(--patina);
+}
+
+.diff-rendered-result {
+  margin-top: 1rem;
+}
+
+.diff-rendered-result:empty {
+  display: none;
+}
+
+/* What changed, in rendered terms. Attacker text arrives as text nodes. */
+.diff-change-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  font-size: 0.84rem;
+}
+
+/*
+ * Two lines: the label above, the quote under it.
+ *
+ * Three columns was the layout, and every list lands in a sidebar a reader
+ * can drag down to 230px, where the first two columns ate every pixel:
+ * 5.5rem and 7rem plus the gaps leave about six for the quote, which
+ * `overflow-wrap: anywhere` then broke one character per line into a 995px
+ * tall row. One layout, sized for the column the list actually renders in.
+ */
+.diff-change {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.15rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.diff-change + .diff-change {
+  border-top: 1px solid var(--rule);
+}
+
+.diff-change-kind {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.diff-change-added .diff-change-kind {
+  color: var(--patina-ink);
+}
+
+.diff-change-removed .diff-change-kind {
+  color: var(--oxide);
+}
+
+.diff-change-what {
+  color: var(--ink-soft);
+}
+
+/*
+ * Three lines of the quote, then it stops.
+ *
+ * The row is a way to reach the change, not a copy of it: pressing it puts
+ * the reader on the real text. An unclamped paragraph made one row taller
+ * than the viewport, which turned a list of three changes into a scroll.
+ */
+.diff-change-detail {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+
+/*
+ * On a changed row the old text and the new one each get their own two
+ * lines.
+ *
+ * Clamping the whole cell cut the replacement off entirely: the row showed
+ * three lines of struck-through old text and nothing of what it became,
+ * which is the half the reader is looking for. So the cell stops clamping
+ * where both exist and each side clamps itself.
+ */
+.diff-change-changed .diff-change-detail {
+  display: block;
+  overflow: visible;
+}
+
+.diff-change-detail del,
+.diff-change-detail ins {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.diff-change-detail del {
+  background: var(--diff-removed);
+  text-decoration-thickness: 1px;
+}
+
+.diff-change-detail ins {
+  background: var(--diff-added);
+  text-decoration: none;
+}
+
+.diff-result {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 0.75rem;
+}
+
+.diff-loading {
+  margin: 2rem 0;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+/* ---------- one version, shown on its own ---------- */
+
+/* The reason, the label, and the version all sit in one column so the page
+   reads top to bottom. Without this the label sat at the far left of a
+   full-bleed shell while the notice and the rendered version were centred
+   by their own rules, which looked like three unrelated fragments rather
+   than one version with an explanation above it. */
+.diff-single {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 1rem;
+}
+
+.diff-single > .notice {
+  margin: 0;
+}
+
+.diff-single-label {
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+/* The stage builder centres its own children against the reading column, so
+   the wrapper hands it the full width it expects rather than nesting a
+   second narrower one inside this one. */
+.diff-single > .doc,
+.diff-single > .stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  max-width: none;
+}
+
+.diff-view,
+.diff-view-markdown,
+.diff-view-rendered,
+.diff-view-code,
+.diff-view-image {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.diff-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+}
+
+.diff-summary span {
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+.diff-empty {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1.25rem;
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--patina);
+  background: var(--surface);
+}
+
+.diff-empty span {
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.diff-changes {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.diff-part {
+  display: grid;
+  grid-template-columns: 3.2rem 3.2rem minmax(0, 1fr);
+}
+
+.diff-part + .diff-part {
+  border-top: 1px solid var(--rule);
+}
+
+.diff-part-added {
+  background: var(--diff-added);
+}
+
+.diff-part-removed {
+  background: var(--diff-removed);
+}
+
+.diff-part-unchanged {
+  color: var(--ink-soft);
+}
+
+.diff-gutter,
+.diff-body {
+  min-width: 0;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-gutter {
+  text-align: right;
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--ground) 75%, transparent);
+  border-right: 1px solid var(--rule);
+  user-select: none;
+}
+
+.diff-body {
+  overflow-x: auto;
+  color: var(--ink);
+}
+
+.diff-inline-added {
+  background: var(--diff-added-strong);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.diff-inline-removed {
+  background: var(--diff-removed-strong);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.image-diff-canvas {
+  --split: 50%;
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  place-items: center;
+}
+
+.image-diff-control {
+  flex: none;
+}
+
+.image-diff-canvas img {
+  grid-area: 1 / 1;
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+.image-diff-current {
+  clip-path: inset(0 calc(100% - var(--split)) 0 0);
+}
+
+.image-diff-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--split);
+  width: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
+  pointer-events: none;
+}
+
+.image-diff-label {
+  position: absolute;
+  top: 0.75rem;
+  padding: 0.25rem 0.45rem;
+  background: rgb(16 19 20 / 82%);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  pointer-events: none;
+}
+
+.image-diff-label-before {
+  right: 0.75rem;
+}
+
+.image-diff-label-current {
+  left: 0.75rem;
+}
+
+.image-diff-control {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.image-diff-control input {
+  width: 100%;
+  accent-color: var(--patina);
+}
+
+@media (max-width: 44rem) {
+  .stage-diff {
+    min-width: 0;
+    padding: 1rem 0.65rem 0;
+  }
+
+  .diff-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .compare-picker {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+
+  /* Two columns of prose at 320px is two columns of nothing, so a split
+     layout stacks and the swipe control keeps working either way. */
+  .compare-stage[data-layout='split'] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .compare-stage[data-layout='split'] .compare-pane-before {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+
+  /* Stacked, the two labels would both sit at the top of the stage and the
+     current one would name the historical pane. It moves to the foot, which
+     is where its pane now is. */
+  .compare-stage[data-layout='split'] .compare-label-current {
+    top: auto;
+    bottom: 0.6rem;
+  }
+
+  .compare-pane,
+  .compare-pane .usercontent-frame {
+    max-height: none;
+    height: 100%;
+  }
+
+  .compare-pane .prose {
+    padding: 0.9rem 1rem;
+  }
+
+  .compare-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+
+  .diff-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .diff-summary span {
+    text-align: left;
+  }
+
+  .diff-part {
+    grid-template-columns: 2.35rem 2.35rem minmax(0, 1fr);
+  }
+
+  .diff-gutter,
+  .diff-body {
+    padding: 0.4rem;
+  }
+
+  .image-diff-canvas {
+    min-height: 10rem;
+  }
+}
+
+/* ---------- the comment sidebar ---------- */
+
+/*
+ * The conversation sits beside the relic, not under it and not over it.
+ *
+ * Reading and commenting are one pass: a comment gets written next to the
+ * line it is about, while that line is still on the screen. So the sidebar
+ * takes width from the row and the relic reflows narrower. Darkrun keeps its
+ * thread in a side panel beside the marks it paints on the artifact, and this
+ * is that, on the viewing origin, because the render frame cannot fetch.
+ */
+.thread {
+  display: none;
+  flex: 0 0 auto;
+  width: var(--thread-width, 22rem);
+  max-width: 100%;
+  margin: 0;
+  padding: 0 1.25rem 1.5rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--rule-strong);
+}
+
+.thread.is-open {
+  display: block;
+}
+
+/* Seven pixels of grab centred on the one pixel of rule, so the divider is
+   reachable without putting a visible slab between the two columns. */
+.thread-resizer {
+  position: absolute;
+  top: 0;
+  right: var(--thread-width, 22rem);
+  bottom: 0;
+  z-index: 5;
+  width: 7px;
+  margin-right: -3px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.thread-resizer:focus-visible {
+  outline: 2px solid var(--patina);
+}
+
+.thread:not(.is-open) ~ .thread-resizer {
+  display: none;
+}
+
+/* The entry that survives every width, including the floor where the taskbar
+   control leaves the row. */
+.thread-tab {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+  z-index: 5;
+  padding: 0.85rem 0.4rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-right: 0;
+  cursor: pointer;
+}
+
+.diff-row {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/**
+ * The sidebar needs a floor of its own, not just a ceiling.
+ *
+ * Bounding it to `calc(100% - 28rem)` stopped it crushing the comparison,
+ * which was the defect it was written for, and then handed the sidebar
+ * whatever was left: 167px at a 1180 viewport, 192 at 1400, 135 at 900, with
+ * two dozen of its own children overflowing horizontally and its rows reading
+ * "CHANGED par". A squeezed panel is the same defect as a squeezed rail, one
+ * element over.
+ *
+ * So both sides carry a legible minimum and the ceiling stays. `clamp` picks
+ * the reader's dragged width when it fits between them. Below the width where
+ * both minima cannot hold, the narrow rule further down takes over and the
+ * row stacks instead of splitting.
+ */
+.diff-row .thread {
+  flex: 0 1 auto;
+  width: clamp(18rem, var(--thread-width, 22rem), calc(100% - 28rem));
+  min-width: 18rem;
+  max-width: calc(100% - 28rem);
+}
+
+.diff-changes-sidebar .thread-title {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.diff-changes-sidebar .thread-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: var(--sans);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.diff-changes-body {
+  padding: 0.75rem 0 1.5rem;
+}
+
+.diff-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.thread-tab:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.thread.is-open ~ .thread-tab {
+  display: none;
+}
+
+.thread-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -1.25rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.thread-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.65rem 1.25rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+/* Pointing right, because the header control only ever closes: the sidebar is
+   not on the page to be opened from. */
+.thread-toggle::after {
+  width: 0.55rem;
+  height: 0.55rem;
+  content: "";
+  border-top: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.thread-toggle:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -4px;
+}
+
+/* The tool row, directly under the heading, because arming a tool is the
+   first thing a reader does in here and the second thing is scrolling. */
+.thread-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.mark-mode {
+  padding: 0.35rem 0.7rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.mark-mode:hover {
+  border-color: var(--patina);
+  color: var(--patina-ink);
+}
+
+/* The pressed state is the armed state, so it has to be unmistakable: the
+   reader's next click on the document does something different because of it. */
+.mark-mode[aria-pressed="true"] {
+  background: var(--patina);
+  color: var(--surface);
+  border-color: var(--patina);
+}
+
+.mark-mode:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+/* Discoverability hint in thread tools, announcing how to aim on this artifact. */
+.thread-hint {
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  color: var(--ink-secondary, #666);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* Keyboard and click action in tools row when text is selected in the document. */
+.mark-quote-action {
+  padding: 0.35rem 0.7rem;
+  color: var(--patina-ink);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--patina-wash, rgba(46, 125, 107, 0.1));
+  border: 1px solid var(--patina);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.mark-quote-action:hover {
+  background: var(--patina);
+  color: var(--surface);
+}
+
+.mark-quote-action:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+/* Keyboard-aimed region box on images with clear focus indication. */
+.comment-region.is-keyboard {
+  outline: 2px dashed var(--patina);
+  background: rgba(46, 125, 107, 0.15);
+}
+
+.stage-wrap.is-pinning:focus-visible,
+.stage-wrap.is-pinning img.relic-image:focus-visible,
+.stage-wrap.is-pinning .doc:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+/*
+ * Below this width, side by side is twenty characters of relic beside twenty
+ * characters of conversation, which is neither reading nor commenting. The
+ * sidebar takes the row and the relic collapses rather than shrinking to an
+ * unusable sliver. Its frame stays loaded, so closing brings the relic back
+ * without a refetch.
+ */
+@media (max-width: 44rem) {
+  .diff-row .thread,
+  .thread.is-open {
+    width: 100%;
+    /* The floor above is for sharing a row. Here the sidebar owns the row, so
+       carrying a minimum would only let it overflow a narrow screen. */
+    min-width: 0;
+    max-width: 100%;
+  }
+  .thread.is-open ~ .thread-resizer {
+    display: none;
+  }
+}
+
+.thread-note {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.thread-policy {
+  display: inline-block;
+  margin-bottom: 1rem;
+  color: var(--patina-ink);
+  font-size: 0.8rem;
+  text-underline-offset: 2px;
+}
+
+.thread-refusal {
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--oxide);
+}
+
+.thread-refusal-title {
+  margin: 0 0 0.5rem;
+  font-family: var(--sans);
+  font-weight: 600;
+}
+
+.thread-refusal .accession {
+  margin-top: 0.75rem;
+}
+
+.thread-list {
+  margin: 0 0 2rem;
+  padding: 0;
+  list-style: none;
+}
+
+.comment {
+  padding: 1rem 0;
+  border-top: 1px solid var(--rule);
+}
+
+.comment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+/* The alias reads as a name. */
+.comment-name {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* The address reads as the record, which is what it is. */
+.comment-author {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.comment-badge {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--patina);
+  color: var(--patina-ink);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.comment-badge-unversioned {
+  border-color: var(--rule-strong);
+  color: var(--ink-soft);
+}
+
+.comment-badge-addressed {
+  border-color: var(--patina);
+  color: var(--patina-ink);
+  background: color-mix(in srgb, var(--patina) 8%, transparent);
+}
+
+.comment-time {
+  margin-left: auto;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.comment-replies {
+  margin: 0.75rem 0 0 0.75rem;
+  padding: 0 0 0 0.75rem;
+  border-left: 2px solid var(--rule);
+  list-style: none;
+}
+
+.comment.comment-reply {
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--rule);
+}
+
+.comment.comment-reply:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.comment-body {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 0.94rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+.comment-body p {
+  margin: 0 0 0.5rem;
+}
+
+.comment-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* Headings inside comments must not out-shout the relic's own headings or the sidebar title. */
+.comment-body h1,
+.comment-body h2,
+.comment-body h3,
+.comment-body h4,
+.comment-body h5,
+.comment-body h6 {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0.6rem 0 0.25rem;
+}
+
+.comment-body h1:first-child,
+.comment-body h2:first-child,
+.comment-body h3:first-child,
+.comment-body h4:first-child,
+.comment-body h5:first-child,
+.comment-body h6:first-child {
+  margin-top: 0;
+}
+
+/* Code blocks must scroll horizontally within the sidebar and never widen it. */
+.comment-body pre {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--rule-strong);
+  padding: 0.5rem 0.6rem;
+  margin: 0.5rem 0;
+  max-width: 100%;
+  overflow-x: auto;
+  box-sizing: border-box;
+}
+
+.comment-body code {
+  font-family: var(--mono);
+  font-size: 0.84em;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 0.05em 0.25em;
+}
+
+.comment-body pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Blockquotes inside comments. */
+.comment-body blockquote {
+  margin: 0.5rem 0;
+  padding-left: 0.65rem;
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+/* Lists inside comments. */
+.comment-body ul,
+.comment-body ol {
+  margin: 0.4rem 0 0.5rem;
+  padding-left: 1.2rem;
+}
+
+.comment-body li {
+  margin-bottom: 0.2rem;
+}
+
+/* Tables inside comments must not widen the sidebar; .md-scroll handles scrolling. */
+.comment-body .md-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+  border: 1px solid var(--rule);
+  box-sizing: border-box;
+}
+
+.comment-body table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 0.8rem;
+}
+
+.comment-body th,
+.comment-body td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.comment-body th {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.comment-body hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 0.6rem 0;
+}
+
+.comment-body a {
+  color: var(--patina-ink);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* An unopened comment is shown, not hidden, and it must not read as prose
+   somebody wrote. */
+.comment-sealed {
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--oxide);
+  color: var(--ink-soft);
+  font-family: var(--sans);
+  font-size: 0.84rem;
+  font-style: italic;
+}
+/* ---------- the composer ---------- */
+
+.compose {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--patina);
+}
+
+.compose-title {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.compose-identity {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.compose-identity strong {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * What the next comment is about, stated before it is written.
+ *
+ * Present in every state, including the state where nothing is marked. The
+ * empty state is the one that had to be added: a composer that said nothing
+ * about its target is a composer where a stray selection quietly aimed the
+ * comment somewhere the reader never chose.
+ */
+.compose-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  background: var(--ground);
+  border-left: 3px solid var(--patina);
+  font-size: 0.82rem;
+}
+
+.compose-target-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.compose-target-clear {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.4rem;
+  color: var(--patina-ink);
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+.compose-target-clear:hover {
+  border-color: var(--patina);
+  background: var(--surface);
+}
+
+.compose-target-clear:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+/* The disclosure. Not fine print: a reader learns what commenting publishes
+   before they type, so it is set at reading size and above the fields. */
+.compose-note {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--ground);
+  border-left: 2px solid var(--oxide);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.compose-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.compose-warning {
+  margin: 0.5rem 0 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--diff-removed);
+  border-left: 2px solid var(--oxide);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.compose-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.compose-field > span {
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.compose-input,
+.compose-textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.compose-textarea {
+  font-family: var(--serif);
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.compose-input:focus-visible,
+.compose-textarea:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.compose-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.compose-count {
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+.compose-count.over {
+  color: var(--oxide);
+  font-weight: 700;
+}
+
+/* The composer is a grid, so a button in it stretches to the column unless
+   told otherwise, and a full-bleed primary in a 46rem card reads as a phone
+   layout that wandered onto a desktop. */
+.compose .action.primary {
+  justify-self: start;
+  align-self: center;
+}
+
+.thread-outcome {
+  margin-top: 0.75rem;
+}
+
+.thread-outcome .thread-note {
+  margin: 0;
+}
+
+@media (max-width: 34rem) {
+  .thread {
+    padding: 2rem 0.9rem 4rem;
+  }
+  .compose {
+    padding: 1rem;
+  }
+  /* Two identifiers and a timestamp do not share a line at this width, and a
+     timestamp pushed to the right edge of a 320px row reads as a column that
+     is not there. */
+  .comment-time {
+    margin-left: 0;
+  }
+}
+
+/* ---------- the share panel ---------- */
+
+/* A sheet that drops from the band, under the action that opened it. It is a
+   modal dialog rather than a third sidebar: sharing is a short errand with an
+   end, the reading row already has a conversation beside it, and a dialog
+   gives the keyboard its trap and Escape for nothing. Square, hairline, the
+   patina rule on top like the composer, and the version list's shadow, so it
+   reads as the same family of chrome as everything else that drops from the
+   band. */
+.share-panel {
+  position: fixed;
+  inset: var(--share-top, var(--bar-height)) 0 auto auto;
+  width: min(28rem, 100vw);
+  max-width: 100vw;
+  max-height: calc(100dvh - var(--share-top, var(--bar-height)));
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  font-family: var(--sans);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--patina);
+  border-right: 0;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.share-panel::backdrop {
+  background: rgb(16 19 20 / 28%);
+}
+
+.share-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.share-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.share-title:focus {
+  outline: none;
+}
+
+.share-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.share-close:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+}
+
+.share-close:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.share-body {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.1rem 1.25rem 1.4rem;
+}
+
+.share-body > * {
+  min-width: 0;
+}
+
+.share-form {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.share-form > .action.primary,
+.share-body > .action {
+  justify-self: start;
+}
+
+.share-body .thread-note,
+.share-body .thread-policy {
+  margin: 0;
+}
+
+.share-body .compose-warning {
+  margin: 0;
+}
+
+/* The two facts a sharer is owed before typing anybody's address, set as the
+   composer sets its disclosure: at reading size, on the oxide rule. */
+.share-facts {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.share-facts p {
+  margin: 0;
+}
+
+.share-addresses {
+  min-height: 4.6rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.share-addresses[aria-invalid="true"] {
+  border-color: var(--oxide);
+}
+
+/* Inside the sheet every action is a bordered button: the band's divider
+   rules mean nothing away from the band. */
+.share-panel .action {
+  justify-content: center;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--rule-strong);
+}
+
+.share-panel .action.primary {
+  border: 1px solid var(--patina);
+}
+
+.share-panel .action:disabled {
+  color: var(--ink-soft);
+  background: var(--ground);
+  border-color: var(--rule);
+  cursor: default;
+}
+
+.share-panel .action span {
+  display: inline;
+}
+
+.share-panel .compose-foot .action.primary {
+  margin-left: auto;
+}
+
+.share-done {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  background: var(--diff-added);
+  border-left: 2px solid var(--patina);
+}
+
+/* The email as the recipient will get it, so what is about to leave the
+   sharer's own mailbox is read before it leaves. The body is set in the
+   reading face because it is a letter, not chrome. */
+.share-email {
+  margin: 0;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+}
+
+.share-email-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.3rem 0.75rem;
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.share-email-head dt {
+  padding-top: 0.15rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.share-email-head dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.share-email-body {
+  margin: 0;
+  padding: 0.75rem 0.8rem 0.85rem;
+  font-family: var(--serif);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.share-send {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.share-again {
+  justify-self: start;
+  padding: 0;
+  color: var(--patina-ink);
+  font: inherit;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.share-again:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.share-body .thread-refusal {
+  margin: 0;
+}
+
+/* A phone gets the whole width under the band, and the buttons stack so the
+   one that opens the mail app is never a sliver. */
+@media (max-width: 34rem) {
+  .share-panel {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .share-head {
+    padding-left: 1rem;
+  }
+
+  .share-body {
+    padding: 1rem 1rem 1.25rem;
+  }
+
+  .share-send .action {
+    flex: 1 1 100%;
+  }
+}
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 2rem);
+  padding: 0.7rem 1rem;
+  background: var(--ink);
+  color: var(--ground);
+  font-size: 0.84rem;
+  border-left: 3px solid var(--patina);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast {
+    animation: rise 180ms ease-out;
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 0.5rem);
+    }
+  }
+}
+
+/* ---------- comment region mark ---------- */
+
+/* The region mark outline uses a dual-stroke technique to guarantee high
+   contrast against arbitrary imagery. A 2px solid patina border is paired
+   with an outer dark shadow and an inner light shadow. On pure white photos,
+   the dark outer shadow and patina border provide crisp contrast. On pure
+   black photos, the bright inner shadow and patina border provide crisp
+   contrast. On any background luminance, at least one boundary edge remains
+   visible. */
+.comment-region {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--patina);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.9);
+  background: color-mix(in srgb, var(--patina) 14%, transparent);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.comment-region:hover,
+.comment-region.is-active {
+  background: color-mix(in srgb, var(--patina) 28%, transparent);
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.comment-region.is-pending,
+.comment-region.is-drawing {
+  border-style: dashed;
+  pointer-events: none;
+  cursor: default;
+}
+
+.comment-region-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.25rem;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: var(--patina);
+  color: var(--surface);
+  font-family: var(--sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85), 0 2px 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* --------------------------------------------------------------------------
+   Time anchor markers and timeline track
+   -------------------------------------------------------------------------- */
+
+.time-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Markers are drawn in ink inside a ring of the surface. The played bar is
+   patina and the unplayed rail a light tint of the ink, so a patina marker
+   vanished over everything already played. Ink stands off the tinted rail,
+   the surface ring stands off the patina, and the pair holds in the dark
+   fullscreen stage, where both tokens are redefined. */
+.time-marker {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 12px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--ink);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: 0 0 0 1px var(--surface);
+}
+
+.time-marker:hover,
+.time-marker.is-active,
+.time-marker:focus-visible {
+  width: 5px;
+  background: var(--ink);
+  outline: 1px solid var(--patina);
+  outline-offset: 1px;
+  z-index: 4;
+}
+
+.time-marker.is-pending {
+  background: var(--accent, #d97706);
+  border-style: dashed;
+}
+
+/* A span stands above and below the 4px rail, so its ring shows against the
+   controls band as well as against the rail, played or not. */
+.time-marker-span {
+  height: 8px;
+  top: 50%;
+  border-radius: 0;
+  border-left: 2px solid var(--ink);
+  border-right: 2px solid var(--ink);
+  border-top: none;
+  border-bottom: none;
+  background: var(--ink);
+  transform: translateY(-50%);
+  min-width: 4px;
+  z-index: 2;
+}
+
+.time-marker-span:hover,
+.time-marker-span.is-active,
+.time-marker-span:focus-visible {
+  transform: translateY(-50%);
+  background: var(--ink);
+  outline: 1px solid var(--patina);
+  outline-offset: 1px;
+  z-index: 4;
+}
+
+.time-marker-span.is-pending {
+  background: color-mix(in srgb, var(--accent, #d97706) 60%, transparent);
+}
+
+.time-marker-cluster {
+  position: absolute;
+  top: 50%;
+  height: 14px;
+  min-width: 14px;
+  padding: 0 3px;
+  border: 1px solid var(--surface);
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--surface);
+  font-family: var(--mono);
+  transform: translateY(-50%);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.time-marker-cluster.is-moment-cluster {
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.time-marker-cluster:hover,
+.time-marker-cluster.is-active,
+.time-marker-cluster:has(.is-active),
+.time-marker-cluster:focus-visible {
+  background: var(--ink);
+  outline: 1px solid var(--patina);
+  outline-offset: 1px;
+  z-index: 5;
+}
+
+.time-frame-box {
+  position: absolute;
+  border: 2px solid var(--patina);
+  background: color-mix(in srgb, var(--patina) 15%, transparent);
+  pointer-events: none;
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+
+.time-frame-box.is-hidden {
+  display: none !important;
+}
+
+.time-frame-box.is-active {
+  border-color: var(--accent, var(--patina));
+  background: color-mix(in srgb, var(--patina) 30%, transparent);
+  box-shadow: 0 0 0 1px var(--surface);
+}
+
+.time-frame-box.is-pending {
+  border-style: dashed;
+}
+
+/* Anchored to the bottom of the media stage, so `top` from `.mark-hint` has to
+   be released. Carrying both classes with both edges set stretched the tooltip
+   from the top of the stage to just above its base: a one-line sentence became
+   a white panel covering the video it was describing. */
+.mark-time-hint {
+  position: absolute;
+  top: auto;
+  bottom: 1rem;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100% - 2rem);
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 0.35rem 0.75rem;
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  color: var(--ink);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* ---------- Key entry on dead cards ---------- */
+
+.key-entry {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.key-entry-prompt {
+  margin: 0 0 0.75rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.key-entry-label {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.35rem;
+}
+
+.key-entry-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.key-entry-input {
+  flex: 1 1 auto;
+}
+
+.key-entry-submit {
+  flex-shrink: 0;
+}
+
+.key-entry-feedback {
+  margin-top: 0.5rem;
+  font-size: 0.86rem;
+  color: var(--oxide);
+  min-height: 1.2rem;
+}
+
+/* ---------- Dashboard ---------- */
+.stage-dashboard {
+  display: flex;
+  justify-content: center;
+  padding: 2.5rem 1.5rem 5rem;
+  width: 100%;
+  overflow-y: auto;
+}
+
+.dashboard-container {
+  max-width: 48rem;
+  width: 100%;
+}
+
+.dashboard-title {
+  font-family: var(--sans);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule-strong);
+  color: var(--ink);
+}
+
+.dashboard-section {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--patina);
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.dashboard-section-title {
+  font-family: var(--sans);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+  color: var(--ink);
+}
+
+.dashboard-section-note {
+  margin: 0 0 1.25rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.dashboard-session-info {
+  margin: 0 0 1.25rem;
+  font-size: 0.86rem;
+  color: var(--patina);
+  font-weight: 500;
+}
+
+.dashboard-relic-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.dashboard-relic-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  gap: 1.25rem;
+  transition: background 120ms ease;
+}
+
+.dashboard-relic-item:hover {
+  background: color-mix(in srgb, var(--ground) 60%, var(--surface));
+}
+
+.dashboard-relic-item:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+
+/* A thumbnail here is an accession cover, not cached relic content. It uses
+   metadata this browser or the server already holds, so painting the dashboard
+   never spends an open and never creates a second plaintext copy of the file. */
+.relic-thumbnail {
+  --thumb-tone: var(--ink-soft);
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  flex: 0 0 4.75rem;
+  width: 4.75rem;
+  height: 3.35rem;
+  padding: 0.42rem;
+  overflow: hidden;
+  border: 1px solid var(--rule-strong);
+  border-top: 4px solid var(--thumb-tone);
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 18%,
+      color-mix(in srgb, var(--thumb-tone) 12%, transparent) 18% 19%,
+      transparent 19% 100%
+    ),
+    var(--ground);
+  color: var(--ink);
+}
+
+.relic-thumbnail-rule {
+  align-self: center;
+  height: 1.05rem;
+  border-block: 1px solid color-mix(in srgb, var(--thumb-tone) 46%, transparent);
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 0.22rem,
+    color-mix(in srgb, var(--thumb-tone) 24%, transparent) 0.22rem 0.28rem
+  );
+}
+
+.relic-thumbnail-label {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relic-thumbnail-code,
+.relic-thumbnail-component {
+  --thumb-tone: var(--oxide);
+}
+
+.relic-thumbnail-image,
+.relic-thumbnail-media {
+  --thumb-tone: var(--patina);
+}
+
+.relic-thumbnail-pdf,
+.relic-thumbnail-archive {
+  --thumb-tone: var(--patina-ink);
+}
+
+.dashboard-relic-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.relic-link {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+
+.relic-link:hover {
+  color: var(--patina);
+  text-decoration: underline;
+}
+
+.dashboard-relic-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.dashboard-relic-actions .action-forget {
+  border: 1px solid var(--rule);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-family: var(--sans);
+  color: var(--ink-soft);
+  background: var(--surface);
+}
+
+.dashboard-relic-actions .action-forget:hover {
+  border-color: var(--oxide);
+  color: var(--oxide);
+  background: var(--diff-removed);
+}
+
+.relic-title-unopenable {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+  word-break: break-word;
+}
+
+.relic-unopenable-note {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.relic-list-empty {
+  margin: 1.25rem 0;
+  padding: 1.25rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  font-style: italic;
+  text-align: center;
+}
+
+.vault-tools {
+  margin-top: 1.75rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+.vault-tools-title {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+  color: var(--ink);
+}
+
+.vault-tools-note {
+  margin: 0 0 1rem;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.vault-tools-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.vault-tools-actions .action {
+  border: 1px solid var(--rule);
+  padding: 0.4rem 0.85rem;
+  font-size: 0.82rem;
+  background: var(--surface);
+}
+
+.vault-tools-actions .action:hover {
+  border-color: var(--patina);
+  color: var(--patina-ink);
+  background: var(--ground);
+}
+
+.vault-import-panel {
+  margin-top: 1.25rem;
+  padding: 1.25rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+}
+
+.vault-import-input {
+  width: 100%;
+  margin-top: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.dashboard-auth-section {
+  border-top-color: var(--rule-strong);
+}
+
+.dashboard-auth-outcome {
+  margin-top: 0.75rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+/* Native OTIO: the same accession surface, with lanes instead of a document. */
+.stage-otio { padding: 0 0 2rem; min-width: 0; }
+.otio-view { --otio-label-width: 174px; min-width: 0; width: 100%; }
+.otio-loading { margin: 1rem; font: .8rem var(--mono); color: var(--ink-soft); }
+.otio-monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 244px; border-bottom: 1px solid var(--rule-strong); }
+.otio-preview { position: relative; background: #080a0b; min-width: 0; display: grid; place-items: center; min-height: 240px; }
+.otio-canvas { display: block; width: 100%; height: auto; max-height: 380px; object-fit: contain; }
+.otio-preview-scope { position: absolute; top: .7rem; left: .7rem; max-width: calc(100% - 1.4rem); padding: .2rem .35rem; color: #e6e9e7; background: #080a0bd9; font: .6rem/1.5 var(--mono); }
+.otio-preview-status { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .65rem; padding: 1.25rem; overflow-y: auto; background: #080a0bf0; color: #e6e9e7; text-align: center; }
+.otio-preview-status p { max-width: 38rem; margin: 0; font: .75rem/1.6 var(--mono); color: #d2b49f; overflow-wrap: anywhere; }
+.otio-preview-status .otio-buffering { color: #e6e9e7; }
+/* OTIO accent controls use --surface on --patina: 6.06:1 light, 6.89:1 dark. */
+.otio-preview-base { max-width: 30rem; padding: .5rem .7rem; color: var(--surface); background: var(--patina); border: 1px solid var(--patina); font-size: .75rem; cursor: pointer; }
+.otio-preview-scope { z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .5rem; }
+.otio-preview-block { padding: .15rem .3rem; border: 1px solid currentColor; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* Blocked previews reserve separate rows for the scope and diagnostics. */
+.otio-preview:has(> .otio-preview-status:not([hidden])) {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(min-content, 1fr);
+  place-items: stretch;
+}
+.otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-canvas {
+  grid-area: 1 / 1 / 3 / 2;
+  align-self: center;
+  justify-self: center;
+}
+.otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-preview-scope {
+  position: relative;
+  inset: auto;
+  grid-area: 1 / 1;
+  align-self: start;
+  justify-self: start;
+  min-width: 0;
+  max-width: calc(100% - 1.4rem);
+  margin: .7rem .7rem 0;
+  overflow-wrap: anywhere;
+}
+.otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-preview-status {
+  position: relative;
+  inset: auto;
+  grid-area: 2 / 1;
+  align-self: stretch;
+  justify-self: stretch;
+  min-width: 0;
+  margin-top: .65rem;
+  overflow: visible;
+}
+.otio-raw { margin-top: .6rem; min-width: 0; }
+.otio-raw summary { color: var(--ink-soft); font: .62rem/1.6 var(--mono); cursor: pointer; }
+.otio-inspector { background: var(--surface); min-width: 0; border-left: 1px solid var(--rule); }
+.otio-inspector-tabs { display: flex; border-bottom: 1px solid var(--rule); }
+.otio-inspector-tab { flex: 1; min-width: 0; padding: .6rem .4rem; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--ink-soft); font: .7rem var(--sans); cursor: pointer; }
+.otio-inspector-tab[aria-selected="true"] { border-bottom-color: var(--patina); color: var(--patina-ink); }
+.otio-context { max-height: 340px; overflow-y: auto; padding: .8rem; font-size: .68rem; }
+.otio-context h3 { margin: 0 0 .3rem; color: var(--ink); font: 600 .82rem var(--sans); overflow-wrap: anywhere; }
+.otio-context h4 { margin: .8rem 0 .3rem; font: 600 .7rem var(--sans); }
+.otio-context dl { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: .4rem; margin: .7rem 0; font-size: .62rem; }
+.otio-context dt { color: var(--ink-soft); }
+.otio-context dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+.otio-schema { color: var(--ink-soft); font: .62rem var(--mono); }
+.otio-effect, .otio-metadata { font: .62rem/1.6 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.otio-media-reference, .otio-inspector-marker { padding: .6rem 0; border-bottom: 1px solid var(--rule); }
+.otio-media-reference strong, .otio-inspector-marker strong { display: block; font-weight: 500; overflow-wrap: anywhere; }
+.otio-media-reference span, .otio-inspector-marker span { display: block; color: var(--ink-soft); font: .6rem/1.6 var(--mono); overflow-wrap: anywhere; }
+.otio-inspector-marker p { font: .8rem var(--serif); }
+.otio-inspector-marker button { border: 1px solid var(--rule-strong); background: var(--ground); color: var(--patina-ink); font: .62rem var(--mono); cursor: pointer; }
+.otio-transport { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; min-height: 46px; padding: .55rem .75rem; border-bottom: 1px solid var(--rule-strong); background: var(--surface); }
+.otio-transport button { padding: .3rem .45rem; border: 1px solid var(--rule-strong); background: transparent; color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
+.otio-transport .otio-play { background: var(--patina); border-color: var(--patina); color: var(--surface); min-width: 44px; }
+.otio-time { font: .7rem var(--mono); font-variant-numeric: tabular-nums; }
+.otio-seek { min-width: 65px; width: 100px; flex: 1; accent-color: var(--patina); cursor: pointer; }
+.otio-transport .otio-inspector-toggle { display: none; }
+.otio-timeline-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .65rem; padding: .7rem .75rem; border-bottom: 1px solid var(--rule); }
+.otio-timeline-name { margin: 0; font: 600 .82rem var(--sans); overflow-wrap: anywhere; }
+.otio-selection-tools { display: flex; gap: .25rem; align-items: center; flex-wrap: wrap; }
+.otio-mode { border: 1px solid var(--rule-strong); border-radius: 0; padding: .3rem .5rem; background: var(--surface); color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
+.otio-mode[aria-pressed="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
+.otio-track-select, .otio-timeline-select { max-width: 190px; min-width: 0; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .28rem; padding-inline-end: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .62rem var(--sans); }
+.otio-timeline-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scroll-padding-inline-start: var(--otio-label-width); }
+.otio-track-grid { position: relative; min-width: 760px; }
+.otio-ruler, .otio-track-row { display: grid; grid-template-columns: var(--otio-label-width) minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
+.otio-ruler-label { position: sticky; z-index: 7; left: 0; padding: .35rem .6rem; border-right: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft); font: .6rem var(--mono); }
+.otio-ruler-ticks { container-name: otio-ruler; container-type: inline-size; height: 26px; position: relative; overflow: hidden; }
+.otio-ruler-ticks span { position: absolute; top: 5px; color: var(--ink-soft); font: .53rem var(--mono); transform: translateX(-50%); }
+.otio-ruler-ticks span:first-child { transform: none; }
+.otio-ruler-ticks span:last-child { transform: translateX(-100%); }
+@container otio-ruler (max-width: 54rem) {
+  .otio-ruler-ticks span:nth-child(2n) { display: none; }
+}
+.otio-track-label { position: sticky; left: 0; z-index: 6; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .4rem .45rem; border-right: 1px solid var(--rule-strong); background: var(--surface); }
+.otio-track-code { flex: 0 0 auto; color: var(--ink-soft); font: .6rem var(--mono); }
+.otio-track-name { flex: 1; min-width: 0; line-height: 1.35; }
+.otio-track-name strong { display: block; font: 500 .65rem var(--sans); overflow-wrap: anywhere; }
+.otio-track-name small { display: block; color: var(--ink-soft); font: .48rem var(--mono); overflow-wrap: anywhere; }
+.otio-track-row:not([data-depth="0"]) .otio-track-label { padding-left: calc(.45rem + min(var(--otio-depth, 0), 4) * .35rem); background: var(--ground); }
+.otio-track-toggle, .otio-disclosure { flex: 0 0 auto; border: 0; background: transparent; color: var(--ink-soft); padding: .2rem; font: .53rem var(--sans); cursor: pointer; }
+.otio-track-toggle[aria-pressed="true"] { text-decoration: line-through; color: var(--oxide); }
+.otio-track-solo[aria-pressed="true"] { text-decoration: none; color: var(--patina-ink); background: var(--diff-added); }
+.otio-disclosure svg { width: 11px; height: 11px; display: block; fill: none; stroke: currentColor; }
+.otio-disclosure[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.otio-track-body { display: flex; flex-direction: column; min-width: 0; }
+.otio-comment-band { position: relative; flex: none; min-width: 0; height: 0; }
+.otio-track-rail { position: relative; flex: 1 0 auto; min-height: 54px; min-width: 0; cursor: crosshair; user-select: none; touch-action: pan-y; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--rule) calc(10% - 1px), var(--rule) 10%); }
+.otio-track-rail[data-selected="true"] { background-color: color-mix(in srgb, var(--patina) 8%, transparent); }
+.otio-composition-row .otio-track-rail { min-height: 26px; }
+.otio-composition-row .otio-track-label { padding-top: .15rem; padding-bottom: .15rem; }
+.otio-item { position: absolute; top: 5px; bottom: 6px; min-width: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--rule-strong); border-top-width: 2px; border-radius: 0; background: var(--surface); color: var(--ink); padding: .25rem .35rem; text-align: left; font: .62rem var(--mono); cursor: crosshair; }
+.otio-item[data-enabled="false"], .otio-track-row[data-enabled="false"] .otio-item { opacity: .5; }
+.otio-item.is-gap { border-style: dashed; color: var(--ink-soft); background: repeating-linear-gradient(135deg, transparent 0 4px, var(--rule) 4px 5px); }
+.otio-item.is-compound { border-top-color: var(--patina); }
+.otio-item.is-transition { z-index: 2; padding: 0; font-size: 0; background: linear-gradient(135deg, transparent 48%, var(--patina) 49%, var(--patina) 51%, transparent 52%); }
+.otio-item.is-transition:not(.is-unplaced):not(.is-trimmed-out) { top: 10px; bottom: auto; height: 12px; }
+.otio-item.has-diagnostic { border-color: var(--oxide); color: var(--oxide); }
+.otio-item.is-unplaced, .otio-item.is-trimmed-out { position: relative; display: block; left: auto; top: auto; bottom: auto; width: auto; margin: .2rem; border-style: dashed; color: var(--oxide); white-space: normal; }
+.otio-item.is-trimmed-out { color: var(--ink-soft); opacity: .6; }
+.otio-timeline-marker { position: absolute; top: 0; height: 5px; min-width: 7px; z-index: 4; padding: 0; border: 1px solid var(--ink); border-radius: 0; background: var(--otio-marker-color, var(--patina)); cursor: pointer; }
+.otio-timeline-marker.is-point { top: 1px; width: 7px; height: 7px; z-index: 5; transform: translateX(-50%) rotate(45deg); }
+.otio-selection { position: absolute; top: 1px; bottom: 1px; z-index: 3; min-width: 4px; border: 2px dashed var(--patina); background: color-mix(in srgb, var(--patina) 22%, transparent); pointer-events: none; }
+.otio-selection.is-point { width: 4px; transform: translateX(-50%); }
+.otio-comment-mark { position: absolute; bottom: 1px; height: 14px; min-width: 5px; z-index: 4; padding: 0; border: 1px solid var(--patina); border-left-width: 2px; border-right-width: 2px; border-radius: 0; background: color-mix(in srgb, var(--patina) 35%, var(--surface)); cursor: pointer; }
+.otio-comment-band .otio-comment-mark { bottom: calc(4px + var(--otio-comment-lane, 0) * 22px); }
+.otio-comment-mark.is-point { width: 5px; transform: translateX(-50%); background: var(--ink); border-color: var(--surface); }
+.otio-comment-mark.is-active { outline: 2px solid var(--patina); outline-offset: 2px; z-index: 8; }
+.otio-comment-mark.is-pending { border-style: dashed; }
+.otio-comment-mark.is-resolved { opacity: .55; filter: grayscale(.6); border-style: dotted; }
+.otio-comment-mark[data-projection="partial"] { border-style: dashed; }
+.otio-playhead { position: absolute; top: 25px; bottom: 0; z-index: 5; width: 1px; background: var(--ink); box-shadow: 0 0 0 1px var(--surface); pointer-events: none; }
+.otio-selection-readout { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .65rem .75rem; border-bottom: 1px solid var(--rule-strong); background: var(--surface); }
+.otio-selection-label { flex: 1 1 100%; font: .64rem/1.6 var(--mono); overflow-wrap: anywhere; }
+.otio-selection-readout label { font: .62rem var(--sans); }
+.otio-selection-readout input { width: 70px; border: 1px solid var(--rule-strong); background: var(--ground); color: var(--ink); padding: .25rem; font: .65rem var(--mono); }
+.otio-selection-readout button { border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .3rem .6rem; font: .65rem var(--sans); cursor: pointer; }
+.otio-selection-readout .otio-comment-selection { background: var(--patina); color: var(--surface); border-color: var(--patina); }
+.otio-diagnostics { padding: .5rem .75rem; }
+.otio-diagnostics:empty { display: none; }
+.otio-diagnostic { margin: .35rem 0; color: var(--oxide); font: .68rem/1.6 var(--mono); overflow-wrap: anywhere; }
+.otio-feedback-target { margin: .6rem 0; padding: .35rem .55rem; border-left: 2px solid var(--patina); background: var(--diff-added); color: var(--ink); font: .66rem/1.6 var(--mono); overflow-wrap: anywhere; }
+.otio-feedback-target span { display: block; margin-top: .15rem; color: var(--ink-soft); font-size: .6rem; }
+.otio-feedback-projection { display: flex; align-items: baseline; flex-wrap: wrap; gap: .5rem; padding: .5rem 0 0; font: .66rem/1.6 var(--mono); color: var(--oxide); }
+.otio-view-original { border: 1px solid var(--rule-strong); background: var(--surface); color: var(--patina-ink); padding: .2rem .4rem; font: .68rem var(--sans); cursor: pointer; }
+.otio-view button:focus-visible, .otio-view input:focus-visible, .otio-view select:focus-visible, .otio-track-rail:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+/* The OTIO composer stays on the preview surface. Its context can scroll,
+   while the editor and actions remain on the same opaque card. */
+.popover-card.is-otio-composer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  padding: 0.25rem 0.45rem;
+  margin-top: 0;
+}
+.is-otio-composer .popover-bounded-body {
+  flex: 1 1 auto;
+  min-height: 1.35rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.is-otio-composer .popover-target {
+  margin: 0 0 0.2rem;
+  overflow-wrap: anywhere;
+}
+.is-otio-composer .popover-disclosure { margin: 0.2rem 0; }
+.is-otio-composer .popover-note { margin: 0.2rem 0; }
+.is-otio-composer .popover-field {
+  margin-top: 0.15rem;
+  flex: 0 1 4.5rem;
+  height: 4.5rem;
+  min-height: calc(1.4em + 0.8rem + 2px);
+  resize: none;
+}
+.is-otio-composer .popover-tools {
+  flex: none;
+  margin-top: 0.15rem;
+  padding-top: 0.15rem;
+  background: var(--surface);
+}
+@media (max-width: 64rem) {
+  .otio-monitor-row { grid-template-columns: minmax(0, 1fr) 210px; }
+  .otio-selection-tools { width: 100%; }
+}
+@media (max-width: 44rem) {
+  .otio-view { --otio-label-width: 148px; }
+  .otio-monitor-row { display: block; }
+  .otio-preview { min-height: 180px; }
+  .otio-canvas { max-height: none; }
+  .otio-inspector { display: none; border-left: 0; border-top: 1px solid var(--rule); }
+  .otio-monitor-row[data-inspector-open="true"] .otio-inspector { display: block; }
+  .otio-context { max-height: 260px; }
+  .otio-transport .otio-inspector-toggle { display: block; }
+  .otio-transport { gap: .4rem; padding: .5rem; }
+  .otio-seek { flex-basis: 100%; order: 2; }
+  .otio-timeline-heading { padding: .65rem .5rem; }
+  .otio-track-select { max-width: 160px; }
+  .otio-preview-scope { font-size: .5rem; }
+  .otio-selection-readout { padding: .6rem .5rem; }
+}
+
+/* ---------- decisions ---------- */
+
+/*
+ * A decision is a different act from a comment, so it gets its own entry on
+ * the band and its own sheet, and neither borrows the composer's patina rule.
+ *
+ * The subject is a register: a catalogued object, an exact version of it, and
+ * a dated mark saying who signed off. So the sheet is ruled like a ledger
+ * (a double ink rule along the top, where the share sheet has patina) and the
+ * verdict is an impression, a bordered uppercase mark, rather than a pill or
+ * a badge. Approve is patina because it is the system's one colour for "go";
+ * reject is oxide, already the colour of every refusal in the viewer.
+ */
+
+/* The tally rides inside the band control, one bordered chip split by a
+   hairline, in the same box as the comment count so the two read as siblings
+   and the verdict colours are the only difference. */
+.decision-tally {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--rule-strong);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.decision-tally > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0 0.3rem;
+}
+
+.decision-tally > span + span {
+  border-left: 1px solid var(--rule-strong);
+}
+
+.decision-tally .icon {
+  width: 10px;
+  height: 10px;
+}
+
+.tally-approve {
+  color: var(--patina-ink);
+}
+
+.tally-approve .icon {
+  fill: var(--patina);
+}
+
+.tally-reject {
+  color: var(--oxide);
+}
+
+/* Zero is a fact, not an alarm: it keeps its place and loses its colour. */
+.decision-tally > span[data-zero="true"] {
+  color: var(--ink-soft);
+}
+
+.decision-tally > span[data-zero="true"] .icon {
+  fill: var(--rule-strong);
+}
+
+.action-decisions[aria-expanded="true"] {
+  background: var(--ground);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+
+/*
+ * The sheet drops from the band like the share sheet, but it is not modal.
+ * The comment sidebar stays open and live beside it, because the point of the
+ * layout is that the two are visibly separate places: one for talking about
+ * the version, one for signing it. Its right edge is set by the page to the
+ * sidebar's left edge when the sidebar is open.
+ */
+.decision-panel {
+  position: fixed;
+  inset: var(--decision-top, var(--bar-height)) var(--decision-right, 0) auto
+    auto;
+  z-index: 8;
+  width: min(27rem, 100vw);
+  max-width: 100vw;
+  max-height: calc(100dvh - var(--decision-top, var(--bar-height)));
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  font-family: var(--sans);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.decision-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.decision-title:focus {
+  outline: none;
+}
+
+.decision-title .accession {
+  font-weight: 400;
+}
+
+.decision-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.decision-close:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+}
+
+.decision-close:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.decision-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem 1.4rem;
+}
+
+.decision-body > * {
+  min-width: 0;
+  margin: 0;
+}
+
+/* Said first, every time, at reading size: the one sentence that keeps a
+   comment saying "greenlight" from being mistaken for a decision. */
+.decision-lead {
+  padding: 0.6rem 0.75rem;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  background: var(--ground);
+  border-left: 2px solid var(--ink);
+}
+
+.decision-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.decision-section-title .decision-digest-chip {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-weight: 400;
+}
+
+.decision-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+.decision-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 0.65rem;
+  row-gap: 0.25rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-who {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.decision-you {
+  margin-left: 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--sans);
+  font-size: 0.72rem;
+}
+
+.decision-time {
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+/* The verdict as an impression: bordered, uppercase, set in the catalog
+   face. Never a filled pill, so it cannot be mistaken for a button. */
+.decision-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.05rem 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1.5px solid currentColor;
+}
+
+.decision-mark .icon {
+  width: 10px;
+  height: 10px;
+}
+
+.decision-mark.is-approve {
+  color: var(--patina);
+  background: color-mix(in srgb, var(--patina) 7%, transparent);
+}
+
+.decision-mark.is-reject {
+  color: var(--oxide);
+  background: color-mix(in srgb, var(--oxide) 7%, transparent);
+}
+
+/* Earlier records stay on the page because they stay on the record. Each
+   author's history hangs off their current row and says what replaced it. */
+.decision-history {
+  grid-column: 2 / -1;
+  font-size: 0.78rem;
+}
+
+.decision-history summary {
+  width: max-content;
+  max-width: 100%;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.decision-history summary:hover {
+  color: var(--patina-ink);
+}
+
+.decision-history summary:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.decision-history ol {
+  margin: 0.4rem 0 0;
+  padding: 0 0 0 0.75rem;
+  list-style: none;
+  border-left: 2px solid var(--rule);
+}
+
+.decision-history li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.5rem;
+  padding: 0.2rem 0;
+  color: var(--ink-soft);
+}
+
+.decision-history .decision-mark {
+  opacity: 0.7;
+}
+
+.decision-superseded {
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.decision-empty {
+  padding: 0.9rem 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  font-style: italic;
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-identity {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+.decision-identity strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* Two verdicts, equal weight, so the panel does not lean either way. Each
+   carries its own colour on its rule and glyph and never as a fill: filling
+   is reserved for the one button that actually records something. */
+.decision-verdicts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.decision-verdict {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.75rem;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top-width: 3px;
+  cursor: pointer;
+}
+
+.decision-verdict.is-approve {
+  border-top-color: var(--patina);
+}
+
+.decision-verdict.is-approve .icon {
+  fill: var(--patina);
+}
+
+.decision-verdict.is-reject {
+  border-top-color: var(--oxide);
+}
+
+.decision-verdict.is-reject .icon {
+  fill: var(--oxide);
+}
+
+.decision-verdict.is-approve:hover {
+  color: var(--patina-ink);
+  background: color-mix(in srgb, var(--patina) 8%, var(--surface));
+}
+
+.decision-verdict.is-reject:hover {
+  color: var(--oxide);
+  background: color-mix(in srgb, var(--oxide) 8%, var(--surface));
+}
+
+.decision-verdict:focus-visible,
+.decision-confirm:focus-visible,
+.decision-secondary:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.decision-verdict:disabled {
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.decision-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+/* The confirm step. The digest is printed because it is what the decision is
+   bound to, and a reader who cares can compare it with what the publisher
+   was told. Twelve characters: enough to compare by eye, short enough not to
+   be a wall of hex. */
+.decision-ticket {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+}
+
+.decision-ticket[data-verdict="reject"] {
+  border-left-color: var(--oxide);
+}
+
+.decision-ticket h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.decision-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.3rem 0.85rem;
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.decision-facts dt {
+  padding-top: 0.1rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.decision-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.decision-digest-chip {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+}
+
+.decision-digest-chip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.decision-digest-chip span {
+  color: var(--ink-soft);
+}
+
+.decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+}
+
+.decision-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 1rem;
+  color: var(--surface);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  background: var(--patina);
+  border: 0;
+  cursor: pointer;
+}
+
+.decision-confirm:hover {
+  background: var(--patina-ink);
+}
+
+.decision-confirm[data-verdict="reject"] {
+  background: var(--oxide);
+}
+
+.decision-confirm[data-verdict="reject"]:hover {
+  background: color-mix(in srgb, var(--oxide) 78%, var(--ink));
+}
+
+.decision-confirm .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.decision-confirm:disabled {
+  color: var(--ink-soft);
+  background: var(--rule);
+  cursor: default;
+}
+
+.decision-secondary {
+  justify-self: start;
+  padding: 0;
+  color: var(--patina-ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* Waiting on the device. A rule that travels along the ticket rather than a
+   spinner: nothing in the viewer spins, and this is a wait on a person. */
+.decision-waiting {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: var(--rule);
+}
+
+.decision-waiting::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  content: "";
+  background: var(--ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .decision-waiting::after {
+    animation: decision-wait 1.4s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes decision-wait {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(233%);
+  }
+}
+
+/* The stamp. The single place in the viewer that is set at an angle, because
+   it is the single thing in it that was pressed onto the page by a person.
+   The double rule echoes the sheet's top edge. */
+.decision-outcome {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.decision-stamp {
+  justify-self: center;
+  display: grid;
+  justify-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  margin: 0.4rem 0 0.2rem;
+  padding: 0.7rem 1.1rem 0.75rem;
+  color: var(--patina);
+  text-align: center;
+  border: 4px double currentColor;
+  transform: rotate(-1.5deg);
+}
+
+.decision-stamp.is-reject {
+  color: var(--oxide);
+}
+
+.decision-stamp-verdict {
+  font-family: var(--mono);
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.decision-stamp-line {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+}
+
+.decision-note {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+/* Outcomes that are not a record. Cancelled is neutral, because the reader
+   chose it; a refusal carries the viewer's usual oxide rule. */
+.decision-refusal {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--oxide);
+}
+
+.decision-refusal[data-state="cancelled"] {
+  border-top-color: var(--ink-soft);
+}
+
+.decision-refusal-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.decision-refusal p {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.decision-refusal .accession {
+  font-size: 0.62rem;
+}
+
+.decision-refusal .decision-facts {
+  padding: 0.5rem 0.65rem;
+  background: var(--ground);
+}
+
+/* Reading an older version is allowed and so is deciding on it, so the
+   notice says plainly which version a decision here lands on. */
+.decision-stale {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  background: var(--diff-removed);
+  border-left: 2px solid var(--oxide);
+}
+
+.decision-stale p {
+  margin: 0;
+}
+
+.decision-stale .decision-secondary {
+  justify-self: start;
+}
+
+/* Setting up the passkey. The trust-on-first-use sentence is a warning, not
+   fine print: it is the one irreversible thing in this panel. */
+.decision-passkey {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.decision-passkey h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.decision-passkey .compose-warning {
+  margin: 0;
+}
+
+.decision-passkey .action.primary,
+.decision-signin .action.primary {
+  align-self: auto;
+  justify-self: start;
+}
+
+.decision-signin {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.25rem;
+}
+
+.decision-signin form {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.decision-signin h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* A comment that says "approve" is still a comment. The sidebar keeps its
+   composer exactly as it was: no verdict control, no stamp, nothing that
+   could be read as one. */
+
+@media (max-width: 34rem) {
+  .decision-panel {
+    width: 100vw;
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .decision-head {
+    padding-left: 1rem;
+  }
+
+  .decision-body {
+    padding: 1rem 1rem 1.25rem;
+  }
+
+  /* The tally is the control's whole reason to be on a phone's band, like
+     the comment count beside it, so it keeps its numbers when labels go.
+     The two glyphs say what the numbers count, so the stamp icon is what
+     goes: on a phone the tally is the control. */
+  .action span.decision-tally {
+    display: inline-flex;
+  }
+
+  .action .decision-tally > span {
+    display: inline-flex;
+  }
+
+  .action-decisions > .icon {
+    display: none;
+  }
+
+  /* Unless there is no tally to stand in for it (decisions not open on this
+     relic), when the stamp is all that is left to press. */
+  .action-decisions:not([data-decision-approvals]) > .icon {
+    display: inline-block;
+  }
+
+  /* Inside the sheet every button keeps its words, as in the share sheet:
+     the band's icon-only rule is about the band. */
+  .decision-panel .action span {
+    display: inline;
+  }
+
+  /*
+   * The narrow hierarchy, re-derived a third time, for the eighth action.
+   *
+   * Measured at 390px before this rule: the band ran 36px past the viewport
+   * and the filename rendered 0px wide. The bar has to be no worse for the
+   * filename than it was before Decisions arrived (31px at 390), so three
+   * things give way, smallest loss first: the stamp icon above (21px), a
+   * slightly tighter action padding (about 38px across eight), and Relics
+   * (39px), which the 24rem floor already treats as the first to go and
+   * which opens a tab rather than acting on this relic.
+   */
+  .action-relics {
+    display: none;
+  }
+
+  .actions .action {
+    padding: 0 0.6rem;
+  }
+
+  .decision-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .decision-time {
+    grid-column: 2;
+  }
+}
+
+/* ---------- mock controls, not part of the viewer ---------- */
+.mock-states {
+  position: fixed;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 9;
+  width: min(19rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - var(--bar-height) - 2rem);
+  overflow-y: auto;
+  padding: 0.6rem 0.7rem 0.7rem;
+  font-family: var(--sans);
+  font-size: 0.74rem;
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+}
+.mock-states h2 {
+  margin: 0 0 0.2rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.mock-states p {
+  margin: 0 0 0.5rem;
+  color: var(--ink-soft);
+}
+.mock-states .group {
+  margin: 0.45rem 0 0.25rem;
+  font-weight: 600;
+}
+.mock-states ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mock-states button {
+  padding: 0.2rem 0.45rem;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  cursor: pointer;
+}
+.mock-states button[aria-pressed="true"] {
+  color: var(--surface);
+  background: var(--patina);
+  border-color: var(--patina);
+}
+.mock-states .collapse {
+  float: right;
+}
+.mock-states.is-collapsed ul,
+.mock-states.is-collapsed p,
+.mock-states.is-collapsed .group {
+  display: none;
+}
+.mock-simulate {
+  justify-self: start;
+  padding: 0.25rem 0.5rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  background: transparent;
+  border: 1px dashed var(--rule-strong);
+  cursor: pointer;
+}
+</style>
+</head>
+<body>
+<header class="bar"><div class="mark">relik.link</div><div class="identity"><div class="filename" title="harbor-lights-ep03-review.md">harbor-lights-ep03-review.md</div><div class="identity-meta"><div class="accession">v8k2mq7xh4r3b9tc1wn6pd5ze0</div><div class="version"><span class="version-label"><span class="version-long" id="version-long">Version 3 of 3</span><span class="version-short" id="version-short" aria-hidden="true">v3/3</span></span></div></div></div><div class="actions"><a class="action marker" href="#policy" aria-label="Rendered as text, no author code" title="Rendered as text, no author code. What Relic knows."><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"></path></svg><span>Rendered as text, no author code</span></a><a class="action action-relics" href="#dashboard" aria-label="Relics list" title="Relics list. Open your saved and commented relics in a new tab."><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M2 2h4.5v4.5H2V2zm7.5 0H14v4.5H9.5V2zM2 9.5h4.5V14H2V9.5zm7.5 0H14V14H9.5V9.5z"></path></svg><span>Relics</span></a><button type="button" class="action action-comments" id="comments-open" aria-controls="comment-thread" aria-expanded="true" aria-label="Comments, 4" title="4 comments"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M2 2h12v9H7.5L4 14v-3H2V2zm1 1v7h2v2.1L7.1 10H13V3H3z"></path></svg><span>Comments</span><span class="action-count">4</span></button><button type="button" class="action action-decisions" id="decision-open" data-decision-open data-decision-approvals="1" data-decision-rejections="1" aria-haspopup="dialog" aria-controls="decision-panel" aria-expanded="false" title="Approve or reject this version"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.5 1h5v4L9 6.5V8h4.5v3h-11V8H7V6.5L5.5 5V1zM2 12.5h12V14H2v-1.5z"></path></svg><span>Decisions</span><span class="decision-tally" id="decision-tally" aria-hidden="true"></span></button><button type="button" class="action"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5 2h7a1 1 0 0 1 1 1v8h-1V3H5V2zM3 4h7a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 1v8h7V5H3z"></path></svg><span>Copy link</span></button><button type="button" class="action action-share" aria-haspopup="dialog" title="Share this relic with people by email"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M1.5 3h13v10h-13zm1.3 1L8 7.6 13.2 4zM2.5 5.2V12h11V5.2L8 9z"></path></svg><span>Share</span></button><button type="button" class="action"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M7.5 1h1v7.3l2.6-2.6.7.7L8 10.2 4.2 6.4l.7-.7 2.6 2.6V1zM2 12h12v1H2v-1z"></path></svg><span>Download</span></button><a class="action" href="#abuse"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"></path></svg><span>Report</span></a></div></header>
+<div class="relic-row" id="relic-row" style="--thread-width: 22rem">
+<div class="stage-wrap"><main class="stage stage-markdown"><div class="doc"><div class="toggle-row"><button type="button" class="action"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"></path></svg><span>View source</span></button></div><article class="prose" id="relic-prose">
+<h1>Harbor Lights, episode 3: review cut</h1>
+<p><strong>Cut <span data-doc-version>3</span></strong> · running time <span data-doc-runtime>22:41</span> · 41 shots · locked dialogue, temp score</p>
+<p>This is the cut the paid finish is built from. Approving this version releases final colour, the score session and the voice pickups. Rejecting it holds all three until a new version is published.</p>
+<h2>What changed since version <span data-doc-prev>2</span></h2>
+<ul data-doc-changes>
+<li>Cold open trimmed from 1:04 to 0:52. The pier shot loses two beats.</li>
+<li>Market scene re-ordered so the argument lands before the rain, not after it.</li>
+<li>Two pickup lines added for Mara in scene 6, recorded as scratch.</li>
+</ul>
+<h2>Sequence</h2>
+<div class="md-scroll"><table>
+<thead><tr><th>#</th><th>Scene</th><th>In</th><th>Length</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Cold open: the pier at dawn</td><td>00:00</td><td>0:52</td></tr>
+<tr><td>2</td><td>Titles</td><td>00:52</td><td>0:28</td></tr>
+<tr><td>3</td><td>The market, before the rain</td><td>01:20</td><td>4:15</td></tr>
+<tr><td>4</td><td>Harbormaster's office</td><td>05:35</td><td>3:02</td></tr>
+<tr><td>5</td><td>Night crossing</td><td>08:37</td><td>5:48</td></tr>
+<tr><td>6</td><td>Mara and Tom on the breakwater</td><td>14:25</td><td>4:51</td></tr>
+<tr><td>7</td><td>Lights come on</td><td>19:16</td><td>2:41</td></tr>
+<tr><td>8</td><td>End credits</td><td>21:57</td><td>0:44</td></tr>
+</tbody>
+</table></div>
+<h2>What approval releases</h2>
+<div class="md-scroll"><table>
+<thead><tr><th>Item</th><th>Scope</th><th>Estimate</th></tr></thead>
+<tbody>
+<tr><td>Final colour</td><td>41 shots, one pass plus notes</td><td>$2,400</td></tr>
+<tr><td>Score session</td><td>3 cues, 9:20 of music</td><td>$3,150</td></tr>
+<tr><td>Voice pickups</td><td>2 lines, scene 6</td><td>$380</td></tr>
+</tbody>
+</table></div>
+<h2>Still open</h2>
+<p>The market cue is temp. If the scene's new order changes what the music has to do, say so in a comment before deciding: the score session is booked from this cut.</p>
+</article></div></main></div>
+<aside class="thread is-open" id="comment-thread" aria-labelledby="thread-title"><h2 class="thread-title" id="thread-title"><button class="thread-toggle" type="button" aria-controls="comment-thread" aria-expanded="true">Comments</button></h2><div class="thread-tools"><span class="thread-hint">Select text in document to quote</span></div><div class="thread-status" aria-live="polite"></div><ol class="thread-list">
+<li class="comment"><div class="comment-head"><span class="comment-name">Ada Ruiz</span><span class="comment-author">ada@example.com</span><time class="comment-time" datetime="2026-10-24T11:28:00Z">Oct 24, 11:28</time></div><div class="comment-body"><p>The pier shot still holds a beat after Tom turns. Trim to his look and I'm happy.</p></div></li>
+<li class="comment"><div class="comment-head"><span class="comment-name">Sam Okafor</span><span class="comment-author">sam@example.com</span><time class="comment-time" datetime="2026-10-24T14:02:00Z">Oct 24, 14:02</time></div><div class="comment-body"><p>GREENLIGHT from me. The re-ordered market scene works. Ship it to colour.</p></div></li>
+<li class="comment"><div class="comment-head"><span class="comment-name">Lin Hart</span><span class="comment-author">lin@example.com</span><time class="comment-time" datetime="2026-10-24T14:20:00Z">Oct 24, 14:20</time></div><div class="comment-body"><p>Is the market cue temp or final? It fights the rain.</p></div><ol class="comment-replies"><li class="comment comment-reply"><div class="comment-head"><span class="comment-author">publisher</span><span class="comment-badge">Published this relic</span><time class="comment-time" datetime="2026-10-24T14:31:00Z">Oct 24, 14:31</time></div><div class="comment-body"><p>Temp. The final cue comes out of the score session this review releases.</p></div></li></ol></li>
+</ol><div class="compose-slot" id="compose-slot"></div><div class="thread-outcome" aria-live="polite"></div></aside>
+<div class="thread-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the comments" tabindex="0"></div>
+<button type="button" class="thread-tab" id="thread-tab" aria-controls="comment-thread" aria-expanded="true">Comments</button>
+</div>
+
+<dialog class="decision-panel" id="decision-panel" aria-labelledby="decision-title" data-decision-version="3"></dialog>
+
+<aside class="mock-states" id="mock-states" aria-label="Mock controls">
+  <h2>Mock controls <button type="button" class="collapse" id="mock-collapse" aria-expanded="true">Hide</button></h2>
+  <p>Not part of the viewer. Press Decisions in the band and click through, or jump straight to a state. Each state is also a deep link: <code>#state=Ready</code>.</p>
+  <div class="group">Page</div>
+  <ul data-group="page"></ul>
+  <div class="group">Before deciding</div>
+  <ul data-group="before"></ul>
+  <div class="group">Passkey</div>
+  <ul data-group="passkey"></ul>
+  <div class="group">Deciding</div>
+  <ul data-group="deciding"></ul>
+  <div class="group">Refusals</div>
+  <ul data-group="refusal"></ul>
+</aside>
+
+<script>
+(() => {
+  'use strict';
+
+  const READER = 'lin@example.com';
+  const LATEST = 3;
+
+  // Lowercase hex SHA-256 of each version's stored ciphertext, as the server
+  // and the viewer both compute it. Invented for the mock.
+  const DIGEST = {
+    3: '4be19c07a2f3d81e6c5b90f7a14e2d3c8b6f01a9e7d45c2b3a8f6e1d0c9b7a52',
+    2: '9a1d7730c4e2b5f8a06d13c9e7b42f5a8d1c3e6b9f0a2d4c7e5b8a1f3d6c9e04',
+  };
+  // What the server holds when the page and the store disagree.
+  const STORED_ELSEWHERE = 'e07b52a9915c3d8f4a6b2e1c7d9f0a3b5c8e2d4f6a1b3c5d7e9f0b2a4c6d8e1f';
+
+  const BASE_RECORDS = [
+    { id: 'r1', version: 2, verdict: 'approve', author: 'ada@example.com', created: '2026-10-22T16:48:00Z' },
+    { id: 'r2', version: 3, verdict: 'reject', author: 'sam@example.com', created: '2026-10-24T09:12:00Z' },
+    { id: 'r3', version: 3, verdict: 'reject', author: 'ada@example.com', created: '2026-10-24T11:30:00Z' },
+    { id: 'r4', version: 3, verdict: 'approve', author: 'sam@example.com', created: '2026-10-24T14:05:00Z' },
+  ];
+
+  // The required meanings, in the viewer's words. No dashes.
+  const LEAD = 'A decision is a stamp on one exact version, made with a passkey. ' +
+    'It is separate from comments: nothing written in a comment counts as one.';
+  const TOFU = 'The first passkey set up for an address becomes the only way to ' +
+    'record decisions as that address. Adding another later needs this one.';
+  const CANCELLED = 'Cancelled. Nothing was recorded.';
+  const UNAVAILABLE = 'Decisions open on this relic once its publisher republishes it.';
+  const staleCopy = (n, m) => `You are viewing version ${n}. Version ${m} is the newest. ` +
+    `A decision here applies to version ${n} only.`;
+  const mismatchCopy = (n) => `The file stored for version ${n} is not the file this page shows. ` +
+    'Nothing was recorded.';
+  const DELIVERY_DISCLOSURE = 'Sending the link means handling your address in the clear. ' +
+    'There is no other way to post it.';
+  const IDENTITY_DISCLOSURE = 'Your address is shown with your comment and in emails to people ' +
+    'following the relic, and Relic sees who commented on what. When someone ' +
+    'comments or a new version is published, Relic emails you, with a link to stop.';
+
+  const ICON_STAMP = 'M5.5 1h5v4L9 6.5V8h4.5v3h-11V8H7V6.5L5.5 5V1zM2 12.5h12V14H2v-1.5z';
+  const ICON_APPROVE = 'M6.2 11.6 2.6 8l1-1 2.6 2.6 6.2-6.2 1 1z';
+  const ICON_REJECT = 'M4 3 8 7l4-4 1 1-4 4 4 4-1 1-4-4-4 4-1-1 4-4-4-4z';
+  const ICON_KEY = 'M5 5.5a3 3 0 1 1 5.6 1.5l4.4 4.4V14h-2.2v-1.3h-1.3v-1.3h-1.3L7.5 8.6A3 3 0 0 1 5 5.5zm2.5-1.2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z';
+  const ICON_CLOSE = 'M4.2 3.5 8 7.3l3.8-3.8.7.7L8.7 8l3.8 3.8-.7.7L8 8.7l-3.8 3.8-.7-.7L7.3 8 3.5 4.2z';
+
+  // ---------- helpers ----------
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function icon(path) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.classList.add('icon');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', path);
+    svg.appendChild(p);
+    return svg;
+  }
+
+  const verdictIcon = (v) => icon(v === 'approve' ? ICON_APPROVE : ICON_REJECT);
+  const pastTense = (v) => (v === 'approve' ? 'Approved' : 'Rejected');
+  const verb = (v) => (v === 'approve' ? 'Approve' : 'Reject');
+
+  function when(iso) {
+    const d = new Date(iso);
+    const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${month} ${d.getUTCDate()}, ${hh}:${mm}`;
+  }
+
+  function timeEl(iso) {
+    const t = el('time', 'decision-time', when(iso));
+    t.dateTime = iso;
+    return t;
+  }
+
+  function mark(verdict) {
+    const m = el('span', `decision-mark is-${verdict}`);
+    m.append(verdictIcon(verdict), document.createTextNode(pastTense(verdict)));
+    return m;
+  }
+
+  function digestChip(hex) {
+    const chip = el('span', 'decision-digest-chip');
+    chip.append(el('span', '', 'sha256 '), el('b', '', hex.slice(0, 12)), el('span', '', '\u2026'));
+    chip.title = hex;
+    return chip;
+  }
+
+  function facts(pairs) {
+    const dl = el('dl', 'decision-facts');
+    for (const [k, v] of pairs) {
+      const dd = el('dd');
+      if (typeof v === 'string') dd.textContent = v; else dd.appendChild(v);
+      dl.append(el('dt', '', k), dd);
+    }
+    return dl;
+  }
+
+  // ---------- mock state ----------
+
+  const fresh = () => ({
+    session: 'verified',     // verified | anonymous
+    linkSent: false,
+    passkey: 'have',         // have | none | elsewhere
+    version: LATEST,
+    unavailable: false,
+    storedDiffers: false,
+    empty: false,
+    step: 'list',            // list | passkey | confirm | working | outcome
+    verdict: null,
+    outcome: null,           // { state, code }
+    historyOpen: false,
+    freeze: false,           // hold the working step for screenshots
+    force: null,             // the outcome the passkey prompt will produce
+    extra: [],
+  });
+  let mock = fresh();
+  let commentsOpen = window.matchMedia('(min-width: 44.0625rem)').matches;
+  let workTimer = null;
+
+  function records() {
+    if (mock.empty) return mock.extra.slice();
+    return BASE_RECORDS.concat(mock.extra);
+  }
+
+  // The latest record per author on one version, then the older ones behind
+  // it, the shape currentDecisions() in @relic/format returns plus history.
+  function byAuthor(version) {
+    const rows = records().filter((r) => r.version === version)
+      .sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
+    const map = new Map();
+    for (const r of rows) {
+      const entry = map.get(r.author) || { history: [] };
+      if (entry.current) entry.history.unshift({ ...entry.current, supersededBy: r });
+      entry.current = r;
+      map.set(r.author, entry);
+    }
+    return [...map.values()].sort((a, b) => a.current.created.localeCompare(b.current.created));
+  }
+
+  function tally(version) {
+    const t = { approve: 0, reject: 0 };
+    for (const e of byAuthor(version)) t[e.current.verdict] += 1;
+    return t;
+  }
+
+  // ---------- the band ----------
+
+  const opener = document.getElementById('decision-open');
+  const dialog = document.getElementById('decision-panel');
+  const thread = document.getElementById('comment-thread');
+  const threadTab = document.getElementById('thread-tab');
+  const commentsButton = document.getElementById('comments-open');
+
+  function paintBar() {
+    document.getElementById('version-long').textContent = `Version ${mock.version} of ${LATEST}`;
+    document.getElementById('version-short').textContent = `v${mock.version}/${LATEST}`;
+    document.querySelectorAll('[data-doc-version]').forEach((n) => { n.textContent = String(mock.version); });
+    document.querySelectorAll('[data-doc-prev]').forEach((n) => { n.textContent = String(mock.version - 1); });
+    const box = document.getElementById('decision-tally');
+    if (mock.unavailable) {
+      // decisionTally === null: the control stays, the numbers do not.
+      box.hidden = true;
+      opener.removeAttribute('data-decision-approvals');
+      opener.removeAttribute('data-decision-rejections');
+      opener.setAttribute('aria-label', 'Decisions, not open on this relic yet');
+      return;
+    }
+    const t = tally(mock.version);
+    box.hidden = false;
+    opener.dataset.decisionApprovals = String(t.approve);
+    opener.dataset.decisionRejections = String(t.reject);
+    opener.setAttribute('aria-label',
+      `Decisions on version ${mock.version}: ${t.approve} approved, ${t.reject} rejected`);
+    const a = el('span', 'tally-approve');
+    a.dataset.zero = String(t.approve === 0);
+    a.append(icon(ICON_APPROVE), document.createTextNode(String(t.approve)));
+    const r = el('span', 'tally-reject');
+    r.dataset.zero = String(t.reject === 0);
+    r.append(icon(ICON_REJECT), document.createTextNode(String(t.reject)));
+    box.replaceChildren(a, r);
+  }
+
+  function paintComments() {
+    thread.classList.toggle('is-open', commentsOpen);
+    for (const b of [commentsButton, threadTab, thread.querySelector('.thread-toggle')]) {
+      b.setAttribute('aria-expanded', String(commentsOpen));
+    }
+    const slot = document.getElementById('compose-slot');
+    const form = el('form', 'compose');
+    form.addEventListener('submit', (e) => e.preventDefault());
+    form.appendChild(el('h3', 'compose-title', 'Leave a comment'));
+    if (mock.session === 'verified') {
+      const id = el('p', 'compose-identity');
+      id.append(document.createTextNode('Commenting as '), el('strong', '', READER));
+      const target = el('div', 'compose-target');
+      target.appendChild(el('span', 'compose-target-label', 'Commenting on the whole document'));
+      const policy = el('a', 'thread-policy', 'What Relic knows');
+      policy.href = '#policy';
+      const nameField = el('label', 'compose-field');
+      const name = el('input', 'compose-input');
+      name.value = 'Lin Hart';
+      nameField.append(el('span', '', 'Display name'), name);
+      const bodyField = el('label', 'compose-field');
+      const body = el('textarea', 'compose-textarea');
+      body.rows = 4;
+      bodyField.append(el('span', '', 'Comment'), body);
+      const foot = el('div', 'compose-foot');
+      const count = el('span', 'compose-count', '0 of 4096 bytes');
+      body.addEventListener('input', () => {
+        count.textContent = `${new TextEncoder().encode(body.value).length} of 4096 bytes`;
+      });
+      const post = el('button', 'action primary', 'Post comment');
+      post.type = 'submit';
+      foot.append(count, post);
+      form.append(id, target, el('p', 'compose-note', IDENTITY_DISCLOSURE), policy, nameField,
+        el('p', 'compose-fine', 'Shown beside your address, never instead.'), bodyField, foot);
+    } else {
+      const field = el('label', 'compose-field');
+      const email = el('input', 'compose-input');
+      email.type = 'email';
+      email.placeholder = 'you@example.com';
+      field.append(el('span', '', 'Email address'), email);
+      const send = el('button', 'action primary', 'Send me a link');
+      send.type = 'submit';
+      form.append(el('p', 'compose-note', IDENTITY_DISCLOSURE), field,
+        el('p', 'compose-fine', DELIVERY_DISCLOSURE), send);
+    }
+    slot.replaceChildren(form);
+    place();
+  }
+
+  commentsButton.addEventListener('click', () => { commentsOpen = !commentsOpen; paintComments(); });
+  threadTab.addEventListener('click', () => { commentsOpen = true; paintComments(); });
+  thread.querySelector('.thread-toggle').addEventListener('click', () => { commentsOpen = false; paintComments(); });
+
+  // ---------- the panel ----------
+
+  function head() {
+    const h = el('div', 'decision-head');
+    const title = el('h2', 'decision-title');
+    title.id = 'decision-title';
+    title.tabIndex = -1;
+    title.append(document.createTextNode('Decisions'), el('span', 'accession', `version ${mock.version} of ${LATEST}`));
+    const close = el('button', 'decision-close');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Close decisions');
+    close.appendChild(icon(ICON_CLOSE));
+    close.addEventListener('click', () => closePanel());
+    h.append(title, close);
+    return h;
+  }
+
+  function staleNotice() {
+    if (mock.version === LATEST) return [];
+    const box = el('div', 'decision-stale');
+    box.setAttribute('data-decision-stale', '');
+    box.appendChild(el('p', '', staleCopy(mock.version, LATEST)));
+    const go = el('button', 'decision-secondary', `Open version ${LATEST}`);
+    go.type = 'button';
+    go.addEventListener('click', () => { mock.version = LATEST; resetStep(); paint(); });
+    box.appendChild(go);
+    return [box];
+  }
+
+  function list() {
+    const wrap = el('section', 'decision-current');
+    const t = el('h3', 'decision-section-title');
+    t.append(el('span', '', `Current on version ${mock.version}`), digestChip(DIGEST[mock.version]));
+    wrap.appendChild(t);
+    const entries = byAuthor(mock.version);
+    if (entries.length === 0) {
+      wrap.appendChild(el('p', 'decision-empty', `No decisions on version ${mock.version} yet.`));
+      return wrap;
+    }
+    const ol = el('ol', 'decision-list');
+    for (const e of entries) {
+      const r = e.current;
+      const li = el('li', 'decision-row');
+      li.setAttribute('data-decision-row', '');
+      li.dataset.decisionAuthor = r.author;
+      li.dataset.verdict = r.verdict;
+      const who = el('span', 'decision-who', r.author);
+      if (r.author === READER) who.appendChild(el('span', 'decision-you', 'you'));
+      li.append(mark(r.verdict), who, timeEl(r.created));
+      if (e.history.length > 0) {
+        const d = el('details', 'decision-history');
+        d.open = mock.historyOpen;
+        const n = e.history.length;
+        d.appendChild(el('summary', '', `${n} earlier decision${n === 1 ? '' : 's'}`));
+        const hol = el('ol');
+        for (const h of e.history) {
+          const hl = el('li');
+          hl.append(mark(h.verdict), timeEl(h.created),
+            el('span', 'decision-superseded', `superseded at ${when(h.supersededBy.created).split(', ')[1]}`));
+          hol.appendChild(hl);
+        }
+        d.appendChild(hol);
+        ol.appendChild(li);
+        li.appendChild(d);
+      } else {
+        ol.appendChild(li);
+      }
+    }
+    wrap.appendChild(ol);
+    if (entries.some((e) => e.history.length > 0)) {
+      wrap.appendChild(el('p', 'decision-fine',
+        'Each address counts once, by its latest decision. Earlier ones stay on the record.'));
+    }
+    return wrap;
+  }
+
+  function chooser() {
+    const box = el('section', 'decision-choose');
+    box.style.display = 'grid';
+    box.style.gap = '0.65rem';
+    const t = el('h3', 'decision-section-title');
+    t.appendChild(el('span', '', 'Your decision'));
+    const id = el('p', 'decision-identity');
+    id.append(document.createTextNode('Deciding as '), el('strong', '', READER));
+    const row = el('div', 'decision-verdicts');
+    for (const v of ['approve', 'reject']) {
+      const b = el('button', `decision-verdict is-${v}`);
+      b.type = 'button';
+      b.dataset.decisionVerdict = v;
+      b.append(verdictIcon(v), el('span', '', `${verb(v)} v${mock.version}`));
+      b.setAttribute('aria-label', `${verb(v)} version ${mock.version}`);
+      b.addEventListener('click', () => pick(v));
+      row.appendChild(b);
+    }
+    box.append(t, id, row, el('p', 'decision-fine',
+      'You choose here, then confirm with your passkey. A later decision replaces this one as yours; both stay on the record.'));
+    return box;
+  }
+
+  function signIn() {
+    const host = el('section', 'decision-signin');
+    host.setAttribute('data-decision-signin', '');
+    host.appendChild(el('h3', '', 'Sign in to decide'));
+    if (mock.linkSent) {
+      host.appendChild(el('p', 'thread-note',
+        `If ${READER} can receive mail, a link is on its way. Following it verifies the address and brings you back here.`));
+      const sim = el('button', 'mock-simulate', 'Mock: follow the link');
+      sim.type = 'button';
+      sim.addEventListener('click', () => { mock.session = 'verified'; mock.linkSent = false; paint(); paintComments(); });
+      host.appendChild(sim);
+      return host;
+    }
+    host.appendChild(el('p', 'decision-fine',
+      'Deciding uses the same verified address as commenting, and a passkey on top of it.'));
+    const form = el('form');
+    const field = el('label', 'compose-field');
+    const email = el('input', 'compose-input');
+    email.type = 'email';
+    email.required = true;
+    email.autocomplete = 'email';
+    email.placeholder = 'you@example.com';
+    field.append(el('span', '', 'Your email address'), email);
+    const send = el('button', 'action primary', 'Send me a link');
+    send.type = 'submit';
+    form.append(field, el('p', 'compose-fine', DELIVERY_DISCLOSURE), send);
+    form.addEventListener('submit', (e) => { e.preventDefault(); mock.linkSent = true; paint(); });
+    host.appendChild(form);
+    return host;
+  }
+
+  function passkeyStep() {
+    const box = el('section', 'decision-passkey');
+    if (mock.passkey === 'elsewhere') {
+      box.appendChild(el('h3', '', 'This address already has a passkey'));
+      box.appendChild(el('p', 'decision-note',
+        `${READER} set up a passkey on another device. To decide from this one, add a passkey here; your device asks for the existing one first.`));
+      box.appendChild(el('p', 'compose-warning', TOFU));
+      const add = el('button', 'action primary');
+      add.type = 'button';
+      add.setAttribute('data-passkey-add', '');
+      add.append(icon(ICON_KEY), el('span', '', 'Add a passkey on this device'));
+      add.addEventListener('click', () => { mock.passkey = 'have'; afterOptions(); });
+      box.appendChild(add);
+    } else {
+      box.appendChild(el('h3', '', 'Set up a passkey to decide'));
+      const id = el('p', 'decision-identity');
+      id.append(document.createTextNode('For '), el('strong', '', READER));
+      box.appendChild(id);
+      box.appendChild(el('p', 'compose-warning', TOFU));
+      const make = el('button', 'action primary');
+      make.type = 'button';
+      make.setAttribute('data-passkey-create', '');
+      make.append(icon(ICON_KEY), el('span', '', 'Create a passkey'));
+      make.addEventListener('click', () => { mock.passkey = 'have'; afterOptions(); });
+      box.appendChild(make);
+      box.appendChild(el('p', 'decision-fine',
+        'Your device keeps the private key. Relic stores the public key, under a hash of your address, and never receives the private one.'));
+    }
+    const back = el('button', 'decision-secondary', 'Not now');
+    back.type = 'button';
+    back.addEventListener('click', () => { resetStep(); paint(); });
+    box.appendChild(back);
+    return box;
+  }
+
+  function ticket(working) {
+    const v = mock.verdict;
+    const box = el('section', 'decision-ticket');
+    box.dataset.verdict = v;
+    box.appendChild(el('h3', '', `${verb(v)} version ${mock.version}`));
+    box.appendChild(facts([
+      ['Verdict', pastTense(v)],
+      ['Version', `${mock.version} of ${LATEST}`],
+      ['File', digestChip(DIGEST[mock.version])],
+      ['As', READER],
+    ]));
+    box.appendChild(el('p', 'decision-fine',
+      'The decision is bound to this file. If the relic is republished, it stays with this version and does not carry over.'));
+    const actions = el('div', 'decision-actions');
+    const go = el('button', 'decision-confirm');
+    go.type = 'button';
+    go.dataset.verdict = v;
+    go.setAttribute('data-decision-confirm', '');
+    go.append(icon(ICON_KEY), el('span', '', working
+      ? 'Waiting for your passkey'
+      : `${verb(v)} version ${mock.version} with your passkey`));
+    go.disabled = working;
+    go.addEventListener('click', confirm);
+    actions.appendChild(go);
+    if (!working) {
+      const back = el('button', 'decision-secondary', 'Choose again');
+      back.type = 'button';
+      back.addEventListener('click', () => { resetStep(); paint(); });
+      actions.appendChild(back);
+    }
+    box.appendChild(actions);
+    if (working) {
+      box.appendChild(el('div', 'decision-waiting'));
+      box.appendChild(el('p', 'decision-fine', 'Confirm on your device. Nothing is recorded until it answers.'));
+      const sim = el('button', 'mock-simulate', 'Mock: close the passkey prompt');
+      sim.type = 'button';
+      sim.addEventListener('click', () => { clearTimeout(workTimer); finish({ state: 'cancelled', code: 'not_allowed' }); });
+      box.appendChild(sim);
+    }
+    return box;
+  }
+
+  // The refusal table, keyed by problem code, the way shareRefusal() is.
+  function refusal(code) {
+    const n = mock.version;
+    switch (code) {
+      case 'decision_digest_mismatch':
+        return { title: 'This page and the stored file differ', detail: mismatchCopy(n),
+          extra: () => facts([['This page', digestChip(DIGEST[n])], ['Stored', digestChip(STORED_ELSEWHERE)]]),
+          after: 'Reload the relic and look again. If they still differ, tell the publisher before anyone decides.',
+          action: 'Reload' };
+      case 'passkey_verification_failed':
+        return { title: 'Your passkey did not verify',
+          detail: 'Relic could not confirm the answer from your passkey. Nothing was recorded.',
+          action: 'Try again' };
+      case 'decision_rate_limited':
+        return { title: 'Too many decisions from here just now',
+          detail: 'Relic limits how many decisions one network can record in an hour. Nothing was recorded. Try again in about 40 minutes.' };
+      case 'sign_in_required':
+        return { title: 'This browser is not verified any more',
+          detail: 'Verification is a short session, and it lapsed. Nothing was recorded. Enter your address again and follow the new link.',
+          action: 'Sign in again' };
+      case 'network':
+        return { title: 'Relic could not be reached',
+          detail: 'The request did not complete, so it may or may not have been recorded. The list above is current; check it before trying again. A second identical decision changes nothing.',
+          action: 'Try again' };
+      default:
+        return { title: 'The decision was refused', detail: `Relic refused it with ${code}. Nothing was recorded.` };
+    }
+  }
+
+  function outcomeBlock() {
+    const o = mock.outcome;
+    const box = el('div', o.state === 'recorded' ? 'decision-outcome' : 'decision-refusal');
+    box.setAttribute('data-decision-outcome', '');
+    box.dataset.state = o.state;
+    box.dataset.code = o.code;
+    box.setAttribute('role', o.state === 'error' ? 'alert' : 'status');
+    if (o.state === 'recorded') {
+      const r = o.record;
+      const stamp = el('figure', `decision-stamp is-${r.verdict}`);
+      stamp.append(
+        el('div', 'decision-stamp-verdict', pastTense(r.verdict)),
+        el('div', 'decision-stamp-line', `Version ${r.version} \u00b7 sha256 ${DIGEST[r.version].slice(0, 12)}`),
+        el('div', 'decision-stamp-line', `${r.author} \u00b7 ${when(r.created)} UTC`),
+      );
+      box.append(stamp, el('p', 'decision-note',
+        `Recorded. Anyone holding this link can read it. It cannot be edited or deleted; a later decision from you becomes your current one and this stays on the record.`));
+      const actions = el('div', 'decision-actions');
+      const done = el('button', 'action primary', 'Done');
+      done.type = 'button';
+      done.addEventListener('click', () => closePanel());
+      const again = el('button', 'decision-secondary', 'Change my decision');
+      again.type = 'button';
+      again.addEventListener('click', () => { resetStep(); paint(); });
+      actions.append(done, again);
+      box.appendChild(actions);
+      return box;
+    }
+    if (o.state === 'cancelled') {
+      box.append(el('p', 'decision-refusal-title', CANCELLED),
+        el('p', '', 'The passkey prompt closed before it answered.'));
+      const actions = el('div', 'decision-actions');
+      const again = el('button', 'action primary', 'Try again');
+      again.type = 'button';
+      again.addEventListener('click', () => { mock.outcome = null; mock.step = 'confirm'; paint(); });
+      const choose = el('button', 'decision-secondary', 'Choose again');
+      choose.type = 'button';
+      choose.addEventListener('click', () => { resetStep(); paint(); });
+      actions.append(again, choose);
+      box.appendChild(actions);
+      return box;
+    }
+    const f = refusal(o.code);
+    box.append(el('p', 'decision-refusal-title', f.title), el('p', '', f.detail));
+    if (f.extra) box.appendChild(f.extra());
+    if (f.after) box.appendChild(el('p', '', f.after));
+    if (f.action) {
+      const a = el('button', 'action primary', f.action);
+      a.type = 'button';
+      a.style.justifySelf = 'start';
+      a.addEventListener('click', () => {
+        if (o.code === 'sign_in_required') { mock.session = 'anonymous'; paintComments(); }
+        if (o.code === 'decision_digest_mismatch') mock.storedDiffers = false;
+        resetStep(); paint();
+      });
+      box.appendChild(a);
+    }
+    box.appendChild(el('div', 'accession', o.code));
+    return box;
+  }
+
+  function body() {
+    const b = el('div', 'decision-body');
+    b.append(...staleNotice());
+    b.appendChild(el('p', 'decision-lead', LEAD));
+    if (mock.unavailable) {
+      const box = el('div', 'decision-refusal');
+      box.setAttribute('data-decision-outcome', '');
+      box.dataset.state = 'error';
+      box.dataset.code = 'decision_unavailable';
+      box.append(el('p', 'decision-refusal-title', 'Decisions are not open here yet'),
+        el('p', '', UNAVAILABLE),
+        el('p', '', 'Comments work as usual in the meantime, and none of them will count as a decision.'),
+        el('div', 'accession', 'decision_unavailable'));
+      b.appendChild(box);
+      return b;
+    }
+    const recorded = mock.step === 'outcome' && mock.outcome.state === 'recorded';
+    if (recorded) b.appendChild(outcomeBlock());
+    b.appendChild(list());
+    if (recorded) return b;
+    if (mock.session !== 'verified') { b.appendChild(signIn()); return b; }
+    if (mock.step === 'list') b.appendChild(chooser());
+    else if (mock.step === 'passkey') b.appendChild(passkeyStep());
+    else if (mock.step === 'confirm') b.appendChild(ticket(false));
+    else if (mock.step === 'working') b.appendChild(ticket(true));
+    else if (mock.step === 'outcome') {
+      if (mock.outcome.state === 'cancelled' || mock.outcome.code === 'network'
+        || mock.outcome.code === 'passkey_verification_failed') b.appendChild(ticketSummary());
+      b.appendChild(outcomeBlock());
+    }
+    return b;
+  }
+
+  // What the reader was about to do, kept above a non-record outcome so the
+  // retry is obviously the same decision.
+  function ticketSummary() {
+    const s = el('p', 'decision-identity');
+    s.append(document.createTextNode(`${verb(mock.verdict)} version ${mock.version} as `), el('strong', '', READER));
+    return s;
+  }
+
+  // ---------- flow ----------
+
+  function resetStep() {
+    mock.step = 'list';
+    mock.verdict = null;
+    mock.outcome = null;
+  }
+
+  // Step 2: choosing a verdict fetches /decisions/options. 409
+  // passkey_required goes to setup; a digest that differs from the page
+  // stops before any ceremony.
+  function pick(v) {
+    mock.verdict = v;
+    if (mock.passkey !== 'have') { mock.step = 'passkey'; paint(); return; }
+    afterOptions();
+  }
+
+  function afterOptions() {
+    if (mock.storedDiffers) {
+      finish({ state: 'error', code: 'decision_digest_mismatch' });
+      return;
+    }
+    mock.step = 'confirm';
+    paint();
+  }
+
+  // Step 5: get() runs synchronously in this click, with options in hand.
+  function confirm() {
+    mock.step = 'working';
+    paint();
+    if (mock.freeze) return;
+    workTimer = setTimeout(() => {
+      if (mock.force) { finish(mock.force); return; }
+      const rec = { id: `x${mock.extra.length}`, version: mock.version, verdict: mock.verdict,
+        author: READER, created: '2026-10-24T15:0' + (mock.extra.length % 10) + ':00Z' };
+      mock.extra.push(rec);
+      finish({ state: 'recorded', code: 'recorded', record: rec });
+    }, 1300);
+  }
+
+  function finish(outcome) {
+    mock.step = 'outcome';
+    mock.outcome = outcome;
+    paint();
+  }
+
+  // ---------- painting and placement ----------
+
+  function place() {
+    const bar = document.querySelector('.bar');
+    dialog.style.setProperty('--decision-top', `${Math.round(bar.getBoundingClientRect().bottom)}px`);
+    // Beside the sidebar when it is open, and beside its edge tab when it is
+    // closed, so the way into the comments is never under the sheet.
+    const wide = window.matchMedia('(min-width: 44.0625rem)').matches;
+    const edge = commentsOpen ? thread : threadTab;
+    const right = wide && edge.offsetWidth > 0
+      ? Math.round(window.innerWidth - edge.getBoundingClientRect().left) : 0;
+    dialog.style.setProperty('--decision-right', `${right}px`);
+    dialog.style.width = `min(27rem, ${window.innerWidth - right}px)`;
+  }
+
+  function paint(focusTitle) {
+    paintBar();
+    dialog.dataset.decisionVersion = String(mock.version);
+    dialog.replaceChildren(head(), body());
+    if (!dialog.open) dialog.show();
+    opener.setAttribute('aria-expanded', 'true');
+    place();
+    if (focusTitle) dialog.querySelector('.decision-title').focus();
+  }
+
+  function closePanel() {
+    clearTimeout(workTimer);
+    dialog.close();
+  }
+
+  dialog.addEventListener('close', () => {
+    opener.setAttribute('aria-expanded', 'false');
+    if (mock.step === 'outcome' && mock.outcome.state === 'recorded') resetStep();
+    syncPressed();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && dialog.open) { closePanel(); opener.focus(); }
+  });
+  opener.addEventListener('click', () => {
+    if (dialog.open) { closePanel(); return; }
+    paint(true);
+  });
+  window.addEventListener('resize', place);
+
+  // ---------- mock controls ----------
+
+  const STATES = {
+    page: [
+      ['Comments open', () => ({ comments: true })],
+      ['Comments closed', () => ({ comments: false })],
+      ['Panel closed', () => ({ closed: true })],
+    ],
+    before: [
+      ['Signed out', () => ({ session: 'anonymous' })],
+      ['Link sent', () => ({ session: 'anonymous', linkSent: true })],
+      ['Ready', () => ({})],
+      ['Nothing yet', () => ({ empty: true })],
+      ['History', () => ({ historyOpen: true })],
+      ['Older version', () => ({ version: 2 })],
+    ],
+    passkey: [
+      ['First passkey', () => ({ passkey: 'none', verdict: 'approve', step: 'passkey' })],
+      ['Passkey elsewhere', () => ({ passkey: 'elsewhere', verdict: 'approve', step: 'passkey' })],
+    ],
+    deciding: [
+      ['Confirm approve', () => ({ verdict: 'approve', step: 'confirm' })],
+      ['Confirm reject', () => ({ verdict: 'reject', step: 'confirm' })],
+      ['Working', () => ({ verdict: 'approve', step: 'working', freeze: true })],
+      ['Recorded approve', () => recordedAs('approve')],
+      ['Recorded reject', () => recordedAs('reject')],
+      ['Cancelled', () => ({ verdict: 'approve', step: 'outcome', outcome: { state: 'cancelled', code: 'not_allowed' } })],
+    ],
+    refusal: [
+      ['Digest mismatch', () => ({ verdict: 'approve', storedDiffers: true, step: 'outcome', outcome: { state: 'error', code: 'decision_digest_mismatch' } })],
+      ['Unavailable', () => ({ unavailable: true })],
+      ['Passkey failed', () => ({ verdict: 'approve', step: 'outcome', outcome: { state: 'error', code: 'passkey_verification_failed' } })],
+      ['Rate limited', () => ({ verdict: 'reject', step: 'outcome', outcome: { state: 'error', code: 'decision_rate_limited' } })],
+      ['Session lapsed', () => ({ verdict: 'approve', step: 'outcome', outcome: { state: 'error', code: 'sign_in_required' } })],
+      ['Network', () => ({ verdict: 'approve', step: 'outcome', outcome: { state: 'error', code: 'network' } })],
+    ],
+  };
+
+  function recordedAs(v) {
+    const rec = { id: 'xr', version: LATEST, verdict: v, author: READER, created: '2026-10-24T15:04:00Z' };
+    return { extra: [rec], verdict: v, step: 'outcome', outcome: { state: 'recorded', code: 'recorded', record: rec } };
+  }
+
+  const panel = document.getElementById('mock-states');
+  const buttons = [];
+  let pressed = null;
+  function syncPressed() {
+    for (const b of buttons) b.setAttribute('aria-pressed', String(b === pressed && (dialog.open || b.dataset.page === 'true')));
+  }
+  for (const [group, entries] of Object.entries(STATES)) {
+    const ul = panel.querySelector(`ul[data-group="${group}"]`);
+    for (const [label, make] of entries) {
+      const li = el('li');
+      const b = el('button', '', label);
+      b.type = 'button';
+      if (group === 'page') b.dataset.page = 'true';
+      b.addEventListener('click', () => {
+        const next = make();
+        clearTimeout(workTimer);
+        if (group === 'page') {
+          if ('comments' in next) { commentsOpen = next.comments; paintComments(); }
+          if (next.closed) closePanel();
+          return;
+        }
+        mock = Object.assign(fresh(), next);
+        paintComments();
+        paint();
+        pressed = b;
+        syncPressed();
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+      buttons.push(b);
+    }
+  }
+  document.getElementById('mock-collapse').addEventListener('click', (event) => {
+    const collapsed = panel.classList.toggle('is-collapsed');
+    event.currentTarget.textContent = collapsed ? 'Show' : 'Hide';
+    event.currentTarget.setAttribute('aria-expanded', String(!collapsed));
+  });
+
+  paintBar();
+  paintComments();
+
+  // Deep links for screenshots and review:
+  // mockup.html#state=<label>&comments=open|closed&controls=hide
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (params.get('comments') === 'open') { commentsOpen = true; paintComments(); }
+  if (params.get('comments') === 'closed') { commentsOpen = false; paintComments(); }
+  const wanted = params.get('state');
+  if (wanted !== null) {
+    const target = buttons.find((b) => b.textContent === wanted);
+    target?.click();
+  }
+  if (params.get('controls') === 'hide') panel.hidden = true;
+})();
+</script>
+</body>
+</html>
