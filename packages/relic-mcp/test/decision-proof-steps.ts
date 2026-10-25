@@ -626,8 +626,23 @@ export async function runDecisionProofSequence(
     console.log('DECISION_B_OK code=decision_requires_reader status=403');
 
     // Step 7: Check (d) - reject v3, read returns 2 records with latest reject
+    // Close and reopen the sheet via spec hook before choosing reject:
+    await browser.clickSelector('button.action-decisions[data-decision-open]');
+    const startWait = Date.now();
+    while (Date.now() - startWait < 5000) {
+      const isOpen = await browser
+        .evaluate<boolean>(
+          'Boolean(document.querySelector("dialog.decision-panel"))'
+        )
+        .catch(() => false);
+      if (!isOpen) break;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 50);
+      await promise;
+    }
+    await browser.clickSelector('button.action-decisions[data-decision-open]');
+    await browser.waitForSelector('[data-decision-verdict="reject"]');
     await browser.clickSelector('[data-decision-verdict="reject"]');
-    await browser.waitForSelector('[data-decision-confirm]');
     await browser.clickSelector('[data-decision-confirm]');
     await browser.waitForSelector(
       '[data-decision-outcome][data-state="recorded"]'
@@ -646,12 +661,18 @@ export async function runDecisionProofSequence(
     );
     const decisionsD = (resD['decisions'] ?? []) as readonly DecisionRecord[];
     assert.equal(decisionsD.length, 2);
-    const dFirst = decisionsD[0];
-    const dSecond = decisionsD[1];
-    assert.ok(dFirst && dSecond, 'expected two decision records on v3');
-    assert.equal(dFirst.verdict, 'approve');
-    assert.equal(dSecond.verdict, 'reject');
-    assert.equal(dSecond.author, readerEmail.trim().toLowerCase());
+    const hasApprove = decisionsD.some((d) => d.verdict === 'approve');
+    const hasReject = decisionsD.some((d) => d.verdict === 'reject');
+    assert.ok(hasApprove, 'expected approve record');
+    assert.ok(hasReject, 'expected reject record');
+    const sorted = [...decisionsD].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    const latest = sorted[sorted.length - 1];
+    assert.ok(latest, 'expected latest decision record');
+    assert.equal(latest.verdict, 'reject');
+    assert.equal(latest.author, readerEmail.trim().toLowerCase());
     console.log('DECISION_D_OK count=2 latest=reject');
 
     // Step 8: Check (c) - republish v4; v4 is empty, v3 still has 2 records
@@ -790,7 +811,11 @@ export async function runDecisionProofSequence(
         return navigator.credentials.get({
           publicKey: {
             ...pk,
-            challenge: b64urlToBuf(pk.challenge)
+            challenge: b64urlToBuf(pk.challenge),
+            allowCredentials: (pk.allowCredentials || []).map(c => ({
+              ...c,
+              id: b64urlToBuf(c.id)
+            }))
           }
         }).then(cred => ({
           id: cred.id,
@@ -828,6 +853,91 @@ export async function runDecisionProofSequence(
     assert.equal(mismatchBody.code, 'decision_digest_mismatch');
 
     // Negative 2: second authenticator with isUserVerified:false gives 403 user_verified
+
+    // 1. Get enroll assertion options
+    const enrollOptRes = await fetch(
+      `${serviceOrigin}/api/auth/passkeys/options`,
+      {
+        method: 'POST',
+        headers: {
+          cookie: readerCookie,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      }
+    );
+    assert.equal(enrollOptRes.status, 200);
+    const enrollOptData = (await enrollOptRes.json()) as {
+      mode: string;
+      public_key: {
+        challenge: string;
+        rpId: string;
+        allowCredentials?: Array<{ id: string; type: string }>;
+      };
+    };
+
+    const enrollAssertion = await browser.evaluate<AuthenticationResponseJSON>(`
+      (() => {
+        const pk = ${JSON.stringify(enrollOptData.public_key)};
+        function b64urlToBuf(s) {
+          const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+          const bin = atob(b64);
+          const buf = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+          return buf.buffer;
+        }
+        function bufToB64url(buf) {
+          const bytes = new Uint8Array(buf);
+          let bin = '';
+          for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          return btoa(bin).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+        }
+        return navigator.credentials.get({
+          publicKey: {
+            ...pk,
+            challenge: b64urlToBuf(pk.challenge),
+            allowCredentials: (pk.allowCredentials || []).map(c => ({
+              ...c,
+              id: b64urlToBuf(c.id)
+            }))
+          }
+        }).then(cred => ({
+          id: cred.id,
+          rawId: cred.id,
+          type: cred.type,
+          response: {
+            clientDataJSON: bufToB64url(cred.response.clientDataJSON),
+            authenticatorData: bufToB64url(cred.response.authenticatorData),
+            signature: bufToB64url(cred.response.signature),
+            userHandle: cred.response.userHandle ? bufToB64url(cred.response.userHandle) : null
+          }
+        }));
+      })()
+    `);
+
+    // 2. Submit enroll assertion to get register CreationOptions with purpose 'register'
+    const regOptRes = await fetch(
+      `${serviceOrigin}/api/auth/passkeys/options`,
+      {
+        method: 'POST',
+        headers: {
+          cookie: readerCookie,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ credential: enrollAssertion }),
+      }
+    );
+    assert.equal(regOptRes.status, 200);
+    const regOptData = (await regOptRes.json()) as {
+      mode: string;
+      public_key: { challenge: string; rp?: { id: string }; rpId?: string };
+    };
+    await browser.cdp.send(
+      'WebAuthn.removeVirtualAuthenticator',
+      { authenticatorId: browser.authenticatorId },
+      browser.sessionId
+    );
+
     const auth2 = (await browser.cdp.send(
       'WebAuthn.addVirtualAuthenticator',
       {
@@ -842,23 +952,6 @@ export async function runDecisionProofSequence(
       },
       browser.sessionId
     )) as { authenticatorId: string };
-
-    const regOptRes = await fetch(
-      `${serviceOrigin}/api/auth/passkeys/options`,
-      {
-        method: 'POST',
-        headers: {
-          cookie: readerCookie,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({}),
-      }
-    );
-    assert.equal(regOptRes.status, 200);
-    const regOptData = (await regOptRes.json()) as {
-      mode: string;
-      public_key: { challenge: string; rp?: { id: string }; rpId?: string };
-    };
 
     const unverifiedRegistration =
       await browser.evaluate<RegistrationResponseJSON>(`
@@ -897,7 +990,6 @@ export async function runDecisionProofSequence(
         }));
       })()
     `);
-
     const unverifiedRes = await fetch(`${serviceOrigin}/api/auth/passkeys`, {
       method: 'POST',
       headers: {

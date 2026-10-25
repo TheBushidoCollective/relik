@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
-import type { OutboundMail } from '@relic/server/src/mail.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { discoverChrome } from '../src/cover/chrome.ts';
@@ -57,10 +56,9 @@ const scratch = await mkdtemp(join(tmpdir(), 'relic-decision-path-'));
 const statePath = join(scratch, 'state.json');
 
 // --- App server setup with MemoryStore and MemoryStorage -----------------
-const fakeNow = Date.now();
 const store = new MemoryStore();
 const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
-const mails: { to: string; mail: OutboundMail }[] = [];
+const mails: { to: string; text: string }[] = [];
 
 let handler: ((request: Request) => Promise<Response>) | undefined;
 const service = Bun.serve({
@@ -81,13 +79,15 @@ const app = createApp({
   },
   store,
   storage,
-  now: () => fakeNow,
+  now: () => Date.now(),
   operatorTokens,
   assets: diskAssets(viewerDist),
   mailer: {
-    send: async () => {},
+    send: async (to, url) => {
+      mails.push({ to, text: url });
+    },
     sendMail: async (to, mail) => {
-      mails.push({ to, mail });
+      mails.push({ to, text: mail.text });
     },
   },
 });
@@ -120,7 +120,7 @@ async function resolveMagicLink(email: string): Promise<string> {
   while (Date.now() < deadline) {
     const found = mails.find((m) => m.to.toLowerCase() === email.toLowerCase());
     if (found) {
-      const match = found.mail.text.match(
+      const match = found.text.match(
         new RegExp(
           `http://localhost:${service.port}/api/auth/callback\\?token=[A-Za-z0-9_-]{43}`
         )
