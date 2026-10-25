@@ -114,6 +114,13 @@ jobs:
           fi
           google-chrome --headless=new --disable-gpu --dump-dom about:blank >/dev/null
 
+      - name: Copy link path
+        run: |
+          set -euo pipefail
+          RELIC_PROOF_CHROME_PATH="$(command -v google-chrome)" \
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            bun packages/relic-mcp/test/copy-link-path.ts
+
       - name: OTIO conformance
         run: |
           command -v ffmpeg >/dev/null
