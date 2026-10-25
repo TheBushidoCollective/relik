@@ -27,6 +27,7 @@ import {
   deriveShareProof,
   encodeKey,
   type ShareEmail,
+  parseRelicId,
 } from '@relic/format';
 import { commentRefusal, type Refusal } from './comments.ts';
 import type { ViewerDeps } from './viewer.ts';
@@ -484,8 +485,12 @@ export async function requestShare(
   const body = await shareRequestBody(key, emails);
   let response: Response;
   try {
+    let canonical = relicId;
+    try {
+      canonical = parseRelicId(relicId);
+    } catch {}
     response = await deps.fetch(
-      `${deps.serviceOrigin}/api/relics/${encodeURIComponent(relicId)}/share`,
+      `${deps.serviceOrigin}/api/relics/${encodeURIComponent(canonical)}/share`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

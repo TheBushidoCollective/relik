@@ -892,3 +892,12 @@ No MCP tool can record a decision. Decisions are recorded only by human readers 
 **Residuals:**
 - First use is trusted (TOFU): the approver should register their passkey once in the viewer before downstream automation depends on decisions.
 - Relics published before relic-mcp 0.11.0 lack a registered `shareVerifier` and return `409 decision_unavailable` until republished once.
+## 2026-10-24: The key is checked against the first record, every relic shows its loading phases, and a truncated relic is refused
+
+**Record 0 is the key check, in the browser only.** Jason Waldrip approved checking the key against the first record and cancelling the download when it fails, with no check on the server. The viewer streams the signed download and decrypts record 0 as soon as its 65,557 bytes arrive. A wrong key used to download the whole object, up to 105,298,736 bytes, before saying the relic could not be opened. Server-side checks were rejected. A verifier returned to readers needs a stored value that relics published before sharing lack, and it could not be trusted anyway. Sending the share proof on every open would hand the operator per-open data on who holds a working key. The one new observable, an open that stops after its first block, is disclosed on `/policy` at Jason's direction.
+
+**A failure after record 0 says the file is damaged.** Jason chose that a later failure drops key entry and says the link is fine and the stored file was changed or damaged, with Try again and Report this relic.
+
+**A truncated container is refused.** `openRelic` accepted an object cut at a record boundary. In a probe it returned 196,557 of 196,567 declared bytes, because nothing checked for the final record or the envelope's length. Every relic ever written satisfies the stricter rule, since there has only ever been one encoder.
+
+**Every relic page shows the bar and a named phase from the first frame.** The shell carries a static plate, so the page is never blank before `viewer.js` runs. The viewer then shows Opening, Fetching with bytes against the mint's object length, Decrypting, and Rendering, as `viewer.md` §6.3 and §6.4 and `surface.md` §7 already specified. Try again now reruns the open with the key in memory instead of reloading a page whose key was stripped.

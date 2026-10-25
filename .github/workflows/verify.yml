@@ -156,6 +156,13 @@ jobs:
               bun packages/relic-mcp/test/otio-path.ts \
               2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-path.log"
 
+
+      - name: Load progress path
+        run: |
+          set -euo pipefail
+          RELIC_PROOF_CHROME_PATH="$(command -v google-chrome)" \
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            bun packages/relic-mcp/test/load-progress-path.ts
       - name: Upload OTIO browser proof
         if: always()
         uses: actions/upload-artifact@v4

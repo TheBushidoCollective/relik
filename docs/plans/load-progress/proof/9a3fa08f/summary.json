@@ -1,0 +1,168 @@
+{
+  "classes": 12,
+  "runs": 31,
+  "timestamp": "2026-10-25T08:57:15.155Z",
+  "headSha": "9a3fa08f",
+  "proofDir": "/Users/jwaldrip/.omp/wt/relik-load-progress/docs/plans/load-progress/proof/9a3fa08f/",
+  "runsSummary": [
+    {
+      "name": "Run 1: md 1440x900 light",
+      "durationMs": 613,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: ts 1440x900 light",
+      "durationMs": 539,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: png 1440x900 light",
+      "durationMs": 530,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: svg 1440x900 light",
+      "durationMs": 521,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: html 1440x900 light",
+      "durationMs": 599,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: jsx 1440x900 light",
+      "durationMs": 565,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: pdf 1440x900 light",
+      "durationMs": 554,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: mp4 1440x900 light",
+      "durationMs": 419,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: wav 1440x900 light",
+      "durationMs": 647,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: otio 1440x900 light",
+      "durationMs": 2468,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: zip 1440x900 light",
+      "durationMs": 377,
+      "status": "pass"
+    },
+    {
+      "name": "Run 1: bin 1440x900 light",
+      "durationMs": 424,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: md 390-dark",
+      "durationMs": 535,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: png 390-dark",
+      "durationMs": 481,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: html 390-dark",
+      "durationMs": 526,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: pdf 390-dark",
+      "durationMs": 514,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: otio 390-dark",
+      "durationMs": 2375,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: bin 390-dark",
+      "durationMs": 408,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: md 320-light",
+      "durationMs": 515,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: png 320-light",
+      "durationMs": 441,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: html 320-light",
+      "durationMs": 476,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: pdf 320-light",
+      "durationMs": 457,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: otio 320-light",
+      "durationMs": 2342,
+      "status": "pass"
+    },
+    {
+      "name": "Run 2: bin 320-light",
+      "durationMs": 424,
+      "status": "pass"
+    },
+    {
+      "name": "Run 3: Wrong key early cancel & reopen",
+      "durationMs": 6569,
+      "status": "pass",
+      "details": {
+        "serverEnqueuedBytes": 81920,
+        "clientDataReceivedBytes": 81920
+      }
+    },
+    {
+      "name": "Run 4: Mid-stream abort & Try again in place",
+      "durationMs": 717,
+      "status": "pass"
+    },
+    {
+      "name": "Run 5: Byte flipped in record 2",
+      "durationMs": 495,
+      "status": "pass"
+    },
+    {
+      "name": "Run 6: Missing last record truncated container",
+      "durationMs": 550,
+      "status": "pass"
+    },
+    {
+      "name": "Run 7: Noscript execution disabled",
+      "durationMs": 453,
+      "status": "pass"
+    },
+    {
+      "name": "Run 8: Blocked viewer.js static plate",
+      "durationMs": 565,
+      "status": "pass"
+    },
+    {
+      "name": "Run 9: Version switch v2 -> v1",
+      "durationMs": 980,
+      "status": "pass"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+Spec B mock shots: docs/plans/load-progress/mockup.html
+Browser: HeadlessChrome/149.0.7827.55 (chrome-headless-shell-1228, throwaway profile, private port)
+Served from a loopback HTTP server that answers only /mockup.html.
+Stylesheet copied from packages/relic-viewer/src/styles.css at origin/main 8ae3b3c3.
+
+Files: <state>-<width>-<theme>.png, viewport only, deviceScaleFactor 1.
+Sweeps (plate meter, render strip) are paused at 700 ms before each shot.
+Reload a state: mockup.html#state=<id>[&class=<pdf|image|media|otio|frame>]&theme=<light|dark>&controls=hide
+
+Requests per fresh load (theme, width: network requests / server log):
+  light 1440: 1 / GET /mockup.html
+  light  390: 1 / GET /mockup.html
+  light  320: 1 / GET /mockup.html
+  dark  1440: 1 / GET /mockup.html
+  dark   390: 1 / GET /mockup.html
+  dark   320: 1 / GET /mockup.html
+
+Shots: 162 (27 states x 3 widths x 2 themes) plus 4 reduced-motion shots.
+Horizontal overflow: documentElement.scrollWidth - innerWidth, worst case 0 px.
+Render pill present in 42 shots: inside the band, off the stage and every frame,
+touching no band label or icon, and removing it moves neither the relic row nor the Comments tab.
+Every state and class clicked from the panel with real pointer input at 1440, 390 and 320.
+Paths clicked in the viewer: Try again re-mounts the plate; choosing version 2 shows the
+pill and ends in the toast; Earlier versions opens the comparison line; a typed key shows
+the fetching line under the form.
+Simulate a throttled open, phase order observed: opening > transfer > fetching > fetching+contents > decrypting > rendering+pill > ready
+Copy read back from the DOM for every state and compared word for word: no mismatches.
+Failures: 0

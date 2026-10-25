@@ -15,19 +15,29 @@
  */
 
 import {
+  ContentTooLargeError,
   DecryptFailedError,
   deriveRendererClass,
   encodeFragment,
   FORMAT_VERSION,
+  INSECURE_ADVICE,
+  INSECURE_DETAIL,
+  INSECURE_TITLE,
   KeyIdPresentError,
   leastPrivileged,
+  LOAD_OPENING,
   MalformedFragmentError,
-  openRelic,
+  openEnvelope,
+  openRelicStream,
   parseFragment,
+  parseRelicId,
+  PHASE_DECRYPTING,
+  PHASE_FETCHING,
   plaintextSizeUpperBound,
   privilegeTier,
   type RendererClass,
   sniffContentClass,
+  TransferIncompleteError,
   UnknownVersionError,
   VersionMismatchError,
   versionDigest,
@@ -41,13 +51,43 @@ import type { CommentedRelic } from './relic-rows.ts';
 /** Refuse before allocating anything this large. */
 export const MAX_RENDER_BYTES = 100 * 1024 * 1024;
 
+export interface LoadContents {
+  readonly filename: string;
+  readonly length: number;
+}
+
+export type LoadProgress =
+  | { readonly phase: 'opening' }
+  | {
+      readonly phase: 'fetching';
+      readonly received: number;
+      readonly total: number;
+      readonly contents?: LoadContents | undefined;
+    }
+  | {
+      readonly phase: 'decrypting';
+      readonly opened: number;
+      readonly contents: LoadContents;
+    };
+
+export interface CachedPrefix {
+  readonly prefix: Uint8Array;
+  readonly mint: MintResponse;
+}
+
+export interface LoadResume {
+  readonly fragment: string;
+  readonly mint?: MintResponse | undefined;
+}
+
 export type ViewerState =
-  | { kind: 'loading' }
   | { kind: 'ready'; view: ReadyView }
   | {
       kind: 'dead';
       dead: DeadView;
-      cachedCiphertext?: { bytes: Uint8Array; mint: MintResponse };
+      cachedPrefix?: CachedPrefix | undefined;
+      cachedCiphertext?: CachedPrefix | undefined;
+      resume?: LoadResume | undefined;
     };
 
 export interface ReadyView {
@@ -87,11 +127,18 @@ export type RenderRoute =
   | 'pdf'
   | 'download';
 
+export type DeadAction =
+  | 'retry'
+  | 'reopen-original-link'
+  | 'report'
+  | 'retry-report'
+  | 'none';
+
 export interface DeadView {
   readonly headline: string;
   readonly detail: string;
   /** Shown only where the recipient can actually act on it. */
-  readonly action: 'retry' | 'reopen-original-link' | 'report' | 'none';
+  readonly action: DeadAction;
   readonly code: string;
 }
 
@@ -159,11 +206,13 @@ export interface ViewerDeps {
   readonly serviceOrigin: string;
   readonly fetch: typeof globalThis.fetch;
   /** Reads `location.hash` exactly once, then hands it over. */
-  readonly takeFragment: () => string;
+  readonly takeFragment?: () => string;
   /** Calls `history.replaceState` to drop the fragment from the address bar. */
-  readonly stripFragment: () => void;
+  readonly stripFragment?: () => void;
   readonly locationHref: string;
   readonly keyVault: KeyVault;
+  readonly now?: () => number;
+  readonly secureContext?: () => boolean;
 }
 
 /**
@@ -179,63 +228,132 @@ export function shareUrlFor(href: string, fragment: string): string {
   return url.toString();
 }
 
+function teeAndDigest(source: ReadableStream<Uint8Array>) {
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
+  const reader = source.getReader();
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        if (value) {
+          chunks.push(value);
+          totalLength += value.length;
+          controller.enqueue(value);
+        }
+      },
+      async cancel(reason) {
+        await reader.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const computeDigest = async (): Promise<string> => {
+    const full = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const c of chunks) {
+      full.set(c, offset);
+      offset += c.length;
+    }
+    return versionDigest(full);
+  };
+  return { stream, computeDigest };
+}
+
 export async function load(
-  relicId: string,
-  deps: ViewerDeps
+  rawRelicId: string,
+  deps: ViewerDeps,
+  onProgress?: (p: LoadProgress) => void,
+  resume?: LoadResume
 ): Promise<ViewerState> {
-  // Read the hash once into a local variable, then strip it. Cheapest
-  // insurance in the product: a sanitizer bypass, a stray same-origin script,
-  // or a bundled first-party SDK finds nothing in `location.hash` to read.
-  //
-  // It shrinks the window without closing it. The URL with its fragment
-  // existed before the replace, so browser history sync, an extension with
-  // host permissions, and the application the link was clicked from all
-  // already saw it.
-  const fromUrl = deps.takeFragment();
-  deps.stripFragment();
-
-  // A reload arrives with no fragment, because reading it stripped it. Fall
-  // back to what this browser was told last time.
-  const recalled =
-    fromUrl.length === 0 || fromUrl === '#'
-      ? deps.keyVault.recall(relicId)
-      : undefined;
-  const fragment = recalled ?? fromUrl;
-  /** Whether the key came from storage, so a bad one can be evicted. */
-  const fromVault = recalled !== undefined;
-
-  // Rebuilt from the key actually in use, never read back off the address bar.
-  //
-  // The address bar is the one place the key is guaranteed not to be: it was
-  // stripped on the way in, and a reload arrives with it already gone. Taking
-  // the share URL from `location.href` therefore produced a link with no key
-  // on exactly the visits where the reader had to fall back to storage, and it
-  // did it silently: the copy succeeded, the toast said the link contained the
-  // key, and the recipient got a page that could not open.
-  const shareUrl = shareUrlFor(deps.locationHref, fragment);
-
-  if (fragment.length === 0 || fragment === '#') {
-    // No key in the URL and none remembered here. Say so plainly, pointing
-    // back at the original link rather than showing a decrypt error.
+  let relicId: string;
+  try {
+    relicId = parseRelicId(rawRelicId);
+  } catch {
     return {
       kind: 'dead',
       dead: {
-        headline: 'This link is missing its key',
+        headline: 'No such relic',
         detail:
-          'The part of the link after the # is the decryption key, and it ' +
-          'is not here. This usually means the page was reloaded, which ' +
-          'drops it. Open the original link again.',
-        action: 'reopen-original-link',
-        code: 'fragment_missing',
+          'This link does not point at anything. It may have been mistyped.',
+        action: 'none',
+        code: 'invalid_relic_id',
+      },
+    };
+  }
+  const isSecure =
+    deps.secureContext !== undefined
+      ? deps.secureContext()
+      : (typeof globalThis.isSecureContext === 'undefined' ||
+          globalThis.isSecureContext) &&
+        globalThis.crypto?.subtle !== undefined;
+
+  if (!isSecure) {
+    return {
+      kind: 'dead',
+      dead: {
+        headline: INSECURE_TITLE,
+        detail: `${INSECURE_DETAIL}\n\n${INSECURE_ADVICE}`,
+        action: 'none',
+        code: 'insecure_context',
       },
     };
   }
 
+  let fragment: string;
+  let fromVault = false;
+
+  if (resume !== undefined) {
+    fragment = resume.fragment;
+  } else {
+    const raw = deps.takeFragment
+      ? deps.takeFragment()
+      : (() => {
+          try {
+            return new URL(deps.locationHref).hash;
+          } catch {
+            return '';
+          }
+        })();
+
+    if (raw === undefined || raw === '' || raw === '#') {
+      const recalled = deps.keyVault.recall(relicId);
+      if (recalled !== undefined) {
+        fragment = recalled;
+        fromVault = true;
+      } else {
+        return {
+          kind: 'dead',
+          dead: {
+            headline: 'This link is missing its key',
+            detail:
+              'The part of the link after the # is the decryption key, and it ' +
+              'is not here. This usually means the page was reloaded, which ' +
+              'drops it. Open the original link again.',
+            action: 'reopen-original-link',
+            code: 'fragment_missing',
+          },
+        };
+      }
+    } else {
+      fragment = raw.startsWith('#') ? raw.slice(1) : raw;
+      deps.stripFragment?.();
+    }
+  }
+
+  if (fragment.startsWith('#')) {
+    fragment = fragment.slice(1);
+  }
+
+  const shareUrl = shareUrlFor(deps.locationHref, fragment);
+
   let key: Uint8Array;
   let version: number;
   try {
-    // An unknown version refuses here, before the fetch: no mint, no consumed
-    // download cap, no byte of egress.
     ({ key, version } = parseFragment(fragment));
   } catch (error) {
     if (error instanceof UnknownVersionError) {
@@ -246,8 +364,6 @@ export async function load(
         'unknown_version'
       );
     }
-    // A remembered key that no longer parses is corrupt storage, not a bad
-    // link. Drop it so the next attempt is a clean one.
     if (fromVault) deps.keyVault.forget(relicId);
     if (error instanceof MalformedFragmentError) {
       return dead(
@@ -262,18 +378,32 @@ export async function load(
     throw error;
   }
 
-  const minted = await mint(relicId, deps);
-  if ('dead' in minted) {
-    // Expired, removed, or never published. Whatever this browser remembered
-    // is worthless now, and keeping a dead key is keeping a secret for no
-    // reason at all.
-    deps.keyVault.forget(relicId);
-    return { kind: 'dead', dead: minted.dead };
-  }
-  const mintResponse = minted.mint;
+  let mintResponse: MintResponse;
+  const now = deps.now ? deps.now() : Date.now();
 
-  // Refuse before allocating, using a bound computed from the object length
-  // and the record size rather than anything the server declared.
+  if (resume?.mint && Date.parse(resume.mint.url_expires_at) - now >= 60_000) {
+    mintResponse = resume.mint;
+  } else {
+    onProgress?.({ phase: 'opening' });
+    const minted = await mint(relicId, deps);
+    if ('dead' in minted) {
+      if (minted.dead.code !== 'service_unreachable' && fromVault) {
+        deps.keyVault.forget(relicId);
+      }
+      return {
+        kind: 'dead',
+        dead: minted.dead,
+        resume: { fragment },
+      };
+    }
+    mintResponse = minted.mint;
+  }
+  onProgress?.({
+    phase: 'fetching',
+    received: 0,
+    total: mintResponse.object_length,
+  });
+
   const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
   if (upperBound > MAX_RENDER_BYTES) {
     return dead(
@@ -285,11 +415,21 @@ export async function load(
     );
   }
 
-  const fetched = await deps.fetch(mintResponse.url);
+  let fetched: Response;
+  try {
+    fetched = await deps.fetch(mintResponse.url);
+  } catch {
+    return dead(
+      'This relic could not be opened',
+      'Something went wrong reaching the service.',
+      'retry',
+      'service_unreachable',
+      undefined,
+      { fragment, mint: mintResponse }
+    );
+  }
+
   if (!fetched.ok) {
-    // A fetch that fails not-found after a successful mint is a takedown that
-    // landed between the two. It must never render as a decrypt failure, or
-    // the recipient blames the sender.
     return dead(
       'This relic is no longer available',
       'It was removed after this page started loading.',
@@ -298,21 +438,65 @@ export async function load(
     );
   }
 
-  const bytes = new Uint8Array(await fetched.arrayBuffer());
-
-  if (bytes.length !== mintResponse.object_length) {
+  if (!fetched.body) {
     return dead(
       'The download was cut short',
       'The transfer did not complete. This is a network problem, not a ' +
         'problem with the link.',
       'retry',
-      'truncated_transfer'
+      'truncated_transfer',
+      undefined,
+      { fragment, mint: mintResponse }
     );
   }
-  const digest = await versionDigest(bytes);
+  const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
+
+  let cachedPrefixData: CachedPrefix | undefined;
+  let envelopeFired = false;
+  let loadContents: LoadContents | undefined;
 
   try {
-    const opened = await openRelic(bytes, key, version);
+    const opened = await openRelicStream(bodyStream, key, {
+      objectLength: mintResponse.object_length,
+      fragmentVersion: version,
+      maxContentBytes: MAX_RENDER_BYTES,
+      onPrefix: (prefix) => {
+        cachedPrefixData = { prefix, mint: mintResponse };
+      },
+      onEnvelope: (env) => {
+        envelopeFired = true;
+        const entry = env.entries[0];
+        if (entry) {
+          loadContents = { filename: entry.filename, length: entry.length };
+        }
+      },
+      onProgress: (prog) => {
+        if (prog.receivedBytes < prog.objectLength) {
+          onProgress?.({
+            phase: 'fetching',
+            received: prog.receivedBytes,
+            total: prog.objectLength,
+            contents: loadContents,
+          });
+        } else {
+          if (loadContents && prog.openedContentBytes < loadContents.length) {
+            onProgress?.({
+              phase: 'decrypting',
+              opened: prog.openedContentBytes,
+              contents: loadContents,
+            });
+          } else {
+            onProgress?.({
+              phase: 'fetching',
+              received: prog.receivedBytes,
+              total: prog.objectLength,
+              contents: loadContents,
+            });
+          }
+        }
+      },
+    });
+
     const entry = opened.envelope.entries[0];
     if (entry === undefined) {
       return dead(
@@ -325,9 +509,6 @@ export async function load(
 
     const route = routeFor(entry.filename, entry.mimetype, opened.content);
 
-    // Mint proves the relic exists. Successful AEAD authentication proves this
-    // browser holds its key. Remember only here: writing after mint but before
-    // decrypt made a well-formed wrong key appear as an openable dashboard row.
     deps.keyVault.remember(
       relicId,
       fragment,
@@ -337,6 +518,7 @@ export async function load(
       { title: entry.filename, renderer: route.route }
     );
 
+    const digest = await computeDigest();
     return {
       kind: 'ready',
       view: {
@@ -352,27 +534,22 @@ export async function load(
       },
     };
   } catch (error) {
-    if (error instanceof KeyIdPresentError) {
-      return dead(
-        'This relic is malformed',
-        'It sets a header field this format forbids.',
-        'none',
-        'keyid_present'
-      );
+    if (error instanceof TransferIncompleteError) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: 'The download was cut short',
+          detail:
+            'The transfer did not complete. This is a network problem, not a ' +
+            'problem with the link.',
+          action: 'retry',
+          code: 'truncated_transfer',
+        },
+        resume: { fragment, mint: mintResponse },
+      };
     }
-    if (error instanceof VersionMismatchError) {
-      return dead(
-        'This relic does not match its link',
-        'The format version inside the file disagrees with the one in the ' +
-          'link. The link may have been altered.',
-        'none',
-        'version_mismatch'
-      );
-    }
-    if (error instanceof DecryptFailedError) {
-      // Deliberately does not say "wrong key". A wrong key, a truncated
-      // transfer, and a tampered header produce the identical symptom, and
-      // claiming one of them would be a guess presented as a diagnosis.
+
+    if (error instanceof DecryptFailedError && error.recordSeq === 0) {
       if (fromVault) deps.keyVault.forget(relicId);
       return {
         kind: 'dead',
@@ -385,7 +562,49 @@ export async function load(
           action: 'reopen-original-link',
           code: 'decrypt_failed',
         },
-        cachedCiphertext: { bytes, mint: mintResponse },
+        cachedPrefix: cachedPrefixData,
+        cachedCiphertext: cachedPrefixData,
+      };
+    }
+    if (error instanceof ContentTooLargeError) {
+      return dead(
+        'This relic is too large to open here',
+        `It holds up to ${formatBytes(error.declaredBytes)}, past what this viewer will ` +
+          'load into a browser tab.',
+        'none',
+        'too_large'
+      );
+    }
+
+    if (error instanceof KeyIdPresentError) {
+      return dead(
+        'This relic is malformed',
+        'It sets a header field this format forbids.',
+        'none',
+        'keyid_present'
+      );
+    }
+
+    if (error instanceof VersionMismatchError) {
+      return dead(
+        'This relic does not match its link',
+        'The format version inside the file disagrees with the one in the ' +
+          'link. The link may have been altered.',
+        'none',
+        'version_mismatch'
+      );
+    }
+
+    if (envelopeFired) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: DAMAGED_TITLE,
+          detail: DAMAGED_DETAIL,
+          action: 'retry-report',
+          code: 'content_damaged',
+        },
+        resume: { fragment, mint: mintResponse },
       };
     }
     return dead(
@@ -398,20 +617,38 @@ export async function load(
 }
 
 async function mint(
-  relicId: string,
+  rawRelicId: string,
   deps: ViewerDeps,
   requestedVersion?: number
 ): Promise<{ mint: MintResponse } | { dead: DeadView }> {
-  const response = await deps.fetch(
-    `${deps.serviceOrigin}/api/relics/${relicId}/mint`,
-    requestedVersion === undefined
-      ? { method: 'POST' }
-      : {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ version: requestedVersion }),
-        }
-  );
+  let relicId: string;
+  try {
+    relicId = parseRelicId(rawRelicId);
+  } catch {
+    return { dead: deadFromProblem('invalid_relic_id') };
+  }
+  let response: Response;
+  try {
+    response = await deps.fetch(
+      `${deps.serviceOrigin}/api/relics/${encodeURIComponent(relicId)}/mint`,
+      requestedVersion === undefined
+        ? { method: 'POST' }
+        : {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ version: requestedVersion }),
+          }
+    );
+  } catch {
+    return {
+      dead: {
+        headline: 'This relic could not be opened',
+        detail: 'Something went wrong reaching the service.',
+        action: 'retry',
+        code: 'service_unreachable',
+      },
+    };
+  }
 
   if (response.ok) {
     return { mint: (await response.json()) as MintResponse };
@@ -434,7 +671,8 @@ export async function loadHistoricalVersion(
   relicId: string,
   requestedVersion: number,
   current: ReadyView,
-  deps: ViewerDeps
+  deps: ViewerDeps,
+  onProgress?: (p: LoadProgress) => void
 ): Promise<HistoricalVersionState> {
   if (
     !Number.isInteger(requestedVersion) ||
@@ -454,22 +692,6 @@ export async function loadHistoricalVersion(
     return { kind: 'ready', view: current };
   }
 
-  // Nothing about comparison is decided here, and that is the point of this
-  // function's shape.
-  //
-  // It used to refuse outright when the *current* version was download-only
-  // or over the comparison ceiling, which meant a reader could not reach an
-  // earlier version at all on those relics. The two facts are unrelated: an
-  // earlier version's bytes are fetchable and openable whatever the current
-  // version happens to be, and whether the two can be shown side by side is
-  // a question for whoever renders them. Answering it here turned "we cannot
-  // diff these" into "you cannot see this", which is a different and much
-  // worse sentence.
-  //
-  // The ceiling that does apply is the one `load` applies to any version,
-  // because it bounds what this page will allocate rather than what it will
-  // diff.
-
   let key: Uint8Array;
   let formatVersion: number;
   try {
@@ -486,6 +708,7 @@ export async function loadHistoricalVersion(
     };
   }
 
+  onProgress?.({ phase: 'opening' });
   const minted = await mint(relicId, deps, requestedVersion);
   if ('dead' in minted) {
     return {
@@ -523,7 +746,19 @@ export async function loadHistoricalVersion(
     };
   }
 
-  const fetched = await deps.fetch(mintResponse.url);
+  let fetched: Response;
+  try {
+    fetched = await deps.fetch(mintResponse.url);
+  } catch {
+    return {
+      kind: 'unavailable',
+      code: 'version_fetch_failed',
+      detail:
+        `Version ${requestedVersion} could not be downloaded. Version ` +
+        `${current.version} remains open.`,
+    };
+  }
+
   if (!fetched.ok) {
     return {
       kind: 'unavailable',
@@ -534,8 +769,7 @@ export async function loadHistoricalVersion(
     };
   }
 
-  const bytes = new Uint8Array(await fetched.arrayBuffer());
-  if (bytes.length !== mintResponse.object_length) {
+  if (!fetched.body) {
     return {
       kind: 'unavailable',
       code: 'version_truncated',
@@ -544,10 +778,48 @@ export async function loadHistoricalVersion(
         `${current.version} remains open.`,
     };
   }
-  const digest = await versionDigest(bytes);
+  const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
+
+  let loadContents: LoadContents | undefined;
 
   try {
-    const opened = await openRelic(bytes, key, formatVersion);
+    const opened = await openRelicStream(bodyStream, key, {
+      objectLength: mintResponse.object_length,
+      fragmentVersion: formatVersion,
+      maxContentBytes: MAX_RENDER_BYTES,
+      onEnvelope: (env) => {
+        const entry = env.entries[0];
+        if (entry) {
+          loadContents = { filename: entry.filename, length: entry.length };
+        }
+      },
+      onProgress: (prog) => {
+        if (prog.receivedBytes < prog.objectLength) {
+          onProgress?.({
+            phase: 'fetching',
+            received: prog.receivedBytes,
+            total: prog.objectLength,
+            contents: loadContents,
+          });
+        } else {
+          if (loadContents && prog.openedContentBytes < loadContents.length) {
+            onProgress?.({
+              phase: 'decrypting',
+              opened: prog.openedContentBytes,
+              contents: loadContents,
+            });
+          } else {
+            onProgress?.({
+              phase: 'fetching',
+              received: prog.receivedBytes,
+              total: prog.objectLength,
+              contents: loadContents,
+            });
+          }
+        }
+      },
+    });
+
     const entry = opened.envelope.entries[0];
     if (entry === undefined) {
       return {
@@ -570,6 +842,7 @@ export async function loadHistoricalVersion(
     }
 
     const route = routeFor(entry.filename, entry.mimetype, opened.content);
+    const digest = await computeDigest();
     return {
       kind: 'ready',
       view: {
@@ -584,7 +857,16 @@ export async function loadHistoricalVersion(
         versionDigest: digest,
       },
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof TransferIncompleteError) {
+      return {
+        kind: 'unavailable',
+        code: 'version_truncated',
+        detail:
+          `Version ${requestedVersion} did not finish downloading. Version ` +
+          `${current.version} remains open.`,
+      };
+    }
     return {
       kind: 'unavailable',
       code: 'version_decrypt_failed',
@@ -822,22 +1104,56 @@ function describe(cls: RendererClass): string {
   }
 }
 
+export const DAMAGED_TITLE = 'The stored file is damaged';
+export const DAMAGED_DETAIL =
+  'The start of the file decrypted with this link, so the link is fine. A later part did not, which means the stored file was changed or damaged.';
+
 function dead(
   headline: string,
   detail: string,
-  action: DeadView['action'],
-  code: string
+  action: DeadView['action'] = 'none',
+  code = 'error',
+  cachedPrefix?: CachedPrefix,
+  resume?: LoadResume
 ): ViewerState {
-  return { kind: 'dead', dead: { headline, detail, action, code } };
+  return {
+    kind: 'dead',
+    dead: { headline, detail, action, code },
+    cachedPrefix,
+    cachedCiphertext: cachedPrefix,
+    resume,
+  };
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1000) return `${Math.round(bytes)} B`;
+  if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} KB`;
+  if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+}
+
+export function formatTransfer(received: number, total: number): string {
+  if (total < 1000) {
+    return `${Math.round(received)} of ${Math.round(total)} B`;
   }
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (total < 1_000_000) {
+    return `${(received / 1000).toFixed(1)} of ${(total / 1000).toFixed(1)} KB`;
+  }
+  if (total < 1_000_000_000) {
+    return `${(received / 1_000_000).toFixed(1)} of ${(total / 1_000_000).toFixed(1)} MB`;
+  }
+  return `${(received / 1_000_000_000).toFixed(1)} of ${(total / 1_000_000_000).toFixed(1)} GB`;
+}
+
+export function progressLine(p: LoadProgress): string {
+  switch (p.phase) {
+    case 'opening':
+      return LOAD_OPENING;
+    case 'fetching':
+      return `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+    case 'decrypting':
+      return `${PHASE_DECRYPTING} ${formatTransfer(p.opened, p.contents.length)}`;
+  }
 }
 
 export function isKeyEntryRecoverable(code: string): boolean {
@@ -928,7 +1244,11 @@ export async function resolveEnteredKey(
 export type KeyEntryAttemptResult =
   | { readonly kind: 'ready'; readonly view: ReadyView }
   | { readonly kind: 'invalid'; readonly message: string }
-  | { readonly kind: 'wrong_key'; readonly message: string }
+  | {
+      readonly kind: 'wrong_key';
+      readonly message: string;
+      readonly cachedPrefix?: CachedPrefix | undefined;
+    }
   | { readonly kind: 'dead'; readonly dead: DeadView };
 
 /**
@@ -939,7 +1259,8 @@ export async function openRelicWithKey(
   relicId: string,
   input: string,
   deps: ViewerDeps,
-  cachedCiphertext?: { bytes: Uint8Array; mint: MintResponse }
+  cachedPrefix?: CachedPrefix,
+  onProgress?: (p: LoadProgress) => void
 ): Promise<KeyEntryAttemptResult> {
   const resolution = await resolveEnteredKey(input);
   if (resolution.kind === 'invalid') {
@@ -948,66 +1269,140 @@ export async function openRelicWithKey(
 
   const { key, version, fragment } = resolution.resolved;
 
-  let bytes: Uint8Array;
-  let mintResponse: MintResponse;
+  if (cachedPrefix !== undefined) {
+    try {
+      await openEnvelope(cachedPrefix.prefix, key, version);
+    } catch (err) {
+      if (err instanceof DecryptFailedError) {
+        return {
+          kind: 'wrong_key',
+          message: 'That key does not open this relic.',
+          cachedPrefix,
+        };
+      }
+    }
+  }
 
-  if (cachedCiphertext !== undefined) {
-    bytes = cachedCiphertext.bytes;
-    mintResponse = cachedCiphertext.mint;
+  let mintResponse: MintResponse;
+  const now = deps.now ? deps.now() : Date.now();
+
+  if (
+    cachedPrefix?.mint &&
+    Date.parse(cachedPrefix.mint.url_expires_at) - now >= 60_000
+  ) {
+    mintResponse = cachedPrefix.mint;
   } else {
+    onProgress?.({ phase: 'opening' });
     const minted = await mint(relicId, deps);
     if ('dead' in minted) {
       return { kind: 'dead', dead: minted.dead };
     }
     mintResponse = minted.mint;
-
-    const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
-    if (upperBound > MAX_RENDER_BYTES) {
-      return {
-        kind: 'dead',
-        dead: {
-          headline: 'This relic is too large to open here',
-          detail:
-            `It holds up to ${formatBytes(upperBound)}, past what this viewer will ` +
-            'load into a browser tab.',
-          action: 'none',
-          code: 'too_large',
-        },
-      };
-    }
-
-    const fetched = await deps.fetch(mintResponse.url);
-    if (!fetched.ok) {
-      return {
-        kind: 'dead',
-        dead: {
-          headline: 'This relic is no longer available',
-          detail: 'It was removed after this page started loading.',
-          action: 'report',
-          code: 'removed_after_mint',
-        },
-      };
-    }
-
-    bytes = new Uint8Array(await fetched.arrayBuffer());
-    if (bytes.length !== mintResponse.object_length) {
-      return {
-        kind: 'dead',
-        dead: {
-          headline: 'The download was cut short',
-          detail:
-            'The transfer did not complete. This is a network problem, not a ' +
-            'problem with the link.',
-          action: 'retry',
-          code: 'truncated_transfer',
-        },
-      };
-    }
   }
-  const digest = await versionDigest(bytes);
+
+  const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
+  if (upperBound > MAX_RENDER_BYTES) {
+    return {
+      kind: 'dead',
+      dead: {
+        headline: 'This relic is too large to open here',
+        detail:
+          `It holds up to ${formatBytes(upperBound)}, past what this viewer will ` +
+          'load into a browser tab.',
+        action: 'none',
+        code: 'too_large',
+      },
+    };
+  }
+
+  let fetched: Response;
+  try {
+    fetched = await deps.fetch(mintResponse.url);
+  } catch {
+    return {
+      kind: 'dead',
+      dead: {
+        headline: 'This relic could not be opened',
+        detail: 'Something went wrong reaching the service.',
+        action: 'retry',
+        code: 'service_unreachable',
+      },
+    };
+  }
+
+  if (!fetched.ok) {
+    return {
+      kind: 'dead',
+      dead: {
+        headline: 'This relic is no longer available',
+        detail: 'It was removed after this page started loading.',
+        action: 'report',
+        code: 'removed_after_mint',
+      },
+    };
+  }
+
+  if (!fetched.body) {
+    return {
+      kind: 'dead',
+      dead: {
+        headline: 'The download was cut short',
+        detail:
+          'The transfer did not complete. This is a network problem, not a ' +
+          'problem with the link.',
+        action: 'retry',
+        code: 'truncated_transfer',
+      },
+    };
+  }
+
+  let newCachedPrefix: CachedPrefix | undefined = cachedPrefix;
+  let envelopeFired = false;
+  let loadContents: LoadContents | undefined;
 
   try {
-    const opened = await openRelic(bytes, key, version);
+    const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
+    const opened = await openRelicStream(bodyStream, key, {
+      objectLength: mintResponse.object_length,
+      fragmentVersion: version,
+      maxContentBytes: MAX_RENDER_BYTES,
+      onPrefix: (prefix) => {
+        newCachedPrefix = { prefix, mint: mintResponse };
+      },
+      onEnvelope: (env) => {
+        envelopeFired = true;
+        const entry = env.entries[0];
+        if (entry) {
+          loadContents = { filename: entry.filename, length: entry.length };
+        }
+      },
+      onProgress: (prog) => {
+        if (prog.receivedBytes < prog.objectLength) {
+          onProgress?.({
+            phase: 'fetching',
+            received: prog.receivedBytes,
+            total: prog.objectLength,
+            contents: loadContents,
+          });
+        } else {
+          if (loadContents && prog.openedContentBytes < loadContents.length) {
+            onProgress?.({
+              phase: 'decrypting',
+              opened: prog.openedContentBytes,
+              contents: loadContents,
+            });
+          } else {
+            onProgress?.({
+              phase: 'fetching',
+              received: prog.receivedBytes,
+              total: prog.objectLength,
+              contents: loadContents,
+            });
+          }
+        }
+      },
+    });
+
     const entry = opened.envelope.entries[0];
     if (entry === undefined) {
       return {
@@ -1034,6 +1429,7 @@ export async function openRelicWithKey(
       renderer: route.route,
     });
 
+    const digest = await computeDigest();
     return {
       kind: 'ready',
       view: {
@@ -1049,10 +1445,37 @@ export async function openRelicWithKey(
       },
     };
   } catch (error) {
-    if (error instanceof DecryptFailedError) {
+    if (error instanceof TransferIncompleteError) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: 'The download was cut short',
+          detail:
+            'The transfer did not complete. This is a network problem, not a ' +
+            'problem with the link.',
+          action: 'retry',
+          code: 'truncated_transfer',
+        },
+      };
+    }
+    if (error instanceof DecryptFailedError && error.recordSeq === 0) {
       return {
         kind: 'wrong_key',
         message: 'That key does not open this relic.',
+        cachedPrefix: newCachedPrefix,
+      };
+    }
+    if (error instanceof ContentTooLargeError) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: 'This relic is too large to open here',
+          detail:
+            `It holds up to ${formatBytes(error.declaredBytes)}, past what this viewer will ` +
+            'load into a browser tab.',
+          action: 'none',
+          code: 'too_large',
+        },
       };
     }
     if (error instanceof KeyIdPresentError) {
@@ -1076,6 +1499,17 @@ export async function openRelicWithKey(
             'link. The link may have been altered.',
           action: 'none',
           code: 'version_mismatch',
+        },
+      };
+    }
+    if (envelopeFired) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: DAMAGED_TITLE,
+          detail: DAMAGED_DETAIL,
+          action: 'retry-report',
+          code: 'content_damaged',
         },
       };
     }

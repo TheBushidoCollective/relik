@@ -152,7 +152,13 @@ export async function mountPdf(
     });
 
     await renderPage(1);
+    wrapper.dispatchEvent(
+      new CustomEvent('relic:render-state', { detail: 'ready', bubbles: true })
+    );
   } catch {
+    wrapper.dispatchEvent(
+      new CustomEvent('relic:render-state', { detail: 'error', bubbles: true })
+    );
     wrapper.replaceChildren();
     const errorCard = document.createElement('div');
     errorCard.className = 'pdf-status-card';

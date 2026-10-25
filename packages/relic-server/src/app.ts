@@ -22,8 +22,14 @@ import {
   isHostedService,
   isRendererClass,
   isStorableTitle,
+  LOAD_EXPLANATION,
+  LOAD_OPENING,
   MAX_HEADER_BYTES,
+  NOSCRIPT_DETAIL,
+  NOSCRIPT_TITLE,
   parseRelicId,
+  POLICY_LINK_LABEL,
+  REPORT_LINK_LABEL,
   RESERVED_SEGMENTS,
   type RendererClass,
 } from '@relic/format';
@@ -162,8 +168,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     if (segments.length === 1 && head !== undefined) {
+      let decodedHead = head;
+      try {
+        decodedHead = decodeURIComponent(head);
+      } catch {}
       // The shell only. No mint, no counter, no cap.
-      return shell(config, head, store, now);
+      return shell(config, decodedHead, store, now);
     }
     if (
       segments.length === 3 &&
@@ -4718,9 +4728,13 @@ async function shell(
 
   const rootAttributes =
     typeof target === 'string'
-      ? `data-relic-id="${escapeHtml(target)}" data-usercontent-origin="${escapeHtml(
-          new URL(config.usercontentOrigin).origin
-        )}"`
+      ? canonicalId !== undefined
+        ? `data-relic-id="${escapeHtml(canonicalId)}" data-usercontent-origin="${escapeHtml(
+            new URL(config.usercontentOrigin).origin
+          )}"`
+        : `data-usercontent-origin="${escapeHtml(
+            new URL(config.usercontentOrigin).origin
+          )}"`
       : `data-view="dashboard" data-usercontent-origin="${escapeHtml(
           new URL(config.usercontentOrigin).origin
         )}"`;
@@ -4746,7 +4760,46 @@ async function shell(
 <meta name="theme-color" content="#1f6b64">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/styles.css">
+<link rel="stylesheet" href="/assets/styles.css">${
+    typeof target === 'string'
+      ? '\n<noscript><style>.stage-loading,[data-load-custody]{display:none}</style></noscript>'
+      : ''
+  }${
+    typeof target === 'string'
+      ? `\n<header class="bar" data-load-bar>
+<div class="mark">relik.link</div>
+<div class="identity">
+<div class="filename" data-load-custody>${escapeHtml(LOAD_OPENING)}</div>
+<div class="identity-meta"><span class="accession">${canonicalId !== undefined ? escapeHtml(canonicalId) : ''}</span></div>
+</div>
+<div class="actions">
+<a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
+<a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
+</div>
+</header>
+<main class="stage stage-loading" data-load-plate data-load-phase="opening">
+<div class="card load-card">
+<p id="load-phase" class="load-phase" role="status" aria-live="polite">${escapeHtml(LOAD_OPENING)}</p>
+<div class="load-meter" role="progressbar" aria-labelledby="load-phase"></div>
+<p data-load-transfer></p>
+<p data-load-contents hidden></p>
+<p class="card-note">${escapeHtml(LOAD_EXPLANATION)}</p>
+</div>
+</main>
+<noscript>
+<main class="stage stage-noscript">
+<div class="card">
+<h1 class="card-title">${escapeHtml(NOSCRIPT_TITLE)}</h1>
+<p class="card-note">${escapeHtml(NOSCRIPT_DETAIL)}</p>
+<div class="card-actions">
+<a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
+<a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
+</div>
+</div>
+</main>
+</noscript>`
+      : ''
+  }
 <div id="relic-root" ${rootAttributes}></div>
 <script type="module" src="/assets/viewer.js"></script>
 <script type="module" src="/assets/register-sw.js"></script>
@@ -5168,6 +5221,10 @@ Your file is encrypted on your machine with a key your machine generates. The
 key lives in the URL fragment, after the \`#\`. **Your browser never sends the
 key to Relic's servers.** That is the correct form of the claim. Saying "the
 key never reaches a server" unqualified would be wrong.
+
+A link whose key does not open a relic stops downloading after the first block,
+so our storage provider and anyone watching the connection can tell the open
+stopped early but never see the key.
 
 ## What your own browser keeps
 
