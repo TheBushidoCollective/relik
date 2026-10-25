@@ -226,7 +226,11 @@ export type ThreadState =
 
 export type PostResult =
   /** The address the server attributed it to, which the reader should see. */
-  | { readonly kind: 'posted'; readonly author: string }
+  | {
+      readonly kind: 'posted';
+      readonly author: string;
+      readonly commentId: string | null;
+    }
   | { readonly kind: 'refused'; readonly refusal: Refusal };
 
 /**
@@ -770,10 +774,13 @@ export async function postComment(
   ) {
     return { kind: 'refused', refusal: commentRefusal('malformed_thread') };
   }
-  // The caller reloads the thread rather than splicing this comment in
-  // locally. Ordering and timestamps are the server's, and inventing a
-  // `created_at` here would put a number on the page that no row holds.
-  return { kind: 'posted', author: body.author };
+  const commentId =
+    'comment_id' in body &&
+    typeof body.comment_id === 'string' &&
+    body.comment_id.length > 0
+      ? body.comment_id
+      : null;
+  return { kind: 'posted', author: body.author, commentId };
 }
 
 /** One comment's own URL, for the writes that address a single row. */
