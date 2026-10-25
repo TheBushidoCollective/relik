@@ -184,8 +184,36 @@ const service = Bun.serve({
 const origin = `http://127.0.0.1:${service.port}`;
 const storage = new MemoryStorage(`${origin}/__storage`);
 
+const usercontentService = Bun.serve({
+  port: 0,
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/sandbox.html') {
+      return new Response(Bun.file(join(viewerDist, 'sandbox.html')), {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+          'content-security-policy':
+            "default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+        },
+      });
+    }
+    if (url.pathname === '/sandbox.js') {
+      return new Response(Bun.file(join(viewerDist, 'sandbox.js')), {
+        headers: { 'content-type': 'application/javascript; charset=utf-8' },
+      });
+    }
+    const assetPath = join(viewerDist, url.pathname.slice(1));
+    const file = Bun.file(assetPath);
+    if (await file.exists()) {
+      return new Response(file);
+    }
+    return new Response('Not found', { status: 404 });
+  },
+});
+const usercontentOrigin = `http://127.0.0.1:${usercontentService.port}`;
+
 const app = createApp({
-  config: { serviceOrigin: origin },
+  config: { serviceOrigin: origin, usercontentOrigin },
   store,
   storage,
   now: () => fakeNow,
@@ -417,13 +445,24 @@ async function openBrowser(
     });
     cdp.onEvent((event) => {
       if (event.method === 'Runtime.consoleAPICalled') {
-        const params = event.params as { args?: Array<{ value?: unknown; description?: string }> };
+        const params = event.params as {
+          args?: Array<{ value?: unknown; description?: string }>;
+        };
         const args = params.args?.map((a) => a.value ?? a.description) ?? [];
         console.log('[BROWSER]', ...args);
       }
       if (event.method === 'Runtime.exceptionThrown') {
-        const params = event.params as { exceptionDetails?: { text?: string; exception?: { description?: string } } };
-        console.log('[BROWSER EXCEPTION]', params.exceptionDetails?.exception?.description || params.exceptionDetails?.text);
+        const params = event.params as {
+          exceptionDetails?: {
+            text?: string;
+            exception?: { description?: string };
+          };
+        };
+        console.log(
+          '[BROWSER EXCEPTION]',
+          params.exceptionDetails?.exception?.description ||
+            params.exceptionDetails?.text
+        );
       }
     });
 
@@ -618,6 +657,7 @@ interface MeasurementEntry {
   preference: boolean;
   card: { left: number; top: number; width: number; height: number };
   anchor: { left: number; top: number; width: number; height: number };
+  focusRings?: Record<string, boolean> | undefined;
 }
 
 const measurements: MeasurementEntry[] = [];
@@ -686,6 +726,9 @@ const MEASURE_PROBE_SCRIPT = `
     const cnRect = cancel.getBoundingClientRect();
     if (cnRect.width <= 0 || cnRect.height <= 0) usable = false;
   }
+  const fieldRing = field ? (getComputedStyle(field).outlineStyle !== 'none' || getComputedStyle(field).boxShadow !== 'none') : false;
+  const postRing = post ? (getComputedStyle(post).outlineStyle !== 'none' || getComputedStyle(post).boxShadow !== 'none') : false;
+  const cancelRing = cancel ? (getComputedStyle(cancel).outlineStyle !== 'none' || getComputedStyle(cancel).boxShadow !== 'none') : false;
 
   // 7. Preference
   let preference = true;
@@ -714,6 +757,7 @@ const MEASURE_PROBE_SCRIPT = `
     card: { left: cRect.left, top: cRect.top, width: cRect.width, height: cRect.height },
     anchor: { left: aRect.left, top: aRect.top, width: aRect.width, height: aRect.height },
     host: { left: hRect.left, top: hRect.top, right: hRect.right, bottom: hRect.bottom },
+    focusRings: { field: fieldRing, post: postRing, cancel: cancelRing },
   };
 })
 `;
@@ -798,10 +842,22 @@ async function measureAndAssert(
     preference: result.preference,
     card: result.card,
     anchor: result.anchor,
+    focusRings: (result as unknown as { focusRings?: Record<string, boolean> })
+      .focusRings,
   });
 
   const shotName = `popover-${params.className}-${params.width}-${params.scheme}-${params.state}.png`;
   await session.screenshot(shotName);
+  if (params.scheme === 'light' && params.state === 'composer') {
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: 'dark' }],
+    });
+    const darkShot = `popover-${params.className}-${params.width}-dark-${params.state}.png`;
+    await session.screenshot(darkShot);
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-color-scheme', value: 'light' }],
+    });
+  }
 }
 
 // --- Fixtures Creation ---
@@ -1135,7 +1191,7 @@ console.log('Testing Class 1: Markdown...');
   // 320x480 tall paragraph test (attached line 1, capped)
   const mobileSession = await openBrowser(getRelic('markdown'), verifiedToken, {
     width: 320,
-    height: 480,
+    height: 320,
     scheme: 'light',
   });
   try {
@@ -1165,7 +1221,7 @@ console.log('Testing Class 1: Markdown...');
     await measureAndAssert(mobileSession, {
       className: 'markdown',
       width: 320,
-      height: 480,
+      height: 320,
       scheme: 'light',
       state: 'capped',
       cardSelector: '.popover-card.popover-composer',
@@ -1547,10 +1603,15 @@ console.log('Testing Class 5: HTML...');
     scheme: 'light',
   });
   try {
-    await session.waitFor("document.querySelector('iframe') !== null", 15000);
-
-    // Wait for frame to report ready / load
-    await Bun.sleep(500);
+    await session.waitFor(
+      "document.querySelector('iframe.usercontent-frame') !== null",
+      15000
+    );
+    await session.waitFor(
+      "document.querySelector('.stage-wrap') && !document.querySelector('.toolbar-progress')",
+      15000
+    );
+    await Bun.sleep(600);
 
     // Select text in frame
     await session.evaluate(`(() => {
@@ -1695,12 +1756,14 @@ console.log('Testing Class 6: SVG...');
     // Point at {200, 150} inside frame
     await session.evaluate(`(() => {
       const frame = document.querySelector('iframe');
+      const x = 200;
+      const y = 150;
       frame.dispatchEvent(new CustomEvent('relic:frame-point', {
         detail: {
           type: 'relic:frame-point',
-          x: 200 / 800,
-          y: 150 / 600,
-          box: { left: 200, top: 150, width: 0, height: 0, right: 200, bottom: 150 },
+          x: x / 800,
+          y: y / 600,
+          box: { left: x - 10, top: y - 10, width: 20, height: 20, right: x + 10, bottom: y + 10 },
         },
         bubbles: true,
       }));
@@ -1712,7 +1775,7 @@ console.log('Testing Class 6: SVG...');
     const svgAnchorJson = await session.evaluate<string>(`(() => {
       const frame = document.querySelector('iframe');
       const b = frame.getBoundingClientRect();
-      return JSON.stringify({ left: b.left + 200, top: b.top + 150, width: 0, height: 0, right: b.left + 200, bottom: b.top + 150 });
+      return JSON.stringify({ left: b.left + 190, top: b.top + 140, width: 20, height: 20, right: b.left + 210, bottom: b.top + 160 });
     })()`);
     await measureAndAssert(session, {
       className: 'svg',
@@ -1737,7 +1800,7 @@ console.log('Testing Class 6: SVG...');
     const svgPostedJson = await session.evaluate<string>(`(() => {
       const frame = document.querySelector('iframe');
       const b = frame.getBoundingClientRect();
-      return JSON.stringify({ left: b.left + 200, top: b.top + 150, width: 0, height: 0, right: b.left + 200, bottom: b.top + 150 });
+      return JSON.stringify({ left: b.left + 190, top: b.top + 140, width: 20, height: 20, right: b.left + 210, bottom: b.top + 160 });
     })()`);
     await measureAndAssert(session, {
       className: 'svg',
@@ -1772,10 +1835,14 @@ console.log('Testing Class 7: Video...');
       15000
     );
 
-    // Click scrubber at 0:04 (composer below)
     const videoAnchorJson = await session.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
-      const measure = { left: 400, top: 450, width: 0, height: 24, right: 400, bottom: 474 };
+      const scrubber = document.querySelector('.media-scrubber');
+      const rail = document.querySelector('.media-track-rail');
+      const sBox = scrubber.getBoundingClientRect();
+      const rBox = rail.getBoundingClientRect();
+      const x = rBox.left + (4.0 / 12.0) * rBox.width;
+      const measure = { left: x, top: sBox.top, width: 0, height: sBox.height, right: x, bottom: sBox.bottom };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
         detail: {
           anchor: { kind: 'time', t: 4.0 },
@@ -1788,7 +1855,7 @@ console.log('Testing Class 7: Video...');
     })()`);
 
     await session.waitFor(
-      'document.querySelector(\'.popover-card.popover-composer[data-side="below"]\') !== null'
+      "document.querySelector('.popover-card.popover-composer') !== null"
     );
     await measureAndAssert(session, {
       className: 'video',
@@ -1804,11 +1871,18 @@ console.log('Testing Class 7: Video...');
       const stage = document.querySelector('.stage-wrap');
       const field = document.querySelector('textarea.popover-field');
       field.value = 'Video moment note';
+      const scrubber = document.querySelector('.media-scrubber');
+      const rail = document.querySelector('.media-track-rail');
+      const sBox = scrubber?.getBoundingClientRect() ?? { left: 400, top: 586, width: 600, height: 24, right: 1000, bottom: 610 };
+      const rBox = rail?.getBoundingClientRect() ?? sBox;
+      const x1 = rBox.left + (4.0 / 12.0) * rBox.width;
+      const x2 = rBox.left + (7.0 / 12.0) * rBox.width;
+      const measure = { left: x1, top: sBox.top, width: x2 - x1, height: sBox.height, right: x2, bottom: sBox.bottom };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
         detail: {
           anchor: { kind: 'time', t: 4.0, t_end: 7.0 },
           focus: false,
-          measure: () => ({ left: 400, top: 450, width: 150, height: 24, right: 550, bottom: 474 }),
+          measure: () => measure,
         },
         bubbles: true,
       }));
@@ -1851,6 +1925,26 @@ console.log('Testing Class 7: Video...');
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]') !== null"
     );
+    // Fullscreen composer screenshot
+    await session.evaluate(`(() => {
+      const stage = document.querySelector('.stage-wrap');
+      const scrubber = document.querySelector('.media-scrubber');
+      const rail = document.querySelector('.media-track-rail');
+      const sBox = scrubber?.getBoundingClientRect() ?? { left: 400, top: 586, width: 600, height: 24, right: 1000, bottom: 610 };
+      const rBox = rail?.getBoundingClientRect() ?? sBox;
+      const x = rBox.left + (2.0 / 12.0) * rBox.width;
+      const measure = { left: x, top: sBox.top, width: 0, height: sBox.height, right: x, bottom: sBox.bottom };
+      stage.dispatchEvent(new CustomEvent('relic:time-aim', {
+        detail: {
+          anchor: { kind: 'time', t: 2.0 },
+          focus: true,
+          measure: () => measure,
+        },
+        bubbles: true,
+      }));
+    })()`);
+    await session.screenshot('popover-video-fullscreen-composer.png');
+    await session.pressEscape();
   } finally {
     await session.close();
   }
@@ -1858,7 +1952,7 @@ console.log('Testing Class 7: Video...');
   // At 390 width, scrubber at bottom of stage flips above
   const mobileVideo = await openBrowser(getRelic('video'), verifiedToken, {
     width: 390,
-    height: 844,
+    height: 380,
     scheme: 'light',
   });
   try {
@@ -1868,8 +1962,17 @@ console.log('Testing Class 7: Video...');
     );
     const flippedVideoAnchorJson = await mobileVideo.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
-      // Anchor near bottom of stage
-      const measure = { left: 100, top: 760, width: 0, height: 24, right: 100, bottom: 784 };
+      const scrubber = document.querySelector('.media-scrubber');
+      const rail = document.querySelector('.media-track-rail');
+      if (stage && scrubber) {
+        const stageBox = stage.getBoundingClientRect();
+        const scrubberBox = scrubber.getBoundingClientRect();
+        stage.scrollTop = Math.max(0, scrubberBox.bottom - stageBox.bottom + 80);
+      }
+      const sBox = scrubber?.getBoundingClientRect() ?? { left: 10, top: 760, width: 370, height: 24, right: 380, bottom: 784 };
+      const rBox = rail?.getBoundingClientRect() ?? sBox;
+      const x = rBox.left + (6.0 / 12.0) * rBox.width;
+      const measure = { left: x, top: sBox.top, width: 0, height: sBox.height, right: x, bottom: sBox.bottom };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
         detail: {
           anchor: { kind: 'time', t: 6.0 },
@@ -1886,7 +1989,7 @@ console.log('Testing Class 7: Video...');
     await measureAndAssert(mobileVideo, {
       className: 'video',
       width: 390,
-      height: 844,
+      height: 380,
       scheme: 'light',
       state: 'flipped',
       cardSelector: '.popover-card.popover-composer',
@@ -1919,7 +2022,12 @@ console.log('Testing Class 8: Audio...');
     // Click scrubber at 0:03 (composer below)
     const audioAnchorJson = await session.evaluate<string>(`(() => {
       const stage = document.querySelector('.stage-wrap');
-      const measure = { left: 350, top: 400, width: 0, height: 24, right: 350, bottom: 424 };
+      const scrubber = document.querySelector('.media-scrubber');
+      const rail = document.querySelector('.media-track-rail');
+      const sBox = scrubber?.getBoundingClientRect() ?? { left: 350, top: 400, width: 600, height: 24, right: 950, bottom: 424 };
+      const rBox = rail?.getBoundingClientRect() ?? sBox;
+      const x = rBox.left + (3.0 / 12.0) * rBox.width;
+      const measure = { left: x, top: sBox.top, width: 0, height: sBox.height, right: x, bottom: sBox.bottom };
       stage.dispatchEvent(new CustomEvent('relic:time-aim', {
         detail: {
           anchor: { kind: 'time', t: 3.0 },
@@ -1988,7 +2096,7 @@ console.log('Testing Class 9: OTIO...');
     })()`);
 
     await session.waitFor(
-      'document.querySelector(\'.popover-card.popover-composer.is-otio-composer\') !== null'
+      "document.querySelector('.popover-card.popover-composer.is-otio-composer') !== null"
     );
     await measureAndAssert(session, {
       className: 'otio',
@@ -2059,7 +2167,7 @@ if (hasMainDist) {
 
   // Spin up an instance serving mainDist
   const mainApp = createApp({
-    config: { serviceOrigin: origin },
+    config: { serviceOrigin: origin, usercontentOrigin },
     store,
     storage,
     now: () => fakeNow,
@@ -2167,6 +2275,7 @@ if (hasMainDist) {
 // Cleanup scratch files & shutdown loopback server
 clearTimeout(watchdog);
 cleanupAll();
+await usercontentService.stop();
 await service.stop();
 await rm(scratch, { recursive: true, force: true }).catch(() => {});
 console.log('COMMENT_POPOVER_PATH_OK classes=9');

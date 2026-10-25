@@ -33,7 +33,9 @@ if (typeof globalThis.crypto === 'undefined') {
   });
 }
 process.on('uncaughtException', (err) => {
-  process.stderr.write(`UNCAUGHT EXCEPTION IN RELIC-MCP: ${err?.stack || err}\n`);
+  process.stderr.write(
+    `UNCAUGHT EXCEPTION IN RELIC-MCP: ${err?.stack || err}\n`
+  );
   process.exit(1);
 });
 process.on('unhandledRejection', (err) => {

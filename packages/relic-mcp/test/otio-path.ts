@@ -72,7 +72,7 @@ const isNpxMode = clientMode.startsWith('npx:');
 const OTIO_PIN = 'opentimelineio==0.18.1';
 
 const RUN_BUDGET_MS = 600_000;
-let currentStep = 'startup';
+const currentStep = 'startup';
 const cdpInFlight = new Map<number, string>();
 let cdpCallId = 0;
 const runningBrowsers: Array<{
@@ -511,7 +511,9 @@ async function callMcp(
       child.exited,
     ]);
     if (exit !== 0) {
-      console.error(`callMcp ${toolName} failed (exit ${exit}). stderr: "${stderr}" stdout: "${stdout}"`);
+      console.error(
+        `callMcp ${toolName} failed (exit ${exit}). stderr: "${stderr}" stdout: "${stdout}"`
+      );
     }
     const inputOutcomes = await Promise.allSettled([writeResult, endResult]);
     if (activeMcpCall === call) activeMcpCall = undefined;
@@ -4886,7 +4888,10 @@ async function assertCommentMarkPointerClick(
         y: clickTarget.y,
         button: 'none',
       });
-      const adjustedCenter = await browser.evaluate<{ x: number; y: number } | null>(
+      const adjustedCenter = await browser.evaluate<{
+        x: number;
+        y: number;
+      } | null>(
         String.raw`(() => {
           const mark = document.querySelector('.otio-comment-mark[data-comment-id="' + ${JSON.stringify(pointerCase.expectedId)} + '"]');
           if (!(mark instanceof HTMLElement)) return null;
@@ -8907,6 +8912,12 @@ try {
   });
   try {
     await waitReady(insertBrowser);
+    await insertBrowser.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
     const projectedMark = await insertBrowser.evaluate<{
       readonly version: string;
       readonly projection: string;
@@ -8985,7 +8996,9 @@ try {
       false,
       'OTIO relic at version 2 opens with "download-only" text in DOM'
     );
-    console.log('OTIO_V2_DOM_NO_DOWNLOAD_ONLY_OK downloadOnlyMatches=' + downloadOnlyMatches);
+    console.log(
+      `OTIO_V2_DOM_NO_DOWNLOAD_ONLY_OK downloadOnlyMatches=${downloadOnlyMatches}`
+    );
 
     await insertBrowser.evaluate<void>(`(() => {
       const button = document.querySelector('[aria-label="Open an earlier version of this relic"]');
@@ -9259,7 +9272,10 @@ try {
         storage.put(relicId, new Uint8Array(await request.arrayBuffer()));
         return new Response(null, { status: 200 });
       }
-      if (url.pathname.startsWith('/__storage/o/') && request.method === 'GET') {
+      if (
+        url.pathname.startsWith('/__storage/o/') &&
+        request.method === 'GET'
+      ) {
         const relicId = url.pathname.slice('/__storage/o/'.length);
         const bytes = await storage.read(relicId);
         if (!bytes) return new Response('Not found', { status: 404 });

@@ -1,0 +1,1 @@
+[1025/045610.245590:INFO:CONSOLE:8] "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently", source:  (8)

@@ -1,0 +1,2 @@
+[1025/045617.163106:INFO:CONSOLE:8] "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently", source:  (8)
+[1025/045617.306460:WARNING:media/filters/ffmpeg_demuxer.cc:1469] PipelineStatus::DEMUXER_ERROR_NO_SUPPORTED_STREAMS

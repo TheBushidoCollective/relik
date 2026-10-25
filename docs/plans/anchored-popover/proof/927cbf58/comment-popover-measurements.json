@@ -1,0 +1,662 @@
+[
+  {
+    "class": "markdown",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 249.4375,
+      "top": 282.984375,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 297.609375,
+      "top": 251.984375,
+      "width": 255.671875,
+      "height": 23
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "markdown",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "above",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 249.4375,
+      "top": 99.984375,
+      "width": 352,
+      "height": 144.234375
+    },
+    "anchor": {
+      "left": 297.609375,
+      "top": 251.984375,
+      "width": 255.671875,
+      "height": 23
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "markdown",
+    "width": 320,
+    "height": 320,
+    "scheme": "light",
+    "state": "capped",
+    "side": "above",
+    "capped": true,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 8,
+      "top": 62.0625,
+      "width": 275.21875,
+      "height": 219.046875
+    },
+    "anchor": {
+      "left": 20,
+      "top": 289.109375,
+      "width": 250.53125,
+      "height": 23
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "code",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "above",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 416.9375,
+      "top": 628.0625,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 521.84375,
+      "top": 875.0625,
+      "width": 142.1875,
+      "height": 17
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "code",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "scrolled",
+    "side": "above",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 296.9375,
+      "top": 628.0625,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 401.84375,
+      "top": 875.0625,
+      "width": 142.1875,
+      "height": 17
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "image",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "above",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 255,
+      "top": 171.203125,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 420.203125,
+      "top": 418.203125,
+      "width": 21.59375,
+      "height": 21.59375
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "image",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "above",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 255,
+      "top": 266.203125,
+      "width": 352,
+      "height": 144.234375
+    },
+    "anchor": {
+      "left": 420.203125,
+      "top": 418.203125,
+      "width": 21.59375,
+      "height": 21.59375
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "pdf",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 219.609375,
+      "top": 239.125,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 335.609375,
+      "top": 171.125,
+      "width": 120,
+      "height": 60
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "pdf",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 219.609375,
+      "top": 239.125,
+      "width": 352,
+      "height": 144.234375
+    },
+    "anchor": {
+      "left": 335.609375,
+      "top": 171.125,
+      "width": 120,
+      "height": 60
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "html",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 14,
+      "top": 126.0625,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 40,
+      "top": 94.0625,
+      "width": 300,
+      "height": 24
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "html",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 14,
+      "top": 126.0625,
+      "width": 352,
+      "height": 144.234375
+    },
+    "anchor": {
+      "left": 40,
+      "top": 94.0625,
+      "width": 300,
+      "height": 24
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "svg",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 24,
+      "top": 222.0625,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 190,
+      "top": 194.0625,
+      "width": 20,
+      "height": 20
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "svg",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 24,
+      "top": 222.0625,
+      "width": 352,
+      "height": 144.234375
+    },
+    "anchor": {
+      "left": 190,
+      "top": 194.0625,
+      "width": 20,
+      "height": 20
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "video",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 395.265625,
+      "top": 647.9375,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 571.2760416666666,
+      "top": 615.9375,
+      "width": 0,
+      "height": 24
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "video",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 496.015625,
+      "top": 639.9375,
+      "width": 352,
+      "height": 144.234375
+    },
+    "anchor": {
+      "left": 571.265625,
+      "top": 623.9375,
+      "width": 201.5,
+      "height": 8
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "video",
+    "width": 390,
+    "height": 380,
+    "scheme": "light",
+    "state": "flipped",
+    "side": "above",
+    "capped": true,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 8,
+      "top": 62.0625,
+      "width": 345.21875,
+      "height": 205.546875
+    },
+    "anchor": {
+      "left": 180.609375,
+      "top": 275.609375,
+      "width": 0,
+      "height": 24
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "audio",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 328.109375,
+      "top": 257.65625,
+      "width": 352,
+      "height": 239.09375
+    },
+    "anchor": {
+      "left": 504.109375,
+      "top": 225.65625,
+      "width": 0,
+      "height": 24
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "audio",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 328.109375,
+      "top": 251.65625,
+      "width": 352,
+      "height": 144.234375
+    },
+    "anchor": {
+      "left": 501.609375,
+      "top": 231.65625,
+      "width": 5,
+      "height": 12
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "otio",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "composer",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 8,
+      "top": 589.375,
+      "width": 352,
+      "height": 234.8125
+    },
+    "anchor": {
+      "left": 174,
+      "top": 557.375,
+      "width": 5.140625,
+      "height": 24
+    },
+    "focusRings": {
+      "field": true,
+      "post": false,
+      "cancel": false
+    }
+  },
+  {
+    "class": "otio",
+    "width": 1440,
+    "height": 900,
+    "scheme": "light",
+    "state": "posted",
+    "side": "below",
+    "capped": false,
+    "adjacency": true,
+    "horizontal": true,
+    "noOverlap": true,
+    "anchorExposed": true,
+    "inside": true,
+    "usable": true,
+    "preference": true,
+    "card": {
+      "left": 8,
+      "top": 608.375,
+      "width": 352,
+      "height": 202
+    },
+    "anchor": {
+      "left": 174,
+      "top": 586.375,
+      "width": 5.140625,
+      "height": 14
+    },
+    "focusRings": {
+      "field": false,
+      "post": false,
+      "cancel": false
+    }
+  }
+]
