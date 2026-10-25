@@ -58,6 +58,18 @@ function keylessLink(shareUrl: string): string {
   return result.endsWith('#') ? result.slice(0, -1) : result;
 }
 
+const RUN_BUDGET_MS = 120_000;
+let currentStep = 'startup';
+const cdpInFlight = new Map<number, string>();
+let cdpCallId = 0;
+const runningBrowsers: Array<{ child: ChildProcess; cdp: CdpConnection; profile: string }> = [];
+const watchdog = setTimeout(() => {
+  const pending = [...cdpInFlight.values()].join(', ') || 'none';
+  console.error(`COPY_LINK_PATH_TIMEOUT after ${RUN_BUDGET_MS}ms at step "${currentStep}"; CDP calls in flight: ${pending}`);
+  for (const b of runningBrowsers) b.child.kill('SIGKILL');
+  process.exit(1);
+}, RUN_BUDGET_MS);
+
 const scratch = await mkdtemp(join(tmpdir(), 'relic-copy-link-path-'));
 const statePath = join(scratch, 'state.json');
 
@@ -176,7 +188,7 @@ const pubResult = await callMcp('relic_publish', {
 });
 const relicId = String(pubResult['relic_id']);
 const shareUrl = String(pubResult['url']);
-assert.ok(shareUrl.includes('#r1'), 'shareUrl missing key fragment');
+assert.ok(shareUrl.includes('#r1'), `shareUrl missing key fragment: ${JSON.stringify(pubResult).slice(0, 400)}`);
 
 await writeFile(
   fixturePath,
@@ -216,11 +228,6 @@ assert.equal(
 if (foundChrome.kind !== 'found') throw new Error('unreachable');
 const chromeBinaryPath = foundChrome.path;
 
-const runningBrowsers: Array<{
-  child: ChildProcess;
-  cdp: CdpConnection;
-  profile: string;
-}> = [];
 
 async function launchBrowser(): Promise<{
   child: ChildProcess;
@@ -247,10 +254,15 @@ async function launchBrowser(): Promise<{
   const child = spawn(chromeBinaryPath, launch.args, {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
   });
-  const cdp = connectPipe(
-    child.stdio[3] as Writable,
-    child.stdio[4] as Readable
-  );
+  const rawCdp = connectPipe(child.stdio[3] as Writable, child.stdio[4] as Readable);
+  const cdp: CdpConnection = {
+    ...rawCdp,
+    send(method, params, sessionId) {
+      const id = ++cdpCallId;
+      cdpInFlight.set(id, method);
+      return rawCdp.send(method, params, sessionId).finally(() => cdpInFlight.delete(id));
+    },
+  };
   await attestBrowserHeadless(cdp, launch);
 
   const created = (await cdp.send('Target.createTarget', {
@@ -478,15 +490,17 @@ async function captureShot(
   await writeFile(join(proofDir, filename), Buffer.from(shot.data, 'base64'));
 }
 
-async function waitForCondition(
-  predicate: () => Promise<boolean>,
-  label = 'condition',
-  timeoutMs = 10000,
-  pollMs = 50
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await predicate()) return;
+async function waitForCondition(predicate: () => Promise<boolean>, label: string, timeoutMs = 10000, pollMs = 50): Promise<void> {
+  currentStep = label;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<'expired'>((resolve) => {
+      timer = setTimeout(() => resolve('expired'), Math.max(0, deadline - Date.now()));
+    });
+    const outcome = await Promise.race([predicate(), expired]).finally(() => clearTimeout(timer));
+    if (outcome === true) return;
+    if (outcome === 'expired') break;
     await Bun.sleep(pollMs);
   }
   throw new Error(`Timeout waiting for ${label} after ${timeoutMs}ms`);
@@ -854,7 +868,7 @@ try {
         `window.__clipboardWrites.length`
       )) >= 1
     );
-  });
+  }, 'step 3 Enter wrote the link');
 
   const step3 = await evaluate<{
     lastCopied: string;
@@ -898,7 +912,7 @@ try {
         `window.__clipboardWrites.length`
       )) >= 2
     );
-  });
+  }, 'step 4 keyless link written');
 
   const step4 = await evaluate<{
     lastCopied: string;
@@ -941,7 +955,7 @@ try {
         `window.__clipboardWrites.length`
       )) >= 3
     );
-  });
+  }, 'step 5 phrase written');
 
   const step5 = await evaluate<{
     lastCopied: string;
@@ -1013,7 +1027,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 6 Escape closed the panel');
 
   const step6 = await evaluate<{
     openerFocused: boolean;
@@ -1093,7 +1107,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 7 reopened before Tab');
   console.log('Step 7: Testing Tab navigation to leave panel');
   for (let i = 0; i < 6; i++) {
     await pressKey(b1.cdp, b1.sessionId, 'Tab', 'Tab', 9);
@@ -1134,7 +1148,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 7 reopened before the stage click');
   await clickElement(b1.cdp, b1.sessionId, '.stage', { x: 100, y: 200 });
   await waitForCondition(async () => {
     return (
@@ -1144,7 +1158,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 7 stage click closed the panel');
 
   // Reopen and click opener
   await clickElement(b1.cdp, b1.sessionId, '[data-action="copy-link"]');
@@ -1156,7 +1170,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 7 reopened before the opener click');
   await clickElement(b1.cdp, b1.sessionId, '[data-action="copy-link"]');
   await waitForCondition(async () => {
     return (
@@ -1166,7 +1180,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 7 opener click closed the panel');
 
   // 8. Clipboard refusal
   await evaluate(
@@ -1183,7 +1197,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 8 reopened with the clipboard refusing');
 
   await clickElement(b1.cdp, b1.sessionId, '[data-copy="link"]');
   await waitForCondition(async () => {
@@ -1194,7 +1208,7 @@ try {
         `document.querySelector('.toast')?.textContent`
       )) === COPY_FAILED_NOTE
     );
-  });
+  }, 'step 8 link refusal toast');
   const linkSelection = await evaluate<string>(
     b1.cdp,
     b1.sessionId,
@@ -1223,7 +1237,7 @@ try {
         `document.querySelector('.toast')?.textContent`
       )) === COPY_FAILED_NOTE
     );
-  });
+  }, 'step 8 phrase refusal toast');
   const phraseSelection = await evaluate<string>(
     b1.cdp,
     b1.sessionId,
@@ -1273,7 +1287,7 @@ try {
             `document.getElementById('copy-link-panel') === null`
           )) === true
         );
-      });
+      }, 'step 9 version switch closed the panel');
     }
   }
 
@@ -1289,7 +1303,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel') && document.querySelector('#copy-link-panel ol.copy-phrase:not([aria-busy="true"])'))`
       )) === true
     );
-  });
+  }, 'step 10 panel ready at 390');
   await captureShot(b1.cdp, b1.sessionId, 'panel-390-dark.png');
 
   const doc390 = (await b1.cdp.send(
@@ -1352,7 +1366,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 10 Escape closed the panel at 390');
 
   // 320x568 light:
   await setViewport(b1.cdp, b1.sessionId, 320, 568, 'light');
@@ -1365,7 +1379,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel') && document.querySelector('#copy-link-panel ol.copy-phrase:not([aria-busy="true"])'))`
       )) === true
     );
-  });
+  }, 'step 10 panel ready at 320');
   await captureShot(b1.cdp, b1.sessionId, 'panel-320-light.png');
 
   const doc320 = (await b1.cdp.send(
@@ -1429,7 +1443,7 @@ try {
         `Boolean(document.querySelector('.toast'))`
       )) === true
     );
-  });
+  }, 'step 10 toast shown at 320');
   await evaluate(
     b1.cdp,
     b1.sessionId,
@@ -1463,7 +1477,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 10 Escape closed the panel at 320');
 
   // Verify taskbar at all widths with full action set
   console.log('Testing band progressive collapse across viewports');
@@ -1490,7 +1504,7 @@ try {
         `Boolean(document.querySelector('.stage-dead') && document.querySelector('#relic-key-input'))`
       )) === true
     );
-  });
+  }, 'step 11 key entry shown');
 
   const deadCheck = await evaluate<{
     headline: string | null;
@@ -1569,4 +1583,5 @@ try {
   await cleanupBrowsers();
   await service.stop();
   await rm(scratch, { recursive: true, force: true }).catch(() => {});
+  clearTimeout(watchdog);
 }
