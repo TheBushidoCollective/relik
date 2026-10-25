@@ -36,7 +36,6 @@ import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { PDFDocument } from 'pdf-lib';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -781,19 +780,10 @@ await execFileAsync('ffmpeg', [
   imgPath,
 ]);
 
-// 4. Multi-page PDF (via pdf-lib)
-const pdfDoc = await PDFDocument.create();
-const p1 = pdfDoc.addPage([600, 800]);
-p1.drawText('Relik Document Review - Page 1', { x: 50, y: 740, size: 24 });
-p1.drawText(
-  'Drag a box across this region on page 1 to leave an anchored comment.',
-  { x: 50, y: 700, size: 14 }
-);
-const p2 = pdfDoc.addPage([600, 800]);
-p2.drawText('Relik Document Review - Page 2', { x: 50, y: 740, size: 24 });
-const pdfBytes = await pdfDoc.save();
+// 4. Multi-page PDF
+const pdfContent = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 7 0 R >> >> >>\nendobj\n4 0 obj\n<< /Length 50 >>\nstream\nBT\n/F1 24 Tf\n50 700 Td\n(Relik Document Review - Page 1) Tj\nET\nendstream\nendobj\n5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>\nendobj\n6 0 obj\n<< /Length 50 >>\nstream\nBT\n/F1 24 Tf\n50 700 Td\n(Relik Document Review - Page 2) Tj\nET\nendstream\nendobj\n7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\nxref\n0 8\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000121 00000 n \n0000000244 00000 n \n0000000346 00000 n \n0000000469 00000 n \n0000000571 00000 n \ntrailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n651\n%%EOF\n';
 const pdfPath = join(scratch, 'doc.pdf');
-await writeFile(pdfPath, pdfBytes);
+await writeFile(pdfPath, pdfContent);
 
 // 5. HTML: article with frame scroll > 2000px
 const htmlContent = `<!DOCTYPE html>
