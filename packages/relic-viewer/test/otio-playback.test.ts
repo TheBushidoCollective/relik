@@ -3385,6 +3385,35 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('play at last frame (duration minus one frame) restarts from 0 and advances', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument({ rate: 24, frames: 48 }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      // Last reachable frame on scrubber / Next frame is frame 47 (48 - 1)
+      await playback.seek({ value: 47, rate: 24 });
+      expect(playback.getState().time.value).toBe(47);
+      expect(playback.getState().playing).toBe(false);
+
+      // Hitting play on the last frame should reset time to 0 and start playing
+      await playback.play();
+      expect(playback.getState().time.value).toBe(0);
+      expect(playback.getState().playing).toBe(true);
+
+      // Advance clock with animation frame tick
+      expect(raf).not.toBeNull();
+      raf?.(0);
+      raf?.(500); // 0.5s at 24fps = 12 frames
+      expect(playback.getState().time.value).toBe(12);
+      expect(playback.getState().playing).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('play mid-timeline keeps current position', async () => {
     const playback = createOtioPlayback({
       document: buildDocument({ rate: 24, frames: 48 }),

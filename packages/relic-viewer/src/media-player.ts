@@ -542,7 +542,7 @@ export function createMediaPlayer(
         media.ended ||
         (Number.isFinite(media.duration) &&
           media.duration > 0 &&
-          media.currentTime >= media.duration)
+          media.currentTime >= media.duration - STEP_SECONDS / 2)
       ) {
         media.currentTime = 0;
         updateTimeDisplay();

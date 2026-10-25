@@ -630,8 +630,13 @@ describe('custom media player and comment timeline', () => {
     });
     expect(video.currentTime).toBe(0);
     expect(video.paused).toBe(false);
+    // 4. Play button near end / within last frame tolerance (e.g. 99.98 on 100 duration)
+    video.paused = true;
+    video.currentTime = 99.98;
+    playBtn.click();
+    expect(video.currentTime).toBe(0);
+    expect(video.paused).toBe(false);
   });
-
   test('hover affordance displays timecode without seeking the media', () => {
     const video = new MediaTestNode('video');
     video.currentTime = 10;
