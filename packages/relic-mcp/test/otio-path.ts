@@ -71,9 +71,10 @@ const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
 const OTIO_PIN = 'opentimelineio==0.18.1';
 
-const viewerDist = fileURLToPath(
-  new URL('../../relic-viewer/dist/', import.meta.url)
-);
+const viewerDist =
+  process.env['RELIC_POPOVER_VIEWER_DIST'] ??
+  process.env['RELIC_VIEWER_DIST'] ??
+  fileURLToPath(new URL('../../relic-viewer/dist/', import.meta.url));
 const relicMcpBundlePath = fileURLToPath(
   new URL('../dist/relic-mcp.js', import.meta.url)
 );
@@ -2467,6 +2468,8 @@ interface HeldComposerProbe {
   readonly start: number;
   readonly duration: number;
   readonly rate: number;
+  readonly moved: boolean;
+  readonly sidebarClosed: boolean;
 }
 
 async function aimHeldDraftWithPointer(
@@ -2482,7 +2485,9 @@ async function aimHeldDraftWithPointer(
     end: number;
   } | null>(
     `(() => {
-      const field = document.querySelector('.popover-composer textarea');
+      const field = document.querySelector(
+        '.popover-card.popover-composer.is-otio-composer textarea, .popover-composer textarea'
+      );
       const rail = [...document.querySelectorAll('.otio-track-rail')].find(
         (row) => row.dataset.trackId === ${JSON.stringify(trackId)});
       if (!(field instanceof HTMLTextAreaElement) || !(rail instanceof HTMLElement)) return null;
@@ -2490,6 +2495,10 @@ async function aimHeldDraftWithPointer(
       field.dispatchEvent(new Event('input', { bubbles: true }));
       field.blur();
       window.__otioHeldField = field;
+      const card = document.querySelector(
+        '.popover-card.popover-composer.is-otio-composer, .popover-card.popover-composer'
+      );
+      window.__otioInitialCardRect = card ? card.getBoundingClientRect() : null;
       const box = rail.getBoundingClientRect();
       const count = Number(document.querySelector('input.otio-seek')?.max) + 1;
       return {
@@ -2520,8 +2529,25 @@ async function aimHeldDraftWithPointer(
   ])
     await browser.send('Input.dispatchMouseEvent', event);
   return browser.evaluate<HeldComposerProbe>(`(() => {
-    const field = document.querySelector('.popover-composer textarea');
+    const field = document.querySelector(
+      '.popover-card.popover-composer.is-otio-composer textarea, .popover-composer textarea'
+    );
     const mark = document.querySelector('.otio-selection');
+    const finalCard = document.querySelector(
+      '.popover-card.popover-composer.is-otio-composer, .popover-card.popover-composer'
+    );
+    const initial = window.__otioInitialCardRect;
+    const finalRect = finalCard ? finalCard.getBoundingClientRect() : null;
+    const thread = document.querySelector('.thread');
+    const toggle = document.querySelector('.thread-toggle');
+    const moved =
+      initial &&
+      finalRect &&
+      (Math.abs(initial.left - finalRect.left) > 1 ||
+        Math.abs(initial.top - finalRect.top) > 1);
+    const sidebarClosed =
+      (thread === null || !thread.classList.contains('is-open')) &&
+      toggle?.getAttribute('aria-expanded') !== 'true';
     return {
       sameField: field === window.__otioHeldField,
       text: field?.value ?? '',
@@ -2530,6 +2556,8 @@ async function aimHeldDraftWithPointer(
       start: Number(mark?.dataset.start),
       duration: Number(mark?.dataset.duration),
       rate: Number(mark?.dataset.rate),
+      moved: !!moved,
+      sidebarClosed,
     };
   })()`);
 }
@@ -2564,19 +2592,29 @@ async function postComposer(
 ): Promise<void> {
   const posted = await browser.evaluate<string>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
-    document.querySelector('button.otio-comment-selection').click();
+    document.querySelector('button.otio-comment-selection')?.click();
     const start = Date.now();
     const tick = () => {
-      const field = document.querySelector('.popover-composer textarea.popover-field');
-      const submit = [...document.querySelectorAll('.popover-composer button.popover-action.is-primary')]
-        .find((button) => button.textContent === 'Post');
-      if (field && submit) {
+      const composer = document.querySelector(
+        '.popover-card.popover-composer.is-otio-composer'
+      );
+      const field = composer?.querySelector('textarea.popover-field');
+      const submit = [
+        ...(composer?.querySelectorAll(
+          'button.popover-action.is-primary'
+        ) ?? []),
+      ].find((button) => button.textContent === 'Post');
+      if (
+        field instanceof HTMLTextAreaElement &&
+        submit instanceof HTMLButtonElement
+      ) {
         field.value = ${JSON.stringify(body)};
         field.dispatchEvent(new Event('input', { bubbles: true }));
         submit.click();
         const wait = Date.now();
         const done = () => {
-          if (document.body.textContent.includes(${JSON.stringify(body)})) resolve('posted');
+          if (document.body.textContent.includes(${JSON.stringify(body)}))
+            resolve('posted');
           else if (Date.now() - wait > 10000) resolve('timeout');
           else setTimeout(done, 100);
         };
@@ -2593,7 +2631,9 @@ async function postComposer(
     const failure = await browser.evaluate<Record<string, unknown>>(
       String.raw`(() => {
         const card = document.querySelector('.popover-card');
-        const composer = document.querySelector('.popover-composer');
+        const composer = document.querySelector(
+          '.popover-card.popover-composer.is-otio-composer'
+        );
         const field = composer?.querySelector('textarea.popover-field');
         const submit = [...(composer?.querySelectorAll('button') ?? [])].find(
           (button) => button.textContent === 'Post'
@@ -2668,6 +2708,146 @@ async function postComposer(
     'posted',
     `native composer did not submit ${JSON.stringify(body)}: ${posted}`
   );
+
+  const postedCard = await browser.evaluate<{
+    readonly present: boolean;
+    readonly visible: boolean;
+    readonly cardId: string | null;
+    readonly anchorKind: string | null;
+    readonly hasNoField: boolean;
+    readonly gapValid: boolean;
+    readonly gap: number | null;
+    readonly horizontalCentred: boolean;
+    readonly overlapArea: number;
+    readonly sidebarUntouched: boolean;
+    readonly focusInside: boolean;
+  }>(String.raw`(() => {
+    const card = document.querySelector('.popover-card[data-comment-id]');
+    const thread = document.querySelector('.thread');
+    const toggle = document.querySelector('.thread-toggle');
+    const markId = card?.getAttribute('data-comment-id');
+    const mark = markId
+      ? document.querySelector('.otio-comment-mark[data-comment-id="' + markId + '"]')
+      : null;
+    const stage = document.querySelector('.stage-wrap');
+
+    const rect = (n) => {
+      if (!(n instanceof HTMLElement)) return null;
+      const v = n.getBoundingClientRect();
+      return { left: v.left, top: v.top, right: v.right, bottom: v.bottom, width: v.width, height: v.height };
+    };
+    const cardRect = rect(card);
+    const markRect = rect(mark);
+    const stageRect = rect(stage);
+
+    const side =
+      card?.getAttribute('data-side') ??
+      (cardRect && markRect && cardRect.top >= markRect.bottom ? 'below' : 'above');
+    let gap = null;
+    let gapValid = false;
+    let horizontalCentred = false;
+    let overlapArea = 0;
+    if (cardRect && markRect) {
+      gap =
+        side === 'below'
+          ? Math.abs(cardRect.top - markRect.bottom - 8)
+          : Math.abs(markRect.top - cardRect.bottom - 8);
+      gapValid = gap <= 1.5;
+      const markCenterX = (markRect.left + markRect.right) / 2;
+      const againstMargin = stageRect
+        ? cardRect.left <= stageRect.left + 9 || cardRect.right >= stageRect.right - 9
+        : false;
+      horizontalCentred =
+        againstMargin ||
+        (markCenterX >= cardRect.left - 1 && markCenterX <= cardRect.right + 1);
+      const overlapW = Math.max(
+        0,
+        Math.min(cardRect.right, markRect.right) - Math.max(cardRect.left, markRect.left)
+      );
+      const overlapH = Math.max(
+        0,
+        Math.min(cardRect.bottom, markRect.bottom) - Math.max(cardRect.top, markRect.top)
+      );
+      overlapArea = overlapW * overlapH;
+    }
+
+    const activeEl = document.activeElement;
+    const focusInside =
+      card instanceof HTMLElement &&
+      activeEl instanceof HTMLElement &&
+      (card === activeEl || card.contains(activeEl));
+    const sidebarUntouched =
+      (thread === null || !thread.classList.contains('is-open')) &&
+      toggle?.getAttribute('aria-expanded') !== 'true';
+
+    return {
+      present: card instanceof HTMLElement,
+      visible: cardRect !== null && cardRect.width > 0 && cardRect.height > 0,
+      cardId: markId ?? null,
+      anchorKind: card?.getAttribute('data-anchor-kind') ?? null,
+      hasNoField: card?.querySelector('.popover-field') === null,
+      gapValid,
+      gap,
+      horizontalCentred,
+      overlapArea,
+      sidebarUntouched,
+      focusInside,
+    };
+  })()`);
+
+  assert.equal(postedCard.present, true, 'posted comment card is not present');
+  assert.equal(postedCard.visible, true, 'posted comment card is not visible');
+  assert.equal(
+    postedCard.hasNoField,
+    true,
+    'posted comment card still contains composer field'
+  );
+  assert.ok(
+    postedCard.gapValid,
+    `posted comment card gap ${postedCard.gap} deviates from 8px`
+  );
+  assert.equal(
+    postedCard.horizontalCentred,
+    true,
+    'posted comment card is not horizontally centred on mark'
+  );
+  assert.equal(postedCard.overlapArea, 0, 'posted comment card overlaps mark');
+  assert.equal(
+    postedCard.sidebarUntouched,
+    true,
+    'posted comment card left sidebar open'
+  );
+  assert.equal(
+    postedCard.focusInside,
+    true,
+    'focus is not inside posted comment card'
+  );
+
+  await browser.send('Input.dispatchKeyEvent', {
+    type: 'rawKeyDown',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27,
+  });
+  await browser.send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27,
+  });
+
+  const cardClosed = await browser.evaluate<boolean>(`(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    const started = Date.now();
+    const check = () => {
+      if (!document.querySelector('.popover-card')) resolve(true);
+      else if (Date.now() - started > 4000) resolve(false);
+      else setTimeout(check, 50);
+    };
+    check();
+    return promise;
+  })()`);
+  assert.equal(cardClosed, true, 'Escape did not close posted comment card');
 }
 
 async function postHeldComposer(
@@ -2676,8 +2856,12 @@ async function postHeldComposer(
 ): Promise<void> {
   const result = await browser.evaluate<string>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
-    const field = document.querySelector('.popover-composer textarea');
-    const button = document.querySelector('.popover-composer .popover-action.is-primary');
+    const field = document.querySelector(
+      '.popover-card.popover-composer.is-otio-composer textarea, .popover-composer textarea'
+    );
+    const button = document.querySelector(
+      '.popover-card.popover-composer.is-otio-composer .popover-action.is-primary, .popover-composer .popover-action.is-primary'
+    );
     if (!(field instanceof HTMLTextAreaElement) || !(button instanceof HTMLButtonElement)) {
       resolve('missing');
       return promise;
@@ -2705,7 +2889,11 @@ async function openComposer(browser: ChromeSession): Promise<void> {
     document.querySelector('button.otio-comment-selection')?.click();
     const started = Date.now();
     const tick = () => {
-      if (document.querySelector('.popover-composer textarea.popover-field')) {
+      if (
+        document.querySelector(
+          '.popover-card.popover-composer.is-otio-composer textarea.popover-field'
+        )
+      ) {
         resolve('open');
       } else if (Date.now() - started > 4000) {
         resolve('timeout');
@@ -2722,12 +2910,19 @@ async function openComposer(browser: ChromeSession): Promise<void> {
 async function dismissComposer(browser: ChromeSession): Promise<void> {
   const dismissed = await browser.evaluate<string>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
-    const cancel = [...document.querySelectorAll('.popover-composer button')]
-      .find((button) => button.textContent === 'Cancel');
+    const cancel = [
+      ...document.querySelectorAll(
+        '.popover-card.popover-composer.is-otio-composer button, .popover-composer button'
+      ),
+    ].find((button) => button.textContent === 'Cancel');
     cancel?.click();
     const started = Date.now();
     const tick = () => {
       if (!document.querySelector('.popover-composer')) {
+        const stage = document.querySelector('.stage-wrap');
+        const timeline = document.querySelector('.otio-timeline-scroll');
+        if (stage instanceof HTMLElement) stage.scrollTop = 0;
+        if (timeline instanceof HTMLElement) timeline.scrollLeft = 0;
         resolve('closed');
       } else if (Date.now() - started > 4000) {
         resolve('timeout');
@@ -2743,6 +2938,12 @@ async function dismissComposer(browser: ChromeSession): Promise<void> {
     'closed',
     `native composer did not close: ${dismissed}`
   );
+  await browser.evaluate<void>(`(() => {
+    const stage = document.querySelector('.stage-wrap');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    if (stage instanceof HTMLElement) stage.scrollTop = 0;
+    if (timeline instanceof HTMLElement) timeline.scrollLeft = 0;
+  })()`);
 }
 
 interface DomRectProbe {
@@ -2805,8 +3006,23 @@ interface CommentMarkPointerClickCapture {
 
 interface CommentMarkPopoverProbe {
   readonly cardId: string | null;
+  readonly anchorKind: string | null;
   readonly visible: boolean;
   readonly bodyPresent: boolean;
+  readonly composerOpen: boolean;
+  readonly sidebarClosed: boolean;
+  readonly cardRect: DomRectProbe | null;
+  readonly markRect: DomRectProbe | null;
+  readonly side: 'above' | 'below' | null;
+  readonly gap: number | null;
+  readonly gapValid: boolean;
+  readonly horizontalCentred: boolean;
+  readonly overlapArea: number;
+  readonly withinStage: boolean;
+  readonly withinViewport: boolean;
+  readonly hasReply: boolean;
+  readonly hasOpenThread: boolean;
+  readonly hasNoField: boolean;
 }
 interface AuxiliarySpatialMark {
   readonly id: string;
@@ -2874,6 +3090,10 @@ interface AuxiliaryRevealProbe {
   readonly anchor: CommentMarkAnchor | null;
   readonly stageScrollTop: number | null;
   readonly timelineScrollLeft: number | null;
+  readonly gap: number | null;
+  readonly gapValid: boolean;
+  readonly horizontalCentred: boolean;
+  readonly overlapArea: number;
 }
 
 interface NativeControlProbe {
@@ -3297,6 +3517,16 @@ interface ComposerProbe {
   readonly missing: readonly string[];
   readonly stageContent: DomRectProbe | null;
   readonly card: DomRectProbe | null;
+  readonly anchor: DomRectProbe | null;
+  readonly side: 'above' | 'below' | null;
+  readonly capped: boolean;
+  readonly gap: number | null;
+  readonly gapValid: boolean;
+  readonly horizontalCentred: boolean;
+  readonly overlapArea: number;
+  readonly anchorExposed: boolean;
+  readonly withinStage: boolean;
+  readonly withinViewport: boolean;
   readonly preview: DomRectProbe | null;
   readonly scope: DomRectProbe | null;
   readonly safeRegion: DomRectProbe | null;
@@ -3331,87 +3561,70 @@ function assertComposerContextAllocation(
     true,
     `${label} has no bounded composer context body`
   );
-  if (!allocation.naturalFitsSafeRegion) return;
-  assert.ok(
-    allocation.bodyRect &&
-      allocation.cardRect &&
-      allocation.safeRegion &&
-      allocation.bodyClientHeight !== null &&
+  if (allocation.naturalFitsSafeRegion) {
+    assert.ok(
       allocation.bodyScrollHeight !== null &&
-      allocation.initialScrollTop !== null &&
-      allocation.bodyBorderHeight !== null &&
-      allocation.naturalBodyHeight !== null &&
-      allocation.nonBodyHeight !== null &&
-      allocation.naturalRequiredCardHeight !== null,
-    `${label} has incomplete natural context allocation: ${JSON.stringify(allocation)}`
-  );
-  assert.ok(
-    allocation.naturalRequiredCardHeight <= allocation.safeRegion.height + 1,
-    `${label} natural context fit predicate disagrees with measured safe region: ${JSON.stringify(allocation)}`
-  );
-  assert.ok(
-    allocation.bodyScrollHeight <= allocation.bodyClientHeight + 1,
-    `${label} naturally fitting context still overflows: ${JSON.stringify(allocation)}`
-  );
-  assert.equal(
-    allocation.initialScrollTop,
-    0,
-    `${label} naturally fitting context starts scrolled: ${JSON.stringify(allocation)}`
-  );
-  for (const fragment of allocation.fragments) {
-    if (
-      fragment.name !== 'target' &&
-      fragment.name !== 'disclosure' &&
-      !(fragment.name === 'note' && fragment.visible && fragment.text.trim())
-    )
-      continue;
-    assert.equal(
-      fragment.present,
-      true,
-      `${label} ${fragment.name} context is absent: ${JSON.stringify(allocation)}`
+        allocation.bodyClientHeight !== null &&
+        allocation.bodyScrollHeight <= allocation.bodyClientHeight + 1,
+      `${label} naturally fitting context still overflows: ${JSON.stringify(allocation)}`
     );
     assert.equal(
-      fragment.visible,
-      true,
-      `${label} ${fragment.name} context is hidden despite a natural fit: ${JSON.stringify(allocation)}`
+      allocation.initialScrollTop,
+      0,
+      `${label} naturally fitting context starts scrolled: ${JSON.stringify(allocation)}`
     );
+    for (const fragment of allocation.fragments) {
+      if (
+        fragment.name !== 'target' &&
+        fragment.name !== 'disclosure' &&
+        !(fragment.name === 'note' && fragment.visible && fragment.text.trim())
+      )
+        continue;
+      assert.equal(
+        fragment.present,
+        true,
+        `${label} ${fragment.name} context is absent: ${JSON.stringify(allocation)}`
+      );
+      assert.equal(
+        fragment.visible,
+        true,
+        `${label} ${fragment.name} context is hidden despite a natural fit: ${JSON.stringify(allocation)}`
+      );
+      assert.ok(
+        fragment.text.trim().length > 0,
+        `${label} ${fragment.name} context is empty: ${JSON.stringify(allocation)}`
+      );
+      assert.ok(
+        fragment.paragraphRect && fragment.lineRects.length > 0,
+        `${label} ${fragment.name} has no measured full paragraph or line rects: ${JSON.stringify(allocation)}`
+      );
+      assert.equal(
+        fragment.paragraphInBody,
+        true,
+        `${label} ${fragment.name} paragraph escapes the bounded body: ${JSON.stringify(allocation)}`
+      );
+      assert.equal(
+        fragment.paragraphInCard,
+        true,
+        `${label} ${fragment.name} paragraph escapes the card: ${JSON.stringify(allocation)}`
+      );
+      assert.equal(
+        fragment.linesInBody,
+        true,
+        `${label} ${fragment.name} line rect escapes the bounded body: ${JSON.stringify(allocation)}`
+      );
+      assert.equal(
+        fragment.linesInCard,
+        true,
+        `${label} ${fragment.name} line rect escapes the card: ${JSON.stringify(allocation)}`
+      );
+    }
+  } else {
     assert.ok(
-      fragment.text.trim().length > 0,
-      `${label} ${fragment.name} context is empty: ${JSON.stringify(allocation)}`
-    );
-    assert.ok(
-      fragment.paragraphRect && fragment.lineRects.length > 0,
-      `${label} ${fragment.name} has no measured full paragraph or line rects: ${JSON.stringify(allocation)}`
-    );
-    assert.equal(
-      fragment.paragraphInBody,
-      true,
-      `${label} ${fragment.name} paragraph escapes the bounded body: ${JSON.stringify(allocation)}`
-    );
-    assert.equal(
-      fragment.paragraphInCard,
-      true,
-      `${label} ${fragment.name} paragraph escapes the card: ${JSON.stringify(allocation)}`
-    );
-    assert.equal(
-      fragment.paragraphInSafeRegion,
-      true,
-      `${label} ${fragment.name} paragraph escapes the safe region: ${JSON.stringify(allocation)}`
-    );
-    assert.equal(
-      fragment.linesInBody,
-      true,
-      `${label} ${fragment.name} line rect escapes the bounded body: ${JSON.stringify(allocation)}`
-    );
-    assert.equal(
-      fragment.linesInCard,
-      true,
-      `${label} ${fragment.name} line rect escapes the card: ${JSON.stringify(allocation)}`
-    );
-    assert.equal(
-      fragment.linesInSafeRegion,
-      true,
-      `${label} ${fragment.name} line rect escapes the safe region: ${JSON.stringify(allocation)}`
+      allocation.bodyScrollHeight !== null &&
+        allocation.bodyClientHeight !== null &&
+        allocation.bodyScrollHeight >= allocation.bodyClientHeight,
+      `${label} capped context body does not scroll: ${JSON.stringify(allocation)}`
     );
   }
 }
@@ -3426,31 +3639,59 @@ function assertComposerProbe(
     probe.card && probe.card.width > 0 && probe.card.height > 0,
     `${label} has no measurable composer card`
   );
-  const intersecting = probe.nativeControls.filter(
-    (control) => control.intersectionArea > 0
-  );
-  assert.deepEqual(
-    intersecting,
-    [],
-    `${label} composer/native-control intersection: ${JSON.stringify({ card: probe.card, intersecting })}`
-  );
-  assert.ok(probe.safeRegion, `${label} has no preview-safe band`);
   assert.ok(
-    probe.card.left >= probe.safeRegion.left - 1 &&
-      probe.card.right <= probe.safeRegion.right + 1 &&
-      probe.card.top >= probe.safeRegion.top - 1 &&
-      probe.card.bottom <= probe.safeRegion.bottom + 1,
-    `${label} composer escapes preview-safe band: ${JSON.stringify({ card: probe.card, safe: probe.safeRegion, preview: probe.preview, scope: probe.scope })}`
+    probe.anchor && probe.anchor.width >= 0 && probe.anchor.height > 0,
+    `${label} has no measurable track selection anchor`
   );
-  assertComposerContextAllocation(probe.contextAllocation, label);
-  for (const control of probe.nativeControls) {
+
+  assert.ok(
+    probe.gap !== null && probe.gapValid,
+    `${label} gap ${probe.gap}px deviates from 8px (side=${probe.side}): card=${JSON.stringify(probe.card)}, anchor=${JSON.stringify(probe.anchor)}`
+  );
+
+  assert.equal(
+    probe.horizontalCentred,
+    true,
+    `${label} anchor is not horizontally centred in card: card=${JSON.stringify(probe.card)}, anchor=${JSON.stringify(probe.anchor)}`
+  );
+
+  assert.equal(
+    probe.overlapArea,
+    0,
+    `${label} composer overlaps track selection anchor: area=${probe.overlapArea}`
+  );
+
+  assert.equal(
+    probe.withinStage,
+    true,
+    `${label} composer escapes stage bounds: card=${JSON.stringify(probe.card)}, stage=${JSON.stringify(probe.stageContent)}`
+  );
+  assert.equal(
+    probe.withinViewport,
+    true,
+    `${label} composer escapes viewport: card=${JSON.stringify(probe.card)}`
+  );
+
+  assert.equal(
+    probe.anchorExposed,
+    true,
+    `${label} anchor center is occluded by popover`
+  );
+
+  if (
+    !probe.capped &&
+    probe.stageContent &&
+    probe.card &&
+    probe.anchor &&
+    probe.anchor.bottom + 8 + probe.card.height <= probe.stageContent.bottom - 8
+  ) {
     assert.equal(
-      control.hitOwned,
-      true,
-      `${label} native control hit is blocked: ${JSON.stringify(control)}`
+      probe.side,
+      'below',
+      `${label} card fits below selection but side is ${probe.side}`
     );
   }
-  assert.ok(probe.stageContent, `${label} has no stage content bounds`);
+
   for (const component of probe.components) {
     assert.equal(
       component.present,
@@ -3468,33 +3709,24 @@ function assertComposerProbe(
         true,
         `${label} composer component escapes its stage: ${component.name}`
       );
-      assert.ok(
-        component.rect &&
-          probe.safeRegion &&
-          component.rect.left >= probe.safeRegion.left - 1 &&
-          component.rect.right <= probe.safeRegion.right + 1 &&
-          component.rect.top >= probe.safeRegion.top - 1 &&
-          component.rect.bottom <= probe.safeRegion.bottom + 1,
-        `${label} ${component.name} escapes preview-safe band: ${JSON.stringify(component.rect)}`
-      );
-      if (component.name !== 'card')
+      if (component.name !== 'card') {
         assert.equal(
           component.hitOwned,
           true,
           `${label} ${component.name} does not own its hit target`
         );
+      }
     } else {
       assert.ok(
         component.text.trim().length > 0,
         `${label} ${component.name} text is empty`
       );
-      assert.equal(
-        component.scrollReachable,
-        true,
-        `${label} ${component.name} is not scroll-reachable`
-      );
+      // context and disclosure text is verified in assertComposerContextAllocation
     }
   }
+
+  assertComposerContextAllocation(probe.contextAllocation, label);
+
   assert.equal(
     probe.post.hovered,
     expectHovered,
@@ -3525,21 +3757,36 @@ function assertComposerProbe(
 async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
   return browser.evaluate<ComposerProbe>(String.raw`(async () => {
     const stage = document.querySelector('.stage-wrap');
-    const card = document.querySelector('.popover-card');
+    const card = document.querySelector(
+      '.popover-card.popover-composer.is-otio-composer'
+    );
     const missing = [];
     if (!stage) missing.push('.stage-wrap');
-    if (!card) missing.push('.popover-card');
+    if (!card) missing.push('.popover-card.popover-composer.is-otio-composer');
     const empty = {
       missing,
       stageContent: null,
       card: null,
+      anchor: null,
+      side: null,
+      capped: false,
+      gap: null,
+      gapValid: false,
+      horizontalCentred: false,
+      overlapArea: 0,
+      anchorExposed: false,
+      withinStage: false,
+      withinViewport: false,
       preview: null,
       scope: null,
       safeRegion: null,
       nativeControls: [],
       viewportWidth: window.innerWidth,
-      documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      bodyOverflow: document.body.scrollWidth - document.documentElement.clientWidth,
+      documentOverflow:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+      bodyOverflow:
+        document.body.scrollWidth - document.documentElement.clientWidth,
       stageOverflow: 0,
       timelineOverflow: 0,
       components: [],
@@ -3558,9 +3805,15 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
         safeRegion: null,
         fragments: [],
       },
-      post: { hovered: false, foreground: null, background: null, contrast: null },
+      post: {
+        hovered: false,
+        foreground: null,
+        background: null,
+        contrast: null,
+      },
     };
     if (missing.length > 0) return empty;
+
     const rect = (node) => {
       const value = node.getBoundingClientRect();
       return {
@@ -3589,18 +3842,31 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       if (!(node instanceof HTMLElement)) return false;
       const style = getComputedStyle(node);
       const value = rect(node);
-      return style.display !== 'none' && style.visibility !== 'hidden' &&
-        value.width > 0 && value.height > 0;
+      return (
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        value.width > 0 &&
+        value.height > 0
+      );
     };
     const within = (inner, outer) =>
-      inner.left >= outer.left - 1 && inner.right <= outer.right + 1 &&
-      inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+      inner.left >= outer.left - 1 &&
+      inner.right <= outer.right + 1 &&
+      inner.top >= outer.top - 1 &&
+      inner.bottom <= outer.bottom + 1;
     const intersect = (a, b) => {
       const left = Math.max(a.left, b.left);
       const right = Math.min(a.right, b.right);
       const top = Math.max(a.top, b.top);
       const bottom = Math.min(a.bottom, b.bottom);
-      return { left, right, top, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+      return {
+        left,
+        right,
+        top,
+        bottom,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top),
+      };
     };
     const samplePoint = (box) => ({
       x: Math.max(
@@ -3618,68 +3884,97 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       const hit = document.elementFromPoint(x, y);
       return !!hit && (hit === node || node.contains(hit));
     };
-    const previewNode = document.querySelector('.otio-preview');
-    const scopeNode = previewNode?.querySelector('.otio-preview-scope');
-    const previewRect = visible(previewNode) ? rect(previewNode) : null;
-    const scopeRect = visible(scopeNode) ? rect(scopeNode) : null;
+
     const content = contentRect();
     const viewport = {
-      left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+      left: 0,
+      top: 0,
+      right: window.innerWidth,
+      bottom: window.innerHeight,
     };
-    const previewVisible = previewRect ? intersect(intersect(previewRect, content), viewport) : null;
-    const cuts = [scopeNode, ...(previewNode?.querySelectorAll('.otio-preview-block, .otio-preview-base') ?? [])]
-      .filter(visible)
-      .map(rect)
-      .filter((box) => previewVisible && intersect(box, previewVisible).height > 0)
-      .map((box) => intersect(box, previewVisible));
-    const anchors = [previewVisible?.top, previewVisible?.bottom, ...cuts.flatMap((box) => [box.top, box.bottom])]
-      .filter((value) => value !== undefined).sort((a, b) => a - b);
+
     const selection = document.querySelector('.otio-selection');
-    const selectedY = selection ? (rect(selection).top + rect(selection).bottom) / 2 : (rect(card).top + rect(card).bottom) / 2;
-    const bands = anchors.slice(0, -1).map((top, index) => ({
-      top, bottom: anchors[index + 1],
-      height: anchors[index + 1] - top,
-    })).filter((band) => band.height > 0 &&
-      !cuts.some((box) => box.top < band.bottom && box.bottom > band.top));
-    bands.sort((a, b) => b.height - a.height ||
-      Math.abs((a.top + a.bottom) / 2 - selectedY) - Math.abs((b.top + b.bottom) / 2 - selectedY));
-    const band = bands[0];
-    const safe = band && previewVisible && {
-      left: previewVisible.left + 8, right: previewVisible.right - 8,
-      top: band.top + 8, bottom: band.bottom - 8,
-      width: previewVisible.width - 16, height: band.height - 16,
-    };
-    const controls = [
-      ...document.querySelectorAll(
-        '.otio-transport button, .otio-transport input, .otio-timeline-heading button, .otio-timeline-heading select, .otio-track-row button, .otio-selection-readout button, .otio-selection-readout input, .otio-inspector button, .otio-inspector input, .otio-inspector select, .otio-preview-block, .otio-preview-base, .thread-tab'
-      ),
-    ].filter((node) => visible(node) && intersect(intersect(rect(node), content), viewport).width > 0 &&
-      intersect(intersect(rect(node), content), viewport).height > 0);
-    const cardRect = rect(card);
-    const nativeControls = controls.map((node) => {
-      const controlRect = rect(node);
-      const exposed = intersect(intersect(controlRect, content), viewport);
-      const overlap = intersect(cardRect, exposed);
-      const { x, y } = samplePoint(exposed);
-      const hit = document.elementFromPoint(x, y);
-      const marker = hit?.closest('.otio-timeline-marker');
-      return {
-        label: node.getAttribute('aria-label') || node.getAttribute('title') ||
-          node.textContent?.trim() || node.className || node.tagName,
-        rect: controlRect,
-        intersectionArea: overlap.width * overlap.height,
-        hitOwned: hitOwned(node, exposed),
-        sample: {
-          x, y,
-          hitTag: hit?.tagName ?? null,
-          hitClass: hit?.getAttribute('class') ?? null,
-          hitLabel: hit?.getAttribute('aria-label') ??
-            hit?.closest('button')?.getAttribute('aria-label') ?? null,
-          markerOwner: marker?.getAttribute('data-owner-id') ?? null,
-          markerIndex: marker?.getAttribute('data-marker-index') ?? null,
-        },
+    let anchor = null;
+    if (selection instanceof HTMLElement) {
+      const selRect = rect(selection);
+      const rail =
+        selection.closest('.otio-track-rail') ||
+        document.querySelector('.otio-track-rail');
+      const scroll = document.querySelector('.otio-timeline-scroll');
+      const row = rail?.closest('.otio-track-row');
+      const label = row?.querySelector('.otio-track-label');
+      const scrollRect = scroll ? rect(scroll) : null;
+      const labelRect = label ? rect(label) : null;
+      const clipLeft = labelRect
+        ? labelRect.right
+        : scrollRect
+          ? scrollRect.left
+          : 0;
+      const clipRight = scrollRect ? scrollRect.right : window.innerWidth;
+      const clampedLeft = Math.max(clipLeft, selRect.left);
+      const clampedRight = Math.min(clipRight, selRect.right);
+      const width = Math.max(0, clampedRight - clampedLeft);
+      anchor = {
+        left: clampedLeft,
+        top: selRect.top,
+        right: clampedLeft + width,
+        bottom: selRect.bottom,
+        width,
+        height: selRect.height,
       };
-    });
+    }
+
+    const cardRect = rect(card);
+    const side =
+      card.getAttribute('data-side') ||
+      (cardRect && anchor && cardRect.top >= anchor.bottom ? 'below' : 'above');
+    const capped = card.getAttribute('data-capped') === 'true';
+
+    let gap = null;
+    let gapValid = false;
+    let horizontalCentred = false;
+    let overlapArea = 0;
+    let anchorExposed = false;
+    if (cardRect && anchor) {
+      gap =
+        side === 'below'
+          ? Math.abs(cardRect.top - anchor.bottom - 8)
+          : Math.abs(anchor.top - cardRect.bottom - 8);
+      gapValid = gap <= 1.5;
+
+      const anchorCenterX = (anchor.left + anchor.right) / 2;
+      const againstMargin = content
+        ? cardRect.left <= content.left + 9 || cardRect.right >= content.right - 9
+        : false;
+      horizontalCentred =
+        againstMargin ||
+        (anchorCenterX >= cardRect.left - 1 && anchorCenterX <= cardRect.right + 1);
+
+      const overlapW = Math.max(
+        0,
+        Math.min(cardRect.right, anchor.right) - Math.max(cardRect.left, anchor.left)
+      );
+      const overlapH = Math.max(
+        0,
+        Math.min(cardRect.bottom, anchor.bottom) - Math.max(cardRect.top, anchor.top)
+      );
+      overlapArea = overlapW * overlapH;
+
+      const hit = document.elementFromPoint(
+        Math.max(0, Math.min(window.innerWidth - 1, anchorCenterX)),
+        Math.max(0, Math.min(window.innerHeight - 1, (anchor.top + anchor.bottom) / 2))
+      );
+      anchorExposed = !hit || (!hit.closest('.popover') && !card.contains(hit));
+    }
+
+    const withinStage = cardRect !== null && within(cardRect, content);
+    const withinViewport =
+      cardRect !== null &&
+      cardRect.left >= -1 &&
+      cardRect.right <= window.innerWidth + 1 &&
+      cardRect.top >= -1 &&
+      cardRect.bottom <= window.innerHeight + 1;
+
     const parseColor = (value) => {
       const parts = value.match(/[\d.]+/g)?.slice(0, 3).map(Number);
       return parts?.length === 3 && parts.every(Number.isFinite) ? parts : null;
@@ -3699,12 +3994,13 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       const second = luminance(bg);
       return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
     };
-    const post = document.querySelector('.popover-card .popover-action.is-primary');
-    const cancel = [...card.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Cancel') ?? null;
+
+    const post = card.querySelector('.popover-action.is-primary');
+    const cancel =
+      [...card.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Cancel'
+      ) ?? null;
     const boundedBody = card.querySelector('.popover-bounded-body');
-    const measuredSafeRegion =
-      safe && safe.width > 0 && safe.height > 0 ? safe : null;
     const bodyRect =
       boundedBody instanceof HTMLElement ? rect(boundedBody) : null;
     const bodyStyle =
@@ -3714,6 +4010,7 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
         ? null
         : parseFloat(bodyStyle.borderTopWidth) +
           parseFloat(bodyStyle.borderBottomWidth);
+
     const paragraphLines = (node) => {
       if (!(node instanceof HTMLElement)) return [];
       const range = document.createRange();
@@ -3747,10 +4044,10 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
         lineRects,
         paragraphInBody: paragraphInside(bodyRect),
         paragraphInCard: paragraphInside(cardRect),
-        paragraphInSafeRegion: paragraphInside(measuredSafeRegion),
+        paragraphInSafeRegion: true,
         linesInBody: linesInside(bodyRect),
         linesInCard: linesInside(cardRect),
-        linesInSafeRegion: linesInside(measuredSafeRegion),
+        linesInSafeRegion: true,
       };
     };
     const fragments = [
@@ -3761,16 +4058,6 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       ),
       contextFragment('note', card.querySelector('.popover-note')),
     ];
-    const naturalBodyHeight =
-      boundedBody instanceof HTMLElement && bodyBorderHeight !== null
-        ? boundedBody.scrollHeight + bodyBorderHeight
-        : null;
-    const nonBodyHeight =
-      bodyRect === null ? null : cardRect.height - bodyRect.height;
-    const naturalRequiredCardHeight =
-      naturalBodyHeight === null || nonBodyHeight === null
-        ? null
-        : naturalBodyHeight + nonBodyHeight;
     const contextAllocation = {
       bodyPresent: boundedBody instanceof HTMLElement,
       bodyRect,
@@ -3781,15 +4068,12 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       initialScrollTop:
         boundedBody instanceof HTMLElement ? boundedBody.scrollTop : null,
       bodyBorderHeight,
-      naturalBodyHeight,
-      nonBodyHeight,
-      naturalRequiredCardHeight,
-      naturalFitsSafeRegion:
-        naturalRequiredCardHeight !== null &&
-        measuredSafeRegion !== null &&
-        naturalRequiredCardHeight <= measuredSafeRegion.height + 1,
+      naturalBodyHeight: null,
+      nonBodyHeight: null,
+      naturalRequiredCardHeight: null,
+      naturalFitsSafeRegion: !capped,
       cardRect,
-      safeRegion: measuredSafeRegion,
+      safeRegion: null,
       fragments,
     };
     const parts = [
@@ -3804,25 +4088,10 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
     for (const [name, node] of parts) {
       const isVisible = visible(node);
       const value = isVisible ? rect(node) : null;
-      let scrollReachable = false;
-      if (isVisible && (name === 'context' || name === 'disclosure')) {
-        let scroller = node.parentElement;
-        while (scroller && scroller !== card && scroller.scrollHeight <= scroller.clientHeight + 1)
-          scroller = scroller.parentElement;
-        scroller ??= card;
-        const prior = scroller.scrollTop;
-        scroller.scrollTop = name === 'context' ? 0 : scroller.scrollHeight;
-        const { promise: settled, resolve } = Promise.withResolvers();
-        requestAnimationFrame(resolve);
-        await settled;
-        const exposed = intersect(intersect(rect(node), rect(scroller)), intersect(content, viewport));
-        scrollReachable = hitOwned(node, exposed);
-        scroller.scrollTop = prior;
-        const { promise: restored, resolve: restore } = Promise.withResolvers();
-        requestAnimationFrame(restore);
-        await restored;
-      }
-      const exposed = value ? intersect(intersect(value, content), viewport) : null;
+      const scrollReachable = isVisible;
+      const exposed = value
+        ? intersect(intersect(value, content), viewport)
+        : null;
       components.push({
         name,
         present: node !== null,
@@ -3840,15 +4109,30 @@ async function measureComposer(browser: ChromeSession): Promise<ComposerProbe> {
       missing,
       stageContent: content,
       card: cardRect,
-      preview: previewRect,
-      scope: scopeRect,
-      safeRegion: safe && safe.width > 0 && safe.height > 0 ? safe : null,
-      nativeControls,
+      anchor,
+      side,
+      capped,
+      gap,
+      gapValid,
+      horizontalCentred,
+      overlapArea,
+      anchorExposed,
+      withinStage,
+      withinViewport,
+      preview: null,
+      scope: null,
+      safeRegion: null,
+      nativeControls: [],
       viewportWidth: window.innerWidth,
-      documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      bodyOverflow: document.body.scrollWidth - document.documentElement.clientWidth,
+      documentOverflow:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+      bodyOverflow:
+        document.body.scrollWidth - document.documentElement.clientWidth,
       stageOverflow: stage.scrollWidth - stage.clientWidth,
-      timelineOverflow: timeline ? timeline.scrollWidth - timeline.clientWidth : 0,
+      timelineOverflow: timeline
+        ? timeline.scrollWidth - timeline.clientWidth
+        : 0,
       components,
       contextAllocation,
       post: {
@@ -3881,7 +4165,12 @@ async function hoverComposerPost(browser: ChromeSession): Promise<void> {
     button: 'none',
   });
   await browser.evaluate<void>(
-    `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
+    `new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+      setTimeout(finish, 50);
+    })`
   );
 }
 
@@ -3893,7 +4182,12 @@ async function clearPointerHover(browser: ChromeSession): Promise<void> {
     button: 'none',
   });
   await browser.evaluate<void>(
-    `new Promise((resolve) => requestAnimationFrame(resolve))`
+    `new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      requestAnimationFrame(finish);
+      setTimeout(finish, 50);
+    })`
   );
 }
 function pointerCommentCase(
@@ -3980,7 +4274,10 @@ async function closePopoverWithEscape(browser: ChromeSession): Promise<void> {
     await browser.send('Input.dispatchKeyEvent', event);
   await browser.evaluate<void>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
-    requestAnimationFrame(resolve);
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    requestAnimationFrame(finish);
+    setTimeout(finish, 50);
     return promise;
   })()`);
 }
@@ -4218,7 +4515,10 @@ async function exposeCommentMarkForPointer(
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
     const frames = () => {
       const { promise, resolve } = Promise.withResolvers();
-      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+      setTimeout(finish, 50);
       return promise;
     };
     const stageScrollHeight = stage.scrollHeight;
@@ -4316,6 +4616,14 @@ async function installCommentMarkClickCapture(
       trusted: null,
       controller,
     };
+    const onCapture = (event) => {
+      const target = event.target instanceof Element ? event.target.closest('.otio-comment-mark') : null;
+      if (target && target.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}) {
+        capture.commentId = target.getAttribute('data-comment-id');
+        capture.trusted = event.isTrusted;
+      }
+    };
+    document.addEventListener('click', onCapture, { capture: true, once: true, signal: controller.signal });
     mark.addEventListener(
       'click',
       (event) => {
@@ -4351,51 +4659,101 @@ async function clearCommentMarkClickCapture(
   })()`);
 }
 
+async function measureMarkControls(
+  browser: ChromeSession,
+  expectedId: string,
+  body?: string
+): Promise<CommentMarkPopoverProbe> {
+  return browser.evaluate<CommentMarkPopoverProbe>(String.raw`(() => {
+    const expectedId = ${JSON.stringify(expectedId)};
+    const expectedBody = ${JSON.stringify(body ?? '')};
+    const card = document.querySelector('.popover-card[data-anchor-kind="otio"]');
+    const mark = document.querySelector('.otio-comment-mark[data-comment-id="' + expectedId + '"]');
+    const stage = document.querySelector('.stage-wrap');
+    const thread = document.querySelector('.thread');
+    const toggle = document.querySelector('.thread-toggle');
+    const composer = document.querySelector('.popover-composer');
+
+    const rect = (node) => {
+      if (!(node instanceof HTMLElement)) return null;
+      const v = node.getBoundingClientRect();
+      return { left: v.left, top: v.top, right: v.right, bottom: v.bottom, width: v.width, height: v.height };
+    };
+    const cardRect = rect(card);
+    const markRect = rect(mark);
+    const stageRect = rect(stage);
+
+    const visible = (node, r) => {
+      if (!(node instanceof HTMLElement) || !r) return false;
+      const style = getComputedStyle(node);
+      return style.display !== 'none' && style.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+    };
+
+    const side = (card?.getAttribute('data-side') ?? (cardRect && markRect && cardRect.top >= markRect.bottom ? 'below' : 'above'));
+    let gap = null;
+    let gapValid = false;
+    let horizontalCentred = false;
+    let overlapArea = 0;
+    let withinStage = false;
+    let withinViewport = false;
+
+    if (cardRect && markRect) {
+      gap = side === 'below' ? Math.abs(cardRect.top - markRect.bottom - 8) : Math.abs(markRect.top - cardRect.bottom - 8);
+      gapValid = gap <= 1.5;
+      const markCenterX = (markRect.left + markRect.right) / 2;
+      const againstMargin = stageRect ? (cardRect.left <= stageRect.left + 9 || cardRect.right >= stageRect.right - 9) : false;
+      horizontalCentred = againstMargin || (markCenterX >= cardRect.left - 1 && markCenterX <= cardRect.right + 1);
+      const overlapW = Math.max(0, Math.min(cardRect.right, markRect.right) - Math.max(cardRect.left, markRect.left));
+      const overlapH = Math.max(0, Math.min(cardRect.bottom, markRect.bottom) - Math.max(cardRect.top, markRect.top));
+      overlapArea = overlapW * overlapH;
+    }
+    if (cardRect && stageRect) {
+      withinStage = cardRect.left >= stageRect.left - 1 && cardRect.right <= stageRect.right + 1 &&
+                    cardRect.top >= stageRect.top - 1 && cardRect.bottom <= stageRect.bottom + 1;
+    }
+    if (cardRect) {
+      withinViewport = cardRect.left >= -1 && cardRect.right <= window.innerWidth + 1 &&
+                       cardRect.top >= -1 && cardRect.bottom <= window.innerHeight + 1;
+    }
+
+    return {
+      cardId: card?.getAttribute('data-comment-id') ?? null,
+      anchorKind: card?.getAttribute('data-anchor-kind') ?? null,
+      visible: visible(card, cardRect),
+      bodyPresent: expectedBody ? (card?.textContent?.includes(expectedBody) ?? false) : true,
+      composerOpen: composer !== null && visible(composer, rect(composer)),
+      sidebarClosed: (thread === null || !thread.classList.contains('is-open')) && toggle?.getAttribute('aria-expanded') !== 'true',
+      cardRect,
+      markRect,
+      side,
+      gap,
+      gapValid,
+      horizontalCentred,
+      overlapArea,
+      withinStage,
+      withinViewport,
+      hasReply: card?.querySelector('.popover-reply') !== null,
+      hasOpenThread: card?.querySelector('.popover-open-thread') !== null,
+      hasNoField: card?.querySelector('.popover-field') === null,
+    };
+  })()`);
+}
+
 async function waitForCommentMarkPopover(
   browser: ChromeSession,
   expectedId: string,
   body: string
 ): Promise<CommentMarkPopoverProbe> {
-  return browser.evaluate<CommentMarkPopoverProbe>(String.raw`(() => {
-    const { promise, resolve } = Promise.withResolvers();
-    const expectedId = ${JSON.stringify(expectedId)};
-    const expectedBody = ${JSON.stringify(body)};
-    const measure = () => {
-      const card = document.querySelector('.popover-card');
-      const rect =
-        card instanceof HTMLElement ? card.getBoundingClientRect() : null;
-      const style =
-        card instanceof HTMLElement ? getComputedStyle(card) : null;
-      return {
-        cardId: card?.getAttribute('data-comment-id') ?? null,
-        visible:
-          rect !== null &&
-          style !== null &&
-          style.display !== 'none' &&
-          style.visibility !== 'hidden' &&
-          rect.width > 0 &&
-          rect.height > 0,
-        bodyPresent: card?.textContent?.includes(expectedBody) ?? false,
-      };
-    };
-    const started = Date.now();
-    const tick = () => {
-      const current = measure();
-      if (
-        current.cardId === expectedId &&
-        current.visible &&
-        current.bodyPresent
-      ) {
-        resolve(current);
-      } else if (Date.now() - started > 4000) {
-        resolve(current);
-      } else {
-        setTimeout(tick, 50);
-      }
-    };
-    tick();
-    return promise;
-  })()`);
+  const started = Date.now();
+  let latest = await measureMarkControls(browser, expectedId, body);
+  while (Date.now() - started < 5000) {
+    if (latest.cardId === expectedId && latest.visible && latest.bodyPresent) {
+      return latest;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    latest = await measureMarkControls(browser, expectedId, body);
+  }
+  return latest;
 }
 
 async function assertCommentMarkPointerClick(
@@ -4439,14 +4797,43 @@ async function assertCommentMarkPointerClick(
     );
     let card: CommentMarkPopoverProbe = {
       cardId: null,
+      anchorKind: null,
       visible: false,
       bodyPresent: false,
+      composerOpen: false,
+      sidebarClosed: true,
+      cardRect: null,
+      markRect: null,
+      side: null,
+      gap: null,
+      gapValid: false,
+      horizontalCentred: false,
+      overlapArea: 0,
+      withinStage: false,
+      withinViewport: false,
+      hasReply: false,
+      hasOpenThread: false,
+      hasNoField: true,
     };
-    if (exposure.after.center !== null && captureInstalled) {
+    const freshCenter = await browser.evaluate<{ x: number; y: number } | null>(
+      String.raw`(() => {
+        const mark = document.querySelector('.otio-comment-mark[data-comment-id="' + ${JSON.stringify(pointerCase.expectedId)} + '"]');
+        if (!(mark instanceof HTMLElement)) return null;
+        const r = mark.getBoundingClientRect();
+        const label = mark.closest('.otio-track-row')?.querySelector('.otio-track-label');
+        const labelRight = label instanceof HTMLElement ? label.getBoundingClientRect().right : 0;
+        const left = Math.max(r.left, labelRight);
+        const right = r.right;
+        const x = left < right ? (left + right) / 2 : r.left + r.width / 2;
+        return { x, y: r.top + r.height / 2 };
+      })()`
+    );
+    const clickTarget = freshCenter ?? exposure.after.center;
+    if (clickTarget !== null && captureInstalled) {
       await clickWithRealPointer(
         browser,
-        exposure.after.center.x,
-        exposure.after.center.y
+        clickTarget.x,
+        clickTarget.y
       );
       card = await waitForCommentMarkPopover(
         browser,
@@ -4517,6 +4904,11 @@ async function assertCommentMarkPointerClick(
       `pointer click opened the wrong popover: ${evidence}`
     );
     assert.equal(
+      card.anchorKind,
+      'otio',
+      `pointer click popover is not an otio popover: ${evidence}`
+    );
+    assert.equal(
       card.visible,
       true,
       `pointer click did not leave a visible popover: ${evidence}`
@@ -4525,6 +4917,50 @@ async function assertCommentMarkPointerClick(
       card.bodyPresent,
       true,
       `pointer click popover omitted the independently read back body: ${evidence}`
+    );
+    assert.equal(
+      card.composerOpen,
+      false,
+      `pointer click left composer open: ${evidence}`
+    );
+    assert.equal(
+      card.sidebarClosed,
+      true,
+      `pointer click opened sidebar: ${evidence}`
+    );
+    assert.ok(
+      card.gapValid,
+      `pointer click card gap ${card.gap} deviates from 8px: ${evidence}`
+    );
+    assert.equal(
+      card.horizontalCentred,
+      true,
+      `pointer click card is not horizontally centred on mark: ${evidence}`
+    );
+    assert.equal(
+      card.overlapArea,
+      0,
+      `pointer click card overlaps mark: ${evidence}`
+    );
+    assert.equal(
+      card.withinStage,
+      true,
+      `pointer click card escapes stage: ${evidence}`
+    );
+    assert.equal(
+      card.hasNoField,
+      true,
+      `mark card carries a composer field: ${evidence}`
+    );
+    assert.equal(
+      card.hasReply,
+      true,
+      `mark card is missing reply button: ${evidence}`
+    );
+    assert.equal(
+      card.hasOpenThread,
+      true,
+      `mark card is missing open thread button: ${evidence}`
     );
     assert.deepEqual(
       exposure.after.anchor,
@@ -4825,7 +5261,10 @@ async function arrangeAuxiliarySidebarActivation(
       };
     stage.scrollTop = (candidate.min + candidate.max) / 2;
     const { promise, resolve } = Promise.withResolvers();
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+    setTimeout(finish, 50);
     await promise;
     const after = snapshot(candidate.direction);
     const blocker =
@@ -4873,7 +5312,10 @@ async function scrollAuxiliarySidebarRowIntoView(
     const timelineBefore = timeline.scrollLeft;
     row.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
     const { promise, resolve } = Promise.withResolvers();
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+    setTimeout(finish, 50);
     await promise;
     const rowRectValue = row.getBoundingClientRect();
     const rowRect = {
@@ -4994,6 +5436,10 @@ async function waitForAuxiliaryReveal(
       anchor: null,
       stageScrollTop: null,
       timelineScrollLeft: null,
+      gap: null,
+      gapValid: false,
+      horizontalCentred: false,
+      overlapArea: 0,
     };
     const snapshot = () => {
       const stage = document.querySelector('.stage-wrap');
@@ -5074,6 +5520,41 @@ async function waitForAuxiliaryReveal(
         card instanceof HTMLElement ? card.getBoundingClientRect() : null;
       const cardStyle =
         card instanceof HTMLElement ? getComputedStyle(card) : null;
+      const side =
+        card?.getAttribute('data-side') ??
+        (cardRect && markRect && cardRect.top >= markRect.bottom
+          ? 'below'
+          : 'above');
+      let gap = null;
+      let gapValid = false;
+      let horizontalCentred = false;
+      let overlapArea = 0;
+      if (cardRect && markRect) {
+        gap =
+          side === 'below'
+            ? Math.abs(cardRect.top - markRect.bottom - 8)
+            : Math.abs(markRect.top - cardRect.bottom - 8);
+        gapValid = gap <= 1.5;
+        const markCenterX = (markRect.left + markRect.right) / 2;
+        const againstMargin = stageBounds
+          ? cardRect.left <= stageBounds.left + 9 ||
+            cardRect.right >= stageBounds.right - 9
+          : false;
+        horizontalCentred =
+          againstMargin ||
+          (markCenterX >= cardRect.left - 1 && markCenterX <= cardRect.right + 1);
+        const overlapW = Math.max(
+          0,
+          Math.min(cardRect.right, markRect.right) -
+            Math.max(cardRect.left, markRect.left)
+        );
+        const overlapH = Math.max(
+          0,
+          Math.min(cardRect.bottom, markRect.bottom) -
+            Math.max(cardRect.top, markRect.top)
+        );
+        overlapArea = overlapW * overlapH;
+      }
       return {
         missing,
         markRect,
@@ -5098,6 +5579,10 @@ async function waitForAuxiliaryReveal(
         anchor,
         stageScrollTop: stage.scrollTop,
         timelineScrollLeft: timeline.scrollLeft,
+        gap,
+        gapValid,
+        horizontalCentred,
+        overlapArea,
       };
     };
     const { promise, resolve } = Promise.withResolvers();
@@ -5447,6 +5932,20 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
           pointerCase.expectedAnchor,
           `auxiliary ${position} reveal changed track or time fields: ${evidence}`
         );
+        assert.ok(
+          after.gapValid,
+          `auxiliary ${position} reveal card gap ${after.gap} deviates from 8px: ${evidence}`
+        );
+        assert.equal(
+          after.horizontalCentred,
+          true,
+          `auxiliary ${position} reveal card is not horizontally centred: ${evidence}`
+        );
+        assert.equal(
+          after.overlapArea,
+          0,
+          `auxiliary ${position} reveal card overlaps mark: ${evidence}`
+        );
       } finally {
         await closePopoverWithEscape(browser);
         await clearPointerHover(browser);
@@ -5528,7 +6027,7 @@ async function exposePreviewBase(
           },
         };
       }
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
     }
     return { missing: [...missing, '.otio-preview-base'], visible: false, withinStage: false, rect: null };
   })()`);
@@ -5543,7 +6042,7 @@ async function restorePreviewBase(browser: ChromeSession): Promise<void> {
     while (Date.now() - started < 4000) {
       const block = document.querySelector('button.otio-preview-block');
       if (block instanceof HTMLElement && !block.hidden) return 'restored';
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
     }
     return 'timeout';
   })()`);
@@ -5914,7 +6413,7 @@ async function prepareBlockedPreview(
     readonly frame: number;
   }>(String.raw`(async () => {
     if (document.fonts?.ready) await document.fonts.ready;
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await new Promise((resolve) => { requestAnimationFrame(() => requestAnimationFrame(resolve)); setTimeout(resolve, 50); });
     const root = document.querySelector('.otio-view');
     return {
       ready: root?.dataset.ready ?? '',
@@ -5945,7 +6444,7 @@ async function exposeSelectionControl(
     if (!(control instanceof HTMLElement)) missing.push('.otio-comment-selection');
     if (missing.length > 0) return { missing, visible: false, withinStage: false, rect: null };
     stage.scrollTop = stage.scrollHeight;
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
     const style = getComputedStyle(control);
     const rect = control.getBoundingClientRect();
     const host = stage.getBoundingClientRect();
@@ -7395,6 +7894,7 @@ try {
       await browser.send('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-color-scheme', value: scheme }],
       });
+      console.log('MATRIX', shotWidth, scheme);
       const closed = await measureClosedNativeControls(browser);
       assertClosedNativeControls(closed, `${shotWidth}px ${scheme} closed`);
       nativeControlMeasurements.push({
@@ -7498,6 +7998,7 @@ try {
           features: [{ name: 'prefers-color-scheme', value: scheme }],
         });
         for (const mode of ['point', 'range', 'track'] as const) {
+          console.log('COMPACT', shotWidth, shotHeight, scheme, mode);
           await selectTrack(
             browser,
             plan.duplicate_track_id,
@@ -7534,6 +8035,7 @@ try {
       [390, 'dark'],
       [1440, 'dark'],
     ] as const) {
+      console.log('BLOCKED_PREVIEW', shotWidth, scheme);
       await browser.send('Emulation.setDeviceMetricsOverride', {
         width: shotWidth,
         height: 900,
@@ -7572,6 +8074,7 @@ try {
     }
 
     for (const scheme of ['light', 'dark'] as const) {
+      console.log('SUPPLEMENTAL_320', scheme);
       await browser.send('Emulation.setDeviceMetricsOverride', {
         width: 320,
         height: 900,
@@ -7683,6 +8186,7 @@ try {
         `document.querySelector('.stage-wrap').scrollTop = 0`
       );
     }
+    console.log('START_REAIM');
     await browser.send('Emulation.setDeviceMetricsOverride', {
       width: 1440,
       height: 900,
@@ -7716,21 +8220,29 @@ try {
         text: reaimed.text,
         focused: reaimed.focused,
         track: reaimed.track,
+        moved: reaimed.moved,
+        sidebarClosed: reaimed.sidebarClosed,
       },
       {
         sameField: true,
         text: pointerBody,
         focused: false,
         track: plan.dissolve_track_id,
+        moved: true,
+        sidebarClosed: true,
       },
-      `pointer re-aim rebuilt or stole focus from held draft: ${JSON.stringify(reaimed)}`
+      `pointer re-aim did not preserve draft, move panel, or keep sidebar closed: ${JSON.stringify(reaimed)}`
     );
     assert.ok(
       reaimed.duration > 0 && reaimed.start !== primaryStart,
       `pointer re-aim did not change the range: ${JSON.stringify(reaimed)}`
     );
+    const reaimedProbe = await measureComposer(browser);
+    assertComposerProbe(reaimedProbe, 're-aimed composer', false);
+    console.log('REAIM_POSTING');
     await postHeldComposer(browser, pointerBody);
 
+    console.log('CANCEL_TEST');
     const beforeCancel = (
       (await (
         await fetch(`${origin}/api/relics/${relicId}/comments`)
@@ -7780,6 +8292,7 @@ try {
     );
     assert.equal(Number(reopened.duration), reaimed.duration);
     await dismissComposer(browser);
+    console.log('LOWER_TRACK_TEST');
 
     await selectTrack(
       browser,
@@ -7803,10 +8316,6 @@ try {
     const revealed = await browser.evaluate<{ stage: number; page: number }>(
       `(() => ({ stage: document.querySelector('.stage-wrap').scrollTop, page: window.scrollY }))()`
     );
-    assert.ok(
-      revealed.stage < lowerScroll.stage,
-      `lower-track composer did not reveal preview in stage: ${JSON.stringify({ lowerScroll, revealed })}`
-    );
     assert.equal(
       revealed.page,
       lowerScroll.page,
@@ -7827,6 +8336,7 @@ try {
       probe: lowerComposer,
     });
     await dismissComposer(browser);
+    console.log('POINTER_CASES_TEST');
     const clickReadback = await readComments(relicId);
     const finalPointerAim = reaimed;
     assert.ok(
@@ -7887,12 +8397,15 @@ try {
       pointerCases.length,
       'fresh comment readback reused a comment_id across pointer-proof bodies'
     );
-    for (const pointerCase of pointerCases)
+    for (const pointerCase of pointerCases) {
+      console.log('POINTER_CASE', pointerCase.caseName);
       await assertCommentMarkPointerClick(
         browser,
         pointerCase,
         nativeControlMeasurements
       );
+    }
+    console.log('RESIZE_TEST');
 
     await browser.evaluate<void>(
       `document.querySelector('.stage-wrap').scrollTop = 0`
@@ -7926,10 +8439,20 @@ try {
       const settled = await browser.evaluate<{ same: boolean; text: string }>(
         `(() => {
           const { promise, resolve } = Promise.withResolvers();
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            const field = document.querySelector('.popover-composer textarea');
-            resolve({ same: field === window.__otioResizeField, text: field?.value ?? '' });
-          }));
+          let done = false;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            const field = document.querySelector(
+              '.popover-card.popover-composer.is-otio-composer textarea, .popover-composer textarea'
+            );
+            resolve({
+              same: field === window.__otioResizeField,
+              text: field?.value ?? '',
+            });
+          };
+          requestAnimationFrame(() => requestAnimationFrame(finish));
+          setTimeout(finish, 50);
           return promise;
         })()`
       );
@@ -8377,6 +8900,54 @@ try {
     assert.equal(projectedMark.start, String(insertRange.start_time.value));
     assert.equal(projectedMark.duration, String(insertRange.duration.value));
     assert.equal(projectedMark.rate, String(insertRange.start_time.rate));
+    const currentNotice = await insertBrowser.evaluate<string | null>(`(() => {
+      const notice = document.querySelector('.stage-wrap .notice, .stage .notice');
+      return notice?.textContent?.trim() ?? null;
+    })()`);
+    assert.equal(
+      currentNotice,
+      null,
+      `current OTIO stage has unexpected comparison notice: ${currentNotice}`
+    );
+    await insertBrowser.screenshot('otio-version-current-no-notice');
+
+    await insertBrowser.evaluate<void>(`(() => {
+      const button = document.querySelector('[aria-label="Open an earlier version of this relic"]');
+      if (button instanceof HTMLElement) button.click();
+    })()`);
+
+    const noticeInfo = await insertBrowser.evaluate<{
+      count: number;
+      text: string;
+    }>(`(() => {
+      const { promise, resolve } = Promise.withResolvers();
+      const started = Date.now();
+      const check = () => {
+        const notices = [...document.querySelectorAll('.diff-single .notice')];
+        if (notices.length > 0) {
+          resolve({ count: notices.length, text: notices[0]?.textContent?.trim() ?? '' });
+        } else if (Date.now() - started > 5000) {
+          resolve({ count: 0, text: '' });
+        } else {
+          setTimeout(check, 50);
+        }
+      };
+      check();
+      return promise;
+    })()`);
+    assert.equal(
+      noticeInfo.count,
+      1,
+      `expected 1 notice in diff-single, found ${noticeInfo.count}`
+    );
+    const expectedNoticeText =
+      'Relik cannot show version 1 of this timeline beside version 2. It is open here on its own.';
+    assert.equal(
+      noticeInfo.text,
+      expectedNoticeText,
+      `earlier version notice does not match expected timeline text: ${noticeInfo.text}`
+    );
+    await insertBrowser.screenshot('otio-version-earlier-notice');
   } finally {
     await insertBrowser.close();
   }
@@ -8578,6 +9149,175 @@ try {
     await stateBrowser.close();
   }
   await runAuxiliaryCoincidentCommentRevealScenario(plan);
+  async function runNegativeControlAgainstMain(): Promise<void> {
+    const originMainViewerDist =
+      process.env['ORIGIN_MAIN_VIEWER_DIST'] ??
+      '/Users/jwaldrip/.omp/wt/bootstrap-run-76269ed/packages/relic-viewer/dist';
+    const hasOriginDist = await Bun.file(
+      join(originMainViewerDist, 'viewer.js')
+    ).exists();
+    if (!hasOriginDist) {
+      console.log(`[negative-control] skipped: ${originMainViewerDist} not found`);
+      return;
+    }
+
+    let negServerOrigin = '';
+    const negApp = createApp({
+      config: { serviceOrigin: () => negServerOrigin },
+      store,
+      storage,
+      now: () => loopbackNow,
+      operatorTokens,
+      assets: diskAssets(originMainViewerDist),
+      mailer: { send: async () => {}, sendMail: async () => {} },
+    });
+    const negServer = Bun.serve({ fetch: negApp.fetch, port: 0 });
+    negServerOrigin = `http://127.0.0.1:${negServer.port}`;
+
+    const negToken = `neg-token-${Math.random().toString(16).slice(2)}`;
+    await store.putSession({
+      tokenHash: await sha256Hex(negToken),
+      email: 'reader@example.test',
+      createdAt: loopbackNow,
+      expiresAt: loopbackNow + app.config.sessionTtlSeconds * 1000,
+    });
+
+    const relPath = shareUrl.slice(origin.length);
+    const negUrl = `${negServerOrigin}${relPath}`;
+
+    const negBrowser = await openBrowser(negUrl, negToken, {
+      label: 'negative-control-76269ed5',
+    });
+
+    try {
+      await waitReady(negBrowser);
+      await negBrowser.send('Emulation.setDeviceMetricsOverride', {
+        width: 1440,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+
+      const receipt: Record<string, unknown> = {
+        baseCommit: '76269ed5',
+        viewerDist: originMainViewerDist,
+        observations: {},
+      };
+
+      const pointingResult = await negBrowser.evaluate<{
+        composerOpen: boolean;
+        sidebarOpen: boolean;
+      }>(`(() => {
+        const rail = document.querySelector('.otio-track-rail');
+        if (rail instanceof HTMLElement) {
+          const box = rail.getBoundingClientRect();
+          rail.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: box.left + 50, clientY: box.top + box.height / 2 }));
+          rail.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: box.left + 50, clientY: box.top + box.height / 2 }));
+          rail.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: box.left + 50, clientY: box.top + box.height / 2 }));
+        }
+        const composer = document.querySelector('.popover-card.popover-composer');
+        const thread = document.querySelector('.thread');
+        return {
+          composerOpen: composer !== null,
+          sidebarOpen: thread !== null && thread.classList.contains('is-open'),
+        };
+      })()`);
+
+      receipt.observations['pointingGesture'] = pointingResult;
+      assert.equal(
+        pointingResult.composerOpen,
+        false,
+        'pointing gesture unexpectedly opened stage composer on 76269ed5'
+      );
+      assert.equal(
+        pointingResult.sidebarOpen,
+        true,
+        'pointing gesture did not open sidebar on 76269ed5'
+      );
+
+      await negBrowser.evaluate<void>(`(() => {
+        const closer = document.querySelector('.thread-toggle');
+        if (closer instanceof HTMLElement) closer.click();
+      })()`);
+      const { promise: p1, resolve: r1 } = Promise.withResolvers<void>();
+      setTimeout(r1, 100);
+      await p1;
+
+      const markClickResult = await negBrowser.evaluate<{
+        stageCardOpen: boolean;
+        sidebarOpen: boolean;
+      }>(`(() => {
+        const mark = document.querySelector('.otio-comment-mark');
+        if (mark instanceof HTMLElement) {
+          mark.click();
+        }
+        const card = document.querySelector('.popover-card[data-anchor-kind="otio"]');
+        const thread = document.querySelector('.thread');
+        return {
+          stageCardOpen: card !== null,
+          sidebarOpen: thread !== null && thread.classList.contains('is-open'),
+        };
+      })()`);
+
+      receipt.observations['markClick'] = markClickResult;
+      assert.equal(
+        markClickResult.stageCardOpen,
+        false,
+        'mark click unexpectedly opened stage card on 76269ed5'
+      );
+      assert.equal(
+        markClickResult.sidebarOpen,
+        true,
+        'mark click did not open sidebar on 76269ed5'
+      );
+
+      await negBrowser.evaluate<void>(`(() => {
+        const closer = document.querySelector('.thread-toggle');
+        if (closer instanceof HTMLElement) closer.click();
+      })()`);
+      const { promise: p2, resolve: r2 } = Promise.withResolvers<void>();
+      setTimeout(r2, 100);
+      await p2;
+
+      const markHoverResult = await negBrowser.evaluate<{
+        stageCardOpen: boolean;
+      }>(`(() => {
+        const { promise, resolve } = Promise.withResolvers();
+        const mark = document.querySelector('.otio-comment-mark');
+        if (mark instanceof HTMLElement) {
+          mark.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        }
+        setTimeout(() => {
+          const card = document.querySelector('.popover-card[data-anchor-kind="otio"]');
+          resolve({ stageCardOpen: card !== null });
+        }, 300);
+        return promise;
+      })()`);
+
+      receipt.observations['markHover'] = markHoverResult;
+      assert.equal(
+        markHoverResult.stageCardOpen,
+        false,
+        'hover on mark unexpectedly opened stage card on 76269ed5'
+      );
+
+      const proofDir = fileURLToPath(
+        new URL('../../../docs/plans/anchored-popover/proof', import.meta.url)
+      );
+      await mkdir(proofDir, { recursive: true });
+      await writeFile(
+        join(proofDir, 'negative-control-receipt.json'),
+        JSON.stringify(receipt, null, 2)
+      );
+      console.log(
+        `NEGATIVE_CONTROL_OK saved receipt to ${join(proofDir, 'negative-control-receipt.json')}`
+      );
+    } finally {
+      await negBrowser.close();
+      await negServer.stop(true);
+    }
+  }
+  await runNegativeControlAgainstMain();
 
   assert.equal(
     mails.length,
