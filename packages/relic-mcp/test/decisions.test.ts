@@ -512,6 +512,40 @@ describe('wire protocol and mint safety', () => {
     expect(r.isError).toBe(true);
     expect(r.structuredContent.code).toBe('app_response_unusable');
   });
+  test('relic_read_decisions against real server endpoint returns initial empty decision list', async () => {
+    const sourceFile = join(scratch, 'real-doc.txt');
+    await writeFile(sourceFile, 'Real server decisions test content\n');
+
+    const pub = await publish({ path: sourceFile }, deps);
+    expect(pub.relic_id).toBeDefined();
+    expect(pub.version_digest).toBeDefined();
+
+    // No mockDecisionsListResponse: request goes directly to real app.fetch!
+    const res = await handleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 100,
+        method: 'tools/call',
+        params: {
+          name: READ_DECISIONS_TOOL_NAME,
+          arguments: { relic_id: pub.relic_id },
+        },
+      },
+      deps
+    );
+
+    expect(res?.result).toBeDefined();
+    const result = res?.result as {
+      isError: boolean;
+      structuredContent: DecisionList;
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent.relic_id).toBe(pub.relic_id);
+    expect(result.structuredContent.current_version).toBe(1);
+    expect(result.structuredContent.decisions).toEqual([]);
+    expect(result.content[0]?.text).toContain('No decisions recorded');
+  });
 });
 
 describe('version_digest in publish and republish', () => {
