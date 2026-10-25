@@ -22,6 +22,7 @@ import {
 } from './envelope.ts';
 import { ContentTooLargeError, MalformedContainerError } from './errors.ts';
 import { FORMAT_VERSION } from './fragment.ts';
+import { openRelicStream } from './stream.ts';
 import {
   type DerivedKeys,
   decodeHeader,
@@ -116,35 +117,16 @@ export async function openRelic(
   key: Uint8Array,
   fragmentVersion: number = FORMAT_VERSION
 ): Promise<OpenedRelic> {
-  const header = decodeHeader(container);
-  const keys = await deriveKeys(key, header.salt);
-  const body = container.slice(HEADER_BYTES);
-
-  if (body.length === 0) {
-    throw new MalformedContainerError('container carries no records');
-  }
-
-  const first = await decryptRecord(keys, 0, sliceRecord(body, 0, header.rs));
-  const envelope = decodeEnvelope(first.data, fragmentVersion);
-
-  if (first.isLast) {
-    return { envelope, content: new Uint8Array(0) };
-  }
-
-  const recordCount = Math.ceil(body.length / header.rs);
-  const chunks: Uint8Array[] = [];
-
-  for (let seq = 1; seq < recordCount; seq++) {
-    const record = await decryptRecord(
-      keys,
-      seq,
-      sliceRecord(body, seq, header.rs)
-    );
-    chunks.push(record.data);
-    if (record.isLast) break;
-  }
-
-  return { envelope, content: concat(chunks) };
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(container);
+      controller.close();
+    },
+  });
+  return openRelicStream(stream, key, {
+    objectLength: container.length,
+    fragmentVersion,
+  });
 }
 
 /**

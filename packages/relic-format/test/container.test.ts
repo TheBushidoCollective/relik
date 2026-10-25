@@ -19,12 +19,17 @@ import {
 import {
   DecryptFailedError,
   KeyIdPresentError,
+  MalformedContainerError,
   StrictParseError,
+  TruncatedContainerError,
   VersionMismatchError,
 } from '../src/errors.ts';
 import { FORMAT_VERSION, generateKey } from '../src/fragment.ts';
 import {
   decodeHeader,
+  deriveKeys,
+  encodeHeader,
+  encryptRecord,
   HEADER_BYTES,
   RECORD_SIZE,
   recordCapacity,
@@ -377,6 +382,87 @@ describe('refusals', () => {
     await expect(
       openRelic(container.slice(0, container.length - 5), key)
     ).rejects.toBeInstanceOf(DecryptFailedError);
+  });
+
+  test('openRelic refuses a container cut at a record boundary with TruncatedContainerError', async () => {
+    const { container, key } = await roundTrip(bytes(CAPACITY * 3));
+    const cut = container.slice(0, container.length - RS);
+    await expect(openRelic(cut, key)).rejects.toBeInstanceOf(
+      TruncatedContainerError
+    );
+  });
+
+  test('openRelic refuses bytes after the delimiter-2 record with MalformedContainerError', async () => {
+    const { container, key } = await roundTrip(bytes(CAPACITY * 2));
+    const extra = new Uint8Array(container.length + 10);
+    extra.set(container, 0);
+    await expect(openRelic(extra, key)).rejects.toBeInstanceOf(
+      MalformedContainerError
+    );
+  });
+
+  test('openRelic refuses records that authenticate but total fewer bytes than entry.length with TruncatedContainerError, and more with MalformedContainerError', async () => {
+    const key = generateKey();
+    const salt = new Uint8Array(16);
+    crypto.getRandomValues(salt);
+    const keys = await deriveKeys(key, salt);
+    const rs = 256;
+    const capacity = recordCapacity(rs);
+
+    const declaredLength = capacity * 2;
+    const envelopeBytes = encodeEnvelope({
+      version: 1,
+      entries: [
+        {
+          filename: 'test.bin',
+          mimetype: 'application/octet-stream',
+          offset: 0,
+          length: declaredLength,
+        },
+      ],
+    });
+
+    const headerBytes = encodeHeader(salt, rs);
+    const rec0 = await encryptRecord(keys, 0, envelopeBytes, false, capacity);
+
+    // Case A: fewer bytes (only 1 record of capacity bytes, with delimiter 2)
+    const rec1Short = await encryptRecord(keys, 1, bytes(capacity), true);
+    const shortContainer = new Uint8Array(
+      headerBytes.length + rec0.length + rec1Short.length
+    );
+    shortContainer.set(headerBytes, 0);
+    shortContainer.set(rec0, headerBytes.length);
+    shortContainer.set(rec1Short, headerBytes.length + rec0.length);
+
+    await expect(openRelic(shortContainer, key)).rejects.toBeInstanceOf(
+      TruncatedContainerError
+    );
+
+    // Case B: more bytes (3 records of capacity bytes, last record has delimiter 2)
+    const rec1 = await encryptRecord(keys, 1, bytes(capacity), false, capacity);
+    const rec2 = await encryptRecord(keys, 2, bytes(capacity), false, capacity);
+    const rec3 = await encryptRecord(keys, 3, bytes(capacity), true);
+    const longContainer = new Uint8Array(
+      headerBytes.length +
+        rec0.length +
+        rec1.length +
+        rec2.length +
+        rec3.length
+    );
+    let offset = 0;
+    longContainer.set(headerBytes, offset);
+    offset += headerBytes.length;
+    longContainer.set(rec0, offset);
+    offset += rec0.length;
+    longContainer.set(rec1, offset);
+    offset += rec1.length;
+    longContainer.set(rec2, offset);
+    offset += rec2.length;
+    longContainer.set(rec3, offset);
+
+    await expect(openRelic(longContainer, key)).rejects.toBeInstanceOf(
+      MalformedContainerError
+    );
   });
 
   test('a set keyid is refused', async () => {

@@ -24,5 +24,6 @@ export * from './otio-types.ts';
 export * from './otio-zip.ts';
 export * from './renderer-class.ts';
 export * from './rfc8188.ts';
+export * from './stream.ts';
 export * from './share.ts';
 export * from './title.ts';
