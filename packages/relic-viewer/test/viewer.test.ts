@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { encryptRelic, generateKey, generateRelicId } from '@relic/format';
+import {
+  encodeFragment,
+  encryptRelic,
+  generateKey,
+  generateRelicId,
+} from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
@@ -700,6 +705,26 @@ describe('failure states', () => {
 
     const state = await load(id, deps(fragment));
     if (state.kind === 'dead') expect(state.dead.code).toBe('relic_expired');
+  });
+
+  test('viewer validates relicId with parseRelicId and never fetches a non-canonical path', async () => {
+    const fetchedUrls: string[] = [];
+    const validFragment = encodeFragment(generateKey());
+    const customDeps: ViewerDeps = {
+      ...deps(validFragment),
+      fetch: (async (input: RequestInfo | URL) => {
+        const urlStr = typeof input === 'string' ? input : input.toString();
+        fetchedUrls.push(urlStr);
+        return new Response(JSON.stringify({ code: 'relic_not_found' }), { status: 404 });
+      }) as typeof globalThis.fetch,
+    };
+
+    const state = await load('../challenge?', customDeps);
+    expect(state.kind).toBe('dead');
+    if (state.kind === 'dead') {
+      expect(state.dead.code).toBe('invalid_relic_id');
+    }
+    expect(fetchedUrls.length).toBe(0);
   });
 });
 

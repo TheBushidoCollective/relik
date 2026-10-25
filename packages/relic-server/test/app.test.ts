@@ -349,11 +349,26 @@ describe('the shell', () => {
     );
   });
 
-  test('an angle-bracket path segment is escaped in the plate', async () => {
-    const response = await app.fetch(req('/<script>'));
-    const body = await response.text();
-    expect(body).toContain('&lt;script&gt;');
-    expect(body).not.toContain('<span class="accession"><script>');
+  test('server shell emits canonical id only and falls back for unparseable ids', async () => {
+    // Unparseable ids (like path traversal or script tags) fall back: no data-relic-id and no accession
+    const traversalResponse = await app.fetch(req('/..%2Fchallenge%3F'));
+    const traversalBody = await traversalResponse.text();
+    expect(traversalBody).not.toContain('data-relic-id');
+    expect(traversalBody).not.toContain('challenge');
+
+    const scriptResponse = await app.fetch(req('/<script>'));
+    const scriptBody = await scriptResponse.text();
+    expect(scriptBody).not.toContain('data-relic-id');
+    expect(scriptBody).not.toContain('<script>');
+    expect(scriptBody).not.toContain('&lt;script&gt;');
+
+    // Canonical Crockford alias or uppercase canonicalises to canonical lowercase id
+    const { id } = await publish();
+    const upperResponse = await app.fetch(req(`/${id.toUpperCase()}`));
+    expect(upperResponse.status).toBe(200);
+    const upperBody = await upperResponse.text();
+    expect(upperBody).toContain(`data-relic-id="${id}"`);
+    expect(upperBody).toContain(`<span class="accession">${id}</span>`);
   });
 
   test('the dashboard shell has no data-load-plate', async () => {

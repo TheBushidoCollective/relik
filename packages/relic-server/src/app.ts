@@ -4728,9 +4728,13 @@ async function shell(
 
   const rootAttributes =
     typeof target === 'string'
-      ? `data-relic-id="${escapeHtml(target)}" data-usercontent-origin="${escapeHtml(
-          new URL(config.usercontentOrigin).origin
-        )}"`
+      ? canonicalId !== undefined
+        ? `data-relic-id="${escapeHtml(canonicalId)}" data-usercontent-origin="${escapeHtml(
+            new URL(config.usercontentOrigin).origin
+          )}"`
+        : `data-usercontent-origin="${escapeHtml(
+            new URL(config.usercontentOrigin).origin
+          )}"`
       : `data-view="dashboard" data-usercontent-origin="${escapeHtml(
           new URL(config.usercontentOrigin).origin
         )}"`;
@@ -4766,7 +4770,7 @@ async function shell(
 <div class="mark">relik.link</div>
 <div class="identity">
 <div class="filename" data-load-custody>${escapeHtml(LOAD_OPENING)}</div>
-<div class="identity-meta"><span class="accession">${escapeHtml(target)}</span></div>
+<div class="identity-meta"><span class="accession">${canonicalId !== undefined ? escapeHtml(canonicalId) : ''}</span></div>
 </div>
 <div class="actions">
 <a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
