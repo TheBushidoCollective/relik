@@ -247,7 +247,13 @@ describe('the storage adapter', () => {
         },
       });
       globalThis.fetch = (async () => {
-        return new Response(stream, { status: 200 });
+        return new Response(stream, {
+          status: 200,
+          headers: {
+            'content-length': '11',
+            'x-goog-generation': '12345',
+          },
+        });
       }) as unknown as typeof fetch;
 
       const digest = await storage().digest('abc123');
@@ -280,6 +286,95 @@ describe('the storage adapter', () => {
       }) as unknown as typeof fetch;
 
       await expect(storage().digest('error')).rejects.toThrow(/500/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('digest throws if hashed bytes do not match stat length', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (
+        input: string | URL | Request,
+        init?: RequestInit
+      ) => {
+        const method =
+          init?.method ?? (input instanceof Request ? input.method : 'GET');
+        if (method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: { 'content-length': '20' }, // stat says 20
+          });
+        }
+        return new Response('short', {
+          status: 200,
+          headers: { 'content-length': '20' }, // 5 bytes != 20
+        });
+      }) as unknown as typeof fetch;
+
+      await expect(storage().digest('abc123')).rejects.toThrow(/mismatch/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('digest pins GET to stat generation with x-goog-if-generation-match', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      let getHeaders: Headers | undefined;
+      globalThis.fetch = (async (
+        input: string | URL | Request,
+        init?: RequestInit
+      ) => {
+        const method =
+          init?.method ?? (input instanceof Request ? input.method : 'GET');
+        if (method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: {
+              'content-length': '5',
+              'x-goog-generation': 'gen-999',
+            },
+          });
+        }
+        getHeaders = new Headers(init?.headers);
+        return new Response('hello', {
+          status: 200,
+          headers: { 'content-length': '5' },
+        });
+      }) as unknown as typeof fetch;
+
+      const digest = await storage().digest('abc123');
+      expect(digest).toBe(createHash('sha256').update('hello').digest('hex'));
+      expect(getHeaders?.get('x-goog-if-generation-match')).toBe('gen-999');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('digest returns undefined if generation match returns 412', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (
+        input: string | URL | Request,
+        init?: RequestInit
+      ) => {
+        const method =
+          init?.method ?? (input instanceof Request ? input.method : 'GET');
+        if (method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: {
+              'content-length': '5',
+              'x-goog-generation': 'gen-999',
+            },
+          });
+        }
+        return new Response('precondition failed', { status: 412 });
+      }) as unknown as typeof fetch;
+
+      const digest = await storage().digest('abc123');
+      expect(digest).toBeUndefined();
     } finally {
       globalThis.fetch = originalFetch;
     }

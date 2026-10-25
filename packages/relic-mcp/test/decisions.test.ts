@@ -2,19 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  decodeKey,
-  deriveShareProof,
-  encodeKey,
-  type DecisionList,
-  type DecisionRecord,
-  isVersionDigest,
-  versionDigest,
-} from '@relic/format';
+import { type DecisionList, isVersionDigest } from '@relic/format';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
-import { readDecisions } from '../src/decisions.ts';
 import { nodeFiles } from '../src/files.ts';
 import { type PublishDeps, PublishError, publish } from '../src/publish.ts';
 import { republish } from '../src/republish.ts';
@@ -27,7 +18,7 @@ import {
   TOOL_DEFINITION,
   handleMessage,
 } from '../src/server.ts';
-import { loadPublishState, savePublishState } from '../src/state.ts';
+import { loadPublishState } from '../src/state.ts';
 
 const SERVICE = 'https://relic.example';
 
@@ -480,6 +471,35 @@ describe('wire protocol and mint safety', () => {
     };
     expect(r2.isError).toBe(true);
     expect(r2.structuredContent.code).toBe('app_response_unusable');
+
+    // Mismatched relic_id in response
+    mockDecisionsListResponse = {
+      status: 200,
+      body: {
+        relic_id: 'mismatched-other-id',
+        current_version: 1,
+        decisions: [],
+      },
+    };
+
+    const resMismatch = await handleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/call',
+        params: {
+          name: READ_DECISIONS_TOOL_NAME,
+          arguments: { relic_id: pub.relic_id },
+        },
+      },
+      deps
+    );
+    const rMismatch = resMismatch?.result as {
+      isError: boolean;
+      structuredContent: { code: string };
+    };
+    expect(rMismatch.isError).toBe(true);
+    expect(rMismatch.structuredContent.code).toBe('app_response_unusable');
   });
 
   test('relic_read_decisions handles legacy server 404 with app_response_unusable', async () => {

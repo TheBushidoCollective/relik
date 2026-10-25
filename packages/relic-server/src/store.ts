@@ -16,7 +16,7 @@ import { ProblemError } from './problems.ts';
 export type { DecisionVerdict };
 
 export function normalizeEmail(value: string): string {
-  return value.trim().toLowerCase();
+  return value.trim().replace(/[A-Z]/g, (ch) => ch.toLowerCase());
 }
 
 export function looksLikeEmail(value: string): boolean {
@@ -471,6 +471,7 @@ export interface RelicStore {
   appendDecision(row: DecisionRow): Promise<void>;
   listDecisions(relicId: string): Promise<readonly DecisionRow[]>;
   deleteDecisionsForRelic(relicId: string): Promise<number>;
+  deleteDecision(relicId: string, decisionId: string): Promise<boolean>;
   recordVersionDigest(
     id: string,
     version: number,
@@ -1005,6 +1006,16 @@ export class MemoryStore implements RelicStore {
     return count;
   }
 
+  async deleteDecision(relicId: string, decisionId: string): Promise<boolean> {
+    const map = this.decisions.get(relicId);
+    if (map === undefined) return false;
+    const deleted = map.delete(decisionId);
+    if (map.size === 0) {
+      this.decisions.delete(relicId);
+    }
+    return deleted;
+  }
+
   async recordVersionDigest(
     id: string,
     version: number,
@@ -1053,12 +1064,7 @@ export class MemoryStore implements RelicStore {
         (c) => c.credentialId === nextCred.credentialId
       );
       if (stored !== undefined) {
-        const isRegression = nextCred.signCount < stored.signCount;
-        const isRepeatedAssertion =
-          nextCred.signCount === stored.signCount &&
-          (stored.signCount > 0 || nextCred.signCount > 0) &&
-          nextCred.lastUsedAt !== stored.lastUsedAt;
-        if (isRegression || isRepeatedAssertion) {
+        if (nextCred.signCount < stored.signCount) {
           throw new ProblemError('passkey_verification_failed', {
             passkey_check: 'counter',
           });

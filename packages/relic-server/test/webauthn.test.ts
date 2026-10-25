@@ -1227,6 +1227,104 @@ describe('All 400 malformed checks (spec §4.3, §5)', () => {
     );
   });
 
+  test('check: key fails for RS256 with stripped n < 256 bytes, n > 512 bytes, or e != 65537', async () => {
+    function makeRsaCred(n: Uint8Array, e: Uint8Array) {
+      const coseMap = new Map<unknown, unknown>();
+      coseMap.set(1, 3); // RSA
+      coseMap.set(3, -257); // RS256
+      coseMap.set(-1, n);
+      coseMap.set(-2, e);
+
+      const rpIdHash = createHash('sha256').update(RP_ID).digest();
+      const flags = 0x01 | 0x04 | 0x40;
+      const signCountBuf = Buffer.alloc(4, 0);
+      const aaguid = Buffer.alloc(16, 0);
+      const credId = 'Y3JlZC1yc2EtdGVzdA';
+      const credIdBytes = Buffer.from(credId, 'base64url');
+      const credIdLenBuf = Buffer.alloc(2);
+      credIdLenBuf.writeUInt16BE(credIdBytes.byteLength, 0);
+      const coseBytes = encodeCbor(coseMap);
+
+      const authData = Buffer.concat([
+        rpIdHash,
+        Buffer.from([flags]),
+        signCountBuf,
+        aaguid,
+        credIdLenBuf,
+        credIdBytes,
+        coseBytes,
+      ]);
+
+      const attMap = new Map<unknown, unknown>();
+      attMap.set('fmt', 'none');
+      attMap.set('attStmt', new Map());
+      attMap.set('authData', new Uint8Array(authData));
+
+      const clientData = {
+        type: 'webauthn.create',
+        challenge: 'chal',
+        origin: ORIGIN,
+        crossOrigin: false,
+      };
+      return {
+        id: credId,
+        rawId: credId,
+        type: 'public-key',
+        response: {
+          clientDataJSON: Buffer.from(JSON.stringify(clientData)).toString(
+            'base64url'
+          ),
+          attestationObject: Buffer.from(encodeCbor(attMap)).toString(
+            'base64url'
+          ),
+        },
+      };
+    }
+
+    const validE = new Uint8Array([0x01, 0x00, 0x01]);
+
+    // 1. Modulus is 256 bytes with leading 0 (255 bytes after strip < 256)
+    const shortN = new Uint8Array(256);
+    shortN[0] = 0x00;
+    shortN.fill(0xaa, 1);
+    await expectWebauthnError(
+      verifyRegistration(makeRsaCred(shortN, validE), {
+        challenge: 'chal',
+        origin: ORIGIN,
+        rpId: RP_ID,
+      }),
+      'malformed',
+      'key'
+    );
+
+    // 2. Modulus > 512 bytes (513 bytes)
+    const hugeN = new Uint8Array(513);
+    hugeN.fill(0xaa);
+    await expectWebauthnError(
+      verifyRegistration(makeRsaCred(hugeN, validE), {
+        challenge: 'chal',
+        origin: ORIGIN,
+        rpId: RP_ID,
+      }),
+      'malformed',
+      'key'
+    );
+
+    // 3. Exponent != 65537 (e = 3)
+    const validN = new Uint8Array(256);
+    validN.fill(0xaa);
+    const badE = new Uint8Array([0x03]);
+    await expectWebauthnError(
+      verifyRegistration(makeRsaCred(validN, badE), {
+        challenge: 'chal',
+        origin: ORIGIN,
+        rpId: RP_ID,
+      }),
+      'malformed',
+      'key'
+    );
+  });
+
   test('check: shape fails on missing or invalid required envelope fields', async () => {
     // Non-object credential
     await expectWebauthnError(

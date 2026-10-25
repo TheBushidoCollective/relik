@@ -1368,6 +1368,58 @@ describe('gcsStore', () => {
       expect(await store.listDecisions('r_dec')).toEqual([]);
     });
 
+    test('listDecisions caps fan-out concurrency to 16 with > 16 decisions and preserves ordering', async () => {
+      const gcs = fakeGcs();
+      let activeGets = 0;
+      let maxActiveGets = 0;
+      const origFetch = gcs.fetch.bind(gcs);
+      gcs.fetch = (async (
+        input: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1]
+      ) => {
+        const url = new URL(
+          typeof input === 'string' ? input : input.toString()
+        );
+        const isObjectGet =
+          !url.pathname.startsWith('/upload/') &&
+          !url.pathname.endsWith('/o') &&
+          (init?.method === undefined || init.method === 'GET');
+        if (isObjectGet) {
+          activeGets++;
+          if (activeGets > maxActiveGets) maxActiveGets = activeGets;
+          await Promise.resolve();
+          try {
+            return await origFetch(input, init);
+          } finally {
+            activeGets--;
+          }
+        }
+        return origFetch(input, init);
+      }) as unknown as typeof fetch;
+
+      const store = storeOn(gcs);
+      for (let i = 25; i >= 1; i--) {
+        await store.appendDecision({
+          id: `dec_${String(i).padStart(2, '0')}`,
+          relicId: 'r_many',
+          version: 1,
+          verdict: 'approve',
+          author: `user${i}@example.com`,
+          createdAt: i * 1000,
+          versionDigest: 'sha1',
+          credentialId: `cred${i}`,
+        });
+      }
+
+      const list = await store.listDecisions('r_many');
+      expect(list.length).toBe(25);
+      expect(maxActiveGets).toBe(16);
+      for (let i = 0; i < 25; i++) {
+        expect(list[i]?.createdAt).toBe((i + 1) * 1000);
+        expect(list[i]?.id).toBe(`dec_${String(i + 1).padStart(2, '0')}`);
+      }
+    });
+
     test('createPasskeys TOFU and updatePasskeys counter check', async () => {
       const gcs = fakeGcs();
       const store = storeOn(gcs);
