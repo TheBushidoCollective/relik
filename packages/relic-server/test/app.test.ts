@@ -324,6 +324,59 @@ describe('the shell', () => {
     );
   });
 
+  test('GET /{id} emits static plate with data-load-plate, opening phase, bar, explanation, and accession', async () => {
+    const { id } = await publish();
+    const response = await app.fetch(req(`/${id}`));
+    const body = await response.text();
+
+    expect(body).toContain('data-load-plate');
+    expect(body).toContain('data-load-phase="opening"');
+    expect(body).toContain('data-load-bar');
+    expect(body).toContain(
+      'The file in this link is decrypted in your browser.'
+    );
+    expect(body).toContain('Report this relic');
+    expect(body).toContain('How Relic handles your data');
+    expect(body).toContain(`<span class="accession">${id}</span>`);
+
+    // noscript styles and card
+    expect(body).toContain(
+      '<noscript><style>.stage-loading,[data-load-custody]{display:none}</style></noscript>'
+    );
+    expect(body).toContain('This page needs JavaScript to open a relic.');
+    expect(body).toContain(
+      'Relic decrypts the file in your browser, so with JavaScript off there is nothing here to decrypt it with.'
+    );
+  });
+
+  test('server shell emits canonical id only and falls back for unparseable ids', async () => {
+    // Unparseable ids (like path traversal or script tags) fall back: no data-relic-id and no accession
+    const traversalResponse = await app.fetch(req('/..%2Fchallenge%3F'));
+    const traversalBody = await traversalResponse.text();
+    expect(traversalBody).not.toContain('data-relic-id');
+    expect(traversalBody).not.toContain('challenge');
+
+    const scriptResponse = await app.fetch(req('/<script>'));
+    const scriptBody = await scriptResponse.text();
+    expect(scriptBody).not.toContain('data-relic-id');
+    expect(scriptBody).not.toContain('<script>');
+    expect(scriptBody).not.toContain('&lt;script&gt;');
+
+    // Canonical Crockford alias or uppercase canonicalises to canonical lowercase id
+    const { id } = await publish();
+    const upperResponse = await app.fetch(req(`/${id.toUpperCase()}`));
+    expect(upperResponse.status).toBe(200);
+    const upperBody = await upperResponse.text();
+    expect(upperBody).toContain(`data-relic-id="${id}"`);
+    expect(upperBody).toContain(`<span class="accession">${id}</span>`);
+  });
+
+  test('the dashboard shell has no data-load-plate', async () => {
+    const response = await app.fetch(req('/dashboard'));
+    const body = await response.text();
+    expect(body).not.toContain('data-load-plate');
+  });
+
   test('a relic published as markdown serves the Markdown phrase and browser tail; one published as archive serves the archive phrase and download tail', async () => {
     const { id: mdId } = await publish({ rendererClass: 'markdown' });
     const mdResponse = await app.fetch(req(`/${mdId}`));
@@ -644,8 +697,10 @@ describe('reserved segments beat ids at the router', () => {
     );
     expect(body).toContain('Sharing gives us addresses, never the link.');
     expect(body).toContain('One stop link stops every email about that relic.');
+    expect(body).toContain(
+      'A link whose key does not open a relic stops downloading after the first block'
+    );
   });
-
   test('/install on a self-hosted deployment names the origin to point at', async () => {
     // A self-hoster needs it: without the variable their client resolves the
     // hosted default and publishes to somebody else's service.
