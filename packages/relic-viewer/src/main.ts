@@ -1356,12 +1356,23 @@ export function renderPdfView(view: ReadyView): HTMLElement {
       void mountPdf(wrapper, view.content, view.filename);
     })
     .catch(() => {
-      wrapper.dispatchEvent(
-        new CustomEvent('relic:render-state', {
-          detail: 'error',
-          bubbles: true,
-        })
-      );
+      const win =
+        wrapper.ownerDocument?.defaultView ??
+        (typeof window !== 'undefined' ? window : undefined);
+      const EventCtor =
+        win?.CustomEvent ??
+        (typeof CustomEvent === 'function' ? CustomEvent : undefined);
+      const event = EventCtor
+        ? new EventCtor('relic:render-state', {
+            detail: 'error',
+            bubbles: true,
+          })
+        : ({
+            type: 'relic:render-state',
+            detail: 'error',
+            bubbles: true,
+          } as unknown as Event);
+      wrapper.dispatchEvent(event);
       loading.replaceChildren();
       const errTitle = document.createElement('p');
       errTitle.className = 'pdf-status-title';

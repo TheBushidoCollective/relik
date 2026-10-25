@@ -45,6 +45,7 @@ class ElementStub {
   naturalWidth = 0;
   readyState = 0;
   contentWindow: unknown = null;
+  ownerDocument: unknown = null;
   parentElement: ElementStub | null = null;
   readonly dataset: Record<string, string> = {};
   readonly children: ElementStub[] = [];
@@ -371,6 +372,7 @@ class MockMutationObserver {
 describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () => {
   let rootBody: ElementStub;
   let windowEventListeners: Map<string, Array<(e: unknown) => void>>;
+  let installedCustomEvent = false;
 
   beforeEach(() => {
     rootBody = new ElementStub('body');
@@ -380,29 +382,26 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     (globalThis as unknown as { MutationObserver: unknown }).MutationObserver =
       MockMutationObserver;
 
-    (globalThis as unknown as { document: unknown }).document = {
-      body: rootBody,
-      documentElement: {
-        style: {
-          setProperty: () => {},
-          getPropertyValue: () => '',
-        },
-      },
-      createElement: (tag: string) => new ElementStub(tag),
-      createElementNS: (_ns: string, tag: string) => new ElementStub(tag),
-      createTextNode: (text: string) => {
-        const n = new ElementStub('#text');
-        n.textContent = text;
-        return n;
-      },
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      getElementById: (id: string) => rootBody.querySelector(`#${id}`),
-      querySelector: (sel: string) => rootBody.querySelector(sel),
-      querySelectorAll: (sel: string) => rootBody.querySelectorAll(sel),
-    };
+    const customEventClass =
+      typeof CustomEvent !== 'undefined'
+        ? CustomEvent
+        : class CustomEventStub<T = unknown> {
+            readonly type: string;
+            readonly detail: T | undefined;
+            readonly bubbles: boolean;
+            constructor(type: string, init?: { detail?: T; bubbles?: boolean }) {
+              this.type = type;
+              this.detail = init?.detail;
+              this.bubbles = init?.bubbles ?? false;
+            }
+          };
 
-    (globalThis as unknown as { window?: unknown }).window = {
+    if (typeof (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent === 'undefined') {
+      (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent = customEventClass;
+      installedCustomEvent = true;
+    }
+
+    const win = {
       innerWidth: 1024,
       innerHeight: 768,
       location: {
@@ -413,6 +412,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
       },
       setTimeout: globalThis.setTimeout.bind(globalThis),
       clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      CustomEvent: customEventClass,
       addEventListener: (event: string, listener: (e: unknown) => void) => {
         const list = windowEventListeners.get(event) ?? [];
         list.push(listener);
@@ -436,6 +436,43 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
         return true;
       },
     };
+
+    (globalThis as unknown as { window?: unknown }).window = win;
+
+    const doc = {
+      body: rootBody,
+      defaultView: win,
+      documentElement: {
+        style: {
+          setProperty: () => {},
+          getPropertyValue: () => '',
+        },
+      },
+      createElement: (tag: string) => {
+        const el = new ElementStub(tag);
+        el.ownerDocument = doc;
+        return el;
+      },
+      createElementNS: (_ns: string, tag: string) => {
+        const el = new ElementStub(tag);
+        el.ownerDocument = doc;
+        return el;
+      },
+      createTextNode: (text: string) => {
+        const n = new ElementStub('#text');
+        n.textContent = text;
+        n.ownerDocument = doc;
+        return n;
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      getElementById: (id: string) => rootBody.querySelector(`#${id}`),
+      querySelector: (sel: string) => rootBody.querySelector(sel),
+      querySelectorAll: (sel: string) => rootBody.querySelectorAll(sel),
+    };
+
+    rootBody.ownerDocument = doc;
+    (globalThis as unknown as { document: unknown }).document = doc;
   });
 
   afterEach(() => {
@@ -443,6 +480,10 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     delete (globalThis as unknown as { window?: unknown }).window;
     delete (globalThis as unknown as { MutationObserver?: unknown })
       .MutationObserver;
+    if (installedCustomEvent) {
+      delete (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent;
+      installedCustomEvent = false;
+    }
   });
 
   test('1. Image: rendering, aria-busy="true", and Rendering pill until load; then ready, pill gone, aria-busy="false"; error gives data-render-state="error"', () => {
