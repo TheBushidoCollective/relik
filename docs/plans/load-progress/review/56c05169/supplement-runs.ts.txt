@@ -1,0 +1,430 @@
+// Slice R supplement for packages/relic-mcp/test/load-progress-path.ts at 56c05169.
+//
+// Appended after line 1006 of that script (after runRelicPage), it renders the
+// states P's run never captures: the render pill per class, the version pill,
+// the version failure toast, the comparison line, every dead card, noscript and
+// the static plate, at 1440 light/dark, 390 light/dark and 320 light/dark.
+// Two harness edits were made for these frames, both outside the viewer:
+//   - sandbox.html is served with `blob:` in script-src, as app.ts serveSandbox does;
+//   - --host-resolver-rules maps insecure.test to loopback (and the proxy
+//     bypass list carries it) so the shell can be opened from an insecure context.
+// It is kept as text so no checker picks it up; it is evidence, not a test.
+
+
+// ===========================================================================
+// Designer review supplement (slice R): states the P run did not screenshot.
+// Same server, same fixtures, same viewer build, same owned headless shell.
+// ===========================================================================
+
+const OUTX = process.env['RELIC_REVIEW_OUT'] ?? '/tmp/relik-review/extra';
+await mkdir(OUTX, { recursive: true });
+
+type Cfg = {
+  name: string;
+  viewport: { width: number; height: number; mobile?: boolean };
+  colorScheme: 'light' | 'dark';
+};
+const C1440L: Cfg = { name: '1440-light', viewport: { width: 1440, height: 900 }, colorScheme: 'light' };
+const C1440D: Cfg = { name: '1440-dark', viewport: { width: 1440, height: 900 }, colorScheme: 'dark' };
+const C390L: Cfg = { name: '390-light', viewport: { width: 390, height: 844, mobile: true }, colorScheme: 'light' };
+const C390D: Cfg = { name: '390-dark', viewport: { width: 390, height: 844, mobile: true }, colorScheme: 'dark' };
+const C320L: Cfg = { name: '320-light', viewport: { width: 320, height: 568, mobile: true }, colorScheme: 'light' };
+const C320D: Cfg = { name: '320-dark', viewport: { width: 320, height: 568, mobile: true }, colorScheme: 'dark' };
+const ALL: Cfg[] = [C1440L, C1440D, C390L, C390D, C320L, C320D];
+
+const MEASURE = `(() => {
+  const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right), b: Math.round(b.bottom) }; };
+  const pills = [...document.querySelectorAll('.render-status')];
+  const bar = document.querySelector('header.bar');
+  const stage = document.querySelector('main.stage');
+  const stageWrap = document.querySelector('.stage-wrap');
+  const frames = [...document.querySelectorAll('iframe')].map(r);
+  const canvases = [...document.querySelectorAll('canvas')].slice(0, 4).map(r);
+  const labels = bar ? [...bar.querySelectorAll('.action, .version-control, select, .identity .filename, .identity .accession')].map((a) => ({ cls: a.className, text: (a.innerText || a.textContent || '').trim().slice(0, 40), rect: r(a) })) : [];
+  const over = [];
+  for (const el of document.querySelectorAll('body *')) {
+    const b = el.getBoundingClientRect();
+    if (b.width > 0 && b.right > innerWidth + 0.5) over.push((el.tagName + '.' + (el.className && el.className.baseVal === undefined ? el.className : '')).slice(0, 60) + ' r=' + Math.round(b.right));
+    if (over.length > 12) break;
+  }
+  const custody = document.querySelector('[data-load-custody]');
+  const meter = document.querySelector('.load-meter');
+  const card = document.querySelector('main.stage .card');
+  return {
+    innerWidth, scrollWidth: document.documentElement.scrollWidth, bodyScrollWidth: document.body ? document.body.scrollWidth : 0,
+    bodyChildren: document.body ? [...document.body.children].map((c) => c.tagName.toLowerCase() + (c.className ? '.' + String(c.className).split(' ').join('.') : '')) : [],
+    pills: pills.map((p) => ({ rect: r(p), label: r(p.querySelector('.render-status-label')), text: p.textContent, attrs: [...p.attributes].map((a) => a.name + '=' + a.value).join(' '), prev: p.previousElementSibling ? p.previousElementSibling.tagName.toLowerCase() + '.' + p.previousElementSibling.className : null })),
+    bar: r(bar), stage: r(stage), stageClass: stage ? stage.className : null, renderState: stage ? stage.getAttribute('data-render-state') : null,
+    stageWrap: r(stageWrap), busy: stageWrap ? stageWrap.getAttribute('aria-busy') : null,
+    frames, canvases, labels,
+    custody: custody ? { text: custody.textContent, hidden: custody.hidden } : null,
+    plate: (document.querySelector('[data-load-plate]') || {}).getAttribute ? document.querySelector('[data-load-plate]').getAttribute('data-load-phase') : null,
+    transfer: (document.querySelector('[data-load-transfer]') || {}).textContent ?? null,
+    contents: document.querySelector('[data-load-contents]') ? { text: document.querySelector('[data-load-contents]').textContent, hidden: document.querySelector('[data-load-contents]').hidden } : null,
+    meter: meter ? [...meter.attributes].map((a) => a.name + '=' + a.value).join(' ') : null,
+    card: card ? { rect: r(card), text: card.innerText } : null,
+    keyProgress: (document.querySelector('.key-entry-progress') || {}).textContent ?? null,
+    toast: [...document.querySelectorAll('.toast')].map((t) => t.textContent),
+    diffLoading: (document.querySelector('.diff-loading') || {}).textContent ?? null,
+    overflowing: over,
+  };
+})()`;
+
+interface Page {
+  sessionId: string;
+  targetId: string;
+  evalv: <T = unknown>(expr: string) => Promise<T | undefined>;
+  shot: (name: string, note?: string) => Promise<unknown>;
+  close: () => Promise<void>;
+}
+
+const measurements: Record<string, unknown> = {};
+
+async function openPage(
+  url: string,
+  cfg: Cfg,
+  opts: { cpu?: number; disableScripts?: boolean; failPatterns?: string[]; navigate?: boolean } = {}
+): Promise<Page> {
+  const created = (await cdp.send('Target.createTarget', { url: 'about:blank' })) as { targetId: string };
+  const targetId = created.targetId;
+  const attached = (await cdp.send('Target.attachToTarget', { targetId, flatten: true })) as { sessionId: string };
+  const sessionId = attached.sessionId;
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send('Runtime.enable', {}, sessionId);
+  await cdp.send('Network.enable', {}, sessionId);
+  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true }, sessionId);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: cfg.viewport.width, height: cfg.viewport.height, deviceScaleFactor: 1, mobile: cfg.viewport.mobile ?? false }, sessionId);
+  await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'prefers-color-scheme', value: cfg.colorScheme }] }, sessionId);
+  if (opts.cpu && opts.cpu > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: opts.cpu }, sessionId);
+  if (opts.disableScripts) await cdp.send('Emulation.setScriptExecutionDisabled', { value: true }, sessionId);
+  let stop: (() => void) | undefined;
+  if (opts.failPatterns && opts.failPatterns.length > 0) {
+    await cdp.send('Fetch.enable', { patterns: opts.failPatterns.map((p) => ({ urlPattern: p, requestStage: 'Request' })) }, sessionId);
+    stop = cdp.onEvent((e) => {
+      if (e.method === 'Fetch.requestPaused' && e.sessionId === sessionId) {
+        const reqId = (e.params as { requestId: string }).requestId;
+        void cdp.send('Fetch.failRequest', { requestId: reqId, errorReason: 'ConnectionRefused' }, sessionId).catch(() => {});
+      }
+    });
+  }
+  const evalv = async <T,>(expr: string): Promise<T | undefined> => {
+    const res = (await cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, sessionId).catch(() => null)) as { result?: { value?: T } } | null;
+    return res?.result?.value;
+  };
+  const shot = async (name: string, note?: string) => {
+    const before = await evalv(MEASURE);
+    const s = (await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId).catch(() => null)) as { data: string } | null;
+    const after = await evalv(MEASURE);
+    if (s) await writeFile(join(OUTX, `${name}.png`), Buffer.from(s.data, 'base64'));
+    measurements[name] = { note, before, after };
+    console.log(`  shot ${name}`);
+    return after;
+  };
+  if (opts.navigate !== false) await cdp.send('Page.navigate', { url }, sessionId);
+  return {
+    sessionId,
+    targetId,
+    evalv,
+    shot,
+    close: async () => {
+      stop?.();
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+    },
+  };
+}
+
+async function waitFor(page: Page, expr: string, timeoutMs = 20_000, stepMs = 4): Promise<boolean> {
+  const t = Date.now();
+  while (Date.now() - t < timeoutMs) {
+    if (await page.evalv<boolean>(expr)) return true;
+    await Bun.sleep(stepMs);
+  }
+  return false;
+}
+
+const PILL_VISIBLE = `!!document.querySelector('.render-status')`;
+const READY = `(() => { const s = document.querySelector('main.stage:not(.stage-loading):not(.stage-dead)'); return !!s && !document.querySelector('.render-status') && s.getAttribute('data-render-state') !== 'rendering'; })()`;
+const DEAD = `!!document.querySelector('main.stage-dead .card')`;
+const AFTER_RECORD0 = `(() => { const c = document.querySelector('[data-load-contents]'); return !!c && !c.hidden; })()`;
+const FETCHING = `(() => { const p = document.querySelector('[data-load-plate]'); return !!p && p.getAttribute('data-load-phase') === 'fetching'; })()`;
+
+const byKey = (k: string) => fixtures.find((f) => f.classKey === k)!;
+
+try {
+  const only = process.argv.find((a) => a.startsWith('--x='))?.slice(4);
+  const want = (n: string) => !only || only.split(',').includes(n);
+
+  // A. Render pill per class and size/theme, plus the plate with contents.
+  if (want('pill')) {
+    for (const cfg of [C1440L, C1440D, C390D, C320L]) {
+      for (const k of ['pdf', 'otio', 'html', 'svg', 'mp4', 'png']) {
+        const fix = byKey(k);
+        const page = await openPage(fix.shareUrl, cfg, { cpu: 6 });
+        const saw = await waitFor(page, PILL_VISIBLE, 30_000, 2);
+        if (saw) await page.shot(`A-pill-${k}-${cfg.name}`);
+        else console.log(`  no pill seen ${k} ${cfg.name}`);
+        if (await waitFor(page, READY, 30_000, 20)) await page.shot(`A-ready-${k}-${cfg.name}`);
+        await page.close();
+      }
+    }
+  }
+
+  // B. Plate states at every size and theme on the 2.1 MB otio relic.
+  if (want('plate')) {
+    for (const cfg of ALL) {
+      const fix = byKey('otio');
+      const page = await openPage(fix.shareUrl, cfg, {});
+      if (await waitFor(page, FETCHING, 20_000, 2)) await page.shot(`B-plate-fetching-${cfg.name}`);
+      if (await waitFor(page, AFTER_RECORD0, 20_000, 2)) await page.shot(`B-plate-contents-${cfg.name}`);
+      await page.close();
+    }
+  }
+
+  // C. Version switch pill and its failure toast, every size and theme.
+  if (want('version')) {
+    const md = byKey('md');
+    for (const cfg of ALL) {
+      const page = await openPage(md.shareUrl, cfg, {});
+      await waitFor(page, READY, 20_000, 20);
+      await Bun.sleep(150);
+      await page.evalv(`(() => { const o = document.querySelector('.version-option[data-version="1"]'); if (o) o.click(); return !!o; })()`);
+      if (await waitFor(page, `(() => { const p = document.querySelector('[data-version-progress]'); return !!p && /Opening version/.test(p.textContent); })()`, 5_000, 2)) await page.shot(`C-version-opening-${cfg.name}`);
+      if (await waitFor(page, `(() => { const p = document.querySelector('[data-version-progress]'); return !!p && /Fetching/.test(p.textContent); })()`, 5_000, 2)) await page.shot(`C-version-fetching-${cfg.name}`);
+      await page.close();
+    }
+    // Failure: version 1's object is cut short, so the switch must end in a toast.
+    for (const cfg of [C1440L, C1440D, C390D, C320L]) {
+      activeAbortAfterBytes.set(md.relicId, 48 * 1024);
+      const page = await openPage(md.shareUrl, cfg, {});
+      await waitFor(page, READY, 20_000, 20);
+      await Bun.sleep(150);
+      await page.evalv(`(() => { const o = document.querySelector('.version-option[data-version="1"]'); if (o) o.click(); return !!o; })()`);
+      if (await waitFor(page, `document.querySelectorAll('.toast').length > 0`, 8_000, 5)) await page.shot(`C-version-failed-${cfg.name}`);
+      else await page.shot(`C-version-failed-NOTOAST-${cfg.name}`);
+      activeAbortAfterBytes.delete(md.relicId);
+      await page.close();
+    }
+  }
+
+  // D. Comparison loading line.
+  if (want('compare')) {
+    const md = byKey('md');
+    for (const cfg of [C1440L, C1440D, C390D, C320L]) {
+      const page = await openPage(md.shareUrl, cfg, {});
+      await waitFor(page, READY, 20_000, 20);
+      await Bun.sleep(150);
+      await page.evalv(`(() => { const b = document.querySelector('button[aria-label^="Compare version"]'); if (b) b.click(); return !!b; })()`);
+      if (await waitFor(page, `(() => { const d = document.querySelector('.diff-loading'); return !!d && /Fetching/.test(d.textContent); })()`, 6_000, 2)) await page.shot(`D-compare-loading-${cfg.name}`);
+      else await page.shot(`D-compare-NOLINE-${cfg.name}`);
+      await page.close();
+    }
+  }
+
+  // E. Dead cards at every size and theme.
+  if (want('dead')) {
+    const rightKey = sixMbInfo.key;
+    const charIdx = rightKey.startsWith('r1') ? 2 : 0;
+    const wrongChar = rightKey[charIdx] === 'A' ? 'B' : 'A';
+    const wrongKey = rightKey.slice(0, charIdx) + wrongChar + rightKey.slice(charIdx + 1);
+    for (const cfg of ALL) {
+      // could not be opened, then a typed key fetching under the form
+      {
+        const page = await openPage(`${origin}/${sixMbInfo.relicId}#${wrongKey}`, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`E-could-not-open-${cfg.name}`);
+        await page.evalv(`(() => { const i = document.querySelector('#relic-key-input'); i.value = ${JSON.stringify(rightKey)}; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.key-entry-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); return true; })()`);
+        if (await waitFor(page, `/Fetching/.test((document.querySelector('.key-entry-progress') || {}).textContent || '')`, 8_000, 5)) {
+          await Bun.sleep(300);
+          await page.shot(`E-key-entry-fetching-${cfg.name}`);
+        }
+        await page.close();
+      }
+      // cut short after record 0
+      {
+        const md = byKey('md');
+        activeAbortAfterBytes.set(md.relicId, 100 * 1024);
+        activeAbortAfterBytes.set(`${md.relicId}/v2`, 100 * 1024);
+        const page = await openPage(md.shareUrl, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`E-cut-short-${cfg.name}`);
+        activeAbortAfterBytes.delete(md.relicId);
+        activeAbortAfterBytes.delete(`${md.relicId}/v2`);
+        await page.close();
+      }
+      // cut short before record 0 (the custody line must clear)
+      {
+        const zip = byKey('zip');
+        activeAbortAfterBytes.set(zip.relicId, 16 * 1024);
+        const page = await openPage(zip.shareUrl, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`E-cut-short-before-record0-${cfg.name}`);
+        activeAbortAfterBytes.delete(zip.relicId);
+        await page.close();
+      }
+      // damaged
+      {
+        const wav = byKey('wav');
+        const original = new Uint8Array(await storage.read(wav.relicId)!);
+        const corrupted = new Uint8Array(original);
+        corrupted[21 + 2 * 65536 + 10] ^= 0x01;
+        storage.put(wav.relicId, corrupted);
+        const page = await openPage(wav.shareUrl, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`E-damaged-${cfg.name}`);
+        storage.put(wav.relicId, original);
+        await page.close();
+      }
+      // service unreachable: the mint request itself fails
+      {
+        const ts = byKey('ts');
+        const page = await openPage(ts.shareUrl, cfg, { failPatterns: ['*/mint*'] });
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`E-service-unreachable-${cfg.name}`);
+        await page.close();
+      }
+      // insecure context: the same shell over plain http on a non-loopback name
+      {
+        const ts = byKey('ts');
+        const page = await openPage(`http://insecure.test:${service.port}/${ts.relicId}#${ts.key}`, cfg, {});
+        if (await waitFor(page, DEAD, 20_000, 10)) await page.shot(`E-insecure-${cfg.name}`);
+        else await page.shot(`E-insecure-NOCARD-${cfg.name}`);
+        await page.close();
+      }
+      // noscript
+      {
+        const md = byKey('md');
+        const page = await openPage(md.shareUrl, cfg, { disableScripts: true });
+        await Bun.sleep(500);
+        await page.shot(`E-noscript-${cfg.name}`);
+        await page.close();
+      }
+      // static plate, viewer.js blocked
+      {
+        const md = byKey('md');
+        const page = await openPage(md.shareUrl, cfg, { failPatterns: ['*viewer.js*'] });
+        await Bun.sleep(500);
+        await page.shot(`E-static-plate-${cfg.name}`);
+        await page.close();
+      }
+    }
+  }
+
+
+  // G. Verification pass: DOM contracts, noscript links, key-entry spacing, settled toast, reduced motion.
+  if (want('verify')) {
+    const DOMQ = `(() => {
+      const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), b: Math.round(b.bottom) }; };
+      const at = (sel, name) => { const el = document.querySelector(sel); return el ? el.getAttribute(name) : 'NO-ELEMENT'; };
+      return {
+        mainStageRenderState: at('main.stage', 'data-render-state'),
+        stageWrapRenderState: at('.stage-wrap', 'data-render-state'),
+        stageWrapBusy: at('.stage-wrap', 'aria-busy'),
+        relicRowBusy: at('.relic-row', 'aria-busy'),
+        pill: !!document.querySelector('.render-status'),
+      };
+    })()`;
+    // 1. render-state attribute placement while the OTIO pill is up
+    {
+      const otio = byKey('otio');
+      const page = await openPage(otio.shareUrl, C1440L, { cpu: 6 });
+      await waitFor(page, PILL_VISIBLE, 30_000, 2);
+      measurements['G-render-state-attrs-rendering'] = await page.evalv(DOMQ);
+      await waitFor(page, READY, 30_000, 20);
+      measurements['G-render-state-attrs-ready'] = await page.evalv(DOMQ);
+      await page.close();
+    }
+    // 2. noscript links at each width
+    for (const cfg of [C1440L, C390D, C320L]) {
+      const md = byKey('md');
+      const page = await openPage(md.shareUrl, cfg, { disableScripts: true });
+      await Bun.sleep(500);
+      // Script execution is disabled for the page, so read the layout over CDP's DOM domain instead.
+      await cdp.send('DOM.enable', {}, page.sessionId);
+      const doc = (await cdp.send('DOM.getDocument', { depth: -1, pierce: true }, page.sessionId)) as { root: { nodeId: number } };
+      const q = (await cdp.send('DOM.querySelectorAll', { nodeId: doc.root.nodeId, selector: 'noscript a, main.stage-dead a, main a.action' }, page.sessionId)) as { nodeIds: number[] };
+      const boxes = [];
+      for (const id of q.nodeIds) {
+        const bm = (await cdp.send('DOM.getBoxModel', { nodeId: id }, page.sessionId).catch(() => null)) as { model?: { width: number; height: number; content: number[] } } | null;
+        const html = (await cdp.send('DOM.getOuterHTML', { nodeId: id }, page.sessionId).catch(() => null)) as { outerHTML?: string } | null;
+        boxes.push({ html: (html?.outerHTML ?? '').slice(0, 160), box: bm?.model ? { w: bm.model.width, h: bm.model.height, x: bm.model.content[0], y: bm.model.content[1] } : 'no box' });
+      }
+      measurements[`G-noscript-links-${cfg.name}`] = boxes;
+      await page.close();
+    }
+    // 3. key-entry spacing while a typed key fetches
+    {
+      const rightKey = sixMbInfo.key;
+      const charIdx = rightKey.startsWith('r1') ? 2 : 0;
+      const wrongKey = rightKey.slice(0, charIdx) + (rightKey[charIdx] === 'A' ? 'B' : 'A') + rightKey.slice(charIdx + 1);
+      const page = await openPage(`${origin}/${sixMbInfo.relicId}#${wrongKey}`, C1440L, {});
+      await waitFor(page, DEAD, 20_000, 10);
+      const SPACING = `(() => {
+        const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); const cs = getComputedStyle(el); return { y: Math.round(b.y), h: Math.round(b.height), b: Math.round(b.bottom), mt: cs.marginTop, mb: cs.marginBottom, minh: cs.minHeight, parent: el.parentElement.className }; };
+        return { row: r(document.querySelector('.key-entry-row')), progress: r(document.querySelector('.key-entry-progress')), feedback: r(document.querySelector('.key-entry-feedback')), accession: r(document.querySelector('main.stage-dead .card > .accession')) };
+      })()`;
+      measurements['G-key-entry-spacing-rest'] = await page.evalv(SPACING);
+      await page.evalv(`(() => { const i = document.querySelector('#relic-key-input'); i.value = ${JSON.stringify(rightKey)}; document.querySelector('.key-entry-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); return true; })()`);
+      await waitFor(page, `/Fetching/.test((document.querySelector('.key-entry-progress') || {}).textContent || '')`, 8_000, 5);
+      measurements['G-key-entry-spacing-fetching'] = await page.evalv(SPACING);
+      await page.close();
+    }
+    // 4. version failure toast once its entrance has settled
+    for (const cfg of [C1440L, C320L, C390D]) {
+      const md = byKey('md');
+      activeAbortAfterBytes.set(md.relicId, 48 * 1024);
+      const page = await openPage(md.shareUrl, cfg, {});
+      await waitFor(page, READY, 20_000, 20);
+      await Bun.sleep(150);
+      await page.evalv(`(() => { const o = document.querySelector('.version-option[data-version="1"]'); if (o) o.click(); return !!o; })()`);
+      if (await waitFor(page, `document.querySelectorAll('.toast').length > 0`, 8_000, 5)) {
+        await Bun.sleep(700);
+        await page.shot(`G-version-failed-settled-${cfg.name}`);
+      }
+      activeAbortAfterBytes.delete(md.relicId);
+      await page.close();
+    }
+    // 5. static plate meter semantics, and 6. reduced motion plate and pill
+    {
+      const md = byKey('md');
+      const page = await openPage(md.shareUrl, C1440L, { failPatterns: ['*viewer.js*'] });
+      await Bun.sleep(500);
+      await cdp.send('DOM.enable', {}, page.sessionId);
+      const doc = (await cdp.send('DOM.getDocument', { depth: -1 }, page.sessionId)) as { root: { nodeId: number } };
+      const q = (await cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '.load-meter' }, page.sessionId)) as { nodeId: number };
+      const html = (await cdp.send('DOM.getOuterHTML', { nodeId: q.nodeId }, page.sessionId)) as { outerHTML: string };
+      measurements['G-static-plate-meter'] = html.outerHTML;
+      await page.close();
+    }
+    {
+      const md = byKey('md');
+      const page = await openPage(md.shareUrl, C1440L, { failPatterns: ['*viewer.js*'], navigate: false });
+      await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'prefers-color-scheme', value: 'light' }, { name: 'prefers-reduced-motion', value: 'reduce' }] }, page.sessionId);
+      await cdp.send('Page.navigate', { url: md.shareUrl }, page.sessionId);
+      await Bun.sleep(600);
+      await page.shot('G-static-plate-reduced-motion-1440-light');
+      await page.close();
+    }
+    {
+      const html = byKey('html');
+      const page = await openPage(html.shareUrl, C1440L, { cpu: 6, navigate: false });
+      await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'prefers-color-scheme', value: 'light' }, { name: 'prefers-reduced-motion', value: 'reduce' }] }, page.sessionId);
+      await cdp.send('Page.navigate', { url: html.shareUrl }, page.sessionId);
+      if (await waitFor(page, PILL_VISIBLE, 30_000, 2)) await page.shot('G-pill-reduced-motion-html-1440-light');
+      await page.close();
+    }
+  }
+
+  // F. JSX under a sandbox CSP that allows blob: (as app.ts serveSandbox does).
+  if (want('jsx')) {
+    const jsx = byKey('jsx');
+    const page = await openPage(jsx.shareUrl, C1440L, {});
+    await waitFor(page, READY, 20_000, 20);
+    await Bun.sleep(400);
+    await page.shot('F-jsx-ready-blob-csp-1440-light');
+    await page.close();
+  }
+
+  await writeFile(join(OUTX, 'measurements.json'), JSON.stringify(measurements, null, 2));
+  console.log('REVIEW_CAPTURE_DONE');
+} finally {
+  child.kill('SIGKILL');
+  service.stop(true);
+  usercontentService.stop(true);
+  await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+  await rm(scratch, { recursive: true, force: true }).catch(() => {});
+}
