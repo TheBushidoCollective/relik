@@ -31,6 +31,7 @@ import {
   openEnvelope,
   openRelicStream,
   parseFragment,
+  parseRelicId,
   PHASE_DECRYPTING,
   PHASE_FETCHING,
   PHASE_RENDERING,
@@ -267,11 +268,26 @@ function teeAndDigest(source: ReadableStream<Uint8Array>) {
 }
 
 export async function load(
-  relicId: string,
+  rawRelicId: string,
   deps: ViewerDeps,
   onProgress?: (p: LoadProgress) => void,
   resume?: LoadResume
 ): Promise<ViewerState> {
+  let relicId: string;
+  try {
+    relicId = parseRelicId(rawRelicId);
+  } catch {
+    return {
+      kind: 'dead',
+      dead: {
+        headline: 'No such relic',
+        detail:
+          'This link does not point at anything. It may have been mistyped.',
+        action: 'none',
+        code: 'invalid_relic_id',
+      },
+    };
+  }
   const isSecure =
     deps.secureContext !== undefined
       ? deps.secureContext()
@@ -606,14 +622,20 @@ export async function load(
 }
 
 async function mint(
-  relicId: string,
+  rawRelicId: string,
   deps: ViewerDeps,
   requestedVersion?: number
 ): Promise<{ mint: MintResponse } | { dead: DeadView }> {
+  let relicId: string;
+  try {
+    relicId = parseRelicId(rawRelicId);
+  } catch {
+    return { dead: deadFromProblem('invalid_relic_id') };
+  }
   let response: Response;
   try {
     response = await deps.fetch(
-      `${deps.serviceOrigin}/api/relics/${relicId}/mint`,
+      `${deps.serviceOrigin}/api/relics/${encodeURIComponent(relicId)}/mint`,
       requestedVersion === undefined
         ? { method: 'POST' }
         : {
@@ -863,6 +885,7 @@ export async function loadHistoricalVersion(
 /** Maps the server's codes onto what a recipient should actually be told. */
 export function deadFromProblem(code: string): DeadView {
   switch (code) {
+    case 'invalid_relic_id':
     case 'relic_not_found':
       return view(
         'No such relic',

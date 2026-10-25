@@ -28,6 +28,7 @@ import {
   decryptComment,
   encryptComment,
   MalformedCommentError,
+  parseRelicId,
 } from '@relic/format';
 import type { ViewerDeps } from './viewer.ts';
 
@@ -411,7 +412,11 @@ export function commentRefusal(code: string): Refusal {
  * because the id is percent-encoded here rather than at each site.
  */
 function commentsUrl(origin: string, relicId: string): string {
-  return `${origin}/api/relics/${encodeURIComponent(relicId)}/comments`;
+  let canonical = relicId;
+  try {
+    canonical = parseRelicId(relicId);
+  } catch {}
+  return `${origin}/api/relics/${encodeURIComponent(canonical)}/comments`;
 }
 
 /** Reads `code` out of an `application/problem+json` body. */

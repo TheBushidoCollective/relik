@@ -23,6 +23,7 @@ import {
   isDecisionVerdict,
   isVersionDigest,
   parseFragment,
+  parseRelicId,
 } from '@relic/format';
 import type { ReadyView, ViewerDeps } from './viewer.ts';
 
@@ -89,8 +90,12 @@ export async function listDecisions(
 ): Promise<DecisionListOutcome> {
   let response: Response;
   try {
+    let canonical = relicId;
+    try {
+      canonical = parseRelicId(relicId);
+    } catch {}
     response = await deps.fetch(
-      `${deps.serviceOrigin}/api/relics/${encodeURIComponent(relicId)}/decisions/list`,
+      `${deps.serviceOrigin}/api/relics/${encodeURIComponent(canonical)}/decisions/list`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
