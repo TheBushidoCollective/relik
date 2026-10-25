@@ -717,7 +717,7 @@ body {
      width while the actions lost their labels, which pushed Report off the
      row at 420px. Its accessible name carries the meaning when the text
      goes. */
-  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list) span) {
+  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list, .card-actions) span) {
     position: absolute;
     width: 1px;
     height: 1px;

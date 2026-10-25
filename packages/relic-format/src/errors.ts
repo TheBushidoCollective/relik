@@ -77,8 +77,13 @@ export class TruncatedContainerError extends MalformedContainerError {
 /** The stream closed or errored before reaching the declared object length. */
 export class TransferIncompleteError extends RelicFormatError {
   override readonly name = 'TransferIncompleteError';
-  constructor(readonly receivedBytes: number, readonly expectedBytes: number) {
-    super(`transfer incomplete: received ${receivedBytes} of ${expectedBytes} bytes`);
+  constructor(
+    readonly receivedBytes: number,
+    readonly expectedBytes: number
+  ) {
+    super(
+      `transfer incomplete: received ${receivedBytes} of ${expectedBytes} bytes`
+    );
   }
 }
 

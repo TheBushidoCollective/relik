@@ -193,7 +193,10 @@ class ElementStub {
     this.parentElement.children.splice(idx + 1, 0, ...toAdd);
   }
 
-  insertBefore(newChild: ElementStub, refChild: ElementStub | null): ElementStub {
+  insertBefore(
+    newChild: ElementStub,
+    refChild: ElementStub | null
+  ): ElementStub {
     newChild.parentElement = this;
     if (!refChild) {
       this.children.push(newChild);
@@ -307,8 +310,8 @@ function matchesSelector(node: ElementStub, selector: string): boolean {
   let remaining = selector;
   const attrRegex =
     /\[([a-zA-Z0-9_-]+)(?:([$*^~|]?=)("[^"]*"|'[^']*'|[^\]]*))?\]/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRegex.exec(selector)) !== null) {
+  let match = attrRegex.exec(selector);
+  while (match !== null) {
     const attrName = match[1] as string;
     const op = match[2];
     const attrVal = match[3]?.replace(/^["']|["']$/g, '');
@@ -325,12 +328,13 @@ function matchesSelector(node: ElementStub, selector: string): boolean {
     } else {
       if (
         !node.attributes.has(attrName) &&
-        !Object.prototype.hasOwnProperty.call(node.dataset, datasetKey) &&
+        !Object.hasOwn(node.dataset, datasetKey) &&
         node.getAttribute(attrName) === null
       ) {
         return false;
       }
     }
+    match = attrRegex.exec(selector);
   }
   remaining = remaining.replace(attrRegex, '');
 
@@ -434,10 +438,14 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       },
     };
 
-    (globalThis as unknown as { requestAnimationFrame?: unknown }).requestAnimationFrame = (
+    (
+      globalThis as unknown as { requestAnimationFrame?: unknown }
+    ).requestAnimationFrame = (
       globalThis as unknown as { window: { requestAnimationFrame: unknown } }
     ).window.requestAnimationFrame;
-    (globalThis as unknown as { cancelAnimationFrame?: unknown }).cancelAnimationFrame = (
+    (
+      globalThis as unknown as { cancelAnimationFrame?: unknown }
+    ).cancelAnimationFrame = (
       globalThis as unknown as { window: { cancelAnimationFrame: unknown } }
     ).window.cancelAnimationFrame;
   });
@@ -498,6 +506,10 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       fetch: (async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith('/mint')) {
+          const phase = shellPlate.dataset['loadPhase'];
+          if (phase && !phasesSeen.includes(phase)) {
+            phasesSeen.push(phase);
+          }
           return Response.json({
             url: 'https://storage.example/blob',
             url_expires_at: new Date(Date.now() + 300_000).toISOString(),
@@ -828,18 +840,16 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       code: 'decrypt_failed',
     };
 
-    renderDead(
-      dead,
-      'r1',
-      'https://usercontent.example',
-      deps,
-      cachedPrefix
-    );
+    renderDead(dead, 'r1', 'https://usercontent.example', deps, cachedPrefix);
 
     const input = rootBody.querySelector('.key-entry-input') as ElementStub;
     const form = rootBody.querySelector('.key-entry-form') as ElementStub;
-    const feedback = rootBody.querySelector('.key-entry-feedback') as ElementStub;
-    const progressEl = rootBody.querySelector('.key-entry-progress') as ElementStub;
+    const feedback = rootBody.querySelector(
+      '.key-entry-feedback'
+    ) as ElementStub;
+    const progressEl = rootBody.querySelector(
+      '.key-entry-progress'
+    ) as ElementStub;
 
     expect(input).not.toBeNull();
     expect(form).not.toBeNull();
@@ -857,7 +867,11 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     // 2. Submit right key: fetches object and opens
     input.value = rightKeyFragment;
     form.submit();
-    for (let i = 0; i < 100 && rootBody.querySelector('main.stage-dead') !== null; i++) {
+    for (
+      let i = 0;
+      i < 100 && rootBody.querySelector('main.stage-dead') !== null;
+      i++
+    ) {
       await new Promise((resolve) => setImmediate(resolve));
     }
     expect(fetchCount).toBe(1);

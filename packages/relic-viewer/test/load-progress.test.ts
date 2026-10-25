@@ -163,7 +163,9 @@ describe('Spec B: Viewer load progress and early key check', () => {
     expect(events[0]?.phase).toBe('opening');
 
     // 2. fetching events follow
-    const fetchingEvents = events.filter((e) => e.phase === 'fetching') as Array<{
+    const fetchingEvents = events.filter(
+      (e) => e.phase === 'fetching'
+    ) as Array<{
       phase: 'fetching';
       received: number;
       total: number;
@@ -179,13 +181,17 @@ describe('Spec B: Viewer load progress and early key check', () => {
     expect(distinctReceived.size).toBeGreaterThanOrEqual(3);
 
     // Before record 0 (first 65,557 bytes), contents must be undefined
-    const beforeRecord0 = fetchingEvents.filter((f) => f.received < HEADER_BYTES + RECORD_SIZE);
+    const beforeRecord0 = fetchingEvents.filter(
+      (f) => f.received < HEADER_BYTES + RECORD_SIZE
+    );
     for (const f of beforeRecord0) {
       expect(f.contents).toBeUndefined();
     }
 
     // After record 0, contents must be present
-    const afterRecord0 = fetchingEvents.filter((f) => f.received >= HEADER_BYTES + RECORD_SIZE);
+    const afterRecord0 = fetchingEvents.filter(
+      (f) => f.received >= HEADER_BYTES + RECORD_SIZE
+    );
     expect(afterRecord0.length).toBeGreaterThan(0);
     for (const f of afterRecord0) {
       expect(f.contents).toBeDefined();
@@ -358,7 +364,8 @@ describe('Spec B: Viewer load progress and early key check', () => {
 
     // Flip byte in record 2
     const tampered = new Uint8Array(container);
-    tampered[HEADER_BYTES + 2 * RECORD_SIZE + 10] = (tampered[HEADER_BYTES + 2 * RECORD_SIZE + 10]! ^ 0xff);
+    tampered[HEADER_BYTES + 2 * RECORD_SIZE + 10] =
+      tampered[HEADER_BYTES + 2 * RECORD_SIZE + 10]! ^ 0xff;
 
     const vault = makeMockVault();
     vault.remember('r1', fragment);
@@ -392,7 +399,9 @@ describe('Spec B: Viewer load progress and early key check', () => {
       expect(res.dead.code).toBe('content_damaged');
       expect(res.dead.action).toBe('retry-report');
       expect(res.dead.headline).toBe('The stored file is damaged');
-      expect(res.dead.detail).toContain('start of the file decrypted with this link, so the link is fine');
+      expect(res.dead.detail).toContain(
+        'start of the file decrypted with this link, so the link is fine'
+      );
       expect(res.resume).toBeDefined();
       expect(res.resume?.fragment).toBe(fragment);
     }
@@ -493,18 +502,28 @@ describe('Spec B: Viewer load progress and early key check', () => {
     };
 
     // 1. Wrong key with cachedPrefix -> 0 fetch calls
-    const resWrong = await openRelicWithKey('r1', encodeFragment(wrongKey), deps, {
-      prefix,
-      mint: validMint,
-    });
+    const resWrong = await openRelicWithKey(
+      'r1',
+      encodeFragment(wrongKey),
+      deps,
+      {
+        prefix,
+        mint: validMint,
+      }
+    );
     expect(resWrong.kind).toBe('wrong_key');
     expect(fetchCount).toBe(0);
 
     // 2. Right key with valid cachedPrefix URL -> exactly 1 storage GET, 0 mints
-    const resRight = await openRelicWithKey('r1', encodeFragment(rightKey), deps, {
-      prefix,
-      mint: validMint,
-    });
+    const resRight = await openRelicWithKey(
+      'r1',
+      encodeFragment(rightKey),
+      deps,
+      {
+        prefix,
+        mint: validMint,
+      }
+    );
     expect(resRight.kind).toBe('ready');
     expect(mintCount).toBe(0);
     expect(storageCount).toBe(1);
@@ -516,10 +535,15 @@ describe('Spec B: Viewer load progress and early key check', () => {
     };
     mintCount = 0;
     storageCount = 0;
-    const resExpired = await openRelicWithKey('r1', encodeFragment(rightKey), deps, {
-      prefix,
-      mint: expiredMint,
-    });
+    const resExpired = await openRelicWithKey(
+      'r1',
+      encodeFragment(rightKey),
+      deps,
+      {
+        prefix,
+        mint: expiredMint,
+      }
+    );
     expect(resExpired.kind).toBe('ready');
     expect(mintCount).toBe(1);
     expect(storageCount).toBe(1);
@@ -556,7 +580,8 @@ describe('Spec B: Viewer load progress and early key check', () => {
         fetchCount++;
         const url = String(input);
         if (url.endsWith('/mint')) return Response.json(validMint);
-        if (url.includes('/blob')) return new Response(container as unknown as BodyInit);
+        if (url.includes('/blob'))
+          return new Response(container as unknown as BodyInit);
         return new Response('', { status: 404 });
       }) as unknown as typeof globalThis.fetch,
     };
@@ -569,7 +594,12 @@ describe('Spec B: Viewer load progress and early key check', () => {
 
       // Now pass it back with another wrong key -> 0 fetches!
       const initialFetches = fetchCount;
-      const res2 = await openRelicWithKey('r1', encodeFragment(generateKey()), deps, res1.cachedPrefix);
+      const res2 = await openRelicWithKey(
+        'r1',
+        encodeFragment(generateKey()),
+        deps,
+        res1.cachedPrefix
+      );
       expect(res2.kind).toBe('wrong_key');
       expect(fetchCount).toBe(initialFetches);
     }
@@ -680,18 +710,27 @@ describe('Spec B: Viewer load progress and early key check', () => {
       fetch: (async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith('/mint')) return Response.json(mintResp);
-        if (url.includes('/v2-blob')) return new Response(container as unknown as BodyInit);
+        if (url.includes('/v2-blob'))
+          return new Response(container as unknown as BodyInit);
         return new Response('', { status: 404 });
       }) as unknown as typeof globalThis.fetch,
     };
 
     const events: LoadProgress[] = [];
-    const res = await loadHistoricalVersion('r1', 2, currentReady, deps, (p) => {
-      events.push(p);
-    });
+    const res = await loadHistoricalVersion(
+      'r1',
+      2,
+      currentReady,
+      deps,
+      (p) => {
+        events.push(p);
+      }
+    );
 
     expect(res.kind).toBe('ready');
-    const fetchingEvents = events.filter((e) => e.phase === 'fetching') as Array<{
+    const fetchingEvents = events.filter(
+      (e) => e.phase === 'fetching'
+    ) as Array<{
       phase: 'fetching';
       received: number;
       total: number;

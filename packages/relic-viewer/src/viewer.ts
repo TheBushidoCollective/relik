@@ -284,7 +284,7 @@ export async function load(
       kind: 'dead',
       dead: {
         headline: INSECURE_TITLE,
-        detail: `${INSECURE_DETAIL} ${INSECURE_ADVICE}`,
+        detail: `${INSECURE_DETAIL}\n\n${INSECURE_ADVICE}`,
         action: 'none',
         code: 'insecure_context',
       },
@@ -368,10 +368,7 @@ export async function load(
   let mintResponse: MintResponse;
   const now = deps.now ? deps.now() : Date.now();
 
-  if (
-    resume?.mint &&
-    Date.parse(resume.mint.url_expires_at) - now >= 60_000
-  ) {
+  if (resume?.mint && Date.parse(resume.mint.url_expires_at) - now >= 60_000) {
     mintResponse = resume.mint;
   } else {
     onProgress?.({ phase: 'opening' });
@@ -388,6 +385,11 @@ export async function load(
     }
     mintResponse = minted.mint;
   }
+  onProgress?.({
+    phase: 'fetching',
+    received: 0,
+    total: mintResponse.object_length,
+  });
 
   const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
   if (upperBound > MAX_RENDER_BYTES) {
@@ -436,9 +438,9 @@ export async function load(
   }
   const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
 
-  let cachedPrefixData: CachedPrefix | undefined = undefined;
+  let cachedPrefixData: CachedPrefix | undefined;
   let envelopeFired = false;
-  let loadContents: LoadContents | undefined = undefined;
+  let loadContents: LoadContents | undefined;
 
   try {
     const opened = await openRelicStream(bodyStream, key, {
@@ -603,7 +605,6 @@ export async function load(
   }
 }
 
-
 async function mint(
   relicId: string,
   deps: ViewerDeps,
@@ -762,7 +763,7 @@ export async function loadHistoricalVersion(
   }
   const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);
 
-  let loadContents: LoadContents | undefined = undefined;
+  let loadContents: LoadContents | undefined;
 
   try {
     const opened = await openRelicStream(bodyStream, key, {
@@ -1282,7 +1283,6 @@ export async function openRelicWithKey(
     mintResponse = minted.mint;
   }
 
-
   const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
   if (upperBound > MAX_RENDER_BYTES) {
     return {
@@ -1341,7 +1341,7 @@ export async function openRelicWithKey(
 
   let newCachedPrefix: CachedPrefix | undefined = cachedPrefix;
   let envelopeFired = false;
-  let loadContents: LoadContents | undefined = undefined;
+  let loadContents: LoadContents | undefined;
 
   try {
     const { stream: bodyStream, computeDigest } = teeAndDigest(fetched.body);

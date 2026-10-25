@@ -24,7 +24,8 @@ if (process.env['RELIC_LOAD_PROBE_CONFIRM'] !== 'publish-one-1-day-relic') {
 const serviceOrigin = (
   process.env['RELIC_SERVICE_ORIGIN'] ?? 'https://relik.link'
 ).replace(/\/+$/, '');
-const chromePath = process.env['RELIC_PROOF_CHROME_PATH'] ?? process.env['RELIC_CHROME_PATH'];
+const chromePath =
+  process.env['RELIC_PROOF_CHROME_PATH'] ?? process.env['RELIC_CHROME_PATH'];
 const probeClient = process.env['RELIC_LOAD_PROBE_CLIENT'] ?? 'source';
 const proofDir = process.env['RELIC_LOAD_PROOF_DIR'];
 
@@ -166,12 +167,16 @@ function makeNoisePng(targetBytes: number): Uint8Array {
   const idatChunk = chunk('IDAT', idatData);
   const iendChunk = chunk('IEND', new Uint8Array(0));
 
-  const totalLen = sig.length + ihdrChunk.length + idatChunk.length + iendChunk.length;
+  const totalLen =
+    sig.length + ihdrChunk.length + idatChunk.length + iendChunk.length;
   const out = new Uint8Array(totalLen);
   let pos = 0;
-  out.set(sig, pos); pos += sig.length;
-  out.set(ihdrChunk, pos); pos += ihdrChunk.length;
-  out.set(idatChunk, pos); pos += idatChunk.length;
+  out.set(sig, pos);
+  pos += sig.length;
+  out.set(ihdrChunk, pos);
+  pos += ihdrChunk.length;
+  out.set(idatChunk, pos);
+  pos += idatChunk.length;
   out.set(iendChunk, pos);
   return out;
 }
@@ -189,7 +194,10 @@ try {
   });
 
   const relicId = pubResult['relic_id'] as string;
-  assert.ok(relicId && typeof relicId === 'string', 'missing relic_id in publish result');
+  assert.ok(
+    relicId && typeof relicId === 'string',
+    'missing relic_id in publish result'
+  );
 
   console.log(`Published live probe relic: id=${relicId}`);
 
@@ -211,7 +219,10 @@ try {
       timestamp: new Date().toISOString(),
       serviceOrigin,
     };
-    await writeFile(join(proofDir, 'receipt.json'), JSON.stringify(receipt, null, 2));
+    await writeFile(
+      join(proofDir, 'receipt.json'),
+      JSON.stringify(receipt, null, 2)
+    );
   }
 
   console.log(

@@ -332,14 +332,16 @@ describe('the shell', () => {
     expect(body).toContain('data-load-plate');
     expect(body).toContain('data-load-phase="opening"');
     expect(body).toContain('data-load-bar');
-    expect(body).toContain('The file in this link is decrypted in your browser.');
+    expect(body).toContain(
+      'The file in this link is decrypted in your browser.'
+    );
     expect(body).toContain('Report this relic');
     expect(body).toContain('How Relic handles your data');
     expect(body).toContain(`<span class="accession">${id}</span>`);
 
     // noscript styles and card
     expect(body).toContain(
-      '<noscript><style>.stage-loading{display:none}</style></noscript>'
+      '<noscript><style>.stage-loading,[data-load-custody]{display:none}</style></noscript>'
     );
     expect(body).toContain('This page needs JavaScript to open a relic.');
     expect(body).toContain(

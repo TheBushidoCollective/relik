@@ -7876,14 +7876,15 @@ export function renderReady(
     } else {
       thread = undefined;
     }
-    const stage = buildStageWrap(viewToShow, usercontentOrigin);
+    const wrap = buildStageWrap(viewToShow, usercontentOrigin);
+    const stage = (wrap.firstElementChild as HTMLElement) ?? wrap;
     disposeOtioViews(document.body);
     document.body.replaceChildren(
       bar,
-      buildRelicRow(stage, thread?.element, thread?.resizer, thread?.tab)
+      buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
     thread?.attach(stage);
-    trackRenderState(stage, stage.parentElement ?? stage, viewToShow.route);
+    trackRenderState(stage, wrap, viewToShow.route);
   };
 
   const showVersion = async (v: number): Promise<void> => {
@@ -7911,7 +7912,11 @@ export function renderReady(
       label.className = 'render-status-label';
       label.textContent = `Opening version ${v}`;
       versionPill.appendChild(label);
-      if (document.body?.appendChild) {
+      if (bar?.after) {
+        bar.after(versionPill);
+      } else if (bar?.parentElement?.insertBefore) {
+        bar.parentElement.insertBefore(versionPill, bar.nextSibling);
+      } else if (document.body?.appendChild) {
         document.body.appendChild(versionPill);
       }
     } else if (versionPill) {
@@ -7927,7 +7932,13 @@ export function renderReady(
         if (p.phase === 'opening') {
           label.textContent = `Opening version ${v}`;
         } else if (p.phase === 'fetching') {
-          label.textContent = `Version ${v}: ${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+          label.replaceChildren();
+          const vSpan = document.createElement('span');
+          vSpan.className = 'render-status-version';
+          vSpan.textContent = `Version ${v}: `;
+          const progSpan = document.createElement('span');
+          progSpan.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+          label.append(vSpan, progSpan);
         }
       }
     });
@@ -8074,6 +8085,7 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
     card.className = 'card load-card';
 
     const phase = document.createElement('p');
+    phase.id = 'load-phase';
     phase.className = 'load-phase';
     phase.setAttribute('role', 'status');
     phase.setAttribute('aria-live', 'polite');
@@ -8082,8 +8094,7 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
     const meter = document.createElement('div');
     meter.className = 'load-meter';
     meter.setAttribute('role', 'progressbar');
-    meter.setAttribute('aria-valuemin', '0');
-    meter.setAttribute('aria-valuemax', '105298736');
+    meter.setAttribute('aria-labelledby', 'load-phase');
 
     const transfer = document.createElement('p');
     transfer.dataset['loadTransfer'] = '';
@@ -8154,7 +8165,11 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
         meterEl.style.setProperty('--load-fraction', String(frac));
       }
       if (transferEl) {
-        transferEl.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+        if (p.received === 0) {
+          transferEl.textContent = `${TRANSFER_LABEL} ${formatBytes(p.total)}`;
+        } else {
+          transferEl.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+        }
       }
       if (p.contents) {
         if (contentsEl) {
@@ -8249,7 +8264,13 @@ export function trackRenderState(
     label.className = 'render-status-label';
     label.textContent = PHASE_RENDERING;
     statusPill.appendChild(label);
-    if (document.body?.appendChild) {
+    const bar =
+      document.querySelector('header.bar') ?? document.querySelector('.bar');
+    if (bar?.after) {
+      bar.after(statusPill);
+    } else if (bar?.parentElement?.insertBefore) {
+      bar.parentElement.insertBefore(statusPill, bar.nextSibling);
+    } else if (document.body?.appendChild) {
       document.body.appendChild(statusPill);
     }
   }
@@ -8417,8 +8438,17 @@ export function renderDead(
     }
   }
 
+  const custodyEl = bar?.querySelector?.(
+    '[data-load-custody]'
+  ) as HTMLElement | null;
+  if (custodyEl && custodyEl.textContent === LOAD_OPENING) {
+    custodyEl.textContent = '';
+  }
+
   if (document.querySelectorAll) {
-    document.querySelectorAll('main.stage').forEach((s) => s.remove());
+    document.querySelectorAll('main.stage').forEach((s) => {
+      s.remove();
+    });
   }
 
   const main = document.createElement('main');
@@ -8430,12 +8460,14 @@ export function renderDead(
   const headline = document.createElement('h1');
   headline.className = 'card-title';
   headline.textContent = dead.headline;
-
-  const detail = document.createElement('p');
-  detail.className = 'card-note';
-  detail.textContent = dead.detail;
-
-  card.append(headline, detail);
+  const paragraphs = dead.detail.split('\n\n');
+  card.append(headline);
+  for (const para of paragraphs) {
+    const p = document.createElement('p');
+    p.className = 'card-note';
+    p.textContent = para;
+    card.appendChild(p);
+  }
 
   const actionsDiv = document.createElement('div');
   actionsDiv.className = 'card-actions';
@@ -8460,7 +8492,11 @@ export function renderDead(
     link.className = dead.action === 'report' ? 'action primary' : 'action';
     link.href = `${SERVICE_ORIGIN}/abuse`;
     link.dataset['deadAction'] = 'report';
-    link.textContent = 'Report this relic';
+    link.setAttribute('aria-label', REPORT_LINK_LABEL);
+    link.appendChild(icon(ICONS.flag));
+    const span = document.createElement('span');
+    span.textContent = REPORT_LINK_LABEL;
+    link.appendChild(span);
     actionsDiv.appendChild(link);
   }
 
@@ -8511,7 +8547,7 @@ export function renderDead(
     feedback.className = 'key-entry-feedback';
     feedback.setAttribute('role', 'alert');
 
-    form.append(label, inputRow, progressEl, feedback);
+    form.append(label, inputRow, feedback);
 
     let activeCachedPrefix = cachedPrefix;
 
@@ -8559,7 +8595,7 @@ export function renderDead(
       );
     });
 
-    keySection.append(prompt, form);
+    keySection.append(prompt, form, progressEl);
     card.appendChild(keySection);
   }
 

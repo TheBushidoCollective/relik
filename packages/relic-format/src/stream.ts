@@ -56,12 +56,12 @@ export async function openRelicStream(
 
   let receivedBytes = 0;
   let openedContentBytes = 0;
-  let contentLength: number | undefined = undefined;
+  let contentLength: number | undefined;
 
-  let header: ContainerHeader | undefined = undefined;
-  let keys: DerivedKeys | undefined = undefined;
-  let envelope: Envelope | undefined = undefined;
-  let contentBuffer: Uint8Array | undefined = undefined;
+  let header: ContainerHeader | undefined;
+  let keys: DerivedKeys | undefined;
+  let envelope: Envelope | undefined;
+  let contentBuffer: Uint8Array | undefined;
 
   let record0Length = 0;
   let prefixLength = 0;

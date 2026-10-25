@@ -291,8 +291,8 @@ function matchesSelector(node: ElementStub, selector: string): boolean {
   let remaining = selector;
   const attrRegex =
     /\[([a-zA-Z0-9_-]+)(?:([$*^~|]?=)("[^"]*"|'[^']*'|[^\]]*))?\]/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRegex.exec(selector)) !== null) {
+  let match = attrRegex.exec(selector);
+  while (match !== null) {
     const attrName = match[1] as string;
     const op = match[2];
     const attrVal = match[3]?.replace(/^["']|["']$/g, '');
@@ -309,12 +309,13 @@ function matchesSelector(node: ElementStub, selector: string): boolean {
     } else {
       if (
         !node.attributes.has(attrName) &&
-        !Object.prototype.hasOwnProperty.call(node.dataset, datasetKey) &&
+        !Object.hasOwn(node.dataset, datasetKey) &&
         node.getAttribute(attrName) === null
       ) {
         return false;
       }
     }
+    match = attrRegex.exec(selector);
   }
   remaining = remaining.replace(attrRegex, '');
 
@@ -361,7 +362,7 @@ class MockMutationObserver {
   }
 
   static trigger(): void {
-    for (const o of this.observers) {
+    for (const o of MockMutationObserver.observers) {
       o.callback([]);
     }
   }
@@ -423,7 +424,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
         const idx = list.indexOf(listener);
         if (idx !== -1) list.splice(idx, 1);
       },
-      dispatchEvent: (event: { type: string; source?: unknown; data?: unknown }) => {
+      dispatchEvent: (event: {
+        type: string;
+        source?: unknown;
+        data?: unknown;
+      }) => {
         const list = windowEventListeners.get(event.type) ?? [];
         for (const listener of list) {
           listener(event);
@@ -452,11 +457,17 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrap.appendChild(stage);
     rootBody.appendChild(stageWrap);
 
-    trackRenderState(stage as unknown as HTMLElement, stageWrap as unknown as HTMLElement, 'image');
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'image'
+    );
 
     expect(stage.dataset['renderState']).toBe('rendering');
     expect(stageWrap.getAttribute('aria-busy')).toBe('true');
-    const pill = rootBody.querySelector('div.render-status[data-render-status]');
+    const pill = rootBody.querySelector(
+      'div.render-status[data-render-status]'
+    );
     expect(pill).not.toBeNull();
     expect(pill?.textContent).toBe(PHASE_RENDERING);
 
@@ -465,7 +476,9 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
 
     expect(stage.dataset['renderState']).toBe('ready');
     expect(stageWrap.getAttribute('aria-busy')).toBe('false');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // 1b. Error case
     const stageErr = new ElementStub('main');
@@ -477,14 +490,20 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrapErr.appendChild(stageErr);
     rootBody.appendChild(stageWrapErr);
 
-    trackRenderState(stageErr as unknown as HTMLElement, stageWrapErr as unknown as HTMLElement, 'image');
+    trackRenderState(
+      stageErr as unknown as HTMLElement,
+      stageWrapErr as unknown as HTMLElement,
+      'image'
+    );
     expect(stageErr.dataset['renderState']).toBe('rendering');
 
     imgErr.dispatchEvent({ type: 'error' });
 
     expect(stageErr.dataset['renderState']).toBe('error');
     expect(stageWrapErr.getAttribute('aria-busy')).toBe('false');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // 1c. Already complete image
     const stageComplete = new ElementStub('main');
@@ -497,7 +516,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrapComplete.appendChild(stageComplete);
     rootBody.appendChild(stageWrapComplete);
 
-    trackRenderState(stageComplete as unknown as HTMLElement, stageWrapComplete as unknown as HTMLElement, 'image');
+    trackRenderState(
+      stageComplete as unknown as HTMLElement,
+      stageWrapComplete as unknown as HTMLElement,
+      'image'
+    );
     expect(stageComplete.dataset['renderState']).toBe('ready');
     expect(stageWrapComplete.getAttribute('aria-busy')).toBe('false');
   });
@@ -513,17 +536,25 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrap.appendChild(stage);
     rootBody.appendChild(stageWrap);
 
-    trackRenderState(stage as unknown as HTMLElement, stageWrap as unknown as HTMLElement, 'media');
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'media'
+    );
 
     expect(stage.dataset['renderState']).toBe('rendering');
     expect(stageWrap.getAttribute('aria-busy')).toBe('true');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).not.toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).not.toBeNull();
 
     video.dispatchEvent({ type: 'loadedmetadata' });
 
     expect(stage.dataset['renderState']).toBe('ready');
     expect(stageWrap.getAttribute('aria-busy')).toBe('false');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // 2b. Media error -> error
     const stageErr = new ElementStub('main');
@@ -534,12 +565,18 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrapErr.appendChild(stageErr);
     rootBody.appendChild(stageWrapErr);
 
-    trackRenderState(stageErr as unknown as HTMLElement, stageWrapErr as unknown as HTMLElement, 'media');
+    trackRenderState(
+      stageErr as unknown as HTMLElement,
+      stageWrapErr as unknown as HTMLElement,
+      'media'
+    );
     audio.dispatchEvent({ type: 'error' });
 
     expect(stageErr.dataset['renderState']).toBe('error');
     expect(stageWrapErr.getAttribute('aria-busy')).toBe('false');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // 2c. Already ready media (readyState >= 1)
     const stageReady = new ElementStub('main');
@@ -551,7 +588,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrapReady.appendChild(stageReady);
     rootBody.appendChild(stageWrapReady);
 
-    trackRenderState(stageReady as unknown as HTMLElement, stageWrapReady as unknown as HTMLElement, 'media');
+    trackRenderState(
+      stageReady as unknown as HTMLElement,
+      stageWrapReady as unknown as HTMLElement,
+      'media'
+    );
     expect(stageReady.dataset['renderState']).toBe('ready');
   });
 
@@ -563,16 +604,24 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrap.appendChild(stage);
     rootBody.appendChild(stageWrap);
 
-    trackRenderState(stage as unknown as HTMLElement, stageWrap as unknown as HTMLElement, 'pdf');
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'pdf'
+    );
 
     expect(stage.dataset['renderState']).toBe('rendering');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).not.toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).not.toBeNull();
 
     stage.dispatchEvent({ type: 'relic:render-state', detail: 'ready' });
 
     expect(stage.dataset['renderState']).toBe('ready');
     expect(stageWrap.getAttribute('aria-busy')).toBe('false');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // 3b. PDF error event
     const stageErr = new ElementStub('main');
@@ -580,12 +629,18 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrapErr.appendChild(stageErr);
     rootBody.appendChild(stageWrapErr);
 
-    trackRenderState(stageErr as unknown as HTMLElement, stageWrapErr as unknown as HTMLElement, 'pdf');
+    trackRenderState(
+      stageErr as unknown as HTMLElement,
+      stageWrapErr as unknown as HTMLElement,
+      'pdf'
+    );
 
     stageErr.dispatchEvent({ type: 'relic:render-state', detail: 'error' });
 
     expect(stageErr.dataset['renderState']).toBe('error');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // 3c. renderPdfView dispatches relic:render-state error when import fails
     const dummyPdfView: ReadyView = {
@@ -627,14 +682,20 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrap.appendChild(stage);
     rootBody.appendChild(stageWrap);
 
-    trackRenderState(stage as unknown as HTMLElement, stageWrap as unknown as HTMLElement, 'otio');
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'otio'
+    );
 
     expect(stage.dataset['renderState']).toBe('rendering');
 
     stage.dispatchEvent({ type: 'relic:otio-ready' });
 
     expect(stage.dataset['renderState']).toBe('ready');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // Spec invariant: once ready, OTIO never returns to rendering when data-ready="false"
     otioView.dataset['ready'] = 'false';
@@ -650,13 +711,19 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrapErr.appendChild(stageErr);
     rootBody.appendChild(stageWrapErr);
 
-    trackRenderState(stageErr as unknown as HTMLElement, stageWrapErr as unknown as HTMLElement, 'otio');
+    trackRenderState(
+      stageErr as unknown as HTMLElement,
+      stageWrapErr as unknown as HTMLElement,
+      'otio'
+    );
 
     otioViewErr.dataset['ready'] = 'error';
     MockMutationObserver.trigger();
 
     expect(stageErr.dataset['renderState']).toBe('error');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
 
     // 4c. Pre-ready OTIO (data-ready already "true" / "diagnostic" / "structural")
     const stagePre = new ElementStub('main');
@@ -668,7 +735,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrapPre.appendChild(stagePre);
     rootBody.appendChild(stageWrapPre);
 
-    trackRenderState(stagePre as unknown as HTMLElement, stageWrapPre as unknown as HTMLElement, 'otio');
+    trackRenderState(
+      stagePre as unknown as HTMLElement,
+      stageWrapPre as unknown as HTMLElement,
+      'otio'
+    );
     expect(stagePre.dataset['renderState']).toBe('ready');
   });
 
@@ -685,13 +756,21 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     stageWrap.appendChild(stage);
     rootBody.appendChild(stageWrap);
 
-    trackRenderState(stage as unknown as HTMLElement, stageWrap as unknown as HTMLElement, 'sandboxed-html');
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'sandboxed-html'
+    );
 
     expect(stage.dataset['renderState']).toBe('rendering');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).not.toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).not.toBeNull();
 
     // 1. Message from wrong source is ignored
-    (globalThis.window as unknown as { dispatchEvent: (e: unknown) => void }).dispatchEvent({
+    (
+      globalThis.window as unknown as { dispatchEvent: (e: unknown) => void }
+    ).dispatchEvent({
       type: 'message',
       source: attackerWindow,
       data: { type: 'relic:tree' },
@@ -699,7 +778,9 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     expect(stage.dataset['renderState']).toBe('rendering');
 
     // 2. Message from correct source but wrong type is ignored
-    (globalThis.window as unknown as { dispatchEvent: (e: unknown) => void }).dispatchEvent({
+    (
+      globalThis.window as unknown as { dispatchEvent: (e: unknown) => void }
+    ).dispatchEvent({
       type: 'message',
       source: frameWindow,
       data: { type: 'other:event' },
@@ -707,7 +788,9 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     expect(stage.dataset['renderState']).toBe('rendering');
 
     // 3. Message from correct frame window with relic:tree sets ready
-    (globalThis.window as unknown as { dispatchEvent: (e: unknown) => void }).dispatchEvent({
+    (
+      globalThis.window as unknown as { dispatchEvent: (e: unknown) => void }
+    ).dispatchEvent({
       type: 'message',
       source: frameWindow,
       data: { type: 'relic:tree' },
@@ -715,7 +798,9 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
 
     expect(stage.dataset['renderState']).toBe('ready');
     expect(stageWrap.getAttribute('aria-busy')).toBe('false');
-    expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-render-status]')
+    ).toBeNull();
   });
 
   test('6. Markdown, code and download are ready synchronously on mount', () => {
@@ -725,11 +810,17 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
       stageWrap.appendChild(stage);
       rootBody.appendChild(stageWrap);
 
-      trackRenderState(stage as unknown as HTMLElement, stageWrap as unknown as HTMLElement, route);
+      trackRenderState(
+        stage as unknown as HTMLElement,
+        stageWrap as unknown as HTMLElement,
+        route
+      );
 
       expect(stage.dataset['renderState']).toBe('ready');
       expect(stageWrap.getAttribute('aria-busy')).toBe('false');
-      expect(rootBody.querySelector('div.render-status[data-render-status]')).toBeNull();
+      expect(
+        rootBody.querySelector('div.render-status[data-render-status]')
+      ).toBeNull();
     }
   });
 
@@ -747,7 +838,9 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     };
 
     let progressCb: ((p: LoadProgress) => void) | undefined;
-    let loadHistoricalResolver: ((res: HistoricalVersionState) => void) | undefined;
+    let loadHistoricalResolver:
+      | ((res: HistoricalVersionState) => void)
+      | undefined;
 
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
@@ -807,12 +900,19 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     expect(rootBody.querySelector('main.stage')).not.toBeNull();
 
     // Wait for unavailable resolution
-    for (let i = 0; i < 50 && rootBody.querySelector('div.render-status[data-version-progress]'); i++) {
+    for (
+      let i = 0;
+      i < 50 &&
+      rootBody.querySelector('div.render-status[data-version-progress]');
+      i++
+    ) {
       await new Promise((r) => queueMicrotask(r));
     }
 
     // Pill is removed on unavailable
-    expect(rootBody.querySelector('div.render-status[data-version-progress]')).toBeNull();
+    expect(
+      rootBody.querySelector('div.render-status[data-version-progress]')
+    ).toBeNull();
 
     // Toast shown
     const toastEl = rootBody.querySelector('.toast');
@@ -835,7 +935,9 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
       versionDigest: '2'.repeat(64),
     };
 
-    let historicalStreamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let historicalStreamController:
+      | ReadableStreamDefaultController<Uint8Array>
+      | undefined;
 
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
@@ -884,7 +986,9 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
 
     const loading = rootBody.querySelector('p.diff-loading');
     expect(loading).not.toBeNull();
-    expect(loading?.textContent).toContain('Loading comparison: version 1 and version 2.');
+    expect(loading?.textContent).toContain(
+      'Loading comparison: version 1 and version 2.'
+    );
 
     // Simulate progress event received for version 1
     const prog: LoadProgress = {
@@ -894,6 +998,8 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     };
     loading!.textContent = `Loading comparison: version 1 and version 2. Version 1: ${progressLine(prog)}`;
 
-    expect(loading?.textContent).toContain('Version 1: Fetching 41.2 of 105.3 MB');
+    expect(loading?.textContent).toContain(
+      'Version 1: Fetching 41.2 of 105.3 MB'
+    );
   });
 });

@@ -443,11 +443,7 @@ describe('refusals', () => {
     const rec2 = await encryptRecord(keys, 2, bytes(capacity), false, capacity);
     const rec3 = await encryptRecord(keys, 3, bytes(capacity), true);
     const longContainer = new Uint8Array(
-      headerBytes.length +
-        rec0.length +
-        rec1.length +
-        rec2.length +
-        rec3.length
+      headerBytes.length + rec0.length + rec1.length + rec2.length + rec3.length
     );
     let offset = 0;
     longContainer.set(headerBytes, offset);

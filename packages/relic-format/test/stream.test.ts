@@ -8,11 +8,7 @@ import {
   TransferIncompleteError,
 } from '../src/errors.ts';
 import { generateKey } from '../src/fragment.ts';
-import {
-  HEADER_BYTES,
-  RECORD_SIZE,
-  recordCapacity,
-} from '../src/rfc8188.ts';
+import { HEADER_BYTES, RECORD_SIZE, recordCapacity } from '../src/rfc8188.ts';
 import { type StreamOpenProgress, openRelicStream } from '../src/stream.ts';
 
 const RS = 64;
@@ -169,8 +165,12 @@ describe('openRelicStream', () => {
       err1 = err;
     }
     expect(err1).toBeInstanceOf(TransferIncompleteError);
-    expect((err1 as TransferIncompleteError).receivedBytes).toBe(halfBytes.length);
-    expect((err1 as TransferIncompleteError).expectedBytes).toBe(container.length);
+    expect((err1 as TransferIncompleteError).receivedBytes).toBe(
+      halfBytes.length
+    );
+    expect((err1 as TransferIncompleteError).expectedBytes).toBe(
+      container.length
+    );
 
     // 2. Stream rejects
     const failingStream = new ReadableStream<Uint8Array>({
@@ -315,7 +315,7 @@ describe('openRelicStream', () => {
     // Record 1 is [85, 85 + RS) = [85, 149)
     // Record 2 starts at 149.
     const tampered = new Uint8Array(container);
-    tampered[149 + 5] = (tampered[149 + 5]! ^ 0xff);
+    tampered[149 + 5] = tampered[149 + 5]! ^ 0xff;
 
     let envelopeFired = false;
     let thrown: unknown;

@@ -4758,7 +4758,7 @@ async function shell(
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/styles.css">${
     typeof target === 'string'
-      ? '\n<noscript><style>.stage-loading{display:none}</style></noscript>'
+      ? '\n<noscript><style>.stage-loading,[data-load-custody]{display:none}</style></noscript>'
       : ''
   }${
     typeof target === 'string'
@@ -4775,21 +4775,21 @@ async function shell(
 </header>
 <main class="stage stage-loading" data-load-plate data-load-phase="opening">
 <div class="card load-card">
-<p class="load-phase" role="status" aria-live="polite">${escapeHtml(LOAD_OPENING)}</p>
-<div class="load-meter" role="progressbar" aria-valuemin="0" aria-valuemax="105298736"></div>
+<p id="load-phase" class="load-phase" role="status" aria-live="polite">${escapeHtml(LOAD_OPENING)}</p>
+<div class="load-meter" role="progressbar" aria-labelledby="load-phase"></div>
 <p data-load-transfer></p>
 <p data-load-contents hidden></p>
 <p class="card-note">${escapeHtml(LOAD_EXPLANATION)}</p>
 </div>
 </main>
 <noscript>
-<main class="stage stage-dead">
+<main class="stage stage-noscript">
 <div class="card">
 <h1 class="card-title">${escapeHtml(NOSCRIPT_TITLE)}</h1>
 <p class="card-note">${escapeHtml(NOSCRIPT_DETAIL)}</p>
-<div class="actions">
-<a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
-<a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
+<div class="card-actions">
+<a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
+<a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
 </div>
 </div>
 </main>
