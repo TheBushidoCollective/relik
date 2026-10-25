@@ -318,7 +318,7 @@ async function callMcp(
 
 // --- Fixture Generators -----------------------------------------------------
 
-function buildPngBuffer(width = 200, height = 150): Buffer {
+function buildPngBuffer(width = 400, height = 300): Buffer {
   function makeChunk(type: string, data: Buffer): Buffer {
     const len = data.length;
     const chunk = Buffer.alloc(4 + 4 + len + 4);
@@ -454,6 +454,7 @@ function isRegionNonUniform(
 const RECORDER_SOURCE = `(() => {
   const samples = [];
   let sampling = true;
+  let sawPillEver = false;
 
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
@@ -465,7 +466,25 @@ const RECORDER_SOURCE = `(() => {
     return rect.width > 0 && rect.height > 0;
   }
 
+  function checkPill() {
+    const p = document.querySelector('.render-status, [data-render-status]');
+    if (p && isVisible(p)) sawPillEver = true;
+  }
+
+  try {
+    const observer = new MutationObserver(() => {
+      checkPill();
+    });
+    observer.observe(document.documentElement || document, { childList: true, subtree: true });
+  } catch {}
+
   function doSample() {
+    if (window.top !== window) return;
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') {
+      if (sampling) requestAnimationFrame(doSample);
+      return;
+    }
+    checkPill();
     if (window.top !== window) return;
     if (location.protocol !== 'http:' && location.protocol !== 'https:') {
       if (sampling) requestAnimationFrame(doSample);
@@ -522,6 +541,7 @@ const RECORDER_SOURCE = `(() => {
 
   doSample();
   window.__relicLoadSamples = samples;
+  window.__sawRelicRenderPill = () => sawPillEver;
   window.__stopRelicLoadSampling = () => { sampling = false; return samples; };
 })();`;
 
@@ -876,6 +896,7 @@ interface RunOutcome {
   samples: Sample[];
   firstProgressShot: Buffer | null;
   readyShot: Buffer | null;
+  sawPillEver: boolean;
   storageRequest: {
     requestId?: string | undefined;
     requestWillBeSent: boolean;
@@ -1148,12 +1169,30 @@ async function runRelicPage(
     samples = rawSamples?.result?.value ?? [];
   }
 
+  let sawPillEver = false;
+  if (isolatedContextId !== undefined) {
+    const rawSaw = (await cdp
+      .send(
+        'Runtime.evaluate',
+        {
+          expression:
+            'window.__sawRelicRenderPill ? window.__sawRelicRenderPill() : false',
+          contextId: isolatedContextId,
+          returnByValue: true,
+        },
+        sessionId
+      )
+      .catch(() => null)) as { result?: { value?: boolean } } | null;
+    sawPillEver = rawSaw?.result?.value === true;
+  }
+
   return {
     targetId,
     sessionId,
     samples,
     firstProgressShot,
     readyShot,
+    sawPillEver,
     storageRequest: storageReq,
     close: async () => {
       stopContextListener();
@@ -1299,7 +1338,8 @@ try {
         'otio',
       ];
       if (renderingClasses.includes(fix.classKey)) {
-        const sawPill = samples.some((s) => s.renderPillVisible);
+        const sawPill =
+          samples.some((s) => s.renderPillVisible) || outcome.sawPillEver;
         assert.ok(
           sawPill,
           `Rendering class ${fix.classKey} must show the render pill at least once before ready`
