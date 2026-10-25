@@ -69,6 +69,19 @@ export class StrictParseError extends MalformedContainerError {
   override readonly name = 'StrictParseError';
 }
 
+/** The container is truncated: missing its final delimiter-2 record or declared content bytes. */
+export class TruncatedContainerError extends MalformedContainerError {
+  override readonly name = 'TruncatedContainerError';
+}
+
+/** The stream closed or errored before reaching the declared object length. */
+export class TransferIncompleteError extends RelicFormatError {
+  override readonly name = 'TransferIncompleteError';
+  constructor(readonly receivedBytes: number, readonly expectedBytes: number) {
+    super(`transfer incomplete: received ${receivedBytes} of ${expectedBytes} bytes`);
+  }
+}
+
 /**
  * An AEAD tag did not verify.
  *
