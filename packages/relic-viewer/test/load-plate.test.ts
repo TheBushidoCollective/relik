@@ -1,18 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import {
-  boot,
-  adoptOrMountPlate,
-  renderDead,
-  renderReady,
-} from '../src/main.ts';
+import { boot, adoptOrMountPlate, renderDead } from '../src/main.ts';
 import {
   type ViewerDeps,
   type KeyVault,
   type DeadView,
-  type ReadyView,
   type CachedPrefix,
   type LoadResume,
-  type LoadProgress,
   formatBytes,
   formatTransfer,
   DAMAGED_TITLE,
@@ -21,14 +14,10 @@ import {
 import {
   encodeFragment,
   generateKey,
-  FORMAT_VERSION,
   HEADER_BYTES,
   LOAD_OPENING,
-  PHASE_FETCHING,
   PHASE_DECRYPTING,
   CONTENTS_LABEL,
-  REPORT_LINK_LABEL,
-  POLICY_LINK_LABEL,
   INSECURE_TITLE,
   INSECURE_DETAIL,
   encryptRelic,
@@ -740,7 +729,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     rootBody.appendChild(root);
 
     let loadCalls = 0;
-    const resumesReceived: Array<LoadResume | undefined> = [];
+    const _resumesReceived: Array<LoadResume | undefined> = [];
 
     const key = generateKey();
     const fragment = encodeFragment(key);
@@ -851,7 +840,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     const feedback = rootBody.querySelector(
       '.key-entry-feedback'
     ) as ElementStub;
-    const progressEl = rootBody.querySelector(
+    const _progressEl = rootBody.querySelector(
       '.key-entry-progress'
     ) as ElementStub;
 

@@ -18,7 +18,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { type ChildProcess, execFile, spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -33,7 +33,7 @@ import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
-import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
+import { connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import {
   attestBrowserHeadless,
@@ -1063,7 +1063,7 @@ async function runRelicPage(
   // Poll for completion or settling
   if (!options.disableScripts && !options.blockViewerJs) {
     const start = Date.now();
-    let settled = false;
+    let _settled = false;
 
     while (Date.now() - start < 30_000) {
       await Bun.sleep(25);
@@ -1094,7 +1094,7 @@ async function runRelicPage(
       } | null;
 
       const state = evalRes?.result?.value;
-      if (!state || !state.latest) continue;
+      if (!state?.latest) continue;
 
       // Capture first progress shot
       if (
@@ -1117,7 +1117,7 @@ async function runRelicPage(
           .send('Page.captureScreenshot', { format: 'png' }, sessionId)
           .catch(() => null)) as { data: string } | null;
         if (shot) readyShot = Buffer.from(shot.data, 'base64');
-        settled = true;
+        _settled = true;
         break;
       }
     }
@@ -1470,8 +1470,8 @@ try {
       rightKey.slice(0, charIdx) + wrongChar + rightKey.slice(charIdx + 1);
     const wrongUrl = `${origin}/${sixMbInfo.relicId}#${wrongKey}`;
 
-    const mintCountBefore = serverMintCount;
-    const storageGetsBefore = storageLogs.length;
+    const _mintCountBefore = serverMintCount;
+    const _storageGetsBefore = storageLogs.length;
 
     const outcome = await runRelicPage(wrongUrl, {
       viewport: { width: 1440, height: 900 },

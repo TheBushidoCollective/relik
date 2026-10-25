@@ -26,7 +26,6 @@ import {
   KeyIdPresentError,
   leastPrivileged,
   LOAD_OPENING,
-  MalformedContainerError,
   MalformedFragmentError,
   openEnvelope,
   openRelicStream,
@@ -34,13 +33,11 @@ import {
   parseRelicId,
   PHASE_DECRYPTING,
   PHASE_FETCHING,
-  PHASE_RENDERING,
   plaintextSizeUpperBound,
   privilegeTier,
   type RendererClass,
   sniffContentClass,
   TransferIncompleteError,
-  TruncatedContainerError,
   UnknownVersionError,
   VersionMismatchError,
   versionDigest,
@@ -883,7 +880,6 @@ export async function loadHistoricalVersion(
 /** Maps the server's codes onto what a recipient should actually be told. */
 export function deadFromProblem(code: string): DeadView {
   switch (code) {
-    case 'invalid_relic_id':
     case 'relic_not_found':
       return view(
         'No such relic',

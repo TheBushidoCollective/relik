@@ -715,7 +715,9 @@ describe('failure states', () => {
       fetch: (async (input: RequestInfo | URL) => {
         const urlStr = typeof input === 'string' ? input : input.toString();
         fetchedUrls.push(urlStr);
-        return new Response(JSON.stringify({ code: 'relic_not_found' }), { status: 404 });
+        return new Response(JSON.stringify({ code: 'relic_not_found' }), {
+          status: 404,
+        });
       }) as typeof globalThis.fetch,
     };
 

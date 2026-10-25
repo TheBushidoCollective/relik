@@ -931,11 +931,7 @@ describe('Network security: no key material sent in any request', () => {
     };
 
     const testId1 = generateRelicId();
-    const resultFragment = await openRelicWithKey(
-      testId1,
-      fragment,
-      deps
-    );
+    const resultFragment = await openRelicWithKey(testId1, fragment, deps);
     expect(resultFragment.kind).toBe('ready');
 
     const testId2 = generateRelicId();

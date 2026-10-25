@@ -719,15 +719,9 @@ describe('Spec B: Viewer load progress and early key check', () => {
     };
 
     const events: LoadProgress[] = [];
-    const res = await loadHistoricalVersion(
-      R1,
-      2,
-      currentReady,
-      deps,
-      (p) => {
-        events.push(p);
-      }
-    );
+    const res = await loadHistoricalVersion(R1, 2, currentReady, deps, (p) => {
+      events.push(p);
+    });
 
     expect(res.kind).toBe('ready');
     const fetchingEvents = events.filter(
@@ -766,7 +760,10 @@ describe('Spec B: Viewer load progress and early key check', () => {
       current_version: 1,
     };
 
-    const cutOffContainer = container.subarray(0, HEADER_BYTES + RECORD_SIZE + 100);
+    const cutOffContainer = container.subarray(
+      0,
+      HEADER_BYTES + RECORD_SIZE + 100
+    );
 
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
@@ -775,7 +772,8 @@ describe('Spec B: Viewer load progress and early key check', () => {
       fetch: (async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith('/mint')) return Response.json(mintResp);
-        if (url.includes('/blob')) return new Response(cutOffContainer as unknown as BodyInit);
+        if (url.includes('/blob'))
+          return new Response(cutOffContainer as unknown as BodyInit);
         return new Response('', { status: 404 });
       }) as unknown as typeof globalThis.fetch,
     };

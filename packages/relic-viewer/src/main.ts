@@ -219,8 +219,6 @@ import {
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
   type CachedPrefix,
-  DAMAGED_DETAIL,
-  DAMAGED_TITLE,
   type DeadView,
   formatBytes,
   formatTransfer,
@@ -232,7 +230,6 @@ import {
   type LoadResume,
   loadCommentedRelics,
   loadHistoricalVersion,
-  type MintResponse,
   openRelicWithKey,
   progressLine,
   type ReadyView,
@@ -7193,10 +7190,7 @@ export function toggleCopyLinkPanel(
     const currentOpener =
       document.querySelector<HTMLElement>('.bar [data-action="copy-link"]') ??
       opener;
-    if (
-      section.contains(target) ||
-      (currentOpener && currentOpener.contains(target))
-    ) {
+    if (section.contains(target) || currentOpener?.contains(target)) {
       return;
     }
     close(false);
@@ -7212,7 +7206,7 @@ export function toggleCopyLinkPanel(
     if (
       nextTarget !== null &&
       !section.contains(nextTarget) &&
-      !(currentOpener && currentOpener.contains(nextTarget))
+      !currentOpener?.contains(nextTarget)
     ) {
       close(false);
     }
@@ -7255,7 +7249,7 @@ export function toggleCopyLinkPanel(
 
   const bar =
     document.querySelector('header.bar') ?? document.querySelector('.bar');
-  if (bar !== null && bar.parentNode) {
+  if (bar?.parentNode) {
     bar.parentNode.insertBefore(section, bar.nextSibling);
   } else {
     document.body.appendChild(section);
@@ -8424,9 +8418,6 @@ export function trackRenderState(
       }
       break;
     }
-    case 'markdown':
-    case 'code':
-    case 'download':
     default: {
       setReady();
       break;

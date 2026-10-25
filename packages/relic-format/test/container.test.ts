@@ -21,7 +21,6 @@ import {
   DecryptFailedError,
   KeyIdPresentError,
   MalformedContainerError,
-  RelicFormatError,
   StrictParseError,
   TruncatedContainerError,
   VersionMismatchError,

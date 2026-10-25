@@ -23,7 +23,7 @@ if (process.env['RELIC_LOAD_PROBE_CONFIRM'] !== 'publish-one-1-day-relic') {
 const serviceOrigin = (
   process.env['RELIC_SERVICE_ORIGIN'] ?? 'https://relik.link'
 ).replace(/\/+$/, '');
-const chromePath =
+const _chromePath =
   process.env['RELIC_PROOF_CHROME_PATH'] ?? process.env['RELIC_CHROME_PATH'];
 const probeClient = process.env['RELIC_LOAD_PROBE_CLIENT'] ?? 'source';
 const proofDir = process.env['RELIC_LOAD_PROOF_DIR'];

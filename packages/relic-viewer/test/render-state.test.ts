@@ -11,9 +11,8 @@ import {
   type LoadProgress,
   type HistoricalVersionState,
   progressLine,
-  formatTransfer,
 } from '../src/viewer.ts';
-import { PHASE_RENDERING, PHASE_FETCHING } from '@relic/format';
+import { PHASE_RENDERING } from '@relic/format';
 
 class ElementStub {
   readonly tagName: string;
@@ -389,15 +388,22 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
             readonly type: string;
             readonly detail: T | undefined;
             readonly bubbles: boolean;
-            constructor(type: string, init?: { detail?: T; bubbles?: boolean }) {
+            constructor(
+              type: string,
+              init?: { detail?: T; bubbles?: boolean }
+            ) {
               this.type = type;
               this.detail = init?.detail;
               this.bubbles = init?.bubbles ?? false;
             }
           };
 
-    if (typeof (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent === 'undefined') {
-      (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent = customEventClass;
+    if (
+      typeof (globalThis as unknown as { CustomEvent?: unknown })
+        .CustomEvent === 'undefined'
+    ) {
+      (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent =
+        customEventClass;
       installedCustomEvent = true;
     }
 
@@ -878,8 +884,8 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
       versionDigest: '1'.repeat(64),
     };
 
-    let progressCb: ((p: LoadProgress) => void) | undefined;
-    let loadHistoricalResolver:
+    let _progressCb: ((p: LoadProgress) => void) | undefined;
+    let _loadHistoricalResolver:
       | ((res: HistoricalVersionState) => void)
       | undefined;
 
@@ -976,7 +982,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
       versionDigest: '2'.repeat(64),
     };
 
-    let historicalStreamController:
+    let _historicalStreamController:
       | ReadableStreamDefaultController<Uint8Array>
       | undefined;
 
@@ -1002,7 +1008,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
         if (url.includes('/v1-blob')) {
           const stream = new ReadableStream<Uint8Array>({
             start(c) {
-              historicalStreamController = c;
+              _historicalStreamController = c;
               c.enqueue(new Uint8Array(1000));
             },
           });

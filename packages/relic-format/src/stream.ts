@@ -2,7 +2,6 @@ import { type Envelope, decodeEnvelope } from './envelope.ts';
 import { FORMAT_VERSION } from './fragment.ts';
 import {
   ContentTooLargeError,
-  DecryptFailedError,
   MalformedContainerError,
   TransferIncompleteError,
   TruncatedContainerError,
@@ -15,7 +14,7 @@ import {
   decryptRecord,
   deriveKeys,
 } from './rfc8188.ts';
-import { type OpenedRelic, plaintextSizeUpperBound } from './container.ts';
+import type { OpenedRelic } from './container.ts';
 
 export interface StreamOpenProgress {
   readonly receivedBytes: number; // ciphertext bytes read so far, header included
