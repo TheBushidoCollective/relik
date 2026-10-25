@@ -55,14 +55,26 @@ import {
 } from './storage.ts';
 import {
   type CommentPatch,
+  type DecisionRow,
+  type DecisionVerdict,
   MemoryStore,
   type MintLogEntry,
+  normalizeEmail,
+  type PasskeyCredential,
+  type PasskeyRecord,
   type ReasonClass,
   type RelicCover,
   type RelicRow,
   type RelicStore,
   type Tombstone,
+  type WebauthnChallengeRow,
 } from './store.ts';
+import {
+  parseBase64url,
+  verifyAssertion,
+  verifyRegistration,
+  WebauthnError,
+} from './webauthn.ts';
 
 const RESERVED = new Set(RESERVED_SEGMENTS);
 
@@ -479,6 +491,45 @@ export function createApp(options: AppOptions = {}): RelicApp {
     if (first === 'auth' && second === 'relics') {
       if (third === undefined && request.method === 'GET') {
         return authRelics(request, now);
+      }
+      return new Response('Method not allowed', { status: 405 });
+    }
+
+    // Decisions:
+    // - relics/{id}/decisions: POST record; POST .../options; POST .../list; any other method or path returns 405.
+    if (first === 'relics' && second !== undefined && third === 'decisions') {
+      if (fourth === undefined && request.method === 'POST') {
+        return postDecision(second, request, ip, now);
+      }
+      if (
+        fourth === 'options' &&
+        rest[4] === undefined &&
+        request.method === 'POST'
+      ) {
+        return postDecisionOptions(second, request, ip, now);
+      }
+      if (
+        fourth === 'list' &&
+        rest[4] === undefined &&
+        request.method === 'POST'
+      ) {
+        return listDecisions(second, request, ip, now);
+      }
+      return new Response('Method not allowed', { status: 405 });
+    }
+
+    // Passkeys:
+    // - auth/passkeys: POST register; POST .../options; otherwise 405.
+    if (first === 'auth' && second === 'passkeys') {
+      if (third === undefined && request.method === 'POST') {
+        return postPasskey(request, ip, now);
+      }
+      if (
+        third === 'options' &&
+        fourth === undefined &&
+        request.method === 'POST'
+      ) {
+        return postPasskeyOptions(request, ip, now);
       }
       return new Response('Method not allowed', { status: 405 });
     }
@@ -948,6 +999,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     return Response.json({
       relic_id: relicId,
+      version: next.version,
       upload_url: upload.url,
       upload_method: upload.method,
       upload_headers: upload.headers,
@@ -1004,8 +1056,32 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
     }
 
+    let versionDigest: string | null =
+      row.versionDigests?.[String(row.version)] ?? null;
+    if (versionDigest === null) {
+      try {
+        const computed = await storage.digest(objectKey(relicId, row.version));
+        if (computed !== undefined) {
+          const recorded = await store.recordVersionDigest(
+            relicId,
+            row.version,
+            computed
+          );
+          versionDigest = recorded ?? computed;
+        }
+      } catch (error) {
+        console.error(
+          'relic: failed to compute version digest in complete:',
+          error
+        );
+        versionDigest = null;
+      }
+    }
+
     return Response.json({
       relic_id: relicId,
+      version: row.version,
+      version_digest: versionDigest,
       object_length: object.length,
       object_crc32c: object.crc32c,
       relic_expires_at: relicExpiryIso(row.expiresAt),
@@ -1873,6 +1949,26 @@ export function createApp(options: AppOptions = {}): RelicApp {
       event: { type: 'version', version },
     });
   }
+  async function checkShareProof(
+    row: RelicRow,
+    raw: unknown
+  ): Promise<'ok' | 'unavailable' | 'malformed' | 'mismatch'> {
+    if (row.shareVerifier === undefined || row.shareVerifier === '') {
+      return 'unavailable';
+    }
+    if (typeof raw !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(raw)) {
+      return 'malformed';
+    }
+    const proofBytes = Buffer.from(raw, 'base64url');
+    if (proofBytes.byteLength !== 32) {
+      return 'malformed';
+    }
+    const computedVerifier = await sha256Hex(proofBytes);
+    if (!timingSafeEqual(computedVerifier, row.shareVerifier)) {
+      return 'mismatch';
+    }
+    return 'ok';
+  }
 
   async function share(
     rawId: string,
@@ -1988,33 +2084,21 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return refuse('invalid_session', { relic_id: relicId });
       }
 
-      if (row.shareVerifier === undefined || row.shareVerifier === '') {
+      const proofResult = await checkShareProof(row, body['share_proof']);
+      if (proofResult === 'unavailable') {
         return refuse('share_unavailable', {
           relic_id: relicId,
           detail:
             'This relic was published before sharing existed. Its publisher can republish it to turn sharing on.',
         });
       }
-
-      const rawProof = body['share_proof'];
-      if (
-        typeof rawProof !== 'string' ||
-        !/^[A-Za-z0-9_-]{43}$/.test(rawProof)
-      ) {
+      if (proofResult === 'malformed') {
         return refuse('invalid_share', {
           relic_id: relicId,
           share_max_per_call: config.shareMaxPerCall,
         });
       }
-      const proofBytes = Buffer.from(rawProof, 'base64url');
-      if (proofBytes.byteLength !== 32) {
-        return refuse('invalid_share', {
-          relic_id: relicId,
-          share_max_per_call: config.shareMaxPerCall,
-        });
-      }
-      const computedVerifier = await sha256Hex(proofBytes);
-      if (!timingSafeEqual(computedVerifier, row.shareVerifier)) {
+      if (proofResult === 'mismatch') {
         return refuse('invalid_share_proof', { relic_id: relicId });
       }
 
@@ -2396,7 +2480,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const commentsRemoved = await store.deleteCommentsForRelic(relicId);
     const sharesDeleted = await store.deleteSharesForRelic(relicId);
     const optOutsDeleted = await store.deleteOptOutsForRelic(relicId);
-
+    const decisionsDeleted = await store.deleteDecisionsForRelic(relicId);
     const override = url.searchParams.get('blocklist');
     const automatic =
       reasonClass === 'abuse' || reasonClass === 'blocklist_match';
@@ -2412,6 +2496,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         covers_deleted: coversRemoved,
         shares_deleted: sharesDeleted,
         opt_outs_deleted: optOutsDeleted,
+        decisions_deleted: decisionsDeleted,
       });
     }
 
@@ -2424,6 +2509,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       covers_deleted: coversRemoved,
       shares_deleted: sharesDeleted,
       opt_outs_deleted: optOutsDeleted,
+      decisions_deleted: decisionsDeleted,
     });
   }
 
@@ -3120,6 +3206,1007 @@ export function createApp(options: AppOptions = {}): RelicApp {
     return json({ relics });
   }
 
+  // --- decisions and passkeys ---------------------------------------------
+
+  async function digestOnRecord(
+    row: RelicRow,
+    version: number
+  ): Promise<string> {
+    const vKey = String(version);
+    const existing = row.versionDigests?.[vKey];
+    if (existing !== undefined) return existing;
+
+    const key = objectKey(row.id, version);
+    const stat = await storage.stat(key);
+    if (stat === undefined) {
+      throw new ProblemError('relic_not_yet_published', {
+        relic_id: row.id,
+        retry_after_seconds: 5,
+      });
+    }
+
+    const digest = await storage.digest(key);
+    if (digest === undefined) {
+      throw new ProblemError('relic_not_yet_published', {
+        relic_id: row.id,
+        retry_after_seconds: 5,
+      });
+    }
+
+    const recorded = await store.recordVersionDigest(row.id, version, digest);
+    return recorded ?? digest;
+  }
+
+  async function readBoundedJson(
+    request: Request,
+    malformedCode: ProblemError['code']
+  ): Promise<unknown> {
+    const clHeader = request.headers.get('content-length');
+    if (clHeader !== null) {
+      const cl = Number.parseInt(clHeader, 10);
+      if (Number.isNaN(cl) || cl > 65_536) {
+        throw new ProblemError(malformedCode);
+      }
+    }
+    let text: string;
+    try {
+      text = await request.text();
+    } catch {
+      throw new ProblemError(malformedCode);
+    }
+    if (text.length > 65_536) {
+      throw new ProblemError(malformedCode);
+    }
+    if (text.trim().length === 0) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new ProblemError(malformedCode);
+    }
+  }
+
+  function extractClientDataChallenge(credential: unknown): string {
+    if (
+      typeof credential !== 'object' ||
+      credential === null ||
+      typeof (credential as Record<string, unknown>)['response'] !== 'object' ||
+      (credential as Record<string, unknown>)['response'] === null
+    ) {
+      throw new ProblemError('invalid_passkey', { passkey_check: 'shape' });
+    }
+    const resp = (credential as Record<string, unknown>)['response'] as Record<
+      string,
+      unknown
+    >;
+    if (typeof resp['clientDataJSON'] !== 'string') {
+      throw new ProblemError('invalid_passkey', { passkey_check: 'shape' });
+    }
+    try {
+      parseBase64url(resp['clientDataJSON']);
+    } catch {
+      throw new ProblemError('invalid_passkey', { passkey_check: 'encoding' });
+    }
+    let rawJson: string;
+    try {
+      rawJson = Buffer.from(resp['clientDataJSON'], 'base64url').toString(
+        'utf-8'
+      );
+    } catch {
+      throw new ProblemError('invalid_passkey', { passkey_check: 'encoding' });
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawJson);
+    } catch {
+      throw new ProblemError('invalid_passkey', { passkey_check: 'shape' });
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>)['challenge'] !== 'string'
+    ) {
+      throw new ProblemError('invalid_passkey', { passkey_check: 'shape' });
+    }
+    return (parsed as Record<string, unknown>)['challenge'] as string;
+  }
+
+  interface DecisionPrefixResult {
+    readonly relicId: string;
+    readonly row: RelicRow;
+    readonly body: Record<string, unknown>;
+    readonly email: string;
+    readonly version: number;
+    readonly verdict: DecisionVerdict;
+  }
+
+  async function checkDecisionPrefix(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<DecisionPrefixResult> {
+    if (config.killSwitchEngaged) {
+      throw new ProblemError('service_paused', { retry_after_seconds: 300 });
+    }
+
+    const ipVerdict = limiter.check(
+      `decision ${ip}`,
+      config.decisionRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      throw new ProblemError('decision_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    let relicId: string;
+    try {
+      relicId = parseRelicId(rawId);
+    } catch {
+      throw new ProblemError('invalid_relic_id');
+    }
+
+    if ((await store.getTombstone(relicId)) !== undefined) {
+      throw new ProblemError('relic_removed', {
+        relic_id: relicId,
+        report_url: `${config.serviceOrigin}/abuse`,
+      });
+    }
+
+    const row = await store.getRelic(relicId);
+    if (row === undefined) {
+      throw new ProblemError('relic_not_found', { relic_id: relicId });
+    }
+
+    if (row.expiresAt !== undefined && row.expiresAt <= now) {
+      throw new ProblemError('relic_expired', { relic_id: relicId });
+    }
+
+    const parsedBody = await readBoundedJson(request, 'invalid_decision');
+    if (
+      parsedBody === null ||
+      typeof parsedBody !== 'object' ||
+      Array.isArray(parsedBody)
+    ) {
+      throw new ProblemError('invalid_decision', { relic_id: relicId });
+    }
+    const body = parsedBody as Record<string, unknown>;
+
+    if ('publish_token' in body) {
+      throw new ProblemError('decision_requires_reader', { relic_id: relicId });
+    }
+
+    const token = sessionCookie(request);
+    if (token === undefined) {
+      throw new ProblemError('sign_in_required', { relic_id: relicId });
+    }
+    const session = await store.getSession(await sha256Hex(token));
+    if (session === undefined || session.expiresAt <= now) {
+      throw new ProblemError('sign_in_required', { relic_id: relicId });
+    }
+    const email = normalizeEmail(session.email);
+
+    const verdict = body['verdict'];
+    if (verdict !== 'approve' && verdict !== 'reject') {
+      throw new ProblemError('invalid_decision', { relic_id: relicId });
+    }
+
+    const version = body['version'];
+    if (
+      typeof version !== 'number' ||
+      !Number.isSafeInteger(version) ||
+      version < 1 ||
+      version > row.version
+    ) {
+      throw new ProblemError('invalid_relic_version', { relic_id: relicId });
+    }
+
+    const proofResult = await checkShareProof(row, body['share_proof']);
+    if (proofResult === 'unavailable') {
+      throw new ProblemError('decision_unavailable', { relic_id: relicId });
+    }
+    if (proofResult === 'malformed') {
+      throw new ProblemError('invalid_decision', { relic_id: relicId });
+    }
+    if (proofResult === 'mismatch') {
+      throw new ProblemError('invalid_share_proof', { relic_id: relicId });
+    }
+
+    return { relicId, row, body, email, version, verdict };
+  }
+
+  async function postDecisionOptions(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    try {
+      const { relicId, row, email, version, verdict } =
+        await checkDecisionPrefix(rawId, request, ip, now);
+
+      const passkeyRecord = await store.getPasskeys(email);
+      if (
+        passkeyRecord === undefined ||
+        passkeyRecord.credentials.length === 0
+      ) {
+        return refuse('passkey_required', { relic_id: relicId });
+      }
+
+      const digest = await digestOnRecord(row, version);
+
+      const challengeBytes = new Uint8Array(32);
+      crypto.getRandomValues(challengeBytes);
+      const challenge = Buffer.from(challengeBytes).toString('base64url');
+      const challengeHash = await sha256Hex(challenge);
+
+      await store.putWebauthnChallenge({
+        challengeHash,
+        email,
+        purpose: 'decide',
+        expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
+        relicId,
+        version,
+        verdict,
+      });
+
+      const rpId = new URL(config.serviceOrigin).hostname;
+
+      return json({
+        version,
+        version_digest: digest,
+        public_key: {
+          challenge,
+          rpId,
+          timeout: 300000,
+          userVerification: 'required',
+          allowCredentials: passkeyRecord.credentials.map((c) => ({
+            type: 'public-key',
+            id: c.credentialId,
+            transports:
+              c.transports && c.transports.length > 0
+                ? c.transports
+                : ['internal'],
+          })),
+        },
+      });
+    } catch (error) {
+      if (error instanceof ProblemError) {
+        return refuse(error.code, error.options);
+      }
+      throw error;
+    }
+  }
+
+  async function postDecision(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    try {
+      const { relicId, row, body, email, version, verdict } =
+        await checkDecisionPrefix(rawId, request, ip, now);
+
+      const clientDigest = body['version_digest'];
+      if (
+        typeof clientDigest !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(clientDigest)
+      ) {
+        return refuse('invalid_decision', { relic_id: relicId });
+      }
+
+      const credential = body['credential'];
+      if (
+        typeof credential !== 'object' ||
+        credential === null ||
+        Array.isArray(credential)
+      ) {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      const passkeyRecord = await store.getPasskeys(email);
+      if (
+        passkeyRecord === undefined ||
+        passkeyRecord.credentials.length === 0
+      ) {
+        return refuse('passkey_required', { relic_id: relicId });
+      }
+
+      let clientChallenge: string;
+      try {
+        clientChallenge = extractClientDataChallenge(credential);
+      } catch (err) {
+        if (err instanceof ProblemError) {
+          return refuse(err.code, err.options);
+        }
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      const challengeHash = await sha256Hex(clientChallenge);
+      const challengeRow = await store.consumeWebauthnChallenge(challengeHash);
+      if (
+        challengeRow === undefined ||
+        challengeRow.purpose !== 'decide' ||
+        challengeRow.email !== email ||
+        challengeRow.relicId !== relicId ||
+        challengeRow.version !== version ||
+        challengeRow.verdict !== verdict ||
+        challengeRow.expiresAt < now
+      ) {
+        return refuse('passkey_verification_failed', {
+          passkey_check: 'challenge',
+        });
+      }
+
+      const credId = (credential as Record<string, unknown>)['id'];
+      if (typeof credId !== 'string') {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      const cred = passkeyRecord.credentials.find(
+        (c) => c.credentialId === credId
+      );
+      if (cred === undefined) {
+        return refuse('passkey_verification_failed', {
+          passkey_check: 'credential',
+        });
+      }
+
+      const rpId = new URL(config.serviceOrigin).hostname;
+      const origin = new URL(config.serviceOrigin).origin;
+
+      let assertion: { credentialId: string; signCount: number };
+      try {
+        assertion = await verifyAssertion(credential, {
+          challenge: clientChallenge,
+          origin,
+          rpId,
+          stored: cred,
+          userHandle: passkeyRecord.userHandle,
+        });
+      } catch (err) {
+        if (err instanceof WebauthnError) {
+          return refuse(
+            err.kind === 'malformed'
+              ? 'invalid_passkey'
+              : 'passkey_verification_failed',
+            { passkey_check: err.check }
+          );
+        }
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      try {
+        await store.updatePasskeys(email, (current) => ({
+          ...current,
+          credentials: current.credentials.map((c) =>
+            c.credentialId === cred.credentialId
+              ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
+              : c
+          ),
+        }));
+      } catch (err) {
+        if (err instanceof ProblemError) {
+          return refuse(err.code, err.options);
+        }
+        throw err;
+      }
+
+      const recordDigest = await digestOnRecord(row, version);
+      if (clientDigest !== recordDigest) {
+        return refuse('decision_digest_mismatch', {
+          relic_id: relicId,
+          version,
+          version_digest: recordDigest,
+        });
+      }
+
+      const decisionId = Buffer.from(
+        crypto.getRandomValues(new Uint8Array(16))
+      ).toString('base64url');
+      const createdAt = now;
+      const decisionRow: DecisionRow = {
+        id: decisionId,
+        relicId,
+        version,
+        verdict,
+        author: email,
+        createdAt,
+        versionDigest: recordDigest,
+        credentialId: cred.credentialId,
+      };
+      await store.appendDecision(decisionRow);
+
+      return json(
+        {
+          relic_id: relicId,
+          id: decisionId,
+          version,
+          verdict,
+          author: email,
+          created_at: new Date(createdAt).toISOString(),
+          version_digest: recordDigest,
+        },
+        201
+      );
+    } catch (error) {
+      if (error instanceof ProblemError) {
+        return refuse(error.code, error.options);
+      }
+      throw error;
+    }
+  }
+
+  async function listDecisions(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const ipVerdict = limiter.check(
+      `decision-read ${ip}`,
+      config.decisionReadRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      return refuse('decision_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    let relicId: string;
+    try {
+      relicId = parseRelicId(rawId);
+    } catch {
+      return refuse('invalid_relic_id');
+    }
+
+    if ((await store.getTombstone(relicId)) !== undefined) {
+      return refuse('relic_removed', {
+        relic_id: relicId,
+        report_url: `${config.serviceOrigin}/abuse`,
+      });
+    }
+
+    const row = await store.getRelic(relicId);
+    if (row === undefined) {
+      return refuse('relic_not_found', { relic_id: relicId });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      const parsedBody = await readBoundedJson(request, 'invalid_decision');
+      if (
+        parsedBody === null ||
+        typeof parsedBody !== 'object' ||
+        Array.isArray(parsedBody)
+      ) {
+        return refuse('invalid_decision', { relic_id: relicId });
+      }
+      body = parsedBody as Record<string, unknown>;
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      return refuse('invalid_decision', { relic_id: relicId });
+    }
+
+    const proofResult = await checkShareProof(row, body['share_proof']);
+    if (proofResult === 'unavailable') {
+      return refuse('decision_unavailable', { relic_id: relicId });
+    }
+    if (proofResult === 'malformed') {
+      return refuse('invalid_decision', { relic_id: relicId });
+    }
+    if (proofResult === 'mismatch') {
+      return refuse('invalid_share_proof', { relic_id: relicId });
+    }
+
+    const rawVersion = body['version'];
+    let targetVersion: number | '*';
+    if (rawVersion === undefined) {
+      targetVersion = row.version;
+    } else if (rawVersion === '*') {
+      targetVersion = '*';
+    } else if (
+      typeof rawVersion === 'number' &&
+      Number.isSafeInteger(rawVersion) &&
+      rawVersion >= 1 &&
+      rawVersion <= row.version
+    ) {
+      targetVersion = rawVersion;
+    } else {
+      return refuse('invalid_relic_version', { relic_id: relicId });
+    }
+
+    const allDecisions = await store.listDecisions(relicId);
+    const filtered =
+      targetVersion === '*'
+        ? [...allDecisions]
+        : allDecisions.filter((d) => d.version === targetVersion);
+
+    filtered.sort(
+      (a, b) =>
+        a.version - b.version ||
+        a.createdAt - b.createdAt ||
+        a.id.localeCompare(b.id)
+    );
+
+    return json({
+      relic_id: relicId,
+      current_version: row.version,
+      decisions: filtered.map((d) => ({
+        id: d.id,
+        version: d.version,
+        verdict: d.verdict,
+        author: d.author,
+        created_at: new Date(d.createdAt).toISOString(),
+        version_digest: d.versionDigest,
+      })),
+    });
+  }
+
+  async function postPasskeyOptions(
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const token = sessionCookie(request);
+    if (token === undefined) {
+      return refuse('sign_in_required');
+    }
+    const session = await store.getSession(await sha256Hex(token));
+    if (session === undefined || session.expiresAt <= now) {
+      return refuse('sign_in_required');
+    }
+    const email = normalizeEmail(session.email);
+
+    const ipVerdict = limiter.check(
+      `passkey ${ip}`,
+      config.passkeyRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      return refuse('passkey_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = await readBoundedJson(request, 'invalid_passkey');
+      if (parsed !== undefined) {
+        if (
+          parsed === null ||
+          typeof parsed !== 'object' ||
+          Array.isArray(parsed)
+        ) {
+          return refuse('invalid_passkey', { passkey_check: 'shape' });
+        }
+        body = parsed as Record<string, unknown>;
+      }
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    const rpId = new URL(config.serviceOrigin).hostname;
+    const origin = new URL(config.serviceOrigin).origin;
+
+    const hasCredential =
+      'credential' in body && body['credential'] !== undefined;
+
+    if (hasCredential) {
+      const credential = body['credential'];
+      if (
+        typeof credential !== 'object' ||
+        credential === null ||
+        Array.isArray(credential)
+      ) {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      const passkeyRecord = await store.getPasskeys(email);
+      if (
+        passkeyRecord === undefined ||
+        passkeyRecord.credentials.length === 0
+      ) {
+        return refuse('passkey_required');
+      }
+
+      let clientChallenge: string;
+      try {
+        clientChallenge = extractClientDataChallenge(credential);
+      } catch (err) {
+        if (err instanceof ProblemError) {
+          return refuse(err.code, err.options);
+        }
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      const challengeHash = await sha256Hex(clientChallenge);
+      const challengeRow = await store.consumeWebauthnChallenge(challengeHash);
+      if (
+        challengeRow === undefined ||
+        challengeRow.purpose !== 'enroll' ||
+        challengeRow.email !== email ||
+        challengeRow.expiresAt < now
+      ) {
+        return refuse('passkey_verification_failed', {
+          passkey_check: 'challenge',
+        });
+      }
+
+      const credId = (credential as Record<string, unknown>)['id'];
+      if (typeof credId !== 'string') {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      const cred = passkeyRecord.credentials.find(
+        (c) => c.credentialId === credId
+      );
+      if (cred === undefined) {
+        return refuse('passkey_verification_failed', {
+          passkey_check: 'credential',
+        });
+      }
+
+      let assertion: { credentialId: string; signCount: number };
+      try {
+        assertion = await verifyAssertion(credential, {
+          challenge: clientChallenge,
+          origin,
+          rpId,
+          stored: cred,
+          userHandle: passkeyRecord.userHandle,
+        });
+      } catch (err) {
+        if (err instanceof WebauthnError) {
+          return refuse(
+            err.kind === 'malformed'
+              ? 'invalid_passkey'
+              : 'passkey_verification_failed',
+            { passkey_check: err.check }
+          );
+        }
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+
+      try {
+        await store.updatePasskeys(email, (current) => ({
+          ...current,
+          credentials: current.credentials.map((c) =>
+            c.credentialId === cred.credentialId
+              ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
+              : c
+          ),
+        }));
+      } catch (err) {
+        if (err instanceof ProblemError) {
+          return refuse(err.code, err.options);
+        }
+        throw err;
+      }
+
+      const challengeBytes = new Uint8Array(32);
+      crypto.getRandomValues(challengeBytes);
+      const newChallenge = Buffer.from(challengeBytes).toString('base64url');
+      const newChallengeHash = await sha256Hex(newChallenge);
+
+      await store.putWebauthnChallenge({
+        challengeHash: newChallengeHash,
+        email,
+        purpose: 'register',
+        assertedBy: cred.credentialId,
+        userHandle: passkeyRecord.userHandle,
+        expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
+      });
+
+      return json({
+        mode: 'create',
+        public_key: {
+          challenge: newChallenge,
+          rp: { id: rpId, name: 'Relic' },
+          user: {
+            id: passkeyRecord.userHandle,
+            name: email,
+            displayName: email,
+          },
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7 },
+            { type: 'public-key', alg: -257 },
+          ],
+          timeout: 300000,
+          attestation: 'none',
+          authenticatorSelection: {
+            residentKey: 'preferred',
+            userVerification: 'required',
+          },
+          excludeCredentials: passkeyRecord.credentials.map((c) => ({
+            type: 'public-key',
+            id: c.credentialId,
+            transports:
+              c.transports && c.transports.length > 0
+                ? c.transports
+                : ['internal'],
+          })),
+        },
+      });
+    }
+
+    const passkeyRecord = await store.getPasskeys(email);
+    if (passkeyRecord === undefined || passkeyRecord.credentials.length === 0) {
+      const userHandleBytes = new Uint8Array(32);
+      crypto.getRandomValues(userHandleBytes);
+      const userHandle = Buffer.from(userHandleBytes).toString('base64url');
+
+      const challengeBytes = new Uint8Array(32);
+      crypto.getRandomValues(challengeBytes);
+      const challenge = Buffer.from(challengeBytes).toString('base64url');
+      const challengeHash = await sha256Hex(challenge);
+
+      await store.putWebauthnChallenge({
+        challengeHash,
+        email,
+        purpose: 'register',
+        userHandle,
+        expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
+      });
+
+      return json({
+        mode: 'create',
+        public_key: {
+          challenge,
+          rp: { id: rpId, name: 'Relic' },
+          user: { id: userHandle, name: email, displayName: email },
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7 },
+            { type: 'public-key', alg: -257 },
+          ],
+          timeout: 300000,
+          attestation: 'none',
+          authenticatorSelection: {
+            residentKey: 'preferred',
+            userVerification: 'required',
+          },
+          excludeCredentials: [],
+        },
+      });
+    }
+
+    const challengeBytes = new Uint8Array(32);
+    crypto.getRandomValues(challengeBytes);
+    const challenge = Buffer.from(challengeBytes).toString('base64url');
+    const challengeHash = await sha256Hex(challenge);
+
+    await store.putWebauthnChallenge({
+      challengeHash,
+      email,
+      purpose: 'enroll',
+      expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
+    });
+
+    return json({
+      mode: 'assert',
+      public_key: {
+        challenge,
+        rpId,
+        timeout: 300000,
+        userVerification: 'required',
+        allowCredentials: passkeyRecord.credentials.map((c) => ({
+          type: 'public-key',
+          id: c.credentialId,
+          transports:
+            c.transports && c.transports.length > 0
+              ? c.transports
+              : ['internal'],
+        })),
+      },
+    });
+  }
+
+  async function postPasskey(
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const token = sessionCookie(request);
+    if (token === undefined) {
+      return refuse('sign_in_required');
+    }
+    const session = await store.getSession(await sha256Hex(token));
+    if (session === undefined || session.expiresAt <= now) {
+      return refuse('sign_in_required');
+    }
+    const email = normalizeEmail(session.email);
+
+    const ipVerdict = limiter.check(
+      `passkey ${ip}`,
+      config.passkeyRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      return refuse('passkey_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      const parsed = await readBoundedJson(request, 'invalid_passkey');
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed)
+      ) {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+      body = parsed as Record<string, unknown>;
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    const credential = body['credential'];
+    if (
+      typeof credential !== 'object' ||
+      credential === null ||
+      Array.isArray(credential)
+    ) {
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let clientChallenge: string;
+    try {
+      clientChallenge = extractClientDataChallenge(credential);
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    const challengeHash = await sha256Hex(clientChallenge);
+    const challengeRow = await store.consumeWebauthnChallenge(challengeHash);
+    if (
+      challengeRow === undefined ||
+      challengeRow.purpose !== 'register' ||
+      challengeRow.email !== email ||
+      challengeRow.expiresAt < now
+    ) {
+      return refuse('passkey_verification_failed', {
+        passkey_check: 'challenge',
+      });
+    }
+
+    const rpId = new URL(config.serviceOrigin).hostname;
+    const origin = new URL(config.serviceOrigin).origin;
+
+    let verified: {
+      credentialId: string;
+      publicKeyJwk: JsonWebKey;
+      alg: -7 | -257;
+      signCount: number;
+      transports: readonly string[];
+    };
+    try {
+      verified = await verifyRegistration(credential, {
+        challenge: clientChallenge,
+        origin,
+        rpId,
+      });
+    } catch (err) {
+      if (err instanceof WebauthnError) {
+        return refuse(
+          err.kind === 'malformed'
+            ? 'invalid_passkey'
+            : 'passkey_verification_failed',
+          { passkey_check: err.check }
+        );
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    if (challengeRow.assertedBy === undefined) {
+      const userHandle =
+        challengeRow.userHandle ??
+        Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
+          'base64url'
+        );
+
+      const newCred: PasskeyCredential = {
+        credentialId: verified.credentialId,
+        publicKeyJwk: verified.publicKeyJwk,
+        alg: verified.alg,
+        signCount: verified.signCount,
+        transports: verified.transports,
+        createdAt: now,
+      };
+
+      const record: PasskeyRecord = {
+        email,
+        userHandle,
+        credentials: [newCred],
+      };
+
+      const created = await store.createPasskeys(record);
+      if (!created) {
+        return refuse('passkey_assertion_required');
+      }
+
+      return json(
+        {
+          email,
+          credential_id: verified.credentialId,
+          created_at: new Date(now).toISOString(),
+          passkeys: 1,
+        },
+        201
+      );
+    }
+
+    const assertedBy = challengeRow.assertedBy;
+    try {
+      const updated = await store.updatePasskeys(email, (current) => {
+        const hasAsserted = current.credentials.some(
+          (c) => c.credentialId === assertedBy
+        );
+        if (!hasAsserted) {
+          throw new ProblemError('passkey_verification_failed', {
+            passkey_check: 'credential',
+          });
+        }
+        const isDuplicate = current.credentials.some(
+          (c) => c.credentialId === verified.credentialId
+        );
+        if (isDuplicate) {
+          throw new ProblemError('passkey_verification_failed', {
+            passkey_check: 'credential',
+          });
+        }
+        const newCred: PasskeyCredential = {
+          credentialId: verified.credentialId,
+          publicKeyJwk: verified.publicKeyJwk,
+          alg: verified.alg,
+          signCount: verified.signCount,
+          transports: verified.transports,
+          createdAt: now,
+          registeredWith: assertedBy,
+        };
+        return {
+          ...current,
+          credentials: [...current.credentials, newCred],
+        };
+      });
+
+      if (updated === undefined) {
+        return refuse('passkey_required');
+      }
+
+      return json(
+        {
+          email,
+          credential_id: verified.credentialId,
+          created_at: new Date(now).toISOString(),
+          passkeys: updated.credentials.length,
+        },
+        201
+      );
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      throw err;
+    }
+  }
   // --- helpers ------------------------------------------------------------
 
   function json(payload: unknown, status = 200): Response {
@@ -4087,6 +5174,15 @@ relic id. A hash of an email address is not anonymous: anyone who can guess the 
 
 Deleting a relic deletes its comments, its shared addresses, and its stop records. An expired
 relic sends no more emails, and those records stay until it is deleted, like the rest of it.
+
+## Decisions and passkeys
+
+**Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
+
+**Passkeys.** A decision must be confirmed with a passkey registered to the reader's verified address. The service stores the passkey's public key, its credential id, a signature counter, and when it was created and last used, under a hash of the address. The first passkey registered for an address is trusted on first use; adding another requires confirming with an existing one. The service never receives a private key.
+
+**Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
+
 ## The JavaScript caveat
 
 The code that decrypts your relic in the browser is served by us, the same
