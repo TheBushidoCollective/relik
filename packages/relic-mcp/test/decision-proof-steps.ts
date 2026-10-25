@@ -437,7 +437,7 @@ export async function runDecisionProofSequence(
     serviceOrigin,
     'relic_publish',
     {
-      file: v1Path,
+      path: v1Path,
       title: '',
       cover: false,
       ttl_days: 1,
@@ -470,7 +470,7 @@ export async function runDecisionProofSequence(
     'relic_republish',
     {
       relic_id: relicId,
-      file: v2Path,
+      path: v2Path,
       title: '',
       cover: false,
     }
@@ -489,7 +489,7 @@ export async function runDecisionProofSequence(
     'relic_republish',
     {
       relic_id: relicId,
-      file: v3Path,
+      path: v3Path,
       title: '',
       cover: false,
     }
@@ -500,6 +500,7 @@ export async function runDecisionProofSequence(
       new TextEncoder().encode('Relic Decision Proof Version 3\n')
     ));
   assert.ok(v3Digest, 'version_digest missing for v3');
+  console.log(`STEP_1_PUBLISH_OK relic_id=${relicId} v3_digest=${v3Digest}`);
 
   // Step 2: Open /<id>#r1<key> in headless browser over CDP pipe.
   const chromeDiscovery = await discoverChrome(chromePath);
@@ -526,6 +527,7 @@ export async function runDecisionProofSequence(
       browser.sessionId
     );
     await pageLoaded;
+    console.log('STEP_2_BROWSER_OPEN_OK');
 
     // Step 3: Request sign-in magic link and follow it in the same context.
     // Open the decisions panel to access sign-in host:
@@ -661,7 +663,7 @@ export async function runDecisionProofSequence(
       'relic_republish',
       {
         relic_id: relicId,
-        file: v4Path,
+        path: v4Path,
         title: '',
         cover: false,
       }
