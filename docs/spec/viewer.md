@@ -392,10 +392,9 @@ Version moved into the taskbar, then Comments did, and the row had already overf
 
 1. **The wordmark zone.** One element: `relik.link`. The domain rather than a product name, because the recipient is deciding whether to trust an unfamiliar address bar.
 2. **The identity zone.** Four elements: the filename, the relic id, the version control, and the zone itself as the only flexible column on the row. Version joins this zone because a version number is artifact metadata of exactly the same kind as the catalog number beside it, and because the identity zone is the one that already absorbs pressure through an ellipsis. Putting a fixed-width control in the actions zone instead would push a control off the row.
-3. **The actions zone.** Six elements: the isolation marker, Comments, Compare versions, Copy link, Download, Report. Comments carries a count and is conditional on the relic being renderable. Compare versions is conditional on history being present and diffable.
+3. **The actions zone.** Seven elements: the isolation marker, Comments, Decisions, Compare versions, Copy link, Download, Report. Comments carries a count and is conditional on the relic being renderable. Decisions carries a tally of approvals and rejections, opening the decision panel on renderable relics. Compare versions is conditional on history being present and diffable.
 
-**Eleven elements at the widest.** Ten when a relic has history that cannot be compared, because the version control stays and Compare versions goes. Nine when `current_version == 1`, because both go and §6.1 item 6 says nothing about versions at all. Ten on a download-only relic, which gets no thread for the same reason §6.1 item 13 gives it no comparison control: nothing rendered, so there is nothing on the page to comment about. It was ten at the widest before Comments arrived and nine before version did.
-
+**Twelve elements at the widest.** Eleven when a relic has history that cannot be compared, because the version control stays and Compare versions goes. Ten when `current_version == 1`, because both go and §6.1 item 6 says nothing about versions at all. Eleven on a download-only relic, which gets no thread and no decisions for the same reason §6.1 item 13 gives it no comparison control: nothing rendered, so there is nothing on the page to comment or decide about. It was eleven at the widest before Decisions arrived, ten before Comments arrived, and nine before version did.
 **Comments went into the actions zone rather than beside version, and the version precedent is what settles it.** A comment count looks like artifact metadata and is not: it changes while the reader is on the page, it is a place to go rather than a fact about the file, and the identity zone's flexibility is the ellipsis on the filename, which a count cannot use. What it does share with version is that it must not push a control off the row, and at every width above the floor it does not.
 
 **The narrow hierarchy is re-derived at a 320 CSS pixel floor.**
@@ -404,11 +403,11 @@ Version moved into the taskbar, then Comments did, and the row had already overf
 - Below 34rem, **the count survives the collapse that hides the label beside it.** It is two characters, and it is the whole point of the control: a bare speech bubble says a thread might exist, while `2` says what is in it. A reader cannot get that number anywhere else on the row.
 - Below 34rem, **the wordmark is also hidden.** At 320px the actions need about 11.9rem of the available 20rem and the version control needs about 3rem, which leaves nothing for a 6.7rem wordmark and a filename both. The wordmark is the least load bearing element on the row at that width, because the domain is in the address bar directly above it, while the filename, the version, and the four actions are not available anywhere else. Brand gives way before function.
 - The version control collapses its own label from `Version 5 of 5` to `v5/5` at the same breakpoint.
-- **Below 24rem, Comments leaves the row.** Measured in Chrome against a live instance, on a relic at `current_version == 3` so the version control is present. At a 320px viewport, where a classic scrollbar left the row 305px, the five collapsed actions take 195px, the version control 56px, and the filename keeps 88px. Forcing the sixth control back on takes the actions to 259px and collapses the filename to 24px, which is an ellipsis and about two characters. **The row does not overflow, it eats the filename**, because the identity zone is the flexible column and the filename is what flexes. That is worse than an overflow, not better: an overflow is visible and a silently truncated name is not. The breakpoint sits where the filename stops being usable rather than where the row stops fitting: with the control present the filename measured 94px at 390px, 118px at 414px, and 143px at 375px only with the control gone, so 24rem is the last width at which every element on the must-survive list still has room.
+- **Below 24rem, Comments and Decisions leave the row.** Measured in Chrome against a live instance, on a relic at `current_version == 3` so the version control is present. At a 320px viewport, where a classic scrollbar left the row 305px, the five collapsed actions take 195px, the version control 56px, and the filename keeps 88px. Forcing additional controls back on takes the actions over available width and collapses the filename to an ellipsis and about two characters. The row does not overflow, it eats the filename, because the identity zone is the flexible column and the filename is what flexes. That is worse than an overflow, not better: an overflow is visible and a silently truncated name is not. Below 24rem, the decision stamp and Comments control leave the taskbar. Decisions remains accessible through the stage bar or secondary popover and panel.
 
-**Comments is the element that leaves the row because the layout below the taskbar carries a second entry to the same thread.** A persistent vertical Comments tab sits on the right edge of the stage row, reachable at every supported width, so below 24rem it becomes the entry point when the taskbar Comments control is absent. The tab belongs to the stage row rather than the taskbar and does not change the element accounting above. Every other candidate on the row leads somewhere reachable only through it: the isolation marker is the one place the author-code disclosure appears since §6.3 demoted the banner, and Compare versions is the only entry to comparison on a relic at `current_version == 2`, where the version control is a label rather than a picker. Losing either would cost a reader something the page does not otherwise say.
+**Comments and Decisions are the elements that leave the row because the layout below the taskbar carries secondary access to them.** A persistent vertical Comments tab sits on the right edge of the stage row, reachable at every supported width, so below 24rem it becomes the entry point when the taskbar Comments control is absent. Every other candidate on the row leads somewhere reachable only through it: the isolation marker is the one place the author-code disclosure appears since §6.3 demoted the banner, and Compare versions is the only entry to comparison on a relic at `current_version == 2`, where the version control is a label rather than a picker. Losing either would cost a reader something the page does not otherwise say.
 
-**What must never be lost at 320px: the filename, the version, Copy link, Download, and Report.** That is the floor's completion criterion, and it is unchanged. Comments is deliberately not on it. A future addition has to displace something named rather than overflow the row, and the two remaining candidates both have the price above attached to them.
+**What must never be lost at 320px: the filename, the version, Copy link, Download, and Report.** That is the floor's completion criterion, and it is unchanged. Neither Comments nor Decisions is on it. A future addition has to displace something named rather than overflow the row, and the remaining candidates both have the price above attached to them.
 
 ### 6.6 The comment thread
 
@@ -530,6 +529,36 @@ A reader holding the link and decryption key can share a relic from the viewer.
 - `409 share_limit_reached`: Explains that the relic has reached its maximum of 50 shared addresses.
 - `429 share_rate_limited`: Explains the rate limit and provides the retry time.
 
+
+### 6.9 The decision stamp
+
+A reader holding the link and decryption key can record an approval or rejection decision on the rendered version of a relic, and view decisions recorded by others.
+
+**Decisions are distinct from comments.** Commenting is discussion and feedback. An approval decision is a deliberate, first-class act in the viewer that downstream systems (such as Backlot) rely on to authorize execution. Comments never mean approval, and no comment text creates a decision.
+
+**The taskbar control and tally.** The taskbar carries a dedicated Decisions button (`button.action-decisions[data-decision-open]`, icon mark `stamp`), displaying the current tally of approvals (`data-decision-approvals`) and rejections (`data-decision-rejections`) on renderable relics. Clicking it opens the decision panel (`dialog.decision-panel[data-decision-version]`).
+
+**Listing decisions on the current version.** Opening the panel lists all recorded decisions for the active version being viewed, fetched via `POST /api/relics/{id}/decisions/list` with `{ share_proof, version: activeView.version }`. Each row (`[data-decision-row][data-decision-author][data-verdict]`) shows the author's verified address, the verdict (Approved or Rejected), and the timestamp.
+
+**The ceremony flow:**
+1. *Sign-in check:* If the reader has no verified session cookie, the panel mounts the magic-link sign-in form (`[data-decision-signin]`).
+2. *Verdict selection:* The reader selects a verdict via `[data-decision-verdict="approve"]` or `[data-decision-verdict="reject"]`. Selecting a verdict immediately fetches challenge options from `POST /api/relics/{id}/decisions/options` presenting `{ version, verdict, share_proof }`.
+3. *Passkey enrollment (TOFU):* If the options endpoint returns `409 passkey_required`, the panel shows the passkey setup step (`[data-passkey-create]`). The reader registers a WebAuthn passkey via `POST /api/auth/passkeys/options`, `navigator.credentials.create()`, and `POST /api/auth/passkeys`. Once registered, the panel re-fetches decision options.
+4. *Content digest verification:* The viewer verifies that `options.version_digest` matches `view.versionDigest` (the SHA-256 of the ciphertext bytes downloaded and decrypted by the viewer). If they diverge, the panel displays mismatch copy (`[data-decision-outcome][data-state="error"][data-code="decision_digest_mismatch"]`: "The file stored for version N is not the file this page shows. Nothing was recorded.") and halts the ceremony without invoking WebAuthn.
+5. *Synchronous user gesture and confirmation:* To satisfy browser user-activation rules (such as Safari's requirement that credential requests execute synchronously within a user gesture), `navigator.credentials.get()` is invoked synchronously inside the click handler for the Confirm button (`[data-decision-confirm]`), passing the pre-fetched public key options.
+6. *Recording the decision:* The assertion response is submitted to `POST /api/relics/{id}/decisions` with `{ version, verdict, share_proof, version_digest, credential }`.
+7. *Outcome:* Upon receiving `201`, the panel displays the recorded outcome stamp (`[data-decision-outcome][data-state="recorded"]`), refreshes the decisions list, and updates the taskbar tally.
+
+**Version scoping and stale view notice.** Decisions apply strictly to the specific version rendered. When viewing an older version on a relic that has been republished, the panel displays a prominent notice (`[data-decision-stale]`): "You are viewing version N. Version M is the newest. A decision here applies to version N only."
+
+**Refusal presentation:**
+- `401 sign_in_required`: Prompts the reader to sign in via magic link.
+- `409 passkey_required`: Prompts passkey enrollment.
+- `409 passkey_assertion_required`: Explains that adding another passkey requires confirmation with an existing one.
+- `409 decision_unavailable`: Displays: "Decisions open on this relic once its publisher republishes it."
+- `409 decision_digest_mismatch`: Displays: "The file stored for version N is not the file this page shows. Nothing was recorded."
+- `403 invalid_share_proof`: Indicates that the key proof did not match the relic's verifier.
+- `429 decision_rate_limited`: Explains that too many decision requests were made and provides retry time.
 ## 7. Routed to `shape`
 
 Five items, and only these five.

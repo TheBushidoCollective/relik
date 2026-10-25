@@ -27,6 +27,7 @@ import {
   type RendererClass,
   relicUrl,
   shareVerifierFor,
+  versionDigest,
 } from '@relic/format';
 import type {
   CoverOutcome,
@@ -110,7 +111,8 @@ export type ClientCode =
   | 'local_comment_not_found'
   | 'local_comment_unreadable'
   | 'app_response_unusable'
-  | 'otio_bundle_invalid';
+  | 'otio_bundle_invalid'
+  | 'version_digest_mismatch';
 export class PublishError extends Error {
   override readonly name = 'PublishError';
   constructor(
@@ -210,6 +212,8 @@ export interface PublishResult {
    * without asking. Republish counts upward from the local state file.
    */
   readonly version: number;
+  /** Lowercase hex SHA-256 digest of the encrypted ciphertext container. */
+  readonly version_digest: string;
   /** Null when the relic has no lifetime, which is now the default. */
   readonly relic_expires_at: string | null;
   readonly renderer_class: RendererClass;
@@ -480,8 +484,32 @@ export async function publish(
     // 3. Straight to storage, then report completion. Both legs are shared
     //    with republish, because a version-2 object earns the same handling
     //    a version-1 one does.
+    const localVersionDigest = await versionDigest(container);
     await putContainer(deps, relicId, String(grant['upload_url']), container);
-    await reportComplete(deps, relicId);
+    const complete = await reportComplete(deps, relicId);
+    const serverDigest = complete?.['version_digest'];
+    const version =
+      typeof complete?.['version'] === 'number'
+        ? (complete['version'] as number)
+        : 1;
+
+    if (
+      typeof serverDigest === 'string' &&
+      serverDigest !== localVersionDigest
+    ) {
+      throw new PublishError(
+        'version_digest_mismatch',
+        `the version digest computed by the server (${serverDigest}) does not match the local container digest (${localVersionDigest})`,
+        {
+          relic_id: relicId,
+          version,
+          local: localVersionDigest,
+          server: serverDigest,
+        }
+      );
+    }
+    const resolvedVersionDigest =
+      typeof serverDigest === 'string' ? serverDigest : localVersionDigest;
 
     const url = relicUrl(deps.relicOrigin, relicId, key);
     const relicExpiresAt =
@@ -567,6 +595,7 @@ export async function publish(
       url,
       relic_id: relicId,
       version: 1,
+      version_digest: resolvedVersionDigest,
       // Null is a real state now, the default one; String(null) would hand
       // the caller the four characters "null" where a date used to be.
       relic_expires_at: relicExpiresAt,
@@ -891,15 +920,16 @@ export async function putContainer(
 export async function reportComplete(
   deps: PublishDeps,
   relicId: string
-): Promise<void> {
+): Promise<Record<string, unknown> | undefined> {
   try {
-    await postJson(
+    return await postJson(
       deps,
       `${deps.serviceOrigin}/api/relics/${relicId}/complete`,
       {}
     );
   } catch {
     // Deliberately swallowed. The object is uploaded and the link is valid.
+    return undefined;
   }
 }
 

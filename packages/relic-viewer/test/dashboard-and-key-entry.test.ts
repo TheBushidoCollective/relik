@@ -1276,6 +1276,7 @@ describe('Dashboard rendering (DOM)', () => {
       shareUrl: 'https://relic.example/r1#key',
       version: 1,
       currentVersion: 1,
+      versionDigest: '0'.repeat(64),
     };
     const bar = buildBar(dummyView, 'relic123') as unknown as ElementStub;
     const relicsLink = bar.querySelector('.action-relics');

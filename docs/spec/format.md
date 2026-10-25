@@ -293,6 +293,8 @@ A reader can enroll addresses in a relic's change notices from the web viewer, a
 
 **Reader sharing presents the proof.** A reader in the web viewer holding the fragment key derives `proof = await deriveShareProof(keyBytes)` and submits `share_proof: base64url(proof)` in `POST /api/relics/{id}/share` alongside their authenticated session cookie. The server checks that the base64url-decoded proof is exactly 32 bytes and verifies `timingSafeEqual(sha256Hex(proof), row.shareVerifier)`.
 
+**The decision gate reuses the share proof.** Recording a decision (`POST /api/relics/{id}/decisions/options` and `POST /api/relics/{id}/decisions`) and listing decisions with key proof (`POST /api/relics/{id}/decisions/list`) present the exact same 32-byte `share_proof` derived via `deriveShareProof(keyBytes)`. The server verifies `timingSafeEqual(sha256Hex(proof), row.shareVerifier)`. Reusing the share proof avoids introducing a second derivation label (`relic/decision-proof/v1` was rejected because any key holder can derive both, and a second label would add redundant storage and leave pre-existing relics with registered share verifiers undecidable). Like sharing, decision calls learn the proof, which decrypts nothing.
+
 **What the service learns:** the verifier at publish, the proof at share, and neither decrypts anything. The proof derivation uses a dedicated HKDF info label (`relic/share-proof/v1`), so the proof is cryptographically independent of the content-encryption key, the nonce, and the comment key (`relic/comments/v1`). Knowledge of the proof or its verifier yields no information about the relic's plaintext.
 
 **No format version bump is required.** Like the comment key in 3.13, this derivation adds no fields to the container header or fragment. The fragment continues to carry only the 16-byte key, and the proof is a separate derivation from material the URL already holds.
@@ -333,6 +335,19 @@ interface OtioAnchorV1 {
   Duplicate-renamed authored IDs retain their original authored IDs for matching; if a current revision has multiple candidates with the same authored ID or fingerprint, projection is `ambiguous` and never guesses one.
 - **Bundle paths:** Every exported `bundle_path` is one canonical archive entry name, decoded exactly once, or `null`; raw authored URLs remain only in their media references. Image sequences use OpenTimelineIO URL joining: a slash is inserted only for a non-empty base without a trailing slash, the signed padded frame follows the prefix, and the raw URL remains otherwise unchanged. Their count is `trunc(rescale(duration, rate / frame_step))`; omitted fields use the official defaults, and an absent range, non-positive rate, or non-positive count is a valid zero-image sequence. Relative references trim, remove a raw query or fragment, strip only a relative `file:` prefix, percent-decode once, treat backslashes as separators, and discard empty or `.` segments. They refuse control characters, malformed escapes, absolute paths, non-`file:` schemes, drive paths, empty results, and every `..` segment. A sanitized path already under `media/` stays there; every other path becomes `media/<path>`. Present sequence fields must be representable within safe integer, padding, URL-length, and 65,532-entry limits. Missing sequence frames are omitted when packed and playback applies the reference's missing-frame policy; missing external-reference targets still refuse publication.
 - **No container version bump:** Format version 1 and envelope framing remain unchanged. Standard `.otiod` directory inputs are packaged into standard single-entry `.otioz` archives before encryption, preserving the single-entry container invariant.
+
+### 3.16 The version digest
+
+To bind an approval or rejection decision to exact content without requiring plaintext disclosure or server-side decryption, Relic defines the version digest.
+
+**Definition:** `versionDigest` is the 64-character lowercase hex SHA-256 of the exact bytes of that version's stored ciphertext container object (`{ciphertext_prefix}/{id}` for version 1, and `{ciphertext_prefix}/{id}/v{n}` for version `n >= 2`).
+
+**Who computes it:**
+- The server computes it by streaming the stored ciphertext object upon upload completion (`POST /api/relics/{id}/complete`) or lazily at the first stat or mint if completion was skipped, caching the result on the relic row (`RelicRow.versionDigests[String(version)]`).
+- The publishing client computes it over the ciphertext container bytes during `relic_publish` and `relic_republish`, returning `version_digest` in `structuredContent`.
+- The viewer computes it over the downloaded ciphertext bytes immediately after fetch and length verification (`ReadyView.versionDigest`).
+
+**Container invariant:** No format version bump is required. The digest is computed over the raw RFC 8188 container bytes as stored in Cloud Storage. It does not alter container headers, salt, or record structure. It enables cryptographic binding between the viewer's decrypted view and the server's stored version record: when a reader confirms an approval or rejection, the server verifies that the client's `version_digest` matches the recorded digest for that version, refusing with `409 decision_digest_mismatch` if they diverge.
 ## 4. Routed to `shape`
 
 Six items, and only these six. Each names what `shape` picks and what becomes specifiable once it does. Constraints established above are cited here rather than restated.

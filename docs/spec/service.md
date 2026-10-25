@@ -121,7 +121,7 @@ Republish-to-same-URL exists, authorized by a bearer publish token, and the endp
 
 **`relic_removed` outranks a valid token.** The tombstone check runs before the token check, so a taken-down relic answers `410 relic_removed` forever, whatever credential is presented. This is the rule that keeps delete-by-ID an abuse control rather than a speed bump: if a takedown could be out-lived by the next version, an abuser would simply republish through every deletion, the operator's SLA would measure a treadmill, and section 4's whole posture would be theater. Takedown is terminal across all versions, and this endpoint is where that terminality is enforced rather than merely stated.
 
-**A valid token on a live relic produces the next version.** The row's version increments, the object lands at the versioned path (`format.md` 3.12) under that path's own existence refusal, the renderer class is redeclared with the new ciphertext, and the response mirrors the grant: a signed upload target and its constraints. The per-IP publish quota and the kill switch apply to republish exactly as to publish, because a version costs the same storage and the same abuse surface a first publish does, and an endpoint outside the quota would be a quota bypass wearing a different verb.
+**A valid token on a live relic produces the next version.** The row's version increments, the object lands at the versioned path (`format.md` 3.12) under that path's own existence refusal, the renderer class is redeclared with the new ciphertext, and the response mirrors the grant: a signed upload target and its constraints, with `version` returning the new version number (`next.version`). The version's digest is not known yet, because the ciphertext has not been uploaded; upload completion (2.1) returns it. The per-IP publish quota and the kill switch apply to republish exactly as to publish, because a version costs the same storage and the same abuse surface a first publish does, and an endpoint outside the quota would be a quota bypass wearing a different verb.
 
 ### 1.8 The mint version refusal
 
@@ -229,6 +229,57 @@ To prevent rate limit bypass via caller-controlled headers, the server derives t
 
 Entries to the left of the trusted hop are caller-controlled and never trusted. If `X-Forwarded-For` contains fewer entries than `trustedProxyHops`, the request did not transit the expected proxy chain; the server falls back to `X-Real-IP` or `127.0.0.1` rather than trusting caller-supplied values.
 
+### 1.14 The decision refusals
+
+Decisions exist. The endpoints are `POST /api/relics/{id}/decisions/options`, `POST /api/relics/{id}/decisions`, and `POST /api/relics/{id}/decisions/list`. Section 9 owns the surface; this subsection owns the codes.
+
+| Case | Status | `code` |
+|---|---|---|
+| Request presents a publish token (`publish_token` key present in body) | `403` | `decision_requires_reader` |
+| Request body is malformed, not an object, invalid verdict, or malformed proof | `400` | `invalid_decision` |
+| Relic was published before sharing and decisions were supported (`shareVerifier` absent) | `409` | `decision_unavailable` |
+| Provided version digest does not match the server's digest on record | `409` | `decision_digest_mismatch` |
+| Decision record or list requests rate limited | `429` | `decision_rate_limited` |
+| No passkey registered for this verified address | `409` | `passkey_required` |
+| Missing or invalid reader session cookie | `401` | `sign_in_required` |
+| Share proof hash does not match stored verifier | `403` | `invalid_share_proof` |
+| Requested version is not a safe integer in 1 through `row.version` | `400` | `invalid_relic_version` |
+| Storage object for the version is not yet found in storage | `409` | `relic_not_yet_published` |
+| Relic id does not exist | `404` | `relic_not_found` |
+| Relic has been taken down by operator | `410` | `relic_removed` |
+| Relic has expired past publisher-set lifetime | `410` | `relic_expired` |
+| Egress kill switch engaged | `503` | `service_paused` |
+| Relic id fails canonical format validation | `400` | `invalid_relic_id` |
+
+**A decision requires a reader, never the publish token.** If the request body carries `publish_token`, the server refuses with `403 decision_requires_reader`. Decisions cannot be recorded by publisher authority or MCP tools; only a human reader in the viewer with a verified session and a passkey can record one.
+
+**Key proof and reader authorization.** Both recording routes and the list route require proof of holding the decryption key. The caller presents `share_proof` (the unpadded base64url encoding of the 32-byte proof derived via HKDF-SHA256 with info `relic/share-proof/v1`). If `row.shareVerifier` is absent, the server returns `409 decision_unavailable`. If `share_proof` is malformed, it returns `400 invalid_decision`. If `timingSafeEqual(sha256Hex(proof), row.shareVerifier)` fails, it returns `403 invalid_share_proof`.
+
+**Version digest verification.** Recording a decision presents `version_digest` matching `/^[0-9a-f]{64}$/`. If this does not match the server's digest on record for that version, the server refuses with `409 decision_digest_mismatch` carrying extension fields `relic_id`, `version`, and `version_digest`.
+
+**Rate limits.** `limiter.check('decision ' + ip, config.decisionRateLimit, now)` with `{limit: 30, windowSeconds: 3600}`: `429 decision_rate_limited`. For the list endpoint: `limiter.check('decision-read ' + ip, config.decisionReadRateLimit, now)` with `{limit: 600, windowSeconds: 3600}`: `429 decision_rate_limited`.
+
+**The list endpoint.** `POST /api/relics/{id}/decisions/list` takes `{ share_proof, version?: number | "*" }`. It is unauthenticated (no session cookie required), not gated by the kill switch, allowed on expired relics, and never touches `mintsUsed`.
+
+### 1.15 The passkey refusals
+
+Passkey registration and authentication exist for decision confirmation. The endpoints are `POST /api/auth/passkeys/options` and `POST /api/auth/passkeys`. Section 9 owns the surface; this subsection owns the codes.
+
+| Case | Status | `code` |
+|---|---|---|
+| Operation requires an enrolled passkey, but none is registered | `409` | `passkey_required` |
+| Adding a passkey when one is already enrolled requires an assertion | `409` | `passkey_assertion_required` |
+| Passkey registration or assertion payload is malformed | `400` | `invalid_passkey` |
+| Passkey signature, challenge, counter, or user verification failed | `403` | `passkey_verification_failed` |
+| Passkey request rate limited | `429` | `passkey_rate_limited` |
+| Missing or invalid reader session cookie | `401` | `sign_in_required` |
+
+**Diagnostic checks via `passkey_check`.** Refusals carry a machine-readable `passkey_check` problem extension indicating which check failed:
+- For `400 invalid_passkey`: `encoding`, `cbor`, `auth_data`, `algorithm`, `key`, or `shape`.
+- For `403 passkey_verification_failed`: `challenge`, `type`, `origin`, `cross_origin`, `rp_id`, `user_present`, `user_verified`, `signature`, `counter`, `credential`, or `user_handle`.
+
+**Rate limits.** `limiter.check('passkey ' + ip, config.passkeyRateLimit, now)` with `{limit: 20, windowSeconds: 3600}`: `429 passkey_rate_limited`.
+
 ## 2. Mint placement, the mint response, and counting
 
 **The mint is never a side effect of serving `/{id}`.** That path returns a static shell with no mint, no counter increment, and no cap consumption. The mint is a distinct request the shell makes.
@@ -310,13 +361,13 @@ Three consequences, stated so nobody "fixes" them by restoring a rule or by serv
 
 **Delete means delete every version's object and tombstone the row. The row is never removed.** The preconditions require the object to stop serving *and* upload IP plus timestamp to survive for law enforcement, and deleting both destroys the record the abuse process depends on. With versions, "the object" is each stored byte range the id names, v1 through current (`format.md` 3.12): a delete that left an old version live would leave the abuser's payload servable, and a delete that only tombstoned without removing the bytes would leave them mintable the moment anyone relented. The tombstone is also what makes any `410` possible: without it, every removed relic degrades to `404` and section 1 collapses. And it is what makes the takedown terminal rather than declarative: a tombstoned id refuses every future version with `relic_removed`, whatever publish token is presented (1.7), which is the load-bearing half of delete-by-ID now that republish exists. It retains the normalized relic ID, upload IP, publish timestamp, publishing client name, renderer class, ciphertext hash, delete timestamp, operator identity, private reason class, and report reference, and it lives for the published retention window. The ciphertext hash is a single field filled with the newest version that has bytes; every version's object is hashed and blocklisted during the delete itself, on the rule the next paragraph states, because a republished relic can carry a different payload per version and the tombstone's single field would otherwise lose the ones already caught.
 
-**Delete takes the thread, shared addresses, stop records, and the commenter index with the relic.** Comments discuss content the operator was just obliged to remove, and a readable discussion of a removed payload is the same disclosure by a longer route. Deleting a relic removes comments, shared addresses, opt-out stop records, the per-relic commenter index and backfill completion marker, and the `author_relic` index entry, so that a deleted relic's record of who commented or was shared with does not outlive it. The response names `comments_deleted`, `shares_deleted`, and `opt_outs_deleted` so a silent cascade is not the kind of deletion nobody can audit later. There is no per-comment operator delete; section 1.9 records why.
+**Delete takes the thread, shared addresses, stop records, decisions, and the commenter index with the relic.** Comments discuss content the operator was just obliged to remove, and a readable discussion of a removed payload is the same disclosure by a longer route. Deleting a relic removes comments, shared addresses, opt-out stop records, decisions (`deleteDecisionsForRelic`), the per-relic commenter index and backfill completion marker, and the `author_relic` index entry, so that a deleted relic's record of who commented, decided, or was shared with does not outlive it. The response names `comments_deleted`, `shares_deleted`, `opt_outs_deleted`, and `decisions_deleted` so a silent cascade is not the kind of deletion nobody can audit later. There is no per-comment operator delete; section 1.9 records why.
 
 **Hash before delete.** A delete that captures no hash permanently loses the ability to blocklist that payload, and it's by then the payload you most want blocklisted. If the scanner already stored a hash, the delete path reads it. If the report beat the scan, the delete path reads the object once, computes the hash, then deletes. **A delete with no hash is refused.** The CRC32C Cloud Storage records is 32 bits and unfit for this, per the preconditions, so this is a real hash over the bytes, and reading them is the operator handling inert ciphertext through the control plane rather than entering the serving data path.
 
 **Delete blocklists in the same call**, because a second call gets forgotten at 3am. It's conditioned on the required reason: automatic for `abuse` and `blocklist_match`, off for `legal` and `operator_error`, with an explicit override either way. The single exception is reporter category `csam`, whose insertion is unconditional and not overridable, for the reason 4.1 gives. Blocklist insertion is idempotent, so a scanner-triggered delete doesn't re-add its own hash.
 
-**Delete is idempotent.** A second delete on a tombstoned ID succeeds and returns the existing tombstone. It never returns `404`. On the delete endpoint, `404` means one thing only: no such relic ID was ever issued. Under a project-level suspension clock, "already handled" and "wrong ID" have to be distinguishable at a glance. Deleting an already-tombstoned ID idempotently resumes every sweep (ciphertext, covers, comments, author index, shares, opt-outs) to completion and returns the counts of removed items.
+**Delete is idempotent.** A second delete on a tombstoned ID succeeds and returns the existing tombstone. It never returns `404`. On the delete endpoint, `404` means one thing only: no such relic ID was ever issued. Under a project-level suspension clock, "already handled" and "wrong ID" have to be distinguishable at a glance. Deleting an already-tombstoned ID idempotently resumes every sweep (ciphertext, covers, comments, author index, shares, opt-outs, decisions) to completion and returns the counts of removed items.
 **Bulk delete by publishing IP and time window** ships with the single-ID form. Real notices are about campaigns, and without it the operator hand-loops an endpoint never designed for it. The operator credential is exempt from the public per-IP limiters, since those would otherwise throttle the operator's own takedown tooling, and that exemption is precisely why the credential is per-operator and audited.
 
 ### 4.1 The abuse form
@@ -350,6 +401,10 @@ It lives at a stable URL, is linked from every relic page beside `/abuse`, and i
 10. **The failed-open signal.** The viewer checks the key against the first record before downloading the rest and cancels the download when it fails (`viewer.md` §6.4), so the storage provider and anyone watching the connection can see an open that stopped after its first block, which usually means a wrong key. The statement says so in one sentence. The key is never sent and cannot be derived from the stop. For classes that render, the operator could already infer a failed open, because the comment-thread request follows only a successful decrypt. For archive and binary relics the signal is new.
 
 
+10. **Decisions, passkeys, and version digests.**
+> **Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
+> **Passkeys.** A decision must be confirmed with a passkey registered to the reader's verified address. The service stores the passkey's public key, its credential id, a signature counter, and when it was created and last used, under a hash of the address. The first passkey registered for an address is trusted on first use; adding another requires confirming with an existing one. The service never receives a private key.
+> **Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
 One more, assigned by `format.md` 3.8: **the length leak.** Ciphertext length reveals plaintext length to within a record, so alongside the class, title, and cover image the operator learns something like "an image of roughly 2.4 MB". Whether the container pads to buckets is `shape`'s, and the disclosure appears under either branch.
 
 ## 6. When the key reaches a third party without Relic doing anything wrong
@@ -414,3 +469,90 @@ Seven items, and only these seven.
 
 **What is stored.** Shared addresses are stored in the clear (`ShareRow: { relicId, address, addedAt, sharedBy }`), recording whether the share was registered by `'publisher'` or `'reader'`. The sharer's address is deliberately not stored on the row: attribution of who shared is not kept beyond the in-memory rate limiter. Opt-out stop records are stored as SHA-256 hashes (`OptOutRow: { relicId, addressHash, at }`). An HMAC unsubscribe key (`store.unsubscribeKey()`) is generated once and stored permanently in the store so stop links remain verifiable forever. All share records and opt-out records are retained until the relic is deleted: relic expiry halts outbound notices but leaves stored records intact. Commenters are indexed per relic (`listCommenters`), written create-only by `putComment` for verified email authors and backfilled lazily once per relic from existing comments, swept by operator delete, and removed when an author deletes their only comments on the relic. At publish and republish, `share_verifier` (a 64-character lowercase hex string) may be registered; republish overwrites it when present and leaves it unchanged when absent, and it is never returned by any endpoint.
 
+## 9. Decisions and passkeys
+
+**Decisions are first-class approval and rejection records.** They bind to exact version content, verified reader identity, and a passkey confirmation. Comments mean no approval; approval requires a deliberate decision action in the viewer confirmed with a passkey.
+
+### 9.1 The decision record and lifecycle
+
+- **The record:** `{ id, relicId, version, verdict: 'approve' | 'reject', author, createdAt, versionDigest, credentialId }`.
+- **Author:** the normalized verified email address (`normalizeEmail(v)`: trimmed, lowercase).
+- **Version:** exact version number (1 through `row.version`).
+- **Version digest:** lowercase hex SHA-256 of the stored ciphertext container object for that version.
+- **Append-only:** decisions are never edited or deleted. Each author's latest decision on a version is their current one.
+- **Per-version:** decisions do not carry over across republishes. A new version starts with zero decisions; prior versions retain their decisions.
+- **Deletion:** operator relic delete sweeps decisions (`deleteDecisionsForRelic`), returning `decisions_deleted`.
+
+### 9.2 The HTTP routes
+
+Routing is declared in `apiRoute` (`app.ts`):
+
+1. **`POST /api/relics/{id}/decisions/options`** (session cookie required):
+   - Request: `{ "version": 3, "verdict": "approve", "share_proof": "<43>" }`
+   - Validates session, proof, verdict, version.
+   - Checks passkey exists on file (otherwise `409 passkey_required`).
+   - Computes digest on record (`row.versionDigests[v] ?? storage.digest(...)`).
+   - Issues challenge `{ purpose: 'decide', email, relicId, version, verdict }` with TTL 300 seconds.
+   - Returns `200` with `{ version, version_digest, public_key: { challenge, rpId, timeout: 300000, userVerification: "required", allowCredentials: [...] } }`.
+
+2. **`POST /api/relics/{id}/decisions`** (session cookie required):
+   - Request: `{ "version": 3, "verdict": "approve", "share_proof": "<43>", "version_digest": "<64 hex>", "credential": AuthenticationResponseJSON }`
+   - Validates session, proof, version_digest format, credential object.
+   - Verifies WebAuthn assertion: challenge matching purpose `'decide'`, email, relicId, version, verdict, unexpired; UP and UV required; counter CAS.
+   - Verifies `body.version_digest == recorded_digest` (otherwise `409 decision_digest_mismatch`).
+   - Appends decision row (`appendDecision`).
+   - Returns `201` with `{ relic_id, id, version, verdict, author, created_at, version_digest }`.
+
+3. **`POST /api/relics/{id}/decisions/list`**:
+   - Request: `{ "share_proof": "<43>", "version": 3 | "*" }`
+   - Unauthenticated (no session cookie needed), allowed on expired relics, not gated by the kill switch, never touches `mintsUsed`.
+   - Validates share proof.
+   - Returns `200` with `{ relic_id, current_version, decisions: [...] }`.
+
+4. **`POST /api/auth/passkeys/options`** (session cookie required):
+   - Request: `{}` or `{ "credential": AuthenticationResponseJSON }` (for enroll assertion).
+   - If no credential: if no passkey exists, returns `{ mode: "create", public_key: CreationOptions }` with challenge purpose `'register'`; if passkeys exist, returns `{ mode: "assert", public_key: RequestOptions }` with challenge purpose `'enroll'`.
+   - If credential present: verifies enroll assertion, runs counter CAS, returns `{ mode: "create", public_key: CreationOptions }` with `excludeCredentials` and challenge `{ purpose: 'register', assertedBy: credId }`.
+
+5. **`POST /api/auth/passkeys`** (session cookie required):
+   - Request: `{ "credential": RegistrationResponseJSON }`
+   - Consumes challenge (purpose `'register'`, email match).
+   - Verifies registration: UP, UV, AT, COSE key (ES256 or RS256).
+   - If `assertedBy` absent: `createPasskeys` (TOFU; if record already exists, `409 passkey_assertion_required`).
+   - If `assertedBy` present: CAS-appends passkey with `registeredWith: assertedBy`.
+   - Returns `201` with `{ email, credential_id, created_at, passkeys }`.
+
+### 9.3 WebAuthn verification
+
+- **RP ID:** `new URL(config.serviceOrigin).hostname`. Origin: `new URL(config.serviceOrigin).origin`.
+- **Minimal verifier:** hand-rolled in `webauthn.ts` with zero third-party dependencies.
+- **clientDataJSON:** parsed as JSON, checks `type`, `challenge`, `origin`, and `crossOrigin !== true`.
+- **authData:** minimum 37 bytes, validates `rpIdHash == sha256(rpId)`. Flags: UP (0x01) and UV (0x04) mandatory.
+- **COSE algorithms:** ES256 (-7) and RS256 (-257) only.
+- **RS256 key bounds:** Leading zeros are stripped from the modulus `n`. The stripped modulus must satisfy 256 <= |n| <= 512 bytes (2048 to 4096 bits). The exponent `e` must equal 65537 (0x010001). Any violation is rejected as `invalid_passkey` with `passkey_check: 'key'`.
+- **Signatures and counters:** verified over `authData || sha256(clientDataJSON)` using WebCrypto. Authenticator signature counters are checked strictly on assertion and in store compare-and-swap callbacks: if either the stored or incoming counter is non-zero, an incoming counter less than or equal to the stored counter is rejected with `passkey_verification_failed` and `passkey_check: 'counter'`.
+### 9.4 Storage and GCS layout
+
+- Prefix `m`:
+  - Decisions: `m/decision/{relicId}/{id}.json`, write-once with generation `'0'`.
+  - Passkeys: `m/passkey/{sha256Hex(normalizedEmail)}.json`. Created with generation `'0'`; updated via generation CAS.
+  - WebAuthn challenges: `m/challenge/webauthn/{sha256Hex(challenge)}.json`, consumed atomically via get-then-delete with `ifGenerationMatch`. Cleaned up by 1-day bucket lifecycle rule.
+- Streaming object digest in GCS pins the signed GET to the stat generation with `x-goog-if-generation-match`. The server counts bytes hashed and records the SHA-256 only when the hashed byte count matches the stat length and response content-length. Digest computation is single-flighted per (id, version) within the process.
+- GCS decision listing caps fan-out object fetch concurrency at 16 while preserving deterministic ordering (createdAt ascending, then id).
+### 9.5 Upload completion response
+
+When ciphertext upload finishes, the client calls `POST /api/relics/{id}/complete`. The endpoint is rate limited per IP using `config.publishRateLimit` (refusing with `429 publish_rate_limited` and `retry_after_seconds`).
+Response status `200` with JSON:
+```json
+{
+  "relic_id": "<id>",
+  "object_length": 12345,
+  "object_crc32c": "<crc>",
+  "relic_expires_at": null,
+  "version": 3,
+  "version_digest": "<64 hex>"
+}
+```
+`version` returns `row.version`, and `version_digest` returns the lowercase hex SHA-256 of the stored ciphertext object (`null` only if hashing failed, which is logged). The digest is computed only when this call just set `publishedAt` or no digest is recorded yet. Repeated calls reuse the recorded digest.
+
+Decision and passkey routes read JSON request bodies via a streaming reader capped at 65,536 bytes, decoded with fatal UTF-8 decoding. Exceeding 65,536 bytes or providing invalid UTF-8 aborts the stream and returns the route's malformed code (`invalid_decision` or `invalid_passkey`). Decision recording re-checks the tombstone immediately before and after writing a decision; if a tombstone appears, the just-written row is deleted and `410 relic_removed` is returned.

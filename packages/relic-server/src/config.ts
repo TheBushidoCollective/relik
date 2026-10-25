@@ -110,7 +110,14 @@ export interface RelicConfig {
   readonly authLinkTtlSeconds: number;
   /** How long a verified session lasts before the reader signs in again. */
   readonly sessionTtlSeconds: number;
-
+  /** Passkey challenge TTL in seconds. */
+  readonly passkeyChallengeTtlSeconds: number;
+  /** Decision mutations per IP. */
+  readonly decisionRateLimit: RateLimitConfig;
+  /** Decision read queries per IP. */
+  readonly decisionReadRateLimit: RateLimitConfig;
+  /** Passkey operations per IP. */
+  readonly passkeyRateLimit: RateLimitConfig;
   /** Engaged when egress spend crosses the ceiling. Refuses every mint. */
   readonly killSwitchEngaged: boolean;
   /**
@@ -166,7 +173,10 @@ export const DEFAULT_CONFIG: RelicConfig = {
   commentCiphertextCapChars: 8192,
   authLinkTtlSeconds: 15 * 60,
   sessionTtlSeconds: 30 * 24 * 3600,
-
+  passkeyChallengeTtlSeconds: 300,
+  decisionRateLimit: { limit: 30, windowSeconds: 3600 },
+  decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
+  passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
   killSwitchEngaged: false,
   trustedProxyHops: 2,
 };

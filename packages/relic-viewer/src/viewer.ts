@@ -42,6 +42,7 @@ import {
   TruncatedContainerError,
   UnknownVersionError,
   VersionMismatchError,
+  versionDigest,
 } from '@relic/format';
 import { isComponentSource } from './jsx.ts';
 import type { VaultEntry } from './vault.ts';
@@ -108,6 +109,12 @@ export interface ReadyView {
   readonly version: number;
   /** The newest revision available to this link holder. */
   readonly currentVersion: number;
+  /**
+   * Lowercase hex SHA-256 of the exact ciphertext bytes this view was
+   * decrypted from. A decision is bound to this, so the panel can refuse to
+   * run a ceremony when the service holds a different file for the version.
+   */
+  readonly versionDigest: string;
 }
 
 /** Where content is allowed to render. Never derived from the server. */
@@ -391,6 +398,7 @@ export async function load(
       { fragment, mint: mintResponse }
     );
   }
+  const digest = await versionDigest(bytes);
 
   let cachedPrefixData: CachedPrefix | undefined = undefined;
   let envelopeFired = false;
@@ -470,6 +478,7 @@ export async function load(
         shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
+        versionDigest: digest,
       },
     };
   } catch (error) {
@@ -714,6 +723,7 @@ export async function loadHistoricalVersion(
         `${current.version} remains open.`,
     };
   }
+  const digest = await versionDigest(bytes);
 
   let loadContents: LoadContents | undefined = undefined;
 
@@ -788,6 +798,7 @@ export async function loadHistoricalVersion(
         shareUrl: current.shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
+        versionDigest: digest,
       },
     };
   } catch (error) {
@@ -1232,6 +1243,7 @@ export async function openRelicWithKey(
     }
     mintResponse = minted.mint;
   }
+  const digest = await versionDigest(bytes);
 
   const upperBound = plaintextSizeUpperBound(mintResponse.object_length);
   if (upperBound > MAX_RENDER_BYTES) {
@@ -1372,6 +1384,7 @@ export async function openRelicWithKey(
         shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
+        versionDigest: digest,
       },
     };
   } catch (error) {

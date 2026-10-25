@@ -4435,3 +4435,808 @@ canvas.relic-page {
   .otio-preview-scope { font-size: .5rem; }
   .otio-selection-readout { padding: .6rem .5rem; }
 }
+
+/* ---------- decisions ---------- */
+
+/*
+ * A decision is a different act from a comment, so it gets its own entry on
+ * the band and its own sheet, and neither borrows the composer's patina rule.
+ *
+ * The subject is a register: a catalogued object, an exact version of it, and
+ * a dated mark saying who signed off. So the sheet is ruled like a ledger
+ * (a double ink rule along the top, where the share sheet has patina) and the
+ * verdict is an impression, a bordered uppercase mark, rather than a pill or
+ * a badge. Approve is patina because it is the system's one colour for "go";
+ * reject is oxide, already the colour of every refusal in the viewer.
+ */
+
+/* The tally rides inside the band control, one bordered chip split by a
+   hairline, in the same box as the comment count so the two read as siblings
+   and the verdict colours are the only difference. */
+.decision-tally {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--rule-strong);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.decision-tally > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0 0.3rem;
+}
+
+.decision-tally > span + span {
+  border-left: 1px solid var(--rule-strong);
+}
+
+.decision-tally .icon {
+  width: 10px;
+  height: 10px;
+}
+
+.tally-approve {
+  color: var(--patina-ink);
+}
+
+.tally-approve .icon {
+  fill: var(--patina);
+}
+
+.tally-reject {
+  color: var(--oxide);
+}
+
+/* Zero is a fact, not an alarm: it keeps its place and loses its colour. */
+.decision-tally > span[data-zero="true"] {
+  color: var(--ink-soft);
+}
+
+.decision-tally > span[data-zero="true"] .icon {
+  fill: var(--rule-strong);
+}
+
+.action-decisions[aria-expanded="true"] {
+  background: var(--ground);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+
+/*
+ * The sheet drops from the band like the share sheet, but it is not modal.
+ * The comment sidebar stays open and live beside it, because the point of the
+ * layout is that the two are visibly separate places: one for talking about
+ * the version, one for signing it. Its right edge is set by the page to the
+ * sidebar's left edge when the sidebar is open.
+ */
+.decision-panel {
+  position: fixed;
+  inset: var(--decision-top, var(--bar-height)) var(--decision-right, 0) auto
+    auto;
+  z-index: 8;
+  width: min(27rem, 100vw);
+  max-width: 100vw;
+  max-height: calc(100dvh - var(--decision-top, var(--bar-height)));
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  font-family: var(--sans);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.decision-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.decision-title:focus {
+  outline: none;
+}
+
+.decision-title .accession {
+  font-weight: 400;
+}
+
+.decision-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.decision-close:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+}
+
+.decision-close:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.decision-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem 1.4rem;
+}
+
+.decision-body > * {
+  min-width: 0;
+  margin: 0;
+}
+
+/* Said first, every time, at reading size: the one sentence that keeps a
+   comment saying "greenlight" from being mistaken for a decision. */
+.decision-lead {
+  padding: 0.6rem 0.75rem;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  background: var(--ground);
+  border-left: 2px solid var(--ink);
+}
+
+.decision-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.decision-section-title .decision-digest-chip {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-weight: 400;
+}
+
+.decision-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+.decision-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 0.65rem;
+  row-gap: 0.25rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-who {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.decision-you {
+  margin-left: 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--sans);
+  font-size: 0.72rem;
+}
+
+.decision-time {
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+/* The verdict as an impression: bordered, uppercase, set in the catalog
+   face. Never a filled pill, so it cannot be mistaken for a button. */
+.decision-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.05rem 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1.5px solid currentColor;
+}
+
+.decision-mark .icon {
+  width: 10px;
+  height: 10px;
+}
+
+.decision-mark.is-approve {
+  color: var(--patina);
+  background: color-mix(in srgb, var(--patina) 7%, transparent);
+}
+
+.decision-mark.is-reject {
+  color: var(--oxide);
+  background: color-mix(in srgb, var(--oxide) 7%, transparent);
+}
+
+/* Earlier records stay on the page because they stay on the record. Each
+   author's history hangs off their current row and says what replaced it. */
+.decision-history {
+  grid-column: 2 / -1;
+  font-size: 0.78rem;
+}
+
+.decision-history summary {
+  width: max-content;
+  max-width: 100%;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.decision-history summary:hover {
+  color: var(--patina-ink);
+}
+
+.decision-history summary:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.decision-history ol {
+  margin: 0.4rem 0 0;
+  padding: 0 0 0 0.75rem;
+  list-style: none;
+  border-left: 2px solid var(--rule);
+}
+
+.decision-history li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.5rem;
+  padding: 0.2rem 0;
+  color: var(--ink-soft);
+}
+
+.decision-history .decision-mark {
+  opacity: 0.7;
+}
+
+.decision-superseded {
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.decision-empty {
+  padding: 0.9rem 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  font-style: italic;
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-identity {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+.decision-identity strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* Two verdicts, equal weight, so the panel does not lean either way. Each
+   carries its own colour on its rule and glyph and never as a fill: filling
+   is reserved for the one button that actually records something. */
+.decision-verdicts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.decision-verdict {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.75rem;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top-width: 3px;
+  cursor: pointer;
+}
+
+.decision-verdict.is-approve {
+  border-top-color: var(--patina);
+}
+
+.decision-verdict.is-approve .icon {
+  fill: var(--patina);
+}
+
+.decision-verdict.is-reject {
+  border-top-color: var(--oxide);
+}
+
+.decision-verdict.is-reject .icon {
+  fill: var(--oxide);
+}
+
+.decision-verdict.is-approve:hover {
+  color: var(--patina-ink);
+  background: color-mix(in srgb, var(--patina) 8%, var(--surface));
+}
+
+.decision-verdict.is-reject:hover {
+  color: var(--oxide);
+  background: color-mix(in srgb, var(--oxide) 8%, var(--surface));
+}
+
+.decision-verdict:focus-visible,
+.decision-confirm:focus-visible,
+.decision-secondary:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.decision-verdict:disabled {
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.decision-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+/* The confirm step. The digest is printed because it is what the decision is
+   bound to, and a reader who cares can compare it with what the publisher
+   was told. Twelve characters: enough to compare by eye, short enough not to
+   be a wall of hex. */
+.decision-ticket {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+}
+
+.decision-ticket[data-verdict="reject"] {
+  border-left-color: var(--oxide);
+}
+
+.decision-ticket h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.decision-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.3rem 0.85rem;
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.decision-facts dt {
+  padding-top: 0.1rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.decision-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.decision-digest-chip {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+}
+
+.decision-digest-chip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.decision-digest-chip span {
+  color: var(--ink-soft);
+}
+
+.decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+}
+
+.decision-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 1rem;
+  color: var(--surface);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  background: var(--patina);
+  border: 0;
+  cursor: pointer;
+}
+
+.decision-confirm:hover {
+  background: var(--patina-ink);
+}
+
+.decision-confirm[data-verdict="reject"] {
+  background: var(--oxide);
+}
+
+.decision-confirm[data-verdict="reject"]:hover {
+  background: color-mix(in srgb, var(--oxide) 78%, var(--ink));
+}
+
+.decision-confirm .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.decision-confirm:disabled {
+  color: var(--ink-soft);
+  background: var(--rule);
+  cursor: default;
+}
+
+.decision-secondary {
+  justify-self: start;
+  padding: 0;
+  color: var(--patina-ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* Waiting on the device. A rule that travels along the ticket rather than a
+   spinner: nothing in the viewer spins, and this is a wait on a person. */
+.decision-waiting {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: var(--rule);
+}
+
+.decision-waiting::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  content: "";
+  background: var(--ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .decision-waiting::after {
+    animation: decision-wait 1.4s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes decision-wait {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(233%);
+  }
+}
+
+/* The stamp. The single place in the viewer that is set at an angle, because
+   it is the single thing in it that was pressed onto the page by a person.
+   The double rule echoes the sheet's top edge. */
+.decision-outcome {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.decision-stamp {
+  justify-self: center;
+  display: grid;
+  justify-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  margin: 0.4rem 0 0.2rem;
+  padding: 0.7rem 1.1rem 0.75rem;
+  color: var(--patina);
+  text-align: center;
+  border: 4px double currentColor;
+  transform: rotate(-1.5deg);
+}
+
+.decision-stamp.is-reject {
+  color: var(--oxide);
+}
+
+.decision-stamp-verdict {
+  font-family: var(--mono);
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.decision-stamp-line {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+}
+
+.decision-note {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+/* Outcomes that are not a record. Cancelled is neutral, because the reader
+   chose it; a refusal carries the viewer's usual oxide rule. */
+.decision-refusal {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--oxide);
+}
+
+.decision-refusal[data-state="cancelled"] {
+  border-top-color: var(--ink-soft);
+}
+
+.decision-refusal-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.decision-refusal p {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.decision-refusal .accession {
+  font-size: 0.62rem;
+}
+
+.decision-refusal .decision-facts {
+  padding: 0.5rem 0.65rem;
+  background: var(--ground);
+}
+
+/* Reading an older version is allowed and so is deciding on it, so the
+   notice says plainly which version a decision here lands on. */
+.decision-stale {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  background: var(--diff-removed);
+  border-left: 2px solid var(--oxide);
+}
+
+.decision-stale p {
+  margin: 0;
+}
+
+.decision-stale .decision-secondary {
+  justify-self: start;
+}
+
+/* Setting up the passkey. The trust-on-first-use sentence is a warning, not
+   fine print: it is the one irreversible thing in this panel. */
+.decision-passkey {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.decision-passkey h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.decision-passkey .compose-warning {
+  margin: 0;
+}
+
+.decision-passkey .action.primary,
+.decision-signin .action.primary {
+  align-self: auto;
+  justify-self: start;
+}
+
+.decision-signin {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.25rem;
+}
+
+.decision-signin form {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.decision-signin h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* A comment that says "approve" is still a comment. The sidebar keeps its
+   composer exactly as it was: no verdict control, no stamp, nothing that
+   could be read as one. */
+
+@media (max-width: 34rem) {
+  .decision-panel {
+    width: 100vw;
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .decision-head {
+    padding-left: 1rem;
+  }
+
+  .decision-body {
+    padding: 1rem 1rem 1.25rem;
+  }
+
+  /* The tally is the control's whole reason to be on a phone's band, like
+     the comment count beside it, so it keeps its numbers when labels go.
+     The two glyphs say what the numbers count, so the stamp icon is what
+     goes: on a phone the tally is the control. */
+  .action span.decision-tally {
+    display: inline-flex;
+  }
+
+  .action .decision-tally > span {
+    display: inline-flex;
+  }
+
+  .action-decisions > .icon {
+    display: none;
+  }
+
+  /* Unless there is no tally to stand in for it (decisions not open on this
+     relic), when the stamp is all that is left to press. */
+  .action-decisions:not([data-decision-approvals]) > .icon {
+    display: inline-block;
+  }
+
+  /* Inside the sheet every button keeps its words, as in the share sheet:
+     the band's icon-only rule is about the band. */
+  .decision-panel .action span {
+    display: inline;
+  }
+
+  /*
+   * The narrow hierarchy, re-derived a third time, for the eighth action.
+   *
+   * Measured at 390px before this rule: the band ran 36px past the viewport
+   * and the filename rendered 0px wide. The bar has to be no worse for the
+   * filename than it was before Decisions arrived (31px at 390), so three
+   * things give way, smallest loss first: the stamp icon above (21px), a
+   * slightly tighter action padding (about 38px across eight), and Relics
+   * (39px), which the 24rem floor already treats as the first to go and
+   * which opens a tab rather than acting on this relic.
+   */
+  .action-relics {
+    display: none;
+  }
+
+  .actions .action {
+    padding: 0 0.6rem;
+  }
+
+  .decision-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .decision-time {
+    grid-column: 2;
+  }
+}
+
+/* The chooser and the refusal's single action, as the mock lays them out. */
+.decision-choose {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.decision-refusal > .action.primary {
+  justify-self: start;
+}
+
+/*
+ * The real band carries Compare versions, which the mock's did not, so the
+ * mock's narrow rules alone left the filename narrower than before Decisions
+ * arrived. Measured filename width before Decisions / with these rules:
+ * 31 / 31 px at 390, 104 / 105 at 360, 64 / 65 at 320. A tighter tally chip
+ * buys the 8px at 390; a tighter action padding at the floor buys the rest.
+ */
+@media (max-width: 34rem) {
+  .action .decision-tally > span {
+    gap: 0.1rem;
+    padding: 0 0.2rem;
+  }
+}
+
+@media (max-width: 24rem) {
+  .actions .action {
+    padding: 0 0.4rem;
+  }
+}

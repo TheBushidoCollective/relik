@@ -2100,6 +2100,17 @@ export function createOtioPlayback(
         notify();
         return;
       }
+      if (compareRationalTimes(currentTime, clock.duration) >= 0) {
+        const gen = ++renderGeneration;
+        currentTime = { value: 0, rate: clock.rate };
+        clockAnchor = null;
+        isBuffering = true;
+        notify();
+        await enqueueRender(currentTime, gen);
+        if (stale(gen)) return;
+        clockAnchor = null;
+        notify();
+      }
       const ctx = getAudioContext();
       if (ctx && ctx.state === 'suspended') {
         try {

@@ -387,6 +387,7 @@ describe('the usercontent frame the render routes build', () => {
     shareUrl: 'https://relik.example/aaaaaaaaaaaaaaaaaaaaaaaaaa#k',
     version: 1,
     currentVersion: 1,
+    versionDigest: '0'.repeat(64),
   });
 
   const sandboxAttributeOf = (wrapper: HTMLElement): string => {

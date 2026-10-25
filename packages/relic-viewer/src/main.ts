@@ -45,6 +45,14 @@ import {
 import { captureSelectionQuote } from './annotate-quote.ts';
 import { isImageElement } from './annotate-region.ts';
 import { formatTimecode, formatTimecodeTenths } from './annotate-time.ts';
+import type { DecisionPanelHandle } from './decision-panel.ts';
+import {
+  type DecisionAccess,
+  type DecisionTally,
+  decisionAccess,
+  decorateDecisionControl,
+  tallyFromList,
+} from './decisions.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import { createMediaPlayer, type TimeAimDetail } from './media-player.ts';
 import {
@@ -285,6 +293,9 @@ const ICONS = {
   share: 'M1.5 3h13v10h-13zm1.3 1L8 7.6 13.2 4zM2.5 5.2V12h11V5.2L8 9z',
   close:
     'M4.2 3.5 8 7.3l3.8-3.8.7.7L8.7 8l3.8 3.8-.7.7L8 8.7l-3.8 3.8-.7-.7L7.3 8 3.5 4.2z',
+  // A rubber stamp seen side on, handle and foot, because a decision here is
+  // an impression pressed onto one exact version.
+  stamp: 'M5.5 1h5v4L9 6.5V8h4.5v3h-11V8H7V6.5L5.5 5V1zM2 12.5h12V14H2v-1.5z',
 } as const;
 
 function icon(path: string): SVGSVGElement {
@@ -427,6 +438,16 @@ export interface BarOptions {
    * needs the key, never a rendered page.
    */
   readonly onShare?: (opener: HTMLElement) => void;
+  /**
+   * Opens the decisions sheet, handed the control that opened it. A decision
+   * is a separate act from a comment, so it gets its own entry on the band.
+   */
+  readonly onDecide?: (opener: HTMLElement) => void;
+  /**
+   * The counts on the version shown: numbers once listed, `null` when
+   * decisions are not open on this relic, absent while loading.
+   */
+  readonly decisionTally?: DecisionTally | null;
 }
 
 /**
@@ -721,6 +742,15 @@ export function buildBar(
       comments.title = 'Comments on this relic';
     }
     actions.appendChild(comments);
+  }
+
+  // Beside Comments and on the narrow must-survive list: the tally is the one
+  // thing on the band that says whether this version has been signed off.
+  const onDecide = options.onDecide;
+  if (onDecide !== undefined) {
+    const decide = button('Decisions', ICONS.stamp, () => onDecide(decide));
+    decorateDecisionControl(decide, view.version, options.decisionTally);
+    actions.appendChild(decide);
   }
 
   // Gated on there being history, not on the history being comparable. Those
@@ -7194,13 +7224,93 @@ export function renderReady(
   let bar: HTMLElement | undefined;
   let commentCount: number | undefined;
   let thread: ThreadHandle | undefined;
+  /** Counts for the version shown; `undefined` until its list lands. */
+  let decisionTally: DecisionTally | null | undefined;
+  let decisionPanel: DecisionPanelHandle | undefined;
+  let decisionPanelLoading = false;
 
   let activeView = view;
   const loadedViews = new Map<number, ReadyView>();
   loadedViews.set(view.version, view);
 
+  /** Swaps in a band carrying the new counts, while this page still shows it. */
+  const replaceBar = (): void => {
+    if (bar === undefined || bar.isConnected !== true) return;
+    const replacement = barFor(false);
+    bar.replaceWith(replacement);
+    bar = replacement;
+  };
+
+  const refreshDecisionTally = (shown: ReadyView): void => {
+    decisionTally = undefined;
+    let access: DecisionAccess;
+    try {
+      access = decisionAccess(shown, relicId, deps);
+    } catch {
+      return;
+    }
+    void access.listDecisions().then((listed) => {
+      if (activeView !== shown) return;
+      decisionTally = tallyFromList(listed, shown.version);
+      replaceBar();
+    });
+  };
+
+  const toggleDecisions = (opener: HTMLElement): void => {
+    if (decisionPanel !== undefined) {
+      decisionPanel.close();
+      return;
+    }
+    if (decisionPanelLoading) return;
+    decisionPanelLoading = true;
+    const shown = activeView;
+    // Its own chunk: a reader who never decides never downloads the sheet,
+    // the ceremony, or the WebAuthn conversion.
+    void import('./decision-panel.ts')
+      .then(({ openDecisionPanel }) => {
+        decisionPanelLoading = false;
+        if (activeView !== shown) return;
+        const fragment = new URL(shown.shareUrl).hash;
+        decisionPanel = openDecisionPanel({
+          view: shown,
+          relicId,
+          deps,
+          opener,
+          ...decisionAccess(shown, relicId, deps),
+          readSession: () => readSession(deps),
+          signIn: (host) => {
+            const outcome = document.createElement('div');
+            outcome.setAttribute('aria-live', 'polite');
+            const { form } = signInForm([], {
+              relicId,
+              fragment,
+              deps,
+              outcome,
+              label: 'Your email address',
+            });
+            host.append(form, outcome);
+          },
+          onTally: (tally) => {
+            if (activeView !== shown) return;
+            decisionTally = tally;
+            replaceBar();
+          },
+          onOpenVersion: (version) => {
+            void showVersion(version);
+          },
+          onClose: () => {
+            decisionPanel = undefined;
+          },
+        });
+      })
+      .catch(() => {
+        decisionPanelLoading = false;
+        toast('The decisions panel could not load. Try again.');
+      });
+  };
+
   function barFor(comparisonOpen = false): HTMLElement {
-    return buildBar(activeView, relicId, {
+    const built = buildBar(activeView, relicId, {
       comparisonOpen,
       selectedVersion: activeView.version,
       onSelectVersion: (version: number) => {
@@ -7220,6 +7330,8 @@ export function renderReady(
       onShare: (opener) => {
         openSharePanel(activeView, relicId, deps, opener);
       },
+      onDecide: toggleDecisions,
+      ...(decisionTally === undefined ? {} : { decisionTally }),
       ...(thread === undefined
         ? {}
         : {
@@ -7227,8 +7339,17 @@ export function renderReady(
             ...(commentCount === undefined ? {} : { commentCount }),
           }),
     });
+    // The band is rebuilt whenever a count lands; an open sheet follows its
+    // control so focus and `aria-expanded` land on the one on screen.
+    const decide = built.querySelector?.<HTMLElement>('[data-decision-open]');
+    if (decisionPanel !== undefined && decide) decisionPanel.setOpener(decide);
+    return built;
   }
   const showSingle = (viewToShow: ReadyView): void => {
+    decisionPanel?.close();
+    if (viewToShow !== activeView || decisionTally === undefined) {
+      refreshDecisionTally(viewToShow);
+    }
     activeView = viewToShow;
     bar = barFor(false);
     if (viewToShow.route !== 'download') {
@@ -7313,6 +7434,7 @@ export function renderReady(
   };
 
   const showComparison = (left?: number, right?: number): void => {
+    decisionPanel?.close();
     renderComparison(
       activeView,
       relicId,
