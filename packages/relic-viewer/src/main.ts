@@ -7198,8 +7198,9 @@ export function renderReady(
   const loadedViews = new Map<number, ReadyView>();
   loadedViews.set(view.version, view);
 
+  /** Swaps in a band carrying the new counts, while this page still shows it. */
   const replaceBar = (): void => {
-    if (bar === undefined) return;
+    if (bar === undefined || bar.isConnected !== true) return;
     const replacement = barFor(false);
     bar.replaceWith(replacement);
     bar = replacement;
