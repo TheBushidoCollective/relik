@@ -270,6 +270,21 @@ DELETED shares_deleted=2 opt_outs_deleted=1
 NOTIFY_PATH_OK
 ```
 
+## Copy link and the key phrase
+
+A reader on any relic presses Copy link, sees the link and its 12-word key phrase, and copies either one; a person sent the link without the key and told the phrase opens the relic.
+
+Run from the repository root:
+
+```bash
+mise exec -- bun packages/relic-mcp/test/copy-link-path.ts
+```
+
+Output ends:
+
+```text
+COPY_LINK_PATH_OK
+```
 ## Change emails on the live service
 
 Run from the repository root:

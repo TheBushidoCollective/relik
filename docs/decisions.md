@@ -851,6 +851,15 @@ Reviewers can anchor point comments or half-open range comments to specific trac
 - Nonlinear retiming and complex transitions without web-native equivalents fall back to base media preview or diagnostic placeholders.
 - A raw `.otio` file lacking bundled media provides structural track inspection and download, not media playback.
 
+## 2026-10-24: Copy link shows the link and the key phrase
+
+**Copy link opens a panel instead of copying straight away.** Jason Waldrip asked for the 12-word key phrase to be visible beside the copied key, and chose a panel on Copy link that shows the link and the phrase, each with its own Copy button, so a reader can send the link without the key and say the phrase separately. The full-link copy stays, Copy without the key is added, and the Share email is unchanged. The phrase is computed in the browser when the panel opens, from the key already in memory, and exists only in the open panel: nothing stores it, logs it, or sends it.
+
+**The key-entry field is part of a path now, so the spec stops banning it.** `viewer.md` §6.4 banned any key-entry field on the viewing origin, and one shipped anyway on the missing-key and could-not-be-opened screens. Sending the link without the key works only because the recipient types the phrase there, and Jason confirmed amending the ban to the field as it ships.
+
+**One name for the phrase.** The field called it a recovery phrase while relic-mcp calls it the key phrase. It is the key phrase everywhere now.
+
+**Collapsed taskbar actions keep their names.** Below 34rem the action labels were hidden with `display: none`, which removed the accessible name of every action without an `aria-label` or `title`: Copy link, Download and Report. The labels are now visually hidden, so the row looks the same and each control still has a name.
 ## 2026-10-24: Decisions are a deliberate stamp, bound to a passkey and a version
 
 Authorised by Jason Waldrip on 2026-10-24: "I think we need to add decisions to the relik system ... Comments mean no approval, and a stamp/button of approval means an approval."

@@ -1,0 +1,203 @@
+{
+  "reviewed": "feat/relik-copy-link-panel at 25ffcbb6 (fixes and test) with shots at 12290655 in proof/25ffcbb6/; worktree clean; dist/viewer.js built 01:14:50 after the commit",
+  "rendered": "The integration worktree's build of 25ffcbb6, served read-only with the proof's fixture (this run's key: #r15c-EW0krBmNTp0e_9NOnEA), isolated chrome-headless-shell, same measurement code as the earlier rounds.",
+  "queryString": {
+    "shownEqualsCopied": true,
+    "shownPathEqualsKeylessCopy": true,
+    "shown": "http://127.0.0.1:50298/jq9r2twqrwanz9jyn5gdnntvw4?utm_source=review#r15c-EW0krBmNTp0e_9NOnEA"
+  },
+  "panelAgainstMock": {
+    "1440-light": {
+      "diffs": [],
+      "keyPieces": 2,
+      "placement": "x734 w416 topVsBand 0.5 rightVsOpener -0.3",
+      "cols": 3
+    },
+    "1440-dark": {
+      "diffs": [],
+      "keyPieces": 2,
+      "placement": "x734 w416 topVsBand 0.5 rightVsOpener -0.3",
+      "cols": 3
+    },
+    "390-dark": {
+      "diffs": [],
+      "keyPieces": 2,
+      "placement": "x0 w390 topVsBand 0.5 rightVsOpener 68.4",
+      "cols": 3
+    },
+    "320-light": {
+      "diffs": [
+        "panel.rightVsOpener: real 55.6 mock 68.4",
+        "opener style: real system-ui | 13.12px | 400 | 20.336px | rgb(15, 59, 55) | rgb(241, 242, 240) | rgb(15, 59, 55) 0px | rgb(15, 59, 55) 0px | 0px 6.4px 0px 6.4px || mock system-ui | 13.12px | 400 | 20.336px | rgb(15, 59, 55) | rgb(241, 242, 240) | rgb(15, 59, 55) 0px | rgb(15, 59, 55) 0px | 0px 9.6px 0px 9.6px"
+      ],
+      "keyPieces": 2,
+      "placement": "x0 w320 topVsBand 0.5 rightVsOpener 55.6",
+      "cols": 2
+    }
+  },
+  "bandStage": {
+    "320": "same stage | overflow=false identity=142 chipInside=true chipClear=true offScreen=[] untitled=[]",
+    "390": "same stage | overflow=false identity=121 chipInside=true chipClear=true offScreen=[] untitled=[]",
+    "1024": "same stage | overflow=false identity=428 chipInside=true chipClear=true offScreen=[] untitled=[]",
+    "1280": "same stage | overflow=false identity=438 chipInside=true chipClear=true offScreen=[] untitled=[]",
+    "1440": "same stage | overflow=false identity=322 chipInside=true chipClear=true offScreen=[] untitled=[]",
+    "1920": "same stage | overflow=false identity=592 chipInside=true chipClear=true offScreen=[] untitled=[]"
+  },
+  "moreRowHeights": {
+    "w390": [40, 41, 41, 41],
+    "w320": [40, 41, 41, 41]
+  },
+  "countChip390": {
+    "3": 17.6,
+    "12": 23.1,
+    "128": 29.6
+  },
+  "keySplitsAtHyphen": {
+    "note": "Production link (https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e) with 2000 random base64url keys per width. split = the key span renders in more than one piece.",
+    "committed": {
+      "320": {
+        "split": 155,
+        "of": 2000,
+        "keysWithAHyphen": 586,
+        "examples": [
+          "#r1-xgU3FwMZcXiASsIFHWm9d",
+          "#r1ND-TAUkim7kBGMG4HAbLoG",
+          "#r1-FuutKHqEY_XD8kh2OQ8Zd"
+        ]
+      },
+      "390": {
+        "split": 419,
+        "of": 2000,
+        "keysWithAHyphen": 656,
+        "examples": [
+          "#r1Is-SVViVIhO8nnWhwV-kHD",
+          "#r1hRoz8t0Yk07VE-yspwI0Gk",
+          "#r1w2-dFslhWtGk_TiuaEAg9H"
+        ]
+      },
+      "1440": {
+        "split": 0,
+        "of": 2000,
+        "keysWithAHyphen": 600,
+        "examples": []
+      }
+    },
+    "withRule": {
+      "320": {
+        "split": 0,
+        "of": 2000
+      },
+      "390": {
+        "split": 0,
+        "of": 2000
+      },
+      "1440": {
+        "split": 0,
+        "of": 2000
+      }
+    },
+    "rule": ".copy-link-key { display: inline-block; line-height: normal; }",
+    "selectionStillTheLink": true,
+    "ruleOnAKeyThatNeverSplit": {
+      "identicalPixels": true,
+      "before": [[767.2, 182.3, 192, 17]],
+      "after": [[767.2, 182.3, 192, 17]]
+    },
+    "proofFixtureKey": {
+      "1440-light": {
+        "committed": {
+          "pieces": 2,
+          "lines": [
+            "http://127.0.0.1:50298/",
+            "jq9r2twqrwanz9jyn5gdnntvw4#r15c-",
+            "EW0krBmNTp0e_9NOnEA"
+          ]
+        },
+        "withRule": {
+          "pieces": 1,
+          "lines": [
+            "http://127.0.0.1:50298/",
+            "jq9r2twqrwanz9jyn5gdnntvw4",
+            "#r15c-EW0krBmNTp0e_9NOnEA"
+          ],
+          "panelOverflow": false
+        }
+      },
+      "390-dark": {
+        "committed": {
+          "pieces": 2,
+          "lines": [
+            "http://127.0.0.1:50298/",
+            "jq9r2twqrwanz9jyn5gdnntvw4#r15c-",
+            "EW0krBmNTp0e_9NOnEA"
+          ]
+        },
+        "withRule": {
+          "pieces": 1,
+          "lines": [
+            "http://127.0.0.1:50298/",
+            "jq9r2twqrwanz9jyn5gdnntvw4",
+            "#r15c-EW0krBmNTp0e_9NOnEA"
+          ],
+          "panelOverflow": false
+        }
+      },
+      "320-light": {
+        "committed": {
+          "pieces": 2,
+          "lines": [
+            "http://127.0.0.1:50298/",
+            "jq9r2twqrwanz9jyn5gdnntvw4#r15c-",
+            "EW0krBmNTp0e_9NOnEA"
+          ]
+        },
+        "withRule": {
+          "pieces": 1,
+          "lines": [
+            "http://127.0.0.1:50298/",
+            "jq9r2twqrwanz9jyn5gdnntvw4",
+            "#r15c-EW0krBmNTp0e_9NOnEA"
+          ],
+          "panelOverflow": false
+        }
+      }
+    },
+    "largeText320": {
+      "pieces": 1,
+      "rects": [[28.2, 323, 263.6, 102]],
+      "lines": [
+        "http://127.0.0.1:",
+        "50298/",
+        "jq9r2twqrwanz9jyn",
+        "5gdnntvw4",
+        "#r15c-",
+        "EW0krBmNTp0e_9NOn",
+        "EA"
+      ],
+      "panelOverflow": false,
+      "valueH": 288
+    },
+    "guardDiscriminates": {
+      "320": {
+        "committedRects": 2,
+        "withRuleRects": 1,
+        "guardFailsOnCommitted": true,
+        "guardPassesWithRule": true
+      },
+      "390": {
+        "committedRects": 2,
+        "withRuleRects": 1,
+        "guardFailsOnCommitted": true,
+        "guardPassesWithRule": true
+      },
+      "1440": {
+        "committedRects": 2,
+        "withRuleRects": 1,
+        "guardFailsOnCommitted": true,
+        "guardPassesWithRule": true
+      },
+      "key": "#r1-AbCdEfGhIjKlMnOpQrStU",
+      "origin": "the proof fixture origin (http://127.0.0.1:<port>/)"
+    }
+  }
+}
