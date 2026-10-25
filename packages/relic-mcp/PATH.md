@@ -337,14 +337,24 @@ RELIC_LOAD_PROBE_CONFIRM=publish-one-1-day-relic \
   mise exec -- bun packages/relic-mcp/test/load-live-probe.ts
 ```
 
-The probe verifies progress indications and early cancellation against a live deployment.
+To run against a local loopback server with `MemoryStore` and `MemoryStorage`:
+
+```bash
+RELIC_LOAD_PROBE_CONFIRM=publish-one-1-day-relic \
+RELIC_SERVICE_ORIGIN=loopback \
+  mise exec -- bun packages/relic-mcp/test/load-live-probe.ts
+```
+
+The probe verifies progress indications and early cancellation against a live deployment or local loopback service.
 It requires `RELIC_LOAD_PROBE_CONFIRM=publish-one-1-day-relic` to prevent unprompted writes,
 publishes exactly one 1-day, untitled relic with `cover: false`, and tests:
-1. Throttled valid open: phases in order through ready, with progressive data transfer.
-2. Wrong key: stops download within 1 MB and confirms storage cancellation.
-3. Mobile viewport (390px): no blank frames and no horizontal overflow.
+1. Throttled valid open (1440x900 light): asserts the no-blank rule, phases in order through ready, at least five distinct `aria-valuenow` values, storage data received events spanning at least 2 seconds, and complete transfer (`encodedDataLength >= object_length`).
+2. Wrong key (one character changed): asserts the could-not-be-opened card appears within 30 seconds, storage request ends in `Network.loadingFailed` with `canceled: true`, `cancel_bytes` is at most 1,048,576 bytes and below `object_length / 4`, and no `dataReceived` arrives in the 5 seconds after the card appears.
+3. Mobile viewport (390x844 dark): asserts the no-blank rule, no horizontal overflow (`scrollWidth <= innerWidth`), and renders ready.
 
-It never prints the share URL or key. Success ends with:
+Optionally set `RELIC_LOAD_PROOF_DIR=<dir>` to write `receipt.json` and captured screenshots (`01-progress.png`, `01-ready.png`, `02-wrong-key-card.png`, `03-mobile-dark-ready.png`).
+
+It never prints the share URL or key. Every reported value in the output comes directly from measurements taken during execution. Success ends with:
 
 ```text
 LOAD_LIVE_OK relic_id=<id> progress_steps=<n> cancel_bytes=<n> object_length=<n>
