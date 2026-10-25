@@ -1,0 +1,535 @@
+{
+  "reviewed": "feat/relik-copy-link-panel at 5a2ebe34 (PR #119); C-P shots in proof/d06abd26",
+  "rendered": "The integration worktree's built viewer and relic-mcp bundle (built from d06abd26 at 00:48; 5a2ebe34 adds only shots), served read-only from a loopback createApp with an in-memory store, the proof's fixture (notes.md published, then republished to version 2), an isolated chrome-headless-shell on a private port with a throwaway profile. The mock is docs/plans/copy-link-key-phrase/mockup.html, identical on both branches (blob 1f4384cd).",
+  "panelAgainstMock": {
+    "note": "Every panel part measured in the real viewer and in the mock at the proof sizes: size, inset, gap, font, colour, border, padding, z-index. Tolerance 0.6px. Listed differences are the only ones.",
+    "1440-light": {
+      "differencesFromMock": [],
+      "panel": {
+        "x": 734,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "z": "20",
+        "topVsBand": 0.5,
+        "rightVsOpener": -0.3
+      },
+      "link": {
+        "realLines": 2,
+        "realKeyPieces": 1,
+        "mockLines": 2,
+        "mockKeyPieces": 1
+      },
+      "phraseColumns": 3,
+      "focusOnOpen": "link"
+    },
+    "1440-dark": {
+      "differencesFromMock": [],
+      "panel": {
+        "x": 734,
+        "y": 63,
+        "w": 416,
+        "h": 635.1,
+        "z": "20",
+        "topVsBand": 0.5,
+        "rightVsOpener": -0.3
+      },
+      "link": {
+        "realLines": 2,
+        "realKeyPieces": 1,
+        "mockLines": 2,
+        "mockKeyPieces": 1
+      },
+      "phraseColumns": 3,
+      "focusOnOpen": "link"
+    },
+    "390-dark": {
+      "differencesFromMock": [],
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 390,
+        "h": 677.4,
+        "z": "20",
+        "topVsBand": 0.5,
+        "rightVsOpener": 68.4
+      },
+      "link": {
+        "realLines": 2,
+        "realKeyPieces": 1,
+        "mockLines": 3,
+        "mockKeyPieces": 1
+      },
+      "phraseColumns": 3,
+      "focusOnOpen": "link"
+    },
+    "320-light": {
+      "differencesFromMock": [
+        "panel.rightVsOpener: real 55.6 mock 68.4",
+        "opener style: real system-ui | 13.12px | 400 | 20.336px | rgb(15, 59, 55) | rgb(241, 242, 240) | rgb(15, 59, 55) 0px | rgb(15, 59, 55) 0px | 0px 6.4px 0px 6.4px || mock system-ui | 13.12px | 400 | 20.336px | rgb(15, 59, 55) | rgb(241, 242, 240) | rgb(15, 59, 55) 0px | rgb(15, 59, 55) 0px | 0px 9.6px 0px 9.6px"
+      ],
+      "panel": {
+        "x": 0,
+        "y": 63,
+        "w": 320,
+        "h": 497,
+        "z": "20",
+        "topVsBand": 0.5,
+        "rightVsOpener": 55.6
+      },
+      "link": {
+        "realLines": 3,
+        "realKeyPieces": 2,
+        "mockLines": 3,
+        "mockKeyPieces": 1
+      },
+      "phraseColumns": 2,
+      "focusOnOpen": "link"
+    }
+  },
+  "toast320": {
+    "asTheProofCaptures": {
+      "text": "Link copied. It contains the decryption key.",
+      "rect": [
+        16,
+        488,
+        288,
+        64
+      ],
+      "opacity": "0",
+      "transform": "matrix(1, 0, 0, 1, -144, 8)",
+      "z": "30",
+      "hitIsToast": true,
+      "anim": [
+        {
+          "name": "rise",
+          "state": "running",
+          "t": 0
+        }
+      ]
+    },
+    "settled": {
+      "text": "Link copied. It contains the decryption key.",
+      "rect": [
+        16,
+        480,
+        288,
+        64
+      ],
+      "opacity": "1",
+      "transform": "matrix(1, 0, 0, 1, -144, 0)",
+      "z": "30",
+      "hitIsToast": true,
+      "anim": []
+    },
+    "mockRect": [
+      16,
+      480,
+      288,
+      64
+    ],
+    "pixelAlphaOfToastBox": {
+      "proofShot": 0.16,
+      "realAtAppearance": 0.15,
+      "realSettled": 1,
+      "mock": 1,
+      "note": "ink #16191a over the slip ground #f1f2f0, sampled at the right end of the toast box, clear of text"
+    }
+  },
+  "band": {
+    "320": {
+      "realRow": "decisions history copy share more",
+      "mockRow": "decisions history copy share more",
+      "overflow": false,
+      "identity": 142,
+      "filename": 120,
+      "versionChipInside": true,
+      "versionChipClear": true,
+      "offScreen": [],
+      "iconOnlyWithoutTitle": [],
+      "actionPadding": "6.4px",
+      "mockActionPadding": "9.6px"
+    },
+    "390": {
+      "realRow": "comments decisions history copy share more",
+      "mockRow": "comments decisions history copy share more",
+      "overflow": false,
+      "identity": 121,
+      "filename": 99,
+      "versionChipInside": true,
+      "versionChipClear": true,
+      "offScreen": [],
+      "iconOnlyWithoutTitle": [],
+      "actionPadding": "9.6px",
+      "mockActionPadding": "9.6px"
+    },
+    "1024": {
+      "realRow": "marker relics comments decisions history copy share download report",
+      "mockRow": "marker relics comments decisions history copy share download report",
+      "overflow": false,
+      "identity": 428,
+      "filename": 396,
+      "versionChipInside": true,
+      "versionChipClear": true,
+      "offScreen": [],
+      "iconOnlyWithoutTitle": [],
+      "actionPadding": "14.4px",
+      "mockActionPadding": "14.4px"
+    },
+    "1280": {
+      "realRow": "marker relics comments+label decisions+label history copy+label share+label download report",
+      "mockRow": "marker relics comments+label decisions+label history copy+label share+label download report",
+      "overflow": false,
+      "identity": 438,
+      "filename": 406,
+      "versionChipInside": true,
+      "versionChipClear": true,
+      "offScreen": [],
+      "iconOnlyWithoutTitle": [],
+      "actionPadding": "14.4px",
+      "mockActionPadding": "14.4px"
+    },
+    "1440": {
+      "realRow": "marker relics+label comments+label decisions+label history+label copy+label share+label download+label report+label",
+      "mockRow": "marker relics+label comments+label decisions+label history+label copy+label share+label download+label report+label",
+      "overflow": false,
+      "identity": 322,
+      "filename": 290,
+      "versionChipInside": true,
+      "versionChipClear": true,
+      "offScreen": [],
+      "iconOnlyWithoutTitle": [],
+      "actionPadding": "14.4px",
+      "mockActionPadding": "14.4px"
+    },
+    "1920": {
+      "realRow": "marker+label relics+label comments+label decisions+label history+label copy+label share+label download+label report+label",
+      "mockRow": "marker+label relics+label comments+label decisions+label history+label copy+label share+label download+label report+label",
+      "overflow": false,
+      "identity": 592,
+      "filename": 560,
+      "versionChipInside": true,
+      "versionChipClear": true,
+      "offScreen": [],
+      "iconOnlyWithoutTitle": [],
+      "actionPadding": "14.4px",
+      "mockActionPadding": "14.4px"
+    },
+    "note": "Light scheme. Rows list the shown controls, +label where the label is visible. Same stage as the mock at every width."
+  },
+  "panelUnderIconOpener": {
+    "w1280": {
+      "panelRight": 1106,
+      "openerRight": 1106,
+      "panelLeft": 690,
+      "top": 63,
+      "bandBottom": 63
+    },
+    "w1024": {
+      "panelRight": 893,
+      "openerRight": 893,
+      "panelLeft": 477,
+      "top": 63,
+      "bandBottom": 63
+    }
+  },
+  "moreDisclosure": {
+    "w390": {
+      "open": true,
+      "expanded": "true",
+      "rect": [
+        145,
+        66,
+        390,
+        153
+      ],
+      "inside": true,
+      "entries": [
+        "Rendered as text, no author code (20px)",
+        "Relics (21px)",
+        "Download (21px)",
+        "Report (21px)"
+      ],
+      "style": "rgb(23, 27, 28) | rgb(59, 67, 69) 1px | rgba(0, 0, 0, 0.18) 0px 6px 18px 0px"
+    },
+    "w320": {
+      "open": true,
+      "expanded": "true",
+      "rect": [
+        81,
+        66,
+        320,
+        153
+      ],
+      "inside": true,
+      "entries": [
+        "Rendered as text, no author code (20px)",
+        "Relics (21px)",
+        "Download (21px)",
+        "Report (21px)"
+      ],
+      "style": "rgb(251, 251, 250) | rgb(179, 184, 180) 1px | rgba(0, 0, 0, 0.18) 0px 6px 18px 0px"
+    },
+    "cascade": {
+      "320": {
+        "before": [
+          "20px pad 0px/6.4px",
+          "21px pad 0px/6.4px",
+          "21px pad 0px/6.4px",
+          "21px pad 0px/6.4px"
+        ],
+        "rulesInCascadeOrder": [
+          ".action { padding: 0px 0.9rem }",
+          "@media (max-width: 34rem) .action { padding: 0px 0.75rem }",
+          "@media (max-width: 52rem) .actions .action { padding: 0px 0.6rem }",
+          ".band-more-list .action { padding: 0.6rem 0.85rem }",
+          "@media (max-width: 34rem) .actions .action { padding: 0px 0.6rem }",
+          "@media (max-width: 24rem) .actions .action { padding: 0px 0.4rem }"
+        ],
+        "withFix": [
+          "40px pad 9.6px/13.6px",
+          "41px pad 9.6px/13.6px",
+          "41px pad 9.6px/13.6px",
+          "41px pad 9.6px/13.6px"
+        ]
+      },
+      "390": {
+        "before": [
+          "20px pad 0px/9.6px",
+          "21px pad 0px/9.6px",
+          "21px pad 0px/9.6px",
+          "21px pad 0px/9.6px"
+        ],
+        "rulesInCascadeOrder": [
+          ".action { padding: 0px 0.9rem }",
+          "@media (max-width: 34rem) .action { padding: 0px 0.75rem }",
+          "@media (max-width: 52rem) .actions .action { padding: 0px 0.6rem }",
+          ".band-more-list .action { padding: 0.6rem 0.85rem }",
+          "@media (max-width: 34rem) .actions .action { padding: 0px 0.6rem }"
+        ],
+        "withFix": [
+          "40px pad 9.6px/13.6px",
+          "41px pad 9.6px/13.6px",
+          "41px pad 9.6px/13.6px",
+          "41px pad 9.6px/13.6px"
+        ]
+      }
+    }
+  },
+  "commentCountChip390": {
+    "3": {
+      "asBuilt": {
+        "w": 17.6,
+        "pad": "0px/0px",
+        "comments": 59
+      },
+      "mainPadding": {
+        "w": 17.6,
+        "pad": "4px/4px",
+        "comments": 59
+      }
+    },
+    "12": {
+      "asBuilt": {
+        "w": 17.6,
+        "pad": "0px/0px",
+        "comments": 59
+      },
+      "mainPadding": {
+        "w": 23.1,
+        "pad": "4px/4px",
+        "comments": 64.4
+      }
+    },
+    "128": {
+      "asBuilt": {
+        "w": 21.6,
+        "pad": "0px/0px",
+        "comments": 63
+      },
+      "mainPadding": {
+        "w": 29.6,
+        "pad": "4px/4px",
+        "comments": 71
+      }
+    }
+  },
+  "linkWrapping": {
+    "320": {
+      "asBuilt": {
+        "local": {
+          "lines": [
+            "http://127.0.0.1:51808/k9pvr9fv36m",
+            "29xm721zavpqd08#r1zc670ub6N8oh8-",
+            "rYwgw5qw"
+          ],
+          "keyPieces": 2
+        },
+        "production": {
+          "lines": [
+            "https://relik.link/q7m2c9x4tz8hb3k",
+            "a1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-",
+            "wRNg"
+          ],
+          "keyPieces": 2
+        }
+      },
+      "withWbr": {
+        "lines": [
+          "https://relik.link/",
+          "q7m2c9x4tz8hb3ka1w6pd5rn0e",
+          "#r1CzBVep_E6Q4zWH2ix-wRNg"
+        ],
+        "keyPieces": 1,
+        "text": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg"
+      }
+    },
+    "390": {
+      "asBuilt": {
+        "local": {
+          "lines": [
+            "http://127.0.0.1:51808/k9pvr9fv36m29xm721za",
+            "vpqd08#r1zc670ub6N8oh8-rYwgw5qw"
+          ],
+          "keyPieces": 1
+        },
+        "production": {
+          "lines": [
+            "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn",
+            "0e#r1CzBVep_E6Q4zWH2ix-wRNg"
+          ],
+          "keyPieces": 1
+        }
+      },
+      "withWbr": {
+        "lines": [
+          "https://relik.link/",
+          "q7m2c9x4tz8hb3ka1w6pd5rn0e",
+          "#r1CzBVep_E6Q4zWH2ix-wRNg"
+        ],
+        "keyPieces": 1,
+        "text": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg"
+      }
+    },
+    "1440": {
+      "asBuilt": {
+        "local": {
+          "lines": [
+            "http://127.0.0.1:51808/k9pvr9fv36m29xm721zavp",
+            "qd08#r1zc670ub6N8oh8-rYwgw5qw"
+          ],
+          "keyPieces": 1
+        },
+        "production": {
+          "lines": [
+            "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+            "#r1CzBVep_E6Q4zWH2ix-wRNg"
+          ],
+          "keyPieces": 1
+        }
+      },
+      "withWbr": {
+        "lines": [
+          "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+          "#r1CzBVep_E6Q4zWH2ix-wRNg"
+        ],
+        "keyPieces": 1,
+        "text": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg"
+      }
+    }
+  },
+  "phraseStates": {
+    "phrase-loading": {
+      "real": {
+        "text": "Loading the key phrase.",
+        "h": 144,
+        "color": "rgb(150, 158, 157)",
+        "bg": "repeating-linear-gradient(rgba(0, 0, 0, ",
+        "busy": "true",
+        "phraseDisabled": true
+      },
+      "mock": {
+        "text": "Loading the key phrase.",
+        "h": 144,
+        "color": "rgb(150, 158, 157)",
+        "bg": "repeating-linear-gradient(rgba(0, 0, 0, ",
+        "busy": "true",
+        "phraseDisabled": true
+      },
+      "slipH": [
+        146,
+        146
+      ],
+      "copyPhraseY": [
+        154,
+        154
+      ],
+      "panelH": [
+        635.1,
+        635.1
+      ]
+    },
+    "phrase-failed": {
+      "real": {
+        "text": "The key phrase could not be loaded. The link above still works.",
+        "h": 58,
+        "color": "rgb(140, 74, 47)",
+        "bg": "none",
+        "busy": null,
+        "phraseDisabled": true
+      },
+      "mock": {
+        "text": "The key phrase could not be loaded. The link above still works.",
+        "h": 58,
+        "color": "rgb(140, 74, 47)",
+        "bg": "none",
+        "busy": null,
+        "phraseDisabled": true
+      },
+      "slipH": [
+        59.6,
+        59.6
+      ],
+      "copyPhraseY": [
+        67.60000000000002,
+        67.59999999999997
+      ],
+      "panelH": [
+        591,
+        611.5
+      ]
+    }
+  },
+  "keyboardFocusRing1440": {
+    "light": {
+      "focused": "link",
+      "focusVisible": true,
+      "outline": "solid 2px rgb(31, 107, 100) offset 2px"
+    },
+    "dark": {
+      "focused": "link",
+      "focusVisible": true,
+      "outline": "solid 2px rgb(79, 179, 166) offset 2px"
+    }
+  },
+  "eagerWordlist": {
+    "note": "Not a C defect. viewer.js statically imports a shared chunk that carries the 2048-word list; the panel lazily fetches only a one-line re-export of it.",
+    "branch5a2ebe34": {
+      "viewerJsImports": "chunk-kncscd24.js",
+      "wordlistInIt": true,
+      "onTheWire": "37386 bytes",
+      "panelChunk": [
+        "/assets/chunk-n0fqdq27.js"
+      ]
+    },
+    "main76269ed5": {
+      "viewerJsImports": "chunk-djc1s81b.js",
+      "wordlistInIt": true
+    },
+    "main7cc36382": {
+      "viewerJsImports": "chunk-tvq0wft8.js",
+      "wordlistInIt": true
+    },
+    "cause": "packages/relic-format/src/index.ts: export * from './mnemonic.ts'; shell-budget.test.ts reads only dist/viewer.js"
+  }
+}

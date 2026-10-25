@@ -1,0 +1,283 @@
+{
+  "reviewed": "feat/relik-copy-link-panel at 5a2ebe34 plus uncommitted working-tree fixes: main.ts blob b808eb03, styles.css blob e42a2a84, copy-link-path.ts blob d836e4cb; proof shots in the untracked proof/5a2ebe34/",
+  "rendered": "The integration worktree's viewer build of that working tree (dist/viewer.js 01:06:56, after both source edits), served read-only with the proof's fixture, isolated chrome-headless-shell, same measurement code as review/5a2ebe34.",
+  "panelAgainstMock": {
+    "1440-light": {
+      "differencesFromMock": [],
+      "placement": "x734 w416 topVsBand 0.5 rightVsOpener -0.3",
+      "link": "real 3 lines, key in 1; mock 2 lines",
+      "phraseColumns": 3
+    },
+    "1440-dark": {
+      "differencesFromMock": [],
+      "placement": "x734 w416 topVsBand 0.5 rightVsOpener -0.3",
+      "link": "real 3 lines, key in 1; mock 2 lines",
+      "phraseColumns": 3
+    },
+    "390-dark": {
+      "differencesFromMock": [],
+      "placement": "x0 w390 topVsBand 0.5 rightVsOpener 68.4",
+      "link": "real 3 lines, key in 1; mock 3 lines",
+      "phraseColumns": 3
+    },
+    "320-light": {
+      "differencesFromMock": [
+        "panel.rightVsOpener: real 55.6 mock 68.4",
+        "opener style: real system-ui | 13.12px | 400 | 20.336px | rgb(15, 59, 55) | rgb(241, 242, 240) | rgb(15, 59, 55) 0px | rgb(15, 59, 55) 0px | 0px 6.4px 0px 6.4px || mock system-ui | 13.12px | 400 | 20.336px | rgb(15, 59, 55) | rgb(241, 242, 240) | rgb(15, 59, 55) 0px | rgb(15, 59, 55) 0px | 0px 9.6px 0px 9.6px"
+      ],
+      "placement": "x0 w320 topVsBand 0.5 rightVsOpener 55.6",
+      "link": "real 3 lines, key in 1; mock 3 lines",
+      "phraseColumns": 2
+    }
+  },
+  "bandStage": {
+    "320": "same stage | decisions history copy share more | overflow=false identity=142 chipInside=true chipClear=true offScreen=[] untitled=[] unnamed=[]",
+    "390": "same stage | comments decisions history copy share more | overflow=false identity=121 chipInside=true chipClear=true offScreen=[] untitled=[] unnamed=[]",
+    "1024": "same stage | marker relics comments decisions history copy share download report | overflow=false identity=428 chipInside=true chipClear=true offScreen=[] untitled=[] unnamed=[]",
+    "1280": "same stage | marker relics comments+label decisions+label history copy+label share+label download report | overflow=false identity=438 chipInside=true chipClear=true offScreen=[] untitled=[] unnamed=[]",
+    "1440": "same stage | marker relics+label comments+label decisions+label history+label copy+label share+label download+label report+label | overflow=false identity=322 chipInside=true chipClear=true offScreen=[] untitled=[] unnamed=[]",
+    "1920": "same stage | marker+label relics+label comments+label decisions+label history+label copy+label share+label download+label report+label | overflow=false identity=592 chipInside=true chipClear=true offScreen=[] untitled=[] unnamed=[]"
+  },
+  "defect1Link": {
+    "320": {
+      "asBuilt": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "text": "http://127.0.0.1:58367/4tb297mqraagx95qm3egf8cedg#r1O9gZzvzRDQIy3a10VM_ksw",
+        "wbr": 2,
+        "equalsShareUrl": true
+      },
+      "production": {
+        "lines": [
+          "https://relik.link/",
+          "q7m2c9x4tz8hb3ka1w6pd5rn0e",
+          "#r1CzBVep_E6Q4zWH2ix-wRNg"
+        ],
+        "keyPieces": 1,
+        "text": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+        "wbr": 2
+      }
+    },
+    "390": {
+      "asBuilt": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "text": "http://127.0.0.1:58367/4tb297mqraagx95qm3egf8cedg#r1O9gZzvzRDQIy3a10VM_ksw",
+        "wbr": 2,
+        "equalsShareUrl": true
+      },
+      "production": {
+        "lines": [
+          "https://relik.link/",
+          "q7m2c9x4tz8hb3ka1w6pd5rn0e",
+          "#r1CzBVep_E6Q4zWH2ix-wRNg"
+        ],
+        "keyPieces": 1,
+        "text": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+        "wbr": 2
+      }
+    },
+    "1440": {
+      "asBuilt": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "text": "http://127.0.0.1:58367/4tb297mqraagx95qm3egf8cedg#r1O9gZzvzRDQIy3a10VM_ksw",
+        "wbr": 2,
+        "equalsShareUrl": true
+      },
+      "production": {
+        "lines": [
+          "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e",
+          "#r1CzBVep_E6Q4zWH2ix-wRNg"
+        ],
+        "keyPieces": 1,
+        "text": "https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg",
+        "wbr": 2
+      }
+    }
+  },
+  "defect2MoreRows": {
+    "320": {
+      "open": true,
+      "inside": true,
+      "rows": [
+        "Rendered as text, no author code 40px pad 9.6px/13.6px",
+        "Relics 41px pad 9.6px/13.6px",
+        "Download 41px pad 9.6px/13.6px",
+        "Report 41px pad 9.6px/13.6px"
+      ]
+    },
+    "390": {
+      "open": true,
+      "inside": true,
+      "rows": [
+        "Rendered as text, no author code 40px pad 9.6px/13.6px",
+        "Relics 41px pad 9.6px/13.6px",
+        "Download 41px pad 9.6px/13.6px",
+        "Report 41px pad 9.6px/13.6px"
+      ]
+    }
+  },
+  "defect3CountChip390": {
+    "3": {
+      "w": 17.6,
+      "pad": "4px/4px",
+      "comments": 59
+    },
+    "12": {
+      "w": 23.1,
+      "pad": "4px/4px",
+      "comments": 64.4
+    },
+    "128": {
+      "w": 29.6,
+      "pad": "4px/4px",
+      "comments": 71
+    },
+    "mainForComparison": {
+      "3": 17.6,
+      "12": 23.1,
+      "128": 29.6
+    }
+  },
+  "defect4Toast": {
+    "proofShotPixels": {
+      "size": "320x568",
+      "ground": [
+        241,
+        242,
+        240
+      ],
+      "box": [
+        [
+          22,
+          25,
+          26
+        ],
+        [
+          22,
+          25,
+          26
+        ],
+        [
+          22,
+          25,
+          26
+        ]
+      ],
+      "alpha": [
+        1,
+        1,
+        1
+      ],
+      "toastTopRow": 480
+    },
+    "realSettled320": {
+      "rect": [
+        16,
+        480,
+        288,
+        64
+      ],
+      "opacity": "1",
+      "onTop": true
+    },
+    "mockRect": [
+      16,
+      480,
+      288,
+      64
+    ]
+  },
+  "newDefectQueryString": {
+    "asBuilt": {
+      "addressBar": "http://127.0.0.1:58367/4tb297mqraagx95qm3egf8cedg?utm_source=review",
+      "shown": "http://127.0.0.1:58367/4tb297mqraagx95qm3egf8cedg#r1O9gZzvzRDQIy3a10VM_ksw",
+      "copiedLink": "http://127.0.0.1:58367/4tb297mqraagx95qm3egf8cedg?utm_source=review#r1O9gZzvzRDQIy3a10VM_ksw",
+      "copiedKeyless": "http://127.0.0.1:58367/4tb297mqraagx95qm3egf8cedg?utm_source=review",
+      "shownEqualsCopied": false,
+      "shownPathEqualsKeylessCopy": false
+    },
+    "withProposedFix": {
+      "withQuery-1440": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg?utm_source=review",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "shownEqualsShareUrl": true,
+        "keylessSpanEqualsKeylessCopy": true,
+        "panelOverflow": false
+      },
+      "withQuery-390": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg?",
+          "utm_source=review#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "shownEqualsShareUrl": true,
+        "keylessSpanEqualsKeylessCopy": true,
+        "panelOverflow": false
+      },
+      "withQuery-320": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg?",
+          "utm_source=review",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "shownEqualsShareUrl": true,
+        "keylessSpanEqualsKeylessCopy": true,
+        "panelOverflow": false
+      },
+      "noQuery-1440": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "shownEqualsShareUrl": true,
+        "keylessSpanEqualsKeylessCopy": true,
+        "panelOverflow": false
+      },
+      "noQuery-390": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "shownEqualsShareUrl": true,
+        "keylessSpanEqualsKeylessCopy": true,
+        "panelOverflow": false
+      },
+      "noQuery-320": {
+        "lines": [
+          "http://127.0.0.1:58367/",
+          "4tb297mqraagx95qm3egf8cedg",
+          "#r1O9gZzvzRDQIy3a10VM_ksw"
+        ],
+        "keyPieces": 1,
+        "shownEqualsShareUrl": true,
+        "keylessSpanEqualsKeylessCopy": true,
+        "panelOverflow": false
+      }
+    }
+  }
+}
