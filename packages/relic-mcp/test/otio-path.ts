@@ -71,6 +71,24 @@ const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
 const OTIO_PIN = 'opentimelineio==0.18.1';
 
+const RUN_BUDGET_MS = 600_000;
+let currentStep = 'startup';
+const cdpInFlight = new Map<number, string>();
+let cdpCallId = 0;
+const runningBrowsers: Array<{
+  child: ChildProcess;
+  cdp: CdpConnection;
+  profile: string;
+}> = [];
+const watchdog = setTimeout(() => {
+  const pending = [...cdpInFlight.values()].join(', ') || 'none';
+  console.error(
+    `OTIO_PATH_TIMEOUT after ${RUN_BUDGET_MS}ms at step "${currentStep}"; CDP calls in flight: ${pending}`
+  );
+  for (const b of runningBrowsers) b.child.kill('SIGKILL');
+  process.exit(1);
+}, RUN_BUDGET_MS);
+watchdog.unref?.();
 const viewerDist =
   process.env['RELIC_POPOVER_VIEWER_DIST'] ??
   process.env['RELIC_VIEWER_DIST'] ??
@@ -266,14 +284,19 @@ handler = async (request: Request): Promise<Response> => {
       headers: { 'content-type': 'application/octet-stream' },
     });
   }
-  const response = await app.fetch(request);
-  recordMcpLoopbackReceipt(
-    request.method,
-    url.pathname,
-    'response',
-    response.status
-  );
-  return response;
+  try {
+    const response = await app.fetch(request);
+    recordMcpLoopbackReceipt(
+      request.method,
+      url.pathname,
+      'response',
+      response.status
+    );
+    return response;
+  } catch (err) {
+    console.error('LOOPBACK APP FETCH ERROR:', err);
+    throw err;
+  }
 };
 
 interface Rational {
@@ -482,12 +505,15 @@ async function callMcp(
     activeMcpCall = call;
     const writeResult = child.stdin.write(packet);
     const endResult = child.stdin.end();
-    const [stdout, stderr, exit, inputOutcomes] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
+    const [stdout, stderr, exit] = await Promise.all([
+      child.stdout.text(),
+      child.stderr.text(),
       child.exited,
-      Promise.allSettled([writeResult, endResult]),
     ]);
+    if (exit !== 0) {
+      console.error(`callMcp ${toolName} failed (exit ${exit}). stderr: "${stderr}" stdout: "${stdout}"`);
+    }
+    const inputOutcomes = await Promise.allSettled([writeResult, endResult]);
     if (activeMcpCall === call) activeMcpCall = undefined;
     const persistedReceipts = await persistMcpLoopbackReceipts(call, packet);
     receiptsPersisted = true;
@@ -1869,7 +1895,18 @@ async function openBrowser(
       fromChrome instanceof Readable,
       'Chrome fd 4 did not expose a readable debug pipe'
     );
-    const cdp = connectPipe(toChrome, fromChrome);
+    const rawCdp = connectPipe(toChrome, fromChrome);
+    const cdp: CdpConnection = {
+      ...rawCdp,
+      send(method, params, sessionId) {
+        const id = ++cdpCallId;
+        cdpInFlight.set(id, method);
+        return rawCdp
+          .send(method, params, sessionId)
+          .finally(() => cdpInFlight.delete(id));
+      },
+    };
+    runningBrowsers.push({ child, cdp, profile });
     startupConnection = cdp;
     const blocked: string[] = [];
     const continuedNonLoopback: string[] = [];
@@ -2223,6 +2260,8 @@ async function openBrowser(
         await cdp.send('Browser.close').catch(() => {});
         child.kill('SIGKILL');
         children.delete(child);
+        const idx = runningBrowsers.findIndex((b) => b.child === child);
+        if (idx !== -1) runningBrowsers.splice(idx, 1);
         cdp.dispose();
         await rm(profile, { recursive: true, force: true });
       },
@@ -2998,10 +3037,10 @@ interface CommentMarkPointerExposure {
   readonly maxScrollTop: number | null;
   readonly attempts: readonly CommentMarkPointerExposureAttempt[];
 }
-
 interface CommentMarkPointerClickCapture {
   readonly commentId: string | null;
   readonly trusted: boolean | null;
+  readonly events?: readonly unknown[];
 }
 
 interface CommentMarkPopoverProbe {
@@ -4614,23 +4653,33 @@ async function installCommentMarkClickCapture(
     const capture = {
       commentId: null,
       trusted: null,
+      events: [],
       controller,
     };
     const onCapture = (event) => {
+      capture.events.push({
+        type: event.type,
+        target: event.target ? (event.target.tagName + '.' + event.target.className) : null,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        isTrusted: event.isTrusted,
+      });
       const target = event.target instanceof Element ? event.target.closest('.otio-comment-mark') : null;
       if (target && target.getAttribute('data-comment-id') === ${JSON.stringify(expectedId)}) {
         capture.commentId = target.getAttribute('data-comment-id');
         capture.trusted = event.isTrusted;
       }
     };
-    document.addEventListener('click', onCapture, { capture: true, once: true, signal: controller.signal });
+    document.addEventListener('click', onCapture, { capture: true, signal: controller.signal });
+    document.addEventListener('mousedown', onCapture, { capture: true, signal: controller.signal });
+    document.addEventListener('mouseup', onCapture, { capture: true, signal: controller.signal });
     mark.addEventListener(
       'click',
       (event) => {
         capture.commentId = mark.dataset.commentId ?? null;
         capture.trusted = event.isTrusted;
       },
-      { capture: true, once: true, signal: controller.signal }
+      { capture: true, signal: controller.signal }
     );
     window.__otioPointerClickCapture = capture;
     return true;
@@ -4645,6 +4694,7 @@ async function readCommentMarkClickCapture(
     return {
       commentId: capture?.commentId ?? null,
       trusted: capture?.trusted ?? null,
+      events: capture?.events ?? [],
     };
   })()`);
 }
@@ -4830,7 +4880,27 @@ async function assertCommentMarkPointerClick(
     );
     const clickTarget = freshCenter ?? exposure.after.center;
     if (clickTarget !== null && captureInstalled) {
-      await clickWithRealPointer(browser, clickTarget.x, clickTarget.y);
+      await browser.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: clickTarget.x,
+        y: clickTarget.y,
+        button: 'none',
+      });
+      const adjustedCenter = await browser.evaluate<{ x: number; y: number } | null>(
+        String.raw`(() => {
+          const mark = document.querySelector('.otio-comment-mark[data-comment-id="' + ${JSON.stringify(pointerCase.expectedId)} + '"]');
+          if (!(mark instanceof HTMLElement)) return null;
+          const r = mark.getBoundingClientRect();
+          const label = mark.closest('.otio-track-row')?.querySelector('.otio-track-label');
+          const labelRight = label instanceof HTMLElement ? label.getBoundingClientRect().right : 0;
+          const left = Math.max(r.left, labelRight);
+          const right = r.right;
+          const x = left < right ? (left + right) / 2 : r.left + r.width / 2;
+          return { x, y: r.top + r.height / 2 };
+        })()`
+      );
+      const target = adjustedCenter ?? clickTarget;
+      await clickWithRealPointer(browser, target.x, target.y);
       card = await waitForCommentMarkPopover(
         browser,
         pointerCase.expectedId,
@@ -9338,6 +9408,7 @@ try {
   await rm(kept, { recursive: true, force: true }).catch(() => {});
   await Bun.spawn(['cp', '-R', shotDir, kept]).exited.catch(() => 1);
   console.log(`SHOTS ${kept}`);
+  clearTimeout(watchdog);
   await service.stop(true);
   await rm(scratch, { recursive: true, force: true });
 }

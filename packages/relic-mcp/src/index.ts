@@ -32,6 +32,15 @@ if (typeof globalThis.crypto === 'undefined') {
     configurable: true,
   });
 }
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`UNCAUGHT EXCEPTION IN RELIC-MCP: ${err?.stack || err}\n`);
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+  const stack = err instanceof Error ? err.stack : String(err);
+  process.stderr.write(`UNHANDLED REJECTION IN RELIC-MCP: ${stack}\n`);
+  process.exit(1);
+});
 
 // Subcommands are handled before anything that needs configuration, so
 // `--help` works on a machine that has never set an origin.

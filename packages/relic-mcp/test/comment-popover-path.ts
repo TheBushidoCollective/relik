@@ -94,11 +94,32 @@ const viewerDist =
   process.env['RELIC_POPOVER_VIEWER_DIST'] ??
   join(repoRoot, 'packages/relic-viewer/dist');
 
-const shotsDir = join(repoRoot, 'comment-popover-path-shots');
+const shotsDir =
+  process.env['RELIC_POPOVER_SHOTS_DIR'] ??
+  (await mkdtemp(join(await realpath(tmpdir()), 'relic-popover-shots-')));
 await mkdir(shotsDir, { recursive: true });
 
 const proofDir = join(repoRoot, 'docs/plans/anchored-popover/proof');
 await mkdir(proofDir, { recursive: true });
+
+const RUN_BUDGET_MS = 300_000;
+let currentStep = 'startup';
+const cdpInFlight = new Map<number, string>();
+let cdpCallId = 0;
+const runningBrowsers: Array<{
+  child: ChildProcess;
+  cdp: CdpConnection;
+  profile: string;
+}> = [];
+const watchdog = setTimeout(() => {
+  const pending = [...cdpInFlight.values()].join(', ') || 'none';
+  console.error(
+    `COMMENT_POPOVER_PATH_TIMEOUT after ${RUN_BUDGET_MS}ms at step "${currentStep}"; CDP calls in flight: ${pending}`
+  );
+  for (const b of runningBrowsers) b.child.kill('SIGKILL');
+  process.exit(1);
+}, RUN_BUDGET_MS);
+watchdog.unref?.();
 
 const scratch = await mkdtemp(
   join(await realpath(tmpdir()), 'relic-popover-path-')
@@ -111,6 +132,12 @@ process.on('SIGINT', cleanupAll);
 process.on('SIGTERM', cleanupAll);
 
 function cleanupAll(): void {
+  for (const b of runningBrowsers) {
+    try {
+      b.cdp.dispose();
+      b.child.kill('SIGKILL');
+    } catch {}
+  }
   for (const child of children) {
     try {
       child.kill('SIGKILL');
@@ -118,6 +145,29 @@ function cleanupAll(): void {
   }
 }
 
+async function waitForCondition(
+  predicate: () => Promise<boolean>,
+  label: string,
+  timeoutMs = 15000,
+  pollMs = 50
+): Promise<void> {
+  currentStep = label;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { promise: expired, resolve } = Promise.withResolvers<'expired'>();
+    const timer = setTimeout(
+      () => resolve('expired'),
+      Math.max(0, deadline - Date.now())
+    );
+    const outcome = await Promise.race([predicate(), expired]).finally(() =>
+      clearTimeout(timer)
+    );
+    if (outcome === true) return;
+    if (outcome === 'expired') break;
+    await Bun.sleep(pollMs);
+  }
+  throw new Error(`Timeout waiting for ${label} after ${timeoutMs}ms`);
+}
 // --- Loopback server setup ---
 const store = new MemoryStore();
 const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
@@ -303,7 +353,18 @@ async function openBrowser(
   try {
     const toChrome = child.stdio[3] as Writable;
     const fromChrome = child.stdio[4] as Readable;
-    cdp = connectPipe(toChrome, fromChrome);
+    const rawCdp = connectPipe(toChrome, fromChrome);
+    cdp = {
+      ...rawCdp,
+      send(method, params, sessionId) {
+        const id = ++cdpCallId;
+        cdpInFlight.set(id, method);
+        return rawCdp
+          .send(method, params, sessionId)
+          .finally(() => cdpInFlight.delete(id));
+      },
+    };
+    runningBrowsers.push({ child, cdp, profile });
     await attestBrowserHeadless(cdp, launch);
 
     const created = (await cdp.send('Target.createTarget', {
@@ -449,21 +510,16 @@ async function openBrowser(
         const inner = res['result'] as { value?: T } | undefined;
         return inner?.value as T;
       },
-      async waitFor(
+      waitFor(
         fnExpression: string,
         timeoutMs = 15000,
         intervalMs = 50
       ): Promise<void> {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          const pass = await session.evaluate<boolean>(
-            `Boolean(${fnExpression})`
-          );
-          if (pass) return;
-          await Bun.sleep(intervalMs);
-        }
-        throw new Error(
-          `timed out waiting for: ${fnExpression.slice(0, 100)} (after ${timeoutMs}ms)`
+        return waitForCondition(
+          () => session.evaluate<boolean>(`Boolean(${fnExpression})`),
+          `waitFor: ${fnExpression.slice(0, 60)}`,
+          timeoutMs,
+          intervalMs
         );
       },
       async setViewport(
@@ -510,11 +566,12 @@ async function openBrowser(
       },
       async close(): Promise<void> {
         try {
-          await cdp.send('Browser.close').catch(() => {});
+          cdp.dispose();
           child.kill('SIGKILL');
           children.delete(child);
-          cdp.dispose();
-          await rm(profile, { recursive: true, force: true });
+          const idx = runningBrowsers.findIndex((b) => b.child === child);
+          if (idx !== -1) runningBrowsers.splice(idx, 1);
+          await rm(profile, { recursive: true, force: true }).catch(() => {});
         } catch {}
       },
     };
@@ -1598,8 +1655,11 @@ console.log('Testing Class 6: SVG...');
 
     // Arm "Point at something"
     await session.evaluate(`(() => {
-      const btn = document.querySelector('button.mark-pin') || document.querySelector('.thread-tools button');
-      btn.click();
+      const btn =
+        document.querySelector('button.mark-mode') ||
+        document.querySelector('button.mark-pin') ||
+        document.querySelector('.thread-tools button');
+      if (btn instanceof HTMLElement) btn.click();
     })()`);
 
     // Point at {200, 150} inside frame
@@ -1994,7 +2054,10 @@ console.log(`Saved ${measurements.length} measurements to ${measurementsPath}`);
 // =========================================================================
 // Negative control against origin/main 76269ed5
 // =========================================================================
-const mainDist = '/tmp/relic-viewer-76269ed5/packages/relic-viewer/dist';
+const mainDist =
+  process.env['RELIC_POPOVER_MAIN_DIST'] ??
+  process.env['ORIGIN_MAIN_VIEWER_DIST'] ??
+  '/Users/jwaldrip/.omp/wt/bootstrap-run-76269ed/packages/relic-viewer/dist';
 const hasMainDist = await access(join(mainDist, 'viewer.js'), constants.R_OK)
   .then(() => true)
   .catch(() => false);
@@ -2124,8 +2187,8 @@ if (hasMainDist) {
 }
 
 // Cleanup scratch files & shutdown loopback server
+clearTimeout(watchdog);
 cleanupAll();
 await service.stop();
 await rm(scratch, { recursive: true, force: true }).catch(() => {});
-
 console.log('COMMENT_POPOVER_PATH_OK classes=9');
