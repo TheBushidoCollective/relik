@@ -19,6 +19,7 @@
  * window is a cost-control parameter, not a convenience one.
  */
 
+import { createHash } from 'node:crypto';
 import type { ObjectStat, ObjectStorage, SignedUpload } from './storage.ts';
 
 /**
@@ -423,8 +424,10 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       const now = Date.now();
       const url = await sign('HEAD', relicId, 60, now);
       const response = await fetch(url, { method: 'HEAD' });
-      if (!response.ok) return undefined;
-
+      if (response.status === 404) return undefined;
+      if (!response.ok) {
+        throw new Error(`stat failed with ${response.status}`);
+      }
       const length = Number(response.headers.get('content-length') ?? '0');
       // `x-goog-hash` looks like `crc32c=xxxx==,md5=yyyy==`. CRC32C is the
       // one GCS recommends for integrity checks, and it is non-editable.
@@ -433,8 +436,9 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
         /crc32c=([^,]+)/.exec(hashes)?.[1] ??
         response.headers.get('x-goog-stored-content-crc32c') ??
         '';
+      const generation = response.headers.get('x-goog-generation') ?? undefined;
 
-      return { length, crc32c };
+      return { length, crc32c, generation };
     },
 
     async read(relicId: string): Promise<Uint8Array | undefined> {
@@ -455,6 +459,61 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       if (!response.ok && response.status !== 404) {
         throw new Error(`delete failed with ${response.status}`);
       }
+    },
+
+    async digest(relicId: string): Promise<string | undefined> {
+      const object = await this.stat(relicId);
+      if (object === undefined) return undefined;
+
+      const headers: Record<string, string> = {};
+      if (object.generation !== undefined) {
+        headers['x-goog-if-generation-match'] = object.generation;
+      }
+      const url = await sign('GET', relicId, 60, Date.now(), headers);
+      const response = await fetch(url, { headers });
+      if (response.status === 404 || response.status === 412) return undefined;
+      if (!response.ok) {
+        throw new Error(`digest failed with ${response.status}`);
+      }
+
+      const responseClHeader = response.headers.get('content-length');
+      const responseCl =
+        responseClHeader !== null
+          ? Number.parseInt(responseClHeader, 10)
+          : undefined;
+      if (
+        responseCl !== undefined &&
+        !Number.isNaN(responseCl) &&
+        responseCl !== object.length
+      ) {
+        throw new Error(
+          `digest content-length mismatch: stat=${object.length}, header=${responseCl}`
+        );
+      }
+
+      const hash = createHash('sha256');
+      let bytesHashed = 0;
+      if (response.body) {
+        for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+          hash.update(chunk);
+          bytesHashed += chunk.byteLength;
+        }
+      }
+      if (bytesHashed !== object.length) {
+        throw new Error(
+          `digest length mismatch: stat=${object.length}, hashed=${bytesHashed}`
+        );
+      }
+      if (
+        responseCl !== undefined &&
+        !Number.isNaN(responseCl) &&
+        bytesHashed !== responseCl
+      ) {
+        throw new Error(
+          `digest length mismatch: header=${responseCl}, hashed=${bytesHashed}`
+        );
+      }
+      return hash.digest('hex');
     },
   };
 }

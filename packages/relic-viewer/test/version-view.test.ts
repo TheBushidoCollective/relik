@@ -37,6 +37,7 @@ function view(
     shareUrl: 'https://relik.link/aaaaaaaaaaaaaaaaaaaaaaaaaa#AByGl0K5dY3iw9g',
     version,
     currentVersion,
+    versionDigest: '0'.repeat(64),
   };
 }
 
