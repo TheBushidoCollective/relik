@@ -148,6 +148,23 @@ What the service holds is comment ciphertext it cannot read. What it learns is
 who commented on which relic and when, which for a human commenter is a
 verified email address. The content stays private; the participation does not.
 
+## Decisions
+
+Readers can record approval or rejection decisions in the viewer, confirmed with a passkey. Decisions are separate from comments: comment text never creates a decision, and no tool records one.
+
+`relic_read_decisions` reads them back:
+
+```json
+{
+  "name": "relic_read_decisions",
+  "arguments": { "relic_id": "0a2c..." }
+}
+```
+
+Optional `version` takes a version number (`1`, `2`, ...) to read decisions for that specific version, or `"*"` to read decisions across all versions. When omitted, it defaults to the relic's current version.
+
+Decisions are made by a person in the viewer with a passkey; no tool records them, and comment text never creates one. A person's latest record on a version is their current decision.
+
 ## Why it runs locally
 
 Encryption has to happen where the plaintext is, so a hosted version of this
@@ -204,6 +221,7 @@ relic plaintext leaves the machine during rendering.
 | `relic_share` | `relic_id`, `emails` | Send a relic this machine published to named people. Registers up to 20 email addresses with the service for change and comment notices, and returns a composed share email and mailto link to draft in the sharer's own mailbox. Addresses are stored in the clear by the service, linked to the relic id. A new comment emails everyone on the list except the author, naming the commenter's address (or 'The publisher'). At most one email per person per relic per 10 minutes, and one stop link stops every email about that relic. Relic never sends the share email. Readers holding the link can also share from the viewer once this client version has published or republished the relic. |
 | `relic_read_comments` | `relic_id` | Returns the relic's comments oldest first, decrypted locally, with the author and a count of any that would not decrypt. Works only on the machine that published. |
 | `relic_comment` | `relic_id`, `body`, optional `display_name` | Leaves a comment, encrypted on this machine, authorized by the publish token and attributed as `publisher`. Warning: posting emails everyone following the relic, naming 'The publisher'. At most one email per person per relic per 10 minutes, and one stop link stops every email about that relic. Body caps at 4096 bytes of UTF-8. |
+| `relic_read_decisions` | `relic_id`, optional `version` | Read the approval and rejection decisions recorded for a relic. Decisions are made by a person in the viewer confirmed with a passkey; no tool records them, and comment text never creates one. Returns each decision with its verdict, author address, timestamp, and version digest. Pass an integer version (1 or greater) to read decisions for that version, or `"*"` to read across all versions. Defaults to the current version. Works only on the machine that published the relic. |
 | `relic_describe_client` | none | Explains the encryption path. Reads nothing, sends nothing. |
 
 ## Environment

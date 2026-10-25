@@ -33,9 +33,16 @@
     "rules": {
       "recommended": true,
       "complexity": {
-        "useLiteralKeys": "off"
+        "useLiteralKeys": "off",
+        "useSimpleNumberKeys": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
       }
     }
+  },
+  "assist": {
+    "enabled": false
   },
   "javascript": {
     "formatter": {

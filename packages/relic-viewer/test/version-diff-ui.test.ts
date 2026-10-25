@@ -160,6 +160,7 @@ function view(
     shareUrl,
     version,
     currentVersion,
+    versionDigest: '0'.repeat(64),
   };
 }
 

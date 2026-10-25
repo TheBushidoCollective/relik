@@ -600,6 +600,7 @@ describe('the MCP surface', () => {
       'relic_edit_comment',
       'relic_resolve_comment',
       'relic_describe_client',
+      'relic_read_decisions',
     ]);
     for (const tool of tools) {
       expect(tool.name.startsWith('relic')).toBe(true);
@@ -876,6 +877,7 @@ describe('the MCP surface', () => {
       'title',
       'url',
       'version',
+      'version_digest',
     ]);
     expect(result.structuredContent['version']).toBe(1);
   });
@@ -1009,6 +1011,7 @@ describe('republish', () => {
       'resolved_path',
       'title',
       'version',
+      'version_digest',
     ]);
   });
 

@@ -200,6 +200,7 @@ function view(key: Uint8Array = KEY_BYTES): ReadyView {
     shareUrl: shareUrlFor(key),
     version: 1,
     currentVersion: 1,
+    versionDigest: '0'.repeat(64),
   };
 }
 

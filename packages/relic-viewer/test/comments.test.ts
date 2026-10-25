@@ -185,6 +185,7 @@ function view(overrides: Partial<ReadyView> = {}): ReadyView {
     shareUrl: `https://relik.example/${RELIC_ID}${FRAGMENT}`,
     version: 1,
     currentVersion: 1,
+    versionDigest: '0'.repeat(64),
     ...overrides,
   };
 }

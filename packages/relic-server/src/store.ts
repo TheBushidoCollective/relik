@@ -8,9 +8,16 @@
  * A filename or a declared mimetype appearing in this file is drift.
  */
 
-import type { RendererClass } from '@relic/format';
+import type { DecisionVerdict, RendererClass } from '@relic/format';
 import type { CoverKind, CoverType } from '@relic/format/cover';
 import { sha256Hex } from './gcs.ts';
+import { ProblemError } from './problems.ts';
+
+export type { DecisionVerdict };
+
+export function normalizeEmail(value: string): string {
+  return value.trim().replace(/[A-Z]/g, (ch) => ch.toLowerCase());
+}
 
 export function looksLikeEmail(value: string): boolean {
   return value.length <= 320 && /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(value);
@@ -87,6 +94,47 @@ export interface RelicRow {
    * Advanced atomically via compare-and-swap when reserving share capacity.
    */
   sharesCount?: number | undefined;
+  versionDigests?: Readonly<Record<string, string>> | undefined;
+}
+
+export interface DecisionRow {
+  readonly id: string;
+  readonly relicId: string;
+  readonly version: number;
+  readonly verdict: DecisionVerdict;
+  readonly author: string;
+  readonly createdAt: number;
+  readonly versionDigest: string;
+  readonly credentialId: string;
+}
+
+export interface PasskeyCredential {
+  readonly credentialId: string;
+  readonly publicKeyJwk: JsonWebKey;
+  readonly alg: -7 | -257;
+  readonly signCount: number;
+  readonly transports?: readonly string[];
+  readonly createdAt: number;
+  readonly lastUsedAt?: number;
+  readonly registeredWith?: string;
+}
+
+export interface PasskeyRecord {
+  readonly email: string;
+  readonly userHandle: string;
+  readonly credentials: readonly PasskeyCredential[];
+}
+
+export interface WebauthnChallengeRow {
+  readonly challengeHash: string;
+  readonly email: string;
+  readonly purpose: 'register' | 'enroll' | 'decide';
+  readonly expiresAt: number;
+  readonly userHandle?: string;
+  readonly assertedBy?: string;
+  readonly relicId?: string;
+  readonly version?: number;
+  readonly verdict?: DecisionVerdict;
 }
 
 export interface ShareRow {
@@ -420,6 +468,25 @@ export interface RelicStore {
   getSession(tokenHash: string): Promise<SessionRow | undefined>;
   hasVerifiedIdentity(email: string): Promise<boolean>;
   recordVerifiedIdentity(email: string, at?: number): Promise<void>;
+  appendDecision(row: DecisionRow): Promise<void>;
+  listDecisions(relicId: string): Promise<readonly DecisionRow[]>;
+  deleteDecisionsForRelic(relicId: string): Promise<number>;
+  deleteDecision(relicId: string, decisionId: string): Promise<boolean>;
+  recordVersionDigest(
+    id: string,
+    version: number,
+    sha256: string
+  ): Promise<string | undefined>;
+  getPasskeys(email: string): Promise<PasskeyRecord | undefined>;
+  createPasskeys(record: PasskeyRecord): Promise<boolean>;
+  updatePasskeys(
+    email: string,
+    change: (r: PasskeyRecord) => PasskeyRecord
+  ): Promise<PasskeyRecord | undefined>;
+  putWebauthnChallenge(row: WebauthnChallengeRow): Promise<void>;
+  consumeWebauthnChallenge(
+    challengeHash: string
+  ): Promise<WebauthnChallengeRow | undefined>;
 }
 
 export class MemoryStore implements RelicStore {
@@ -443,7 +510,9 @@ export class MemoryStore implements RelicStore {
   private unsubscribeSecret: Uint8Array | undefined;
   private readonly commenters = new Map<string, Map<string, string>>();
   private readonly commenterMarkers = new Set<string>();
-
+  private readonly decisions = new Map<string, Map<string, DecisionRow>>();
+  private readonly passkeys = new Map<string, PasskeyRecord>();
+  private readonly webauthnChallenges = new Map<string, WebauthnChallengeRow>();
   async getRelic(id: string): Promise<RelicRow | undefined> {
     return this.relics.get(id);
   }
@@ -909,5 +978,114 @@ export class MemoryStore implements RelicStore {
       if (session.email.toLowerCase().trim() === normalized) return true;
     }
     return false;
+  }
+  async appendDecision(row: DecisionRow): Promise<void> {
+    let map = this.decisions.get(row.relicId);
+    if (map === undefined) {
+      map = new Map();
+      this.decisions.set(row.relicId, map);
+    }
+    if (map.has(row.id)) {
+      throw new Error(`decision ${row.id} already exists`);
+    }
+    map.set(row.id, row);
+  }
+
+  async listDecisions(relicId: string): Promise<readonly DecisionRow[]> {
+    const map = this.decisions.get(relicId);
+    if (map === undefined) return [];
+    return [...map.values()].sort(
+      (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)
+    );
+  }
+
+  async deleteDecisionsForRelic(relicId: string): Promise<number> {
+    const map = this.decisions.get(relicId);
+    const count = map?.size ?? 0;
+    this.decisions.delete(relicId);
+    return count;
+  }
+
+  async deleteDecision(relicId: string, decisionId: string): Promise<boolean> {
+    const map = this.decisions.get(relicId);
+    if (map === undefined) return false;
+    const deleted = map.delete(decisionId);
+    if (map.size === 0) {
+      this.decisions.delete(relicId);
+    }
+    return deleted;
+  }
+
+  async recordVersionDigest(
+    id: string,
+    version: number,
+    sha256: string
+  ): Promise<string | undefined> {
+    const row = this.relics.get(id);
+    if (row === undefined) return undefined;
+    const vKey = String(version);
+    const existing = row.versionDigests?.[vKey];
+    if (existing !== undefined) {
+      return existing;
+    }
+    const versionDigests = {
+      ...(row.versionDigests ?? {}),
+      [vKey]: sha256,
+    };
+    row.versionDigests = versionDigests;
+    return sha256;
+  }
+
+  async getPasskeys(email: string): Promise<PasskeyRecord | undefined> {
+    return this.passkeys.get(normalizeEmail(email));
+  }
+
+  async createPasskeys(record: PasskeyRecord): Promise<boolean> {
+    const norm = normalizeEmail(record.email);
+    if (this.passkeys.has(norm)) {
+      return false;
+    }
+    this.passkeys.set(norm, record);
+    return true;
+  }
+
+  async updatePasskeys(
+    email: string,
+    change: (r: PasskeyRecord) => PasskeyRecord
+  ): Promise<PasskeyRecord | undefined> {
+    const norm = normalizeEmail(email);
+    const current = this.passkeys.get(norm);
+    if (current === undefined) return undefined;
+
+    const next = change(current);
+
+    for (const nextCred of next.credentials) {
+      const stored = current.credentials.find(
+        (c) => c.credentialId === nextCred.credentialId
+      );
+      if (stored !== undefined) {
+        if (nextCred.signCount < stored.signCount) {
+          throw new ProblemError('passkey_verification_failed', {
+            passkey_check: 'counter',
+          });
+        }
+      }
+    }
+
+    this.passkeys.set(norm, next);
+    return next;
+  }
+
+  async putWebauthnChallenge(row: WebauthnChallengeRow): Promise<void> {
+    this.webauthnChallenges.set(row.challengeHash, row);
+  }
+
+  async consumeWebauthnChallenge(
+    challengeHash: string
+  ): Promise<WebauthnChallengeRow | undefined> {
+    const row = this.webauthnChallenges.get(challengeHash);
+    if (row === undefined) return undefined;
+    this.webauthnChallenges.delete(challengeHash);
+    return row;
   }
 }
