@@ -10,6 +10,7 @@
  * What the server does hold is bucket-mutating credentials, because
  * delete-by-ID is a v1 abuse control.
  */
+import { createHash } from 'node:crypto';
 
 export interface SignedUpload {
   readonly url: string;
@@ -63,6 +64,8 @@ export interface ObjectStorage {
   /** Read the bytes once, for the delete path's hash. Never for serving. */
   read(relicId: string): Promise<Uint8Array | undefined>;
   delete(relicId: string): Promise<void>;
+  /** Streaming sha256 hex of the object at that key; undefined iff absent; throws on other errors. */
+  digest(relicId: string): Promise<string | undefined>;
 }
 
 /** In-memory storage, for tests and local development. */
@@ -115,6 +118,13 @@ export class MemoryStorage implements ObjectStorage {
     this.objects.delete(relicId);
   }
 
+  async digest(relicId: string): Promise<string | undefined> {
+    const bytes = this.objects.get(relicId);
+    if (bytes === undefined) return undefined;
+    const hash = createHash('sha256');
+    hash.update(bytes);
+    return hash.digest('hex');
+  }
   /** Test seam: stand in for the client's direct-to-storage PUT. */
   put(relicId: string, bytes: Uint8Array): void {
     this.objects.set(relicId, bytes);
