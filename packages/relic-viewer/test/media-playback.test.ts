@@ -145,6 +145,7 @@ function makeMediaView(options: {
     shareUrl: 'https://relik.example/test#key',
     version: 1,
     currentVersion: 1,
+    versionDigest: '0'.repeat(64),
   };
 }
 

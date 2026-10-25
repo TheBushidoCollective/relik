@@ -30,6 +30,7 @@ import {
   sniffContentClass,
   UnknownVersionError,
   VersionMismatchError,
+  versionDigest,
 } from '@relic/format';
 import { isComponentSource } from './jsx.ts';
 import type { VaultEntry } from './vault.ts';
@@ -66,6 +67,12 @@ export interface ReadyView {
   readonly version: number;
   /** The newest revision available to this link holder. */
   readonly currentVersion: number;
+  /**
+   * Lowercase hex SHA-256 of the exact ciphertext bytes this view was
+   * decrypted from. A decision is bound to this, so the panel can refuse to
+   * run a ceremony when the service holds a different file for the version.
+   */
+  readonly versionDigest: string;
 }
 
 /** Where content is allowed to render. Never derived from the server. */
@@ -302,6 +309,7 @@ export async function load(
       'truncated_transfer'
     );
   }
+  const digest = await versionDigest(bytes);
 
   try {
     const opened = await openRelic(bytes, key, version);
@@ -340,6 +348,7 @@ export async function load(
         shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
+        versionDigest: digest,
       },
     };
   } catch (error) {
@@ -535,6 +544,7 @@ export async function loadHistoricalVersion(
         `${current.version} remains open.`,
     };
   }
+  const digest = await versionDigest(bytes);
 
   try {
     const opened = await openRelic(bytes, key, formatVersion);
@@ -571,6 +581,7 @@ export async function loadHistoricalVersion(
         shareUrl: current.shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
+        versionDigest: digest,
       },
     };
   } catch {
@@ -993,6 +1004,7 @@ export async function openRelicWithKey(
       };
     }
   }
+  const digest = await versionDigest(bytes);
 
   try {
     const opened = await openRelic(bytes, key, version);
@@ -1033,6 +1045,7 @@ export async function openRelicWithKey(
         shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
+        versionDigest: digest,
       },
     };
   } catch (error) {
