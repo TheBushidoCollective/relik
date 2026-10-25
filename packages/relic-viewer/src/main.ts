@@ -6974,11 +6974,20 @@ export function toggleCopyLinkPanel(
     hashIndex === -1 ? shareUrl : shareUrl.slice(0, hashIndex);
   const fragment = hashIndex === -1 ? '' : shareUrl.slice(hashIndex);
 
+  const urlObj = new URL(originAndPath);
+  const originSlash = `${urlObj.origin}/`;
+  const relicPath = originAndPath.slice(originSlash.length);
+
   const pathSpan = document.createElement('span');
-  pathSpan.textContent = originAndPath;
+  pathSpan.append(
+    originSlash,
+    document.createElement('wbr'),
+    relicPath
+  );
   linkValue.appendChild(pathSpan);
 
   if (fragment.length > 0) {
+    linkValue.appendChild(document.createElement('wbr'));
     const keySpan = document.createElement('span');
     keySpan.className = 'copy-link-key';
     keySpan.textContent = fragment;

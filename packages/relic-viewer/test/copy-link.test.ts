@@ -524,15 +524,16 @@ describe('Copy link panel (Spec C)', () => {
   });
 
   test('8. No toast text contains fragment or any phrase word', async () => {
-    const bar = buildBar(view, { kind: 'none' }, {});
+    const fixedUrl =
+      'https://relik.link/q7m2c9x4tz8hb3ka1w6pd5rn0e#r1CzBVep_E6Q4zWH2ix-wRNg';
+    const bar = buildBar({ ...view, shareUrl: fixedUrl }, { kind: 'none' }, {});
     dom.body.appendChild(bar);
     const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
 
-    const handle = toggleCopyLinkPanel(shareUrl, opener)!;
+    const handle = toggleCopyLinkPanel(fixedUrl, opener)!;
     await handle.ready;
     const panel = handle.element as unknown as ElementStub;
-    const words = await keyPhraseWords(shareUrl);
-
+    const words = await keyPhraseWords(fixedUrl);
     panel.querySelector<ElementStub>('[data-copy="link"]')!.fire('click');
     await Promise.resolve();
     await Promise.resolve();
@@ -681,5 +682,21 @@ describe('Copy link panel (Spec C)', () => {
 
     const input = dom.body.querySelector<ElementStub>('.key-entry-input');
     expect(input?.placeholder).toBe(KEY_ENTRY_PLACEHOLDER);
+  });
+
+  test('13. URL with query string preserves query in link value and keyless copy', () => {
+    const queryUrl = 'https://relik.link/testrelic123?utm_source=review#r1X';
+    const bar = buildBar({ ...view, shareUrl: queryUrl }, { kind: 'none' }, {});
+    dom.body.appendChild(bar);
+    const opener = bar.querySelector<ElementStub>('[data-action="copy-link"]')!;
+
+    const handle = toggleCopyLinkPanel(queryUrl, opener)!;
+    const panel = handle.element as unknown as ElementStub;
+    const linkValue = panel.querySelector('[data-copy-value="link"]');
+    expect(linkValue?.textContent).toBe(queryUrl);
+
+    expect(keylessLink(queryUrl)).toBe(
+      'https://relik.link/testrelic123?utm_source=review'
+    );
   });
 });

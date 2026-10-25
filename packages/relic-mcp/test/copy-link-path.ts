@@ -352,7 +352,8 @@ async function evaluate<T>(
 async function clickElement(
   cdp: CdpConnection,
   sessionId: string,
-  selector: string
+  selector: string,
+  offset?: { x: number; y: number }
 ): Promise<void> {
   const rect = (await evaluate(
     cdp,
@@ -361,7 +362,10 @@ async function clickElement(
     const el = document.querySelector('${selector}');
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    return {
+      x: ${offset ? `r.left + ${offset.x}` : 'r.left + r.width / 2'},
+      y: ${offset ? `r.top + ${offset.y}` : 'r.top + r.height / 2'},
+    };
   })()`
   )) as { x: number; y: number } | null;
   assert.ok(rect, `element not found for selector: ${selector}`);
@@ -1045,7 +1049,7 @@ try {
       )) === true
     );
   });
-  await clickElement(b1.cdp, b1.sessionId, '.stage');
+  await clickElement(b1.cdp, b1.sessionId, '.stage', { x: 100, y: 200 });
   await waitForCondition(async () => {
     return (
       (await evaluate<boolean>(
@@ -1338,6 +1342,24 @@ try {
       )) === true
     );
   });
+  await evaluate(b1.cdp, b1.sessionId, `(() => {
+    const toast = document.querySelector('.toast');
+    if (!toast) return Promise.resolve();
+    return Promise.all(toast.getAnimations().map(a => a.finished));
+  })()`);
+  await Bun.sleep(50);
+  const toastCenterIsToast320 = await evaluate<boolean>(
+    b1.cdp,
+    b1.sessionId,
+    `(() => {
+      const toast = document.querySelector('.toast');
+      if (!toast) return false;
+      const r = toast.getBoundingClientRect();
+      const topEl = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return Boolean(topEl && (topEl === toast || toast.contains(topEl)));
+    })()`
+  );
+  assert.ok(toastCenterIsToast320, 'toast at 320 not above panel');
   await captureShot(b1.cdp, b1.sessionId, 'toast-320-light.png');
 
   await pressKey(b1.cdp, b1.sessionId, 'Escape', 'Escape', 27);
