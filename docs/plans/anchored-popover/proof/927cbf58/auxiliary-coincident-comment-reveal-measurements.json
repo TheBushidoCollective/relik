@@ -151,9 +151,7 @@
         "usableRight": 548,
         "hitId": "ZmZIpB2WenWlixTceclPCg",
         "hitOwned": true,
-        "activeIds": [
-          "ZmZIpB2WenWlixTceclPCg"
-        ],
+        "activeIds": ["ZmZIpB2WenWlixTceclPCg"],
         "cardId": "ZmZIpB2WenWlixTceclPCg",
         "cardVisible": true,
         "bodyPresent": true,
@@ -301,9 +299,7 @@
         "usableRight": 548,
         "hitId": "_G_OSiPG15lB_qEInLETXQ",
         "hitOwned": true,
-        "activeIds": [
-          "_G_OSiPG15lB_qEInLETXQ"
-        ],
+        "activeIds": ["_G_OSiPG15lB_qEInLETXQ"],
         "cardId": "_G_OSiPG15lB_qEInLETXQ",
         "cardVisible": true,
         "bodyPresent": true,
