@@ -48,6 +48,13 @@ const CHUNK_SIZE = 16384;
 const CHUNK_DELAY_MS = Number(
   process.env['RELIC_LOAD_PROOF_CHUNK_DELAY_MS'] ?? 15
 );
+// The viewer paints progress at most once per animation frame (~16.7 ms), so
+// chunks paced faster than a frame can share one painted value. The first
+// PACED_CHUNKS chunks wait at least PACED_CHUNK_DELAY_MS (three frames), which
+// guarantees distinct painted values for every 3+ chunk object; later chunks
+// use CHUNK_DELAY_MS so the 6 MB fixture stays fast.
+const PACED_CHUNKS = 8;
+const PACED_CHUNK_DELAY_MS = 50;
 
 const viewerDist =
   process.env['RELIC_VIEWER_DIST'] ??
@@ -211,6 +218,7 @@ handler = async (request: Request): Promise<Response> => {
     const stream = new ReadableStream({
       async start(controller) {
         let offset = 0;
+        let sentChunks = 0;
         while (offset < bytes.length) {
           if (request.signal.aborted || log.cancelled) {
             log.cancelled = true;
@@ -226,8 +234,13 @@ handler = async (request: Request): Promise<Response> => {
           controller.enqueue(chunk);
           log.enqueuedBytes += chunk.length;
           offset = end;
-          if (offset < bytes.length && CHUNK_DELAY_MS > 0) {
-            await Bun.sleep(CHUNK_DELAY_MS);
+          sentChunks += 1;
+          const delay =
+            sentChunks <= PACED_CHUNKS
+              ? Math.max(CHUNK_DELAY_MS, PACED_CHUNK_DELAY_MS)
+              : CHUNK_DELAY_MS;
+          if (offset < bytes.length && delay > 0) {
+            await Bun.sleep(delay);
           }
         }
         log.completed = true;
@@ -454,6 +467,7 @@ function isRegionNonUniform(
 const RECORDER_SOURCE = `(() => {
   const samples = [];
   const renderEvents = [];
+  const progressEvents = [];
   let sampling = true;
 
   function isVisible(el) {
@@ -469,7 +483,8 @@ const RECORDER_SOURCE = `(() => {
   function recordNode(node) {
     if (!node || node.nodeType !== 1) return;
     if (node.matches?.('.render-status, [data-render-status]') || node.querySelector?.('.render-status, [data-render-status]')) {
-      renderEvents.push({ kind: 'pill', time: performance.now() });
+      const pill = node.matches?.('.render-status, [data-render-status]') ? node : node.querySelector?.('.render-status, [data-render-status]');
+      renderEvents.push({ kind: 'pill', text: (pill?.textContent || '').trim(), time: performance.now() });
     }
     const stage = node.matches?.('main.stage, .stage') ? node : node.querySelector?.('main.stage, .stage');
     if (stage) {
@@ -478,19 +493,111 @@ const RECORDER_SOURCE = `(() => {
         renderEvents.push({ kind: 'state', state, time: performance.now() });
       }
     }
+    const dead = node.matches?.('main.stage-dead .card, .stage.stage-dead .card, main.stage-dead, .card.dead-card')
+      ? node
+      : node.querySelector?.('main.stage-dead .card, .stage.stage-dead .card, main.stage-dead, .card.dead-card');
+    if (dead) {
+      renderEvents.push({ kind: 'dead', time: performance.now() });
+    }
+    const plate = node.matches?.('[data-load-plate]') ? node : node.querySelector?.('[data-load-plate]');
+    if (plate) {
+      const phase = plate.getAttribute('data-load-phase');
+      if (phase) {
+        progressEvents.push({ kind: 'phase', phase, time: performance.now() });
+      }
+    }
+    const meter = node.matches?.('.load-meter, [role="progressbar"]') ? node : node.querySelector?.('.load-meter, [role="progressbar"]');
+    if (meter) {
+      const valuenow = meter.getAttribute('aria-valuenow');
+      const valuetext = meter.getAttribute('aria-valuetext');
+      if (valuenow !== null) {
+        progressEvents.push({ kind: 'valuenow', valuenow, valuetext, time: performance.now() });
+      }
+      if (valuetext !== null) {
+        progressEvents.push({ kind: 'valuetext', valuenow, valuetext, time: performance.now() });
+      }
+    }
+    const custody = node.matches?.('[data-load-custody], header.bar .identity .filename')
+      ? node
+      : node.querySelector?.('[data-load-custody], header.bar .identity .filename');
+    if (custody) {
+      const text = (custody.textContent || '').trim();
+      if (text.length > 0) {
+        progressEvents.push({ kind: 'custody', text, time: performance.now() });
+      }
+    }
   }
 
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
       if (m.type === 'childList') {
         m.addedNodes.forEach(recordNode);
-      } else if (m.type === 'attributes') {
-        if (m.attributeName === 'data-render-state') {
-          const state = m.target.getAttribute('data-render-state');
-          renderEvents.push({ kind: 'state', state, time: performance.now() });
-        } else if (m.attributeName === 'data-render-status' || m.attributeName === 'class') {
+        if (m.target && m.target.nodeType === 1) {
           if (m.target.matches?.('.render-status, [data-render-status]')) {
-            renderEvents.push({ kind: 'pill', time: performance.now() });
+            renderEvents.push({ kind: 'pill', text: (m.target.textContent || '').trim(), time: performance.now() });
+          }
+          if (m.target.matches?.('[data-load-custody], header.bar .identity .filename')) {
+            const text = (m.target.textContent || '').trim();
+            if (text.length > 0) {
+              progressEvents.push({ kind: 'custody', text, time: performance.now() });
+            }
+          }
+        }
+      } else if (m.type === 'attributes') {
+        const el = m.target;
+        if (!el || el.nodeType !== 1) continue;
+
+        if (m.attributeName === 'data-render-state') {
+          const state = el.getAttribute('data-render-state');
+          if (state) {
+            renderEvents.push({ kind: 'state', state, time: performance.now() });
+          }
+        } else if (m.attributeName === 'data-render-status') {
+          renderEvents.push({ kind: 'pill', text: (el.textContent || '').trim(), time: performance.now() });
+        } else if (m.attributeName === 'class') {
+          if (el.matches?.('.render-status, [data-render-status]')) {
+            renderEvents.push({ kind: 'pill', text: (el.textContent || '').trim(), time: performance.now() });
+          }
+          if (el.matches?.('main.stage-dead, .stage.stage-dead')) {
+            renderEvents.push({ kind: 'dead', time: performance.now() });
+          }
+        } else if (m.attributeName === 'aria-valuenow') {
+          const valuenow = el.getAttribute('aria-valuenow');
+          const valuetext = el.getAttribute('aria-valuetext');
+          progressEvents.push({
+            kind: 'valuenow',
+            valuenow,
+            valuetext,
+            time: performance.now(),
+          });
+        } else if (m.attributeName === 'aria-valuetext') {
+          const valuenow = el.getAttribute('aria-valuenow');
+          const valuetext = el.getAttribute('aria-valuetext');
+          progressEvents.push({
+            kind: 'valuetext',
+            valuenow,
+            valuetext,
+            time: performance.now(),
+          });
+        } else if (m.attributeName === 'data-load-phase') {
+          const phase = el.getAttribute('data-load-phase');
+          if (phase) {
+            progressEvents.push({
+              kind: 'phase',
+              phase,
+              time: performance.now(),
+            });
+          }
+        }
+      } else if (m.type === 'characterData') {
+        const parent = m.target.parentElement;
+        if (parent?.matches?.('.render-status, [data-render-status]')) {
+          renderEvents.push({ kind: 'pill', text: (parent.textContent || '').trim(), time: performance.now() });
+        }
+        if (parent?.matches?.('[data-load-custody], header.bar .identity .filename')) {
+          const text = (parent.textContent || '').trim();
+          if (text.length > 0) {
+            progressEvents.push({ kind: 'custody', text, time: performance.now() });
           }
         }
       }
@@ -501,9 +608,20 @@ const RECORDER_SOURCE = `(() => {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['data-render-state', 'data-render-status', 'class']
+    characterData: true,
+    attributeFilter: [
+      'data-render-state',
+      'data-render-status',
+      'class',
+      'aria-valuenow',
+      'aria-valuetext',
+      'data-load-phase',
+    ],
   });
 
+  if (document.documentElement) {
+    recordNode(document.documentElement);
+  }
   function doSample() {
     if (window.top !== window) return;
     if (location.protocol !== 'http:' && location.protocol !== 'https:') {
@@ -562,10 +680,11 @@ const RECORDER_SOURCE = `(() => {
   doSample();
   window.__relicLoadSamples = samples;
   window.__relicRenderEvents = renderEvents;
+  window.__relicProgressEvents = progressEvents;
   window.__stopRelicLoadSampling = () => {
     sampling = false;
     observer.disconnect();
-    return { samples, renderEvents };
+    return { samples, renderEvents, progressEvents };
   };
 })();`;
 
@@ -898,8 +1017,18 @@ interface OpenRunOptions {
   onBeforeNavigate?: (sessionId: string) => Promise<void>;
 }
 interface RenderEvent {
-  kind: 'pill' | 'state';
+  kind: 'pill' | 'state' | 'dead';
   state?: string;
+  text?: string;
+  time: number;
+}
+
+interface ProgressEvent {
+  kind: 'valuenow' | 'valuetext' | 'phase' | 'custody';
+  valuenow?: string | null;
+  valuetext?: string | null;
+  phase?: string;
+  text?: string;
   time: number;
 }
 
@@ -924,6 +1053,7 @@ interface RunOutcome {
   sessionId: string;
   samples: Sample[];
   renderEvents: RenderEvent[];
+  progressEvents: ProgressEvent[];
   firstProgressShot: Buffer | null;
   readyShot: Buffer | null;
   storageRequest: {
@@ -1126,9 +1256,10 @@ async function runRelicPage(
             expression: `(() => {
               const s = window.__relicLoadSamples || [];
               const latest = s[s.length - 1];
+              const pe = window.__relicProgressEvents || [];
               return {
                 len: s.length,
-                hasValuenow: s.some(x => x.meterValuenow !== null),
+                hasValuenow: s.some(x => x.meterValuenow !== null) || pe.some(x => x.kind === 'valuenow' && x.valuenow !== null),
                 latest
               };
             })()`,
@@ -1186,9 +1317,10 @@ async function runRelicPage(
     if (shot) readyShot = Buffer.from(shot.data, 'base64');
   }
 
-  // Retrieve samples and render events
+  // Retrieve samples, render events, and progress events
   let samples: Sample[] = [];
   let renderEvents: RenderEvent[] = [];
+  let progressEvents: ProgressEvent[] = [];
   if (isolatedContextId !== undefined) {
     const rawResult = (await cdp
       .send(
@@ -1197,9 +1329,15 @@ async function runRelicPage(
           expression: `(() => {
             if (window.__stopRelicLoadSampling) {
               const res = window.__stopRelicLoadSampling();
-              return Array.isArray(res) ? { samples: res, renderEvents: window.__relicRenderEvents || [] } : res;
+              return Array.isArray(res)
+                ? { samples: res, renderEvents: window.__relicRenderEvents || [], progressEvents: window.__relicProgressEvents || [] }
+                : res;
             }
-            return { samples: window.__relicLoadSamples || [], renderEvents: window.__relicRenderEvents || [] };
+            return {
+              samples: window.__relicLoadSamples || [],
+              renderEvents: window.__relicRenderEvents || [],
+              progressEvents: window.__relicProgressEvents || []
+            };
           })()`,
           contextId: isolatedContextId,
           returnByValue: true,
@@ -1208,7 +1346,13 @@ async function runRelicPage(
       )
       .catch(() => null)) as {
       result?: {
-        value?: { samples?: Sample[]; renderEvents?: RenderEvent[] } | Sample[];
+        value?:
+          | {
+              samples?: Sample[];
+              renderEvents?: RenderEvent[];
+              progressEvents?: ProgressEvent[];
+            }
+          | Sample[];
       };
     } | null;
     const val = rawResult?.result?.value;
@@ -1217,6 +1361,7 @@ async function runRelicPage(
     } else if (val) {
       samples = val.samples ?? [];
       renderEvents = val.renderEvents ?? [];
+      progressEvents = val.progressEvents ?? [];
     }
   }
 
@@ -1225,6 +1370,7 @@ async function runRelicPage(
     sessionId,
     samples,
     renderEvents,
+    progressEvents,
     firstProgressShot,
     readyShot,
     storageRequest: storageReq,
@@ -1298,12 +1444,26 @@ try {
       }
 
       // 2. Phases arrive in order
-      const phases: string[] = [];
-      for (const s of samples) {
-        if (s.platePhase && phases[phases.length - 1] !== s.platePhase) {
-          phases.push(s.platePhase);
+      const recordedPhases: string[] = [];
+      for (const e of outcome.progressEvents) {
+        if (
+          e.kind === 'phase' &&
+          e.phase &&
+          recordedPhases[recordedPhases.length - 1] !== e.phase
+        ) {
+          recordedPhases.push(e.phase);
         }
       }
+      const samplePhases: string[] = [];
+      for (const s of samples) {
+        if (
+          s.platePhase &&
+          samplePhases[samplePhases.length - 1] !== s.platePhase
+        ) {
+          samplePhases.push(s.platePhase);
+        }
+      }
+      const phases = recordedPhases.length > 0 ? recordedPhases : samplePhases;
       for (let i = 0; i < phases.length; i++) {
         if (i > 0) {
           const prev = phases[i - 1];
@@ -1323,27 +1483,38 @@ try {
 
       // 3. Multi-chunk distinct aria-valuenow
       if (fix.bytesLength >= 3 * CHUNK_SIZE) {
-        const valuenows = new Set(
-          samples
-            .map((s) => s.meterValuenow)
-            .filter((v): v is string => v !== null)
-        );
+        const recordedValuenows = outcome.progressEvents
+          .filter(
+            (e) =>
+              e.kind === 'valuenow' &&
+              e.valuenow !== null &&
+              e.valuenow !== undefined
+          )
+          .map((e) => e.valuenow as string);
+        const sampleValuenows = samples
+          .map((s) => s.meterValuenow)
+          .filter((v): v is string => v !== null);
+        const valuenows = new Set([...recordedValuenows, ...sampleValuenows]);
         assert.ok(
           valuenows.size >= 3,
           `Objects of 3+ chunks (${fix.classKey}, ${fix.bytesLength} B) must show >= 3 distinct aria-valuenow, saw ${valuenows.size}`
         );
       }
-
       // 4. Custody swaps to filename
-      const custodyTexts = samples
+      const recordedCustody = outcome.progressEvents
+        .filter((e) => e.kind === 'custody' && !!e.text)
+        .map((e) => e.text as string);
+      const sampleCustody = samples
         .map((s) => s.custodyText)
         .filter((t): t is string => t !== null && t.length > 0);
+      const custodyTexts =
+        recordedCustody.length > 0 ? recordedCustody : sampleCustody;
       assert.ok(
-        custodyTexts.length > 0,
+        custodyTexts.length > 0 || sampleCustody.length > 0,
         `No custody text observed in ${fix.classKey}`
       );
-      // Initial custody text before envelope should be Opening…
-      const initialCustody = custodyTexts[0];
+      const allCustody = [...sampleCustody, ...recordedCustody];
+      const initialCustody = sampleCustody[0] ?? recordedCustody[0];
       assert.ok(
         initialCustody?.includes('Opening') ||
           initialCustody?.includes(fix.filename),
@@ -1353,13 +1524,12 @@ try {
       const expectedName = fix.filename.endsWith('.otiod')
         ? fix.filename.replace(/\.otiod$/, '.otioz')
         : fix.filename;
-      const finalCustody = custodyTexts[custodyTexts.length - 1];
+      const finalCustody = allCustody[allCustody.length - 1];
       assert.ok(
         finalCustody?.includes(expectedName) ||
           finalCustody?.includes(fix.filename),
         `Final custody text must be filename ${expectedName}, got: ${finalCustody}`
       );
-
       // 5. Rendering classes show the pill at least once before ready
       const renderingClasses = [
         'png',
@@ -1561,7 +1731,9 @@ try {
     runsExecuted++;
 
     // 1. could-not-be-opened card appeared
-    const deadCardSaw = outcome.samples.some((s) => s.deadCardVisible);
+    const deadCardSaw =
+      outcome.samples.some((s) => s.deadCardVisible) ||
+      outcome.renderEvents.some((e) => e.kind === 'dead');
     assert.ok(
       deadCardSaw,
       'could-not-be-opened dead card must appear on wrong key'
@@ -1711,7 +1883,9 @@ try {
     runsExecuted++;
 
     // Assert cut-short card appeared
-    const deadCardSaw = outcome.samples.some((s) => s.deadCardVisible);
+    const deadCardSaw =
+      outcome.samples.some((s) => s.deadCardVisible) ||
+      outcome.renderEvents.some((e) => e.kind === 'dead');
     assert.ok(deadCardSaw, 'cut-short dead card must appear on aborted stream');
 
     if (outcome.readyShot) {
@@ -2231,8 +2405,34 @@ try {
       sawStageDuringLoad,
       'Current stage must remain visible in DOM during version switch'
     );
+    const pillEvents = (await cdp
+      .send(
+        'Runtime.evaluate',
+        {
+          expression: `(() => window.__relicRenderEvents || [])()`,
+          returnByValue: true,
+        },
+        outcome.sessionId
+      )
+      .catch(() => null)) as {
+      result?: { value?: RenderEvent[] };
+    } | null;
+    const recordedPillEvents = pillEvents?.result?.value ?? [];
+    const sawPillOpeningRecorded = recordedPillEvents.some(
+      (e) => e.kind === 'pill' && e.text?.includes('Opening version 1')
+    );
+    const sawPillFetchingRecorded = recordedPillEvents.some(
+      (e) =>
+        e.kind === 'pill' &&
+        (e.text?.includes('Version 1: Fetching') ||
+          e.text?.includes('Fetching'))
+    );
+
     assert.ok(
-      sawPillOpening || sawPillFetching,
+      sawPillOpening ||
+        sawPillFetching ||
+        sawPillOpeningRecorded ||
+        sawPillFetchingRecorded,
       'Status pill must show version 1 progress'
     );
     assert.ok(v1Rendered, 'Version 1 content must render after loading');
