@@ -366,6 +366,21 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(resolve));
 }
 
+async function waitForCondition(
+  label: string,
+  predicate: () => boolean,
+  timeoutMs = 5000,
+  intervalMs = 5
+): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timed out waiting for ${label} after ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
   let rootBody: ElementStub;
   let reloadCalled: boolean;
@@ -812,6 +827,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     };
 
     let fetchCount = 0;
+    let blobFetchCount = 0;
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
       locationHref: 'https://relic.example/r1',
@@ -820,6 +836,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
         fetchCount++;
         const url = String(input);
         if (url.includes('/blob')) {
+          blobFetchCount++;
           return new Response(container as unknown as BodyInit);
         }
         return new Response('', { status: 404 });
@@ -850,24 +867,27 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     // 1. Submit wrong key: checked against cachedPrefix locally, zero fetch calls!
     input.value = wrongKeyFragment;
     form.submit();
-    for (let i = 0; i < 50 && feedback.textContent === ''; i++) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    await waitForCondition(
+      'wrong-key feedback to appear',
+      () => feedback.textContent !== ''
+    );
 
     expect(feedback.textContent).toBe('That key does not open this relic.');
     expect(fetchCount).toBe(0);
+    expect(blobFetchCount).toBe(0);
 
     // 2. Submit right key: fetches object and opens
     input.value = rightKeyFragment;
     form.submit();
-    for (
-      let i = 0;
-      i < 100 && rootBody.querySelector('main.stage-dead') !== null;
-      i++
-    ) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    expect(fetchCount).toBe(1);
+    await waitForCondition(
+      'right-key blob fetch call',
+      () => blobFetchCount === 1
+    );
+    await waitForCondition(
+      'right key to open and mount relic stage',
+      () => rootBody.querySelector('main.stage-dead') === null
+    );
+    expect(blobFetchCount).toBe(1);
     // Relic content stage was mounted
     expect(rootBody.querySelector('main.stage-dead')).toBeNull();
   });
