@@ -11,6 +11,7 @@ import {
   isClearMarksMessage,
   isFrameMarkClickMessage,
   isFrameMarkHoverMessage,
+  isFrameMarkRectMessage,
   isFrameOpenLinkMessage,
   isFramePointMessage,
   isFrameRegionMessage,
@@ -18,6 +19,7 @@ import {
   isPaintMarkMessage,
   isPaintMarksMessage,
   isRevealMarkMessage,
+  isTrackMarkMessage,
   normaliseFrameExternalLink,
   takeHeadUtf8,
   takeTailUtf8,
@@ -129,6 +131,25 @@ class MockNode {
   }
   set id(val: string) {
     this.attributes.id = val;
+  }
+  getBoundingClientRect(): { left: number; top: number; width: number; height: number; right: number; bottom: number } {
+    const left = parseFloat(this.style.left || '0') || 0;
+    const top = parseFloat(this.style.top || '0') || 0;
+    const width = parseFloat(this.style.width || '0') || 0;
+    const height = parseFloat(this.style.height || '0') || 0;
+    return {
+      left,
+      top,
+      width,
+      height,
+      right: left + width,
+      bottom: top + height,
+    };
+  }
+  getClientRects(): Array<{ left: number; top: number; width: number; height: number; right: number; bottom: number }> {
+    const b = this.getBoundingClientRect();
+    if (b.width > 0 || b.height > 0) return [b];
+    return [];
   }
   constructor(nodeType: number, name: string) {
     this.nodeType = nodeType;
@@ -416,22 +437,37 @@ let mockWin: {
   getSelection: () => unknown;
   parent: unknown;
   scrollTo: () => void;
+  listeners: Map<string, Array<(e: unknown) => void>>;
+  addEventListener?: (type: string, handler: (e: unknown) => void) => void;
+  removeEventListener?: (type: string, handler: (e: unknown) => void) => void;
 } = {
   getSelection: () => null,
   parent: {},
   scrollTo: () => {},
+  listeners: new Map(),
 };
 mockDoc.defaultView = mockWin;
 
 beforeEach(() => {
   mockDoc = new MockDocument();
+  const listeners = new Map<string, Array<(e: unknown) => void>>();
   mockWin = {
     getSelection: () => null,
     parent: {},
     scrollTo: () => {},
+    listeners,
+    addEventListener: (type: string, handler: (e: unknown) => void) => {
+      const held = listeners.get(type) ?? [];
+      held.push(handler);
+      listeners.set(type, held);
+    },
+    removeEventListener: (type: string, handler: (e: unknown) => void) => {
+      const held = listeners.get(type) ?? [];
+      const at = held.indexOf(handler);
+      if (at >= 0) held.splice(at, 1);
+    },
   };
   mockDoc.defaultView = mockWin;
-
   const g = globalThis as {
     document?: unknown;
     window?: unknown;
@@ -527,33 +563,119 @@ describe('frame message validation', () => {
   });
 
   test('validates well-formed frame point messages', () => {
-    expect(
-      isFramePointMessage({ type: 'relic:frame-point', x: 0.5, y: 0.25 })
-    ).toBe(true);
-    expect(isFramePointMessage({ type: 'relic:frame-point', x: 0, y: 1 })).toBe(
-      true
-    );
-  });
+     expect(
+      isFramePointMessage({
+        type: 'relic:frame-point',
+        x: 0.5,
+        y: 0.25,
+        box: { left: 10, top: 20, width: 20, height: 20 },
+      })
+     ).toBe(true);
+     expect(isFramePointMessage({ type: 'relic:frame-point', x: 0, y: 1 })).toBe(
+       true
+     );
+   });
 
-  test('rejects malformed frame point messages', () => {
-    expect(isFramePointMessage(null)).toBe(false);
-    expect(
-      isFramePointMessage({ type: 'relic:frame-point', x: -0.1, y: 0.5 })
-    ).toBe(false);
-    expect(
-      isFramePointMessage({ type: 'relic:frame-point', x: 1.1, y: 0.5 })
-    ).toBe(false);
-    expect(
-      isFramePointMessage({ type: 'relic:frame-point', x: Number.NaN, y: 0.5 })
-    ).toBe(false);
+   test('rejects malformed frame point messages', () => {
+     expect(isFramePointMessage(null)).toBe(false);
+     expect(
+       isFramePointMessage({ type: 'relic:frame-point', x: -0.1, y: 0.5 })
+     ).toBe(false);
+     expect(
+       isFramePointMessage({ type: 'relic:frame-point', x: 1.1, y: 0.5 })
+     ).toBe(false);
+     expect(
+       isFramePointMessage({ type: 'relic:frame-point', x: Number.NaN, y: 0.5 })
+     ).toBe(false);
+     expect(
+       isFramePointMessage({
+         type: 'relic:frame-point',
+         x: 0.5,
+         y: Number.POSITIVE_INFINITY,
+       })
+     ).toBe(false);
+     expect(isFramePointMessage({ type: 'other', x: 0.5, y: 0.5 })).toBe(false);
     expect(
       isFramePointMessage({
         type: 'relic:frame-point',
         x: 0.5,
-        y: Number.POSITIVE_INFINITY,
+        y: 0.5,
+        box: { left: 0, top: 0, width: -1, height: 20 },
       })
     ).toBe(false);
-    expect(isFramePointMessage({ type: 'other', x: 0.5, y: 0.5 })).toBe(false);
+   });
+
+   test('validates well-formed frame region messages', () => {
+     expect(
+       isFrameRegionMessage({
+         type: 'relic:frame-region',
+         rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+        box: { left: 10, top: 20, width: 30, height: 40 },
+       })
+     );
+     expect(
+       isFrameRegionMessage({
+         type: 'relic:frame-region',
+         rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+       })
+     ).toBe(true);
+   });
+
+   test('rejects malformed frame region messages', () => {
+     expect(isFrameRegionMessage(null)).toBe(false);
+     expect(
+       isFrameRegionMessage({
+         type: 'relic:frame-region',
+         rect: { x: 0.1, y: 0.2, w: 0, h: 0.4 },
+       })
+     ).toBe(false);
+     expect(
+       isFrameRegionMessage({
+         type: 'relic:frame-region',
+         rect: { x: 0.8, y: 0.2, w: 0.5, h: 0.4 },
+       })
+     ).toBe(false);
+    expect(
+      isFrameRegionMessage({
+        type: 'relic:frame-region',
+        rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+        box: { left: 0, top: 0, width: 10, height: Number.NaN },
+      })
+    ).toBe(false);
+   });
+
+  test('validates track mark messages', () => {
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 'm1' })).toBe(true);
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: null })).toBe(true);
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: '' })).toBe(false);
+    expect(isTrackMarkMessage({ type: 'relic:track-mark', id: 123 })).toBe(false);
+    expect(isTrackMarkMessage(null)).toBe(false);
+  });
+
+  test('validates frame mark rect messages', () => {
+    expect(
+      isFrameMarkRectMessage({
+        type: 'relic:frame-mark-rect',
+        id: 'm1',
+        rect: { left: 10, top: 20, width: 30, height: 40 },
+        first: { left: 10, top: 20, width: 30, height: 20 },
+      })
+    ).toBe(true);
+    expect(isFrameMarkRectMessage({ type: 'relic:frame-mark-rect', id: 'm1' })).toBe(true);
+    expect(
+      isFrameMarkRectMessage({
+        type: 'relic:frame-mark-rect',
+        id: 'm1',
+        rect: { left: 0, top: 0, width: -5, height: 10 },
+      })
+    ).toBe(false);
+    expect(
+      isFrameMarkRectMessage({
+        type: 'relic:frame-mark-rect',
+        id: 'm1',
+        first: { left: 0, top: 0, width: 10, height: -1 },
+      })
+    ).toBe(false);
   });
 
   test('validates well-formed frame region messages', () => {
@@ -1035,10 +1157,114 @@ describe('pointing at a long framed document', () => {
 
     expect(messages.filter(isFrameRegionMessage)).toHaveLength(0);
     expect(messages.filter(isFramePointMessage)).toEqual([
-      { type: 'relic:frame-point', x: 152 / 1088, y: 440 / 9583 },
+      {
+        type: 'relic:frame-point',
+        x: 152 / 1088,
+        y: 440 / 9583,
+        box: { left: 144, top: 431, width: 20, height: 20 },
+      },
     ]);
+   });
+
+  test('a region release posts relic:frame-region with the drawn element getBoundingClientRect', () => {
+    sizeDocument(1000, 2000);
+    const messages: object[] = [];
+    armedFrame(messages);
+
+    mockDoc.body.dispatchEvent({ type: 'mousedown', pageX: 100, pageY: 200 });
+    mockDoc.body.dispatchEvent({ type: 'mousemove', pageX: 300, pageY: 400 });
+    mockDoc.body.dispatchEvent({ type: 'mouseup', pageX: 300, pageY: 400 });
+
+    const regions = messages.filter(isFrameRegionMessage);
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.box).toEqual({
+      left: 100,
+      top: 200,
+      width: 200,
+      height: 200,
+    });
   });
 
+  test('tracking: relic:track-mark { id: m1 } reports immediately and on scroll, resize, mark mutations', () => {
+    sizeDocument(1000, 2000);
+    const messages: object[] = [];
+    const interaction = setupFrameInteraction(
+      mockDoc as unknown as Document,
+      mockWin as unknown as Window,
+      (msg) => messages.push(msg)
+    );
+
+    const markEl = mockDoc.createElement('mark');
+    markEl.dataset.commentId = 'm1';
+    markEl.style.left = '50px';
+    markEl.style.top = '100px';
+    markEl.style.width = '80px';
+    markEl.style.height = '20px';
+    mockDoc.body.appendChild(markEl);
+
+    interaction.onTrackMark('m1');
+    const rects1 = messages.filter(isFrameMarkRectMessage);
+    expect(rects1).toHaveLength(1);
+    expect(rects1[0]).toEqual({
+      type: 'relic:frame-mark-rect',
+      id: 'm1',
+      rect: { left: 50, top: 100, width: 80, height: 20 },
+      first: { left: 50, top: 100, width: 80, height: 20 },
+    });
+
+    mockWin.listeners.get('scroll')?.forEach((h) => h(new Event('scroll')));
+    const rects2 = messages.filter(isFrameMarkRectMessage);
+    expect(rects2.length).toBeGreaterThan(1);
+
+    mockWin.listeners.get('resize')?.forEach((h) => h(new Event('resize')));
+    const rects3 = messages.filter(isFrameMarkRectMessage);
+    expect(rects3.length).toBeGreaterThan(rects2.length);
+
+    interaction.onPaintMark({ kind: 'region', id: 'm1', rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 } });
+    const rects4 = messages.filter(isFrameMarkRectMessage);
+    expect(rects4.length).toBeGreaterThan(rects3.length);
+
+    interaction.onTrackMark(null);
+    const countBefore = messages.filter(isFrameMarkRectMessage).length;
+    mockWin.listeners.get('scroll')?.forEach((h) => h(new Event('scroll')));
+    expect(messages.filter(isFrameMarkRectMessage)).toHaveLength(countBefore);
+  });
+
+  test('onActiveMark(id) posts relic:frame-mark-rect for that id without altering tracked id', () => {
+    sizeDocument(1000, 2000);
+    const messages: object[] = [];
+    const interaction = setupFrameInteraction(
+      mockDoc as unknown as Document,
+      mockWin as unknown as Window,
+      (msg) => messages.push(msg)
+    );
+
+    const markEl = mockDoc.createElement('div');
+    markEl.dataset.commentId = 'active1';
+    markEl.style.left = '30px';
+    markEl.style.top = '40px';
+    markEl.style.width = '60px';
+    markEl.style.height = '50px';
+    mockDoc.body.appendChild(markEl);
+
+    interaction.onTrackMark('tracked1');
+    messages.length = 0;
+
+    interaction.onActiveMark('active1');
+    const rects = messages.filter(isFrameMarkRectMessage);
+    expect(rects).toHaveLength(1);
+    expect(rects[0]).toEqual({
+      type: 'relic:frame-mark-rect',
+      id: 'active1',
+      rect: { left: 30, top: 40, width: 60, height: 50 },
+    });
+
+    messages.length = 0;
+    mockWin.listeners.get('scroll')?.forEach((h) => h(new Event('scroll')));
+    const scrollReports = messages.filter(isFrameMarkRectMessage);
+    expect(scrollReports).toHaveLength(1);
+    expect(scrollReports[0]!.id).toBe('tracked1');
+  });
   test('an armed press does not start a text selection; a disarmed one does', () => {
     const interaction = setupFrameInteraction(
       mockDoc as unknown as Document,

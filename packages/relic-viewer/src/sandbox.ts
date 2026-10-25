@@ -40,6 +40,7 @@ import { createRoot } from 'react-dom/client';
 import {
   FRAME_SELECTION_TEXT_LIMIT_BYTES,
   type FrameMarkPayload,
+  type FrameMarkRectMessage,
   type FramePointMessage,
   type FrameRect,
   type FrameRegionMessage,
@@ -48,14 +49,17 @@ import {
   isArmPointingMessage,
   isClearMarkMessage,
   isClearMarksMessage,
+  isFrameMarkRectMessage,
   isPaintMarkMessage,
   isPaintMarksMessage,
   isQuietMarksMessage,
   isRevealMarkMessage,
+  isTrackMarkMessage,
   normaliseFrameExternalLink,
   type RevealMarkMessage,
   takeHeadUtf8,
   takeTailUtf8,
+  type TrackMarkMessage,
 } from './annotate-frame.ts';
 import { isSetScrollMessage } from './frame-scroll.ts';
 import {
@@ -114,8 +118,7 @@ export interface FrameInteractionHandler {
   onClearMarks(): void;
   onRevealMark(msg: RevealMarkMessage): void;
   onPairMark(id: string, active: boolean): void;
-  // Optional like onSetScroll: interaction stubs in older frame tests predate
-  // active-mark and must not have to know about it.
+  onTrackMark?(id: string | null): void;
   onActiveMark?(id: string | null): void;
   onQuietMarks?(ids: readonly string[]): void;
   onRevealChange?(changeId: string, top: number): void;
@@ -124,8 +127,7 @@ export interface FrameInteractionHandler {
 
 export interface FrameInteraction extends FrameInteractionHandler {
   isArmed(): boolean;
-  // The real interaction always carries this; only the loose
-  // FrameInteractionHandler param leaves it open to older stubs.
+  onTrackMark(id: string | null): void;
   onActiveMark(id: string | null): void;
   onQuietMarks(ids: readonly string[]): void;
   onRevealChange(changeId: string, top: number): void;
@@ -814,7 +816,111 @@ export function setupFrameInteraction(
   // popover, so it is sent only on the transition, never on every event
   // that merely happens while nothing is selected.
   let selectionLive = false;
+  let trackedId: string | null = null;
+  let trackRaf: number | undefined;
 
+  const reportMarkRect = (document: Document, id: string): FrameMarkRectMessage => {
+    if (!document.body) {
+      return { type: 'relic:frame-mark-rect', id };
+    }
+    const matching: HTMLElement[] = [];
+    for (const el of Array.from(document.body.querySelectorAll('[data-comment-id]'))) {
+      if ((el as HTMLElement).dataset?.commentId === id) {
+        matching.push(el as HTMLElement);
+      }
+    }
+
+    const candidates: { el: HTMLElement; rects: DOMRect[] }[] = [];
+    for (const el of matching) {
+      let clientRects: DOMRect[] = [];
+      try {
+        clientRects = Array.from(el.getClientRects?.() ?? []).filter(
+          (r) => r.width > 0 || r.height > 0
+        );
+      } catch {
+        clientRects = [];
+      }
+      if (clientRects.length > 0) {
+        candidates.push({ el, rects: clientRects });
+      } else {
+        try {
+          const b = el.getBoundingClientRect?.();
+          if (b && (b.width > 0 || b.height > 0)) {
+            candidates.push({ el, rects: [b as DOMRect] });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      return { type: 'relic:frame-mark-rect', id };
+    }
+
+    const isMark = candidates.some((c) => c.el.tagName === 'MARK');
+    if (isMark) {
+      const allRects: DOMRect[] = [];
+      for (const c of candidates) {
+        allRects.push(...c.rects);
+      }
+      const firstRect = allRects[0]!;
+      const minLeft = Math.min(...allRects.map((r) => r.left));
+      const minTop = Math.min(...allRects.map((r) => r.top));
+      const maxRight = Math.max(...allRects.map((r) => r.right ?? r.left + r.width));
+      const maxBottom = Math.max(...allRects.map((r) => r.bottom ?? r.top + r.height));
+      const unionRect: FrameRect = {
+        left: minLeft,
+        top: minTop,
+        width: maxRight - minLeft,
+        height: maxBottom - minTop,
+      };
+      const first: FrameRect = {
+        left: firstRect.left,
+        top: firstRect.top,
+        width: firstRect.width,
+        height: firstRect.height,
+      };
+      return {
+        type: 'relic:frame-mark-rect',
+        id,
+        rect: unionRect,
+        first,
+      };
+    }
+
+    const firstEl = candidates[0]!.el;
+    const b = firstEl.getBoundingClientRect();
+    return {
+      type: 'relic:frame-mark-rect',
+      id,
+      rect: {
+        left: b.left,
+        top: b.top,
+        width: b.width,
+        height: b.height,
+      },
+    };
+  };
+
+  const reportTracked = (): void => {
+    if (trackedId === null) return;
+    const report = reportMarkRect(doc, trackedId);
+    postOutward(report);
+  };
+
+  const scheduleTrackReport = (): void => {
+    if (trackedId === null) return;
+    if (typeof requestAnimationFrame === 'function') {
+      if (trackRaf !== undefined) cancelAnimationFrame(trackRaf);
+      trackRaf = requestAnimationFrame(() => {
+        trackRaf = undefined;
+        reportTracked();
+      });
+    } else {
+      reportTracked();
+    }
+  };
   const readSelection = (): Selection | null => {
     return typeof win.getSelection === 'function'
       ? (win.getSelection() as Selection | null)
@@ -851,6 +957,8 @@ export function setupFrameInteraction(
   // has always had.
   if (typeof win.addEventListener === 'function') {
     win.addEventListener('scroll', handleScroll, { passive: true });
+    win.addEventListener('scroll', () => scheduleTrackReport(), { passive: true });
+    win.addEventListener('resize', () => scheduleTrackReport());
   }
   doc.addEventListener('click', (event: MouseEvent) => {
     let node = event.target as Element | null;
@@ -1037,8 +1145,31 @@ export function setupFrameInteraction(
       handleSelection();
       return;
     }
-
     if (!isDown) return;
+    let regionBox: FrameRect | undefined;
+    if (drawing !== undefined) {
+      try {
+        const b = drawing.getBoundingClientRect?.();
+        if (
+          b &&
+          Number.isFinite(b.left) &&
+          Number.isFinite(b.top) &&
+          Number.isFinite(b.width) &&
+          Number.isFinite(b.height) &&
+          b.width >= 0 &&
+          b.height >= 0
+        ) {
+          regionBox = {
+            left: b.left,
+            top: b.top,
+            width: b.width,
+            height: b.height,
+          };
+        }
+      } catch {
+        // ignore
+      }
+    }
     stopDrawing();
     event.preventDefault?.();
     event.stopPropagation?.();
@@ -1056,13 +1187,23 @@ export function setupFrameInteraction(
       const msg: FrameRegionMessage = {
         type: 'relic:frame-region',
         rect: gesture.rect,
+        ...(regionBox !== undefined ? { box: regionBox } : {}),
       };
       postOutward(msg);
     } else {
+      const clientX = event.clientX ?? event.pageX ?? 0;
+      const clientY = event.clientY ?? event.pageY ?? 0;
+      const pointBox: FrameRect = {
+        left: clientX - 10,
+        top: clientY - 10,
+        width: 20,
+        height: 20,
+      };
       const msg: FramePointMessage = {
         type: 'relic:frame-point',
         x: gesture.x,
         y: gesture.y,
+        box: pointBox,
       };
       postOutward(msg);
     }
@@ -1083,23 +1224,23 @@ export function setupFrameInteraction(
 
     onPaintMark(mark: FrameMarkPayload): boolean {
       if (!doc.body) return false;
+      let placed = false;
       if (mark.kind === 'quote') {
         unwrapFrameQuotes(doc.body, mark.id);
-        return wrapFrameQuote(
+        placed = wrapFrameQuote(
           doc.body,
           mark.exact,
           mark.prefix,
           mark.suffix,
           mark.id
         );
+      } else if (mark.kind === 'region') {
+        placed = paintFrameRegion(doc.body, mark.rect, mark.id) !== undefined;
+      } else if (mark.kind === 'pin') {
+        placed = paintFramePin(doc.body, mark, mark.id) !== undefined;
       }
-      if (mark.kind === 'region') {
-        return paintFrameRegion(doc.body, mark.rect, mark.id) !== undefined;
-      }
-      if (mark.kind === 'pin') {
-        return paintFramePin(doc.body, mark, mark.id) !== undefined;
-      }
-      return false;
+      scheduleTrackReport();
+      return placed;
     },
 
     onPaintMarks(marks: readonly FrameMarkPayload[]): boolean {
@@ -1108,6 +1249,7 @@ export function setupFrameInteraction(
         const placed = this.onPaintMark(mark);
         if (!placed) allPlaced = false;
       }
+      scheduleTrackReport();
       return allPlaced;
     },
 
@@ -1115,12 +1257,14 @@ export function setupFrameInteraction(
       if (!doc.body) return;
       unwrapFrameQuotes(doc.body, id);
       clearFrameRegions(doc.body, id);
+      scheduleTrackReport();
     },
 
     onClearMarks() {
       if (!doc.body) return;
       unwrapFrameQuotes(doc.body);
       clearFrameRegions(doc.body);
+      scheduleTrackReport();
     },
 
     onRevealMark(msg: RevealMarkMessage) {
@@ -1203,31 +1347,26 @@ export function setupFrameInteraction(
         );
       }
     },
+    onTrackMark(id: string | null) {
+      trackedId = id;
+      if (trackedId !== null) {
+        reportTracked();
+      } else {
+        if (trackRaf !== undefined) {
+          if (typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(trackRaf);
+          }
+          trackRaf = undefined;
+        }
+      }
+    },
 
     onActiveMark(id: string | null) {
       if (!doc.body) return;
-      // The parent asked for this mark and cannot measure it: the mark is
-      // inside this origin. Answering with its box is what lets a press on
-      // a row in the thread open the comment over the thing it covers,
-      // rather than nowhere, for a relic that renders in a frame.
       if (id !== null) {
-        for (const mark of doc.body.querySelectorAll('[data-comment-id]')) {
-          if ((mark as HTMLElement).dataset?.commentId !== id) continue;
-          const rect = markFrameRect(mark as HTMLElement);
-          doc.defaultView?.parent?.postMessage(
-            {
-              type: 'relic:frame-mark-click',
-              id,
-              ...(rect === undefined ? {} : { rect }),
-            },
-            '*'
-          );
-          break;
-        }
+        const report = reportMarkRect(doc, id);
+        postOutward(report);
       }
-      // Compared by dataset rather than folded into the selector so a mark
-      // id containing quotes or brackets cannot break out of the attribute
-      // matcher, and so every span of a multi-node quote lights together.
       for (const mark of Array.from(
         doc.body.querySelectorAll('[data-comment-id]')
       )) {
@@ -1321,12 +1460,15 @@ export function createSandboxHandler(
       interaction?.onRevealMark(data);
       return true;
     }
+    if (isTrackMarkMessage(data)) {
+      interaction?.onTrackMark?.(data.id);
+      return true;
+    }
 
     if (isActiveMarkMessage(data)) {
       interaction?.onActiveMark?.(data.id);
       return true;
     }
-
     if (isQuietMarksMessage(data)) {
       interaction?.onQuietMarks?.(data.ids);
       return true;
@@ -1915,8 +2057,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       onClearMarks: () => interaction?.onClearMarks(),
       onRevealMark: (msg) => interaction?.onRevealMark(msg),
       onPairMark: (id, active) => interaction?.onPairMark(id, active),
+      onTrackMark: (id) => interaction?.onTrackMark?.(id),
       onActiveMark: (id) => interaction?.onActiveMark?.(id),
-      onQuietMarks: (ids) => interaction?.onQuietMarks?.(ids),
       onRevealChange: (changeId, top) =>
         interaction?.onRevealChange?.(changeId, top),
       onSetScroll: (fraction) => interaction?.onSetScroll?.(fraction),
