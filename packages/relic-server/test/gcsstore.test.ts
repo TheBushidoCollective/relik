@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { createApp } from '../src/app.ts';
-import { ProblemError } from '../src/problems.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { gcsStore } from '../src/gcsstore.ts';
+import { ProblemError } from '../src/problems.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { MemoryStore, type RelicRow } from '../src/store.ts';
+import {
+  MemoryStore,
+  type PasskeyCredential,
+  type RelicRow,
+} from '../src/store.ts';
 
 /**
  * A fake GCS that models the one behaviour the store depends on for
@@ -1369,18 +1373,17 @@ describe('gcsStore', () => {
       const store = storeOn(gcs);
 
       const jwk: JsonWebKey = { kty: 'EC', crv: 'P-256', x: 'abc', y: 'def' };
+      const cred0: PasskeyCredential = {
+        credentialId: 'cred1',
+        publicKeyJwk: jwk,
+        alg: -7,
+        signCount: 1,
+        createdAt: 1000,
+      };
       const firstPasskey = {
         email: 'user@example.com',
         userHandle: 'handle1',
-        credentials: [
-          {
-            credentialId: 'cred1',
-            publicKeyJwk: jwk,
-            alg: -7 as const,
-            signCount: 1,
-            createdAt: 1000,
-          },
-        ],
+        credentials: [cred0],
       };
 
       expect(await store.createPasskeys(firstPasskey)).toBe(true);
@@ -1390,12 +1393,11 @@ describe('gcsStore', () => {
       const readBack = await store.getPasskeys('USER@example.com');
       expect(readBack?.userHandle).toBe('handle1');
 
-      // Update with non-advancing counter throws
       let counterError: ProblemError | undefined;
       try {
         await store.updatePasskeys('user@example.com', (curr) => ({
           ...curr,
-          credentials: [{ ...curr.credentials[0], signCount: 1 }],
+          credentials: [{ ...cred0, signCount: 0 }],
         }));
       } catch (err) {
         if (err instanceof ProblemError) {
@@ -1410,10 +1412,10 @@ describe('gcsStore', () => {
         'user@example.com',
         (curr) => ({
           ...curr,
-          credentials: [{ ...curr.credentials[0], signCount: 2 }],
+          credentials: [{ ...cred0, signCount: 2 }],
         })
       );
-      expect(updated?.credentials[0].signCount).toBe(2);
+      expect(updated?.credentials[0]?.signCount).toBe(2);
     });
 
     test('two concurrent createPasskeys calls return exactly one true', async () => {
@@ -1492,7 +1494,14 @@ describe('gcsStore', () => {
         // putCover
         await store.putCover(
           'r_surv',
-          { version: 1, sha256: 'cover_sha', type: 'image/png' },
+          {
+            version: 1,
+            sha256: 'cover_sha',
+            type: 'image/png',
+            kind: 'image',
+            bytes: 3,
+            uploadedAt: 1000,
+          },
           new Uint8Array([1, 2, 3])
         );
         cur = await store.getRelic('r_surv');
