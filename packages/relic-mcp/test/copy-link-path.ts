@@ -58,6 +58,24 @@ function keylessLink(shareUrl: string): string {
   return result.endsWith('#') ? result.slice(0, -1) : result;
 }
 
+const RUN_BUDGET_MS = 120_000;
+let currentStep = 'startup';
+const cdpInFlight = new Map<number, string>();
+let cdpCallId = 0;
+const runningBrowsers: Array<{
+  child: ChildProcess;
+  cdp: CdpConnection;
+  profile: string;
+}> = [];
+const watchdog = setTimeout(() => {
+  const pending = [...cdpInFlight.values()].join(', ') || 'none';
+  console.error(
+    `COPY_LINK_PATH_TIMEOUT after ${RUN_BUDGET_MS}ms at step "${currentStep}"; CDP calls in flight: ${pending}`
+  );
+  for (const b of runningBrowsers) b.child.kill('SIGKILL');
+  process.exit(1);
+}, RUN_BUDGET_MS);
+
 const scratch = await mkdtemp(join(tmpdir(), 'relic-copy-link-path-'));
 const statePath = join(scratch, 'state.json');
 
@@ -176,7 +194,10 @@ const pubResult = await callMcp('relic_publish', {
 });
 const relicId = String(pubResult['relic_id']);
 const shareUrl = String(pubResult['url']);
-assert.ok(shareUrl.includes('#r1'), 'shareUrl missing key fragment');
+assert.ok(
+  shareUrl.includes('#r1'),
+  `shareUrl missing key fragment: ${JSON.stringify(pubResult).slice(0, 400)}`
+);
 
 await writeFile(
   fixturePath,
@@ -216,18 +237,13 @@ assert.equal(
 if (foundChrome.kind !== 'found') throw new Error('unreachable');
 const chromeBinaryPath = foundChrome.path;
 
-const runningBrowsers: Array<{
-  child: ChildProcess;
-  cdp: CdpConnection;
-  profile: string;
-}> = [];
-
 async function launchBrowser(): Promise<{
   child: ChildProcess;
   cdp: CdpConnection;
   sessionId: string;
   profile: string;
   requests: Array<{ url: string; postData?: string }>;
+  exceptions: string[];
 }> {
   const profile = await mkdtemp(join(tmpdir(), 'relic-copy-chrome-'));
   const shared = chromeArgs(chromeBinaryPath, profile);
@@ -247,10 +263,20 @@ async function launchBrowser(): Promise<{
   const child = spawn(chromeBinaryPath, launch.args, {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
   });
-  const cdp = connectPipe(
+  const rawCdp = connectPipe(
     child.stdio[3] as Writable,
     child.stdio[4] as Readable
   );
+  const cdp: CdpConnection = {
+    ...rawCdp,
+    send(method, params, sessionId) {
+      const id = ++cdpCallId;
+      cdpInFlight.set(id, method);
+      return rawCdp
+        .send(method, params, sessionId)
+        .finally(() => cdpInFlight.delete(id));
+    },
+  };
   await attestBrowserHeadless(cdp, launch);
 
   const created = (await cdp.send('Target.createTarget', {
@@ -269,6 +295,7 @@ async function launchBrowser(): Promise<{
   await cdp.send('DOM.enable', {}, sessionId);
 
   const requests: Array<{ url: string; postData?: string }> = [];
+  const exceptions: string[] = [];
   cdp.onEvent((event) => {
     if (
       event.method === 'Network.requestWillBeSent' &&
@@ -291,6 +318,8 @@ async function launchBrowser(): Promise<{
     }
     if (event.method === 'Runtime.exceptionThrown') {
       console.log('BROWSER EXCEPTION:', JSON.stringify(event.params));
+      if (event.sessionId === sessionId)
+        exceptions.push(JSON.stringify(event.params).slice(0, 300));
     }
   });
   const shimScript = `
@@ -314,7 +343,7 @@ async function launchBrowser(): Promise<{
   );
 
   runningBrowsers.push({ child, cdp, profile });
-  return { child, cdp, sessionId, profile, requests };
+  return { child, cdp, sessionId, profile, requests, exceptions };
 }
 
 async function cleanupBrowsers(): Promise<void> {
@@ -478,15 +507,59 @@ async function captureShot(
   await writeFile(join(proofDir, filename), Buffer.from(shot.data, 'base64'));
 }
 
+/**
+ * Where the fragment's key, or two consecutive phrase words as consecutive
+ * tokens, occur in any of the texts; undefined when they occur nowhere.
+ * One word alone is not evidence: 12 of the 2048 words (age, asset, chunk,
+ * expire, list, proof, roof, session, share, style, version, view) already
+ * occur in the viewer's own requests, so a per-word check failed about one
+ * run in fifteen with nothing leaked.
+ */
+function phraseLeak(
+  texts: readonly string[],
+  words: readonly string[],
+  fragment: string
+): string | undefined {
+  const key = fragment.replace(/^#/, '').toLowerCase();
+  const lowered = words.map((w) => w.toLowerCase());
+  for (const raw of texts) {
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw.replace(/\+/g, ' '));
+    } catch {}
+    const text = `${raw} ${decoded}`.toLowerCase();
+    if (key.length > 0 && text.includes(key))
+      return `the key in ${raw.slice(0, 120)}`;
+    const tokens = text.match(/[a-z]+/g) ?? [];
+    for (let i = 0; i + 1 < tokens.length; i++)
+      for (let j = 0; j + 1 < lowered.length; j++)
+        if (tokens[i] === lowered[j] && tokens[i + 1] === lowered[j + 1])
+          return `"${lowered[j]} ${lowered[j + 1]}" in ${raw.slice(0, 120)}`;
+  }
+  return undefined;
+}
+
 async function waitForCondition(
   predicate: () => Promise<boolean>,
-  label = 'condition',
+  label: string,
   timeoutMs = 10000,
   pollMs = 50
 ): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await predicate()) return;
+  currentStep = label;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<'expired'>((resolve) => {
+      timer = setTimeout(
+        () => resolve('expired'),
+        Math.max(0, deadline - Date.now())
+      );
+    });
+    const outcome = await Promise.race([predicate(), expired]).finally(() =>
+      clearTimeout(timer)
+    );
+    if (outcome === true) return;
+    if (outcome === 'expired') break;
     await Bun.sleep(pollMs);
   }
   throw new Error(`Timeout waiting for ${label} after ${timeoutMs}ms`);
@@ -717,6 +790,26 @@ try {
       ? []
       : (await import('@relic/format/mnemonic')).keyToMnemonic(parsedKey);
   assert.equal(phraseWords.length, 12);
+  for (const leaked of [
+    `http://127.0.0.1/?q=${phraseWords.join('+')}`,
+    `http://127.0.0.1/ ${JSON.stringify({ words: phraseWords })}`,
+    `http://127.0.0.1/${encodeURIComponent(phraseWords.join(' '))}`,
+    `http://127.0.0.1/?k=${fragment.slice(1)}`,
+  ]) {
+    assert.ok(
+      phraseLeak([leaked], phraseWords, fragment),
+      `leak check missed ${leaked.slice(0, 60)}`
+    );
+  }
+  assert.equal(
+    phraseLeak(
+      phraseWords.map((w) => `http://127.0.0.1/assets/${w}s.js {"${w}":2}`),
+      phraseWords,
+      fragment
+    ),
+    undefined,
+    'leak check fired on single words'
+  );
 
   // 1. Baseline
   const baseline = await evaluate<{
@@ -732,9 +825,13 @@ try {
       const words = ${JSON.stringify(phraseWords)};
       const text = document.body.innerText;
       const html = document.body.outerHTML;
+      // A toast showing a fixed note carries no phrase, but "key" and "phrase" are wordlist words.
+      const notes = ${JSON.stringify([LINK_COPIED_NOTE, KEYLESS_COPIED_NOTE, PHRASE_COPIED_NOTE, COPY_FAILED_NOTE])};
+      const fixedToasts = Array.from(document.querySelectorAll('.toast')).filter((t) => notes.includes(t.textContent));
       const counts = words.map(w => {
         const re = new RegExp('\\\\b' + w + '\\\\b', 'gi');
-        return (text.match(re) || []).length + (html.match(re) || []).length;
+        const n = (s) => (s.match(re) || []).length;
+        return n(text) + n(html) - fixedToasts.reduce((sum, t) => sum + n(t.innerText) + n(t.outerHTML), 0);
       });
       return {
         localKeys: Object.keys(localStorage),
@@ -854,7 +951,7 @@ try {
         `window.__clipboardWrites.length`
       )) >= 1
     );
-  });
+  }, 'step 3 Enter wrote the link');
 
   const step3 = await evaluate<{
     lastCopied: string;
@@ -898,7 +995,7 @@ try {
         `window.__clipboardWrites.length`
       )) >= 2
     );
-  });
+  }, 'step 4 keyless link written');
 
   const step4 = await evaluate<{
     lastCopied: string;
@@ -941,7 +1038,7 @@ try {
         `window.__clipboardWrites.length`
       )) >= 3
     );
-  });
+  }, 'step 5 phrase written');
 
   const step5 = await evaluate<{
     lastCopied: string;
@@ -971,12 +1068,11 @@ try {
     'toast text mismatch for Copy phrase'
   );
   assert.ok(!step5.toastText.includes('#r1'), 'toast contains fragment');
-  for (const w of phraseWords) {
-    assert.ok(
-      !step5.toastText.split(/\s+/).includes(w),
-      `toast contains phrase word ${w}`
-    );
-  }
+  assert.equal(
+    phraseLeak([step5.toastText], phraseWords, fragment),
+    undefined,
+    'toast carries the key or phrase'
+  );
   console.log('Step 5 passed: Copy phrase');
 
   // 6. Escape closes panel
@@ -1013,7 +1109,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 6 Escape closed the panel');
 
   const step6 = await evaluate<{
     openerFocused: boolean;
@@ -1031,9 +1127,13 @@ try {
       const words = ${JSON.stringify(phraseWords)};
       const text = document.body.innerText;
       const html = document.body.outerHTML;
+      // A toast showing a fixed note carries no phrase, but "key" and "phrase" are wordlist words.
+      const notes = ${JSON.stringify([LINK_COPIED_NOTE, KEYLESS_COPIED_NOTE, PHRASE_COPIED_NOTE, COPY_FAILED_NOTE])};
+      const fixedToasts = Array.from(document.querySelectorAll('.toast')).filter((t) => notes.includes(t.textContent));
       const counts = words.map(w => {
         const re = new RegExp('\\\\b' + w + '\\\\b', 'gi');
-        return (text.match(re) || []).length + (html.match(re) || []).length;
+        const n = (s) => (s.match(re) || []).length;
+        return n(text) + n(html) - fixedToasts.reduce((sum, t) => sum + n(t.innerText) + n(t.outerHTML), 0);
       });
       return {
         openerFocused: document.activeElement === opener,
@@ -1068,19 +1168,16 @@ try {
       !req.url.includes('#'),
       `request url carried fragment: ${req.url}`
     );
-    for (const w of phraseWords) {
-      assert.ok(
-        !req.url.toLowerCase().includes(w.toLowerCase()),
-        `request url carried phrase word ${w}: ${req.url}`
-      );
-      if (req.postData) {
-        assert.ok(
-          !req.postData.toLowerCase().includes(w.toLowerCase()),
-          `request postData carried phrase word ${w}`
-        );
-      }
-    }
   }
+  assert.equal(
+    phraseLeak(
+      b1.requests.map((r) => `${r.url} ${r.postData ?? ''}`),
+      phraseWords,
+      fragment
+    ),
+    undefined,
+    'a request carried the key or phrase'
+  );
 
   // 7. Focus leaving, click outside, click opener
   // Reopen and Tab past last control
@@ -1093,7 +1190,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 7 reopened before Tab');
   console.log('Step 7: Testing Tab navigation to leave panel');
   for (let i = 0; i < 6; i++) {
     await pressKey(b1.cdp, b1.sessionId, 'Tab', 'Tab', 9);
@@ -1134,7 +1231,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 7 reopened before the stage click');
   await clickElement(b1.cdp, b1.sessionId, '.stage', { x: 100, y: 200 });
   await waitForCondition(async () => {
     return (
@@ -1144,7 +1241,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 7 stage click closed the panel');
 
   // Reopen and click opener
   await clickElement(b1.cdp, b1.sessionId, '[data-action="copy-link"]');
@@ -1156,7 +1253,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 7 reopened before the opener click');
   await clickElement(b1.cdp, b1.sessionId, '[data-action="copy-link"]');
   await waitForCondition(async () => {
     return (
@@ -1166,7 +1263,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 7 opener click closed the panel');
 
   // 8. Clipboard refusal
   await evaluate(
@@ -1183,7 +1280,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel'))`
       )) === true
     );
-  });
+  }, 'step 8 reopened with the clipboard refusing');
 
   await clickElement(b1.cdp, b1.sessionId, '[data-copy="link"]');
   await waitForCondition(async () => {
@@ -1194,7 +1291,7 @@ try {
         `document.querySelector('.toast')?.textContent`
       )) === COPY_FAILED_NOTE
     );
-  });
+  }, 'step 8 link refusal toast');
   const linkSelection = await evaluate<string>(
     b1.cdp,
     b1.sessionId,
@@ -1223,7 +1320,7 @@ try {
         `document.querySelector('.toast')?.textContent`
       )) === COPY_FAILED_NOTE
     );
-  });
+  }, 'step 8 phrase refusal toast');
   const phraseSelection = await evaluate<string>(
     b1.cdp,
     b1.sessionId,
@@ -1241,41 +1338,72 @@ try {
     `window.__clipboardShouldReject = false;`
   );
 
-  // 9. Version switch with panel open
-  // In the bar, find version button and switch to version 1
-  const hasVersionButton = await evaluate<boolean>(
+  // 9. Version switch with the panel open (choose version 1)
+  // The options live in the DOM while the list is closed, so a programmatic
+  // click switches with the panel still open; a pointer or focus route would
+  // close it first and prove nothing.
+  await waitForCondition(
+    async () =>
+      (await evaluate<boolean>(
+        b1.cdp,
+        b1.sessionId,
+        `Boolean(document.getElementById('copy-link-panel'))`
+      )) === true,
+    'step 9 panel open before the version switch'
+  );
+  const exceptionsBeforeSwitch = b1.exceptions.length;
+  const switched = await evaluate<boolean>(
     b1.cdp,
     b1.sessionId,
-    `Boolean(document.querySelector('.version') || document.querySelector('[data-action="versions"]'))`
+    `(() => {
+    const option = document.querySelector('.version-option[data-version="1"]');
+    if (!option) return false;
+    window.__preSwitchBar = document.querySelector('header.bar');
+    option.click();
+    return true;
+  })()`
   );
-  if (hasVersionButton) {
-    await clickElement(
-      b1.cdp,
-      b1.sessionId,
-      '.version, [data-action="versions"]'
-    );
-    // If version dropdown opens, click version 1
-    const v1Item = await evaluate<boolean>(
-      b1.cdp,
-      b1.sessionId,
-      `(() => {
-        const item = document.querySelector('.version-item, [data-version="1"]');
-        if (item) { item.click(); return true; }
-        return false;
-      })()`
-    );
-    if (v1Item) {
-      await waitForCondition(async () => {
-        return (
-          (await evaluate<boolean>(
-            b1.cdp,
-            b1.sessionId,
-            `document.getElementById('copy-link-panel') === null`
-          )) === true
-        );
-      });
-    }
-  }
+  assert.ok(switched, 'version 1 option missing from the version control');
+  await waitForCondition(
+    async () =>
+      (await evaluate<boolean>(
+        b1.cdp,
+        b1.sessionId,
+        `Boolean(window.__preSwitchBar && !window.__preSwitchBar.isConnected && document.querySelector('.version-long')?.textContent === 'Version 1 of 2' && document.querySelector('.stage h1')?.textContent === 'Secret Notes')`
+      )) === true,
+    'step 9 version 1 rendered'
+  );
+  const step9 = await evaluate<{
+    panel: boolean;
+    openerExpanded: string | null;
+    openerControls: string | null;
+  }>(
+    b1.cdp,
+    b1.sessionId,
+    `(() => {
+    const opener = document.querySelector('.bar [data-action="copy-link"]');
+    return { panel: Boolean(document.getElementById('copy-link-panel')),
+      openerExpanded: opener ? opener.getAttribute('aria-expanded') : null,
+      openerControls: opener ? opener.getAttribute('aria-controls') : null };
+  })()`
+  );
+  assert.equal(step9.panel, false, 'panel survived the version switch');
+  assert.equal(
+    step9.openerExpanded,
+    'false',
+    'opener still expanded after the switch'
+  );
+  assert.equal(
+    step9.openerControls,
+    null,
+    'opener still controls a gone panel'
+  );
+  assert.equal(
+    b1.exceptions.length,
+    exceptionsBeforeSwitch,
+    'the version switch threw'
+  );
+  console.log('Step 9 passed: version switch tore the panel down');
 
   // 10. Viewports 390x844 dark and 320x568 light
   // 390x844 dark:
@@ -1289,7 +1417,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel') && document.querySelector('#copy-link-panel ol.copy-phrase:not([aria-busy="true"])'))`
       )) === true
     );
-  });
+  }, 'step 10 panel ready at 390');
   await captureShot(b1.cdp, b1.sessionId, 'panel-390-dark.png');
 
   const doc390 = (await b1.cdp.send(
@@ -1352,7 +1480,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 10 Escape closed the panel at 390');
 
   // 320x568 light:
   await setViewport(b1.cdp, b1.sessionId, 320, 568, 'light');
@@ -1365,7 +1493,7 @@ try {
         `Boolean(document.getElementById('copy-link-panel') && document.querySelector('#copy-link-panel ol.copy-phrase:not([aria-busy="true"])'))`
       )) === true
     );
-  });
+  }, 'step 10 panel ready at 320');
   await captureShot(b1.cdp, b1.sessionId, 'panel-320-light.png');
 
   const doc320 = (await b1.cdp.send(
@@ -1429,7 +1557,7 @@ try {
         `Boolean(document.querySelector('.toast'))`
       )) === true
     );
-  });
+  }, 'step 10 toast shown at 320');
   await evaluate(
     b1.cdp,
     b1.sessionId,
@@ -1463,7 +1591,7 @@ try {
         `document.getElementById('copy-link-panel') === null`
       )) === true
     );
-  });
+  }, 'step 10 Escape closed the panel at 320');
 
   // Verify taskbar at all widths with full action set
   console.log('Testing band progressive collapse across viewports');
@@ -1490,7 +1618,7 @@ try {
         `Boolean(document.querySelector('.stage-dead') && document.querySelector('#relic-key-input'))`
       )) === true
     );
-  });
+  }, 'step 11 key entry shown');
 
   const deadCheck = await evaluate<{
     headline: string | null;
@@ -1549,24 +1677,20 @@ try {
   );
 
   // Check b2 requests: no request carried a phrase word
-  for (const req of b2.requests) {
-    for (const w of phraseWords) {
-      assert.ok(
-        !req.url.toLowerCase().includes(w.toLowerCase()),
-        `recipient request url carried phrase word ${w}: ${req.url}`
-      );
-      if (req.postData) {
-        assert.ok(
-          !req.postData.toLowerCase().includes(w.toLowerCase()),
-          `recipient request postData carried phrase word ${w}`
-        );
-      }
-    }
-  }
+  assert.equal(
+    phraseLeak(
+      b2.requests.map((r) => `${r.url} ${r.postData ?? ''}`),
+      phraseWords,
+      fragment
+    ),
+    undefined,
+    'a recipient request carried the key or phrase'
+  );
 
   console.log('COPY_LINK_PATH_OK');
 } finally {
   await cleanupBrowsers();
   await service.stop();
   await rm(scratch, { recursive: true, force: true }).catch(() => {});
+  clearTimeout(watchdog);
 }

@@ -123,6 +123,7 @@ jobs:
           google-chrome --headless=new --disable-gpu --dump-dom about:blank >/dev/null
 
       - name: Copy link path
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           RELIC_PROOF_CHROME_PATH="$(command -v google-chrome)" \
