@@ -505,7 +505,7 @@ describe('the share panel', () => {
     const { panel } = await open(
       stubDeps(() => json(SHARED_REPLY), calls, null)
     );
-    expect(textOf(panel)).toContain('Send me a link');
+    expect(textOf(panel)).toContain('Email me a code');
     expect(withClass(panel, 'share-addresses')).toHaveLength(0);
     // The facts are owed to a reader before they sign in to share, too.
     expect(textOf(panel)).toContain(SHARE_FACT_STORING);
@@ -649,7 +649,7 @@ describe('the share panel', () => {
     );
     await share(panel, handle, 'lin@example.com');
     expect(textOf(panel)).toContain('This browser is not verified any more');
-    expect(textOf(panel)).toContain('Send me a link');
+    expect(textOf(panel)).toContain('Email me a code');
     expect(withClass(panel, 'share-addresses')).toHaveLength(0);
   });
 

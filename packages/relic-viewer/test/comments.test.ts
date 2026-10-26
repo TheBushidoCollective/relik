@@ -26,7 +26,12 @@ import {
   THREAD_ORPHAN_RECOVERY,
   threadCountLabel,
   threadEntries,
+  DELIVERY_DISCLOSURE,
+  KEY_AT_RISK_NOTE,
+  takePasskeyOfferMarker,
+  takeFreshPasskeyOfferMarker,
 } from '../src/comments.ts';
+import { submitSignInCode } from '../src/sign-in-code.ts';
 import {
   buildBar,
   buildRelicRow,
@@ -637,6 +642,45 @@ describe('refusal states', () => {
     expect(refusal.detail).not.toContain('something went wrong');
   });
 
+  test('auth_rate_limited and invalid_session refusal copy reflect code and email wording', () => {
+    const authRate = commentRefusal('auth_rate_limited');
+    expect(authRate.headline).toBe(
+      'Too many sign-in emails asked for from here just now'
+    );
+    expect(authRate.detail).toContain('code or link may still be good');
+
+    const invalidSession = commentRefusal('invalid_session');
+    expect(invalidSession.headline).toBe(
+      'This browser is not verified any more'
+    );
+    expect(invalidSession.detail).toContain('each sign-in email works once');
+  });
+
+  test('DELIVERY_DISCLOSURE and KEY_AT_RISK_NOTE mention sign-in email and code', () => {
+    expect(DELIVERY_DISCLOSURE).toContain('sign-in email');
+    expect(KEY_AT_RISK_NOTE).toContain(
+      'Type the code from the email here instead'
+    );
+  });
+
+  test('takeFreshPasskeyOfferMarker re-reads cookie ignoring cached false and caches true', () => {
+    const docStub = { cookie: '' };
+    expect(takePasskeyOfferMarker(docStub)).toBe(false);
+
+    docStub.cookie = 'relic_passkey_offer=1';
+    expect(takePasskeyOfferMarker(docStub)).toBe(false);
+
+    expect(takeFreshPasskeyOfferMarker(docStub)).toBe(true);
+    expect(docStub.cookie).not.toContain('relic_passkey_offer=1');
+
+    expect(takePasskeyOfferMarker(docStub)).toBe(true);
+    expect(takeFreshPasskeyOfferMarker(docStub)).toBe(true);
+  });
+
+  test('takeFreshPasskeyOfferMarker returns false when marker is absent', () => {
+    const docStub = { cookie: 'other_cookie=abc' };
+    expect(takeFreshPasskeyOfferMarker(docStub)).toBe(false);
+  });
   test('a network failure is not reported as a problem with the relic', async () => {
     const deps: ViewerDeps = {
       ...stubDeps(() => json([])),
@@ -820,11 +864,23 @@ describe('the magic-link round trip', () => {
     const result = await requestMagicLink(RELIC_ID, 'ada@example.com', deps);
 
     expect(result).toEqual({ kind: 'sent' });
+
+    const codeResult = await submitSignInCode('123456', deps);
+    expect(codeResult.kind).toBe('failed');
+
+    expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const call of calls) {
       expect(call.url).not.toContain('#');
       expect(call.url).not.toContain(encodeKey(KEY_BYTES));
       expect(call.body ?? '').not.toContain(encodeKey(KEY_BYTES));
+      expect(call.body ?? '').not.toContain('#');
     }
+
+    const codeCall = calls.find((c) => c.url.endsWith('/api/auth/code'));
+    expect(codeCall).toBeDefined();
+    expect(codeCall?.body).toBe(JSON.stringify({ code: '123456' }));
+    expect(codeCall?.body ?? '').not.toContain('ada@example.com');
+    expect(codeCall?.body ?? '').not.toContain(RELIC_ID);
   });
 
   test('the fragment survives the navigation, and comments still open', async () => {

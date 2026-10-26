@@ -151,7 +151,13 @@ import {
   utf8Bytes,
   wrapTextQuote,
   takePasskeyOfferMarker,
+  takeFreshPasskeyOfferMarker,
 } from './comments.ts';
+import {
+  announceVerified,
+  signedInCopy,
+  signInCodeEntry,
+} from './sign-in-code.ts';
 import {
   type AnchorBox,
   anchorFromClientRect,
@@ -3246,12 +3252,28 @@ export function linkSentCopy(
   deps: ViewerDeps
 ): { readonly message: string; readonly warning?: string } {
   const message =
-    `If ${plainLabel(address)} can receive mail, a link is on its way. ` +
-    'Following it verifies the address and brings you back here.';
+    `If ${plainLabel(address)} can receive mail, an email with a code and a link is on its way. ` +
+    'Type the code below to sign in on this page, or follow the link: it verifies the address and brings you back here.';
   const warning = !keySurvivesNavigation(relicId, fragment, deps)
     ? KEY_AT_RISK_NOTE
     : undefined;
   return { message, ...(warning ? { warning } : {}) };
+}
+
+function codeEntryFactory(
+  deps: ViewerDeps
+): (onVerified: (email: string) => void) => HTMLElement {
+  return (onVerified: (email: string) => void): HTMLElement => {
+    return signInCodeEntry({
+      deps,
+      focus: true,
+      onVerified: (email: string) => {
+        takeFreshPasskeyOfferMarker();
+        announceVerified();
+        onVerified(email);
+      },
+    });
+  };
 }
 
 export function requestFreshLink(
@@ -3265,14 +3287,18 @@ export function requestFreshLink(
       return { kind: 'failed' };
     }
     const copy = linkSentCopy(address, relicId, fragment, deps);
-    return { kind: 'sent', ...copy };
+    return {
+      kind: 'sent',
+      ...copy,
+      codeEntry: codeEntryFactory(deps),
+    };
   };
 }
 
 export function dashboardLinkSent(address: string): string {
   return (
-    `If ${plainLabel(address)} can receive mail, a link is on its way. ` +
-    'Following it verifies the address and brings you back to this dashboard.'
+    `If ${plainLabel(address)} can receive mail, an email with a code and a link is on its way. ` +
+    'Type the code below, or follow the link: it verifies the address and brings you back to this dashboard.'
   );
 }
 
@@ -3285,13 +3311,6 @@ export function dashboardLinkSent(address: string): string {
  * and the reader is warned when following the link here would lose the key.
  * `lead` is what each caller says above the field.
  */
-function announceVerified(): void {
-  if (typeof BroadcastChannel === 'function') {
-    const channel = new BroadcastChannel('relic:auth');
-    channel.postMessage('verified');
-    channel.close();
-  }
-}
 
 export function signInForm(
   lead: readonly HTMLElement[],
@@ -3301,7 +3320,7 @@ export function signInForm(
     readonly deps: ViewerDeps;
     readonly outcome: HTMLElement;
     readonly label: string;
-    readonly onSignedIn?: () => void;
+    readonly onSignedIn?: (signal?: { readonly offerPending: boolean }) => void;
   }
 ): { readonly form: HTMLFormElement; readonly email: HTMLInputElement } {
   const { relicId, fragment, deps, outcome } = options;
@@ -3321,7 +3340,7 @@ export function signInForm(
   const send = document.createElement('button');
   send.type = 'submit';
   send.className = 'action primary';
-  send.textContent = 'Send me a link';
+  send.textContent = 'Email me a code';
   form.appendChild(send);
   const passkeyHost = document.createElement('div');
   passkeyHost.className = 'passkey-sign-in';
@@ -3366,14 +3385,24 @@ export function signInForm(
       // commented before, and copy reading "we sent it" would hand back
       // exactly what that 202 withholds.
       const copy = linkSentCopy(address, relicId, fragment, deps);
-      const said = [line('thread-note', copy.message)];
+      const said: HTMLElement[] = [line('thread-note', copy.message)];
       if (copy.warning) {
         said.push(line('compose-warning', copy.warning));
       }
+      const codeEntry = signInCodeEntry({
+        deps,
+        focus: true,
+        onVerified: (email) => {
+          const offerPending = takeFreshPasskeyOfferMarker();
+          outcome.replaceChildren(line('thread-note', signedInCopy(email)));
+          announceVerified();
+          options.onSignedIn?.({ offerPending });
+        },
+      });
+      said.push(codeEntry);
       outcome.replaceChildren(...said);
     });
   });
-
   return { form, email };
 }
 
@@ -7058,7 +7087,10 @@ export function buildThread(
         deps,
         outcome,
         label: 'Email address',
-        onSignedIn: recheck,
+        onSignedIn: (signal) => {
+          offerOwed = signal?.offerPending === true;
+          void recheck();
+        },
       }
     );
     form.className = 'compose';
@@ -7182,6 +7214,38 @@ export function buildThread(
     }
   };
 
+  let offerOwed = false;
+
+  const mountOfferFor = (email: string): boolean => {
+    if (offerHost !== undefined) return false;
+    if (preferenceStore()?.getItem('relic:passkey-offer') !== null) {
+      return false;
+    }
+    const isSecure =
+      typeof globalThis.isSecureContext === 'undefined' ||
+      globalThis.isSecureContext;
+    if (typeof PublicKeyCredential !== 'function' || !isSecure) {
+      return false;
+    }
+    offerHost = document.createElement('div');
+    void import('./passkey-sign-in.ts').then(({ mountPasskeyOffer }) => {
+      if (offerHost) {
+        mountPasskeyOffer({
+          host: offerHost,
+          deps,
+          email,
+          store: preferenceStore(),
+          requestLink: () => requestFreshLink(relicId, fragment, deps)(email),
+          onDone: () => {
+            offerHost = undefined;
+            paintComposer();
+          },
+        });
+      }
+    });
+    return true;
+  };
+
   /**
    * A magic link opened in another tab verifies this browser, not this tab.
    *
@@ -7193,9 +7257,19 @@ export function buildThread(
   const recheck = async (): Promise<void> => {
     if (cipher === undefined) return;
     const discovered = await readSession(deps);
-    if (sessionSignature(discovered) === sessionSignature(session)) return;
-    session = discovered;
-    paintComposer();
+    let mounted = false;
+    if (offerOwed && discovered.kind === 'verified') {
+      offerOwed = false;
+      mounted = mountOfferFor(discovered.email);
+    }
+    const sessionChanged =
+      sessionSignature(discovered) !== sessionSignature(session);
+    if (sessionChanged) {
+      session = discovered;
+    }
+    if (sessionChanged || mounted) {
+      paintComposer();
+    }
   };
 
   const initialise = async (): Promise<void> => {
@@ -7230,33 +7304,8 @@ export function buildThread(
       session = discovered;
       section.dataset['threadReady'] = 'true';
       section.dataset['session'] = discovered.kind;
-      if (
-        discovered.kind === 'verified' &&
-        takePasskeyOfferMarker() &&
-        preferenceStore()?.getItem('relic:passkey-offer') === null
-      ) {
-        const isSecure =
-          typeof globalThis.isSecureContext === 'undefined' ||
-          globalThis.isSecureContext;
-        if (typeof PublicKeyCredential === 'function' && isSecure) {
-          offerHost = document.createElement('div');
-          void import('./passkey-sign-in.ts').then(({ mountPasskeyOffer }) => {
-            if (offerHost) {
-              mountPasskeyOffer({
-                host: offerHost,
-                deps,
-                email: discovered.email,
-                store: preferenceStore(),
-                requestLink: () =>
-                  requestFreshLink(relicId, fragment, deps)(discovered.email),
-                onDone: () => {
-                  offerHost = undefined;
-                  paintComposer();
-                },
-              });
-            }
-          });
-        }
+      if (discovered.kind === 'verified' && takePasskeyOfferMarker()) {
+        mountOfferFor(discovered.email);
       }
       paintComposer();
       if (discovered.kind === 'verified') {
@@ -9314,6 +9363,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
                 return {
                   kind: 'sent',
                   message: dashboardLinkSent(session.email),
+                  codeEntry: codeEntryFactory(deps),
                 };
               }
               return { kind: 'failed' };
@@ -9419,7 +9469,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
     const sendBtn = document.createElement('button');
     sendBtn.type = 'submit';
     sendBtn.className = 'action primary';
-    sendBtn.textContent = 'Send me a link';
+    sendBtn.textContent = 'Email me a code';
 
     const outcome = document.createElement('div');
     outcome.className = 'dashboard-auth-outcome';
@@ -9468,7 +9518,22 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
           );
           sendBtn.disabled = false;
           if (res.status === 202) {
-            outcome.textContent = dashboardLinkSent(address);
+            const message = document.createElement('p');
+            message.className = 'thread-note';
+            message.textContent = dashboardLinkSent(address);
+            const codeEntry = signInCodeEntry({
+              deps,
+              focus: true,
+              onVerified: () => {
+                announceVerified();
+                if (typeof location !== 'undefined') {
+                  location.reload();
+                } else if (globalThis.location) {
+                  globalThis.location.reload();
+                }
+              },
+            });
+            outcome.replaceChildren(message, codeEntry);
           } else {
             outcome.textContent = 'Request refused. Please try again.';
           }
