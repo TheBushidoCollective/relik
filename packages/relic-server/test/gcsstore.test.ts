@@ -629,6 +629,40 @@ describe('gcsStore', () => {
     expect(await store.getSession('the-secret')).toBeUndefined();
   });
 
+  test('via survives a round trip, and a legacy row reads back with via undefined', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+
+    await store.putSession({
+      tokenHash: 'hash-link',
+      email: 'link@example.com',
+      createdAt: 1000,
+      expiresAt: 9_000_000,
+      via: 'link',
+    });
+    await store.putSession({
+      tokenHash: 'hash-passkey',
+      email: 'passkey@example.com',
+      createdAt: 1000,
+      expiresAt: 9_000_000,
+      via: 'passkey',
+    });
+
+    expect((await store.getSession('hash-link'))?.via).toBe('link');
+    expect((await store.getSession('hash-passkey'))?.via).toBe('passkey');
+
+    // Legacy row written without via (e.g. manually or before this field)
+    await store.putSession({
+      tokenHash: 'hash-legacy',
+      email: 'legacy@example.com',
+      createdAt: 1000,
+      expiresAt: 9_000_000,
+    });
+    const legacy = await store.getSession('hash-legacy');
+    expect(legacy).toBeDefined();
+    expect(legacy?.via).toBeUndefined();
+  });
+
   test('listCommentedRelics returns relics an author commented on, ordered by most recent engagement first', async () => {
     const store = storeOn(fakeGcs());
     await store.putComment({

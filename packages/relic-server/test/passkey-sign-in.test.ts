@@ -12,6 +12,7 @@ import {
   shareVerifierFor,
 } from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
+import type { OutboundMail } from '../src/mail.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore } from '../src/store.ts';
@@ -133,7 +134,10 @@ async function signInViaLink(
       body: JSON.stringify({ email }),
     })
   );
-  const sent = sentMails.find((m) => m.email === email);
+  const sent = sentMails
+    .slice()
+    .reverse()
+    .find((m) => m.email === email);
   if (!sent) throw new Error(`No auth link sent for ${email}`);
 
   const url = new URL(sent.link);
@@ -307,7 +311,16 @@ describe('S1 Server passkey sign-in', () => {
     expect(sessionRow?.email).toBe('bob@example.com');
     expect(sessionRow?.createdAt).toBe(now);
     expect(sessionRow?.expiresAt).toBe(now + 30 * 24 * 3600 * 1000);
+    expect(sessionRow?.via).toBe('passkey');
 
+    const callbackToken = (callbackCookie.split(';')[0] ?? '').replace(
+      'relic_session=',
+      ''
+    );
+    const callbackSessionRow = await store.getSession(
+      await sha256Hex(callbackToken)
+    );
+    expect(callbackSessionRow?.via).toBe('link');
     // Check verified identity
     expect(await store.hasVerifiedIdentity('bob@example.com')).toBe(true);
   });
@@ -1399,5 +1412,475 @@ describe('S1 Server passkey sign-in', () => {
 
     // Valid default passes
     expect(() => assertConfig(DEFAULT_CONFIG)).not.toThrow();
+  });
+
+  test('18. Window boundary. The window covers the full 900 s exactly', async () => {
+    const notices: Array<{ email: string; mail: OutboundMail }> = [];
+    const testApp = build({
+      mailer: {
+        async send(email, link) {
+          sentMails.push({ email, link });
+        },
+        async sendMail(email, mail) {
+          notices.push({ email, mail });
+        },
+      },
+    });
+
+    const mintTime = now;
+    const { cookie } = await signInViaLink('window@example.com', testApp);
+
+    // At mint + 900_000, options returns 200 with create mode
+    now = mintTime + 900_000;
+    const resExact = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: '{}',
+      })
+    );
+    expect(resExact.status).toBe(200);
+    const dataExact = (await resExact.json()) as { mode: string };
+    expect(dataExact.mode).toBe('create');
+
+    // Spy on store.putWebauthnChallenge
+    let putChallengeCalled = false;
+    const origPutChallenge = store.putWebauthnChallenge.bind(store);
+    store.putWebauthnChallenge = async (ch) => {
+      putChallengeCalled = true;
+      return origPutChallenge(ch);
+    };
+
+    // At +900_001, the response is exactly 401 with code passkey_fresh_link_required
+    now = mintTime + 900_001;
+    const resExpired = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: '{}',
+      })
+    );
+    expect(resExpired.status).toBe(401);
+    const bodyExpired = (await resExpired.json()) as Record<string, unknown>;
+    expect(bodyExpired.code).toBe('passkey_fresh_link_required');
+    expect(bodyExpired.title).toBe(
+      'Adding a first passkey needs a fresh sign-in link'
+    );
+    expect(Object.keys(bodyExpired).sort()).toEqual(
+      ['code', 'detail', 'instance', 'status', 'title', 'type'].sort()
+    );
+    expect(putChallengeCalled).toBe(false);
+    expect(notices.length).toBe(0);
+  });
+
+  test('19. Passkey session refused', async () => {
+    const testApp = build();
+    const staleLinkTime = now - 900_001;
+    // Seed a stale link session
+    const staleToken = 'stale-token';
+    await store.putSession({
+      tokenHash: await sha256Hex(staleToken),
+      email: 'oracle@example.com',
+      createdAt: staleLinkTime,
+      expiresAt: now + 3600_000,
+      via: 'link',
+    });
+
+    // Seed a passkey session at now
+    const passkeyToken = 'passkey-token';
+    await store.putSession({
+      tokenHash: await sha256Hex(passkeyToken),
+      email: 'oracle@example.com',
+      createdAt: now,
+      expiresAt: now + 3600_000,
+      via: 'passkey',
+    });
+
+    const staleRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie: `relic_session=${staleToken}` },
+        body: '{}',
+      })
+    );
+    expect(staleRes.status).toBe(401);
+    const staleBody = (await staleRes.json()) as Record<string, unknown>;
+
+    const passkeyRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie: `relic_session=${passkeyToken}` },
+        body: '{}',
+      })
+    );
+    expect(passkeyRes.status).toBe(401);
+    const passkeyBody = (await passkeyRes.json()) as Record<string, unknown>;
+
+    expect(passkeyBody.code).toBe('passkey_fresh_link_required');
+    const { instance: _i1, ...staleRest } = staleBody;
+    const { instance: _i2, ...passkeyRest } = passkeyBody;
+    expect(passkeyRest).toEqual(staleRest);
+  });
+
+  test('20. Legacy rows count as links', async () => {
+    const testApp = build();
+    // Seed a row without via at now
+    const tokenFresh = 'legacy-fresh';
+    await store.putSession({
+      tokenHash: await sha256Hex(tokenFresh),
+      email: 'legacy@example.com',
+      createdAt: now,
+      expiresAt: now + 3600_000,
+    });
+
+    const freshRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie: `relic_session=${tokenFresh}` },
+        body: '{}',
+      })
+    );
+    expect(freshRes.status).toBe(200);
+    const freshData = (await freshRes.json()) as { mode: string };
+    expect(freshData.mode).toBe('create');
+
+    // Seed a row without via at now - 900_001
+    const tokenStale = 'legacy-stale';
+    await store.putSession({
+      tokenHash: await sha256Hex(tokenStale),
+      email: 'legacy@example.com',
+      createdAt: now - 900_001,
+      expiresAt: now + 3600_000,
+    });
+
+    const staleRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie: `relic_session=${tokenStale}` },
+        body: '{}',
+      })
+    );
+    expect(staleRes.status).toBe(401);
+    const staleData = (await staleRes.json()) as { code: string };
+    expect(staleData.code).toBe('passkey_fresh_link_required');
+  });
+
+  test('21. Challenge honoured after the window', async () => {
+    const notices: Array<{ email: string; mail: OutboundMail }> = [];
+    const testApp = build({
+      mailer: {
+        async send(email, link) {
+          sentMails.push({ email, link });
+        },
+        async sendMail(email, mail) {
+          notices.push({ email, mail });
+        },
+      },
+    });
+
+    const mintTime = now;
+    const { cookie } = await signInViaLink('honour@example.com', testApp);
+
+    now = mintTime + 899_000;
+    const optRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: '{}',
+      })
+    );
+    expect(optRes.status).toBe(200);
+    const optData = (await optRes.json()) as {
+      mode: string;
+      public_key: CreationOptionsJSON;
+    };
+
+    const auth = await fakeAuthenticator();
+    const reg = await auth.register(optData.public_key, ORIGIN);
+
+    // Advance clock past the 900s fresh link window (e.g. +60_000 ms)
+    now += 60_000;
+    const regRes = await testApp.fetch(
+      req('/api/auth/passkeys', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: reg }),
+      })
+    );
+    expect(regRes.status).toBe(201);
+    expect(notices.length).toBe(1);
+    expect(notices[0]?.email).toBe('honour@example.com');
+  });
+
+  test('22. Enroll is exempt', async () => {
+    const notices: Array<{ email: string; mail: OutboundMail }> = [];
+    const testApp = build({
+      mailer: {
+        async send(email, link) {
+          sentMails.push({ email, link });
+        },
+        async sendMail(email, mail) {
+          notices.push({ email, mail });
+        },
+      },
+    });
+
+    const mintTime = now;
+    const { cookie } = await signInViaLink('enroll@example.com', testApp);
+    const auth1 = await fakeAuthenticator();
+    await registerPasskey(cookie, auth1, testApp);
+
+    expect(notices.length).toBe(1);
+    const d1 = new Date(mintTime);
+    const hh1 = String(d1.getUTCHours()).padStart(2, '0');
+    const mm1 = String(d1.getUTCMinutes()).padStart(2, '0');
+    const when1 = `${d1.getUTCDate()} Oct ${d1.getUTCFullYear()} at ${hh1}:${mm1} UTC`;
+    expect(notices[0]?.mail.text).toBe(
+      `A passkey was added for enroll@example.com on ${when1}.\n\n` +
+        'It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
+        'If you added it, you can ignore this message.\n\n' +
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.'
+    );
+
+    // Advance now by 2 hours (7_200_000 ms)
+    now += 7_200_000;
+
+    // Options returns assert mode
+    const optRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: '{}',
+      })
+    );
+    expect(optRes.status).toBe(200);
+    const optData = (await optRes.json()) as {
+      mode: string;
+      public_key: RequestOptionsJSON;
+    };
+    expect(optData.mode).toBe('assert');
+
+    // Assertion gives create mode
+    const assertion = await auth1.assert(optData.public_key, ORIGIN);
+    const enrollRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: assertion }),
+      })
+    );
+    expect(enrollRes.status).toBe(200);
+    const enrollData = (await enrollRes.json()) as {
+      mode: string;
+      public_key: CreationOptionsJSON;
+    };
+    expect(enrollData.mode).toBe('create');
+
+    // Register second passkey gives 201
+    const auth2 = await fakeAuthenticator();
+    const reg2 = await auth2.register(enrollData.public_key, ORIGIN);
+    const addRes = await testApp.fetch(
+      req('/api/auth/passkeys', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: reg2 }),
+      })
+    );
+    expect(addRes.status).toBe(201);
+    expect(notices.length).toBe(2);
+    expect(notices[1]?.mail.text).toContain('This address has 2 passkeys.');
+    const d2 = new Date(now);
+    const hh2 = String(d2.getUTCHours()).padStart(2, '0');
+    const mm2 = String(d2.getUTCMinutes()).padStart(2, '0');
+    const when2 = `${d2.getUTCDate()} Oct ${d2.getUTCFullYear()} at ${hh2}:${mm2} UTC`;
+    expect(notices[1]?.mail.text).toBe(
+      `A passkey was added for enroll@example.com on ${when2}.\n\n` +
+        'It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.\n\n' +
+        'If you added it, you can ignore this message.\n\n' +
+        'If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.'
+    );
+  });
+
+  test('23. Failed notice', async () => {
+    const errorLogs: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      errorLogs.push(args.map(String).join(' '));
+    };
+
+    try {
+      const testApp = build({
+        mailer: {
+          async send(email, link) {
+            sentMails.push({ email, link });
+          },
+          async sendMail(email, _mail) {
+            throw new Error(`Resend network fail for ${email}`);
+          },
+        },
+      });
+
+      const { cookie } = await signInViaLink('failnotice@example.com', testApp);
+      const auth = await fakeAuthenticator();
+      const optRes = await testApp.fetch(
+        req('/api/auth/passkeys/options', {
+          method: 'POST',
+          headers: { cookie },
+          body: '{}',
+        })
+      );
+      const optData = (await optRes.json()) as {
+        public_key: CreationOptionsJSON;
+      };
+      const reg = await auth.register(optData.public_key, ORIGIN);
+
+      const regRes = await testApp.fetch(
+        req('/api/auth/passkeys', {
+          method: 'POST',
+          headers: { cookie },
+          body: JSON.stringify({ credential: reg }),
+        })
+      );
+      expect(regRes.status).toBe(201);
+
+      // getPasskeys holds the credential
+      const record = await store.getPasskeys('failnotice@example.com');
+      expect(record?.credentials.length).toBe(1);
+
+      // console.error spy gets exactly one line matching regex, without the address in it
+      expect(errorLogs.length).toBe(1);
+      expect(errorLogs[0]).toMatch(
+        /^relic: passkey notice failed for recipient [0-9a-f]{64}: /
+      );
+      expect(errorLogs[0]).not.toContain('failnotice@example.com');
+    } finally {
+      console.error = origError;
+    }
+  });
+
+  test('24. send never carries the notice', async () => {
+    const testApp = build(); // default has only send
+    const { cookie } = await signInViaLink('nosend@example.com', testApp);
+    const auth = await fakeAuthenticator();
+    await registerPasskey(cookie, auth, testApp);
+
+    // sentMails has length 1 (the link only)
+    expect(sentMails.length).toBe(1);
+    expect(sentMails[0]?.email).toBe('nosend@example.com');
+  });
+
+  test('25. No notice on refusals', async () => {
+    const notices: Array<{ email: string; mail: OutboundMail }> = [];
+    const testApp = build({
+      mailer: {
+        async send(email, link) {
+          sentMails.push({ email, link });
+        },
+        async sendMail(email, mail) {
+          notices.push({ email, mail });
+        },
+      },
+    });
+
+    const mintTime = now;
+    const { cookie } = await signInViaLink('refusal@example.com', testApp);
+
+    // Stale session refusal
+    now = mintTime + 900_001;
+    const optRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: '{}',
+      })
+    );
+    expect(optRes.status).toBe(401);
+    expect(notices.length).toBe(0);
+
+    // Reset clock for race that answers 409 passkey_assertion_required
+    now = mintTime;
+    const optRes2 = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: '{}',
+      })
+    );
+    const optData2 = (await optRes2.json()) as {
+      public_key: CreationOptionsJSON;
+    };
+    const auth = await fakeAuthenticator();
+    const reg = await auth.register(optData2.public_key, ORIGIN);
+
+    // Seed an existing passkey record to simulate race collision
+    await store.createPasskeys({
+      email: 'refusal@example.com',
+      userHandle: 'userhandle123',
+      credentials: [
+        {
+          credentialId: 'existing-id',
+          publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'abc', y: 'def' },
+          alg: -7,
+          signCount: 0,
+          transports: ['internal'],
+          createdAt: now,
+        },
+      ],
+    });
+
+    const regRes = await testApp.fetch(
+      req('/api/auth/passkeys', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: reg }),
+      })
+    );
+    expect(regRes.status).toBe(409);
+    const errBody = (await regRes.json()) as { code: string };
+    expect(errBody.code).toBe('passkey_assertion_required');
+    expect(notices.length).toBe(0);
+  });
+
+  test('26. assertConfig validates passkeyFreshLinkSeconds', () => {
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeyFreshLinkSeconds: 599,
+      })
+    ).toThrow('passkeyFreshLinkSeconds');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeyFreshLinkSeconds: 930,
+      })
+    ).toThrow('passkeyFreshLinkSeconds');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeyFreshLinkSeconds: 1.5,
+      })
+    ).toThrow('passkeyFreshLinkSeconds');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeyFreshLinkSeconds: 900,
+      })
+    ).not.toThrow();
+  });
+
+  test('27. /policy contains the new paragraph and disclosure text', async () => {
+    const testApp = build();
+    const res = await testApp.fetch(req('/policy'));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain(
+      'only a session that a sign-in link started in the previous 15 minutes can begin adding it'
+    );
+    expect(text).toContain(
+      'That email has no stop link, because it is about the address rather than a relic.'
+    );
   });
 });

@@ -51,6 +51,7 @@ import {
   commentNotificationMail,
   MailRefusedError,
   type OutboundMail,
+  passkeyAddedMail,
   replyNotificationMail,
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
@@ -73,6 +74,7 @@ import {
   type RelicCover,
   type RelicRow,
   type RelicStore,
+  type SessionRow,
   type Tombstone,
 } from './store.ts';
 import {
@@ -3137,18 +3139,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     return new Response(null, { status: 202 });
   }
-
-  /**
-   * Follow the link: spend the token, mint a session, land back on the relic.
-   *
-   * The redirect target keeps whatever fragment the caller asked to return
-   * to. The key lives in that fragment, so dropping it would leave a
-   * verified reader unable to decrypt the thing they just signed in to
-   * discuss.
-   */
+  /** Mints a session cookie and persists the session row. */
   async function mintReaderSession(
     email: string,
-    now: number
+    now: number,
+    via: 'link' | 'passkey'
   ): Promise<string> {
     const session = newAuthToken();
     await store.putSession({
@@ -3156,6 +3151,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       email,
       createdAt: now,
       expiresAt: now + config.sessionTtlSeconds * 1000,
+      via,
     });
     await store.recordVerifiedIdentity(email, now);
 
@@ -3169,6 +3165,39 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ].join('; ');
   }
 
+  function mayAddFirstPasskey(session: SessionRow, now: number): boolean {
+    return (
+      (session.via ?? 'link') === 'link' &&
+      now - session.createdAt <= config.passkeyFreshLinkSeconds * 1000
+    );
+  }
+
+  async function sendPasskeyNotice(
+    address: string,
+    now: number,
+    added: { readonly first: boolean; readonly passkeys: number }
+  ): Promise<void> {
+    if (mailer === undefined || typeof mailer.sendMail !== 'function') return;
+    try {
+      await mailer.sendMail(
+        address,
+        passkeyAddedMail({ address, at: now, ...added })
+      );
+    } catch (error) {
+      console.error(
+        `relic: passkey notice failed for recipient ${await sha256Hex(normalizeEmail(address))}: ${sanitizeMailError(error, address)}`
+      );
+    }
+  }
+
+  /**
+   * Follow the link: spend the token, mint a session, land back on the relic.
+   *
+   * The redirect target keeps whatever fragment the caller asked to return
+   * to. The key lives in that fragment, so dropping it would leave a
+   * verified reader unable to decrypt the thing they just signed in to
+   * discuss.
+   */
   async function authCallback(url: URL, now: number): Promise<Response> {
     const token = url.searchParams.get('token');
     if (token === null) return refuse('invalid_session');
@@ -3178,7 +3207,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_session');
     }
 
-    const readerCookie = await mintReaderSession(link.email, now);
+    const readerCookie = await mintReaderSession(link.email, now, 'link');
     const offerCookie = [
       'relic_passkey_offer=1',
       'Path=/',
@@ -4087,6 +4116,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     const passkeyRecord = await store.getPasskeys(email);
     if (passkeyRecord === undefined || passkeyRecord.credentials.length === 0) {
+      if (!mayAddFirstPasskey(session, now)) {
+        return refuse('passkey_fresh_link_required');
+      }
       const userHandleBytes = new Uint8Array(32);
       crypto.getRandomValues(userHandleBytes);
       const userHandle = Buffer.from(userHandleBytes).toString('base64url');
@@ -4288,7 +4320,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       if (!created) {
         return refuse('passkey_assertion_required');
       }
-
+      await sendPasskeyNotice(session.email, now, { first: true, passkeys: 1 });
       return json(
         {
           email,
@@ -4337,7 +4369,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
       if (updated === undefined) {
         return refuse('passkey_required');
       }
-
+      await sendPasskeyNotice(session.email, now, {
+        first: false,
+        passkeys: updated.credentials.length,
+      });
       return json(
         {
           email,
@@ -4635,7 +4670,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const address = record.address ?? record.email;
-    const cookie = await mintReaderSession(address, now);
+    const cookie = await mintReaderSession(address, now, 'passkey');
 
     return new Response(JSON.stringify({ email: address }), {
       status: 200,
@@ -5664,7 +5699,7 @@ relic sends no more emails, and those records stay until it is deleted, like the
 
 **Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
 
-**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use; adding another requires confirming with an existing one. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
+**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in link started in the previous ${config.passkeyFreshLinkSeconds / 60} minutes can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relic. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
 
 **Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
 

@@ -132,6 +132,13 @@ export interface RelicConfig {
   readonly passkeyDecoyIdLengths: readonly number[];
   /** How long the passkey offer cookie marker lasts in seconds. */
   readonly passkeyOfferMarkerSeconds: number;
+  /**
+   * How long after a sign-in link starts a session that session may begin
+   * adding the address's first passkey. A session a passkey started never may.
+   * Whole minutes, because the disclosure states it in minutes, and at least
+   * `passkeyOfferMarkerSeconds`, so no offer card is refused at mount.
+   */
+  readonly passkeyFreshLinkSeconds: number;
   /** Engaged when egress spend crosses the ceiling. Refuses every mint. */
   readonly killSwitchEngaged: boolean;
   /**
@@ -198,6 +205,7 @@ export const DEFAULT_CONFIG: RelicConfig = {
   passkeySignInAllowListSize: 4,
   passkeyDecoyIdLengths: [16, 20, 32, 64],
   passkeyOfferMarkerSeconds: 600,
+  passkeyFreshLinkSeconds: 900,
   killSwitchEngaged: false,
   trustedProxyHops: 2,
 };
@@ -268,6 +276,15 @@ export function assertConfig(config: RelicConfig): void {
     config.passkeyOfferMarkerSeconds <= 0
   ) {
     throw new Error('passkeyOfferMarkerSeconds must be an integer > 0');
+  }
+  if (
+    !Number.isInteger(config.passkeyFreshLinkSeconds) ||
+    config.passkeyFreshLinkSeconds % 60 !== 0 ||
+    config.passkeyFreshLinkSeconds < config.passkeyOfferMarkerSeconds
+  ) {
+    throw new Error(
+      'passkeyFreshLinkSeconds must be a whole number of minutes, at least passkeyOfferMarkerSeconds'
+    );
   }
   if (
     !Number.isInteger(config.passkeySignInOptionsAddressRateLimit?.limit) ||

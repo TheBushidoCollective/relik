@@ -314,7 +314,7 @@ export interface CommentedRelic {
 }
 
 /**
- * A verified email session, minted by following a magic link.
+ * A verified email session, minted by following a magic link or by a passkey sign-in.
  *
  * The link's token is single use and short lived; the session that replaces
  * it is the thing a browser carries. Both are stored hashed, so this file
@@ -325,6 +325,8 @@ export interface SessionRow {
   readonly email: string;
   readonly createdAt: number;
   readonly expiresAt: number;
+  /** What started the session. Absent on rows from before passkey sign-in, all of which a link started. */
+  readonly via?: 'link' | 'passkey';
 }
 
 /** A pending magic link, before anybody has followed it. */
