@@ -28,6 +28,7 @@ import {
   SNAPSHOT_SLOTS_PER_DECODER,
 } from '../src/otio-playback.ts';
 import {
+  certifiedWindowIndex,
   minWindowDuration,
   NativeDecoderRing,
   SnapshotPixelBudget,
@@ -6311,6 +6312,214 @@ describe('otio native playback regressions 5-9, clock and capability gate', () =
       expect(outCanvas.pixel.r).toBe(77);
     } finally {
       document.createElement = origCreate;
+      playback.dispose();
+    }
+  });
+
+  test('watchdog: two native videos with alternating missing tags do not freeze without resync', async () => {
+    const rate = 24;
+    const timingA: Extract<OtioVideoTiming, { kind: 'windows' }> = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 120 }, (_, i) => i / 24),
+      ends: Float64Array.from({ length: 120 }, (_, i) => (i + 1) / 24),
+    };
+    const timingB: Extract<OtioVideoTiming, { kind: 'windows' }> = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 150 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 150 }, (_, i) => (i + 1) / 30),
+    };
+    const blobA = new Blob(['clip A'], { type: 'video/mp4' });
+    const blobB = new Blob(['clip B'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/clipA.mp4', blobA],
+        ['media/clipB.mp4', blobB],
+      ]),
+      timings: new Map([
+        [blobA, timingA],
+        [blobB, timingB],
+      ]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const time = (value: number, r: number = rate) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate: r,
+    });
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_1' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_v_a' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_a' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0, 24),
+                    duration: time(120, 24),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clipA.mp4',
+                  },
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_v_b' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_b' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0, 30),
+                    duration: time(150, 30),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clipB.mp4',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate });
+      const videoA = created.find((m) => m.src.includes('media/clipA.mp4'));
+      const videoB = created.find((m) => m.src.includes('media/clipB.mp4'));
+      expect(videoA).toBeDefined();
+      expect(videoB).toBeDefined();
+      videoA!.enableRvfc();
+      videoB!.enableRvfc();
+      videoA!.advanceTo(0);
+      videoB!.advanceTo(0);
+
+      let bufferingCount = 0;
+      playback.subscribe((state) => {
+        if (state.buffering) bufferingCount++;
+      });
+      let pauseCount = 0;
+      const origPauseA = videoA!.pause.bind(videoA);
+      videoA!.pause = () => {
+        pauseCount++;
+        origPauseA();
+      };
+      const origPauseB = videoB!.pause.bind(videoB);
+      videoB!.pause = () => {
+        pauseCount++;
+        origPauseB();
+      };
+
+      const playPromise = playback.play();
+      await waitForRvfc(videoA!);
+      await waitForRvfc(videoB!);
+
+      const d1 = 100;
+      const vsync = 1 / 60;
+      const wMinA = minWindowDuration(timingA, 1);
+      const wMinB = minWindowDuration(timingB, 1);
+      const deltaSecA = (vsync + 2 * wMinA) / 2 - (timingA.starts[1] ?? 0);
+      const deltaSecB = (vsync + 2 * wMinB) / 2 - (timingB.starts[1] ?? 0);
+      const d1_B = d1 + (deltaSecA - deltaSecB) * 1000;
+
+      videoA!.triggerRvfc(d1, timingA.starts[1] ?? 1 / 24);
+      videoB!.triggerRvfc(d1_B, timingB.starts[1] ?? 1 / 30);
+      await playPromise;
+
+      const tauStar = d1 + deltaSecA * 1000;
+      const startWall = tauStar + 100;
+
+      let lastProgressWallMs = startWall;
+      let lastTimeValue = playback.getState().time.value;
+      let initialSeeksA = videoA!.seekTargets.length;
+      let initialSeeksB = videoB!.seekTargets.length;
+      let initialPauseCount = pauseCount;
+      let initialBufferingCount = bufferingCount;
+
+      for (let tick = 1; tick <= 30; tick++) {
+        const now = startWall + tick * 40;
+        const elapsedSec = (now - tauStar) / 1000;
+        const reqA = certifiedWindowIndex(
+          { value: elapsedSec * 24, rate: 24 },
+          timingA
+        );
+        const reqB = certifiedWindowIndex(
+          { value: elapsedSec * 30, rate: 30 },
+          timingB
+        );
+
+        if (tick % 2 === 1) {
+          videoA!.triggerRvfc(now, timingA.starts[reqA ?? 0] ?? 0);
+          videoB!.triggerRvfc(
+            now,
+            timingB.starts[Math.max(0, (reqB ?? 0) - 1)] ?? 0
+          );
+        } else {
+          videoB!.triggerRvfc(now, timingB.starts[reqB ?? 0] ?? 0);
+          videoA!.triggerRvfc(
+            now,
+            timingA.starts[Math.max(0, (reqA ?? 0) - 1)] ?? 0
+          );
+        }
+
+        raf?.(now);
+        for (let k = 0; k < 25; k++) await Promise.resolve();
+
+        const state = playback.getState();
+        const currentTimeValue = state.time.value;
+        const currentSeeksA = videoA!.seekTargets.length;
+        const currentSeeksB = videoB!.seekTargets.length;
+        const timeAdvanced = currentTimeValue > lastTimeValue;
+        const resyncOccurred =
+          state.buffering ||
+          bufferingCount > initialBufferingCount ||
+          pauseCount > initialPauseCount ||
+          currentSeeksA > initialSeeksA ||
+          currentSeeksB > initialSeeksB;
+        if (timeAdvanced || resyncOccurred) {
+          lastProgressWallMs = now;
+          lastTimeValue = currentTimeValue;
+          initialBufferingCount = bufferingCount;
+          initialPauseCount = pauseCount;
+          initialSeeksA = currentSeeksA;
+          initialSeeksB = currentSeeksB;
+        }
+        const stretch = now - lastProgressWallMs;
+        if (stretch > 150) {
+          throw new Error(
+            `native playback presented nothing and did not resync for ${stretch} ms`
+          );
+        }
+      }
+    } finally {
       playback.dispose();
     }
   });
