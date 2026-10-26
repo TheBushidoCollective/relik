@@ -513,3 +513,471 @@ All slices branch from the S0 commit on `feat/passkey-commenting` in isolated wo
 - The CDP virtual authenticator doesn't return a resident credential for an empty allow list, so step 6 fails.
 - `decision-path` or `comment-popover-path` regresses on the new sidebar card, or on the extra anonymous fetches.
 - Production holds passkey records without `userHandle`, or with handles that aren't 43-character base64url.
+## 9. Addendum (2026-10-25): a first passkey needs a fresh link, and every added passkey is announced
+
+### 9.1 Goal
+
+All of these must be observably true when this is done:
+
+- A first passkey can only be started by a session that a sign-in link minted no more than `passkeyFreshLinkSeconds` (900) ago.
+- A session minted by a passkey never qualifies.
+- Every passkey that gets stored, whether first or added later, sends exactly one email to the address.
+- A mail failure leaves the passkey stored and the `201` unchanged.
+- When the server refuses, the offer card and the decision panel both say why, keep the session, and offer one button that emails a new link.
+- No device ever holds a credential that the server refused.
+
+### 9.2 Facts the brief rests on, checked, and two it missed
+
+1. **Only two places mint a session.**
+   - The link callback: `app.ts:3181`.
+   - Passkey sign-in: `app.ts:4638`.
+   - Both go through `mintReaderSession` (`3149-3170`). It writes `createdAt: now` (`3157`), which is the mint time.
+2. **Both stores keep the session row whole.**
+   - Memory: `store.ts:971-978`.
+   - GCS: `gcsstore.ts:798-814`, which writes the row as JSON to `m/session/<hash>.json`.
+   - So a new optional field needs no store code.
+3. **The first-passkey challenge has exactly one source.** It is the options branch at `app.ts:4088-4127`, which writes `purpose:'register'` without `assertedBy` at `4099-4105`. The register route consumes it at `4224-4235` and creates the record at `4264-4302`. The enroll path is `3990-4086`, then the add at `4304-4355`.
+4. **Missed: the offer card closes itself on any 401.** In `fetchOptions` at `passkey-sign-in.ts:743-746`, `res.status === 401` calls `onDone()`, and the card disappears. The new code has to be checked before that test.
+5. **Missed: a signed-in reader has no way to send a link from either surface.**
+   - `PasskeyOfferMount` (`passkey-sign-in.ts:658-665`) has `email?` but no relic id or return path.
+   - The decision panel only mounts the shell's form when the session lapses (`decision-panel.ts:558-582`).
+   - The link copy lives in the shell (`main.ts:3327-3341`), and so does the key-at-risk check (`comments.ts:543-555`).
+   - So the shell has to supply a callback.
+6. **The notice must use `sendMail` only.**
+   - `send` is the sign-in link channel: `resendMailer` wraps its argument in `signInMail` (`mail.ts:538-541`).
+   - The two passkey test mailers implement only `send` (`passkey-sign-in.test.ts:54-58`, `decisions.test.ts:55-59`).
+   - `fanOutNotifications` falls back to `send(address, mail.text)` (`app.ts:1926-1971`). The notice must not copy that.
+7. **The repo offers a reader no remedy.**
+   - No route removes a passkey or ends a session (grep for `DELETE`, sign-out and revoke found none; `decisions.md:936`).
+   - There is no support address and no reply-to (`mail.ts:458-466`).
+   - `/abuse` is "Report a relic". It requires a relic id (`app.ts:5469-5496`, `2572-2617`).
+8. **The existing proofs stay valid.**
+   - Both follow a link and register within the same second (`passkey-sign-in-steps.ts:256-352`, `decision-proof-steps.ts:536-580`).
+   - Mail is only counted as a delta per step (`passkey-sign-in-steps.ts:417-437`, `446-470`).
+   - `resolveMagicLink` returns the first mail to an address (`passkey-sign-in-path.ts:118-121`, `decision-path.ts:118-121`), so any new negative uses a fresh address.
+9. **A doc comment is attached to the wrong function.** The comment at `app.ts:3141-3148`, "Follow the link: spend the token…", sits on `mintReaderSession` but describes `authCallback`.
+
+### 9.3 Decisions
+
+1. **Provenance.**
+   - `SessionRow` gains `via?: 'link' | 'passkey'`, and `mintReaderSession` always writes it.
+   - An absent value counts as `'link'`, because every row written before passkey sign-in came from a link.
+   - Any other value counts as not a link, so a damaged row fails closed.
+   - This must ship in the same merge as passkey sign-in (PR #130). Otherwise passkey sessions without `via` would read as links.
+2. **The window is `passkeyFreshLinkSeconds: 900`.** Three numbers line up on 900:
+   - It equals `authLinkTtlSeconds` (`config.ts:188`), so a mailbox proof is good for 15 minutes before and after the link is followed.
+   - It equals the offer marker (600, `config.ts:200`) plus one challenge (300, `config.ts:190`). The card only mounts while the marker is alive, and its first prefetched challenge stays valid for its full 300 s, so a card mounted from a live marker is never refused at mount.
+   - For the decision panel: a reader who signs in and decides within 15 minutes never sees the refusal. Others see it once per address, ever, because it applies only to the first passkey.
+   - Rejected: 3600 and 86400. They remove that one-time cost by widening the window in which a stolen cookie works.
+   - `assertConfig` requires a whole number of minutes, because the disclosure renders minutes. It also requires the value to be at least `passkeyOfferMarkerSeconds`.
+3. **The refusal is `401 passkey_fresh_link_required`, titled "Adding a first passkey needs a fresh sign-in link", with no extension members.**
+   - 401 because the remedy is signing in again. That matches `sign_in_required` and the step-up convention.
+   - Rejected: 409 (nothing about the address conflicts) and 403.
+   - **Address-oracle invariant:**
+     - It is emitted only on the session-authenticated options route.
+     - It comes after the rate limiter and the body parse.
+     - It comes only in the no-passkey branch, after the same `getPasskeys` read that already picks `mode`. So it tells the holder of that address's own session nothing that `mode: create`/`assert` didn't.
+     - The body is the same bytes, apart from `instance`, for a stale link session and a passkey session.
+     - It never names the address, the session's age, or the provenance.
+   - The sign-in routes, `/api/auth/request` (always 202) and `/api/auth/session` are untouched.
+4. **Where the check sits.** It goes in one place: the first statement inside `if (passkeyRecord === undefined || passkeyRecord.credentials.length === 0)` at `app.ts:4089`, before any user handle or challenge exists.
+   - Both callers reach it: the offer card (sign-in convenience) and the decision panel (decisions).
+   - `POST /api/auth/passkeys` does not check again:
+     - Its only first-passkey input is that branch's challenge, which is single use, bound to the address and valid for 300 s.
+     - Checking again would refuse readers whose window closed mid-ceremony, after their authenticator had already stored a discoverable credential. That creates an orphan.
+     - So the effective bound is W + `passkeyChallengeTtlSeconds`, and the disclosure says "begin adding".
+   - **Enroll is exempt.** The assertion from an existing passkey happens inside the same ceremony and is stronger than any link. Requiring a link there would break adding a local passkey on a laptop signed in through a phone passkey.
+5. **The notice.**
+   - **When:** it is sent after `createPasskeys` succeeds (`app.ts:4287-4290`) and after `updatePasskeys` returns a record (`4337-4339`), before each `201`.
+   - **To:** `session.email`.
+   - **How:** it is awaited inside try/catch, the same pattern as comment notifications (`app.ts:2776-2788`), because Cloud Run starves work after the response is sent.
+   - **No stop link and no `List-Unsubscribe`**, following `signInMail` (`mail.ts:63-84`):
+     - stop records are per relic (`isOptedOut(relicId, addressHash)`);
+     - a security notice that can be switched off fails exactly when someone else holds the session;
+     - it only fires when the address gains a sign-in credential.
+   - **Failure:** logged with a hash of the address and `sanitizeMailError`. It never changes the response and never undoes the write.
+   - **Remedy:** the email says what to check and says plainly that Relic can't remove a passkey. Rejected: pointing readers at `/abuse`, which is for relics, needs a relic id, and gives the operator no removal tool.
+6. **Viewer.** Both surfaces get a `link-*` state family. A required shell callback sends the link and returns the shell's own non-confirming copy, so that copy stays defined in one place and the 202 non-oracle wording (`comments.ts:575-583`) is kept.
+
+### 9.4 Shared contracts (verbatim)
+
+**Config** (`config.ts`):
+- Interface field after `134`:
+  ```ts
+  /**
+   * How long after a sign-in link starts a session that session may begin
+   * adding the address's first passkey. A session a passkey started never may.
+   * Whole minutes, because the disclosure states it in minutes, and at least
+   * `passkeyOfferMarkerSeconds`, so no offer card is refused at mount.
+   */
+  readonly passkeyFreshLinkSeconds: number;
+  ```
+- Default after `200`: `passkeyFreshLinkSeconds: 900,`.
+- Assertion after `266-271`:
+  ```ts
+  if (!Number.isInteger(config.passkeyFreshLinkSeconds) || config.passkeyFreshLinkSeconds % 60 !== 0 || config.passkeyFreshLinkSeconds < config.passkeyOfferMarkerSeconds) {
+    throw new Error('passkeyFreshLinkSeconds must be a whole number of minutes, at least passkeyOfferMarkerSeconds');
+  }
+  ```
+
+**Problems** (`problems.ts`): add these in the union (`75`), in `STATUS` (`119`) and in `TITLE` (`167`):
+```ts
+| 'passkey_fresh_link_required'
+passkey_fresh_link_required: 401,
+passkey_fresh_link_required: 'Adding a first passkey needs a fresh sign-in link',
+```
+
+**Store** (`store.ts:316-328`):
+- `SessionRow` gains:
+  ```ts
+  /** What started the session. Absent on rows from before passkey sign-in, all of which a link started. */
+  readonly via?: 'link' | 'passkey';
+  ```
+- The doc comment becomes "A verified email session, minted by following a magic link or by a passkey sign-in."
+- No change to the Memory store or the GCS store.
+
+**Server** (`app.ts`):
+- `mintReaderSession(email: string, now: number, via: 'link' | 'passkey')` writes `via`.
+  - Callers: `3181` passes `'link'` and `4638` passes `'passkey'`.
+  - Give it its own one-line doc comment, and move the comment at `3141-3148` onto `authCallback` (`3172`).
+- The predicate, beside it:
+  ```ts
+  function mayAddFirstPasskey(session: SessionRow, now: number): boolean {
+    return (session.via ?? 'link') === 'link' && now - session.createdAt <= config.passkeyFreshLinkSeconds * 1000;
+  }
+  ```
+  The boundary is inclusive.
+- The check, at `4089` (first line inside the branch):
+  ```ts
+  if (!mayAddFirstPasskey(session, now)) return refuse('passkey_fresh_link_required');
+  ```
+- The notice helper:
+  ```ts
+  async function sendPasskeyNotice(address: string, now: number, added: { readonly first: boolean; readonly passkeys: number }): Promise<void> {
+    if (mailer === undefined || typeof mailer.sendMail !== 'function') return;
+    try { await mailer.sendMail(address, passkeyAddedMail({ address, at: now, ...added })); }
+    catch (error) { console.error(`relic: passkey notice failed for recipient ${await sha256Hex(normalizeEmail(address))}: ${sanitizeMailError(error, address)}`); }
+  }
+  ```
+- Calls:
+  - `await sendPasskeyNotice(session.email, now, { first: true, passkeys: 1 })` after `4290`.
+  - `await sendPasskeyNotice(session.email, now, { first: false, passkeys: updated.credentials.length })` after `4339`.
+- Import `passkeyAddedMail` at `48-55`.
+
+**Mail** (`mail.ts`, after `changeNoticeMail`):
+- `export function passkeyAddedMail(p: { readonly address: string; readonly at: number; readonly first: boolean; readonly passkeys: number }): OutboundMail`.
+- The time is formatted from UTC getters only, no locale: `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} at ${hh}:${mm} UTC`, with `MONTHS` running `Jan` to `Dec`.
+- `headers` is `undefined`. The HTML wraps each paragraph in `<p>` and runs `escapeHtml` over the whole paragraph. The text joins paragraphs with blank lines.
+- Subject: `A passkey was added for your address on Relic`
+- Text when `first: true`:
+  ```
+  A passkey was added for {address} on {when}.
+
+  It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.
+
+  If you added it, you can ignore this message.
+
+  If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.
+  ```
+- Text when `first: false`:
+  ```
+  A passkey was added for {address} on {when}.
+
+  It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has {n} passkeys.
+
+  If you added it, you can ignore this message.
+
+  If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.
+  ```
+  Use the singular "passkey" when n is 1.
+
+**Viewer types and copy:** `passkey-common.ts`, imported only by the lazy chunks. `main.ts` may import the type and nothing else.
+```ts
+export const COPY_LINK_REQUIRED_LEAD = 'A first passkey can only be added right after you sign in with a link.';
+export const COPY_LINK_FINE = 'This stops anyone holding an older sign-in from adding a passkey as you.';
+export const COPY_LINK_SEND = 'Send me a new link';
+export const COPY_LINK_FAILED = 'Relic could not send a link just now. Try again later.';
+/** The shell's answer after emailing a new link on a surface's behalf. Resolves, never rejects. */
+export type LinkRequestOutcome =
+  | { readonly kind: 'sent'; readonly message: string; readonly warning?: string }
+  | { readonly kind: 'failed' };
+```
+
+- Offer body in `link-required`:
+  - with an address: `` `${COPY_LINK_REQUIRED_LEAD} Send a new one to ${email}, open it, then add your passkey.` ``
+  - without one: `` `${COPY_LINK_REQUIRED_LEAD} Send yourself a new one, open it, then add your passkey.` ``
+- Decision copy: `` export const DECISION_LINK_REQUIRED = `${COPY_LINK_REQUIRED_LEAD} Send a new one, open it, then choose again. Nothing was recorded.`; `` placed beside `DECISION_TOFU` (`decision-panel.ts:54-56`).
+- The `sent` message is the shell's existing sentence:
+  - relic page: "If {address} can receive mail, a link is on its way. Following it verifies the address and brings you back here." (`main.ts:3331-3335`)
+  - dashboard: "…brings you back to this dashboard." (`main.ts:9411-9414`)
+- `warning` is `KEY_AT_RISK_NOTE` (`comments.ts:552-555`) when `!keySurvivesNavigation(...)`.
+
+**Viewer DOM: offer card.**
+- Children become `title, body, p.compose-warning[data-passkey-offer-warning][hidden], fine, [data-passkey-offer-create], button.action.primary[data-passkey-offer-link][type=button][hidden], [data-passkey-offer-dismiss]`. This replaces the line at `passkey-sign-in.ts:711`.
+- The `data-state` values below are set on both the card and the host:
+
+| `data-state` | body | fine | warning | create | link | dismiss |
+|---|---|---|---|---|---|---|
+| `link-required` | the link-required body | `COPY_LINK_FINE` | hidden | hidden | shown, enabled | "Not now" (stores `dismissed`) |
+| `link-sending` | unchanged | unchanged | hidden | hidden | shown, disabled | "Not now" |
+| `link-sent` | `outcome.message` | hidden | `outcome.warning` or hidden | hidden | hidden | "Close" (removes the card, stores nothing) |
+| `link-failed` | `COPY_LINK_FAILED` | `COPY_LINK_FINE` | hidden | hidden | shown, enabled | "Not now" |
+
+**Viewer DOM: decision panel.** The section is `section.decision-passkey[data-passkey-link][data-state="required|sending|sent|failed"]`. It contains, in order:
+1. `h3` "Set up a passkey to decide".
+2. `identity('For ')`.
+3. For required and sending: `p.compose-warning` `DECISION_LINK_REQUIRED`. For failed: `COPY_LINK_FAILED`.
+4. `button.action.primary[data-passkey-link-send][type=button]` with `COPY_LINK_SEND` (no key glyph), disabled while sending.
+5. `p.decision-fine` with `COPY_LINK_FINE`.
+6. The `Not now` button.
+
+In `sent` the section shows `p.decision-note` with `outcome.message`, then `p.compose-warning` with `outcome.warning` if there is one, then `Not now`.
+
+**Mount contracts.**
+- `PasskeyOfferMount` gains `readonly requestLink: () => Promise<LinkRequestOutcome>;`. It is required.
+- `DecisionPanelOptions` (`decision-panel.ts:89-109`) gains `readonly requestLink: (email: string) => Promise<LinkRequestOutcome>;`. It is required.
+
+**Disclosure.** This paragraph replaces `service.md:409` and `app.ts:5667`. In `app.ts`, "15" is rendered as `${config.passkeyFreshLinkSeconds / 60}`. The two must be byte-identical under `DEFAULT_CONFIG`.
+
+> **Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in link started in the previous 15 minutes can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relic. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
+
+**Sentinels** (new lines only; no existing sentinel changes):
+- `PASSKEY_STEP_4B_NOTICE_OK to=<addr>`
+- `PASSKEY_STEP_8_FRESH_LINK_OK refused=passkey_fresh_link_required orphans=0 recovered=created notice=1`, or `PASSKEY_STEP_8_FRESH_LINK_SKIPPED live`
+- `DECISION_FRESH_LINK_OK state=required orphans=0 link_sent=1`, or `DECISION_FRESH_LINK_SKIPPED live`
+- `PROBE_AWAIT_PASSKEY_NOTICE email=<addr>`
+
+### 9.5 Docs (verbatim where text must match)
+
+**`service.md:37`.** The passkey enrollment clause becomes: "the passkey enrollment endpoints' `401 sign_in_required`, `401 passkey_fresh_link_required`, and `403 passkey_verification_failed` (1.15)". The rest of the line is unchanged.
+
+**`service.md` §1.15.** Insert a table row after `271`:
+
+`| Adding a first passkey from a session that a sign-in link did not start within `passkeyFreshLinkSeconds` (default 900) | `401` | `passkey_fresh_link_required` |`
+
+Add a paragraph after `282`:
+
+> **`401 passkey_fresh_link_required`.** Only `POST /api/auth/passkeys/options` returns it, and only for an address with no passkey, after the session, rate-limit and body checks and before any challenge is written. The session must have been started by following a sign-in link no more than `passkeyFreshLinkSeconds` ago. A session a passkey started never qualifies, and a session row without `via` predates passkey sign-in and counts as a link. The body has no extension and is the same for an old link session and a passkey session. An address with a passkey gets `mode: "assert"` whatever the session's age, so the refusal tells a session holder nothing about their own address that `mode` did not.
+
+**`service.md:520`** is replaced with:
+
+> - If no credential: if no passkey exists, the session must have been started by a sign-in link within `passkeyFreshLinkSeconds` (default 900), or the answer is `401 passkey_fresh_link_required` and no challenge is written; otherwise returns `{ mode: "create", public_key: CreationOptions }` with challenge purpose `'register'`. If passkeys exist, returns `{ mode: "assert", public_key: RequestOptions }` with challenge purpose `'enroll'`, whatever the session's age. Freshness is checked when the `'register'` challenge is issued, not when it is consumed, so a ceremony that starts inside the window can finish within the challenge's 300 seconds.
+
+**`service.md` route 5.** Insert before `529`:
+
+> - After either write, emails the session's address a passkey-added notice with no stop link. A mail failure is logged and changes nothing: the passkey stays stored and the response is still `201`.
+
+**`service.md:458`.** Insert before "A spent or missing token…":
+
+> The session row records `via: 'link'` and its `createdAt`, which is what lets it begin adding the address's first passkey for the next 15 minutes (1.15).
+
+**`service.md:460`.** Append:
+
+> Its session row records `via: 'passkey'`, so it can never add an address's first passkey (1.15).
+
+**`service.md:402`.** Change "Every email carries" to "Every notification email carries". This matches the wording at `:470`.
+
+**`frame.md:143`.** Replace "first use is trusted, and adding further passkeys requires confirming with an existing one." with:
+
+> first use is trusted only from a session that a sign-in link started minutes earlier, adding further passkeys requires confirming with an existing one, and the address is emailed whenever a passkey is added.
+
+**`viewer.md:548`.** Append:
+
+> If `POST /api/auth/passkeys/options` answers `401 passkey_fresh_link_required`, the step becomes `section.decision-passkey[data-passkey-link][data-state="required"]`: it keeps the session, says a first passkey can only be added right after signing in with a link, and its `[data-passkey-link-send]` button asks the shell to email a new link to the session's address (`data-state` `sending`, then `sent` or `failed`).
+
+**`viewer.md` §6.9 refusals.** Add after `559`:
+
+> - `401 passkey_fresh_link_required`: Shows the new-link step (`[data-passkey-link]`) and keeps the session. Nothing was recorded.
+
+**`viewer.md:578`.** Append:
+
+> If the options call answers `401 passkey_fresh_link_required`, the card moves to `data-state="link-required"` instead of closing: it hides `[data-passkey-offer-create]` and shows `[data-passkey-offer-link]` ("Send me a new link"), which asks the shell to email a new link to the same address (`link-sending`, then `link-sent` or `link-failed`). A `401` with any other code still closes the card.
+
+**`decisions.md`.** Append after `940`:
+
+```markdown
+## 2026-10-25: A first passkey needs a fresh link, and every added passkey is announced
+
+Authorised by Jason Waldrip on 2026-10-25: email the address whenever a passkey is added, and refuse a first passkey unless a sign-in link started the session within a short window.
+
+**The problem.** Passkey sign-in made a first passkey into lasting access. Anyone holding a `relic_session` cookie, which lives 30 days, could register the first passkey for an address that had none, from a shared machine or with a stolen cookie, and sign in as that address from then on. Nothing told the mailbox owner. The security review recorded this as L5.
+
+**Sessions record what started them.** `SessionRow` gains `via: 'link' | 'passkey'`, and every mint writes it. Rows without it predate passkey sign-in, so a link started every one of them, and they count as links. `createdAt` is the mint time the window measures from.
+
+**The window is 15 minutes (`passkeyFreshLinkSeconds`, 900).** It matches the life of the link itself (`authLinkTtlSeconds`), and it equals the offer marker's 600 seconds plus one 300-second challenge, so an offer card shown from a live marker can always finish the ceremony its first challenge starts. A reader who signs in to decide and takes longer is asked for a new link once, for the address's first passkey only. An hour or a day would remove that one-time cost by widening what a stolen cookie can do, and was rejected. `assertConfig` requires whole minutes, because the disclosure states the window in minutes, and at least the marker's life, so no card is offered that the service would refuse at once.
+
+**The check sits where the challenge is issued.** `POST /api/auth/passkeys/options` answers `401 passkey_fresh_link_required` instead of issuing a first-passkey challenge. `POST /api/auth/passkeys` does not check again: that branch is the only source of a first-passkey challenge, which is single use, bound to the address, and lasts 300 seconds, and checking again would refuse a reader whose window closed mid-ceremony after their device had already stored a credential the service would never keep. The status is 401 because the remedy is signing in again; a 409 like `passkey_assertion_required` was rejected because nothing about the address is in conflict. The refusal has no extension, reads the same for an old link session and a passkey session, and comes only after the record lookup that already decides `mode`.
+
+**Adding a passkey to an address that has one needs no fresh link.** The assertion from an existing passkey happens inside the same ceremony and proves more than a link can.
+
+**Every added passkey is announced.** After a first passkey is created or another is added, the service emails the session's address with the time, how many passkeys the address now has, and how the passkey was allowed. It has no stop link: it concerns the address rather than a relic, stop records are kept per relic, and a notice someone could switch off would fail exactly when it matters. A failed send is logged with a hash of the address; the passkey stays stored and the response is still `201`. The email tells a reader who did not add it what to check and says plainly that Relic cannot remove a passkey. Pointing it at `/abuse` was rejected: that form reports relics, asks for a relic id, and its operator has no tool to remove a passkey.
+
+**Residuals:**
+- Nothing removes a passkey or ends another browser's session. A reader who learns of a passkey they did not add can do nothing about it in Relic.
+- A session a link started can still add the first passkey inside the window, on a shared machine left signed in or with a cookie stolen and used within minutes. The email is what catches that.
+- The window is checked when the challenge is issued, so a first passkey can be stored up to 300 seconds after the window closes.
+- The email depends on delivery. A refused send, or one Resend accepts and pauses at a spent quota (`quotaWarning`), leaves only a log line.
+- A login CSRF lands inside the window by construction. The offer naming the address (L6) stays the control, and in that case the email goes to the attacker's own mailbox.
+```
+
+**No change needed** to `README.md:174`, the relic-mcp README, SKILL or INSTRUCTIONS (each checked: none makes a claim that becomes false), or the policy comments paragraph at `app.ts:5627-5630`.
+
+### 9.6 Tests and proofs
+
+**Server: `relic-server/test/passkey-sign-in.test.ts`.**
+
+First, change `signInViaLink` to use `sentMails.findLast` (`:136`), so that a second link to the same address resolves to the new one.
+
+Extend test 2:
+- the passkey session row has `via` equal to `'passkey'`;
+- the callback row has `via` equal to `'link'`.
+
+New tests use `build({ mailer: { send…, sendMail(email, mail) { notices.push({ email, mail }) } } })`:
+
+18. **Window boundary.** The window covers the full 900 s exactly.
+    - At `mint + 900_000`, options returns 200 with create mode.
+    - At `+900_001`, the response is exactly `401` with `code` `passkey_fresh_link_required` and that title.
+    - The body keys are exactly `type`, `title`, `status`, `detail`, `instance` and `code`.
+    - A spy on `store.putWebauthnChallenge` records no call.
+    - `notices` is empty.
+19. **Passkey session refused.** A seeded row with `via: 'passkey'`, `createdAt: now`, for an address with no record, gets a body that equals the stale-link body apart from `instance`.
+20. **Legacy rows count as links.** A seeded row without `via` and with `createdAt: now` gets create mode. The same row at `now - 900_001` gets 401.
+21. **Challenge honoured after the window.** Options at `mint + 899_000`, then `now += 60_000`, then register gives `201`, plus one notice.
+22. **Enroll is exempt.**
+    - TOFU at `mint` gives one notice with the first-passkey text, exact to the byte.
+    - Then `now += 7_200_000`: options returns assert, the assertion gives create, and register gives `201`.
+    - The second notice matches the add text with "This address has 2 passkeys." exactly.
+23. **Failed notice.** When `sendMail` throws an `Error` whose message contains the address:
+    - the response is still `201`;
+    - `getPasskeys` holds the credential;
+    - a `console.error` spy gets exactly one line matching `/^relic: passkey notice failed for recipient [0-9a-f]{64}: /`, with no address in it.
+24. **`send` never carries the notice.** With the default `send`-only mailer, `sentMails` has length 1 after registration (the link only).
+25. **No notice on refusals.** Covers the stale-session refusal and the race that answers `409 passkey_assertion_required`.
+26. **`assertConfig`.** It throws for 599, 930 and 1.5, and accepts 900.
+27. **`/policy`.** It contains:
+    - "only a session that a sign-in link started in the previous 15 minutes can begin adding it"
+    - "That email has no stop link, because it is about the address rather than a relic."
+
+**Server: `mail.test.ts`.** New `describe('the passkey-added mail')`:
+- exact subject, text and HTML for both variants, at `Date.parse('2026-10-25T14:03:07Z')`;
+- singular and plural;
+- an address containing `<` is escaped;
+- `headers` is `undefined`;
+- no U+2014 or U+2013 (copy the pattern at `:447`).
+
+**Server: `gcsstore.test.ts`.** Next to `:618-630`: `via` survives a round trip, and a legacy row reads back with `via` undefined.
+
+**Viewer: `passkey-sign-in.test.ts`.** Add `requestLink: async () => ({ kind: 'failed' })` to the seven existing mounts (`:887`, `944`, `1025`, `1098`, `1139`, `1158`, `1177`). Then:
+
+16. A prefetch refusal (`401` with the new code) leads to `link-required`, and `onDone` is not called. The create button is hidden, the link button is visible, and the body names the address.
+17. Pressing the link button calls `requestLink` once. The card goes `link-sending`, then `link-sent` with the message. The warning shows when it is provided. "Close" removes the card and stores nothing.
+18. A `failed` result leads to `link-failed`, and the button can be pressed again.
+19. "Not now" in `link-required` stores `dismissed`.
+20. A refresh timer that meets the refusal moves the card from `ready` to `link-required`.
+21. A `401` with code `sign_in_required` still calls `onDone`. This guards `:743-746`.
+
+**Viewer: `decisions.test.ts`.** The opener at `:507` gains a recording `requestLink`. Then:
+- A refusal at `auth/passkeys/options` leads to `[data-passkey-link][data-state="required"]`. The copy is right, focus lands on `[data-passkey-link-send]`, and `signIn` is not called (no lapse).
+- A press leads to `sent`, showing the message and the warning.
+- A failure leads to `failed`, with the button enabled again.
+
+**Proofs (relic-mcp).**
+
+New step options, in both step modules:
+- `awaitPasskeyNotice: (email) => Promise<string>`. It returns the first line of the notice.
+  - Loopback: poll `mails` for that address with text starting `A passkey was added for `.
+  - Live: print `PROBE_AWAIT_PASSKEY_NOTICE email=<addr>`, then read one line from stdin.
+- `seedStaleSession?: (email) => Promise<string>`. Loopback only. It calls `store.putSession({ tokenHash, email, createdAt: Date.now() - (DEFAULT_CONFIG.passkeyFreshLinkSeconds + 60) * 1000, expiresAt: Date.now() + 3_600_000, via: 'link' })` and returns the token.
+
+`passkey-sign-in-steps.ts`:
+- **Step 4B**, after `:352`. Assert that the line starts with `a passkey was added for <addr> on ` (case-insensitive) and ends with ` UTC.`.
+- **Step 8**, after `PASSKEY_NEG_OK`, using a fresh address B:
+  1. Seed a stale session for B.
+  2. `Network.setCookie` for `relic_session` and for `relic_passkey_offer=1`.
+  3. Run `localStorage.removeItem('relic:passkey-offer')`, because step 4 left `created` there.
+  4. Reopen the relic.
+  5. Wait for `[data-passkey-offer][data-state="link-required"]`.
+  6. Check that `WebAuthn.getCredentials` shows no new credential (`orphans=0`).
+  7. Click `[data-passkey-offer-link]`.
+  8. Follow `resolveMagicLink(B)` the way step 3 follows a link.
+  9. Wait for `ready`, then create, then `created`.
+  10. Call `awaitPasskeyNotice(B)`.
+- If `seedStaleSession` is absent, print the SKIPPED line instead of running step 8.
+
+`decision-proof-steps.ts`, after `DECISION_NEG_OK`, using a fresh address C:
+1. Seed a stale session for C and set the cookie.
+2. Reopen the relic and open the panel.
+3. Choose approve.
+4. Wait for `[data-passkey-link][data-state="required"]`.
+5. Check that the authenticator count is unchanged.
+6. Click `[data-passkey-link-send]`, then wait for `[data-state="sent"]`.
+7. Check that `resolveMagicLink(C)` returns a callback URL.
+
+The `...-path.ts` files supply the options. The live probe supplies only `awaitPasskeyNotice`.
+
+**Docs for the proofs.**
+- `relic-mcp/PATH.md`:
+  - `:524-533`: add 4B and step 8.
+  - `:452-460` and `:485-494`: add `DECISION_FRESH_LINK_*`.
+  - `:554` and `:560+`: add the second paste.
+- Root `PATH.md`:
+  - `:15`: add the notice and the fresh-link negative to the success criteria.
+  - `:23`: add the notice paste.
+
+### 9.7 Slices
+
+All slices branch from the commit that adds §9, in isolated worktrees. Nobody builds or tests mid-flight; F3 may look at its own mock. F1 to F5 run in parallel; none depends on another while being written.
+
+| Slice | Agent | Owns | Change | Non-goals | Acceptance (checked at integration) |
+|---|---|---|---|---|---|
+| F0 | main agent, inline | `docs/plans/passkey-sign-in/README.md` | Append §9 | – | Every worker's context carries §9.4 verbatim |
+| F1 server | task, hi | `relic-server/src/{config,problems,store,app,mail}.ts`; `relic-server/test/{passkey-sign-in,mail,gcsstore}.test.ts` | §9.4 server, mail and disclosure; §9.6 server tests | Sign-in routes, `/api/auth/request` and `/session` untouched; no re-check at POST; no extension; no stop link; `fanOut` untouched | A stale or passkey session gets the exact 401 and no challenge is written; each stored passkey produces exactly one `sendMail` with the §9.4 text; `/policy` contains the paragraph |
+| F2 viewer | task, hi | `relic-viewer/src/{passkey-common,passkey-sign-in,decision-panel,main}.ts`; `relic-viewer/test/{passkey-sign-in,decisions}.test.ts` | See the F2 notes below | No `styles.css`; no handling of the new code at `POST /api/auth/passkeys` (the server never sends it there); no runtime import of `passkey-common.ts` in `main.ts` | Both surfaces reach every `link-*` state from a stubbed 401, and a plain 401 still closes the card |
+| F3 mock | designer | `docs/plans/passkey-sign-in/mockup.html`; `relic-viewer/src/styles.css` (one new block, only if needed) | See the F3 notes below | Copy and DOM exactly as in §9.4 | Opens offline; every new state is reachable by clicking; isolated headless screenshots at 1440x900 and 390x844, light and dark, show no overflow |
+| F4 docs | task, med | `docs/spec/service.md`, `docs/spec/viewer.md`, `docs/frame.md`, `docs/decisions.md` | §9.5 verbatim | README and relic-mcp docs | Disclosure byte-identical to the `app.ts` text rendered with defaults; no em-dashes |
+| F5 proofs | task, hi | `relic-mcp/test/{passkey-sign-in-steps,passkey-sign-in-path,passkey-sign-in-live-probe,decision-proof-steps,decision-path}.ts`, `relic-mcp/PATH.md`, `PATH.md` | §9.6 proofs | Existing sentinel strings stay; no CI steps; live probes never seed | When the integration owner runs the paths, they print the new sentinels |
+
+**F2 notes.**
+- `main.ts` gains:
+  - `linkSentCopy(address, relicId, fragment, deps)`, extracted from `3327-3341` and used by `signInForm`;
+  - `requestFreshLink(relicId, fragment, deps)`, a closure over `requestMagicLink`;
+  - `dashboardLinkSent(address)`, used by the dashboard form at `9411-9414` and by the dashboard offer.
+- Wiring:
+  - `7213` passes `requestLink: () => requestFreshLink(relicId, fragment, deps)(discovered.email)`.
+  - `8184` passes `requestLink: requestFreshLink(relicId, fragment, deps)`.
+  - `9260` posts `{email, return_to:'/dashboard'}` and maps 202 to `sent`.
+- Offer card (`passkey-sign-in.ts`):
+  - Read the problem `code` before the 401 test at `743`.
+  - Add `link-sent` to the terminal states at `1062-1078`.
+- Decision panel:
+  - Add phase `'link'` to `PasskeyStep` (`128-134`).
+  - Render it in `passkeySection` (`584-695`).
+  - Branch in `enterPasskey` at `1213-1216`.
+  - Add `[data-passkey-link-send]:not([disabled])` to the focus selector at `1080`.
+
+**F3 notes.**
+- Offer rail gets: `offer-link-required`, `offer-link-sending`, `offer-link-sent`, `offer-link-sent-key`, `offer-link-failed`.
+- A new "Decision" group gets `decision-create`, `decision-link-required`, `decision-link-sending`, `decision-link-sent`, `decision-link-failed`. Build the sheet from `decision-panel.ts:584-695` and `styles.css:5636-5685`.
+- An "Email" group renders both notice variants at "25 Oct 2026 at 14:03 UTC".
+- Clicking through goes required, then sending, then sent with the follow-link aside, then ready or create.
+- Copy comes from §9.4, plus `KEY_AT_RISK_NOTE`.
+
+### 9.8 Integration check (main agent)
+
+1. Merge F1 to F5, then run `bun install --frozen-lockfile`.
+2. Run `mise exec node@18.20.8 -- mise run verify` and `mise exec node@24.15.0 -- mise run verify`.
+3. Run `bun run --cwd packages/relic-mcp build`. Then run `RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/passkey-sign-in-path.ts`, expecting 4B and step 8 before `PASSKEY_SIGN_IN_PATH_OK`. Then run `decision-path.ts`, expecting `DECISION_FRESH_LINK_OK` before `DECISION_PATH_OK`. Then run the remaining CI paths from `verify.yml:92-168`.
+4. Take isolated headless screenshots of the real `link-*` states and compare them with the mock.
+5. Get a security review of the diff.
+6. Push to PR #130, wait for green, then `gh pr merge --merge`.
+7. Watch `deploy`. Then:
+   - grep the deployed chunk for "Send me a new link";
+   - run `passkey-sign-in-live-probe.ts`, pasting the link and then the notice's first line, until it prints both `PASSKEY_STEP_4B_NOTICE_OK` and `PASSKEY_SIGN_IN_LIVE_OK`.
+
+### 9.9 What would prove this spec wrong
+
+- Passkey sessions without `via` reach production because sign-in shipped without this change. They would be read as links.
+- An offer card shown straight after a link gets the refusal at mount. That points to the marker outliving the window, or to clock skew.
+- Step 8 or the decision negative reports `orphans>0`, or times out waiting for `link-required`. Either means the check is not at options.
+- The live notice line doesn't match the copy in §9.4 because `mail.ts` has drifted from it.
+- `shell-budget` fails because `main.ts` imported `passkey-common.ts` at runtime.
