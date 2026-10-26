@@ -4536,4 +4536,77 @@ describe('otio native video playback S-C and S-B', () => {
       playback.dispose();
     }
   });
+  test('regression 2a: native run to frame 5, pause, seek(0) records a new seek to mid(0) and pixel is 0', async () => {
+    const mediaBlob = new Blob(['reg 2a video test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      videoMedia!.advanceTo(0);
+
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+      });
+
+      // Run native playback to frame 5
+      for (let f = 1; f <= 5; f++) {
+        videoMedia!.triggerRvfc(tau + (f / 30) * 1000, f / 30);
+        raf?.(tau + (f / 30) * 1000);
+      }
+      expect(playback.getState().time.value).toBeCloseTo(5, 4);
+      expect(videoMedia!.currentTime).toBeCloseTo(5 / 30, 3);
+
+      playback.pause();
+      expect(playback.getState().playing).toBe(false);
+
+      const prevSeeks = videoMedia!.seekTargets.length;
+      await playback.seek({ value: 0, rate: 30 });
+
+      // Must record a new seek to mid(0) = 1/60
+      expect(videoMedia!.seekTargets.length).toBeGreaterThan(prevSeeks);
+      expect(
+        videoMedia!.seekTargets[videoMedia!.seekTargets.length - 1]
+      ).toBeCloseTo(1 / 60, 4);
+      expect(outCanvas.pixel.r).toBe(0);
+      expect(playback.getState().time.value).toBe(0);
+    } finally {
+      playback.dispose();
+    }
+  });
 });
