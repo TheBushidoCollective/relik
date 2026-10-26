@@ -34,6 +34,7 @@ export interface BenchmarkOptions {
   readonly format?: 'table' | 'json';
   readonly windows?: readonly WindowOption[];
   readonly cpuThrottle?: number;
+  readonly mediaPaths?: readonly string[];
 }
 
 export interface WindowDefinition {
@@ -625,7 +626,7 @@ export function createOtioPageProfilerScript(): string {
           diagnosticsByCode: diagCodes, decodersCount: decoders.length, audioCount: audios.length,
         };
       },
-      async getDecodersMedia() {
+      async getDecodersMedia(includeBytes = true) {
         const decoders = [...document.querySelectorAll('.otio-video-decoders video')];
         const list = []; const seenSrcs = new Set();
         for (const v of decoders) {
@@ -633,7 +634,7 @@ export function createOtioPageProfilerScript(): string {
           if (!src || seenSrcs.has(src)) continue;
           seenSrcs.add(src);
           let base64 = null; let mimeType = 'video/mp4';
-          try {
+          if (includeBytes) try {
             const resp = await fetch(src);
             const blob = await resp.blob();
             mimeType = blob.type || (src.includes('.webm') ? 'video/webm' : 'video/mp4');
@@ -681,10 +682,11 @@ export function createOtioPageProfilerScript(): string {
         const pausedSeekLatencyMs = performance.now() - scrubStart;
         if (!seekSettled) throw new Error('Seek to target frame ' + targetFrame + ' failed to settle');
         const playStart = performance.now();
+        const startFrame = Number(root.dataset.frame);
         playBtn.click();
         let playToFirstFrameMs = 0;
         while (performance.now() - playStart < 5000) {
-          if (visiblePresents.length > 0) { playToFirstFrameMs = performance.now() - playStart; break; }
+          if (Number(root.dataset.frame) > startFrame) { playToFirstFrameMs = performance.now() - playStart; break; }
           await sleep(10);
         }
         if (playToFirstFrameMs === 0) playToFirstFrameMs = performance.now() - playStart;
@@ -1344,6 +1346,48 @@ export async function runOtioPlaybackBenchmark(
         });
       }
     }
+    for (const mediaPath of options.mediaPaths ?? []) {
+      const mimeType = mediaPath.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+      const timing = await scanOtioVideoTiming(
+        new Blob([await readFile(mediaPath)], { type: mimeType }),
+        mimeType
+      );
+      const probeText = await new Promise<string>(
+        (resolveProbe, rejectProbe) => {
+          const child = spawn('ffprobe', [
+            '-v',
+            'error',
+            '-select_streams',
+            'v:0',
+            '-show_entries',
+            'stream=width,height:format=duration',
+            '-of',
+            'json',
+            mediaPath,
+          ]);
+          let out = '';
+          child.stdout.on('data', (chunk) => {
+            out += chunk;
+          });
+          child.on('error', rejectProbe);
+          child.on('close', (code) =>
+            code === 0
+              ? resolveProbe(out)
+              : rejectProbe(new Error(`ffprobe exited ${code}`))
+          );
+        }
+      );
+      const probe = JSON.parse(probeText) as {
+        streams?: Array<{ width?: number; height?: number }>;
+        format?: { duration?: string };
+      };
+      scannedMediaList.push({
+        duration: Number(probe.format?.duration),
+        videoWidth: probe.streams?.[0]?.width ?? 0,
+        videoHeight: probe.streams?.[0]?.height ?? 0,
+        timing,
+      });
+    }
 
     let configuredWindows: WindowOption[] = [];
     if (options.windows && options.windows.length > 0) {
@@ -1465,8 +1509,13 @@ export async function runOtioPlaybackBenchmark(
 
         let presentedMetricsAvailable =
           raw.unresolvedPresents === 0 && raw.liveElementDraws === 0;
+        const liveDecoders = await evaluate<typeof decodersMedia>(
+          cdp,
+          sessionId,
+          'window.__relicOtioProfiler.getDecodersMedia(false)'
+        );
         for (const ord of raw.presentedDecoderOrdinals) {
-          const decoderMeta = decodersMedia.find((d) => d.ordinal === ord);
+          const decoderMeta = liveDecoders.find((d) => d.ordinal === ord);
           if (!decoderMeta) {
             presentedMetricsAvailable = false;
             break;
@@ -1842,6 +1891,7 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
   let repetitions: number | undefined;
   let format: 'table' | 'json' = 'table';
   let cpuThrottle: number | undefined;
+  const mediaPaths: string[] = [];
   const rawWindowArgs: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -1869,6 +1919,8 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
       if (f === 'json' || f === 'table') format = f;
     } else if (a === '--window' || a.startsWith('--window='))
       rawWindowArgs.push(val('--window='));
+    else if (a === '--media' || a.startsWith('--media='))
+      mediaPaths.push(val('--media='));
     else if (a === '--cpu-throttle' || a.startsWith('--cpu-throttle='))
       cpuThrottle = Number(val('--cpu-throttle='));
     else if (
@@ -1908,5 +1960,31 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
     ...(repetitions !== undefined ? { repetitions } : {}),
     ...(windows.length > 0 ? { windows } : {}),
     ...(cpuThrottle !== undefined ? { cpuThrottle } : {}),
+    ...(mediaPaths.length > 0 ? { mediaPaths } : {}),
   };
+}
+
+if (
+  import.meta.url === `file://${process.argv[1]}` ||
+  process.argv[1]?.endsWith('otio-playback-bench.ts')
+) {
+  const options = parseCliArgs(process.argv.slice(2));
+  runOtioPlaybackBenchmark(options)
+    .then((report) => {
+      if (options.format === 'json') {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(formatReportSummary(report));
+      }
+      process.exit(0);
+    })
+    .catch((error) => {
+      const raw = error instanceof Error ? error.message : String(error);
+      const clean = raw.replace(
+        /(?:https?|blob|file|data):\/\/[^\s"']+/gi,
+        '[URL]'
+      );
+      console.error(`Benchmark failed: ${clean}`);
+      process.exit(1);
+    });
 }
