@@ -770,10 +770,50 @@ export function createOtioPlayback(
   let failureResyncTimestamps: number[] = [];
   let drawnSetChangeTimestamps: number[] = [];
   let lastDrawnOccurrenceKeys = new Set<string>();
+  let lastRenderDrawnOccurrenceKeys = new Set<string>();
+  const lastRenderVideoContributions = new Map<string, OtioVideoContribution>();
+  let knownVideoKeys = new Set<string>();
   let isStarting = false;
   let startingStartTime = 0;
   const videoTimingCache = new Map<string, OtioVideoTiming>();
   const audioSeeking = new WeakSet<LoadedAudio>();
+
+  function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const item of a) {
+      if (!b.has(item)) return false;
+    }
+    return true;
+  }
+
+  function drawnVideoKeys(
+    evaluation: OtioEvaluationResult,
+    tree: OtioVideoCompositionTree | null
+  ): Set<string> {
+    const keys = new Set<string>();
+    if (!tree) return keys;
+    const blocked = blockedTracks(tree);
+    const isHidden = (nodeId: string, ancestry: readonly string[]) =>
+      videoHidden(nodeId, ancestry) || blocked.has(nodeId);
+    const drawnLeafIndices = getDrawnLeafIndices(tree, isHidden);
+    const occurrenceKeys = collectVideoOccurrenceKeys(
+      evaluation.video_contributions
+    );
+    for (const idx of drawnLeafIndices) {
+      const contrib = evaluation.video_contributions[idx];
+      if (!contrib || contrib.bundle_path === null) continue;
+      const mime = inferMediaMimeType(contrib.bundle_path);
+      if (!mime.startsWith('video/')) continue;
+      const fidelity = effectFidelity(contrib.active_effects, contrib.node_id);
+      if (fidelity.kind === 'freeze') continue;
+      const key = occurrenceKeys[idx];
+      if (key) {
+        keys.add(key);
+        lastRenderVideoContributions.set(key, contrib);
+      }
+    }
+    return keys;
+  }
 
   function getOrCreateNativeRing(
     key: string,
@@ -1663,13 +1703,19 @@ export function createOtioPlayback(
       () => null
     );
     if (!tree) return leaves;
-    const seen = new Map<string, number>();
+    const occurrenceKeys = collectVideoOccurrenceKeys(
+      result.video_contributions
+    );
     const visit = async (node: OtioVideoCompositionTree): Promise<void> => {
       if (stale(gen)) return;
       if (node.kind === 'leaf') {
         const contrib = result.video_contributions[node.contribution_index];
         if (!contrib) return;
-        leaves[node.contribution_index] = await prepareLeaf(contrib, seen, gen);
+        leaves[node.contribution_index] = await prepareLeaf(
+          contrib,
+          occurrenceKeys[node.contribution_index] ?? '',
+          gen
+        );
         return;
       }
       if (node.kind === 'stack') {
@@ -1686,7 +1732,7 @@ export function createOtioPlayback(
 
   async function prepareLeaf(
     contrib: OtioVideoContribution,
-    seen: Map<string, number>,
+    key: string,
     gen: number
   ): Promise<OtioPreparedLeaf> {
     if (sampleKind(contrib) === 'black') return { kind: 'black' };
@@ -1743,10 +1789,7 @@ export function createOtioPlayback(
       return { kind: 'empty' };
     }
     if (sampleUnavailable(doc, contrib)) return { kind: 'empty' };
-    const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
-    const dup = seen.get(dupKey) ?? 0;
-    seen.set(dupKey, dup + 1);
-    const key = occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
+    // Key is precomputed by caller
     const video = await acquireVideo(key, contrib.bundle_path, gen);
     if (stale(gen) || !video) return { kind: 'empty' };
     const timing = await sharedVideoTiming(contrib.bundle_path, mime);
@@ -1780,20 +1823,6 @@ export function createOtioPlayback(
         )
       );
       return { kind: 'empty' };
-    }
-    if (timing && timing.kind === 'windows' && midpoint !== null) {
-      const ring = getOrCreateNativeRing(
-        key,
-        video.element,
-        contrib.bundle_path
-      );
-      const { width, height } = outputSize();
-      if (ring.allocate(width, height)) {
-        const iL0 = certifiedWindowIndex(contrib.source_time, timing);
-        if (iL0 !== null) {
-          ring.capturePausedFrame(iL0, nativeEpoch);
-        }
-      }
     }
     return {
       kind: 'image',
@@ -1871,7 +1900,13 @@ export function createOtioPlayback(
         loaded.element.setAttribute('data-active', nextActive);
       }
       const target = decoderLocalSeconds(contrib.source_time);
-      if (fidelity.kind === 'freeze' || !audible || !isPlaying) {
+      if (
+        fidelity.kind === 'freeze' ||
+        !audible ||
+        !isPlaying ||
+        isStarting ||
+        isBuffering
+      ) {
         loaded.element.pause();
         if (decodedAt.get(loaded.element) !== target) {
           await seekElement(loaded.element, target, gen);
@@ -1900,6 +1935,7 @@ export function createOtioPlayback(
       }
       if (loaded.element.paused && !audioSeeking.has(loaded)) {
         try {
+          decodedAt.delete(loaded.element);
           await loaded.element.play();
         } catch (error) {
           rememberFailure(
@@ -1986,6 +2022,7 @@ export function createOtioPlayback(
       videoTimingFailures.clear();
       images.clearPins();
       const tree = videoTree(evaluation);
+      lastRenderDrawnOccurrenceKeys = drawnVideoKeys(evaluation, tree);
       if (tree === null && evaluation.video_contributions.length > 0) {
         mediaFailures.set(
           timelineId,
@@ -2061,6 +2098,13 @@ export function createOtioPlayback(
   }
 
   function fallbackToSeekCadence(): void {
+    nativeEpoch++;
+    pauseAllMedia();
+    for (const ring of nativeRings.values()) {
+      decodedAt.delete(ring.videoElement);
+      ring.release();
+    }
+    nativeRings.clear();
     failureSeekCadence = true;
     nativeMode = false;
     isStarting = false;
@@ -2138,6 +2182,18 @@ export function createOtioPlayback(
     let eligible = !failureSeekCadence && !hasImageSequence;
 
     if (eligible) {
+      const drawnKeys = new Set<string>();
+      for (const idx of drawnLeafIndices) {
+        const k = occurrenceKeys[idx];
+        if (k) drawnKeys.add(k);
+      }
+      for (const [key, ring] of nativeRings) {
+        if (!drawnKeys.has(key)) {
+          decodedAt.delete(ring.videoElement);
+          ring.release();
+          nativeRings.delete(key);
+        }
+      }
       const vsync = vsyncTracker.medianSeconds;
       for (const idx of drawnLeafIndices) {
         const contrib = evaluation.video_contributions[idx];
@@ -2160,7 +2216,6 @@ export function createOtioPlayback(
           eligible = false;
           break;
         }
-
         const video = videos.get(key);
         if (!video) {
           eligible = false;
@@ -2223,10 +2278,19 @@ export function createOtioPlayback(
     }
 
     if (!eligible || drawnVideoLeaves.length === 0) {
+      for (const ring of nativeRings.values()) {
+        decodedAt.delete(ring.videoElement);
+        ring.release();
+      }
+      nativeRings.clear();
       nativeMode = false;
       isStarting = false;
       isBuffering = false;
       clockAnchor = null;
+      lastDrawnOccurrenceKeys = drawnVideoKeys(evaluation, tree);
+      if (isPlaying) {
+        await reconcileAudio(evaluation, gen);
+      }
       notify();
       if (isPlaying) scheduleTick();
       return;
@@ -2242,6 +2306,8 @@ export function createOtioPlayback(
       if (attempt > 0) {
         nativeEpoch++;
         pauseAllMedia();
+        await enqueueRender(T0, gen);
+        if (stale(gen)) return;
       }
       for (const leaf of drawnVideoLeaves) {
         const ring = nativeRings.get(leaf.key);
@@ -2266,27 +2332,14 @@ export function createOtioPlayback(
         ring.startupWaiter = { resolve, reject };
         firstAdvancedPromises.push(promise);
         applyRate(leaf.video.element, leaf.rL);
+        decodedAt.delete(leaf.video.element);
+        playPromises.push(leaf.video.element.play());
         ring.startCallbacks(leaf.timing, leaf.rL, () => {
           nativeIneligiblePaths.add(leaf.contrib.bundle_path);
           if (isPlaying && !isStarting) {
             void startSequence(currentTime, true);
           }
         });
-        playPromises.push(leaf.video.element.play());
-      }
-
-      const seenAudio = new Map<string, number>();
-      for (const contrib of evaluation.audio_contributions) {
-        const audible = trackAudible(contrib.track_id);
-        if (!audible) continue;
-        const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
-        const dup = seenAudio.get(dupKey) ?? 0;
-        seenAudio.set(dupKey, dup + 1);
-        const key = occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
-        const audio = audios.get(key);
-        if (audio && audio.element.paused) {
-          playPromises.push(audio.element.play());
-        }
       }
 
       let maxW = 0;
@@ -2320,6 +2373,15 @@ export function createOtioPlayback(
       clearTimeout(timeoutTimer);
       if (stale(gen)) return;
 
+      if (
+        drawnVideoLeaves.some((leaf) =>
+          nativeIneligiblePaths.has(leaf.contrib.bundle_path)
+        )
+      ) {
+        fallbackToSeekCadence();
+        return;
+      }
+
       if (raceResult === 'timeout' || raceResult === 'failed') {
         if (attempt === 0) continue;
         fallbackToSeekCadence();
@@ -2335,18 +2397,29 @@ export function createOtioPlayback(
       }
 
       const phaseSamples: DecoderPhaseSample[] = [];
+      let anchorFailed = false;
       for (let i = 0; i < drawnVideoLeaves.length; i++) {
         const leaf = drawnVideoLeaves[i]!;
         const adv = advancedSamples[i]!;
-        const iL0Plus1Start = leaf.timing.starts[leaf.iL0 + 1] ?? 0;
+        const actualStart = leaf.timing.starts[adv.tag];
+        if (actualStart === undefined) {
+          anchorFailed = true;
+          break;
+        }
         const sourceT0Seconds = decoderLocalSeconds(leaf.contrib.source_time);
         phaseSamples.push({
           dL: adv.now,
-          iL0Plus1Start,
+          iL0Plus1Start: actualStart,
           sourceT0Seconds,
           rL: leaf.rL,
           wMinSeconds: leaf.wMinSeconds,
         });
+      }
+
+      if (anchorFailed) {
+        if (attempt === 0) continue;
+        fallbackToSeekCadence();
+        return;
       }
 
       const anchorResult = computePhaseAnchor(
@@ -2361,29 +2434,6 @@ export function createOtioPlayback(
 
       nativeAnchor = { wallMs: anchorResult.tauStar, time: T0 };
 
-      const audioSeen = new Map<string, number>();
-      for (const contrib of evaluation.audio_contributions) {
-        const audible = trackAudible(contrib.track_id);
-        if (!audible) continue;
-        const dupKey = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
-        const dup = audioSeen.get(dupKey) ?? 0;
-        audioSeen.set(dupKey, dup + 1);
-        const key = occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
-        const audio = audios.get(key);
-        if (audio) {
-          const target = decoderLocalSeconds(contrib.source_time);
-          const drift = Math.abs(audio.element.currentTime - target);
-          if (drift > 2 / Math.max(1, clock.rate)) {
-            asyncSeekAudio(
-              audio,
-              target,
-              contrib.volume * contrib.transition_weight,
-              audible
-            );
-          }
-        }
-      }
-
       for (const leaf of drawnVideoLeaves) {
         const ring = nativeRings.get(leaf.key);
         if (ring) ring.isStarting = false;
@@ -2392,11 +2442,15 @@ export function createOtioPlayback(
       startSuccess = true;
       break;
     }
-
     if (!startSuccess) {
       fallbackToSeekCadence();
       return;
     }
+
+    const startOccurrenceKeys = collectVideoOccurrenceKeys(
+      evaluation.video_contributions
+    );
+    knownVideoKeys = new Set(startOccurrenceKeys.filter(Boolean));
 
     isStarting = false;
     isBuffering = false;
@@ -2452,13 +2506,30 @@ export function createOtioPlayback(
         evaluation.video_contributions
       );
 
-      const currentDrawnOccurrenceKeys = new Set<string>();
+      const currentDrawnOccurrenceKeys = drawnVideoKeys(evaluation, tree);
+      for (let idx = 0; idx < evaluation.video_contributions.length; idx++) {
+        const contrib = evaluation.video_contributions[idx];
+        if (!contrib || contrib.bundle_path === null) continue;
+        const mime = inferMediaMimeType(contrib.bundle_path);
+        if (!mime.startsWith('video/')) continue;
+        const key = occurrenceKeys[idx];
+        if (
+          key &&
+          !currentDrawnOccurrenceKeys.has(key) &&
+          !knownVideoKeys.has(key)
+        ) {
+          knownVideoKeys.add(key);
+          void prepareLeaf(contrib, key, renderGeneration);
+        }
+      }
+
       const drawnNativeLeaves: {
         contrib: OtioVideoContribution & { bundle_path: OtioBundleEntryName };
         key: string;
         timing: Extract<OtioVideoTiming, { kind: 'windows' }>;
         req: number;
         idx: number;
+        rL: number;
       }[] = [];
       let uncertifiedTailSample = false;
 
@@ -2482,14 +2553,14 @@ export function createOtioPlayback(
 
         const key = occurrenceKeys[idx];
         if (!key) continue;
-        currentDrawnOccurrenceKeys.add(key);
 
         const timing = videoTimingCache.get(contrib.bundle_path);
         const req = certifiedWindowIndex(contrib.source_time, timing ?? null);
         if (req === null || !timing || timing.kind !== 'windows') {
           uncertifiedTailSample = true;
-          break;
+          continue;
         }
+        const rL = fidelity.kind === 'effect' ? 1 : fidelity.rate;
         drawnNativeLeaves.push({
           contrib: contrib as OtioVideoContribution & {
             bundle_path: OtioBundleEntryName;
@@ -2498,19 +2569,14 @@ export function createOtioPlayback(
           timing,
           req,
           idx,
+          rL,
         });
       }
 
-      let drawnSetChanged =
-        currentDrawnOccurrenceKeys.size !== lastDrawnOccurrenceKeys.size;
-      if (!drawnSetChanged) {
-        for (const k of currentDrawnOccurrenceKeys) {
-          if (!lastDrawnOccurrenceKeys.has(k)) {
-            drawnSetChanged = true;
-            break;
-          }
-        }
-      }
+      const drawnSetChanged = !setsEqual(
+        currentDrawnOccurrenceKeys,
+        lastDrawnOccurrenceKeys
+      );
 
       if (drawnSetChanged) {
         lastDrawnOccurrenceKeys = currentDrawnOccurrenceKeys;
@@ -2545,8 +2611,13 @@ export function createOtioPlayback(
           if (ring && ring.hasLostContext()) {
             ring.resetEpoch(nativeEpoch);
           }
-          const wMin = minWindowDuration(leaf.timing, 1);
-          const outOfBandLimit = Math.max(2 * wMin * 1000, 100);
+          const missingWindowSec =
+            (leaf.timing.ends[leaf.req] ?? 0) -
+            (leaf.timing.starts[leaf.req] ?? 0);
+          const outOfBandLimit = Math.max(
+            2 * (missingWindowSec / leaf.rL) * 1000,
+            100
+          );
           if (ring) {
             if (ring.missingSince === null) ring.missingSince = now;
             if (now - ring.missingSince > outOfBandLimit) {
@@ -2559,8 +2630,14 @@ export function createOtioPlayback(
         }
 
         if (ring && ring.lastCallbackWallMs !== null) {
-          const wL = minWindowDuration(leaf.timing, 1);
-          const stallLimit = Math.max(3 * wL * 1000, 100);
+          const t = ring.lastCapturedTag ?? leaf.req;
+          const stallWindowSec =
+            (leaf.timing.ends[t] ?? leaf.timing.ends[leaf.req] ?? 0) -
+            (leaf.timing.starts[t] ?? leaf.timing.starts[leaf.req] ?? 0);
+          const stallLimit = Math.max(
+            3 * (stallWindowSec / leaf.rL) * 1000,
+            100
+          );
           if (now - ring.lastCallbackWallMs > stallLimit) {
             failureResyncNeeded = true;
             break;
@@ -2649,6 +2726,62 @@ export function createOtioPlayback(
       }
       scheduleTick();
       return;
+    }
+    if (
+      !failureSeekCadence &&
+      !setsEqual(lastRenderDrawnOccurrenceKeys, lastDrawnOccurrenceKeys)
+    ) {
+      let canGoNative = lastRenderDrawnOccurrenceKeys.size > 0;
+      if (canGoNative) {
+        for (const key of lastRenderDrawnOccurrenceKeys) {
+          const video = videos.get(key);
+          if (!video) {
+            canGoNative = false;
+            break;
+          }
+          const rvfcVideo = video.element as HTMLVideoElementWithRvfc;
+          if (typeof rvfcVideo.requestVideoFrameCallback !== 'function') {
+            canGoNative = false;
+            break;
+          }
+          const contrib = lastRenderVideoContributions.get(key);
+          const bundlePath = contrib?.bundle_path;
+          if (!bundlePath || nativeIneligiblePaths.has(bundlePath)) {
+            canGoNative = false;
+            break;
+          }
+          const timing = videoTimingCache.get(bundlePath);
+          if (!timing || timing.kind !== 'windows') {
+            canGoNative = false;
+            break;
+          }
+          const node = contrib
+            ? (doc.nodes[contrib.node_id] as
+                | (OtioNode & {
+                    readonly media_reference?: { readonly schema?: string };
+                  })
+                | undefined)
+            : undefined;
+          if (node?.media_reference?.schema === 'ImageSequenceReference.1') {
+            canGoNative = false;
+            break;
+          }
+        }
+      }
+      if (canGoNative) {
+        drawnSetChangeTimestamps = drawnSetChangeTimestamps.filter(
+          (t) => now - t <= 5000
+        );
+        drawnSetChangeTimestamps.push(now);
+        if (drawnSetChangeTimestamps.length > 3) {
+          fallbackToSeekCadence();
+          return;
+        }
+        void startSequence(currentTime, true);
+        return;
+      } else {
+        lastDrawnOccurrenceKeys = lastRenderDrawnOccurrenceKeys;
+      }
     }
 
     if (clockAnchor !== null && clock.rate > 0) {

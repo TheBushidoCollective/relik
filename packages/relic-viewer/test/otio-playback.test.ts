@@ -31,6 +31,7 @@ import {
   videoDecoderTime,
 } from '../src/otio-playback.ts';
 import {
+  minWindowDuration,
   NativeDecoderRing,
   SnapshotPixelBudget,
   VsyncTracker,
@@ -144,9 +145,9 @@ class SoftContext {
     const dst = this.canvas.pixel;
     if (this.globalCompositeOperation === 'lighter') {
       this.canvas.pixel = {
-        r: clamp(dst.r + src.r * srcA),
-        g: clamp(dst.g + src.g * srcA),
-        b: clamp(dst.b + src.b * srcA),
+        r: dst.r + src.r * srcA,
+        g: dst.g + src.g * srcA,
+        b: dst.b + src.b * srcA,
         a: clamp(dst.a + srcA),
       };
       return;
@@ -203,6 +204,8 @@ function paintTree(
 
 class MockMedia {
   pixel: Pixel = { r: 1, g: 0, b: 0, a: 1 };
+  pixelAt?: (s: number) => Pixel;
+  rejectNextPlay = false;
   preload = '';
   playsInline = false;
   muted = false;
@@ -251,11 +254,19 @@ class MockMedia {
     };
   }
 
+  advanceTo(s: number): void {
+    this.time = s;
+    if (this.pixelAt) {
+      this.pixel = this.pixelAt(s);
+    }
+  }
+
   triggerRvfc(
     now: number,
     mediaTime: number,
     expectedDisplayTime?: number
   ): void {
+    this.advanceTo(mediaTime);
     const cbs = Array.from(this.rvfcCallbacks.values());
     this.rvfcCallbacks.clear();
     const metadata: { mediaTime: number; expectedDisplayTime?: number } = {
@@ -297,6 +308,9 @@ class MockMedia {
   set currentTime(value: number) {
     this.seekTargets.push(value);
     this.time = value;
+    if (this.pixelAt) {
+      this.pixel = this.pixelAt(value);
+    }
     queueMicrotask(() => {
       this.readyState = 2;
       this.dispatch('seeked');
@@ -333,6 +347,10 @@ class MockMedia {
   }
 
   play(): Promise<void> {
+    if (this.rejectNextPlay) {
+      this.rejectNextPlay = false;
+      return Promise.reject(new Error('play-rejected'));
+    }
     this.paused = false;
     return Promise.resolve();
   }
@@ -346,6 +364,42 @@ class MockMedia {
   }
 
   remove(): void {}
+}
+async function waitForRvfc(media: MockMedia, maxYields = 50): Promise<void> {
+  for (let i = 0; i < maxYields; i++) {
+    if (media.rvfcCallbacks.size > 0) return;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 0);
+    await promise;
+  }
+  throw new Error('waitForRvfc timed out: no callback registered');
+}
+
+async function startNative(
+  playback: OtioPlaybackController,
+  videoMedia: MockMedia,
+  timing: Extract<OtioVideoTiming, { kind: 'windows' }>,
+  options?: {
+    d1?: number;
+    tag?: number;
+    t0?: OtioRationalTime;
+    rL?: number;
+  }
+): Promise<number> {
+  const d1 = options?.d1 ?? 100;
+  const tag = options?.tag ?? 1;
+  const t0Val = options?.t0 ? options.t0.value / options.t0.rate : 0;
+  const rL = options?.rL ?? 1;
+  const playPromise = playback.play();
+  await waitForRvfc(videoMedia);
+  const mediaTime = timing.starts[tag] ?? tag / 30;
+  videoMedia.triggerRvfc(d1, mediaTime);
+  await playPromise;
+  const nu = 1 / 60;
+  const wMin = minWindowDuration(timing, rL);
+  const startK = timing.starts[tag] ?? 0;
+  const tau = d1 + ((nu + 2 * wMin) / 2 - (startK - t0Val) / rL) * 1000;
+  return tau;
 }
 
 class MockGain {
@@ -618,6 +672,78 @@ function sampledMediaDocument(options: {
                         },
                       }
                     : {}),
+                },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
+function sampledAvDocument(options?: {
+  readonly rate?: number;
+  readonly duration?: number;
+  readonly videoUrl?: string;
+  readonly audioUrl?: string;
+}): OtioDocumentV1 {
+  const rate = options?.rate ?? 30;
+  const duration = options?.duration ?? 60;
+  const videoUrl = options?.videoUrl ?? 'media/clip.mp4';
+  const audioUrl = options?.audioUrl ?? 'media/dialogue.wav';
+  const time = (
+    value: number,
+    timeRate = rate
+  ): Record<string, number | string> => ({
+    OTIO_SCHEMA: 'RationalTime.1',
+    value,
+    rate: timeRate,
+  });
+  return readOtioDocument(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline_1' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        metadata: { relic: { id: 'stack_1' } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_v' } },
+            kind: 'Video',
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: 'clip_v' } },
+                source_range: {
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: time(0),
+                  duration: time(duration),
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: videoUrl,
+                },
+              },
+            ],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_a' } },
+            kind: 'Audio',
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: 'clip_a' } },
+                source_range: {
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: time(0),
+                  duration: time(duration),
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: audioUrl,
                 },
               },
             ],
@@ -1412,15 +1538,15 @@ describe('otio playback controller', () => {
           ? delayedClip()
           : Promise.resolve('blob:dialogue'),
     });
-    await playback.play();
-    const seek = playback.seek({ value: 12, rate: 24 });
+    const p = playback.play();
     await clipStarted.promise;
+    const s = playback.seek({ value: 12, rate: 24 });
     raf?.(8000);
     const resolveFirst = pending[0];
     if (resolveFirst === undefined)
       throw new Error('clip resolver did not start');
     resolveFirst('blob:dialogue');
-    await seek;
+    await Promise.all([p, s]);
     expect(playback.getState().time.value).toBe(12);
     playback.dispose();
   });
@@ -3865,29 +3991,38 @@ describe('otio native video playback S-C and S-B', () => {
 
     try {
       await playback.seek({ value: 0, rate: 30 });
-      // Find mock media created for decoder and enable rVFC
       const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
       expect(videoMedia).toBeDefined();
-      videoMedia?.enableRvfc();
-
-      // Start playback
-      const playPromise = playback.play();
-
-      // First advanced callback arrives during startup
-      // T0 = 0 (window 0), first advanced is window 1 (starts at 1/30)
-      videoMedia?.triggerRvfc(100, 1 / 30);
-      await playPromise;
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      videoMedia!.advanceTo(0);
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / 30) * 1000;
 
       expect(playback.getState().playing).toBe(true);
 
-      // Clear recorded draw calls on output context
+      // Tick at wallFor(0.5): req = 0 (paused T0 frame)
       outCanvas.ctx.drawnSources.length = 0;
+      raf?.(wallFor(0.5));
+      expect(outCanvas.pixel.r).toBe(0);
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
+      expect(
+        outCanvas.ctx.drawnSources.some((d) => d.source instanceof MockMedia)
+      ).toBe(false);
 
-      // Trigger rVFC for window 1 and run tick at matching time
-      videoMedia?.triggerRvfc(133.3, 1 / 30);
-      raf?.(133.3);
-
-      // The output canvas drew a frame
+      // Deliver tag 1 at its consistent time and tick at wallFor(1.5): req = 1
+      outCanvas.ctx.drawnSources.length = 0;
+      videoMedia!.triggerRvfc(wallFor(1.0), 1 / 30);
+      raf?.(wallFor(1.5));
+      expect(outCanvas.pixel.r).toBe(1);
       expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
 
       // CRITICAL INVARIANT: The playing video element is NEVER passed to drawImage!
@@ -3940,11 +4075,19 @@ describe('otio native video playback S-C and S-B', () => {
       await playback.seek({ value: 0, rate: 30 });
       const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
       expect(videoMedia).toBeDefined();
-      videoMedia?.enableRvfc();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
 
-      const playPromise = playback.play();
-      videoMedia?.triggerRvfc(100, 1 / 30);
-      await playPromise;
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / 30) * 1000;
 
       let notifyCount = 0;
       playback.subscribe(() => {
@@ -3953,21 +4096,19 @@ describe('otio native video playback S-C and S-B', () => {
       const initialNotifyCount = notifyCount;
       const timeBefore = playback.getState().time.value;
 
-      // Tick forward in time without triggering rVFC for window 2
-      // Required window 2 is missing from ring -> HOLD!
-      raf?.(200); // 100ms later -> window 2+ is due, but not in ring
-
-      // currentTime has NOT advanced, notify has NOT fired
+      // 1. Tick at wallFor(2.5): it holds, and time and notify count are unchanged.
+      raf?.(wallFor(2.5));
       expect(playback.getState().time.value).toBe(timeBefore);
       expect(notifyCount).toBe(initialNotifyCount);
 
-      // Now trigger rVFC for required window
-      videoMedia?.triggerRvfc(205, 2 / 30);
-      raf?.(210);
+      // 2. Deliver tag 2 at wallFor(2.6).
+      videoMedia!.triggerRvfc(wallFor(2.6), 2 / 30);
 
-      // Now approved! currentTime advances and notify fires
+      // 3. Tick at wallFor(2.7): it approves. Time ≈ 2.7, notify count +1, pixel = 2.
+      raf?.(wallFor(2.7));
       expect(playback.getState().time.value).toBeGreaterThan(timeBefore);
       expect(notifyCount).toBeGreaterThan(initialNotifyCount);
+      expect(outCanvas.pixel.r).toBe(2);
     } finally {
       playback.dispose();
     }
@@ -3992,7 +4133,8 @@ describe('otio native video playback S-C and S-B', () => {
     const doc = sampledMediaDocument({
       kind: 'Video',
       rate: 30,
-      duration: 30, // 30 frames total
+      duration: 30,
+      targetUrl: 'media/clip.webm',
     });
 
     const playback = createOtioPlayback({
@@ -4007,33 +4149,31 @@ describe('otio native video playback S-C and S-B', () => {
       await playback.seek({ value: 0, rate: 30 });
       const videoMedia = created.find((m) => m.src.includes('media/clip.webm'));
       expect(videoMedia).toBeDefined();
-      videoMedia?.enableRvfc();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
 
-      const playPromise = playback.play();
-      videoMedia?.triggerRvfc(100, 1 / 30);
-      await playPromise;
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / 30) * 1000;
 
-      // Play through certified windows natively
-      videoMedia?.triggerRvfc(133, 1 / 30);
-      raf?.(133);
-      videoMedia?.triggerRvfc(166, 2 / 30);
-      raf?.(166);
+      // An outside-span callback is ignored (no sticky ineligible marking!)
+      videoMedia!.triggerRvfc(wallFor(3), 0.25);
+      expect(videoMedia!.hasRvfc).toBe(true);
 
-      // Decoder runs ahead into uncertified tail (> 5/30 = 0.1667s)
-      // Callback outside span is IGNORED (no sticky ineligible marking!)
-      videoMedia?.triggerRvfc(200, 0.25);
-
-      // Now transport advances to frame 6 (value 6, which is > 5/30)
-      // This reaches the uncertified tail sample!
-      raf?.(400); // 300ms elapsed at 30fps = 9 frames
-
-      // Wait microtask turns for resync into seek cadence to settle
+      // A tick at wallFor(6) goes to seek cadence with invalid-timing
+      raf?.(wallFor(6));
       for (let i = 0; i < 10; i++) {
         await Promise.resolve();
       }
 
       const state = playback.getState();
-      // Reported invalid-timing diagnostic on uncertified sample
       expect(
         state.diagnostics.some(
           (d) =>
@@ -4042,12 +4182,20 @@ describe('otio native video playback S-C and S-B', () => {
         )
       ).toBe(true);
 
-      // Outside-span callback did NOT make the path sticky-ineligible
-      // If we seek back to certified range (frame 2), it can play natively again
-      await playback.seek({ value: 2, rate: 30 });
+      // seek(2) while playing, then waitForRvfc, then deliver tag 3. Assert an approved native composite.
+      const seekPromise = playback.seek({ value: 2, rate: 30 });
+      await waitForRvfc(videoMedia!);
+      videoMedia!.triggerRvfc(wallFor(7), 3 / 30);
+      await seekPromise;
+
       expect(
         playback.getState().diagnostics.some((d) => d.code === 'invalid-timing')
       ).toBe(false);
+
+      outCanvas.ctx.drawnSources.length = 0;
+      raf?.(wallFor(7.5));
+      expect(outCanvas.pixel.r).toBe(2);
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
     } finally {
       playback.dispose();
     }
@@ -4088,22 +4236,29 @@ describe('otio native video playback S-C and S-B', () => {
       expect(videoMedia).toBeDefined();
       videoMedia?.enableRvfc();
 
-      // Uncovered callback inside span during startup (e.g. 0.015 is inside [0, 4/30] but no start matches)
+      const start = performance.now();
       const playPromise = playback.play();
+      await waitForRvfc(videoMedia!);
       videoMedia?.triggerRvfc(100, 0.015); // uncovered inside span!
       await playPromise;
+      const elapsed = performance.now() - start;
 
-      // Media path is now sticky-ineligible! Controller falls back to seek cadence
-      // Seeks should use seekElement (video.currentTime)
+      // No 500 ms retry
+      expect(elapsed).toBeLessThan(400);
+
+      // Decoders are paused
+      expect(videoMedia?.paused).toBe(true);
+
+      // After seek(2), no callback registers
       await playback.seek({ value: 2, rate: 30 });
-      expect(playback.getState().playing).toBe(true);
+      expect(videoMedia?.rvfcCallbacks.size).toBe(0);
     } finally {
       playback.dispose();
     }
   });
 
-  test('S-B audio: produces zero steady seeks during normal playback', async () => {
-    const doc = buildDocument({ rate: 30, frames: 60 });
+  test('S-B audio: produces zero steady seeks during normal playback (seek cadence)', async () => {
+    const doc = sampledMediaDocument({ kind: 'Audio', rate: 30, duration: 60 });
     const outCanvas = new SoftCanvas();
     const playback = createOtioPlayback({
       document: doc,
@@ -4116,22 +4271,99 @@ describe('otio native video playback S-C and S-B', () => {
       await playback.play();
       expect(playback.getState().playing).toBe(true);
 
-      const audioMedia = created.find((m) => m.src.includes('blob:clip'));
+      const audioMedia = created.find(
+        (m) => m.attrs.get('data-bundle-path') === 'media/dialogue.wav'
+      );
       expect(audioMedia).toBeDefined();
       const initialSeeks = audioMedia?.seekTargets.length ?? 0;
 
-      // Advance ticks smoothly
-      // Since audio is playing, drift within 2 timeline frames (2/30 = 66ms) does NOT seek
-      raf?.(0);
-      if (audioMedia) audioMedia.currentTime = 1 / 30;
-      raf?.(33.3);
-      if (audioMedia) audioMedia.currentTime = 2 / 30;
-      raf?.(66.6);
-      if (audioMedia) audioMedia.currentTime = 3 / 30;
-      raf?.(100);
+      // Advance ticks smoothly over 30 ticks
+      for (let i = 1; i <= 30; i++) {
+        raf?.(i * 33.333);
+        const t = playback.getState().time;
+        audioMedia?.advanceTo(t.value / t.rate);
+        for (let k = 0; k < 5; k++) await Promise.resolve();
+      }
 
       // ZERO steady seeks occurred!
       expect(audioMedia?.seekTargets.length).toBe(initialSeeks);
+
+      // Offset by 3 frames (> 2 frames tolerance) -> exactly one async seek!
+      const tOff = playback.getState().time;
+      audioMedia?.advanceTo((tOff.value - 3) / tOff.rate);
+      raf?.(31 * 33.333);
+      for (let k = 0; k < 5; k++) await Promise.resolve();
+      expect(audioMedia?.seekTargets.length).toBe(initialSeeks + 1);
+      // Gain restored on seeked
+      audioMedia?.dispatch('seeked');
+      expect(audioMedia?.volume).toBeGreaterThan(0);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('S-B audio: produces zero steady seeks during normal playback (native)', async () => {
+    const mediaBlob = new Blob(['native audio test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/clip.mp4', mediaBlob],
+        ['media/dialogue.wav', new Blob(['audio'])],
+      ]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const doc = sampledAvDocument({ rate: 30, duration: 60 });
+    const outCanvas = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / 30) * 1000;
+
+      const audioMedia = created.find(
+        (m) => m.attrs.get('data-bundle-path') === 'media/dialogue.wav'
+      );
+      expect(audioMedia).toBeDefined();
+      const initialSeeks = audioMedia?.seekTargets.length ?? 0;
+
+      // Advance ticks smoothly over 30 ticks
+      for (let i = 1; i <= 30; i++) {
+        videoMedia!.triggerRvfc(wallFor(i), (i + 1) / 30);
+        audioMedia?.advanceTo((i + 0.5) / 30);
+        raf?.(wallFor(i + 0.5));
+        for (let k = 0; k < 5; k++) await Promise.resolve();
+      }
+
+      expect(audioMedia?.seekTargets.length).toBe(initialSeeks);
+      // Offset by 3 frames (> 2 frames tolerance) -> exactly one async seek!
+      const tOff = playback.getState().time;
+      audioMedia?.advanceTo((tOff.value - 3) / tOff.rate);
+      videoMedia!.triggerRvfc(wallFor(31), 31 / 30);
+      raf?.(wallFor(31.5));
+      for (let k = 0; k < 5; k++) await Promise.resolve();
+      expect(audioMedia?.seekTargets.length).toBe(initialSeeks + 1);
+      // Gain restored on seeked
+      audioMedia?.dispatch('seeked');
+      expect(audioMedia?.volume).toBeGreaterThan(0);
     } finally {
       playback.dispose();
     }

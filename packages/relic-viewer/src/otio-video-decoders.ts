@@ -463,6 +463,7 @@ export class NativeDecoderRing {
   consecutiveUncovered = 0;
   totalUncovered = 0;
   lastCallbackWallMs: number | null = null;
+  lastCapturedTag: number | null = null;
   isStarting = false;
   startupFirstAdvancedTag: number | null = null;
   startupWaiter: {
@@ -470,7 +471,6 @@ export class NativeDecoderRing {
     reject?: (reason?: unknown) => void;
   } | null = null;
   missingSince: number | null = null;
-
   constructor(
     readonly videoElement: HTMLVideoElement,
     readonly key: string,
@@ -540,11 +540,17 @@ export class NativeDecoderRing {
 
   resetEpoch(newEpoch: number): void {
     this.cancelCallback();
+    if (this.startupWaiter) {
+      const waiter = this.startupWaiter;
+      this.startupWaiter = null;
+      waiter.reject?.(new Error('epoch-reset'));
+    }
     this.currentEpoch = newEpoch;
+    this.nextSlotIndex = 0;
     this.consecutiveUncovered = 0;
-    this.startupWaiter = null;
     this.startupFirstAdvancedTag = null;
     this.missingSince = null;
+    this.lastCapturedTag = null;
     for (const slot of this.slots) {
       slot.tag = null;
       slot.epoch = -1;
@@ -553,11 +559,13 @@ export class NativeDecoderRing {
 
   capturePausedFrame(tag: number, epoch: number): void {
     if (this.slots.length === 0) return;
-    const slot = this.slots[0];
+    const slot = this.slots[this.nextSlotIndex];
+    this.nextSlotIndex = (this.nextSlotIndex + 1) % this.slots.length;
     if (!slot) return;
     slot.tag = tag;
     slot.epoch = epoch;
     slot.lead = 0;
+    this.lastCapturedTag = tag;
     if (slot.ctx) {
       try {
         slot.ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
@@ -645,6 +653,7 @@ export class NativeDecoderRing {
                   slot.tag = outcome.index;
                   slot.epoch = epoch;
                   slot.lead = 0;
+                  this.lastCapturedTag = outcome.index;
                   if (slot.ctx) {
                     try {
                       slot.ctx.clearRect(
