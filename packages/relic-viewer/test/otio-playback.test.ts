@@ -4766,4 +4766,80 @@ describe('otio native video playback S-C and S-B', () => {
       playback.dispose();
     }
   });
+  test('regression 4: two rejected plays force fallback: decoders paused, no callbacks registered, next render seeks', async () => {
+    const mediaBlob = new Blob(['reg 4 video test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+      videoMedia!.advanceTo(0);
+
+      // Both attempt 0 and attempt 1 play() calls reject
+      videoMedia!.play = function (this: MockMedia): Promise<void> {
+        this.paused = false;
+        return Promise.reject(new Error('play-rejected-unsupported'));
+      };
+
+      const playPromise = playback.play();
+
+      // Attempt 0: wait for rvfc and trigger it
+      await waitForRvfc(videoMedia!);
+      videoMedia!.triggerRvfc(100, 1 / 30);
+
+      // Attempt 1: wait for rvfc and trigger it
+      for (let i = 0; i < 20; i++) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 5);
+        await promise;
+        if (videoMedia!.rvfcCallbacks.size > 0) break;
+      }
+      await waitForRvfc(videoMedia!);
+      videoMedia!.triggerRvfc(150, 1 / 30);
+
+      await playPromise;
+
+      // Both attempts rejected: must fall back to seek cadence
+      expect(videoMedia!.paused).toBe(true);
+      expect(videoMedia!.rvfcCallbacks.size).toBe(0);
+
+      // Next render in seek cadence must record a seek
+      const prevSeeks = videoMedia!.seekTargets.length;
+      raf?.(100);
+      for (let k = 0; k < 5; k++) await Promise.resolve();
+      raf?.(200);
+      for (let k = 0; k < 5; k++) await Promise.resolve();
+      expect(videoMedia!.seekTargets.length).toBeGreaterThan(prevSeeks);
+    } finally {
+      playback.dispose();
+    }
+  });
 });
