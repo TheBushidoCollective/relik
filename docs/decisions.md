@@ -938,6 +938,7 @@ Authorised by Jason Waldrip on 2026-10-25: passkeys serve as an alternative sign
 - Some old records stay as they are: mixed-case records created before this change mint with the normalized address, and existing passkeys need one email-first sign-in or decision before usernameless sign-in works.
 - Proof gaps: the CDP virtual authenticator answers an autofill request by itself, so automated proof drives both paths (the button with conditional mediation reported unavailable, then autofill with it available) but never sees the browser's own autofill picker. A real device check covers that picker. A U2F-only key can no longer register.
 - The decision panel's create step can still orphan a credential: its prefetched options can expire if the reader waits past the timeout, and the device keeps a credential the server never stored. This predates the change and is not fixed here.
+- An attacker can block the email-first fallback for an address: anyone who knows an address can request options for it and spend its email-first sign-in budget, returning 429 to the legitimate user on the fallback path. The primary usernameless path uses a separate handle-keyed budget and remains unblocked.
 
 ## 2026-10-25: A first passkey needs a fresh link, and every added passkey is announced
 

@@ -22,6 +22,7 @@ import {
   base64urlEncode,
   ceremonySignal,
   type CredentialsLike,
+  type LinkRequestOutcome,
   creationOptionsFromJSON,
   registrationResponseToJSON,
   requestOptionsFromJSON,
@@ -498,7 +499,7 @@ async function openPanel(
     readonly view?: ReadyView;
     readonly session?: SessionState;
     readonly credentials?: CredentialsLike;
-    readonly requestLink?: (email: string) => Promise<any>;
+    readonly requestLink?: (email: string) => Promise<LinkRequestOutcome>;
   } = {}
 ): Promise<Opened> {
   const shown = options.view ?? view();

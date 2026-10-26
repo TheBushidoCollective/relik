@@ -162,6 +162,26 @@ export interface RelicConfig {
    * Number of check operations between routine sweep passes of expired windows.
    */
   readonly limiterSweepInterval: number;
+  /**
+   * Maximum tracked entries in the separate address and handle rate limiter
+   * before eviction. Kept separate from per-IP limiter entries so that
+   * churning victim addresses or random user handles cannot evict per-IP
+   * buckets. When capacity is reached, the oldest entries are evicted, which
+   * resets their counts. This trade-off prioritizes preserving IP-based rate
+   * limit state over tracking exhausted address budgets under deliberate
+   * memory-exhaustion pressure.
+   */
+  readonly addressLimiterMaxEntries: number;
+  /**
+   * Maximum milliseconds to await the passkey-added email notice before
+   * timing out. Bounding the await prevents a hung mail provider from turning
+   * a successful passkey enrollment into a client request timeout.
+   */
+  readonly passkeyNoticeTimeoutMs: number;
+  /**
+   * Rate limit for usernameless passkey sign-in keyed on user handle.
+   */
+  readonly passkeySignInHandleRateLimit: RateLimitConfig;
 }
 
 export interface RateLimitConfig {
@@ -214,6 +234,9 @@ export const DEFAULT_CONFIG: RelicConfig = {
   passkeySignInOptionsAddressRateLimit: { limit: 60, windowSeconds: 3600 },
   passkeySignInRateLimit: { limit: 30, windowSeconds: 3600 },
   passkeySignInAddressRateLimit: { limit: 30, windowSeconds: 3600 },
+  passkeySignInHandleRateLimit: { limit: 30, windowSeconds: 3600 },
+  passkeyNoticeTimeoutMs: 5000,
+  addressLimiterMaxEntries: 100_000,
   passkeySignInAllowListSize: 4,
   passkeyDecoyIdLengths: [16, 20, 32, 64],
   passkeyOfferMarkerSeconds: 600,
@@ -333,5 +356,27 @@ export function assertConfig(config: RelicConfig): void {
     config.limiterSweepInterval <= 0
   ) {
     throw new Error('limiterSweepInterval must be a positive integer');
+  }
+  if (
+    !Number.isInteger(config.passkeySignInHandleRateLimit?.limit) ||
+    config.passkeySignInHandleRateLimit.limit < 1 ||
+    !Number.isInteger(config.passkeySignInHandleRateLimit?.windowSeconds) ||
+    config.passkeySignInHandleRateLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'passkeySignInHandleRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (
+    !Number.isInteger(config.addressLimiterMaxEntries) ||
+    config.addressLimiterMaxEntries <= 0
+  ) {
+    throw new Error('addressLimiterMaxEntries must be a positive integer');
+  }
+  if (
+    !Number.isInteger(config.passkeyNoticeTimeoutMs) ||
+    config.passkeyNoticeTimeoutMs <= 0
+  ) {
+    throw new Error('passkeyNoticeTimeoutMs must be a positive integer');
   }
 }

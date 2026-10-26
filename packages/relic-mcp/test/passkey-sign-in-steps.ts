@@ -38,8 +38,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RelicStore } from '@relic/server/src/store.ts';
 import { callMcp, launchProofBrowser } from './decision-proof-steps.ts';

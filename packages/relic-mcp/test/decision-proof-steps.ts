@@ -1140,7 +1140,7 @@ export async function runDecisionProofSequence(
       // 7. Check that resolveMagicLink(C) returns a callback URL.
       const magicLinkC = await resolveMagicLink(addressC);
       assert.ok(
-        magicLinkC && magicLinkC.includes('/api/auth/callback'),
+        magicLinkC?.includes('/api/auth/callback'),
         `expected callback URL for address C, got "${magicLinkC}"`
       );
 

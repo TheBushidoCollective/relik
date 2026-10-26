@@ -116,6 +116,11 @@ export const NULL_MAILER: Mailer = {
   async sendMail(): Promise<void> {},
   async sendBatch(): Promise<void> {},
 };
+let warnedPasskeyNoticeDisabled = false;
+
+export function resetPasskeyNoticeWarningForTesting(): void {
+  warnedPasskeyNoticeDisabled = false;
+}
 
 export interface AppOptions {
   readonly config?: Partial<RelicConfig>;
@@ -130,6 +135,7 @@ export interface AppOptions {
   /** Where a magic link goes. Defaults to sending nothing at all. */
   readonly mailer?: Mailer | undefined;
   readonly limiter?: RateLimiter | undefined;
+  readonly addressLimiter?: RateLimiter | undefined;
 }
 
 export interface RelicApp {
@@ -137,6 +143,7 @@ export interface RelicApp {
   readonly store: RelicStore;
   readonly storage: ObjectStorage;
   readonly limiter: RateLimiter;
+  readonly addressLimiter: RateLimiter;
   fetch(request: Request): Promise<Response>;
 }
 
@@ -154,6 +161,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
     options.limiter ??
     new RateLimiter({
       maxEntries: config.limiterMaxEntries,
+      sweepInterval: config.limiterSweepInterval,
+    });
+  const addressLimiter =
+    options.addressLimiter ??
+    new RateLimiter({
+      maxEntries: config.addressLimiterMaxEntries,
       sweepInterval: config.limiterSweepInterval,
     });
 
@@ -3198,16 +3211,39 @@ export function createApp(options: AppOptions = {}): RelicApp {
     now: number,
     added: { readonly first: boolean; readonly passkeys: number }
   ): Promise<void> {
-    if (mailer === undefined || typeof mailer.sendMail !== 'function') return;
+    if (mailer === undefined || typeof mailer.sendMail !== 'function') {
+      if (!warnedPasskeyNoticeDisabled) {
+        warnedPasskeyNoticeDisabled = true;
+        console.warn(
+          'relic: passkey notices are disabled: mailer has no sendMail'
+        );
+      }
+      return;
+    }
+    const { promise: timeoutPromise, reject } = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `passkey notice timed out after ${config.passkeyNoticeTimeoutMs}ms`
+          )
+        ),
+      config.passkeyNoticeTimeoutMs
+    );
     try {
-      await mailer.sendMail(
-        address,
-        passkeyAddedMail({ address, at: now, ...added })
-      );
+      await Promise.race([
+        mailer.sendMail(
+          address,
+          passkeyAddedMail({ address, at: now, ...added })
+        ),
+        timeoutPromise,
+      ]);
     } catch (error) {
       console.error(
         `relic: passkey notice failed for recipient ${await sha256Hex(normalizeEmail(address))}: ${sanitizeMailError(error, address)}`
       );
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -4032,7 +4068,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const rpId = new URL(config.serviceOrigin).hostname;
-    const origin = new URL(config.serviceOrigin).origin;
 
     const hasCredential =
       'credential' in body && body['credential'] !== undefined;
@@ -4472,7 +4507,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     now: number
   ): Promise<Response> {
     const ipVerdict = limiter.check(
-      `passkey-sign-in-options ${ip}`,
+      rateLimitKey('passkey-sign-in-options', ip),
       config.passkeySignInOptionsRateLimit,
       now
     );
@@ -4521,8 +4556,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
       email = body['email'];
       const emailHash = await sha256Hex(normalizeEmail(email));
-      const addressVerdict = limiter.check(
-        `passkey-sign-in-options ${emailHash}`,
+      const addressVerdict = addressLimiter.check(
+        `passkey-sign-in-options-email ${emailHash}`,
         config.passkeySignInOptionsAddressRateLimit,
         now
       );
@@ -4566,7 +4601,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     now: number
   ): Promise<Response> {
     const ipVerdict = limiter.check(
-      `passkey-sign-in ${ip}`,
+      rateLimitKey('passkey-sign-in', ip),
       config.passkeySignInRateLimit,
       now
     );
@@ -4634,8 +4669,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
     let record: PasskeyRecord | undefined;
     if (challengeRow.email !== undefined) {
       const addressHash = await sha256Hex(normalizeEmail(challengeRow.email));
-      const addressVerdict = limiter.check(
-        `passkey-sign-in ${addressHash}`,
+      const addressVerdict = addressLimiter.check(
+        `passkey-sign-in-email ${addressHash}`,
         config.passkeySignInAddressRateLimit,
         now
       );
@@ -4658,19 +4693,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
       record = await store.getPasskeysByUserHandle(userHandle);
       if (record !== undefined) {
-        const address = record.address ?? record.email;
-        const addressHash = await sha256Hex(normalizeEmail(address));
-        const addressVerdict = limiter.check(
-          `passkey-sign-in ${addressHash}`,
-          config.passkeySignInAddressRateLimit,
+        const handleHash = await sha256Hex(userHandle);
+        const handleVerdict = addressLimiter.check(
+          `passkey-sign-in-handle ${handleHash}`,
+          config.passkeySignInHandleRateLimit,
           now
         );
-        if (!addressVerdict.allowed) {
-          // Usernameless sign-in only learns the target address after loading
-          // the record by userHandle. Refusing with 429 here would become an
-          // oracle, revealing to an unauthenticated caller whether the probed
-          // userHandle exists. Refuse with the identical 401 passkey_sign_in_failed
-          // as unknown records.
+        if (!handleVerdict.allowed) {
+          // Usernameless sign-in only learns the target record after loading
+          // by userHandle. Refusing with 429 here would become an oracle,
+          // revealing whether the probed userHandle exists. Refuse with the
+          // identical 401 passkey_sign_in_failed as unknown records.
           return refuse('passkey_sign_in_failed');
         }
       }
@@ -4835,6 +4868,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     store,
     storage,
     limiter,
+    addressLimiter,
     fetch: handle,
   };
 }

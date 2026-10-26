@@ -11,7 +11,12 @@ import {
   type RequestOptionsJSON,
   shareVerifierFor,
 } from '@relic/format';
-import { createApp, type RelicApp } from '../src/app.ts';
+import {
+  createApp,
+  type Mailer,
+  type RelicApp,
+  resetPasskeyNoticeWarningForTesting,
+} from '../src/app.ts';
 import type { OutboundMail } from '../src/mail.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
@@ -1335,7 +1340,7 @@ describe('S1 Server passkey sign-in', () => {
     app = build({
       config: {
         serviceOrigin: ORIGIN,
-        passkeySignInAddressRateLimit: { limit: 1, windowSeconds: 3600 },
+        passkeySignInHandleRateLimit: { limit: 1, windowSeconds: 3600 },
       },
     });
 
@@ -1409,6 +1414,33 @@ describe('S1 Server passkey sign-in', () => {
         passkeySignInAddressRateLimit: { limit: 10, windowSeconds: 0 },
       })
     ).toThrow('passkeySignInAddressRateLimit');
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeySignInHandleRateLimit: { limit: -1, windowSeconds: 3600 },
+      })
+    ).toThrow('passkeySignInHandleRateLimit');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeySignInHandleRateLimit: { limit: 10, windowSeconds: 0 },
+      })
+    ).toThrow('passkeySignInHandleRateLimit');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        addressLimiterMaxEntries: 0,
+      })
+    ).toThrow('addressLimiterMaxEntries');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeyNoticeTimeoutMs: -10,
+      })
+    ).toThrow('passkeyNoticeTimeoutMs');
 
     // Valid default passes
     expect(() => assertConfig(DEFAULT_CONFIG)).not.toThrow();
@@ -1882,5 +1914,345 @@ describe('S1 Server passkey sign-in', () => {
     expect(text).toContain(
       'That email has no stop link, because it is about the address rather than a relic.'
     );
+  });
+  test('28. M1: Exhausting the email-first budget for an address does not block usernameless sign-in', async () => {
+    const auth = await fakeAuthenticator();
+    app = build({
+      config: {
+        serviceOrigin: ORIGIN,
+        passkeySignInAddressRateLimit: { limit: 2, windowSeconds: 3600 },
+        passkeySignInHandleRateLimit: { limit: 10, windowSeconds: 3600 },
+      },
+    });
+
+    const targetEmail = 'exhaust-email-first@example.com';
+    const { cookie } = await signInViaLink(targetEmail);
+    const { userHandle } = await registerPasskey(cookie, auth);
+
+    // Spend the email-first sign-in budget (2 requests)
+    for (let i = 0; i < 2; i++) {
+      const optRes = await app.fetch(
+        req('/api/auth/passkeys/sign-in/options', {
+          method: 'POST',
+          body: JSON.stringify({ email: targetEmail }),
+        })
+      );
+      const optData = (await optRes.json()) as {
+        public_key: RequestOptionsJSON;
+      };
+      const assertion = await auth.assert(
+        optData.public_key,
+        ORIGIN,
+        userHandle
+      );
+      const signRes = await app.fetch(
+        req('/api/auth/passkeys/sign-in', {
+          method: 'POST',
+          body: JSON.stringify({ credential: assertion }),
+        })
+      );
+      expect(signRes.status).toBe(200);
+    }
+
+    // 3rd email-first request hits 429 passkey_rate_limited
+    const optResBlocked = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        body: JSON.stringify({ email: targetEmail }),
+      })
+    );
+    const optDataBlocked = (await optResBlocked.json()) as {
+      public_key: RequestOptionsJSON;
+    };
+    const assertionBlocked = await auth.assert(
+      optDataBlocked.public_key,
+      ORIGIN,
+      userHandle
+    );
+    const signResBlocked = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        body: JSON.stringify({ credential: assertionBlocked }),
+      })
+    );
+    expect(signResBlocked.status).toBe(429);
+    const bodyBlocked = (await signResBlocked.json()) as { code: string };
+    expect(bodyBlocked.code).toBe('passkey_rate_limited');
+
+    // Usernameless sign-in for the same address still succeeds
+    const optResUsernameless = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        body: '{}',
+      })
+    );
+    const optDataUsernameless = (await optResUsernameless.json()) as {
+      public_key: RequestOptionsJSON;
+    };
+    const assertionUsernameless = await auth.assert(
+      optDataUsernameless.public_key,
+      ORIGIN,
+      userHandle
+    );
+    const signResUsernameless = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        body: JSON.stringify({ credential: assertionUsernameless }),
+      })
+    );
+    expect(signResUsernameless.status).toBe(200);
+    const successBody = (await signResUsernameless.json()) as { email: string };
+    expect(successBody.email).toBe(targetEmail);
+  });
+
+  test('29. L1: Two IPv6 addresses in one /64 share the sign-in IP budget', async () => {
+    app = build({
+      config: {
+        serviceOrigin: ORIGIN,
+        passkeySignInRateLimit: { limit: 2, windowSeconds: 3600 },
+      },
+    });
+
+    const ip1 = '2001:db8:abcd:12::1';
+    const ip2 = '2001:db8:abcd:12:dead:beef::99';
+    const lbIp = '10.0.0.1';
+
+    // Request 1 from ip1
+    const res1 = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': `${ip1}, ${lbIp}` },
+        body: JSON.stringify({ credential: { id: 'invalid' } }),
+      })
+    );
+    expect(res1.status).not.toBe(429);
+
+    // Request 2 from ip2 (same /64)
+    const res2 = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': `${ip2}, ${lbIp}` },
+        body: JSON.stringify({ credential: { id: 'invalid' } }),
+      })
+    );
+    expect(res2.status).not.toBe(429);
+
+    // Request 3 from ip1: /64 budget (limit: 2) is spent -> 429 passkey_rate_limited
+    const res3 = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': `${ip1}, ${lbIp}` },
+        body: JSON.stringify({ credential: { id: 'invalid' } }),
+      })
+    );
+    expect(res3.status).toBe(429);
+    const body3 = (await res3.json()) as { code: string };
+    expect(body3.code).toBe('passkey_rate_limited');
+
+    // Request from different /64 is not rate limited
+    const resOther = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': `2001:db8:abcd:13::1, ${lbIp}` },
+        body: JSON.stringify({ credential: { id: 'invalid' } }),
+      })
+    );
+    expect(resOther.status).not.toBe(429);
+  });
+
+  test('30. L2: Filling the address limiter leaves IP rate limit buckets intact', async () => {
+    app = build({
+      config: {
+        serviceOrigin: ORIGIN,
+        addressLimiterMaxEntries: 3,
+        passkeySignInOptionsRateLimit: { limit: 10, windowSeconds: 3600 },
+        passkeySignInOptionsAddressRateLimit: {
+          limit: 10,
+          windowSeconds: 3600,
+        },
+      },
+    });
+
+    const testIp = '198.51.100.42';
+    const lbIp = '10.0.0.1';
+
+    // 1. Consume 1 request from testIp on IP limiter
+    const rInitial = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': `${testIp}, ${lbIp}` },
+        body: '{}',
+      })
+    );
+    expect(rInitial.status).toBe(200);
+
+    // 2. Churn 5 distinct email addresses to trigger eviction in addressLimiter
+    for (let i = 1; i <= 5; i++) {
+      const churnRes = await app.fetch(
+        req('/api/auth/passkeys/sign-in/options', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': `192.0.2.${i}, ${lbIp}` },
+          body: JSON.stringify({ email: `victim-${i}@example.com` }),
+        })
+      );
+      expect(churnRes.status).toBe(200);
+    }
+
+    // 3. Verify addressLimiter evicted entries to stay within addressLimiterMaxEntries
+    expect(app.addressLimiter.size).toBeLessThanOrEqual(3);
+
+    // 4. Verify testIp in limiter has count 1 intact; 9 more succeed, 11th is 429
+    for (let i = 2; i <= 10; i++) {
+      const r = await app.fetch(
+        req('/api/auth/passkeys/sign-in/options', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': `${testIp}, ${lbIp}` },
+          body: '{}',
+        })
+      );
+      expect(r.status).toBe(200);
+    }
+    const rBlocked = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': `${testIp}, ${lbIp}` },
+        body: '{}',
+      })
+    );
+    expect(rBlocked.status).toBe(429);
+  });
+
+  test('31. L3: Passkey register returns 201 within bound and stores record even when mailer never resolves', async () => {
+    const neverMailer: Mailer = {
+      async send(email, link) {
+        sentMails.push({ email, link });
+      },
+      sendMail() {
+        return new Promise(() => {});
+      },
+    };
+    const testApp = build({
+      mailer: neverMailer,
+      config: {
+        serviceOrigin: ORIGIN,
+        passkeyNoticeTimeoutMs: 50,
+      },
+    });
+
+    const testEmail = 'hung-mailer@example.com';
+    const { cookie } = await signInViaLink(testEmail, testApp);
+
+    const optRes = await testApp.fetch(
+      req('/api/auth/passkeys/options', {
+        method: 'POST',
+        headers: { cookie },
+        body: '{}',
+      })
+    );
+    expect(optRes.status).toBe(200);
+    const optData = (await optRes.json()) as {
+      public_key: CreationOptionsJSON;
+    };
+
+    const auth = await fakeAuthenticator();
+    const reg = await auth.register(optData.public_key, ORIGIN);
+
+    const start = Date.now();
+    const regRes = await testApp.fetch(
+      req('/api/auth/passkeys', {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({ credential: reg }),
+      })
+    );
+    const duration = Date.now() - start;
+
+    expect(regRes.status).toBe(201);
+    expect(duration).toBeLessThan(1000);
+    const regData = (await regRes.json()) as {
+      passkeys: number;
+      email: string;
+    };
+    expect(regData.passkeys).toBe(1);
+
+    const stored = await store.getPasskeys(testEmail);
+    expect(stored).toBeDefined();
+    expect(stored?.credentials.length).toBe(1);
+  });
+
+  test('32. I1: Logs one warning per process when mailer has no sendMail', async () => {
+    resetPasskeyNoticeWarningForTesting();
+    const noSendMailApp = build({
+      mailer: {
+        async send(email, link) {
+          sentMails.push({ email, link });
+        },
+      },
+    });
+
+    const warnLogs: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnLogs.push(args.map(String).join(' '));
+    };
+
+    try {
+      const { cookie: cookie1 } = await signInViaLink(
+        'no-sendmail-1@example.com',
+        noSendMailApp
+      );
+      const optRes1 = await noSendMailApp.fetch(
+        req('/api/auth/passkeys/options', {
+          method: 'POST',
+          headers: { cookie: cookie1 },
+          body: '{}',
+        })
+      );
+      const optData1 = (await optRes1.json()) as {
+        public_key: CreationOptionsJSON;
+      };
+      const auth1 = await fakeAuthenticator();
+      const reg1 = await auth1.register(optData1.public_key, ORIGIN);
+      const regRes1 = await noSendMailApp.fetch(
+        req('/api/auth/passkeys', {
+          method: 'POST',
+          headers: { cookie: cookie1 },
+          body: JSON.stringify({ credential: reg1 }),
+        })
+      );
+      expect(regRes1.status).toBe(201);
+
+      const { cookie: cookie2 } = await signInViaLink(
+        'no-sendmail-2@example.com',
+        noSendMailApp
+      );
+      const optRes2 = await noSendMailApp.fetch(
+        req('/api/auth/passkeys/options', {
+          method: 'POST',
+          headers: { cookie: cookie2 },
+          body: '{}',
+        })
+      );
+      const optData2 = (await optRes2.json()) as {
+        public_key: CreationOptionsJSON;
+      };
+      const auth2 = await fakeAuthenticator();
+      const reg2 = await auth2.register(optData2.public_key, ORIGIN);
+      const regRes2 = await noSendMailApp.fetch(
+        req('/api/auth/passkeys', {
+          method: 'POST',
+          headers: { cookie: cookie2 },
+          body: JSON.stringify({ credential: reg2 }),
+        })
+      );
+      expect(regRes2.status).toBe(201);
+
+      expect(warnLogs.length).toBe(1);
+      expect(warnLogs[0]).toContain(
+        'relic: passkey notices are disabled: mailer has no sendMail'
+      );
+    } finally {
+      console.warn = origWarn;
+    }
   });
 });
