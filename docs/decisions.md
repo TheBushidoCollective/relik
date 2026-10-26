@@ -915,11 +915,11 @@ No MCP tool can record a decision. Decisions are recorded only by human readers 
 **Measured seek bottleneck during full-cut playback.**
 Profiling full-cut playback (such as a 491.7 s 1080p30 timeline) under the existing midpoint-seek engine revealed that steady-state per-frame seeks formed the primary playback bottleneck. Seeking decoders on every frame generated roughly 257 to 400 seeks in a 15-second window (approximately 19 to 26 seeks per second), spending roughly 77 percent of playback time waiting on decoder seeks and dropping cadence.
 
-**Native hardware decode instead of WASM or WebCodecs.**
-While WASM software decoders and WebCodecs were considered, measurement established that the browser's native HTML5 video element decodes 1080p30 continuously at native display cadence with hardware acceleration already in place.
-- WASM software decoding would burn substantial CPU and memory budgets decoding video frames in software inside the sandbox frame.
-- WebCodecs would require custom demuxing, container parsing, and codec-specific bitstream feeding across varying container formats, increasing complexity and bundle size without delivering better decode throughput than the platform's hardware decoders.
-- Decision line 844 is retained: browser playback operates under browser-managed SDR decoding with canvas composition and additive audio, without transcode services, WASM decoders, or WebCodecs pipelines.
+**Continuous native decode instead of WASM or WebCodecs.**
+The same bundled video decoded continuously at 30 fps in the native HTML video path. The measured bottleneck was repeated seeking, so the repair keeps that decoder and changes how frames are captured and approved.
+- WASM would add a software decoder without addressing the measured per-frame seek policy.
+- WebCodecs would add a demuxing and codec-feed pipeline; the measured seek bottleneck can be removed using the existing media element.
+- The boundary from the 2026-10-20 OpenTimelineIO native playback decision is retained: browser playback operates under browser-managed SDR decoding with canvas composition and additive audio, without transcode services, WASM decoders, or WebCodecs pipelines.
 
 **No format, CSP, or privacy change.**
 Continuous native decoding introduces no changes to the Relic container format, the encryption envelope, or network posture.
@@ -938,9 +938,8 @@ Media Blobs whose scanner index stops short of the file end (such as `no-duratio
 
 **Bounded set-change resync tradeoff.**
 Every change to the set of drawn video occurrences (cuts, unhiding a track, soloing, or entering a dissolve) triggers one exact resync (pausing, running exact `renderAt`, and re-anchoring phase).
-- For continuous playback within a clip or a long cut, zero steady video seeks occur.
+- In admitted native mode, video decoders run continuously rather than seeking on every transport tick.
 - For rapid cuts or montages, frequent resyncs could hitch; this is bounded by a change-rate guard (more than 3 changes in 5 s falls back to seek cadence) and a storm guard (3 failure resyncs in 10 s falls back to seek cadence). Lookahead preroll remains an uncommitted future consideration if measured multi-clip cut performance requires it.
-- Unmeasured claims are excluded: the architecture provides the bounded mechanism, subject to verified benchmark replay.
 
 **Residuals:**
 - Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
