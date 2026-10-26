@@ -111,6 +111,11 @@ async function resolveMagicLink(email: string): Promise<string> {
   return match[0];
 }
 
+async function awaitPasskeyNotice(email: string): Promise<string> {
+  console.log(`PROBE_AWAIT_PASSKEY_NOTICE email=${email}`);
+  return (await readLineFromStdin()).trim();
+}
+
 try {
   const result = await runPasskeySignInSequence({
     serviceOrigin,
@@ -120,9 +125,9 @@ try {
     chromePath,
     readerEmail,
     resolveMagicLink,
+    awaitPasskeyNotice,
     isLive: true,
   });
-
   const clientTag = probeClient.startsWith('npx:')
     ? `relic-mcp@${probeClient.slice(4)}`
     : 'relic-mcp@source';

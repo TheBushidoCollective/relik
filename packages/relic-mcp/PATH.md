@@ -457,6 +457,7 @@ DECISION_D_OK count=2 latest=reject
 DECISION_C_OK v4_count=0 v3_count=2
 DECISION_E_OK total_decisions=2
 DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403
+DECISION_FRESH_LINK_OK state=required orphans=0 link_sent=1
 DECISION_PATH_OK
 ```
 
@@ -490,6 +491,7 @@ DECISION_D_OK count=2 latest=reject
 DECISION_C_OK v4_count=0 v3_count=2
 DECISION_E_OK total_decisions=2
 DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403
+DECISION_FRESH_LINK_SKIPPED live
 DECISION_LIVE_OK relic=<id> client=relic-mcp@<version>
 ```
 
@@ -525,11 +527,13 @@ PASSKEY_STEP_1_PUBLISH_OK relic_id=<id>
 PASSKEY_STEP_2_ANON_SURFACE_OK conditional=<armed|unavailable>
 PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown
 PASSKEY_STEP_4_ENROLL_OK resident=true
+PASSKEY_STEP_4B_NOTICE_OK to=<addr>
 PASSKEY_STEP_5_SIGNED_OUT_OK
 PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0
 PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0
 PASSKEY_STEP_7_COMMENT_OK author=<addr>
 PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400
+PASSKEY_STEP_8_FRESH_LINK_OK refused=passkey_fresh_link_required orphans=0 recovered=created notice=1
 PASSKEY_SIGN_IN_PATH_OK
 ```
 
@@ -552,7 +556,7 @@ It respects:
 - `RELIC_CHROME_PATH`: optional browser executable path
 
 The probe prints `PROBE_AWAIT_MAGIC_LINK email=<addr>` and blocks on stdin. The operator retrieves the magic link from the destination mailbox and pastes it into stdin.
-The probe never prints the relic URL or key. It executes the full sign-in and comment sequence plus negative controls against the live service.
+The probe then prints `PROBE_AWAIT_PASSKEY_NOTICE email=<addr>` and blocks on stdin for the first line of the passkey notice email, asserting it matches the expected notice text.
 
 Success ends with:
 
@@ -561,11 +565,13 @@ PASSKEY_STEP_1_PUBLISH_OK relic_id=<id>
 PASSKEY_STEP_2_ANON_SURFACE_OK conditional=<armed|unavailable>
 PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown
 PASSKEY_STEP_4_ENROLL_OK resident=true
+PASSKEY_STEP_4B_NOTICE_OK to=<addr>
 PASSKEY_STEP_5_SIGNED_OUT_OK
 PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0
 PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0
 PASSKEY_STEP_7_COMMENT_OK author=<addr>
 PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400
+PASSKEY_STEP_8_FRESH_LINK_SKIPPED live
 PASSKEY_SIGN_IN_LIVE_OK relic=<id> client=relic-mcp@<version>
 ```
 
