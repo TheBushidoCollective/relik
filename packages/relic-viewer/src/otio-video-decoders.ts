@@ -27,10 +27,13 @@ export type VideoFrameRequestCallback = (
   metadata: VideoFrameCallbackMetadata
 ) => void;
 
-export interface HTMLVideoElementWithRvfc extends HTMLVideoElement {
+export type HTMLVideoElementWithRvfc = Omit<
+  HTMLVideoElement,
+  'requestVideoFrameCallback' | 'cancelVideoFrameCallback'
+> & {
   requestVideoFrameCallback?(callback: VideoFrameRequestCallback): number;
   cancelVideoFrameCallback?(handle: number): void;
-}
+};
 
 export type PresentedWindowOutcome =
   | { readonly kind: 'match'; readonly index: number }
@@ -149,7 +152,7 @@ export function videoDecoderTime(
   timing: OtioVideoTiming | null
 ): number | null {
   const index = certifiedWindowIndex(sourceTime, timing);
-  if (index === null || !timing) return null;
+  if (index === null || !timing || timing.kind !== 'windows') return null;
   const start = timing.starts[index];
   const end = timing.ends[index];
   if (start === undefined || end === undefined) return null;
@@ -204,10 +207,12 @@ export function presentedWindowOutcome(
   ) {
     const start = starts[candidate];
     if (start !== undefined) {
-      const diff = Math.abs(mediaTime - start);
-      if (diff <= q && diff < minDiff) {
-        minDiff = diff;
-        matchedIndex = candidate;
+      if (mediaTime >= start - q && mediaTime <= start + q) {
+        const diff = Math.abs(mediaTime - start);
+        if (diff < minDiff) {
+          minDiff = diff;
+          matchedIndex = candidate;
+        }
       }
     }
   }
@@ -289,6 +294,7 @@ export function checkNativeTimingEligibility(
 }
 
 export function minWindowDuration(timing: OtioVideoTiming, rL: number): number {
+  if (timing.kind !== 'windows') return 1 / 30;
   let minWindow = Infinity;
   for (let i = 0; i < timing.starts.length; i++) {
     const s = timing.starts[i] ?? 0;
@@ -300,6 +306,7 @@ export function minWindowDuration(timing: OtioVideoTiming, rL: number): number {
 }
 
 export function maxWindowDuration(timing: OtioVideoTiming, rL: number): number {
+  if (timing.kind !== 'windows') return 1 / 30;
   let maxWindow = 0;
   for (let i = 0; i < timing.starts.length; i++) {
     const s = timing.starts[i] ?? 0;
@@ -460,6 +467,7 @@ export class NativeDecoderRing {
   startupFirstAdvancedTag: number | null = null;
   startupWaiter: {
     resolve: (sample: { now: number; tag: number }) => void;
+    reject?: (reason?: unknown) => void;
   } | null = null;
   missingSince: number | null = null;
 
@@ -499,6 +507,11 @@ export class NativeDecoderRing {
 
   release(): void {
     this.cancelCallback();
+    if (this.startupWaiter) {
+      const waiter = this.startupWaiter;
+      this.startupWaiter = null;
+      waiter.reject?.(new Error('ring-released'));
+    }
     for (const slot of this.slots) {
       slot.canvas.width = 0;
       slot.canvas.height = 0;
@@ -665,6 +678,11 @@ export class NativeDecoderRing {
               this.consecutiveUncovered += 1;
               this.totalUncovered += 1;
               if (this.isStarting || this.consecutiveUncovered >= 2) {
+                if (this.startupWaiter) {
+                  const waiter = this.startupWaiter;
+                  this.startupWaiter = null;
+                  waiter.reject?.(new Error('uncovered-during-startup'));
+                }
                 onUncoveredStickyIneligible();
                 return;
               }

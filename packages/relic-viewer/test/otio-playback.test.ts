@@ -214,6 +214,7 @@ class MockMedia {
   naturalHeight = 64;
   error: MediaError | null = null;
   playbackRate = 1;
+  readonly seekTargets: number[] = [];
   rvfcCallbacks = new Map<
     number,
     (
@@ -257,8 +258,14 @@ class MockMedia {
   ): void {
     const cbs = Array.from(this.rvfcCallbacks.values());
     this.rvfcCallbacks.clear();
+    const metadata: { mediaTime: number; expectedDisplayTime?: number } = {
+      mediaTime,
+    };
+    if (expectedDisplayTime !== undefined) {
+      metadata.expectedDisplayTime = expectedDisplayTime;
+    }
     for (const cb of cbs) {
-      cb(now, { mediaTime, expectedDisplayTime });
+      cb(now, metadata);
     }
   }
 
@@ -299,6 +306,10 @@ class MockMedia {
 
   setAttribute(name: string, value: string): void {
     this.attrs.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attrs.get(name) ?? null;
   }
 
   removeAttribute(name: string): void {
@@ -3534,6 +3545,97 @@ describe('otio playback controller', () => {
 });
 
 describe('otio native video playback S-C and S-B', () => {
+  const created: MockMedia[] = [];
+  let raf: FrameRequestCallback | null = null;
+  let originalGlobals = new Map<
+    PlaybackGlobalKey,
+    PropertyDescriptor | undefined
+  >();
+  let originalUrlMethods = new Map<
+    UrlMethodName,
+    PropertyDescriptor | undefined
+  >();
+  const createdUrls: string[] = [];
+  const revokedUrls: string[] = [];
+
+  beforeEach(() => {
+    created.length = 0;
+    createdUrls.length = 0;
+    revokedUrls.length = 0;
+    raf = null;
+    originalGlobals = propertyDescriptors(globalThis, playbackGlobalKeys);
+    originalUrlMethods = propertyDescriptors(URL, urlMethodNames);
+    try {
+      for (const [name, value] of [
+        ['Image', MockMedia],
+        ['Audio', MockMedia],
+        ['AudioContext', MockAudioContext],
+        [
+          'document',
+          {
+            createElement: (tag: string) => {
+              if (tag === 'canvas') return new SoftCanvas();
+              if (tag === 'video' || tag === 'audio') {
+                const media = new MockMedia();
+                created.push(media);
+                return media;
+              }
+              return hostElement();
+            },
+            body: hostElement(),
+          },
+        ],
+        [
+          'requestAnimationFrame',
+          (cb: FrameRequestCallback) => {
+            raf = cb;
+            return 1;
+          },
+        ],
+        [
+          'cancelAnimationFrame',
+          () => {
+            raf = null;
+          },
+        ],
+      ] as const) {
+        Object.defineProperty(globalThis, name, {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value,
+        });
+      }
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        writable: true,
+        value: () => {
+          const url = `blob:owned-${createdUrls.length}`;
+          createdUrls.push(url);
+          return url;
+        },
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        writable: true,
+        value: (url: string) => {
+          revokedUrls.push(url);
+        },
+      });
+    } catch (error) {
+      restorePlaybackEnvironment(originalGlobals, originalUrlMethods);
+      throw error;
+    }
+  });
+
+  afterEach(() => {
+    try {
+      restorePlaybackEnvironment(originalGlobals, originalUrlMethods);
+    } finally {
+      createdUrls.length = 0;
+      revokedUrls.length = 0;
+    }
+  });
   test('presentedWindowOutcome: matches at ±Q, uncovered at ±(Q + 1e-7), outside span before head and after tail', () => {
     const timing: OtioVideoTiming = {
       kind: 'windows',
@@ -3694,7 +3796,7 @@ describe('otio native video playback S-C and S-B', () => {
     ];
     const wideAnchor = computePhaseAnchor(dualSampleWideSpread, vsync);
     expect(wideAnchor.spreadAcceptable).toBe(false);
-    expect(wideAnchor.maxSpreadMs).toBe(70);
+    expect(wideAnchor.maxSpreadMs).toBeCloseTo(70, 5);
     expect(wideAnchor.spreadLimitMs).toBeCloseTo(50, 1);
   });
 
@@ -3762,6 +3864,7 @@ describe('otio native video playback S-C and S-B', () => {
     });
 
     try {
+      await playback.seek({ value: 0, rate: 30 });
       // Find mock media created for decoder and enable rVFC
       const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
       expect(videoMedia).toBeDefined();
@@ -3834,7 +3937,9 @@ describe('otio native video playback S-C and S-B', () => {
     });
 
     try {
+      await playback.seek({ value: 0, rate: 30 });
       const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
       videoMedia?.enableRvfc();
 
       const playPromise = playback.play();
@@ -3899,7 +4004,9 @@ describe('otio native video playback S-C and S-B', () => {
     });
 
     try {
+      await playback.seek({ value: 0, rate: 30 });
       const videoMedia = created.find((m) => m.src.includes('media/clip.webm'));
+      expect(videoMedia).toBeDefined();
       videoMedia?.enableRvfc();
 
       const playPromise = playback.play();
@@ -3976,7 +4083,9 @@ describe('otio native video playback S-C and S-B', () => {
     });
 
     try {
+      await playback.seek({ value: 0, rate: 30 });
       const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
       videoMedia?.enableRvfc();
 
       // Uncovered callback inside span during startup (e.g. 0.015 is inside [0, 4/30] but no start matches)
