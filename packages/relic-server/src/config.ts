@@ -131,7 +131,10 @@ export interface RelicConfig {
   readonly trustedProxyHops: number;
   /**
    * Maximum tracked rate limit windows in memory before eviction.
-   * Bounds memory under address rotation attacks.
+   * Bounds memory under address rotation attacks. At the cap the oldest live
+   * windows are evicted, which resets their counters, so the cap must sit far
+   * above what an attacker can churn within the per-IP limits: 100,000 windows
+   * is roughly 20 MB, a small share of a 256 MiB instance.
    */
   readonly limiterMaxEntries: number;
   /**
@@ -188,7 +191,7 @@ export const DEFAULT_CONFIG: RelicConfig = {
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
   killSwitchEngaged: false,
   trustedProxyHops: 2,
-  limiterMaxEntries: 10_000,
+  limiterMaxEntries: 100_000,
   limiterSweepInterval: 100,
 };
 

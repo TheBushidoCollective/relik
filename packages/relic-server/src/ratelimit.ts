@@ -187,7 +187,7 @@ export class RateLimiter {
   private callsSinceSweep = 0;
 
   constructor(options: RateLimiterOptions = {}) {
-    this.maxEntries = options.maxEntries ?? 10_000;
+    this.maxEntries = options.maxEntries ?? 100_000;
     this.sweepInterval = options.sweepInterval ?? 100;
   }
 
