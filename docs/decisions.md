@@ -909,3 +909,32 @@ No MCP tool can record a decision. Decisions are recorded only by human readers 
 **A truncated container is refused.** `openRelic` accepted an object cut at a record boundary. In a probe it returned 196,557 of 196,567 declared bytes, because nothing checked for the final record or the envelope's length. Every relic ever written satisfies the stricter rule, since there has only ever been one encoder.
 
 **Every relic page shows the bar and a named phase from the first frame.** The shell carries a static plate, so the page is never blank before `viewer.js` runs. The viewer then shows Opening, Fetching with bytes against the mint's object length, Decrypting, and Rendering, as `viewer.md` §6.3 and §6.4 and `surface.md` §7 already specified. Try again now reruns the open with the key in memory instead of reloading a page whose key was stripped.
+
+## 2026-10-25: A passkey signs a returning reader in, without an email
+
+Authorised by Jason Waldrip on 2026-10-25: passkeys serve as an alternative sign-in mechanism for returning readers, minting the exact same `relic_session` cookie as a magic link without sending email.
+
+**The problem.** Verified commenters who returned to leave another comment or review a thread had to request a magic link every time, wait for transactional email delivery, and switch back to their browser. Since passkeys were already supported for decision confirmation, returning readers can use that same registered passkey to sign in directly.
+
+**One page-wide ceremony controller.** Only one WebAuthn ceremony can be pending per page. Any new ceremony call aborts any previous ceremony controller via an `AbortSignal`, avoiding conflicts between background conditional mediation requests and modal user interactions across sign-in, fallback, and decision panels.
+
+**User-handle index in storage.** To allow discoverable, usernameless passkey sign-in without requiring the reader to enter their email address, GCS stores an index object at `m/passkey-handle/{sha256Hex(userHandle)}.json` containing `{ emailHash, createdAt }`. The store writes this index inside `createPasskeys` and upon `updatePasskeys`. Reads verify that `record.userHandle === userHandle`. Existing records created before this change heal on their next decision, enrollment, or email-first sign-in.
+
+**Resident keys required for new registrations.** New passkey registrations use `residentKey: 'required'` and `requireResidentKey: true`. Discoverable credentials are required so browsers can offer passkey sign-in in conditional autofill and usernameless flows. Non-resident U2F-only keys can no longer register.
+
+**One refusal code for sign-in failures.** Once a sign-in challenge is consumed, all assertion failures return `401 passkey_sign_in_failed` without diagnostic `passkey_check` extensions. Only pre-store syntax and shape errors return `400 invalid_passkey`.
+
+**Email-first decoys prevent address enumeration.** If usernameless sign-in fails or a non-discoverable passkey is used, the reader can enter their address. To prevent this endpoint from becoming an address or passkey oracle, the server pads the `allowCredentials` list with deterministic HMAC-SHA256 decoys up to `passkeySignInAllowListSize` (default 4). Requests for non-existent addresses and addresses with fewer credentials return the same count and format, sorted by credential id, with transports omitted.
+
+**The passkey offer after any magic-link sign-in.** On 2026-10-25, Jason Waldrip decided that any magic-link sign-in sets a short-lived `relic_passkey_offer=1` cookie. When a verified session loads and local storage has no record of `relic:passkey-offer`, the viewer shows an offer card prompting the reader to add a passkey on this device. If the reader already has a passkey on another device, the offer steps through confirming with the existing passkey before adding a new one. Dismissing the offer records `'dismissed'` in local storage so the reader is not prompted again in that browser.
+
+**Dashboard gets passkey sign-in.** The dashboard sign-in form also supports passkey sign-in with autocomplete and usernameless credentials, reloading on success.
+
+**Session address preservation.** Passkey records store the exact session address (`record.address ?? record.email`) from the registering session, ensuring mixed-case email addresses can sign in and edit or delete their prior comments without casing mismatches.
+
+**Residuals:**
+- A passkey outlives loss of the mailbox, and nothing can remove one. Whoever registered the first passkey for an address can sign in as it without the mailbox. There is no route to remove a passkey.
+- Decoys leak in a few cases: records holding more than 4 credentials, or ids of unusual lengths, are distinguishable. A sub-millisecond timing gap exists under a 30-per-hour limit.
+- Some old records stay as they are: mixed-case records created before this change mint with the normalized address, and existing passkeys need one email-first sign-in or decision before usernameless sign-in works.
+- Proof gaps: headless Chrome cannot pick from autofill, so automated proof exercises the button path and only observes the conditional lifecycle. A U2F-only key can no longer register.
+- The decision panel's create step can still orphan a credential: its prefetched options can expire if the reader waits past the timeout, and the device keeps a credential the server never stored. This predates the change and is not fixed here.

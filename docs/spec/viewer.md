@@ -524,7 +524,7 @@ A reader holding the link and decryption key can share a relic from the viewer.
 **Composed email handoff.** After the server accepts the addresses, the viewer displays the composed message produced by `composeShareEmail({ sender: 'reader', ... })` from `@relic/format`, offering "Open in your mail app" (`shareMailtoUrl`) and "Copy message". The reader sends the email from their own mail client, so the full URL containing the decryption key never touches the server.
 
 **Refusal presentation.** Every server refusal is rendered with actionable guidance:
-- `401 sign_in_required`: Prompts the reader to sign in via the magic-link flow before sharing.
+- `401 sign_in_required`: Prompts the reader to sign in (link or passkey) before sharing.
 - `409 share_unavailable`: Displays the server's explanation: "This relic was published before sharing existed. Its publisher can republish it to turn sharing on."
 - `400 invalid_share`: Explains that the email list or proof was malformed or exceeded the per-call cap of 20 addresses.
 - `403 invalid_share_proof`: Indicates the key proof does not match the published verifier.
@@ -543,7 +543,7 @@ A reader holding the link and decryption key can record an approval or rejection
 **Listing decisions on the current version.** Opening the panel lists all recorded decisions for the active version being viewed, fetched via `POST /api/relics/{id}/decisions/list` with `{ share_proof, version: activeView.version }`. Each row (`[data-decision-row][data-decision-author][data-verdict]`) shows the author's verified address, the verdict (Approved or Rejected), and the timestamp.
 
 **The ceremony flow:**
-1. *Sign-in check:* If the reader has no verified session cookie, the panel mounts the magic-link sign-in form (`[data-decision-signin]`).
+1. *Sign-in check:* If the reader has no verified session cookie, the panel mounts the sign in (link or passkey) form (`[data-decision-signin]`).
 2. *Verdict selection:* The reader selects a verdict via `[data-decision-verdict="approve"]` or `[data-decision-verdict="reject"]`. Selecting a verdict immediately fetches challenge options from `POST /api/relics/{id}/decisions/options` presenting `{ version, verdict, share_proof }`.
 3. *Passkey enrollment (TOFU):* If the options endpoint returns `409 passkey_required`, the panel shows the passkey setup step (`[data-passkey-create]`). The reader registers a WebAuthn passkey via `POST /api/auth/passkeys/options`, `navigator.credentials.create()`, and `POST /api/auth/passkeys`. Once registered, the panel re-fetches decision options.
 4. *Content digest verification:* The viewer verifies that `options.version_digest` matches `view.versionDigest` (the SHA-256 of the ciphertext bytes downloaded and decrypted by the viewer). If they diverge, the panel displays mismatch copy (`[data-decision-outcome][data-state="error"][data-code="decision_digest_mismatch"]`: "The file stored for version N is not the file this page shows. Nothing was recorded.") and halts the ceremony without invoking WebAuthn.
@@ -554,13 +554,30 @@ A reader holding the link and decryption key can record an approval or rejection
 **Version scoping and stale view notice.** Decisions apply strictly to the specific version rendered. When viewing an older version on a relic that has been republished, the panel displays a prominent notice (`[data-decision-stale]`): "You are viewing version N. Version M is the newest. A decision here applies to version N only."
 
 **Refusal presentation:**
-- `401 sign_in_required`: Prompts the reader to sign in via magic link.
+- `401 sign_in_required`: Prompts the reader to sign in (link or passkey).
 - `409 passkey_required`: Prompts passkey enrollment.
 - `409 passkey_assertion_required`: Explains that adding another passkey requires confirmation with an existing one.
 - `409 decision_unavailable`: Displays: "Decisions open on this relic once its publisher republishes it."
 - `409 decision_digest_mismatch`: Displays: "The file stored for version N is not the file this page shows. Nothing was recorded."
 - `403 invalid_share_proof`: Indicates that the key proof did not match the relic's verifier.
 - `429 decision_rate_limited`: Explains that too many decision requests were made and provides retry time.
+
+### 6.10 Passkey sign-in and the offer after a link
+
+Returning readers can sign in with a passkey without receiving an email. Readers signing in via magic link are offered passkey enrollment after signing in.
+
+**Autofill and conditional mediation.** On forms where readers authenticate (`signInForm` in comments, share, decision panel, and dashboard), the email field carries `autocomplete="username webauthn"`. When WebAuthn is supported and the context is secure, the client dynamically loads the passkey sign-in module. A module-level ceremony controller fetches usernameless public key options from `POST /api/auth/passkeys/sign-in/options` with `{}` and arms a conditional request (`navigator.credentials.get({ mediation: 'conditional', ... })`).
+
+**The page-wide ceremony abort rule.** Only one WebAuthn ceremony can be pending per page at any time. Any new ceremony (a button press, an email-first confirm, or a decision assertion) aborts the prior ceremony via an `AbortSignal` before starting. AbortError resulting from this internal replacement is swallowed silently. Options refresh before the challenge timeout (300 seconds), only while the page is visible. When authentication occurs (such as via a magic-link callback in another tab broadcasting `relic:auth`), pending ceremonies are aborted.
+
+**The usernameless button and modal gesture.** Beside the email field and send button, the interface renders a "Sign in with passkey" button (`button.action.passkey-button[data-passkey-sign-in]`). Clicking the button aborts the background conditional request and immediately calls `navigator.credentials.get()` synchronously inside the click handler using the pre-fetched options. On success, the assertion is posted to `POST /api/auth/passkeys/sign-in`, setting the session cookie and transitioning the interface to the signed-in state without an email.
+
+**The email-first fallback.** If a reader's passkey is non-discoverable, or if usernameless sign-in fails (`401 passkey_sign_in_failed`), the interface reveals the fallback option (`[data-passkey-fallback]`). The reader enters their email address and clicks "Use a passkey for this address". The client fetches options for that address via `POST /api/auth/passkeys/sign-in/options` with `{"email": "<address>"}`, which returns descriptors padded with HMAC decoys. The reader confirms with their passkey synchronously, and the assertion is posted to sign in.
+
+**The post-sign-in passkey offer.** When a reader completes a magic-link sign-in, the callback response sets a short-lived `relic_passkey_offer=1` cookie. When the viewer boots or re-checks identity, if the marker cookie is present, the session is verified, and local storage does not contain `relic:passkey-offer`, the viewer consumes and clears the marker cookie and mounts the offer card (`section.passkey-offer[data-passkey-offer]`).
+- *First passkey (TOFU):* Prefetches create options from `POST /api/auth/passkeys/options`. Clicking "Add a passkey" invokes `navigator.credentials.create()`, posts the registration to `POST /api/auth/passkeys`, and stores `'created'` in `localStorage['relic:passkey-offer']`.
+- *Device with existing passkeys elsewhere:* The options endpoint returns `mode: 'assert'`. The reader first confirms with their existing passkey, then adds a passkey on this device.
+- *Dismissal:* Clicking "Not now" stores `'dismissed'` in `localStorage['relic:passkey-offer']`, suppressing future offers in this browser.
 ## 7. Routed to `shape`
 
 Five items, and only these five.
