@@ -9,6 +9,7 @@ import {
   generateRelicId,
   type RegistrationResponseJSON,
   type RequestOptionsJSON,
+  shareVerifierFor,
 } from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
@@ -69,7 +70,9 @@ function req(path: string, init: RequestInit = {}): Request {
   });
 }
 
-async function publishRelic(relicApp: RelicApp = app): Promise<string> {
+async function publishRelic(
+  relicApp: RelicApp = app
+): Promise<{ id: string; shareProof: string }> {
   const challengeRes = await relicApp.fetch(
     req('/api/challenge', { method: 'POST' })
   );
@@ -79,6 +82,10 @@ async function publishRelic(relicApp: RelicApp = app): Promise<string> {
 
   const id = generateRelicId();
   const key = generateKey();
+  const proof = await deriveShareProof(key);
+  const shareProof = Buffer.from(proof).toString('base64url');
+  const verifier = await shareVerifierFor(proof);
+
   const grantRes = await relicApp.fetch(
     req('/api/grant', {
       method: 'POST',
@@ -89,6 +96,7 @@ async function publishRelic(relicApp: RelicApp = app): Promise<string> {
         declared_ciphertext_bytes: encryptedSize(12),
         challenge_nonce,
         publishing_client: 'relic-mcp/0.1.0 (test)',
+        share_verifier: verifier,
       }),
     })
   );
@@ -111,7 +119,7 @@ async function publishRelic(relicApp: RelicApp = app): Promise<string> {
       headers: { authorization: `Bearer ${publish_token}` },
     })
   );
-  return id;
+  return { id, shareProof };
 }
 
 async function signInViaLink(
@@ -181,7 +189,7 @@ beforeEach(() => {
 
 describe('S1 Server passkey sign-in', () => {
   test('1. A passkey added after a link sign-in signs the reader in with zero mail, and the cookie comments as them', async () => {
-    const relicId = await publishRelic();
+    const { id: relicId } = await publishRelic();
     const { cookie: linkCookie } = await signInViaLink('reader@example.com');
     const auth = await fakeAuthenticator();
     const { userHandle } = await registerPasskey(linkCookie, auth);
@@ -414,6 +422,7 @@ describe('S1 Server passkey sign-in', () => {
         type: true,
         title: true,
         status: true,
+        detail: true,
         code: true,
         instance: true,
       };
@@ -460,12 +469,16 @@ describe('S1 Server passkey sign-in', () => {
 
     // 3. decide challenge
     {
-      const relicId = await publishRelic();
+      const { id: relicId, shareProof } = await publishRelic();
       const decOptsRes = await app.fetch(
         req(`/api/relics/${relicId}/decisions/options`, {
           method: 'POST',
           headers: { cookie: cookieA },
-          body: JSON.stringify({ verdict: 'approve', version: 1 }),
+          body: JSON.stringify({
+            verdict: 'approve',
+            version: 1,
+            share_proof: shareProof,
+          }),
         })
       );
       expect(decOptsRes.status).toBe(200);
@@ -657,7 +670,7 @@ describe('S1 Server passkey sign-in', () => {
     const auth = await fakeAuthenticator();
     const { cookie } = await signInViaLink('user@example.com');
     const { userHandle } = await registerPasskey(cookie, auth);
-    const relicId = await publishRelic();
+    const { id: relicId, shareProof } = await publishRelic();
 
     // Create sign_in options challenge
     const optsRes = await app.fetch(
@@ -683,6 +696,7 @@ describe('S1 Server passkey sign-in', () => {
           verdict: 'approve',
           version: 1,
           version_digest: digest,
+          share_proof: shareProof,
           credential: assertion,
         }),
       })
@@ -728,7 +742,7 @@ describe('S1 Server passkey sign-in', () => {
     const auth = await fakeAuthenticator();
     const { cookie } = await signInViaLink('decider@example.com');
     const { userHandle } = await registerPasskey(cookie, auth);
-    const relicId = await publishRelic();
+    const { id: relicId, shareProof } = await publishRelic();
 
     // Sign in by passkey
     const optsRes = await app.fetch(
@@ -762,6 +776,7 @@ describe('S1 Server passkey sign-in', () => {
           verdict: 'approve',
           version: 1,
           version_digest: '0'.repeat(64),
+          share_proof: shareProof,
         }),
       })
     );
@@ -925,7 +940,7 @@ describe('S1 Server passkey sign-in', () => {
   });
 
   test('10. A reader signed in as Ada@Example.com signs in by passkey as Ada@Example.com and can PATCH and DELETE their earlier comment', async () => {
-    const relicId = await publishRelic();
+    const { id: relicId } = await publishRelic();
     const { cookie: initialCookie } = await signInViaLink('Ada@Example.com');
 
     // Post a comment as Ada@Example.com
