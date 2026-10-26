@@ -921,6 +921,8 @@ The same bundled video decoded continuously at 30 fps in the native HTML video p
 - WebCodecs would add a demuxing and codec-feed pipeline; the measured seek bottleneck can be removed using the existing media element.
 - The boundary from the 2026-10-20 OpenTimelineIO native playback decision is retained: browser playback operates under browser-managed SDR decoding with canvas composition and additive audio, without transcode services, WASM decoders, or WebCodecs pipelines.
 
+VideoFrame is used only to read the media element's current frame together with its timestamp inside `requestVideoFrameCallback`; no WebCodecs decoder, demuxer or codec configuration is used; the reason is measured: tagging from callback metadata allowed a newer frame to be drawn under host load (one wrong frame in an otio-path run executed under 8-way CPU contention, and one in twenty fr60 samples in a concurrent two-decoder admission run; zero in 80 of 80 unloaded samples). Native playback also requires VideoFrame support, otherwise seek cadence.
+
 **No format, CSP, or privacy change.**
 Continuous native decoding introduces no changes to the Relic container format, the encryption envelope, or network posture.
 - The sandbox boundary and CSP remain unchanged (`default-src 'none'`, no remote fetching, isolated origin). Decrypted media Blobs are decoded locally through object URLs.
