@@ -4892,3 +4892,177 @@ describe('otio native video playback S-C and S-B', () => {
     }
   });
 });
+
+describe('VideoFrame readout (planner tests 1-6)', () => {
+  const created: MockMedia[] = [];
+  let raf: FrameRequestCallback | null = null;
+  let originalGlobals = new Map<
+    PlaybackGlobalKey,
+    PropertyDescriptor | undefined
+  >();
+  let originalUrlMethods = new Map<
+    UrlMethodName,
+    PropertyDescriptor | undefined
+  >();
+  const createdUrls: string[] = [];
+  const revokedUrls: string[] = [];
+
+  beforeEach(() => {
+    created.length = 0;
+    createdUrls.length = 0;
+    revokedUrls.length = 0;
+    raf = null;
+    MockVideoFrame.reset();
+    originalGlobals = propertyDescriptors(globalThis, playbackGlobalKeys);
+    originalUrlMethods = propertyDescriptors(URL, urlMethodNames);
+    try {
+      for (const [name, value] of [
+        ['Image', MockMedia],
+        ['Audio', MockMedia],
+        ['AudioContext', MockAudioContext],
+        ['VideoFrame', MockVideoFrame],
+        [
+          'document',
+          {
+            createElement: (tag: string) => {
+              if (tag === 'canvas') return new SoftCanvas();
+              if (tag === 'video' || tag === 'audio') {
+                const media = new MockMedia();
+                created.push(media);
+                return media;
+              }
+              return hostElement();
+            },
+            body: hostElement(),
+          },
+        ],
+        [
+          'requestAnimationFrame',
+          (cb: FrameRequestCallback) => {
+            raf = cb;
+            return 1;
+          },
+        ],
+        [
+          'cancelAnimationFrame',
+          () => {
+            raf = null;
+          },
+        ],
+      ] as const) {
+        Object.defineProperty(globalThis, name, {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value,
+        });
+      }
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        writable: true,
+        value: () => {
+          const url = `blob:owned-${createdUrls.length}`;
+          createdUrls.push(url);
+          return url;
+        },
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        writable: true,
+        value: (url: string) => {
+          revokedUrls.push(url);
+        },
+      });
+    } catch (error) {
+      restorePlaybackEnvironment(originalGlobals, originalUrlMethods);
+      throw error;
+    }
+  });
+
+  afterEach(() => {
+    try {
+      restorePlaybackEnvironment(originalGlobals, originalUrlMethods);
+    } finally {
+      createdUrls.length = 0;
+      revokedUrls.length = 0;
+    }
+  });
+
+  test('1. The hazard: metadata says N while element is at N+1; slot tags N+1, tick N holds, tick N+1 shows N+1', async () => {
+    const mediaBlob = new Blob(['hazard test video'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / 30) * 1000;
+
+      // Initial state: frame 1 composite is showing
+      raf?.(wallFor(1.2));
+      expect(outCanvas.pixel.r).toBe(1);
+
+      // Wait for next callback registration
+      await waitForRvfc(videoMedia!);
+
+      // The hazard: metadata reports frame 1 (N), but the element has already advanced to frame 2 (N+1)
+      videoMedia!.advanceTo(2 / 30);
+      const cbs = Array.from(videoMedia!.rvfcCallbacks.values());
+      videoMedia!.rvfcCallbacks.clear();
+      for (const cb of cbs) {
+        cb(wallFor(2.0), { mediaTime: 1 / 30 });
+      }
+
+      // Tick requiring frame 1 (N) must HOLD (slot got tag N+1 with N+1 pixels, no tag 1)
+      outCanvas.ctx.drawnSources.length = 0;
+      raf?.(wallFor(1.8));
+      expect(outCanvas.pixel.r).toBe(1); // holds previous frame 1
+
+      // Tick requiring frame 2 (N+1) shows frame 2 (N+1)
+      outCanvas.ctx.drawnSources.length = 0;
+      raf?.(wallFor(2.5));
+      expect(outCanvas.pixel.r).toBe(2);
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
+    } finally {
+      playback.dispose();
+    }
+  });
+});
