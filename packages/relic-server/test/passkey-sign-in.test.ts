@@ -1496,7 +1496,7 @@ describe('S1 Server passkey sign-in', () => {
     const bodyExpired = (await resExpired.json()) as Record<string, unknown>;
     expect(bodyExpired.code).toBe('passkey_fresh_link_required');
     expect(bodyExpired.title).toBe(
-      'Adding a first passkey needs a fresh sign-in link'
+      'Adding a first passkey needs a fresh sign-in from an email'
     );
     expect(Object.keys(bodyExpired).sort()).toEqual(
       ['code', 'detail', 'instance', 'status', 'title', 'type'].sort()
@@ -1671,7 +1671,7 @@ describe('S1 Server passkey sign-in', () => {
       `A passkey was added for enroll@example.com on ${when1}.\n\n` +
         'It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
         'If you added it, you can ignore this message.\n\n' +
-        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.'
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.'
     );
 
     // Advance now by 2 hours (7_200_000 ms)
@@ -1909,7 +1909,7 @@ describe('S1 Server passkey sign-in', () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain(
-      'only a session that a sign-in link started in the previous 15 minutes can begin adding it'
+      'only a session that a sign-in email started in the previous 15 minutes, by its link or its code, can begin adding it'
     );
     expect(text).toContain(
       'That email has no stop link, because it is about the address rather than a relic.'

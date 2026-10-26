@@ -106,7 +106,7 @@ export interface RelicConfig {
    * number only stops an unbounded body from reaching the store.
    */
   readonly commentCiphertextCapChars: number;
-  /** How long a magic link stays followable. Short: it arrives by mail. */
+  /** How long a sign-in email's link and code stay usable. */
   readonly authLinkTtlSeconds: number;
   /** How long a verified session lasts before the reader signs in again. */
   readonly sessionTtlSeconds: number;
@@ -133,10 +133,11 @@ export interface RelicConfig {
   /** How long the passkey offer cookie marker lasts in seconds. */
   readonly passkeyOfferMarkerSeconds: number;
   /**
-   * How long after a sign-in link starts a session that session may begin
-   * adding the address's first passkey. A session a passkey started never may.
-   * Whole minutes, because the disclosure states it in minutes, and at least
-   * `passkeyOfferMarkerSeconds`, so no offer card is refused at mount.
+   * How long after a sign-in email (its link or its code) starts a session that
+   * session may begin adding the address's first passkey. A session a passkey
+   * started never may. Whole minutes, because the disclosure states it in
+   * minutes, and at least `passkeyOfferMarkerSeconds`, so no offer card is
+   * refused at mount.
    */
   readonly passkeyFreshLinkSeconds: number;
   /** Engaged when egress spend crosses the ceiling. Refuses every mint. */
@@ -182,6 +183,10 @@ export interface RelicConfig {
    * Rate limit for usernameless passkey sign-in keyed on user handle.
    */
   readonly passkeySignInHandleRateLimit: RateLimitConfig;
+  /** Sign-in code submissions per IP. In memory, per instance: the address budget below is the bound that holds across instances. */
+  readonly signInCodeRateLimit: RateLimitConfig;
+  /** Code attempts per address per window, counted in the store with compare-and-swap; at most a day, because the row lives under the one-day transient prefix. */
+  readonly signInCodeAddressAttemptLimit: RateLimitConfig;
 }
 
 export interface RateLimitConfig {
@@ -235,6 +240,8 @@ export const DEFAULT_CONFIG: RelicConfig = {
   passkeySignInRateLimit: { limit: 30, windowSeconds: 3600 },
   passkeySignInAddressRateLimit: { limit: 30, windowSeconds: 3600 },
   passkeySignInHandleRateLimit: { limit: 30, windowSeconds: 3600 },
+  signInCodeRateLimit: { limit: 30, windowSeconds: 3600 },
+  signInCodeAddressAttemptLimit: { limit: 10, windowSeconds: 86_400 },
   passkeyNoticeTimeoutMs: 5000,
   addressLimiterMaxEntries: 100_000,
   passkeySignInAllowListSize: 4,
@@ -343,6 +350,31 @@ export function assertConfig(config: RelicConfig): void {
   ) {
     throw new Error(
       'passkeySignInAddressRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (
+    !Number.isInteger(config.signInCodeRateLimit?.limit) ||
+    config.signInCodeRateLimit.limit < 1 ||
+    !Number.isInteger(config.signInCodeRateLimit?.windowSeconds) ||
+    config.signInCodeRateLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'signInCodeRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (
+    !Number.isInteger(config.signInCodeAddressAttemptLimit?.limit) ||
+    config.signInCodeAddressAttemptLimit.limit < 1 ||
+    !Number.isInteger(config.signInCodeAddressAttemptLimit?.windowSeconds) ||
+    config.signInCodeAddressAttemptLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'signInCodeAddressAttemptLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (config.signInCodeAddressAttemptLimit.windowSeconds > 86_400) {
+    throw new Error(
+      'signInCodeAddressAttemptLimit.windowSeconds must be at most 86400: the budget row lives under the one-day transient lifecycle prefix, which would cut a longer window short'
     );
   }
   if (
