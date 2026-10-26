@@ -60,10 +60,7 @@ export interface OutboundMail {
  * like a newsletter, because a message that looks like an announcement is a
  * message a spam filter treats like one.
  */
-export function signInMail(
-  link: string,
-  code: string = '123456'
-): OutboundMail {
+export function signInMail(link: string, code: string): OutboundMail {
   const subject = `${code} is your Relic sign-in code`;
   const text = [
     'Your Relic sign-in code:',
@@ -611,11 +608,14 @@ export function resendMailer(options: ResendMailerOptions): Mailer {
   }
 
   return {
-    async send(
-      email: string,
-      link: string,
-      code: string = '123456'
-    ): Promise<void> {
+    async send(email: string, link: string, code?: string): Promise<void> {
+      // A sign-in mail with no code would be a message that names a code it
+      // does not carry, so refuse it rather than invent one. The only caller
+      // without a code is the notification fallback for mailers that lack
+      // `sendMail`, which this mailer has.
+      if (code === undefined) {
+        throw new Error('sign-in mail needs the code that was stored for it');
+      }
       return post(email, signInMail(link, code));
     },
     async sendMail(email: string, mail: OutboundMail): Promise<void> {

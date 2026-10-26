@@ -93,7 +93,7 @@ describe('the quota Resend reports on an accepted send', () => {
       from: 'no-reply@relik.link',
       fetch: wire.fetch,
       log: (message) => said.push(message),
-    }).send('ada@example.com', LINK);
+    }).send('ada@example.com', LINK, '482913');
 
     // Not an error: Resend took it. The reader still gets nothing, and that
     // is what the line has to say.
@@ -103,9 +103,11 @@ describe('the quota Resend reports on an accepted send', () => {
 });
 
 describe('the sign-in mail', () => {
-  test('the link is the message, in both parts', () => {
-    const mail = signInMail(LINK, '123456');
-    expect(mail.subject).toBe('123456 is your Relic sign-in code');
+  test('the code and the link are the message, in both parts', () => {
+    const mail = signInMail(LINK, '482913');
+    expect(mail.subject).toBe('482913 is your Relic sign-in code');
+    expect(mail.text).toContain('482913');
+    expect(mail.html).toContain('482913');
     expect(mail.text).toContain(LINK);
     // Single use and expiring is the part a recipient needs, and the part that
     // makes an unexpected message safe to ignore.
@@ -116,10 +118,29 @@ describe('the sign-in mail', () => {
   test('the link is escaped into the markup, not pasted into it', () => {
     // A token is service-generated, and it is still interpolated into markup
     // that a mail client renders.
-    const mail = signInMail('https://relik.link/cb?a=1&b="><script>x</script>');
+    const mail = signInMail(
+      'https://relik.link/cb?a=1&b="><script>x</script>',
+      '482913'
+    );
     expect(mail.html).not.toContain('<script>');
     expect(mail.html).toContain('&amp;');
     expect(mail.html).toContain('&quot;');
+  });
+
+  test('the Resend mailer refuses a sign-in send that has no code, rather than inventing one', async () => {
+    const requests: unknown[] = [];
+    const mailer = resendMailer({
+      apiKey: 'key',
+      from: 'Relic <relic@example.com>',
+      fetch: (async (_url, init) => {
+        requests.push(init);
+        return new Response('{}', { status: 200 });
+      }) as typeof globalThis.fetch,
+    });
+    await expect(mailer.send('a@example.com', LINK)).rejects.toThrow(
+      'needs the code'
+    );
+    expect(requests).toHaveLength(0);
   });
 });
 describe('the comment notification mail', () => {
@@ -589,7 +610,7 @@ describe('sending through Resend', () => {
       apiKey: 're_test_key',
       from: 'Relic <no-reply@relik.link>',
       fetch: wire.fetch,
-    }).send('ada@example.com', LINK);
+    }).send('ada@example.com', LINK, '482913');
 
     const call = wire.calls[0];
     if (call === undefined) throw new Error('nothing was sent');
@@ -606,7 +627,7 @@ describe('sending through Resend', () => {
     const body = JSON.parse(String(call.init.body)) as Record<string, unknown>;
     expect(body['from']).toBe('Relic <no-reply@relik.link>');
     expect(body['to']).toBe('ada@example.com');
-    expect(body['subject']).toBe('123456 is your Relic sign-in code');
+    expect(body['subject']).toBe('482913 is your Relic sign-in code');
     expect(String(body['text'])).toContain(LINK);
     expect(String(body['html'])).toContain('href=');
   });
@@ -617,7 +638,7 @@ describe('sending through Resend', () => {
       apiKey: 're_secret_value',
       from: 'no-reply@relik.link',
       fetch: wire.fetch,
-    }).send('ada@example.com', LINK);
+    }).send('ada@example.com', LINK, '482913');
     expect(String(wire.calls[0]?.init.body)).not.toContain('re_secret_value');
   });
 
@@ -637,7 +658,7 @@ describe('sending through Resend', () => {
       apiKey: 're_test_key',
       from: 'no-reply@relik.link',
       fetch: wire.fetch,
-    }).send('ada@example.com', LINK);
+    }).send('ada@example.com', LINK, '482913');
 
     await expect(send).rejects.toBeInstanceOf(MailRefusedError);
     await send.catch((error: MailRefusedError) => {
@@ -657,7 +678,7 @@ describe('sending through Resend', () => {
       apiKey: 're_test_key',
       from: 'no-reply@relik.link',
       fetch: wire.fetch,
-    }).send('ada@example.com', LINK);
+    }).send('ada@example.com', LINK, '482913');
     await expect(send).rejects.toBeInstanceOf(MailRefusedError);
     await send.catch((error: MailRefusedError) => {
       expect(error.status).toBe(502);
@@ -711,7 +732,7 @@ describe('sending through Resend', () => {
       from: 'Relic <no-reply@relik.link>',
       fetch: wireWithoutHeaders.fetch,
     });
-    await mailerWithoutHeaders.send('user@example.com', LINK);
+    await mailerWithoutHeaders.send('user@example.com', LINK, '482913');
     const bodyWithoutHeaders = JSON.parse(
       String(wireWithoutHeaders.calls[0]?.init.body)
     ) as Record<string, unknown>;
