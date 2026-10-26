@@ -999,3 +999,28 @@ Authorised by Jason Waldrip on 2026-10-25: email the address whenever a passkey 
 - The window is checked when the challenge is issued, so a first passkey can be stored up to 300 seconds after the window closes.
 - The email depends on delivery. A refused send, or one Resend accepts and pauses at a spent quota (`quotaWarning`), leaves only a log line.
 - A login CSRF lands inside the window by construction. The offer naming the address (L6) stays the control, and in that case the email goes to the attacker's own mailbox.
+
+## 2026-10-26: A sign-in email carries a code the reader can type
+
+Authorised by Jason Waldrip on 2026-10-26: every sign-in email delivers a six-digit decimal code alongside the magic link, allowing readers to sign in directly on the page where they asked without navigating away, and a session started by a typed code may add the address's first passkey within `passkeyFreshLinkSeconds`.
+
+**The problem.** Following a magic link requires navigating away from the page or opening a second browser tab. On browsers where local storage is partitioned or disabled, or where the reader navigates the existing tab directly to the email link, the in-memory fragment decryption key is lost. Switching tabs or reading mail on mobile can also disrupt the reading context. Delivering a six-digit code in the same email allows readers to type the code into the requesting tab, keeping the tab in place and preserving the decryption key in memory with zero navigation.
+
+**One email, one sign-in.** The email contains both the six-digit code and the magic link. Verifying the code atomically spends the magic link, and following the magic link spends the code. The underlying link row in the store is the single deciding object, consumed with a conditional compare-and-swap delete.
+
+**Browser binding.** The typed code is cryptographically bound to the browser that requested it. On `POST /api/auth/request`, the 202 response always sets a random 32-byte nonce in an HttpOnly, Secure, SameSite=Strict `relic_sign_in_request` cookie scoped to path `/api/auth/code`. The code row is indexed under a SHA-256 hash of this nonce and stores an HMAC of the code keyed by the nonce bytes. A reader of the storage bucket holds neither the nonce nor the cookie, preventing offline brute-force guessing of the six-digit code. A code seen on a lock screen or in transit cannot be typed into any other browser.
+
+**Charge-before-compare budget check.** Guessing is capped at 10 code attempts per address per 24 hours (86,400 seconds), tracked in the store under `m/challenge/sign-in-code-budget/` via compare-and-swap reservations. The store charges one attempt before the code is compared, whether the submission is right or wrong, eliminating time-of-check to time-of-use concurrency gaps across server instances.
+
+**Single failure answer.** Every failure on `POST /api/auth/code` after basic syntax and IP rate limiting returns uniform `401 sign_in_code_failed` with no problem extensions. This covers missing cookies, malformed nonces, unknown requests, expired codes, exhausted attempt budgets, wrong codes, spent links, and superseded codes. The endpoint leaks no oracle regarding whether an address has a pending code or how many attempts remain.
+
+**Conditional delete of the link.** When a valid code is submitted, the server performs a conditional delete (`consumeAuthLink`) against the stored magic link before minting the session. If the link was already consumed by a concurrent browser or expired, the code fails with 401. If the code succeeds, the link row is consumed and the code row deleted, preventing dual-use.
+
+**First passkey enrollment from a code session.** Jason Waldrip confirmed that a session started by a typed code may add the address's first passkey within `passkeyFreshLinkSeconds` (default 900 seconds), matching the trust window of a magic link. The session row records `via: 'code'` and sets the `relic_passkey_offer=1` marker cookie, prompting passkey enrollment in the requesting tab upon verification.
+
+**Residuals:**
+- The guess bound: a six-digit code has 1,000,000 combinations. With 10 attempts allowed per address per day, the probability of guessing a code is bounded at 1 in 100,000 per targeted address per day (at most 0.37% over a full year), and each day of guessing costs the attacker at least one outbound email to the target's mailbox.
+- Anyone who knows an address can spend that address's daily attempts for the code by requesting a code and submitting 10 invalid guesses from their own browser, locking the address out of typing a code for the day. In this situation, the magic link in the victim's email still works normally.
+- A cross-site POST to `/api/auth/request` can overwrite a browser's request cookie because the request endpoint accepts cross-site requests without CSRF protection, invalidating any earlier pending code in that browser until a new email is requested.
+- An attacker-initiated code can be phished from the victim: if an attacker requests a code for a victim's address and social engineers the victim into reading back the six-digit code, the attacker can type the code into the attacker's own browser (which holds the corresponding request cookie) and gain a session. The email copy explicitly warns: "Relic never asks you for this code, so do not give it to anyone."
+- `m/authlink/` is never swept: unfollowed and unconsumed magic link objects remain in storage indefinitely unless cleaned up by external lifecycle rules. The new sign-in code and budget rows are stored under `m/challenge/` and inherit the existing bucket one-day lifecycle rule.
