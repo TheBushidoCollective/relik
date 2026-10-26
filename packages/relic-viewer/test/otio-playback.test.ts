@@ -4453,4 +4453,87 @@ describe('otio native video playback S-C and S-B', () => {
       playback.dispose();
     }
   });
+  test('regression 1: right after start a tick at req = iL0 approves pixel iL0, and a second start approves new epoch captures', async () => {
+    const mediaBlob = new Blob(['reg 1 video test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      videoMedia!.advanceTo(0);
+
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / 30) * 1000;
+
+      // Right after start, tick at req = iL0 (frame 0.1) -> approves pixel 0 (T0 paused frame)
+      outCanvas.ctx.drawnSources.length = 0;
+      raf?.(wallFor(0.1));
+      expect(outCanvas.pixel.r).toBe(0);
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
+
+      // Deliver tag 1, tick at frame 1.5 -> approves pixel 1
+      videoMedia!.triggerRvfc(wallFor(1.0), 1 / 30);
+      raf?.(wallFor(1.5));
+      expect(outCanvas.pixel.r).toBe(1);
+
+      // Second start: seek to frame 10 while playing
+      const d2 = wallFor(2.0);
+      const seekPromise = playback.seek({ value: 10, rate: 30 });
+      await waitForRvfc(videoMedia!);
+      // For seek to 10, iL0 is 10, first advanced tag is 11
+      videoMedia!.triggerRvfc(d2, 11 / 30);
+      await seekPromise;
+
+      const nu = 1 / 60;
+      const wMin = minWindowDuration(timing, 1);
+      const tau2 =
+        d2 + ((nu + 2 * wMin) / 2 - (timing.starts[11]! - 10 / 30)) * 1000;
+      const wallFor2 = (f: number): number => tau2 + (f / 30) * 1000;
+
+      // Tick at req = iL0 for new epoch (frame 0.1 after seek target 10)
+      outCanvas.ctx.drawnSources.length = 0;
+      raf?.(wallFor2(0.1));
+      expect(outCanvas.pixel.r).toBe(10);
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
+    } finally {
+      playback.dispose();
+    }
+  });
 });
