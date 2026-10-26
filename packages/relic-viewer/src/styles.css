@@ -6045,3 +6045,141 @@ canvas.relic-page {
     padding: 1rem;
   }
 }
+
+/* sign-in code */
+
+/*
+ * The code from a sign-in email, typed on the page that asked for it.
+ *
+ * It is the composer's field rather than a new control: the same label, the
+ * same ground and hairline, set in the catalog's monospace with tabular
+ * figures and wide tracking, so six digits read as one catalog number and not
+ * as a sum. The field stops at the width a code fills, and Sign in stands on
+ * its foot at the same height. Where the column is too narrow for both, as
+ * in the dashboard at 320px, Sign in drops under the field rather than
+ * squeezing the digits out of it. The status takes the row under both. It
+ * stays in the tree while it is empty, because it is the live region, and it
+ * adds no space until it has something to say.
+ *
+ * Every state borrows a treatment the viewer already has. Checking dims the
+ * button the way a link send in flight does. A rejected code puts the oxide
+ * rule on the field and on the note under it; a refusal for now and a check
+ * that never ran put it on the note only, because the digits were not the
+ * fault, and a refusal for now stops the button looking like the next step,
+ * as the passkey button does. Verified takes the patina rule.
+ *
+ * It sits in four places: under the composer's sent note, in the dashboard's
+ * form, in the passkey offer and in the decision panel's passkey step. The
+ * dashboard form is a `.compose`, whose rule centres a primary button, so the
+ * button's rule carries more classes than that one.
+ */
+.sign-in-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0 0.75rem;
+  width: 100%;
+  margin: 0.75rem 0 0;
+  color: var(--ink);
+}
+
+.passkey-offer .sign-in-code,
+.decision-passkey .sign-in-code {
+  margin-top: 0;
+}
+
+.sign-in-code-field {
+  flex: 1 1 9rem;
+  min-width: 0;
+  max-width: 12rem;
+}
+
+.sign-in-code .sign-in-code-input {
+  padding: 0.45rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5rem;
+  letter-spacing: 0.3em;
+}
+
+.sign-in-code .sign-in-code-input:disabled {
+  color: var(--ink-soft);
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+  cursor: progress;
+}
+
+.sign-in-code .action.primary.sign-in-code-submit {
+  flex: none;
+  align-self: flex-end;
+  min-height: calc(2.4rem + 2px);
+  margin-top: 0.6rem;
+}
+
+.sign-in-code .action.primary.sign-in-code-submit:disabled {
+  background: var(--patina);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sign-in-code-status {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.sign-in-code-status:not(:empty) {
+  margin-top: 0.6rem;
+}
+
+.sign-in-code[data-state="checking"] .sign-in-code-status {
+  color: var(--ink-soft);
+}
+
+.sign-in-code[data-state="checking"]
+  .action.primary.sign-in-code-submit:disabled {
+  cursor: progress;
+}
+
+.sign-in-code[data-state="rejected"] .sign-in-code-status:not(:empty),
+.sign-in-code[data-state="rate-limited"] .sign-in-code-status:not(:empty),
+.sign-in-code[data-state="failed"] .sign-in-code-status:not(:empty) {
+  padding: 0.6rem 0.75rem;
+  background: var(--diff-removed);
+  border-left: 2px solid var(--oxide);
+}
+
+.sign-in-code[data-state="rejected"] .sign-in-code-input {
+  border-color: var(--oxide);
+}
+
+.sign-in-code[data-state="rejected"] .sign-in-code-input:focus-visible {
+  outline-color: var(--oxide);
+}
+
+.sign-in-code[data-state="rate-limited"] .action.primary.sign-in-code-submit {
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+}
+
+.sign-in-code[data-state="rate-limited"]
+  .action.primary.sign-in-code-submit:hover {
+  color: var(--patina-ink);
+  border-color: var(--patina);
+}
+
+.sign-in-code[data-state="verified"] .sign-in-code-input:disabled {
+  color: var(--ink);
+  border-color: var(--patina);
+  cursor: default;
+}
+
+.sign-in-code[data-state="verified"] .sign-in-code-status:not(:empty) {
+  padding: 0.6rem 0.75rem;
+  background: var(--diff-added);
+  border-left: 2px solid var(--patina);
+}
