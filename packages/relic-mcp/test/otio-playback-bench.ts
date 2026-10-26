@@ -92,6 +92,11 @@ export interface CpuMetrics {
   readonly processCpuDeltaMs: number;
   readonly loadAvg: readonly number[];
 }
+export interface CallbackReadoutMetrics {
+  readonly p50: number;
+  readonly p95: number;
+  readonly count: number;
+}
 
 export interface RepetitionMetrics {
   readonly windowKey: string;
@@ -113,6 +118,7 @@ export interface RepetitionMetrics {
   readonly cadenceRatio: number;
   readonly compositesCount: number;
   readonly distinctFramesCount: number;
+  readonly callbackReadoutMs: CallbackReadoutMetrics;
   readonly gaps: GapsMetrics;
   readonly buffering: BufferingMetrics;
   readonly jumpedHistogram: Record<'0' | '1' | '2' | '3+', number>;
@@ -161,6 +167,7 @@ export interface AggregatedMetrics {
   readonly compositesCount: number;
   readonly distinctFramesCount: number;
   readonly gaps: GapsMetrics;
+  readonly callbackReadoutMs: CallbackReadoutMetrics;
   readonly buffering: BufferingMetrics;
   readonly seeks: {
     readonly videoSeeksCount: number;
@@ -323,7 +330,7 @@ export function createOtioPageProfilerScript(): string {
     }
     const activeSeeks = []; const completedSeeks = []; const activeElementSeeks = new WeakMap();
     const audioPlays = []; const visiblePresents = []; const compositeFrames = []; const decoderInsertions = [];
-    const longTasks = []; const loaves = []; const vsyncIntervals = [];
+    const longTasks = []; const loaves = []; const vsyncIntervals = []; const callbackReadoutDurations = [];
     let visibleDrawCount = 0; let offscreenDrawCount = 0; let canvasResetsCount = 0; let liveElementDraws = 0;
     let lastVsyncTime = null; let isRecording = false; let recordingStartTime = 0;
     let totalBufferingMs = 0; let bufferingStartTime = null; let resyncEpisodes = 0;
@@ -334,13 +341,45 @@ export function createOtioPageProfilerScript(): string {
       if (ord === undefined) { ord = nextDecoderOrdinal++; decoderOrdinals.set(video, ord); }
       return ord;
     }
+    const videoFrameOrdinals = new WeakMap();
+    const OrigVideoFrame = globalThis.VideoFrame;
+    if (typeof OrigVideoFrame === 'function') {
+      try {
+        class WrappedVideoFrame extends OrigVideoFrame {
+          constructor(...args) {
+            super(...args);
+            try {
+              const src = args[0];
+              if (src instanceof HTMLVideoElement || (src && src.tagName === 'VIDEO')) {
+                const ord = getDecoderOrdinal(src);
+                videoFrameOrdinals.set(this, ord);
+              }
+            } catch {}
+          }
+        }
+        if (typeof OrigVideoFrame.prototype.clone === 'function') {
+          const origClone = OrigVideoFrame.prototype.clone;
+          OrigVideoFrame.prototype.clone = function(...args) {
+            const cloned = origClone.apply(this, args);
+            try {
+              const ord = videoFrameOrdinals.get(this);
+              if (ord !== undefined) videoFrameOrdinals.set(cloned, ord);
+            } catch {}
+            return cloned;
+          };
+        }
+        globalThis.VideoFrame = WrappedVideoFrame;
+        if (typeof window !== 'undefined') window.VideoFrame = WrappedVideoFrame;
+      } catch {}
+    }
+    const canvasUnresolved = new WeakMap();
     const canvasKeySets = new WeakMap();
     function getCanvasKeys(c) {
       let s = canvasKeySets.get(c);
       if (!s) { s = new Set(); canvasKeySets.set(c, s); }
       return s;
     }
-    function clearCanvasKeys(c) { const s = canvasKeySets.get(c); if (s) s.clear(); }
+    function clearCanvasKeys(c) { const s = canvasKeySets.get(c); if (s) s.clear(); canvasUnresolved.delete(c); }
     const activeCallbackMediaTimes = new WeakMap();
     try {
       const origRVFC = HTMLVideoElement.prototype.requestVideoFrameCallback;
@@ -350,8 +389,11 @@ export function createOtioPageProfilerScript(): string {
           return origRVFC.call(this, (now, metadata) => {
             const prev = activeCallbackMediaTimes.get(self);
             activeCallbackMediaTimes.set(self, (metadata && typeof metadata.mediaTime === 'number') ? metadata.mediaTime : null);
+            const t0 = performance.now();
             try { return callback(now, metadata); }
             finally {
+              const cbDuration = performance.now() - t0;
+              if (isRecording) pushBounded(callbackReadoutDurations, cbDuration, MAX_BUFFER);
               if (prev !== undefined) activeCallbackMediaTimes.set(self, prev);
               else activeCallbackMediaTimes.delete(self);
             }
@@ -443,6 +485,13 @@ export function createOtioPageProfilerScript(): string {
       CanvasRenderingContext2D.prototype.drawImage = function(image, ...args) {
         if (this.canvas) {
           const destKeys = getCanvasKeys(this.canvas);
+          const isVideoFrame = Boolean(
+            image && (
+              (typeof globalThis.VideoFrame === 'function' && image instanceof globalThis.VideoFrame) ||
+              (typeof OrigVideoFrame === 'function' && image instanceof OrigVideoFrame) ||
+              Object.prototype.toString.call(image) === '[object VideoFrame]'
+            )
+          );
           if (image instanceof HTMLVideoElement || (image && image.tagName === 'VIDEO')) {
             const ord = getDecoderOrdinal(image);
             const cbMedia = activeCallbackMediaTimes.get(image);
@@ -456,9 +505,22 @@ export function createOtioPageProfilerScript(): string {
               frameKey = image.currentTime;
             }
             destKeys.add(ord + ':' + frameKey);
+          } else if (isVideoFrame) {
+            const ord = videoFrameOrdinals.get(image);
+            if (ord !== undefined && typeof image.timestamp === 'number' && Number.isFinite(image.timestamp)) {
+              destKeys.add(ord + ':' + (image.timestamp / 1e6));
+            } else {
+              canvasUnresolved.set(this.canvas, true);
+              destKeys.clear();
+            }
           } else if (image instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== 'undefined' && image instanceof OffscreenCanvas) || (image && image.tagName === 'CANVAS')) {
-            const srcKeys = canvasKeySets.get(image);
-            if (srcKeys) { for (const k of srcKeys) destKeys.add(k); }
+            if (canvasUnresolved.get(image)) {
+              canvasUnresolved.set(this.canvas, true);
+              destKeys.clear();
+            } else {
+              const srcKeys = canvasKeySets.get(image);
+              if (srcKeys) { for (const k of srcKeys) destKeys.add(k); }
+            }
           }
           const isVisible = Boolean(
             (this.canvas.matches && this.canvas.matches('canvas.otio-canvas')) ||
@@ -467,7 +529,8 @@ export function createOtioPageProfilerScript(): string {
           if (isVisible) {
             visibleDrawCount++;
             if (isRecording) {
-              pushBounded(visiblePresents, { t: performance.now(), keys: Array.from(destKeys).sort() }, MAX_BUFFER);
+              const keys = canvasUnresolved.get(this.canvas) ? [] : Array.from(destKeys).sort();
+              pushBounded(visiblePresents, { t: performance.now(), keys }, MAX_BUFFER);
             }
           } else {
             offscreenDrawCount++;
@@ -475,6 +538,60 @@ export function createOtioPageProfilerScript(): string {
         }
         return origDraw.apply(this, [image, ...args]);
       };
+      if (typeof OffscreenCanvasRenderingContext2D !== 'undefined') {
+        const origOffscreenDraw = OffscreenCanvasRenderingContext2D.prototype.drawImage;
+        OffscreenCanvasRenderingContext2D.prototype.drawImage = function(image, ...args) {
+          if (this.canvas) {
+            const destKeys = getCanvasKeys(this.canvas);
+            const isVideoFrame = Boolean(
+              image && (
+                (typeof globalThis.VideoFrame === 'function' && image instanceof globalThis.VideoFrame) ||
+                (typeof OrigVideoFrame === 'function' && image instanceof OrigVideoFrame) ||
+                Object.prototype.toString.call(image) === '[object VideoFrame]'
+              )
+            );
+            if (image instanceof HTMLVideoElement || (image && image.tagName === 'VIDEO')) {
+              const ord = getDecoderOrdinal(image);
+              const cbMedia = activeCallbackMediaTimes.get(image);
+              let frameKey;
+              if (cbMedia !== undefined && cbMedia !== null) {
+                frameKey = cbMedia;
+              } else if (image.paused) {
+                frameKey = image.currentTime;
+              } else {
+                liveElementDraws++;
+                frameKey = image.currentTime;
+              }
+              destKeys.add(ord + ':' + frameKey);
+            } else if (isVideoFrame) {
+              const ord = videoFrameOrdinals.get(image);
+              if (ord !== undefined && typeof image.timestamp === 'number' && Number.isFinite(image.timestamp)) {
+                destKeys.add(ord + ':' + (image.timestamp / 1e6));
+              } else {
+                canvasUnresolved.set(this.canvas, true);
+                destKeys.clear();
+              }
+            } else if (image instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== 'undefined' && image instanceof OffscreenCanvas) || (image && image.tagName === 'CANVAS')) {
+              if (canvasUnresolved.get(image)) {
+                canvasUnresolved.set(this.canvas, true);
+                destKeys.clear();
+              } else {
+                const srcKeys = canvasKeySets.get(image);
+                if (srcKeys) { for (const k of srcKeys) destKeys.add(k); }
+              }
+            }
+          }
+          return origOffscreenDraw.apply(this, [image, ...args]);
+        };
+        const origOffscreenClearRect = OffscreenCanvasRenderingContext2D.prototype.clearRect;
+        OffscreenCanvasRenderingContext2D.prototype.clearRect = function(x, y, w, h) {
+          if (this.canvas && x <= 0 && y <= 0 && w >= this.canvas.width && h >= this.canvas.height) {
+            clearCanvasKeys(this.canvas);
+            if (isRecording) canvasResetsCount++;
+          }
+          return origOffscreenClearRect.apply(this, arguments);
+        };
+      }
     } catch {}
     try {
       new PerformanceObserver((list) => {
@@ -695,7 +812,7 @@ export function createOtioPageProfilerScript(): string {
         activeSeeks.length = 0; completedSeeks.length = 0; audioPlays.length = 0;
         visibleDrawCount = 0; offscreenDrawCount = 0; canvasResetsCount = 0; liveElementDraws = 0;
         visiblePresents.length = 0; compositeFrames.length = 0; decoderInsertions.length = 0;
-        longTasks.length = 0; loaves.length = 0; vsyncIntervals.length = 0;
+        longTasks.length = 0; loaves.length = 0; vsyncIntervals.length = 0; callbackReadoutDurations.length = 0;
         totalBufferingMs = 0; bufferingStartTime = null; resyncEpisodes = 0; bufferOverflow = false;
         isRecording = true;
         recordingStartTime = performance.now();
@@ -790,6 +907,14 @@ export function createOtioPageProfilerScript(): string {
         const sortedVsync = [...vsyncIntervals].sort((a, b) => a - b);
         const p50Vsync = sortedVsync.length ? sortedVsync[Math.floor(sortedVsync.length * 0.5)] : 0;
         const p95Vsync = sortedVsync.length ? sortedVsync[Math.floor(sortedVsync.length * 0.95)] : 0;
+        const sortedCbReadout = [...callbackReadoutDurations].sort((a, b) => a - b);
+        const p50CbReadout = sortedCbReadout.length ? sortedCbReadout[Math.floor(sortedCbReadout.length * 0.5)] : 0;
+        const p95CbReadout = sortedCbReadout.length ? sortedCbReadout[Math.floor(sortedCbReadout.length * 0.95)] : 0;
+        const callbackReadoutMs = {
+          p50: p50CbReadout,
+          p95: p95CbReadout,
+          count: sortedCbReadout.length,
+        };
         let stuttersNearInsertions = 0;
         if (stutterCount > 0 && decoderInsertions.length > 0) {
           for (let i = 0; i < compositeFrames.length - 1; i++) {
@@ -806,6 +931,7 @@ export function createOtioPageProfilerScript(): string {
           windowKey, actualDurationSeconds, measuredStart, measuredEnd, pausedSeekLatencyMs, playToFirstFrameMs,
           mediaInterval, distinctFramesCount, compositesCount: compositeFrames.length, clockCadence,
           unresolvedPresents, liveElementDraws, presentedDecoderOrdinals,
+          callbackReadoutMs,
           gaps: { p50: p50Gap, p95: p95Gap, p99: p99Gap, max: maxGap, startEdgeGapMs: startEdge, endEdgeGapMs: endEdge, stutterCount },
           buffering: { totalBufferingMs, resyncEpisodes }, jumpedHistogram,
           seeks: {
@@ -971,6 +1097,11 @@ function aggregateRepetitions(
     cadenceRatio: getMed((r) => r.cadenceRatio),
     compositesCount: getMed((r) => r.compositesCount),
     distinctFramesCount: getMed((r) => r.distinctFramesCount),
+    callbackReadoutMs: {
+      p50: getMed((r) => r.callbackReadoutMs.p50),
+      p95: getMed((r) => r.callbackReadoutMs.p95),
+      count: getMed((r) => r.callbackReadoutMs.count),
+    },
     gaps: {
       p50: getMed((r) => r.gaps.p50),
       p95: getMed((r) => r.gaps.p95),
@@ -1565,6 +1696,7 @@ export async function runOtioPlaybackBenchmark(
             typeof wallCadence === 'number' ? wallCadence : raw.clockCadence,
           compositesCount: raw.compositesCount,
           distinctFramesCount: raw.distinctFramesCount,
+          callbackReadoutMs: raw.callbackReadoutMs,
           gaps: raw.gaps,
           buffering: raw.buffering,
           jumpedHistogram: raw.jumpedHistogram,
@@ -1845,6 +1977,8 @@ export function formatReportSummary(report: BenchmarkReport): string {
       'M7 Live Video Draws (must be 0)',
       (m) => String(m.canvas.liveElementDraws),
     ],
+    ['rVFC Readout p50 (ms)', (m) => m.callbackReadoutMs.p50.toFixed(2)],
+    ['rVFC Readout p95 (ms)', (m) => m.callbackReadoutMs.p95.toFixed(2)],
     ['M8 Decoder Insertions', (m) => String(m.decoders.insertionsCount)],
     [
       'M9 Audio play() calls / sec',
