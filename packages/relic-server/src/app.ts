@@ -101,7 +101,7 @@ export interface BatchMailItem {
 }
 
 export interface Mailer {
-  send(email: string, link: string): Promise<void>;
+  send(email: string, link: string, code?: string): Promise<void>;
   sendMail?(email: string, mail: OutboundMail): Promise<void>;
   sendBatch?(items: readonly BatchMailItem[]): Promise<void>;
 }
@@ -511,6 +511,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // so a comment can be attributed to somebody reachable.
     if (first === 'auth' && second === 'request' && request.method === 'POST') {
       return authRequest(request, ip, now);
+    }
+    if (first === 'auth' && second === 'code' && request.method === 'POST') {
+      return authCode(request, ip, now);
     }
     if (first === 'auth' && second === 'callback' && request.method === 'GET') {
       return authCallback(url, now);
@@ -3125,6 +3128,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ip: string,
     now: number
   ): Promise<Response> {
+    const nonce = newAuthToken();
+    const requestCookie = `relic_sign_in_request=${nonce}; Path=/api/auth/code; HttpOnly; Secure; SameSite=Strict; Max-Age=${config.authLinkTtlSeconds}`;
+
     const verdict = limiter.check(
       rateLimitKey('auth', ip),
       config.authRateLimit,
@@ -3141,12 +3147,27 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     if (typeof email === 'string' && looksLikeEmail(email)) {
       const token = newAuthToken();
+      const expiresAt = now + config.authLinkTtlSeconds * 1000;
+      const linkTokenHash = await sha256Hex(token);
       await store.putAuthLink({
-        tokenHash: await sha256Hex(token),
+        tokenHash: linkTokenHash,
         email,
-        expiresAt: now + config.authLinkTtlSeconds * 1000,
+        expiresAt,
         returnTo: authReturnTo(body),
       });
+
+      const code = newSignInCode();
+      const requestHash = await signInRequestHash(nonce);
+      const codeMac = await signInCodeMac(nonce, code);
+      const addressHash = await sha256Hex(normalizeEmail(email));
+      await store.putSignInCode({
+        requestHash,
+        codeMac,
+        linkTokenHash,
+        addressHash,
+        expiresAt,
+      });
+
       // The plaintext address reaches the mailer here, and that is not
       // avoidable: mail cannot be sent to a hash. `frame.md` names this as
       // one of identity's prices rather than pretending a stored hash undoes
@@ -3161,23 +3182,137 @@ export function createApp(options: AppOptions = {}): RelicApp {
         try {
           await mailer.send(
             email,
-            `${config.serviceOrigin}/api/auth/callback?token=${token}`
+            `${config.serviceOrigin}/api/auth/callback?token=${token}`,
+            code
           );
         } catch (error) {
+          // The subject now carries the code and the provider's refusal can
+          // echo a subject or an address, so neither may reach the log.
           console.error(
-            `relic: sign-in mail failed: ${(error as Error).message}`
+            `relic: sign-in mail failed: ${sanitizeMailError(error, email).replaceAll(code, '[redacted-code]')}`
           );
         }
       }
     }
 
-    return new Response(null, { status: 202 });
+    const headers = new Headers();
+    headers.set('set-cookie', requestCookie);
+    return new Response(null, { status: 202, headers });
+  }
+
+  async function authCode(
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const verdict = limiter.check(
+      rateLimitKey('auth-code', ip),
+      config.signInCodeRateLimit,
+      now
+    );
+    if (!verdict.allowed) {
+      return refuse('auth_rate_limited', {
+        retry_after_seconds: verdict.retryAfterSeconds,
+      });
+    }
+
+    const contentType = request.headers.get('content-type');
+    if (
+      contentType === null ||
+      !contentType.toLowerCase().startsWith('application/json')
+    ) {
+      return refuse('invalid_sign_in_code');
+    }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await readBoundedJson(request, 'invalid_sign_in_code');
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      return refuse('invalid_sign_in_code');
+    }
+    if (
+      rawBody === null ||
+      typeof rawBody !== 'object' ||
+      Array.isArray(rawBody)
+    ) {
+      return refuse('invalid_sign_in_code');
+    }
+    const body = rawBody as Record<string, unknown>;
+    const rawCode = body['code'];
+    if (typeof rawCode !== 'string') {
+      return refuse('invalid_sign_in_code');
+    }
+    const code = rawCode.replace(/[ -]/g, '');
+    if (!/^[0-9]{6}$/.test(code)) {
+      return refuse('invalid_sign_in_code');
+    }
+
+    // The request's `now` was taken when its headers arrived, and the body
+    // can finish much later. Every time-dependent check below uses the time
+    // the check runs, so a slow body cannot outlive the code or be charged to
+    // an attempt window it was not in.
+    const checkedAt = clock();
+    const nonce = signInRequestCookie(request);
+    if (nonce === undefined || !/^[A-Za-z0-9_-]{43}$/.test(nonce)) {
+      return refuse('sign_in_code_failed');
+    }
+
+    const requestHash = await signInRequestHash(nonce);
+    const row = await store.getSignInCode(requestHash);
+    if (row === undefined || row.expiresAt <= checkedAt) {
+      return refuse('sign_in_code_failed');
+    }
+
+    let allowed: boolean;
+    try {
+      allowed = await store.reserveSignInCodeAttempt(
+        row.addressHash,
+        checkedAt,
+        config.signInCodeAddressAttemptLimit.limit,
+        config.signInCodeAddressAttemptLimit.windowSeconds * 1000
+      );
+    } catch {
+      return new Response(null, { status: 500 });
+    }
+    if (!allowed) {
+      return refuse('sign_in_code_failed');
+    }
+
+    const expectedMac = await signInCodeMac(nonce, code);
+    if (!timingSafeEqual(expectedMac, row.codeMac)) {
+      return refuse('sign_in_code_failed');
+    }
+
+    const link = await store.consumeAuthLink(row.linkTokenHash);
+    await store.deleteSignInCode(row.requestHash);
+    if (link === undefined || link.expiresAt <= checkedAt) {
+      return refuse('sign_in_code_failed');
+    }
+
+    const readerCookie = await mintReaderSession(link.email, checkedAt, 'code');
+    const offerCookie = passkeyOfferCookie();
+    const clearRequestCookie =
+      'relic_sign_in_request=; Path=/api/auth/code; HttpOnly; Secure; SameSite=Strict; Max-Age=0';
+
+    const headers = new Headers();
+    headers.set('content-type', 'application/json');
+    headers.append('set-cookie', readerCookie);
+    headers.append('set-cookie', offerCookie);
+    headers.append('set-cookie', clearRequestCookie);
+
+    return new Response(JSON.stringify({ email: link.email }), {
+      status: 200,
+      headers,
+    });
   }
   /** Mints a session cookie and persists the session row. */
   async function mintReaderSession(
     email: string,
     now: number,
-    via: 'link' | 'passkey'
+    via: 'link' | 'passkey' | 'code'
   ): Promise<string> {
     const session = newAuthToken();
     await store.putSession({
@@ -3200,10 +3335,21 @@ export function createApp(options: AppOptions = {}): RelicApp {
   }
 
   function mayAddFirstPasskey(session: SessionRow, now: number): boolean {
+    const via = session.via ?? 'link';
     return (
-      (session.via ?? 'link') === 'link' &&
+      (via === 'link' || via === 'code') &&
       now - session.createdAt <= config.passkeyFreshLinkSeconds * 1000
     );
+  }
+
+  function passkeyOfferCookie(): string {
+    return [
+      'relic_passkey_offer=1',
+      'Path=/',
+      'Secure',
+      'SameSite=Lax',
+      `Max-Age=${config.passkeyOfferMarkerSeconds}`,
+    ].join('; ');
   }
 
   async function sendPasskeyNotice(
@@ -3265,13 +3411,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const readerCookie = await mintReaderSession(link.email, now, 'link');
-    const offerCookie = [
-      'relic_passkey_offer=1',
-      'Path=/',
-      'Secure',
-      'SameSite=Lax',
-      `Max-Age=${config.passkeyOfferMarkerSeconds}`,
-    ].join('; ');
+    const offerCookie = passkeyOfferCookie();
 
     const headers = new Headers();
     headers.set('location', link.returnTo);
@@ -5714,10 +5854,7 @@ mechanism.
 
 Anyone holding a relic's link can read its comments and add one. Comment
 bodies are encrypted with a key derived from the link, so we cannot read them.
-We do keep who commented on which relic and when: a commenter is the email
-address they verified by following a sign-in link, stored in the clear beside
-each comment. A sign-in link, and every email below, passes the address
-through our mail provider. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
+We do keep who commented on which relic and when: a commenter is the email address they verified with a sign-in email, by following its link or typing its code, stored in the clear beside each comment. A sign-in email, and every email below, passes the address through our mail provider. A sign-in code works once, only in the browser that asked for it: until it is used or the storage cleanup removes it, which takes about a day, the service keeps it as a hash keyed by a random value that only that browser holds, and for a day it counts code attempts for each address, filed under a hash of the address. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
 
 **When someone comments or a relic gets a new version, we email the people following it.**
 That is every verified address that commented on it, every address its publisher or a reader
@@ -5754,7 +5891,7 @@ relic sends no more emails, and those records stay until it is deleted, like the
 
 **Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
 
-**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in link started in the previous ${config.passkeyFreshLinkSeconds / 60} minutes can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relic. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
+**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in email started in the previous ${config.passkeyFreshLinkSeconds / 60} minutes, by its link or its code, can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relic. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
 
 **Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
 
@@ -5886,3 +6023,40 @@ function sessionCookie(request: Request): string | undefined {
   }
   return undefined;
 }
+
+/** The sign-in request cookie, if the request carries one. */
+function signInRequestCookie(request: Request): string | undefined {
+  const header = request.headers.get('cookie');
+  if (header === null) return undefined;
+  for (const part of header.split(';')) {
+    const [name, ...rest] = part.trim().split('=');
+    if (name === 'relic_sign_in_request' && rest.length > 0)
+      return rest.join('=');
+  }
+  return undefined;
+}
+
+/** sha256Hex(`relic-sign-in-request:v1:${nonce}`) */
+async function signInRequestHash(nonce: string): Promise<string> {
+  return sha256Hex(`relic-sign-in-request:v1:${nonce}`);
+}
+
+/** hex(HMAC-SHA256(key = the nonce's 32 base64url-decoded bytes, `relic-sign-in-code:v1:${code}`)), via hmacSha256 (app.ts:5021) */
+async function signInCodeMac(nonce: string, code: string): Promise<string> {
+  const keyBytes = Buffer.from(nonce, 'base64url');
+  const macBytes = await hmacSha256(keyBytes, `relic-sign-in-code:v1:${code}`);
+  return Buffer.from(macBytes).toString('hex');
+}
+
+/** Six decimal digits, uniform: draws >= 4_294_000_000 are redrawn, then value % 1_000_000, zero-padded. */
+function newSignInCode(): string {
+  const buf = new Uint32Array(1);
+  let val = 0;
+  do {
+    crypto.getRandomValues(buf);
+    val = buf[0] ?? 0;
+  } while (val >= 4_294_000_000);
+  return String(val % 1_000_000).padStart(6, '0');
+}
+
+export { signInRequestHash, signInCodeMac, newSignInCode };

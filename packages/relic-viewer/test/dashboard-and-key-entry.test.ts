@@ -1083,6 +1083,116 @@ describe('Dashboard rendering (DOM)', () => {
     expect(vault.recall('rel1')).toBeUndefined();
   });
 
+  test('dashboard sign-out form renders code entry on 202 without nested form or blocking attributes', async () => {
+    const vault = makeMockVault([]);
+    const authCalls: string[] = [];
+    let reloadCalled = false;
+    const originalLocation = (globalThis as { location?: unknown }).location;
+    (globalThis as { location?: unknown }).location = {
+      reload: () => {
+        reloadCalled = true;
+      },
+    };
+
+    const deps: ViewerDeps = {
+      serviceOrigin: 'https://relic.example',
+      fetch: (async (input: RequestInfo | URL, _init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/session')) {
+          return new Response(JSON.stringify({ email: null }), { status: 200 });
+        }
+        if (url.endsWith('/api/auth/request')) {
+          authCalls.push(url);
+          return new Response(null, { status: 202 });
+        }
+        if (url.endsWith('/api/auth/code')) {
+          return new Response(JSON.stringify({ email: 'user@example.com' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return new Response(null, { status: 404 });
+      }) as unknown as typeof globalThis.fetch,
+      keyVault: vault,
+      takeFragment: () => '',
+      stripFragment: () => {},
+      locationHref: 'https://relic.example/dashboard',
+    };
+
+    try {
+      await renderDashboard(deps);
+
+      const authSection = rootBody.querySelector(
+        '.dashboard-auth-section'
+      ) as ElementStub;
+      expect(authSection).not.toBeNull();
+      const sendBtn = authSection.querySelector(
+        'button[type="submit"]'
+      ) as ElementStub;
+      expect(sendBtn.textContent).toBe('Email me a code');
+
+      const emailInput = authSection.querySelector(
+        'input[type="email"]'
+      ) as ElementStub;
+      emailInput.value = 'user@example.com';
+
+      const authForm = authSection.querySelector('form') as ElementStub;
+      authForm.submit();
+
+      await waitUntil(
+        () => authSection.querySelector('[data-sign-in-code]') !== null
+      );
+
+      const outcome = authSection.querySelector(
+        '.dashboard-auth-outcome'
+      ) as ElementStub;
+      expect(outcome).not.toBeNull();
+      const threadNote = outcome.querySelector('.thread-note') as ElementStub;
+      expect(threadNote).not.toBeNull();
+      expect(threadNote.textContent).toContain(
+        'If user@example.com can receive mail'
+      );
+      expect(threadNote.textContent).toContain('Type the code below');
+
+      const codeContainer = authSection.querySelector(
+        '[data-sign-in-code]'
+      ) as ElementStub;
+      expect(codeContainer.tagName).toBe('DIV');
+      // No nested form
+      expect(authSection.querySelectorAll('form')).toHaveLength(1);
+
+      const codeInput = authSection.querySelector(
+        '[data-sign-in-code-input]'
+      ) as ElementStub;
+      expect(codeInput.required).toBe(false);
+      expect(codeInput.getAttribute('pattern')).toBeNull();
+      expect(codeInput.getAttribute('maxlength')).toBeNull();
+
+      // Enter key does not submit outer form (no second /api/auth/request)
+      let enterPrevented = false;
+      codeInput.dispatchEvent({
+        type: 'keydown',
+        key: 'Enter',
+        preventDefault: () => {
+          enterPrevented = true;
+        },
+      } as unknown as { type: string; preventDefault: () => void });
+      expect(enterPrevented).toBe(true);
+      expect(authCalls).toHaveLength(1);
+
+      // Typing 6 digits auto-submits and verifies
+      codeInput.value = '123456';
+      codeInput.dispatchEvent({ type: 'input', preventDefault: () => {} });
+
+      await waitUntil(
+        () => codeContainer.getAttribute('data-state') === 'verified'
+      );
+      expect(reloadCalled).toBe(true);
+    } finally {
+      (globalThis as { location?: unknown }).location = originalLocation;
+    }
+  });
+
   test('renders commented-on rows signed in, marking row unopenable when vault lacks key', async () => {
     const keyKnown = generateKey();
     const fragKnown = encodeFragment(keyKnown);

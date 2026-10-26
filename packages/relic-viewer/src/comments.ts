@@ -192,8 +192,8 @@ export const IDENTITY_DISCLOSURE =
 
 /** Said at the point of asking for an address, before one is typed. */
 export const DELIVERY_DISCLOSURE =
-  'Sending the link means handling your address in the clear. There is no ' +
-  'other way to post it.';
+  'Sending the sign-in email means handling your address in the clear. ' +
+  'There is no other way to post it.';
 
 export type SessionState =
   /** A valid session cookie, and the address it verified. */
@@ -296,11 +296,10 @@ export function commentRefusal(code: string): Refusal {
     case 'auth_rate_limited':
       return {
         code,
-        headline: 'Too many link requests from here just now',
+        headline: 'Too many sign-in emails asked for from here just now',
         detail:
-          'The same limit covers verification, for the same reason. Check ' +
-          'the mail already sent before asking again: an earlier link may ' +
-          'still be good.',
+          'Check the email already sent before asking for another: its code ' +
+          'or link may still be good.',
         retryable: true,
       };
     case 'invalid_session':
@@ -309,8 +308,8 @@ export function commentRefusal(code: string): Refusal {
         headline: 'This browser is not verified any more',
         detail:
           'Verification is a short-lived session rather than an account, so ' +
-          'it lapses, and a verification link works once. Enter your ' +
-          'address again and follow the new one.',
+          'it lapses, and each sign-in email works once. Enter your ' +
+          'address again and use the new one.',
         retryable: false,
       };
     case 'invalid_comment':
@@ -551,8 +550,9 @@ export function keySurvivesNavigation(
 /** Copy for the case where it does not. */
 export const KEY_AT_RISK_NOTE =
   'This browser is not keeping the key for this relic, so following the ' +
-  'link in this tab would lose it. Open the link in a new tab and come ' +
-  'back to this one, which still holds the key in memory.';
+  'link in this tab would lose it. Type the code from the email here ' +
+  'instead, or open the link in a new tab and come back to this one, ' +
+  'which still holds the key in memory.';
 
 export async function readSession(deps: ViewerDeps): Promise<SessionState> {
   try {
@@ -1489,4 +1489,31 @@ export function takePasskeyOfferMarker(
     }
   }
   return present;
+}
+
+/**
+ * Like `takePasskeyOfferMarker`, but re-reads the cookie after a typed sign-in
+ * code sets the marker in the same document, ignoring an earlier cached false.
+ * If the marker is present, it clears the cookie, caches true for this document,
+ * and returns true. If absent, it returns false.
+ */
+export function takeFreshPasskeyOfferMarker(
+  doc: { cookie?: string } = globalThis.document
+): boolean {
+  if (!doc || typeof doc !== 'object') return false;
+  if (offerMarkers.get(doc) === true) return true;
+  const match = /(?:^|;\s*)relic_passkey_offer=([^;]*)/.exec(doc.cookie ?? '');
+  const present = match?.[1] === '1';
+  if (present) {
+    offerMarkers.set(doc, true);
+    try {
+      doc.cookie =
+        'relic_passkey_offer=; Path=/; Max-Age=0; Secure; SameSite=Lax';
+    } catch {
+      // A document that refuses cookie writes keeps the marker until it expires.
+    }
+    return true;
+  }
+  offerMarkers.set(doc, false);
+  return false;
 }

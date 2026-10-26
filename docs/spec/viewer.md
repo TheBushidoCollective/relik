@@ -475,20 +475,19 @@ Version moved into the taskbar, then Comments did, and the row had already overf
 6. **Refused**, with the server's code stated verbatim rather than flattened into an apology, exactly as §6.1 item 3 requires of a refused mint. A retry appears only where pressing it again could plausibly work.
 7. **Rate limited**, which is a refusal with its own copy because it is the one a reader is most likely to hit while behaving normally. It says the limit is per relic and per address, says why an unlimited comment box on a link anybody can hold is an abuse surface, and says nothing was lost.
 8. **Unverified**, where the composer asks for an address.
-9. **Waiting on a link.** The request endpoint answers 202 whether or not anything was sent, so it cannot be used to find out who has commented before, and **the copy must not undo that**: it says that if the address can receive mail a link is on its way, and it never confirms the address exists.
+9. **Waiting on a link or code.** The request endpoint answers 202 whether or not anything was sent, so it cannot be used to find out who has commented before, and **the copy must not undo that**: it says that if the address can receive mail an email with a code and a link is on its way, and it never confirms the address exists.
 10. **Verified**, where the composer names the address it will attribute the comment to, before anything is typed.
 
-**The disclosure is at the point of commenting, not only on the policy page.** A reader learns, above the fields and at reading size rather than as fine print, that their verified address is shown with their comment and in emails to people following the relic, that commenting signs the address up for an email whenever someone comments or a new version is published, each with a stop link, that Relic can see which address commented on which relic, and that a display name sits beside the address rather than instead of it. A second line, at the address field, says that sending the link means handling the address in plain text and that it cannot be done any other way. Both are `frame.md`'s prices, stated where they are actionable. A person should learn this before they submit, not after.
+**The disclosure is at the point of commenting, not only on the policy page.** A reader learns, above the fields and at reading size rather than as fine print, that their verified address is shown with their comment and in emails to people following the relic, that commenting signs the address up for an email whenever someone comments or a new version is published, each with a stop link, that Relic can see which address commented on which relic, and that a display name sits beside the address rather than instead of it. A second line, at the address field, says that sending the sign-in email means handling the address in plain text and that it cannot be done any other way. Both are `frame.md`'s prices, stated where they are actionable. A person should learn this before they submit, not after.
 
 **The display name is untrusted display text and gets §1.9 rule 2's treatment.** It is chosen by whoever holds the link and rendered on the origin that holds the fragment, which is the filename's situation exactly, so the bidirectional formatting characters are stripped rather than escaped. The author runs through the same filter: the server verified that a mailbox answered, which says nothing about how the string draws.
 
-**The magic-link round trip must not cost the reader the key, and the fragment is never what carries it back.** The server has never seen the fragment and cannot put it in a redirect, so nothing on the return path can restore it from the wire. What restores it is the key vault: `load` writes the fragment to storage after a successful mint, so a tab that navigates to the callback and comes back to `/{id}` with no fragment recalls it there, exactly as a reload already does. Four consequences:
+**The magic-link and code round trips must not cost the reader the key, and the fragment is never what carries it back.** The server has never seen the fragment and cannot put it in a redirect or mail it, so nothing on the return path can restore it from the wire. Typing the code keeps the reader on the page with zero navigation, so the key never leaves tab memory. When following the link instead, what restores it is the key vault: `load` writes the fragment to storage after a successful mint, so a tab that navigates to the callback and comes back to `/{id}` with no fragment recalls it there, exactly as a reload already does. Four consequences:
 
 - **The auth request carries an address and a relic id, and nothing else.** The relic id is how the callback knows where to send the reader, and the server already has it on every request to this relic. The fragment is not in the body, not in a query string, and not in the return path.
 - **The redirect stays inside the service and therefore omits the fragment**, which is §1.7's inside-the-service half rather than its leaving-the-service half. There is nothing to inherit, and an explicit empty fragment would be worse than nothing: it would strip a key the vault was about to restore.
-- **The common case never navigates at all.** A mail client opens the link in its own tab, so the relic page that asked for it is still sitting there with its key in memory. That tab learns it is verified from a same-origin broadcast carrying a bare marker, no address and no key, and from a re-check when the tab becomes visible again. Neither signal touches the URL.
-- **When this browser is not keeping the key, the reader is told before they leave.** Storage can be absent or refuse to write, and in that case following the link in the same tab loses the key for good. The composer says so, and says to open the link in a new tab and come back to the one that still holds the key in memory. Discovering it afterwards is the §6.1 missing-key screen, which is honest and much too late.
-
+- **The common case never navigates at all.** A reader types the six-digit code directly into the requesting page, or opens the link in a mail client tab while the relic page stays in place with its key in memory. When using the link in another tab, the relic tab learns it is verified from a same-origin broadcast carrying a bare marker, no address and no key, and from a re-check when the tab becomes visible again. Neither signal touches the URL.
+- **When this browser is not keeping the key, the reader is told before they leave.** Storage can be absent or refuse to write, and in that case following the link in the same tab loses the key for good. The composer says so, and advises typing the code from the email right here, or opening the link in a new tab and coming back to the one that still holds the key in memory. Discovering it afterwards is the §6.1 missing-key screen, which is honest and much too late.
 **Two authentication paths exist and only one of them is a browser.** A verified session is the human path. The publish token is the agent and publisher path, attributed as `publisher`, and it is not offered here: the token lives on the publishing machine and a field for it on this origin would be the key-entry surface §6.4 bans, aimed at a different secret. A comment attributed to `publisher` is marked as having published the relic, which is true by construction rather than by claim, since only the machine that published it holds a token.
 
 ### 6.7 The landing page at `/` and `/install`
@@ -569,9 +568,9 @@ A reader holding the link and decryption key can record an approval or rejection
 - `403 invalid_share_proof`: Indicates that the key proof did not match the relic's verifier.
 - `429 decision_rate_limited`: Explains that too many decision requests were made and provides retry time.
 
-### 6.10 Passkey sign-in and the offer after a link
+### 6.10 Passkey sign-in and the offer after a sign-in email
 
-Returning readers can sign in with a passkey without receiving an email. Readers signing in via magic link are offered passkey enrollment after signing in.
+Returning readers can sign in with a passkey without receiving an email. Readers signing in via an email link or a typed code are offered passkey enrollment after signing in.
 
 **Autofill and conditional mediation.** On forms where readers authenticate (`signInForm` in comments, share, decision panel, and dashboard), the email field carries `autocomplete="username webauthn"`. When WebAuthn is supported and the context is secure, the client dynamically loads the passkey sign-in module. A module-level ceremony controller fetches usernameless public key options from `POST /api/auth/passkeys/sign-in/options` with `{}` and arms a conditional request (`navigator.credentials.get({ mediation: 'conditional', ... })`).
 
@@ -581,10 +580,47 @@ Returning readers can sign in with a passkey without receiving an email. Readers
 
 **The email-first fallback.** If a reader's passkey is non-discoverable, or if usernameless sign-in fails (`401 passkey_sign_in_failed`), the interface reveals the fallback option (`[data-passkey-fallback]`). The reader enters their email address and clicks "Use a passkey for this address". The client fetches options for that address via `POST /api/auth/passkeys/sign-in/options` with `{"email": "<address>"}`, which returns descriptors padded with HMAC decoys. The reader confirms with their passkey synchronously, and the assertion is posted to sign in.
 
-**The post-sign-in passkey offer.** When a reader completes a magic-link sign-in, the callback response sets a short-lived `relic_passkey_offer=1` cookie. When the viewer boots or re-checks identity, if the marker cookie is present, the session is verified, and local storage does not contain `relic:passkey-offer`, the viewer consumes and clears the marker cookie and mounts the offer card (`section.passkey-offer[data-passkey-offer]`).
+**The post-sign-in passkey offer.** When a reader completes a magic-link sign-in or types a sign-in code, the service sets a short-lived `relic_passkey_offer=1` cookie. When the viewer boots (or when the composer completes an in-place code sign-in), if the marker cookie is present, the session is verified, and local storage does not contain `relic:passkey-offer`, the viewer consumes and clears the marker cookie and mounts the offer card (`section.passkey-offer[data-passkey-offer]`). The offer mounts on boot and on in-place code sign-in completion; ordinary tab visibility re-checks do not mount it if the marker was already consumed or dismissed.
 - *First passkey (TOFU):* Prefetches create options from `POST /api/auth/passkeys/options`. Clicking "Add a passkey" invokes `navigator.credentials.create()`, posts the registration to `POST /api/auth/passkeys`, and stores `'created'` in `localStorage['relic:passkey-offer']`. If the options call answers `401 passkey_fresh_link_required`, the card moves to `data-state="link-required"` instead of closing: it hides `[data-passkey-offer-create]` and shows `[data-passkey-offer-link]` ("Send me a new link"), which asks the shell to email a new link to the same address (`link-sending`, then `link-sent` or `link-failed`). A `401` with any other code still closes the card.
 - *Device with existing passkeys elsewhere:* The options endpoint returns `mode: 'assert'`. The reader first confirms with their existing passkey, then adds a passkey on this device.
 - *Dismissal:* Clicking "Not now" stores `'dismissed'` in `localStorage['relic:passkey-offer']`, suppressing future offers in this browser.
+
+### 6.11 The sign-in code
+
+Alongside the single-use magic link, every sign-in email carries a six-digit decimal code. The reader can type the code directly into the requesting page to sign in without leaving the tab, preserving the decryption key in memory and avoiding tab switches.
+
+**The DOM structure.** The code entry control renders inside `.sign-in-code`:
+
+```html
+<div class="sign-in-code" data-sign-in-code="" data-state="idle">
+  <label class="compose-field sign-in-code-field"><span>Code from the email</span>
+    <input class="compose-input sign-in-code-input" data-sign-in-code-input="" type="text"
+      inputmode="numeric" autocomplete="one-time-code" autocapitalize="off" spellcheck="false"
+      enterkeyhint="go" aria-describedby="sign-in-code-status-{n}"></label>
+  <button type="button" class="action primary sign-in-code-submit" data-sign-in-code-submit="" disabled>Sign in</button>
+  <p class="sign-in-code-status" data-sign-in-code-status="" id="sign-in-code-status-{n}" role="status" aria-live="polite"></p>
+</div>
+```
+
+The input deliberately omits `required`, `pattern`, or `maxlength` attributes so that enclosing forms (such as the dashboard sign-out form) are never blocked from submitting by the nested code field.
+
+**States and copy.** `data-state` takes one of `idle`, `checking`, `rejected`, `rate-limited`, `failed`, or `verified`:
+- **Idle:** button is disabled until exactly six normalized digits are entered.
+- **Checking:** input and submit button are disabled. Status displays "Checking the code."
+- **Rejected:** status displays "That code did not work. Check it against the newest email from Relic, and type it in the browser that asked for it." Upon a third rejection, the copy escalates to: "That code still did not work. A code works once, only in the browser that asked for it, and stops working after a newer email or too many wrong tries. Open the link in the email instead, or send a new one." The input is re-enabled and selected for immediate retyping.
+- **Rate-limited:** status displays "Too many codes tried from here. Wait about N minutes, or open the link in the email." (or "Wait a few minutes..." when retry seconds are unspecified).
+- **Failed:** network or server error copy: "The code could not be checked, which is a network problem rather than a wrong code. Try again."
+- **Verified:** status displays "Signed in as <address>." Controls are disabled, and `onVerified` executes.
+
+**Input normalization and auto-submission.** Input strips ASCII spaces and hyphens. When the normalized value reaches six digits and differs from the last submitted value, it auto-submits immediately. Pressing Enter always executes `preventDefault()` and submits if six digits are present, preventing outer form submissions.
+
+**Browser binding and cookie scoping.** The typed code works only in the browser that requested the email. When the reader requests sign-in, `POST /api/auth/request` sets an HttpOnly, Secure, SameSite=Strict cookie `relic_sign_in_request` scoped to path `/api/auth/code`. Submitting the code sends only `{"code": "123456"}` with this cookie. A code entered in another browser or after a newer request in the same browser fails with uniform 401 `sign_in_code_failed`.
+
+**Per-surface behavior:**
+- *Comment composer:* appears in the sent state after the email message and warning note. Focus is set automatically in a microtask. Upon verification, sets session attribution, clears the code block, mounts any owed passkey offer, announces verification across tabs, and enables comment submission.
+- *Passkey offer card:* when requesting a fresh sign-in to enroll a first passkey, the card renders the code entry in `link-sent` under `[data-passkey-offer-code]`. Upon verification, empties the container, transitions to `loading`, and fetches creation options.
+- *Decision panel:* renders the code entry in the `sent` step of passkey link creation. Upon verification, immediately invokes `enterPasskey(verdict)`.
+- *Dashboard:* displays the code entry under the sent notice. Upon verification, announces across tabs and reloads the page to show the verified session and passkey enrollment card.
 ## 7. Routed to `shape`
 
 Five items, and only these five.

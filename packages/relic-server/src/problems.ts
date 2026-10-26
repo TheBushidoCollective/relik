@@ -73,7 +73,12 @@ export type ProblemCode =
   | 'passkey_verification_failed'
   | 'passkey_rate_limited'
   | 'passkey_sign_in_failed'
-  | 'passkey_fresh_link_required';
+  | 'passkey_fresh_link_required'
+  // Typed sign-in code. Every failure is one answer, so the endpoint cannot
+  // tell anybody whether a code exists, expired, was spent, or was guessed
+  // too often.
+  | 'invalid_sign_in_code'
+  | 'sign_in_code_failed';
 
 const STATUS: Readonly<Record<ProblemCode, number>> = {
   relic_not_found: 404,
@@ -119,6 +124,8 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   passkey_rate_limited: 429,
   passkey_sign_in_failed: 401,
   passkey_fresh_link_required: 401,
+  invalid_sign_in_code: 400,
+  sign_in_code_failed: 401,
 };
 
 /** `title` SHOULD NOT change from occurrence to occurrence, per RFC 9457. */
@@ -168,7 +175,9 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   passkey_rate_limited: 'Too many passkey requests',
   passkey_sign_in_failed: 'Passkey sign-in did not work',
   passkey_fresh_link_required:
-    'Adding a first passkey needs a fresh sign-in link',
+    'Adding a first passkey needs a fresh sign-in from an email',
+  invalid_sign_in_code: 'Invalid sign-in code payload',
+  sign_in_code_failed: 'Sign-in code did not work',
 };
 
 export interface ProblemExtensions {

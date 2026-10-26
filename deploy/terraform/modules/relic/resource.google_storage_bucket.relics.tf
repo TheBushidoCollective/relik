@@ -16,9 +16,10 @@ resource "google_storage_bucket" "relics" {
   # is never deleted by storage, and an expired relic's bytes stay until
   # something explicitly deletes them.
 
-  # Challenges and mint dedup entries. Live for minutes, expire at the coarsest
-  # granularity a lifecycle rule offers, and are refused on age by the
-  # application long before this runs.
+  # Challenges (including sign-in codes and address budgets) and mint dedup
+  # entries. Live for minutes, expire at the coarsest granularity a lifecycle
+  # rule offers, and are refused on age by the application long before this
+  # runs.
   lifecycle_rule {
     action {
       type = "Delete"

@@ -42,6 +42,8 @@ import {
   type RelicStore,
   type SessionRow,
   type ShareRow,
+  type SignInCodeBudgetRow,
+  type SignInCodeRow,
   type Tombstone,
   type WebauthnChallengeRow,
 } from './store.ts';
@@ -791,8 +793,64 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       if (current === undefined) return undefined;
       // Spend it whether or not it was still valid, so a replay finds
       // nothing rather than an expired row somebody might forgive later.
-      await remove(name);
+      if (!(await remove(name, current.generation))) return undefined;
       return current.value;
+    },
+
+    async putSignInCode(row: SignInCodeRow): Promise<void> {
+      await put(
+        key('challenge', 'sign-in-code', `${row.requestHash}.json`),
+        row
+      );
+    },
+
+    async getSignInCode(
+      requestHash: string
+    ): Promise<SignInCodeRow | undefined> {
+      const found = await get<SignInCodeRow>(
+        key('challenge', 'sign-in-code', `${requestHash}.json`)
+      );
+      return found?.value;
+    },
+
+    async deleteSignInCode(requestHash: string): Promise<void> {
+      await remove(key('challenge', 'sign-in-code', `${requestHash}.json`));
+    },
+
+    async reserveSignInCodeAttempt(
+      addressHash: string,
+      now: number,
+      limit: number,
+      windowMs: number
+    ): Promise<boolean> {
+      const name = key(
+        'challenge',
+        'sign-in-code-budget',
+        `${addressHash}.json`
+      );
+      for (let i = 0; i < casAttempts; i++) {
+        const current = await get<SignInCodeBudgetRow>(name);
+        // A caller whose `now` is earlier than the window's start still draws
+        // on that window: requests finish out of order, and counting one as
+        // outside the window would let it reset the row and forget every
+        // attempt already charged.
+        const inWindow =
+          current !== undefined && now < current.value.windowStart + windowMs;
+        const before = inWindow ? current.value.attempts : 0;
+        const windowStart = inWindow ? current.value.windowStart : now;
+        const next: SignInCodeBudgetRow = {
+          addressHash,
+          windowStart,
+          attempts: before + 1,
+        };
+        const ok = await put(name, next, current?.generation ?? '0');
+        if (ok) {
+          return before < limit;
+        }
+      }
+      throw new Error(
+        `gcs sign-in code budget lost ${casAttempts} compare-and-swap races; refusing to allow an attempt that was never charged`
+      );
     },
 
     async putSession(row: SessionRow): Promise<void> {
