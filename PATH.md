@@ -1,3 +1,27 @@
+# Passkey sign-in for returning readers
+
+A reader who verified their email once and added a passkey can open a relic later, tap 'Sign in with passkey' (or pick the passkey from the email field's autofill), and post a comment without receiving any email.
+
+## Acceptance command
+
+The implementation provides this loopback proof:
+
+```sh
+mise exec -- bun run verify
+mise exec -- bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH="$(command -v google-chrome)" mise exec -- bun packages/relic-mcp/test/passkey-sign-in-path.ts
+```
+
+Success requires `PASSKEY_SIGN_IN_PATH_OK`, verified usernameless and email-first sign-in options with decoy padding, TOFU passkey enrollment after magic-link verification, session resumption without email, comment author attribution, and passing negative controls (replayed sign-in refusal, content-type enforcement, oracle prevention, and assertion requirement on decisions). All proof writes target local in-memory services.
+
+For production verification against a live service:
+
+```sh
+RELIC_PASSKEY_PROBE_MAILBOX=user@example.com mise exec -- bun packages/relic-mcp/test/passkey-sign-in-live-probe.ts
+```
+
+Success requires `PASSKEY_SIGN_IN_LIVE_OK relic=<id> client=relic-mcp@<version>`.
+
 # OTIO review path
 
 A publisher supplies an `.otiod` directory, Relik packages and encrypts a standard `.otioz`, a reviewer plays its tracks and leaves track-specific point or range feedback, and a fresh publisher agent reads the original revision and source-media coordinates before publishing a revision.
