@@ -53,11 +53,12 @@ export interface PasskeySignInOptions {
   readonly chromePath: string;
   readonly readerEmail: string;
   readonly resolveMagicLink: (email: string) => Promise<string>;
+  readonly awaitPasskeyNotice: (email: string) => Promise<string>;
+  readonly seedStaleSession?: (email: string) => Promise<string>;
   readonly isLive?: boolean;
   readonly store?: RelicStore;
   readonly getMailsSentCount?: () => number;
 }
-
 export interface PasskeySignInResult {
   readonly relicId: string;
   readonly readerEmail: string;
@@ -87,11 +88,12 @@ export async function runPasskeySignInSequence(
     chromePath,
     readerEmail,
     resolveMagicLink,
+    awaitPasskeyNotice,
+    seedStaleSession,
     isLive = false,
     store,
     getMailsSentCount,
   } = options;
-
   // Step 1: Publish (title: '', cover: false, ttl_days: 1)
   const docPath = join(scratchDir, 'proof-passkey-sign-in.txt');
   await writeFile(
@@ -350,6 +352,19 @@ export async function runPasskeySignInSequence(
     }
 
     console.log('PASSKEY_STEP_4_ENROLL_OK resident=true');
+
+    // Step 4B: await and verify the passkey-added notice email
+    const noticeLine = await awaitPasskeyNotice(readerEmail);
+    const expectedNoticePrefix = `a passkey was added for ${readerEmail.toLowerCase()} on `;
+    assert.ok(
+      noticeLine.toLowerCase().startsWith(expectedNoticePrefix),
+      `notice line does not start with expected prefix (case-insensitive): expected "${expectedNoticePrefix}", got "${noticeLine}"`
+    );
+    assert.ok(
+      noticeLine.endsWith(' UTC.'),
+      `notice line does not end with " UTC.": got "${noticeLine}"`
+    );
+    console.log(`PASSKEY_STEP_4B_NOTICE_OK to=${readerEmail}`);
 
     // A virtual authenticator answers a conditional (autofill) request on its
     // own, so a page that arms one signs the reader in before anything can be
@@ -664,6 +679,134 @@ export async function runPasskeySignInSequence(
     console.log(
       'PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400'
     );
+
+    // Step 8: fresh link required for a first passkey (negative + recovery)
+    if (typeof seedStaleSession !== 'function') {
+      console.log('PASSKEY_STEP_8_FRESH_LINK_SKIPPED live');
+    } else {
+      const addressB = `reader+b-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
+      const staleToken = await seedStaleSession(addressB);
+
+      // 1. Seeded stale session for B.
+      // 2. Network.setCookie for relic_session and for relic_passkey_offer=1.
+      await browser.cdp.send(
+        'Network.setCookie',
+        {
+          name: 'relic_session',
+          value: staleToken,
+          url: serviceOrigin,
+          httpOnly: true,
+          secure: false,
+          sameSite: 'Lax',
+        },
+        browser.sessionId
+      );
+      await browser.cdp.send(
+        'Network.setCookie',
+        {
+          name: 'relic_passkey_offer',
+          value: '1',
+          url: serviceOrigin,
+          secure: false,
+          sameSite: 'Lax',
+        },
+        browser.sessionId
+      );
+
+      // 3. Run localStorage.removeItem('relic:passkey-offer') because step 4 left 'created' there.
+      await browser.evaluate<void>(`
+        (() => {
+          try {
+            localStorage.removeItem('relic:passkey-offer');
+          } catch {}
+        })()
+      `);
+
+      // Count credentials before reopening
+      const credsBeforeStep8 = (await browser.cdp.send(
+        'WebAuthn.getCredentials',
+        { authenticatorId: browser.authenticatorId },
+        browser.sessionId
+      )) as { credentials?: readonly CdpWebAuthnCredential[] };
+      const credCountBefore = (credsBeforeStep8.credentials ?? []).length;
+
+      // 4. Reopen the relic.
+      const step8Loaded = browser.cdp.waitForEvent('Page.loadEventFired', {
+        sessionId: browser.sessionId,
+        timeoutMs: 25000,
+      });
+      await browser.cdp.send(
+        'Page.navigate',
+        { url: relicUrl },
+        browser.sessionId
+      );
+      await step8Loaded;
+
+      // 5. Wait for [data-passkey-offer][data-state="link-required"].
+      await browser.waitForSelector(
+        '[data-passkey-offer][data-state="link-required"]',
+        20000
+      );
+
+      // 6. Check that WebAuthn.getCredentials shows no new credential (orphans=0).
+      const credsAfterRefusal = (await browser.cdp.send(
+        'WebAuthn.getCredentials',
+        { authenticatorId: browser.authenticatorId },
+        browser.sessionId
+      )) as { credentials?: readonly CdpWebAuthnCredential[] };
+      const credCountAfter = (credsAfterRefusal.credentials ?? []).length;
+      const orphans = credCountAfter - credCountBefore;
+      assert.equal(
+        orphans,
+        0,
+        `expected 0 orphaned credentials, got ${orphans}`
+      );
+
+      // 7. Click [data-passkey-offer-link].
+      await browser.clickSelector('[data-passkey-offer-link]');
+
+      // 8. Follow resolveMagicLink(B) the way step 3 follows a link.
+      const magicLinkB = await resolveMagicLink(addressB);
+      assert.ok(
+        magicLinkB,
+        'resolveMagicLink for address B returned empty link'
+      );
+
+      const authLoadedB = browser.cdp.waitForEvent('Page.loadEventFired', {
+        sessionId: browser.sessionId,
+        timeoutMs: 25000,
+      });
+      await browser.cdp.send(
+        'Page.navigate',
+        { url: magicLinkB },
+        browser.sessionId
+      );
+      await authLoadedB;
+
+      // 9. Wait for ready, then create, then created.
+      await browser.waitForSelector(
+        '[data-passkey-offer][data-state="ready"]',
+        20000
+      );
+      await browser.clickSelector('[data-passkey-offer-create]');
+      await browser.waitForSelector(
+        '[data-passkey-offer][data-state="created"]',
+        20000
+      );
+
+      // 10. Call awaitPasskeyNotice(B).
+      const noticeB = await awaitPasskeyNotice(addressB);
+      assert.ok(
+        noticeB
+          .toLowerCase()
+          .startsWith(`a passkey was added for ${addressB.toLowerCase()} on `),
+        `notice line for B does not start with expected prefix: got "${noticeB}"`
+      );
+
+      console.log(
+        'PASSKEY_STEP_8_FRESH_LINK_OK refused=passkey_fresh_link_required orphans=0 recovered=created notice=1'
+      );
+    }
 
     return {
       relicId,
