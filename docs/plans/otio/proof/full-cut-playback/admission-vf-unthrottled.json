@@ -1,0 +1,1043 @@
+{
+  "schemaVersion": "relic-otio-native-frame-admission/v1",
+  "timestamp": "2026-10-26T06:31:44.460Z",
+  "chromePath": "chrome-headless-shell",
+  "browserProduct": "HeadlessChrome/149.0.7827.55",
+  "cpuThrottlingRate": 1,
+  "minSamplesRequired": 20,
+  "casesTotal": 11,
+  "casesPassed": 8,
+  "casesEligible": 8,
+  "methodApproval": {
+    "inside_rvfc": true,
+    "vf_rvfc": true
+  },
+  "certifiedDrawMethod": "vf_rvfc",
+  "cases": [
+    {
+      "caseName": "fr24.mp4",
+      "filePath": "fr24.mp4",
+      "outcome": "pass",
+      "totalOracleFrames": 48,
+      "oracleDistinctionMinRmse": 78.0774855512138,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "0.3us": 7,
+            "-0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "0.3us": 7,
+            "-0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "fr60.mp4",
+      "filePath": "fr60.mp4",
+      "outcome": "pass",
+      "totalOracleFrames": 120,
+      "oracleDistinctionMinRmse": 77.7712993333659,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 77.7712993333659,
+          "deltaMinUs": -0.33333333333135373,
+          "deltaMaxUs": 0.3333333333521704,
+          "maxAbsDeltaUs": 0.3333333333521704,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.3333333333382926,
+          "deltaDistribution": {
+            "0.3us": 7,
+            "-0.3us": 7,
+            "0.0us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 77.7712993333659,
+          "deltaMinUs": -0.33333333333135373,
+          "deltaMaxUs": 0.3333333333521704,
+          "maxAbsDeltaUs": 0.3333333333521704,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.3333333333382926,
+          "deltaDistribution": {
+            "0.3us": 7,
+            "-0.3us": 7,
+            "0.0us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "fr24b.mp4",
+      "filePath": "fr24b.mp4",
+      "outcome": "pass",
+      "totalOracleFrames": 48,
+      "oracleDistinctionMinRmse": 78.0774855512138,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 77.77190205980564,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "0.3us": 7,
+            "-0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 77.77190205980564,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "0.3us": 7,
+            "-0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "fr24b.mov",
+      "filePath": "fr24b.mov",
+      "outcome": "pass",
+      "totalOracleFrames": 48,
+      "oracleDistinctionMinRmse": 78.0774855512138,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 77.77190205980564,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "0.3us": 7,
+            "-0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 77.77190205980564,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "0.3us": 7,
+            "-0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "vfr.mp4",
+      "filePath": "vfr.mp4",
+      "outcome": "pass",
+      "totalOracleFrames": 28,
+      "oracleDistinctionMinRmse": 77.46511311551801,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "-0.3us": 7,
+            "0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "-0.3us": 7,
+            "0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "fr30.webm",
+      "filePath": "fr30.webm",
+      "outcome": "pass",
+      "totalOracleFrames": 90,
+      "oracleDistinctionMinRmse": 78.0774855512138,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": 0,
+          "deltaMaxUs": 0,
+          "maxAbsDeltaUs": 0,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0,
+          "deltaDistribution": {
+            "0.0us": 20
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": 0,
+          "deltaMaxUs": 0,
+          "maxAbsDeltaUs": 0,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0,
+          "deltaDistribution": {
+            "0.0us": 20
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "no-duration.webm",
+      "filePath": "no-duration.webm",
+      "outcome": "pass",
+      "totalOracleFrames": 90,
+      "oracleDistinctionMinRmse": 78.0774855512138,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": 0,
+          "deltaMaxUs": 0,
+          "maxAbsDeltaUs": 0,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0,
+          "deltaDistribution": {
+            "0.0us": 20
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 0,
+          "rmseP95": 0,
+          "rmseMax": 0,
+          "distinctionMarginP50": 78.0774855512138,
+          "deltaMinUs": 0,
+          "deltaMaxUs": 0,
+          "maxAbsDeltaUs": 0,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0,
+          "deltaDistribution": {
+            "0.0us": 20
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "short-edit.mp4",
+      "filePath": "short-edit.mp4",
+      "outcome": "ineligible",
+      "totalOracleFrames": 24,
+      "oracleDistinctionMinRmse": 0,
+      "oracleAmbiguous": false,
+      "eligible": false,
+      "ineligibilityReason": "edit-window-mismatch",
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 0,
+          "certifiedSampleCount": 0,
+          "distinctFramesCount": 0,
+          "matchCount": 0,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 0,
+          "errorRatio": 1,
+          "rmseP50": null,
+          "rmseP95": null,
+          "rmseMax": null,
+          "distinctionMarginP50": null,
+          "deltaMinUs": null,
+          "deltaMaxUs": null,
+          "maxAbsDeltaUs": null,
+          "deltaP50Us": null,
+          "deltaP95Us": null,
+          "lagDistribution": {},
+          "rejectionReasons": {
+            "Ineligible: edit-window-mismatch": 1
+          },
+          "approved": false,
+          "failureReason": "Ineligible: edit-window-mismatch",
+          "failedCondition": "ineligible_edit-window-mismatch"
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 0,
+          "certifiedSampleCount": 0,
+          "distinctFramesCount": 0,
+          "matchCount": 0,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 0,
+          "errorRatio": 1,
+          "rmseP50": null,
+          "rmseP95": null,
+          "rmseMax": null,
+          "distinctionMarginP50": null,
+          "deltaMinUs": null,
+          "deltaMaxUs": null,
+          "maxAbsDeltaUs": null,
+          "deltaP50Us": null,
+          "deltaP95Us": null,
+          "lagDistribution": {},
+          "rejectionReasons": {
+            "Ineligible: edit-window-mismatch": 1
+          },
+          "approved": false,
+          "failureReason": "Ineligible: edit-window-mismatch",
+          "failedCondition": "ineligible_edit-window-mismatch"
+        }
+      },
+      "approved": false,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "rate-edit.mp4",
+      "filePath": "rate-edit.mp4",
+      "outcome": "ineligible",
+      "totalOracleFrames": 48,
+      "oracleDistinctionMinRmse": 0,
+      "oracleAmbiguous": false,
+      "eligible": false,
+      "ineligibilityReason": "demux-warning",
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 0,
+          "certifiedSampleCount": 0,
+          "distinctFramesCount": 0,
+          "matchCount": 0,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 0,
+          "errorRatio": 1,
+          "rmseP50": null,
+          "rmseP95": null,
+          "rmseMax": null,
+          "distinctionMarginP50": null,
+          "deltaMinUs": null,
+          "deltaMaxUs": null,
+          "maxAbsDeltaUs": null,
+          "deltaP50Us": null,
+          "deltaP95Us": null,
+          "lagDistribution": {},
+          "rejectionReasons": {
+            "Ineligible: demux-warning": 1
+          },
+          "approved": false,
+          "failureReason": "Ineligible: demux-warning",
+          "failedCondition": "ineligible_demux-warning"
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 0,
+          "certifiedSampleCount": 0,
+          "distinctFramesCount": 0,
+          "matchCount": 0,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 0,
+          "errorRatio": 1,
+          "rmseP50": null,
+          "rmseP95": null,
+          "rmseMax": null,
+          "distinctionMarginP50": null,
+          "deltaMinUs": null,
+          "deltaMaxUs": null,
+          "maxAbsDeltaUs": null,
+          "deltaP50Us": null,
+          "deltaP95Us": null,
+          "lagDistribution": {},
+          "rejectionReasons": {
+            "Ineligible: demux-warning": 1
+          },
+          "approved": false,
+          "failureReason": "Ineligible: demux-warning",
+          "failedCondition": "ineligible_demux-warning"
+        }
+      },
+      "approved": false,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "loop-edit.mp4",
+      "filePath": "loop-edit.mp4",
+      "outcome": "ineligible",
+      "totalOracleFrames": 48,
+      "oracleDistinctionMinRmse": 0,
+      "oracleAmbiguous": false,
+      "eligible": false,
+      "ineligibilityReason": "demux-warning",
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 0,
+          "certifiedSampleCount": 0,
+          "distinctFramesCount": 0,
+          "matchCount": 0,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 0,
+          "errorRatio": 1,
+          "rmseP50": null,
+          "rmseP95": null,
+          "rmseMax": null,
+          "distinctionMarginP50": null,
+          "deltaMinUs": null,
+          "deltaMaxUs": null,
+          "maxAbsDeltaUs": null,
+          "deltaP50Us": null,
+          "deltaP95Us": null,
+          "lagDistribution": {},
+          "rejectionReasons": {
+            "Ineligible: demux-warning": 1
+          },
+          "approved": false,
+          "failureReason": "Ineligible: demux-warning",
+          "failedCondition": "ineligible_demux-warning"
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 0,
+          "certifiedSampleCount": 0,
+          "distinctFramesCount": 0,
+          "matchCount": 0,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 0,
+          "errorRatio": 1,
+          "rmseP50": null,
+          "rmseP95": null,
+          "rmseMax": null,
+          "distinctionMarginP50": null,
+          "deltaMinUs": null,
+          "deltaMaxUs": null,
+          "maxAbsDeltaUs": null,
+          "deltaP50Us": null,
+          "deltaP95Us": null,
+          "lagDistribution": {},
+          "rejectionReasons": {
+            "Ineligible: demux-warning": 1
+          },
+          "approved": false,
+          "failureReason": "Ineligible: demux-warning",
+          "failedCondition": "ineligible_demux-warning"
+        }
+      },
+      "approved": false,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    },
+    {
+      "caseName": "long-gop-1080p.mp4",
+      "filePath": "long-gop-1080p.mp4",
+      "outcome": "pass",
+      "totalOracleFrames": 90,
+      "oracleDistinctionMinRmse": 77.46511311551801,
+      "oracleAmbiguous": false,
+      "eligible": true,
+      "methods": {
+        "inside_rvfc": {
+          "drawMethod": "inside_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 1.0606601717798212,
+          "rmseP95": 1.224744871391589,
+          "rmseMax": 1.3693063937629153,
+          "distinctionMarginP50": 76.41171393667254,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "-0.3us": 7,
+            "0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        },
+        "vf_rvfc": {
+          "drawMethod": "vf_rvfc",
+          "sampleCount": 20,
+          "certifiedSampleCount": 20,
+          "distinctFramesCount": 20,
+          "matchCount": 20,
+          "mismatchCount": 0,
+          "wrongFrameCount": 0,
+          "uncoveredInSpanCount": 0,
+          "fallbackRequiredCount": 0,
+          "unpredictedFallbackCount": 0,
+          "captureFailedCount": 0,
+          "matchRate": 1,
+          "errorRatio": 0,
+          "rmseP50": 1.0606601717798212,
+          "rmseP95": 1.224744871391589,
+          "rmseMax": 1.3693063937629153,
+          "distinctionMarginP50": 76.41171393667254,
+          "deltaMinUs": -0.333333333379926,
+          "deltaMaxUs": 0.333333333379926,
+          "maxAbsDeltaUs": 0.333333333379926,
+          "deltaP50Us": 0,
+          "deltaP95Us": 0.333333333379926,
+          "deltaDistribution": {
+            "0.0us": 7,
+            "-0.3us": 7,
+            "0.3us": 6
+          },
+          "lagDistribution": {
+            "0": 20
+          },
+          "rejectionReasons": {},
+          "approved": true
+        }
+      },
+      "approved": true,
+      "metadataDisagreementCount": 0,
+      "metadataDisagreementRate": 0
+    }
+  ],
+  "metadataDisagreementByClass": {
+    "fr24.mp4": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    },
+    "fr60.mp4": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    },
+    "fr24b.mp4": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    },
+    "fr24b.mov": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    },
+    "vfr.mp4": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    },
+    "fr30.webm": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    },
+    "no-duration.webm": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    },
+    "long-gop-1080p.mp4": {
+      "sampleCount": 20,
+      "disagreementCount": 0,
+      "disagreementRate": 0
+    }
+  },
+  "negativeControls": [
+    {
+      "name": "tag_shift_plus_one",
+      "intendedCounter": "wrongFrame",
+      "observedCounter": "wrongFrame",
+      "rejectionReason": "excessive_rmse",
+      "passed": true,
+      "detail": "Rejection: excessive_rmse, wrongFrameCount: 1"
+    },
+    {
+      "name": "stale_pixels",
+      "intendedCounter": "wrongFrame",
+      "observedCounter": "wrongFrame",
+      "rejectionReason": "lagged_frame",
+      "passed": true,
+      "detail": "Rejection: lagged_frame, wrongFrameCount: 1, lagDelta: -1"
+    },
+    {
+      "name": "q_plus_one_us_delta_uncovered",
+      "intendedCounter": "uncoveredInSpan",
+      "observedCounter": "uncoveredInSpan",
+      "rejectionReason": "uncovered_in_span",
+      "passed": true,
+      "detail": "Rejection: uncovered_in_span, uncoveredInSpanCount: 1"
+    },
+    {
+      "name": "timing_delta_exceeds_1us",
+      "intendedCounter": "wrongFrame",
+      "observedCounter": "wrongFrame",
+      "rejectionReason": "ineligible_timing",
+      "passed": true,
+      "detail": "Rejection: ineligible_timing, wrongFrameCount: 1, timeDeltaUs: 1.500us"
+    },
+    {
+      "name": "duplicated_vfr_oracle",
+      "intendedCounter": "oracleAmbiguous",
+      "observedCounter": "oracleAmbiguous",
+      "rejectionReason": "ambiguous_match",
+      "passed": true,
+      "detail": "Distinction minDelta: 0.000, ambiguous: true, ev.rejectionReason: ambiguous_match"
+    },
+    {
+      "name": "paused_window_k_evaluated_as_k_plus_1",
+      "intendedCounter": "wrongFrame",
+      "observedCounter": "wrongFrame",
+      "rejectionReason": "lagged_frame",
+      "passed": true,
+      "detail": "Rejection: lagged_frame, wrongFrameCount: 1"
+    },
+    {
+      "name": "outside_span_certified_frame_unpredicted",
+      "intendedCounter": "unpredictedFallback",
+      "observedCounter": "unpredictedFallback",
+      "rejectionReason": "fallback_required",
+      "passed": true,
+      "detail": "Rejection: fallback_required, unpredictedFallbackCount: 1"
+    },
+    {
+      "name": "scanner_missing_file_probe_error",
+      "intendedCounter": "probeError",
+      "observedCounter": "probeError",
+      "rejectionReason": "probe_error",
+      "passed": true,
+      "detail": "Scanner threw: true (Timing scanner process failed for missing-fixture-404.mp4 (exit 1): ENOENT: no s)"
+    }
+  ],
+  "twoElementCoverage": [
+    {
+      "name": "same_file_different_offsets",
+      "element1": {
+        "caseName": "fr24.mp4",
+        "offsetSeconds": 0,
+        "sampleCount": 20,
+        "matchRate": 1,
+        "approved": true
+      },
+      "element2": {
+        "caseName": "fr24.mp4",
+        "offsetSeconds": 1,
+        "sampleCount": 20,
+        "matchRate": 1,
+        "approved": true
+      },
+      "passed": true
+    },
+    {
+      "name": "different_frame_rates",
+      "element1": {
+        "caseName": "fr24.mp4",
+        "offsetSeconds": 0,
+        "sampleCount": 20,
+        "matchRate": 1,
+        "approved": true
+      },
+      "element2": {
+        "caseName": "fr60.mp4",
+        "offsetSeconds": 0,
+        "sampleCount": 20,
+        "matchRate": 1,
+        "approved": true
+      },
+      "passed": true
+    }
+  ]
+}

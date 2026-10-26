@@ -1101,9 +1101,9 @@ function createHtmlTestPage(delayRvfcMs = 0): string {
   <canvas id="test-canvas-2" width="64" height="16"></canvas>
   <canvas id="test-canvas-2-vf" width="64" height="16"></canvas>
   <script>
+    const origRvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
     if (${delayRvfcMs > 0 ? delayRvfcMs : 0} > 0) {
       const delayMs = ${delayRvfcMs > 0 ? delayRvfcMs : 0};
-      const origRvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
       HTMLVideoElement.prototype.requestVideoFrameCallback = function(cb) {
         return origRvfc.call(this, (now, metadata) => {
           const start = performance.now();
@@ -1131,6 +1131,8 @@ function createHtmlTestPage(delayRvfcMs = 0): string {
         if (!ctx) return reject(new Error('Canvas 2D context is null'));
 
         video.pause();
+        video.removeAttribute('src');
+        video.load();
         canvas.width = 64;
         canvas.height = 16;
         let finished = false;
@@ -1167,7 +1169,7 @@ function createHtmlTestPage(delayRvfcMs = 0): string {
               if (i > 0 && samples[i - 1] && samples[i - 1].pixelsBase64 === pixels) {
                 await new Promise((res) => {
                   let timer = setTimeout(() => { video.pause(); res(); }, 500);
-                  video.requestVideoFrameCallback((now, meta) => {
+                  origRvfc.call(video, (now, meta) => {
                     clearTimeout(timer);
                     video.pause();
                     sampleTime = meta.mediaTime;
