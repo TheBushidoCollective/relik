@@ -730,17 +730,29 @@ export async function runPasskeySignInSequence(
       )) as { credentials?: readonly CdpWebAuthnCredential[] };
       const credCountBefore = (credsBeforeStep8.credentials ?? []).length;
 
-      // 4. Reopen the relic.
-      const step8Loaded = browser.cdp.waitForEvent('Page.loadEventFired', {
-        sessionId: browser.sessionId,
-        timeoutMs: 25000,
-      });
+      // 4. Reopen the relic. Conditional mediation is reported unavailable
+      // again, or the virtual authenticator would autofill reader A's
+      // passkey and replace the stale session under test. The tab sits on
+      // /<id> with its fragment stripped, so leave the document first.
       await browser.cdp.send(
-        'Page.navigate',
-        { url: relicUrl },
+        'Page.addScriptToEvaluateOnNewDocument',
+        {
+          source: `(() => {
+            if (typeof PublicKeyCredential === 'function') {
+              PublicKeyCredential.isConditionalMediationAvailable = async () => false;
+            }
+          })()`,
+        },
         browser.sessionId
       );
-      await step8Loaded;
+      for (const url of ['about:blank', relicUrl]) {
+        const loaded = browser.cdp.waitForEvent('Page.loadEventFired', {
+          sessionId: browser.sessionId,
+          timeoutMs: 25000,
+        });
+        await browser.cdp.send('Page.navigate', { url }, browser.sessionId);
+        await loaded;
+      }
 
       // 5. Wait for [data-passkey-offer][data-state="link-required"].
       await browser.waitForSelector(

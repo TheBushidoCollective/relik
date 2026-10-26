@@ -1052,6 +1052,23 @@ export async function runDecisionProofSequence(
       const addressC = `reader+c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
       const staleTokenC = await seedStaleSession(addressC);
 
+      // The checks above removed every virtual authenticator, so this one
+      // gets its own: a refused first passkey must leave it holding nothing.
+      const authC = (await browser.cdp.send(
+        'WebAuthn.addVirtualAuthenticator',
+        {
+          options: {
+            protocol: 'ctap2',
+            transport: 'internal',
+            hasResidentKey: true,
+            hasUserVerification: true,
+            isUserVerified: true,
+            automaticPresenceSimulation: true,
+          },
+        },
+        browser.sessionId
+      )) as { authenticatorId: string };
+
       // 1. Seed a stale session for C and set the cookie.
       await browser.cdp.send(
         'Network.setCookie',
@@ -1069,7 +1086,7 @@ export async function runDecisionProofSequence(
       // Count credentials before reopening
       const credsBeforeC = (await browser.cdp.send(
         'WebAuthn.getCredentials',
-        { authenticatorId: browser.authenticatorId },
+        { authenticatorId: authC.authenticatorId },
         browser.sessionId
       )) as { credentials?: readonly { credentialId?: string }[] };
       const credCountBeforeC = (credsBeforeC.credentials ?? []).length;
@@ -1102,7 +1119,7 @@ export async function runDecisionProofSequence(
       // 5. Check that the authenticator count is unchanged.
       const credsAfterRefusalC = (await browser.cdp.send(
         'WebAuthn.getCredentials',
-        { authenticatorId: browser.authenticatorId },
+        { authenticatorId: authC.authenticatorId },
         browser.sessionId
       )) as { credentials?: readonly { credentialId?: string }[] };
       const credCountAfterC = (credsAfterRefusalC.credentials ?? []).length;
@@ -1125,6 +1142,12 @@ export async function runDecisionProofSequence(
       assert.ok(
         magicLinkC && magicLinkC.includes('/api/auth/callback'),
         `expected callback URL for address C, got "${magicLinkC}"`
+      );
+
+      await browser.cdp.send(
+        'WebAuthn.removeVirtualAuthenticator',
+        { authenticatorId: authC.authenticatorId },
+        browser.sessionId
       );
 
       console.log(
