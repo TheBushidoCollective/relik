@@ -5778,3 +5778,257 @@ canvas.relic-page {
     padding: 0 0.4rem;
   }
 }
+
+/* passkey sign-in */
+
+/*
+ * The second way in, and the offer to set it up.
+ *
+ * The link stays the primary act, so the passkey button is not a second
+ * patina slab: it is the band's hairline action, set at the same size as
+ * "Send me a link", and the two read as a choice in order rather than two
+ * equal doors. The "or" is a catalog rule with a word at its head, flush
+ * left with the buttons it divides. The email-first confirm takes a patina
+ * outline, because by then it is the press the reader came back for; it
+ * stays an outline so it never competes with the link as a second slab.
+ *
+ * The offer is the composer's family without being a composer (the proofs
+ * wait on `form.compose`): same surface and hairline, but its patina rule
+ * runs down the left edge, so it reads as a note set beside the form rather
+ * than a second form above it.
+ *
+ * Every label stays on a phone. The band's narrow rule hides `.action span`
+ * everywhere it is not exempted, and a key glyph alone is not an
+ * instruction anybody can follow.
+ */
+.passkey-sign-in {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
+
+.passkey-or {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  margin: 0.15rem 0 0;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.passkey-or::after {
+  flex: 1 1 auto;
+  content: "";
+  border-top: 1px solid var(--rule);
+}
+
+.passkey-sign-in .action.passkey-button {
+  position: relative;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+}
+
+.passkey-sign-in .action.passkey-button .icon {
+  color: var(--patina);
+}
+
+.passkey-sign-in .action.passkey-button:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+  border-color: var(--patina);
+}
+
+/* The press the reader came back for, once they have typed an address. */
+.passkey-sign-in .action.passkey-button[data-passkey-email-first-confirm] {
+  color: var(--patina-ink);
+  border-color: var(--patina);
+  box-shadow: inset 0 0 0 1px var(--patina);
+}
+
+.passkey-sign-in .action.passkey-button:disabled {
+  cursor: progress;
+}
+
+/* Not ready, or refused for now: the button stays pressable, because the
+   press is what re-arms it, but it stops looking like the next step. */
+.passkey-sign-in[data-state="preparing"] [data-passkey-sign-in],
+.passkey-sign-in[data-state="rate-limited"] [data-passkey-sign-in] {
+  color: var(--ink-soft);
+  border-style: dashed;
+}
+
+.passkey-sign-in[data-state="preparing"] [data-passkey-sign-in] .icon,
+.passkey-sign-in[data-state="rate-limited"] [data-passkey-sign-in] .icon {
+  color: var(--ink-soft);
+}
+
+/* A ceremony in flight: a patina rule runs along the foot of whichever
+   button started it. Nothing glows; the rule moves, and holds still for
+   readers who asked for less motion. */
+.passkey-sign-in[data-state="working"] [data-passkey-sign-in]::after,
+.passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm]::after,
+.passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  left: -1px;
+  height: 2px;
+  content: "";
+  background: linear-gradient(90deg, transparent 0 30%, var(--patina) 30% 70%, transparent 70% 100%);
+  background-size: 250% 100%;
+  animation: passkey-running 1.4s linear infinite;
+}
+
+.passkey-sign-in[data-state="working"]:has([data-passkey-email-first-confirm]:not([hidden])) [data-passkey-sign-in]::after {
+  content: none;
+}
+
+.passkey-sign-in[data-state="working"] [data-passkey-sign-in],
+.passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm] {
+  cursor: progress;
+}
+
+.passkey-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.passkey-fallback-lead {
+  color: var(--ink-soft);
+}
+
+.passkey-link {
+  padding: 0;
+  color: var(--patina-ink);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.passkey-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.passkey-link:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.passkey-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 0 0 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--patina);
+}
+
+.passkey-offer > :not(button) {
+  flex: 1 1 100%;
+}
+
+.passkey-offer-title {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.passkey-offer-body {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.passkey-offer-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.passkey-offer .action.primary {
+  position: relative;
+  align-self: center;
+}
+
+.passkey-offer .passkey-link {
+  white-space: nowrap;
+}
+
+.passkey-offer[data-state="loading"] [data-passkey-offer-create] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.passkey-offer[data-state="working"] [data-passkey-offer-create] {
+  background: var(--patina-ink);
+  cursor: progress;
+}
+
+.passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+  background-image: linear-gradient(90deg, transparent 0 30%, var(--surface) 30% 70%, transparent 70% 100%);
+}
+
+.passkey-offer[data-state="error"] {
+  border-left-color: var(--oxide);
+}
+
+@keyframes passkey-running {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .passkey-sign-in[data-state="working"] [data-passkey-sign-in]::after,
+  .passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm]::after,
+  .passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+    background: var(--patina);
+    animation: none;
+  }
+
+  .passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+    background: var(--surface);
+  }
+}
+
+@media (max-width: 34rem) {
+  /* Specificity (0,4,1) beats the band rule's (0,3,3). */
+  .passkey-sign-in .action.passkey-button[type="button"] > span {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: nowrap;
+  }
+
+  .passkey-offer {
+    padding: 1rem;
+  }
+}

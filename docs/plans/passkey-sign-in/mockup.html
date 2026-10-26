@@ -1,0 +1,1901 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Relic mock: passkey sign-in</title>
+<!--
+  Passkey sign-in for returning readers: the mock for
+  docs/plans/passkey-sign-in/README.md, slice S3.
+
+  Self-contained on purpose: inline CSS, JS and SVG, and a CSP that refuses
+  every request, so it opens offline and cannot reach anything.
+
+  Three layers, kept apart:
+  1. The viewer excerpt: tokens and the composer, copied from
+     packages/relic-viewer/src/styles.css so the new block sits in its real
+     surroundings, including the narrow rule that hides `.action span`.
+  2. The `/* passkey sign-in */` block, byte-identical to the one in
+     styles.css. It styles exactly the classes in spec §4.9.
+  3. Mock chrome (`.mock-*`): the state rail, the scheme switch, and the
+     browser's own UI (autofill and the passkey sheet), drawn in the system's
+     look and labelled, because Relic does not draw them.
+-->
+<style>
+/* ---------- tokens (styles.css:14-56), plus a scheme switch for the mock ---------- */
+
+:root {
+  color-scheme: light dark;
+
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --diff-added: #dfeeea;
+  --diff-added-strong: #a7d6ca;
+  --diff-removed: #f3e5df;
+  --diff-removed-strong: #ddb6a6;
+
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino,
+    "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+    Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --bar-height: 3.25rem;
+
+  /* The browser's chrome, not Relic's. */
+  --b-bg: #ffffff;
+  --b-ink: #1f1f1f;
+  --b-soft: #5f6368;
+  --b-line: #e3e3e3;
+  --b-hover: #f2f2f2;
+  --b-accent: #0b57d0;
+  --b-accent-ink: #ffffff;
+  --b-scrim: rgb(0 0 0 / 32%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-scheme="light"]) {
+    --ground: #101314;
+    --surface: #171b1c;
+    --ink: #e6e9e7;
+    --ink-soft: #969e9d;
+    --rule: #2a3032;
+    --rule-strong: #3b4345;
+    --patina: #4fb3a6;
+    --patina-ink: #a7ded6;
+    --oxide: #c98058;
+    --diff-added: #15332f;
+    --diff-added-strong: #24564e;
+    --diff-removed: #34231d;
+    --diff-removed-strong: #684331;
+
+    --b-bg: #282a2d;
+    --b-ink: #e3e3e3;
+    --b-soft: #a8abb0;
+    --b-line: #3c4043;
+    --b-hover: #35373a;
+    --b-accent: #a8c7fa;
+    --b-accent-ink: #062e6f;
+    --b-scrim: rgb(0 0 0 / 55%);
+  }
+}
+
+:root[data-scheme="dark"] {
+  color-scheme: dark;
+  --ground: #101314;
+  --surface: #171b1c;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #2a3032;
+  --rule-strong: #3b4345;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  --oxide: #c98058;
+  --diff-added: #15332f;
+  --diff-added-strong: #24564e;
+  --diff-removed: #34231d;
+  --diff-removed-strong: #684331;
+
+  --b-bg: #282a2d;
+  --b-ink: #e3e3e3;
+  --b-soft: #a8abb0;
+  --b-line: #3c4043;
+  --b-hover: #35373a;
+  --b-accent: #a8c7fa;
+  --b-accent-ink: #062e6f;
+  --b-scrim: rgb(0 0 0 / 55%);
+}
+
+:root[data-scheme="light"] {
+  color-scheme: light;
+}
+
+/* ---------- viewer excerpt (styles.css), only what this screen uses ---------- */
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: none;
+  min-height: var(--bar-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.mark {
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  border-right: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.4rem 1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.filename {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accession {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+.identity-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.identity-meta .accession {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.version-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: stretch;
+  border-left: 1px solid var(--rule);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.actions .action:last-child {
+  border-right: 0;
+}
+
+.action:hover {
+  background: var(--ground);
+  color: var(--patina-ink);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.action.primary {
+  background: var(--patina);
+  color: var(--surface);
+  border: 0;
+  padding: 0.55rem 1rem;
+  align-self: flex-start;
+}
+
+.action.primary:hover {
+  background: var(--patina-ink);
+  color: var(--surface);
+}
+
+.icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: currentColor;
+}
+
+.action-count {
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+@media (max-width: 34rem) {
+  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list, .card-actions) span) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .action span.action-count {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+    display: inline-block;
+  }
+  .action {
+    padding: 0 0.75rem;
+  }
+  .mark {
+    display: none;
+  }
+  .identity {
+    padding: 0.4rem 0.7rem;
+  }
+  .identity-meta {
+    gap: 0.4rem;
+  }
+}
+
+.relic-row {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.stage-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.stage {
+  padding: 2rem 1.25rem 5rem;
+}
+
+.doc {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.prose {
+  font-family: var(--serif);
+  font-size: 1.06rem;
+  line-height: 1.7;
+}
+
+.prose h1,
+.prose h2 {
+  font-family: var(--sans);
+  line-height: 1.25;
+  margin: 2rem 0 0.6rem;
+}
+
+.prose h1 {
+  font-size: 1.7rem;
+  margin-top: 0;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.prose h2 {
+  font-size: 1.32rem;
+}
+
+.prose p {
+  margin: 0 0 1.1rem;
+}
+
+.prose ul {
+  margin: 0 0 1.1rem;
+  padding-left: 1.3rem;
+}
+
+.prose code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 0.05rem 0.3rem;
+}
+
+.thread {
+  display: none;
+  flex: 0 0 auto;
+  width: var(--thread-width, 22rem);
+  max-width: 100%;
+  margin: 0;
+  padding: 0 1.25rem 1.5rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--rule-strong);
+}
+
+.thread.is-open {
+  display: block;
+}
+
+.thread-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -1.25rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.thread-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.65rem 1.25rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.thread-toggle::after {
+  width: 0.55rem;
+  height: 0.55rem;
+  content: "";
+  border-top: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+@media (max-width: 44rem) {
+  .thread.is-open {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+.thread-note {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.thread-policy {
+  display: inline-block;
+  margin-bottom: 1rem;
+  color: var(--patina-ink);
+  font-size: 0.8rem;
+  text-underline-offset: 2px;
+}
+
+.compose {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--patina);
+}
+
+.compose-title {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.compose-identity {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.compose-identity strong {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.compose-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  background: var(--ground);
+  border-left: 3px solid var(--patina);
+  font-size: 0.82rem;
+}
+
+.compose-target-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.compose-note {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--ground);
+  border-left: 2px solid var(--oxide);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.compose-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.compose-warning {
+  margin: 0.5rem 0 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--diff-removed);
+  border-left: 2px solid var(--oxide);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.compose-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.compose-field > span {
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.compose-input,
+.compose-textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.compose-textarea {
+  font-family: var(--serif);
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.compose-input:focus-visible,
+.compose-textarea:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.compose-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.compose-count {
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+.compose .action.primary {
+  justify-self: start;
+  align-self: center;
+}
+
+.thread-outcome {
+  margin-top: 0.75rem;
+}
+
+.thread-outcome .thread-note {
+  margin: 0;
+}
+
+@media (max-width: 34rem) {
+  .compose {
+    padding: 1rem;
+  }
+}
+
+/* passkey sign-in */
+
+/*
+ * The second way in, and the offer to set it up.
+ *
+ * The link stays the primary act, so the passkey button is not a second
+ * patina slab: it is the band's hairline action, set at the same size as
+ * "Send me a link", and the two read as a choice in order rather than two
+ * equal doors. The "or" is a catalog rule with a word at its head, flush
+ * left with the buttons it divides. The email-first confirm takes a patina
+ * outline, because by then it is the press the reader came back for; it
+ * stays an outline so it never competes with the link as a second slab.
+ *
+ * The offer is the composer's family without being a composer (the proofs
+ * wait on `form.compose`): same surface and hairline, but its patina rule
+ * runs down the left edge, so it reads as a note set beside the form rather
+ * than a second form above it.
+ *
+ * Every label stays on a phone. The band's narrow rule hides `.action span`
+ * everywhere it is not exempted, and a key glyph alone is not an
+ * instruction anybody can follow.
+ */
+.passkey-sign-in {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
+
+.passkey-or {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  margin: 0.15rem 0 0;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.passkey-or::after {
+  flex: 1 1 auto;
+  content: "";
+  border-top: 1px solid var(--rule);
+}
+
+.passkey-sign-in .action.passkey-button {
+  position: relative;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+}
+
+.passkey-sign-in .action.passkey-button .icon {
+  color: var(--patina);
+}
+
+.passkey-sign-in .action.passkey-button:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+  border-color: var(--patina);
+}
+
+/* The press the reader came back for, once they have typed an address. */
+.passkey-sign-in .action.passkey-button[data-passkey-email-first-confirm] {
+  color: var(--patina-ink);
+  border-color: var(--patina);
+  box-shadow: inset 0 0 0 1px var(--patina);
+}
+
+.passkey-sign-in .action.passkey-button:disabled {
+  cursor: progress;
+}
+
+/* Not ready, or refused for now: the button stays pressable, because the
+   press is what re-arms it, but it stops looking like the next step. */
+.passkey-sign-in[data-state="preparing"] [data-passkey-sign-in],
+.passkey-sign-in[data-state="rate-limited"] [data-passkey-sign-in] {
+  color: var(--ink-soft);
+  border-style: dashed;
+}
+
+.passkey-sign-in[data-state="preparing"] [data-passkey-sign-in] .icon,
+.passkey-sign-in[data-state="rate-limited"] [data-passkey-sign-in] .icon {
+  color: var(--ink-soft);
+}
+
+/* A ceremony in flight: a patina rule runs along the foot of whichever
+   button started it. Nothing glows; the rule moves, and holds still for
+   readers who asked for less motion. */
+.passkey-sign-in[data-state="working"] [data-passkey-sign-in]::after,
+.passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm]::after,
+.passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  left: -1px;
+  height: 2px;
+  content: "";
+  background: linear-gradient(90deg, transparent 0 30%, var(--patina) 30% 70%, transparent 70% 100%);
+  background-size: 250% 100%;
+  animation: passkey-running 1.4s linear infinite;
+}
+
+.passkey-sign-in[data-state="working"]:has([data-passkey-email-first-confirm]:not([hidden])) [data-passkey-sign-in]::after {
+  content: none;
+}
+
+.passkey-sign-in[data-state="working"] [data-passkey-sign-in],
+.passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm] {
+  cursor: progress;
+}
+
+.passkey-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.passkey-fallback-lead {
+  color: var(--ink-soft);
+}
+
+.passkey-link {
+  padding: 0;
+  color: var(--patina-ink);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.passkey-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.passkey-link:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.passkey-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 0 0 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--patina);
+}
+
+.passkey-offer > :not(button) {
+  flex: 1 1 100%;
+}
+
+.passkey-offer-title {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.passkey-offer-body {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.passkey-offer-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.passkey-offer .action.primary {
+  position: relative;
+  align-self: center;
+}
+
+.passkey-offer .passkey-link {
+  white-space: nowrap;
+}
+
+.passkey-offer[data-state="loading"] [data-passkey-offer-create] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.passkey-offer[data-state="working"] [data-passkey-offer-create] {
+  background: var(--patina-ink);
+  cursor: progress;
+}
+
+.passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+  background-image: linear-gradient(90deg, transparent 0 30%, var(--surface) 30% 70%, transparent 70% 100%);
+}
+
+.passkey-offer[data-state="error"] {
+  border-left-color: var(--oxide);
+}
+
+@keyframes passkey-running {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .passkey-sign-in[data-state="working"] [data-passkey-sign-in]::after,
+  .passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm]::after,
+  .passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+    background: var(--patina);
+    animation: none;
+  }
+
+  .passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+    background: var(--surface);
+  }
+}
+
+@media (max-width: 34rem) {
+  /* Specificity (0,4,1) beats the band rule's (0,3,3). */
+  .passkey-sign-in .action.passkey-button[type="button"] > span {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: nowrap;
+  }
+
+  .passkey-offer {
+    padding: 1rem;
+  }
+}
+
+/* ---------- mock chrome: not product ---------- */
+
+/* The rail is drafting furniture: dashed, monospace, and outside the band,
+   so nobody reads it as a Relic control. */
+.mock-rail {
+  position: relative;
+  z-index: 50;
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.9rem;
+  padding: 0.45rem 0.75rem;
+  overflow-x: auto;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  background: var(--ground);
+  border-bottom: 1px dashed var(--rule-strong);
+  scrollbar-width: thin;
+}
+
+.mock-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+}
+
+.mock-group-name {
+  margin-right: 0.15rem;
+  color: var(--ink-soft);
+}
+
+.mock-chip {
+  flex: none;
+  padding: 0.2rem 0.45rem;
+  color: var(--ink);
+  font: inherit;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px dashed var(--rule-strong);
+  cursor: pointer;
+}
+
+.mock-chip:hover {
+  border-color: var(--patina);
+}
+
+.mock-chip[aria-pressed="true"] {
+  color: var(--surface);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+.mock-chip:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.mock-readout {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The mock's own controls inside the product surface: things the reader
+   does elsewhere (follow the email) or the browser decides (a refusal). */
+.mock-aside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  margin-top: 0.6rem;
+  padding: 0.4rem 0.55rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  border: 1px dashed var(--rule-strong);
+}
+
+.mock-aside button {
+  padding: 0.15rem 0.4rem;
+  color: var(--ink);
+  font: inherit;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  cursor: pointer;
+}
+
+.mock-tag {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: var(--ground);
+  border: 1px dashed var(--rule-strong);
+}
+
+/* The browser's conditional-mediation list, hung from the email field the
+   way Chrome and Safari hang it. Rounded and shadowed on purpose: it is the
+   system's, and Relic's chrome never is. */
+.mock-autofill-wrap {
+  position: relative;
+}
+
+.mock-autofill {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  width: min(100%, 21rem);
+  padding: 0.3rem 0;
+  color: var(--b-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  background: var(--b-bg);
+  border: 1px solid var(--b-line);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 22%), 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.mock-autofill .mock-tag {
+  display: block;
+  width: fit-content;
+  margin: 0.15rem 0.8rem 0.3rem;
+}
+
+.mock-autofill-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.45rem 0.8rem;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.mock-autofill-row:hover,
+.mock-autofill-row:focus-visible {
+  background: var(--b-hover);
+  outline: none;
+}
+
+.mock-autofill-badge {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  color: var(--b-soft);
+  background: var(--b-hover);
+  border-radius: 50%;
+}
+
+.mock-autofill-badge svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.mock-autofill-text {
+  display: grid;
+  min-width: 0;
+}
+
+.mock-autofill-text strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-autofill-text span {
+  color: var(--b-soft);
+  font-size: 12px;
+}
+
+.mock-autofill hr {
+  margin: 0.3rem 0;
+  border: 0;
+  border-top: 1px solid var(--b-line);
+}
+
+.mock-autofill-more {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  color: var(--b-soft);
+}
+
+/* The browser's passkey sheet: a dialog from the top of the window on a
+   desktop, a sheet from the bottom on a phone. */
+.mock-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4.5rem 1rem 1rem;
+  background: var(--b-scrim);
+}
+
+.mock-sheet {
+  display: grid;
+  gap: 0.8rem;
+  width: min(100%, 23rem);
+  padding: 1.25rem 1.25rem 1rem;
+  color: var(--b-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  background: var(--b-bg);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 35%);
+}
+
+.mock-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.mock-sheet-origin {
+  color: var(--b-soft);
+  font-size: 12px;
+}
+
+.mock-sheet-key {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--b-accent);
+  background: var(--b-hover);
+  border-radius: 50%;
+}
+
+.mock-sheet-key svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.mock-sheet h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.mock-sheet p {
+  margin: 0;
+  color: var(--b-soft);
+}
+
+.mock-sheet-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.mock-sheet-buttons button {
+  min-width: 5.5rem;
+  padding: 0.5rem 1rem;
+  color: var(--b-accent);
+  font: inherit;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--b-line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.mock-sheet-buttons button.mock-sheet-go {
+  color: var(--b-accent-ink);
+  background: var(--b-accent);
+  border-color: var(--b-accent);
+}
+
+.mock-sheet .mock-aside {
+  margin: 0;
+  color: var(--b-soft);
+  border-color: var(--b-line);
+  border-radius: 8px;
+}
+
+.mock-sheet .mock-aside button {
+  color: var(--b-ink);
+  background: var(--b-hover);
+  border-color: var(--b-line);
+  border-radius: 6px;
+}
+
+@media (max-width: 34rem) {
+  .mock-rail {
+    flex-wrap: nowrap;
+  }
+  .mock-scrim {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .mock-sheet {
+    width: 100%;
+    padding-bottom: 1.5rem;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+/* At this width the viewer gives the row to the sidebar and the relic steps
+   aside; the mock does the same. */
+@media (max-width: 44rem) {
+  .stage-wrap {
+    display: none;
+  }
+}
+</style>
+</head>
+<body>
+<nav class="mock-rail" id="mock-rail" aria-label="Mock states"></nav>
+
+<header class="bar">
+  <div class="mark">relik.link</div>
+  <div class="identity">
+    <div class="filename" title="README.md">README.md</div>
+    <div class="identity-meta">
+      <div class="accession">v8k2mq7xh4r3b9tc1wn6pd5ze0</div>
+      <span class="version-label">Version 1 of 1</span>
+    </div>
+  </div>
+  <div class="actions">
+    <button type="button" class="action" aria-label="No comments"><span>Comments</span><span class="action-count">0</span></button>
+  </div>
+</header>
+
+<div class="relic-row">
+  <div class="stage-wrap">
+    <main class="stage">
+      <div class="doc">
+        <article class="prose">
+          <h1>Passkey sign-in for returning readers</h1>
+          <h2>1. Goal</h2>
+          <p>PATH sentence: "A reader who verified their email once and added a passkey can open a relic later, tap 'Sign in with passkey' (or pick the passkey from the email field's autofill), and post a comment without receiving any email."</p>
+          <p>When this is done, all of these hold:</p>
+          <ul>
+            <li>A passkey assertion mints exactly the <code>relic_session</code> a magic link mints.</li>
+            <li>No mail is sent during a passkey sign-in.</li>
+            <li>The comment reads back attributed to the reader's address.</li>
+            <li>Decisions still need their own assertion.</li>
+            <li>Email-first options and sign-in failures say nothing about whether an address or credential exists.</li>
+          </ul>
+        </article>
+      </div>
+    </main>
+  </div>
+
+  <aside class="thread is-open" id="thread" aria-label="Comments">
+    <h2 class="thread-title"><button type="button" class="thread-toggle">No comments</button></h2>
+    <p class="thread-note">No comments yet. Anyone holding this link can leave one, and the text is encrypted the same way the file is, so Relic stores it without being able to read it.</p>
+    <div id="composer"></div>
+    <div class="thread-outcome" id="outcome" aria-live="polite"></div>
+  </aside>
+</div>
+
+<div id="mock-layer"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // decision-panel.ts:251-252, verbatim.
+  const ICON_KEY =
+    'M5 5.5a3 3 0 1 1 5.6 1.5l4.4 4.4V14h-2.2v-1.3h-1.3v-1.3h-1.3L7.5 8.6A3 3 0 0 1 5 5.5zm2.5-1.2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z';
+
+  // Spec §4.10, verbatim. Existing viewer copy is quoted from its source.
+  const COPY = {
+    button: 'Sign in with passkey',
+    working: 'Waiting for your passkey',
+    preparing: 'Getting your passkey ready. Press again in a moment.',
+    failed: 'That passkey did not sign you in. Try again, or send yourself a link.',
+    cancelled: 'No passkey was used.',
+    fallbackLead: 'Passkey not offered?',
+    fallbackButton: 'Use a passkey for this address',
+    emailFirstEmpty: 'Type your address above, then press this again.',
+    confirm: 'Confirm with your passkey',
+    rateLimited: 'Too many passkey attempts from this network. Wait a few minutes, or send yourself a link.',
+    unreachable: 'Relic could not be reached. Try again.',
+    success: 'Signed in with your passkey. No email was sent.',
+    offerTitle: 'Skip the email next time',
+    offerBody: 'Add a passkey and this device signs you in without a link.',
+    offerFine: 'Your first passkey also confirms decisions, and adding one on another device later asks for it.',
+    offerCreate: 'Add a passkey',
+    offerNotNow: 'Not now',
+    offerAssertBody: 'You already have a passkey on another device. Confirm with it, then add one here.',
+    offerAssertButton: 'Confirm with your passkey',
+    offerSecond: 'Add a passkey on this device',
+    offerWorking: 'Waiting for your passkey',
+    offerCreated: 'Passkey added. Next time, choose Sign in with passkey.',
+    offerExists: 'This device already has your passkey. Next time, choose Sign in with passkey.',
+    offerCancelled: 'No passkey was added.',
+    offerError: 'Relic could not set up a passkey just now. You can add one the next time you sign in with a link.',
+    offerClose: 'Close',
+    // comments.ts and main.ts, as shipped.
+    identity: 'Your address is shown with your comment and in emails to people following the relic, and Relic sees who commented on what. When someone comments or a new version is published, Relic emails you, with a link to stop.',
+    delivery: 'Sending the link means handling your address in the clear. There is no other way to post it.',
+    displayName: 'Shown beside your address, never instead.',
+    target: 'Commenting on the whole document',
+  };
+
+  const ADDRESS = 'you@example.com';
+  const BYTES = 4096;
+
+  const composer = document.getElementById('composer');
+  const outcome = document.getElementById('outcome');
+  const thread = document.getElementById('thread');
+  const layer = document.getElementById('mock-layer');
+  const rail = document.getElementById('mock-rail');
+
+  /** Everything on screen is a function of this. */
+  let s;
+
+  const base = () => ({
+    scene: 'signed-out',
+    signedIn: false,
+    host: 'ready',
+    fallback: false,
+    confirm: false,
+    email: '',
+    note: null,
+    autofill: false,
+    sheet: null,
+    sheetFor: null,
+    aside: null,
+    offer: null,
+  });
+
+  const offerState = (state, over = {}) => ({
+    state,
+    body: COPY.offerBody,
+    create: COPY.offerCreate,
+    dismiss: COPY.offerNotNow,
+    fine: true,
+    createHidden: false,
+    ...over,
+  });
+
+  const SCENES = {
+    'signed-out': () => ({}),
+    autofill: () => ({ autofill: true }),
+    working: () => ({ host: 'working', note: ['thread-note', COPY.working], sheet: 'get', sheetFor: 'sign-in' }),
+    cancelled: () => ({ note: ['thread-note', COPY.cancelled] }),
+    failed: () => ({ host: 'failed', fallback: true, note: ['compose-warning', COPY.failed] }),
+    'email-first': () => ({ host: 'email-first', fallback: true, confirm: true, email: ADDRESS }),
+    preparing: () => ({ host: 'preparing', note: ['thread-note', COPY.preparing] }),
+    'rate-limited': () => ({ host: 'rate-limited', note: ['compose-warning', COPY.rateLimited] }),
+    'link-sent': () => ({
+      email: ADDRESS,
+      note: ['thread-note', `If ${ADDRESS} can receive mail, a link is on its way. Following it verifies the address and brings you back here.`],
+      aside: 'follow-link',
+    }),
+    'signed-in': () => ({ signedIn: true, note: ['thread-note', COPY.success] }),
+    'offer-ready': () => ({ signedIn: true, offer: offerState('ready') }),
+    'offer-assert': () => ({
+      signedIn: true,
+      offer: offerState('assert', { body: COPY.offerAssertBody, create: COPY.offerAssertButton }),
+    }),
+    'offer-second': () => ({ signedIn: true, offer: offerState('ready', { create: COPY.offerSecond, second: true }) }),
+    'offer-working': () => ({
+      signedIn: true,
+      offer: offerState('working', { body: COPY.offerWorking }),
+      sheet: 'create',
+      sheetFor: 'offer',
+    }),
+    'offer-created': () => ({
+      signedIn: true,
+      offer: offerState('created', { body: COPY.offerCreated, fine: false, createHidden: true, dismiss: COPY.offerClose }),
+    }),
+    'offer-exists': () => ({
+      signedIn: true,
+      offer: offerState('exists', { body: COPY.offerExists, fine: false, createHidden: true, dismiss: COPY.offerClose }),
+    }),
+    'offer-cancelled': () => ({ signedIn: true, offer: offerState('cancelled', { body: COPY.offerCancelled }) }),
+    'offer-error': () => ({
+      signedIn: true,
+      offer: offerState('error', { body: COPY.offerError, fine: false, createHidden: true, dismiss: COPY.offerClose }),
+    }),
+  };
+
+  const RAIL = [
+    ['Sign-in', [
+      ['signed-out', 'Signed out'],
+      ['autofill', 'Autofill (browser UI)'],
+      ['working', 'Working'],
+      ['failed', 'Failed'],
+      ['email-first', 'Email-first confirm'],
+      ['link-sent', 'Link sent'],
+      ['signed-in', 'Signed in'],
+      ['cancelled', 'Cancelled'],
+      ['preparing', 'Preparing'],
+      ['rate-limited', 'Rate limited'],
+    ]],
+    ['Offer', [
+      ['offer-ready', 'Ready'],
+      ['offer-assert', 'Assert'],
+      ['offer-second', 'Second step'],
+      ['offer-working', 'Working'],
+      ['offer-created', 'Created'],
+      ['offer-exists', 'Exists'],
+      ['offer-cancelled', 'Cancelled'],
+      ['offer-error', 'Error'],
+    ]],
+  ];
+
+  const SCHEMES = [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']];
+
+  // ---------- DOM helpers, the shapes main.ts and decision-panel.ts build ----------
+
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  const glyph = (path) => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.classList.add('icon');
+    const node = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    node.setAttribute('d', path);
+    svg.appendChild(node);
+    return svg;
+  };
+
+  const pressable = (className, label, onClick, iconPath) => {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = className;
+    if (iconPath !== undefined) node.append(glyph(iconPath), el('span', '', label));
+    else node.textContent = label;
+    node.addEventListener('click', onClick);
+    return node;
+  };
+
+  const field = (label, control) => {
+    const node = el('label', 'compose-field');
+    node.append(el('span', '', label), control);
+    return node;
+  };
+
+  const policy = () => {
+    const link = el('a', 'thread-policy', 'What Relic knows');
+    link.href = '#policy';
+    link.addEventListener('click', (event) => event.preventDefault());
+    return link;
+  };
+
+  const target = () => {
+    const chip = el('p', 'compose-target');
+    chip.append(el('span', 'compose-target-label', COPY.target));
+    return chip;
+  };
+
+  // ---------- transitions ----------
+
+  const go = (scene, keep = {}) => {
+    s = { ...base(), ...SCENES[scene](), ...keep, scene };
+    render();
+  };
+
+  const set = (patch) => {
+    s = { ...s, ...patch };
+    render();
+  };
+
+  const pressSignIn = () => {
+    if (s.host === 'rate-limited') {
+      set({ note: ['compose-warning', COPY.rateLimited] });
+      return;
+    }
+    if (s.host === 'preparing') {
+      set({ note: ['thread-note', COPY.preparing] });
+      window.setTimeout(() => {
+        if (s.host === 'preparing') set({ host: 'ready', note: null });
+      }, 1600);
+      return;
+    }
+    set({
+      host: 'working',
+      confirm: false,
+      autofill: false,
+      note: ['thread-note', COPY.working],
+      sheet: 'get',
+      sheetFor: 'sign-in',
+    });
+  };
+
+  const pressFallback = () => {
+    if (s.email.trim().length === 0) {
+      set({ note: ['thread-note', COPY.emailFirstEmpty] });
+      const input = composer.querySelector('input[type="email"]');
+      if (input) input.focus({ preventScroll: true });
+      return;
+    }
+    set({ host: 'email-first', confirm: true, note: null });
+  };
+
+  const pressConfirm = () => {
+    set({ host: 'working', note: ['thread-note', COPY.working], sheet: 'get', sheetFor: 'email-first' });
+  };
+
+  const pressOfferCreate = () => {
+    const o = s.offer;
+    if (o.state === 'assert') {
+      set({ offer: { ...o, state: 'working', body: COPY.offerWorking, assertPending: true }, sheet: 'get', sheetFor: 'offer' });
+      return;
+    }
+    set({ offer: { ...o, state: 'working', body: COPY.offerWorking }, sheet: 'create', sheetFor: 'offer' });
+  };
+
+  const dismissOffer = () => set({ offer: null });
+
+  const sheetContinue = () => {
+    if (s.sheetFor === 'offer') {
+      if (s.offer.assertPending) {
+        set({ sheet: null, offer: offerState('ready', { create: COPY.offerSecond, second: true }) });
+      } else {
+        go('offer-created');
+      }
+      return;
+    }
+    go('signed-in');
+  };
+
+  const sheetCancel = () => {
+    if (s.sheetFor === 'offer') {
+      go('offer-cancelled');
+      return;
+    }
+    if (s.sheetFor === 'email-first') {
+      set({ sheet: null, host: 'email-first', confirm: true, note: ['thread-note', COPY.cancelled] });
+      return;
+    }
+    set({ sheet: null, host: 'ready', note: ['thread-note', COPY.cancelled] });
+  };
+
+  const sheetRefused = () => {
+    set({ sheet: null, host: 'failed', confirm: false, fallback: true, note: ['compose-warning', COPY.failed] });
+  };
+
+  const sheetExists = () => go('offer-exists');
+
+  // ---------- painting ----------
+
+  const paintHost = () => {
+    // §4.9, in order: p.passkey-or, the button, the fallback, the confirm.
+    const host = el('div', 'passkey-sign-in');
+    host.setAttribute('data-passkey-sign-in-host', '');
+    host.dataset.state = s.host;
+
+    const or = el('p', 'passkey-or', 'or');
+
+    const button = pressable('action passkey-button', COPY.button, pressSignIn, ICON_KEY);
+    button.setAttribute('data-passkey-sign-in', '');
+
+    const fallback = el('div', 'passkey-fallback');
+    fallback.setAttribute('data-passkey-fallback', '');
+    fallback.hidden = !s.fallback;
+    const lead = el('span', 'passkey-fallback-lead', COPY.fallbackLead);
+    const link = pressable('passkey-link', COPY.fallbackButton, pressFallback);
+    link.setAttribute('data-passkey-email-first', '');
+    fallback.append(lead, link);
+
+    const confirm = pressable('action passkey-button', COPY.confirm, pressConfirm, ICON_KEY);
+    confirm.setAttribute('data-passkey-email-first-confirm', '');
+    confirm.hidden = !s.confirm;
+
+    host.append(or, button, fallback, confirm);
+    return host;
+  };
+
+  const paintAutofill = (wrap, input) => {
+    const box = el('div', 'mock-autofill');
+    box.setAttribute('role', 'listbox');
+    box.setAttribute('aria-label', 'Browser autofill, drawn for reference');
+    box.append(el('span', 'mock-tag', 'Browser UI, drawn for reference'));
+
+    const row = el('button', 'mock-autofill-row');
+    row.type = 'button';
+    row.setAttribute('role', 'option');
+    const badge = el('span', 'mock-autofill-badge');
+    badge.append(glyph(ICON_KEY));
+    const text = el('span', 'mock-autofill-text');
+    text.append(el('strong', '', ADDRESS), el('span', '', 'Passkey'));
+    row.append(badge, text);
+    row.addEventListener('click', () => {
+      input.value = ADDRESS;
+      set({
+        email: ADDRESS,
+        autofill: false,
+        host: 'working',
+        note: ['thread-note', COPY.working],
+        sheet: 'get',
+        sheetFor: 'sign-in',
+      });
+    });
+
+    const more = el('button', 'mock-autofill-row mock-autofill-more', 'Use a passkey from another device');
+    more.type = 'button';
+    more.setAttribute('role', 'option');
+    more.addEventListener('click', () => {
+      set({ autofill: false, host: 'working', note: ['thread-note', COPY.working], sheet: 'get', sheetFor: 'sign-in' });
+    });
+
+    box.append(row, el('hr'), more);
+    wrap.append(box);
+  };
+
+  const composeIdentity = () => {
+    const form = el('form', 'compose');
+    form.noValidate = true;
+    const input = el('input', 'compose-input');
+    input.type = 'email';
+    input.required = true;
+    input.autocomplete = 'username webauthn';
+    input.placeholder = 'you@example.com';
+    input.value = s.email;
+    input.addEventListener('input', () => {
+      s.email = input.value;
+      if (s.autofill && input.value.length > 0) {
+        // Typing closes the list, as it does in the browser. No repaint, so
+        // the field keeps its focus and every keystroke.
+        s.autofill = false;
+        const box = composer.querySelector('.mock-autofill');
+        if (box) box.remove();
+      }
+    });
+    input.addEventListener('focus', () => {
+      if (!s.autofill && s.host === 'ready' && s.sheet === null && input.value.length === 0) {
+        set({ autofill: true });
+      }
+    });
+
+    const wrap = el('div', 'mock-autofill-wrap');
+    wrap.append(field('Email address', input));
+    if (s.autofill) paintAutofill(wrap, input);
+
+    const send = el('button', 'action primary', 'Send me a link');
+    send.type = 'submit';
+
+    form.append(
+      el('h3', 'compose-title', 'Leave a comment'),
+      target(),
+      el('p', 'compose-note', COPY.identity),
+      policy(),
+      wrap,
+      el('p', 'compose-fine', COPY.delivery),
+      send,
+      paintHost()
+    );
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const address = input.value.trim();
+      if (address.length === 0) {
+        input.focus();
+        return;
+      }
+      go('link-sent', { email: address, note: ['thread-note', `If ${address} can receive mail, a link is on its way. Following it verifies the address and brings you back here.`] });
+    });
+    return form;
+  };
+
+  const paintOffer = () => {
+    const o = s.offer;
+    const card = el('section', 'passkey-offer');
+    card.setAttribute('data-passkey-offer', '');
+    card.dataset.state = o.state;
+    card.setAttribute('aria-label', COPY.offerTitle);
+
+    const fine = el('p', 'passkey-offer-fine', COPY.offerFine);
+    fine.hidden = !o.fine;
+
+    const create = el('button', 'action primary', o.create);
+    create.type = 'button';
+    create.setAttribute('data-passkey-offer-create', '');
+    create.hidden = o.createHidden;
+    create.disabled = o.state === 'working' || o.state === 'loading';
+    create.addEventListener('click', pressOfferCreate);
+
+    const dismiss = el('button', 'passkey-link', o.dismiss);
+    dismiss.type = 'button';
+    dismiss.setAttribute('data-passkey-offer-dismiss', '');
+    dismiss.addEventListener('click', dismissOffer);
+
+    card.append(
+      el('h3', 'passkey-offer-title', COPY.offerTitle),
+      el('p', 'passkey-offer-body', o.body),
+      fine,
+      create,
+      dismiss
+    );
+    return card;
+  };
+
+  const composeComment = () => {
+    const form = el('form', 'compose');
+    const identity = el('p', 'compose-identity');
+    identity.append(document.createTextNode('Commenting as '), el('strong', '', ADDRESS));
+
+    const name = el('input', 'compose-input');
+    name.type = 'text';
+    name.autocomplete = 'nickname';
+
+    const body = el('textarea', 'compose-textarea');
+    body.rows = 4;
+
+    const count = el('span', 'compose-count', `0 of ${BYTES} bytes`);
+    body.addEventListener('input', () => {
+      count.textContent = `${new TextEncoder().encode(body.value).length} of ${BYTES} bytes`;
+    });
+
+    const post = el('button', 'action primary', 'Post comment');
+    post.type = 'submit';
+    const foot = el('div', 'compose-foot');
+    foot.append(count, post);
+
+    form.append(
+      el('h3', 'compose-title', 'Leave a comment'),
+      identity,
+      target(),
+      el('p', 'compose-note', COPY.identity),
+      policy(),
+      field('Display name', name),
+      el('p', 'compose-fine', COPY.displayName),
+      field('Comment', body),
+      foot
+    );
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (body.value.trim().length === 0) {
+        body.focus();
+        return;
+      }
+      body.value = '';
+      count.textContent = `0 of ${BYTES} bytes`;
+      set({ note: ['thread-note', `Posted as ${ADDRESS}, which is what everybody holding this link now sees.`] });
+    });
+    return form;
+  };
+
+  const paintOutcome = () => {
+    outcome.replaceChildren();
+    if (s.note) {
+      const [className, text] = s.note;
+      outcome.append(el('p', className, text));
+    }
+    if (s.aside === 'follow-link') {
+      const aside = el('div', 'mock-aside');
+      aside.append(el('span', '', 'Mock: the reader opens the email.'));
+      aside.append(pressable('', 'Follow the link', () => go('offer-ready')));
+      outcome.append(aside);
+    }
+  };
+
+  const paintSheet = () => {
+    layer.replaceChildren();
+    if (s.sheet === null) return;
+    const scrim = el('div', 'mock-scrim');
+    const sheet = el('div', 'mock-sheet');
+    sheet.setAttribute('role', 'dialog');
+    sheet.setAttribute('aria-modal', 'true');
+    sheet.setAttribute('aria-label', 'Browser passkey dialog, drawn for reference');
+
+    const head = el('div', 'mock-sheet-head');
+    head.append(el('span', 'mock-sheet-origin', 'relik.link'), el('span', 'mock-tag', 'Browser UI, drawn for reference'));
+
+    const key = el('div', 'mock-sheet-key');
+    key.append(glyph(ICON_KEY));
+
+    const create = s.sheet === 'create';
+    const title = el('h2', '', create ? 'Create a passkey' : 'Use your passkey');
+    const said = el('p', '', create ? `For ${ADDRESS} on relik.link` : 'To sign in to relik.link');
+
+    const buttons = el('div', 'mock-sheet-buttons');
+    const cancel = pressable('', 'Cancel', sheetCancel);
+    const ok = pressable('mock-sheet-go', 'Continue', sheetContinue);
+    buttons.append(cancel, ok);
+
+    const aside = el('div', 'mock-aside');
+    if (create) {
+      aside.append(el('span', '', 'Mock:'), pressable('', 'This device already has one', sheetExists));
+    } else if (s.sheetFor !== 'offer') {
+      aside.append(el('span', '', 'Mock:'), pressable('', 'Answer with a passkey Relic does not know', sheetRefused));
+    }
+
+    sheet.append(head, key, title, said, buttons);
+    if (aside.childElementCount > 0) sheet.append(aside);
+    scrim.append(sheet);
+    layer.append(scrim);
+    window.setTimeout(() => ok.focus({ preventScroll: true }), 0);
+  };
+
+  /** Bring the part of the sidebar that changed into view, above any sheet. */
+  const reveal = () => {
+    const narrow = window.matchMedia('(max-width: 34rem)').matches;
+    const sheet = layer.querySelector('.mock-sheet');
+    const covered = narrow && sheet ? sheet.getBoundingClientRect().height : 0;
+    // Room to scroll the form clear of a sheet that rises over its foot.
+    thread.style.paddingBottom = covered > 0 ? `${covered + 24}px` : '';
+    const box = thread.getBoundingClientRect();
+    const headroom = 56;
+    let top;
+    let bottom;
+    const offer = composer.querySelector('.passkey-offer');
+    if (offer) {
+      top = offer.getBoundingClientRect().top;
+      bottom = offer.getBoundingClientRect().bottom;
+    } else if (s.signedIn) {
+      top = composer.querySelector('.compose-identity').getBoundingClientRect().top;
+      bottom = outcome.getBoundingClientRect().bottom;
+    } else {
+      top = composer.querySelector('.compose-field').getBoundingClientRect().top;
+      const fill = composer.querySelector('.mock-autofill');
+      bottom = Math.max(
+        outcome.getBoundingClientRect().bottom,
+        fill ? fill.getBoundingClientRect().bottom : 0
+      );
+    }
+    const winTop = box.top + headroom;
+    const winBottom = box.bottom - covered - 16;
+    if (bottom - top > winBottom - winTop || top < winTop) {
+      thread.scrollTop += top - winTop;
+    } else if (bottom > winBottom) {
+      thread.scrollTop += bottom - winBottom;
+    }
+  };
+
+  const paintRail = () => {
+    rail.replaceChildren();
+    for (const [name, scenes] of RAIL) {
+      const group = el('div', 'mock-group');
+      group.setAttribute('role', 'group');
+      group.setAttribute('aria-label', name);
+      group.append(el('span', 'mock-group-name', `${name}:`));
+      for (const [id, label] of scenes) {
+        const chip = pressable('mock-chip', label, () => go(id));
+        chip.dataset.scene = id;
+        chip.setAttribute('aria-pressed', String(s.scene === id));
+        group.append(chip);
+      }
+      rail.append(group);
+    }
+    const schemes = el('div', 'mock-group');
+    schemes.setAttribute('role', 'group');
+    schemes.setAttribute('aria-label', 'Scheme');
+    schemes.append(el('span', 'mock-group-name', 'Scheme:'));
+    const current = document.documentElement.dataset.scheme || 'auto';
+    for (const [id, label] of SCHEMES) {
+      const chip = pressable('mock-chip', label, () => {
+        if (id === 'auto') delete document.documentElement.dataset.scheme;
+        else document.documentElement.dataset.scheme = id;
+        paintRail();
+      });
+      chip.dataset.scheme = id;
+      chip.setAttribute('aria-pressed', String(current === id));
+      schemes.append(chip);
+    }
+    rail.append(schemes);
+
+    const readout = el('span', 'mock-readout');
+    readout.id = 'mock-readout';
+    readout.textContent = s.signedIn
+      ? s.offer
+        ? `offer data-state="${s.offer.state}"`
+        : 'signed in'
+      : `host data-state="${s.host}"`;
+    rail.append(readout);
+
+    const pressed = rail.querySelector('.mock-chip[aria-pressed="true"]');
+    if (pressed) pressed.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+
+  const render = () => {
+    composer.replaceChildren();
+    if (s.signedIn) {
+      if (s.offer) composer.append(paintOffer());
+      composer.append(composeComment());
+    } else {
+      composer.append(composeIdentity());
+    }
+    paintOutcome();
+    paintSheet();
+    paintRail();
+    if (s.autofill) {
+      const input = composer.querySelector('input[type="email"]');
+      if (input && document.activeElement !== input) input.focus({ preventScroll: true });
+    }
+    reveal();
+  };
+
+  // Closing the list must not repaint: a repaint on pointerdown would swap
+  // out the button the pointer is about to click.
+  document.addEventListener('pointerdown', (event) => {
+    if (!s.autofill) return;
+    if (event.target.closest('.mock-autofill, input[type="email"]')) return;
+    s.autofill = false;
+    const box = composer.querySelector('.mock-autofill');
+    if (box) box.remove();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (s.sheet !== null) sheetCancel();
+    else if (s.autofill) set({ autofill: false });
+  });
+
+  window.addEventListener('resize', () => reveal());
+
+  const initial = new URLSearchParams(location.search).get('state');
+  go(initial && SCENES[initial] ? initial : 'signed-out');
+})();
+</script>
+</body>
+</html>
