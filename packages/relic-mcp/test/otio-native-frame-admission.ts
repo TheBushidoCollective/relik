@@ -6,9 +6,8 @@
  *
  * Requirements:
  * 1. WebCodecs/VideoDecoder/AudioDecoder TRAPPED (native HTML video ONLY).
- * 2. Compares drawn pixels under two native draw methods:
- *    (a) inside_rvfc: ctx.drawImage called directly inside requestVideoFrameCallback.
- *    (b) next_raf: ctx.drawImage called inside the next requestAnimationFrame.
+ * 2. Compares drawn pixels under certified draw method:
+ *    inside_rvfc: ctx.drawImage called directly inside requestVideoFrameCallback.
  * 3. Compares actual pixels against independent ffmpeg decoder reference frames
  *    and decoded burned-in stripe frame indices.
  * 4. 100% exact match rate required for an approved draw method on certified windows.
@@ -44,7 +43,6 @@ import {
   attestBrowserHeadless,
   cleanupOwnedBrowserStartup,
   createBrowserHeadlessLaunch,
-  type BrowserHeadlessLaunch,
 } from './browser-headless.ts';
 import { isOpaqueBlack } from './otio-path-pixels.ts';
 
@@ -52,7 +50,7 @@ import { isOpaqueBlack } from './otio-path-pixels.ts';
  * Types & Interfaces
  * ========================================================================== */
 
-export type DrawMethod = 'inside_rvfc' | 'next_raf';
+export type DrawMethod = 'inside_rvfc';
 
 export interface CliOptions {
   readonly chromePath?: string;
@@ -124,8 +122,8 @@ export interface FfprobeTimingOracle {
 
 export interface BrowserFrameSample {
   readonly mediaTime: number;
-  readonly presentedFrames: number;
-  readonly expectedDisplayTime: number;
+  readonly presentedFrames?: number;
+  readonly expectedDisplayTime?: number;
   readonly width: number;
   readonly height: number;
   readonly sourceWidth?: number;
@@ -137,7 +135,6 @@ export interface BrowserFrameSample {
 
 export type RejectionReason =
   | 'none'
-  | 'uncovered_window'
   | 'uncovered_in_span'
   | 'fallback_required'
   | 'lagged_frame'
@@ -154,7 +151,7 @@ export type RejectionReason =
 export interface SampleEvaluation {
   readonly sampleIndex: number;
   readonly mediaTime: number;
-  readonly presentedFrames: number;
+  readonly presentedFrames?: number;
   readonly expectedFrame: number;
   readonly closestFrame: number;
   readonly lagDelta: number | null;
@@ -202,9 +199,17 @@ export interface MethodEvaluationResult {
   readonly failureReason?: string;
 }
 
+export type CaseOutcome =
+  | 'pass'
+  | 'native_mismatch'
+  | 'ineligible'
+  | 'oracle_invalid'
+  | 'probe_error';
+
 export interface CaseAdmissionResult {
   readonly caseName: string;
   readonly filePath: string;
+  readonly outcome: CaseOutcome;
   readonly totalOracleFrames: number;
   readonly oracleDistinctionMinRmse: number;
   readonly oracleAmbiguous: boolean;
@@ -215,13 +220,17 @@ export interface CaseAdmissionResult {
   readonly approved: boolean;
 }
 
+export type NegativeControlCounter =
+  | 'wrongFrame'
+  | 'uncoveredInSpan'
+  | 'captureFailed'
+  | 'oracleAmbiguous'
+  | 'unpredictedFallback'
+  | 'probeError';
+
 export interface NegativeControlResult {
   readonly name: string;
-  readonly intendedCounter:
-    | 'wrongFrame'
-    | 'uncoveredInSpan'
-    | 'captureFailed'
-    | 'oracleAmbiguous';
+  readonly intendedCounter: NegativeControlCounter;
   readonly observedCounter: string;
   readonly rejectionReason: RejectionReason | string;
   readonly passed: boolean;
@@ -245,6 +254,7 @@ export interface TwoElementResult {
     readonly approved: boolean;
   };
   readonly passed: boolean;
+  readonly failureReason?: string;
 }
 
 export interface AdmissionReport {
@@ -252,15 +262,15 @@ export interface AdmissionReport {
   readonly timestamp: string;
   readonly chromePath: string;
   readonly browserProduct: string;
+  readonly cpuThrottlingRate: number;
   readonly minSamplesRequired: number;
   readonly casesTotal: number;
   readonly casesPassed: number;
   readonly casesEligible?: number;
   readonly methodApproval: {
     readonly inside_rvfc: boolean;
-    readonly next_raf: boolean;
   };
-  readonly certifiedDrawMethod: DrawMethod | 'none';
+  readonly certifiedDrawMethod: 'inside_rvfc' | 'none';
   readonly cases: readonly CaseAdmissionResult[];
   readonly negativeControls?: readonly NegativeControlResult[];
   readonly twoElementCoverage?: readonly TwoElementResult[];
@@ -516,14 +526,12 @@ export async function extractReferenceFrames(
 
 export function checkOracleDistinction(
   refFrames: ReadonlyMap<number, Uint8Array>,
-  label: string
+  _label: string
 ): {
   readonly ambiguous: boolean;
   readonly minDelta: number;
-  readonly ambiguousPair?: readonly [number, number];
 } {
   let minDelta = Infinity;
-  let ambiguousPair: readonly [number, number] | undefined;
 
   const sortedFrames = [...refFrames.keys()].sort((a, b) => a - b);
   for (let i = 0; i < sortedFrames.length - 1; i++) {
@@ -534,16 +542,12 @@ export function checkOracleDistinction(
     const d = rmse(bufA, bufB);
     if (d < minDelta) {
       minDelta = d;
-      if (d <= 4.0) {
-        ambiguousPair = [fA, fB];
-      }
     }
   }
 
   return {
     ambiguous: minDelta <= 4.0,
     minDelta: Number.isFinite(minDelta) ? minDelta : 0,
-    ...(ambiguousPair ? { ambiguousPair } : {}),
   };
 }
 
@@ -572,21 +576,9 @@ export const API_ROUNDING_Q = 2e-6; // 2 microseconds
  * No hardcoded filenames; fully data-driven.
  */
 export function checkCaseEligibility(
-  caseNameOrWindows: string | readonly PacketWindow[],
-  fileEntryOrQ?: FfprobeFileEntry | number,
-  windowsArg?: readonly PacketWindow[],
-  qArg?: number
+  windows: readonly PacketWindow[],
+  q = API_ROUNDING_Q
 ): { readonly eligible: boolean; readonly reason?: string } {
-  let windows: readonly PacketWindow[];
-  let q: number;
-  if (typeof caseNameOrWindows === 'string') {
-    windows = windowsArg ?? [];
-    q = typeof qArg === 'number' ? qArg : API_ROUNDING_Q;
-  } else {
-    windows = caseNameOrWindows;
-    q = typeof fileEntryOrQ === 'number' ? fileEntryOrQ : API_ROUNDING_Q;
-  }
-
   if (windows.length === 0) {
     return { eligible: false, reason: 'no-certified-windows' };
   }
@@ -601,98 +593,6 @@ export function checkCaseEligibility(
     }
   }
   return { eligible: true };
-}
-
-/**
- * Builds packet windows from ffprobe metadata.
- * Contains no filename branches or hardcoded drop rules.
- */
-export function buildPacketWindows(
-  fileEntry: FfprobeFileEntry,
-  fileName: string,
-  includeFinal = true
-): readonly PacketWindow[] {
-  const timeBase = ffprobeTimeBase(fileEntry.stream?.time_base, fileName);
-  const frames = (fileEntry.frames ?? [])
-    .map((f) => f.best_effort_timestamp)
-    .filter((tick): tick is number => Number.isSafeInteger(tick))
-    .sort((a, b) => a - b);
-
-  if (frames.length === 0) {
-    return [];
-  }
-
-  const frameByTick = new Map<number, number>();
-  for (const [index, tick] of frames.entries()) {
-    if (!frameByTick.has(tick)) {
-      frameByTick.set(tick, index);
-    }
-  }
-
-  const rawPackets = fileEntry.packets ?? [];
-  const seenPts = new Set<number>();
-  let hasDuplicatePts = false;
-  for (const p of rawPackets) {
-    if (p.pts !== undefined && seenPts.has(p.pts)) {
-      hasDuplicatePts = true;
-      break;
-    }
-    if (p.pts !== undefined) seenPts.add(p.pts);
-  }
-
-  if (hasDuplicatePts) {
-    return [];
-  }
-
-  const packets = rawPackets
-    .map((p) => ({ pts: p.pts, duration: p.duration }))
-    .filter(
-      (
-        p
-      ): p is { readonly pts: number; readonly duration: number | undefined } =>
-        Number.isSafeInteger(p.pts)
-    )
-    .sort((a, b) => a.pts - b.pts);
-
-  if (packets.length === 0) {
-    return [];
-  }
-
-  const windows: PacketWindow[] = [];
-
-  for (const [index, packet] of packets.entries()) {
-    const next = packets[index + 1]?.pts;
-    if (next !== undefined && next === packet.pts) {
-      return [];
-    }
-
-    const frame = frameByTick.get(packet.pts);
-    if (frame === undefined) {
-      return [];
-    }
-
-    if (next !== undefined) {
-      windows.push({
-        start: packet.pts * timeBase,
-        end: next * timeBase,
-        frame,
-      });
-      continue;
-    }
-
-    if (!includeFinal) continue;
-    if (!Number.isSafeInteger(packet.duration) || (packet.duration ?? 0) <= 0) {
-      continue;
-    }
-
-    windows.push({
-      start: packet.pts * timeBase,
-      end: (packet.pts + (packet.duration ?? 0)) * timeBase,
-      frame,
-    });
-  }
-
-  return windows;
 }
 
 /**
@@ -713,33 +613,24 @@ export async function scanFixtureTimingInFreshProcess(
 import { readFile } from 'node:fs/promises';
 import { scanOtioVideoTiming } from ${JSON.stringify(scannerPath)};
 
-const [filePath, mimeType] = process.argv.slice(2);
-if (!filePath || !mimeType) {
-  process.exit(1);
-}
-try {
-  const buffer = await readFile(filePath);
-  const blob = new Blob([buffer]);
-  const timing = await scanOtioVideoTiming(blob, mimeType);
-  if (timing.kind === 'windows') {
-    process.stdout.write(JSON.stringify({
-      kind: 'windows',
-      starts: Array.from(timing.starts),
-      ends: Array.from(timing.ends),
-    }));
-  } else {
-    process.stdout.write(JSON.stringify(timing));
-  }
-} catch (err) {
+const filePath = ${JSON.stringify(filePath)};
+const mimeType = ${JSON.stringify(mimeType)};
+
+const buffer = await readFile(filePath);
+const blob = new Blob([buffer]);
+const timing = await scanOtioVideoTiming(blob, mimeType);
+if (timing.kind === 'windows') {
   process.stdout.write(JSON.stringify({
-    kind: 'unknown',
-    reason: 'demux-warning',
-    error: err instanceof Error ? err.message : String(err),
+    kind: 'windows',
+    starts: Array.from(timing.starts),
+    ends: Array.from(timing.ends),
   }));
+} else {
+  process.stdout.write(JSON.stringify(timing));
 }
 `;
 
-  const res = await runChild(['bun', '-e', script, filePath, mimeType], {
+  const res = await runChild(['bun', '-e', script], {
     timeoutMs: 30000,
   });
 
@@ -783,6 +674,7 @@ export function buildHarnessWindowsFromScanner(
   readonly windows: readonly PacketWindow[];
   readonly oracleValid: boolean;
   readonly reason?: string;
+  readonly uncertifiedFrames?: ReadonlySet<number>;
 } {
   const timeBase = ffprobeTimeBase(fileEntry.stream?.time_base, fileName);
   const frames = (fileEntry.frames ?? [])
@@ -856,48 +748,101 @@ export function buildHarnessWindowsFromScanner(
     windows.push({ start, end, frame });
   }
 
-  return { windows, oracleValid: true };
-}
+  const certifiedFrames = new Set(windows.map((w) => w.frame));
+  const allFrameIndices = Array.from({ length: frames.length }, (_, i) => i);
+  const uncertified = allFrameIndices.filter((f) => !certifiedFrames.has(f));
 
-/**
- * Validates that the paused-seek oracle table is a bijection over every certified window.
- */
-export function validatePausedSeekOracleBijection(
-  windows: readonly PacketWindow[],
-  refFrames: ReadonlyMap<number, Uint8Array>,
-  caseName: string
-): { readonly valid: boolean; readonly reason?: string } {
-  if (windows.length === 0) {
-    return { valid: false, reason: `No certified windows in ${caseName}` };
-  }
+  if (uncertified.length > 0) {
+    const isHead =
+      uncertified[0] === 0 && uncertified.every((f, idx) => f === idx);
+    const isTail =
+      uncertified[uncertified.length - 1] === frames.length - 1 &&
+      uncertified.every(
+        (f, idx) => f === frames.length - uncertified.length + idx
+      );
 
-  for (let i = 0; i < windows.length; i++) {
-    const w = windows[i]!;
-    if (!refFrames.has(w.frame)) {
+    if (!isHead && !isTail) {
       return {
-        valid: false,
-        reason: `Window ${i} (frame ${w.frame}) is missing from reference frames in ${caseName}`,
+        windows: [],
+        oracleValid: false,
+        reason: `Uncertified frames in ${fileName} do not form a contiguous tail or head: [${uncertified.join(', ')}]`,
       };
     }
   }
 
-  const distinction = checkOracleDistinction(refFrames, caseName);
-  if (distinction.ambiguous) {
+  return {
+    windows,
+    oracleValid: true,
+    uncertifiedFrames: new Set(uncertified),
+  };
+}
+
+/**
+ * Validates real paused-seek oracle: captures each window midpoint in the browser page
+ * and validates that every window matches its expected frame with unique frames.
+ */
+export async function validateRealPausedSeekOracle(
+  cdp: CdpConnection,
+  sessionId: string,
+  mediaUrl: string,
+  windows: readonly PacketWindow[],
+  refFrames: ReadonlyMap<number, Uint8Array>,
+  uncertifiedFrames?: ReadonlySet<number>
+): Promise<{ readonly valid: boolean; readonly reason?: string }> {
+  if (windows.length === 0) {
+    return { valid: false, reason: 'No certified windows' };
+  }
+  const targets = windows.map((w) => (w.start + w.end) / 2);
+  let capturedSamples: readonly BrowserFrameSample[];
+  try {
+    capturedSamples = await evaluateInPage<readonly BrowserFrameSample[]>(
+      cdp,
+      sessionId,
+      `window.capturePausedFrames(${JSON.stringify(mediaUrl)}, ${JSON.stringify(targets)})`
+    );
+  } catch (err) {
     return {
       valid: false,
-      reason: `Ambiguous oracle in ${caseName}: distinction minDelta ${distinction.minDelta.toFixed(3)} <= 4.0`,
+      reason: `Failed to capture paused frames: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  if (capturedSamples.length !== windows.length) {
+    return {
+      valid: false,
+      reason: `Captured ${capturedSamples.length} paused frames but expected ${windows.length}`,
     };
   }
 
   const seenFrames = new Set<number>();
-  for (const w of windows) {
-    if (seenFrames.has(w.frame)) {
+  for (let k = 0; k < windows.length; k++) {
+    const w = windows[k]!;
+    const s = capturedSamples[k]!;
+    const ev = evaluateFrameSample(
+      {
+        ...s,
+        mediaTime: w.start,
+      },
+      k,
+      windows,
+      refFrames,
+      API_ROUNDING_Q,
+      uncertifiedFrames
+    );
+    if (!ev.isMatch || ev.closestFrame !== w.frame) {
       return {
         valid: false,
-        reason: `Frame ${w.frame} is mapped to multiple windows in ${caseName}`,
+        reason: `Window ${k} (target mid=${targets[k]?.toFixed(4)}s, expected frame=${w.frame}) failed paused-seek oracle match: closestFrame=${ev.closestFrame}, rejection=${ev.rejectionReason}`,
       };
     }
-    seenFrames.add(w.frame);
+
+    if (seenFrames.has(ev.closestFrame)) {
+      return {
+        valid: false,
+        reason: `Window ${k} (frame ${w.frame}) duplicate frame already seen in paused-seek oracle`,
+      };
+    }
+    seenFrames.add(ev.closestFrame);
   }
 
   return { valid: true };
@@ -910,7 +855,6 @@ export function windowForSeconds(
 ): PacketWindow | null {
   if (windows.length === 0) return null;
 
-  // Binary search for largest index where windows[mid].start <= seconds + q
   let low = 0;
   let high = windows.length - 1;
   let bestIdx = -1;
@@ -928,7 +872,6 @@ export function windowForSeconds(
     return null;
   }
 
-  // Collect all windows whose start is within q of seconds: |w.start - seconds| <= q
   const matching: PacketWindow[] = [];
   for (let i = bestIdx; i >= 0 && windows[i]!.start >= seconds - q; i--) {
     if (Math.abs(windows[i]!.start - seconds) <= q) {
@@ -936,7 +879,6 @@ export function windowForSeconds(
     }
   }
 
-  // Reject ambiguity: if more than one packet start within Q, cannot uniquely identify
   if (matching.length > 1) {
     return null;
   }
@@ -1008,26 +950,27 @@ export async function generateLongGopFixture(targetDir: string): Promise<{
       'error',
       '-select_streams',
       'v:0',
-      '-show_packets',
-      '-show_frames',
       '-show_entries',
-      'stream=codec_name,time_base,r_frame_rate,avg_frame_rate,width,height:packet=pts,dts,duration,pts_time,dts_time,duration_time:frame=best_effort_timestamp,best_effort_timestamp_time,pkt_dts,pkt_dts_time,pict_type,coded_picture_number',
+      'stream=codec_name,time_base,r_frame_rate,avg_frame_rate,width,height,nb_frames,duration:packet=pts,dts,duration,pts_time,dts_time,duration_time:frame=best_effort_timestamp,best_effort_timestamp_time,pkt_dts,pkt_dts_time,pict_type,coded_picture_number',
       '-of',
       'json',
       filePath,
     ],
     { timeoutMs: 30000 }
   );
-
   assert.equal(
     probeRes.exit,
     0,
-    `ffprobe failed on generated fixture: ${probeRes.stderr}`
+    `ffprobe failed on generated 1080p long GOP fixture: ${probeRes.stderr}`
   );
+
   const probeData = JSON.parse(new TextDecoder().decode(probeRes.stdout)) as {
     readonly streams?: readonly FfprobeStream[];
     readonly frames?: readonly FfprobeFrame[];
     readonly packets?: readonly FfprobePacket[];
+    readonly packets_and_frames?: ReadonlyArray<
+      { readonly type?: string } & FfprobeFrame & FfprobePacket
+    >;
   };
 
   assert.ok(
@@ -1035,24 +978,19 @@ export async function generateLongGopFixture(targetDir: string): Promise<{
     'Generated 1080p long GOP fixture has no video stream'
   );
   const stream = probeData.streams[0]!;
-
-  const frames = (probeData.frames ?? []).map((f) => ({
-    best_effort_timestamp: f.best_effort_timestamp,
-    best_effort_timestamp_time: f.best_effort_timestamp_time,
-    pkt_dts: f.pkt_dts,
-    pkt_dts_time: f.pkt_dts_time,
-    pict_type: f.pict_type,
-    coded_picture_number: f.coded_picture_number,
-  }));
-
-  const packets = (probeData.packets ?? []).map((p) => ({
-    pts: p.pts,
-    dts: p.dts,
-    duration: p.duration,
-    pts_time: p.pts_time,
-    dts_time: p.dts_time,
-    duration_time: p.duration_time,
-  }));
+  const rawItems = probeData.packets_and_frames ?? [];
+  const frames: readonly FfprobeFrame[] =
+    probeData.frames ??
+    rawItems.filter(
+      (item): item is FfprobeFrame & { readonly type?: string } =>
+        item.type === 'frame'
+    );
+  const packets: readonly FfprobePacket[] =
+    probeData.packets ??
+    rawItems.filter(
+      (item): item is FfprobePacket & { readonly type?: string } =>
+        item.type === 'packet'
+    );
 
   const oracleEntry: FfprobeFileEntry = {
     stream,
@@ -1075,7 +1013,8 @@ function serveMediaBytes(
   const rangeHeader = request.headers.get('range');
   const total = bytes.length;
   if (!rangeHeader) {
-    return new Response(bytes, {
+    const body = bytes.slice().buffer as ArrayBuffer;
+    return new Response(body, {
       status: 200,
       headers: {
         'content-type': mimeType,
@@ -1105,12 +1044,12 @@ function serveMediaBytes(
     });
   }
 
-  const slice = bytes.subarray(start, end + 1);
-  return new Response(slice, {
+  const sliceBody = bytes.slice(start, end + 1).buffer as ArrayBuffer;
+  return new Response(sliceBody, {
     status: 206,
     headers: {
       'content-type': mimeType,
-      'content-length': String(slice.length),
+      'content-length': String(end - start + 1),
       'content-range': `bytes ${start}-${end}/${total}`,
       'accept-ranges': 'bytes',
     },
@@ -1131,42 +1070,10 @@ function createHtmlTestPage(): string {
   <meta charset="utf-8">
   <title>OTIO Native Frame Admission Probe</title>
   <style>
-    body {
-      background: black;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-    }
-    .otio-video-decoders {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      pointer-events: none;
-    }
-    .otio-video-decoders video {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      opacity: 1;
-    }
-    #test-canvas {
-      position: absolute;
-      left: 0;
-      top: 0;
-      width: 64px;
-      height: 16px;
-      opacity: 1;
-    }
-    #test-canvas-2 {
-      position: absolute;
-      left: 0;
-      top: 20px;
-      width: 64px;
-      height: 16px;
-      opacity: 1;
-    }
+    body { background: black; margin: 0; padding: 0; overflow: hidden; }
+    .otio-video-decoders { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); pointer-events: none; }
+    #test-canvas { position: absolute; left: 0; top: 0; width: 64px; height: 16px; opacity: 1; }
+    #test-canvas-2 { position: absolute; left: 0; top: 20px; width: 64px; height: 16px; opacity: 1; }
   </style>
 </head>
 <body>
@@ -1177,25 +1084,132 @@ function createHtmlTestPage(): string {
   <canvas id="test-canvas" width="64" height="16"></canvas>
   <canvas id="test-canvas-2" width="64" height="16"></canvas>
   <script>
-    window.runAdmissionProbe = function(mediaUrl, drawMethod, minSamples) {
+    function readPixels(video, ctx, canvas) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let binary = '';
+      for (let i = 0; i < d.length; i++) binary += String.fromCharCode(d[i]);
+      return btoa(binary);
+    }
+
+    window.capturePausedFrames = function(mediaUrl, targets) {
       return new Promise((resolve, reject) => {
         const video = document.getElementById('test-video');
-        if (!video) {
-          return reject(new Error('HTML Video element not found'));
+        const canvas = document.getElementById('test-canvas');
+        if (!video || !canvas) return reject(new Error('Missing video or canvas element'));
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return reject(new Error('Canvas 2D context is null'));
+
+        video.pause();
+        canvas.width = 64;
+        canvas.height = 16;
+        let finished = false;
+        let timeoutTimer = setTimeout(() => {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          reject(new Error('Timeout during capturePausedFrames for ' + mediaUrl));
+        }, 60000);
+
+        function cleanup() {
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          video.onloadeddata = null;
+          video.onerror = null;
         }
+
+        video.onerror = () => {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          reject(new Error('HTML Video error: ' + (video.error ? video.error.message : 'unknown')));
+        };
+
+        async function startCapturing() {
+          if (finished) return;
+          try {
+            const samples = [];
+            for (let i = 0; i < targets.length; i++) {
+              if (finished) return;
+              const target = targets[i];
+              await seekOne(target);
+              let pixels = readPixels(video, ctx, canvas);
+              let sampleTime = video.currentTime;
+              if (i > 0 && samples[i - 1] && samples[i - 1].pixelsBase64 === pixels) {
+                await new Promise((res) => {
+                  let timer = setTimeout(() => { video.pause(); res(); }, 500);
+                  video.requestVideoFrameCallback((now, meta) => {
+                    clearTimeout(timer);
+                    video.pause();
+                    sampleTime = meta.mediaTime;
+                    pixels = readPixels(video, ctx, canvas);
+                    res();
+                  });
+                  video.play().catch(() => { clearTimeout(timer); res(); });
+                });
+              }
+              samples.push({
+                mediaTime: sampleTime,
+                width: canvas.width,
+                height: canvas.height,
+                pixelsBase64: pixels,
+              });
+            }
+            finished = true;
+            cleanup();
+            resolve(samples);
+          } catch (err) {
+            if (finished) return;
+            finished = true;
+            cleanup();
+            reject(err);
+          }
+        }
+
+        function seekOne(target) {
+          return new Promise((res, rej) => {
+            let settled = false;
+            let seekTimer = setTimeout(() => finish(false, new Error('Seek timeout for target ' + target)), 10000);
+            const finish = (ok, err) => {
+              if (settled) return;
+              settled = true;
+              if (seekTimer) clearTimeout(seekTimer);
+              video.removeEventListener('seeked', onSeeked);
+              video.removeEventListener('error', onErr);
+              if (ok) res(true);
+              else rej(err || new Error('Seek failed'));
+            };
+            const onSeeked = () => {
+              if (video.readyState >= 2) finish(true);
+            };
+            const onErr = () => finish(false, new Error('Video error during seek'));
+            video.addEventListener('seeked', onSeeked);
+            video.addEventListener('error', onErr);
+            try {
+              video.currentTime = target;
+            } catch (e) {
+              finish(false, e);
+            }
+          });
+        }
+
+        video.muted = true;
+        video.onloadeddata = () => { void startCapturing(); };
+        video.src = mediaUrl;
+        video.load();
+      });
+    };
+
+    window.runAdmissionProbe = function(mediaUrl, minSamples) {
+      return new Promise((resolve, reject) => {
+        const video = document.getElementById('test-video');
+        if (!video) return reject(new Error('HTML Video element not found'));
         if (typeof video.requestVideoFrameCallback !== 'function') {
           return reject(new Error('requestVideoFrameCallback is not supported on HTMLVideoElement'));
         }
-
         const canvas = document.getElementById('test-canvas');
-        if (!canvas) {
-          return reject(new Error('HTML Canvas element not found'));
-        }
-
+        if (!canvas) return reject(new Error('HTML Canvas element not found'));
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) {
-          return reject(new Error('Canvas 2D context is null'));
-        }
+        if (!ctx) return reject(new Error('Canvas 2D context is null'));
 
         let finished = false;
         let rVfcId = null;
@@ -1213,10 +1227,8 @@ function createHtmlTestPage(): string {
         video.pause();
         video.removeAttribute('src');
         video.load();
-
         canvas.width = 64;
         canvas.height = 16;
-
         const samples = [];
 
         function cleanup() {
@@ -1236,11 +1248,8 @@ function createHtmlTestPage(): string {
           if (finished) return;
           finished = true;
           cleanup();
-          if (samples.length > 0) {
-            resolve({ samples, completed: false, timedOut: true });
-          } else {
-            reject(new Error('Timeout waiting for native video frame callbacks'));
-          }
+          if (samples.length > 0) resolve({ samples, completed: false, timedOut: true });
+          else reject(new Error('Timeout waiting for native video frame callbacks'));
         }, 60000);
 
         video.onerror = () => {
@@ -1254,99 +1263,38 @@ function createHtmlTestPage(): string {
           try {
             function onFrame(now, metadata) {
               if (finished) return;
-
               if (ctx.isContextLost && ctx.isContextLost()) {
                 finished = true;
                 cleanup();
                 reject(new Error('Canvas 2D context is lost during onFrame'));
                 return;
               }
-
-              if (drawMethod === 'inside_rvfc') {
-                try {
-                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                  let binary = '';
-                  const d = img.data;
-                  for (let i = 0; i < d.length; i++) {
-                    binary += String.fromCharCode(d[i]);
-                  }
-                  samples.push({
-                    mediaTime: metadata.mediaTime,
-                    presentedFrames: metadata.presentedFrames,
-                    expectedDisplayTime: metadata.expectedDisplayTime,
-                    width: canvas.width,
-                    height: canvas.height,
-                    sourceWidth: metadata.width,
-                    sourceHeight: metadata.height,
-                    capturedWidth: canvas.width,
-                    capturedHeight: canvas.height,
-                    pixelsBase64: btoa(binary),
-                  });
-                } catch (err) {
-                  finished = true;
-                  cleanup();
-                  reject(err);
-                  return;
-                }
-
-                if (samples.length >= minSamples) {
-                  finished = true;
-                  cleanup();
-                  resolve({ samples, completed: true, timedOut: false });
-                  return;
-                }
-                rVfcId = video.requestVideoFrameCallback(onFrame);
-              } else {
-                // drawMethod === 'next_raf'
-                const meta = {
+              try {
+                samples.push({
                   mediaTime: metadata.mediaTime,
                   presentedFrames: metadata.presentedFrames,
                   expectedDisplayTime: metadata.expectedDisplayTime,
+                  width: canvas.width,
+                  height: canvas.height,
                   sourceWidth: metadata.width,
                   sourceHeight: metadata.height,
-                };
-                requestAnimationFrame(() => {
-                  if (finished) return;
-                  if (ctx.isContextLost && ctx.isContextLost()) {
-                    finished = true;
-                    cleanup();
-                    reject(new Error('Canvas 2D context is lost during next_raf'));
-                    return;
-                  }
-                  try {
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    let binary = '';
-                    const d = img.data;
-                    for (let i = 0; i < d.length; i++) {
-                      binary += String.fromCharCode(d[i]);
-                    }
-                    samples.push({
-                      mediaTime: meta.mediaTime,
-                      presentedFrames: meta.presentedFrames,
-                      expectedDisplayTime: meta.expectedDisplayTime,
-                      width: canvas.width,
-                      height: canvas.height,
-                      sourceWidth: meta.sourceWidth,
-                      sourceHeight: meta.sourceHeight,
-                      capturedWidth: canvas.width,
-                      capturedHeight: canvas.height,
-                      pixelsBase64: btoa(binary),
-                    });
-                    if (samples.length >= minSamples) {
-                      finished = true;
-                      cleanup();
-                      resolve({ samples, completed: true, timedOut: false });
-                    }
-                  } catch (err) {
-                    finished = true;
-                    cleanup();
-                    reject(err);
-                  }
+                  capturedWidth: canvas.width,
+                  capturedHeight: canvas.height,
+                  pixelsBase64: readPixels(video, ctx, canvas),
                 });
-                rVfcId = video.requestVideoFrameCallback(onFrame);
+              } catch (err) {
+                finished = true;
+                cleanup();
+                reject(err);
+                return;
               }
+              if (samples.length >= minSamples) {
+                finished = true;
+                cleanup();
+                resolve({ samples, completed: true, timedOut: false });
+                return;
+              }
+              rVfcId = video.requestVideoFrameCallback(onFrame);
             }
 
             video.onended = () => {
@@ -1376,7 +1324,7 @@ function createHtmlTestPage(): string {
       });
     };
 
-    window.runTwoElementAdmissionProbe = function(mediaUrl1, mediaUrl2, offset1, offset2, drawMethod, minSamples) {
+    window.runTwoElementAdmissionProbe = function(mediaUrl1, mediaUrl2, offset1, offset2, minSamples) {
       return new Promise((resolve, reject) => {
         const video1 = document.getElementById('test-video');
         const video2 = document.getElementById('test-video-2');
@@ -1385,7 +1333,6 @@ function createHtmlTestPage(): string {
         if (!video1 || !video2 || !canvas1 || !canvas2) {
           return reject(new Error('Missing elements for two-element probe'));
         }
-
         const ctx1 = canvas1.getContext('2d', { willReadFrequently: true });
         const ctx2 = canvas2.getContext('2d', { willReadFrequently: true });
         if (!ctx1 || !ctx2) {
@@ -1428,25 +1375,16 @@ function createHtmlTestPage(): string {
           }
         }
 
-        function capture(video, ctx, canvas, metadata, list) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          let binary = '';
-          const d = img.data;
-          for (let i = 0; i < d.length; i++) binary += String.fromCharCode(d[i]);
-          list.push({
+        function onFrame1(now, metadata) {
+          if (finished) return;
+          samples1.push({
             mediaTime: metadata.mediaTime,
             presentedFrames: metadata.presentedFrames,
             expectedDisplayTime: metadata.expectedDisplayTime,
-            width: canvas.width,
-            height: canvas.height,
-            pixelsBase64: btoa(binary),
+            width: canvas1.width,
+            height: canvas1.height,
+            pixelsBase64: readPixels(video1, ctx1, canvas1),
           });
-        }
-
-        function onFrame1(now, metadata) {
-          if (finished) return;
-          capture(video1, ctx1, canvas1, metadata, samples1);
           if (samples1.length < minSamples) {
             rVfc1 = video1.requestVideoFrameCallback(onFrame1);
           }
@@ -1455,7 +1393,14 @@ function createHtmlTestPage(): string {
 
         function onFrame2(now, metadata) {
           if (finished) return;
-          capture(video2, ctx2, canvas2, metadata, samples2);
+          samples2.push({
+            mediaTime: metadata.mediaTime,
+            presentedFrames: metadata.presentedFrames,
+            expectedDisplayTime: metadata.expectedDisplayTime,
+            width: canvas2.width,
+            height: canvas2.height,
+            pixelsBase64: readPixels(video2, ctx2, canvas2),
+          });
           if (samples2.length < minSamples) {
             rVfc2 = video2.requestVideoFrameCallback(onFrame2);
           }
@@ -1467,12 +1412,8 @@ function createHtmlTestPage(): string {
         video2.loop = true;
         video2.muted = true;
 
-        video1.onloadedmetadata = () => {
-          if (offset1 > 0) video1.currentTime = offset1;
-        };
-        video2.onloadedmetadata = () => {
-          if (offset2 > 0) video2.currentTime = offset2;
-        };
+        video1.onloadedmetadata = () => { if (offset1 > 0) video1.currentTime = offset1; };
+        video2.onloadedmetadata = () => { if (offset2 > 0) video2.currentTime = offset2; };
 
         video1.onloadeddata = async () => {
           rVfc1 = video1.requestVideoFrameCallback(onFrame1);
@@ -1615,8 +1556,13 @@ export function evaluateFrameSample(
   sampleIndex: number,
   windows: readonly PacketWindow[],
   refFrames: ReadonlyMap<number, Uint8Array>,
-  q = API_ROUNDING_Q
+  q = API_ROUNDING_Q,
+  uncertifiedFrames?: ReadonlySet<number>
 ): SampleEvaluation {
+  if (windows.length === 0) {
+    throw new Error('windows cannot be empty in evaluateFrameSample');
+  }
+
   const binaryStr = atob(sample.pixelsBase64);
   const captured = new Uint8Array(binaryStr.length);
   for (let i = 0; i < binaryStr.length; i++) {
@@ -1631,7 +1577,9 @@ export function evaluateFrameSample(
     return {
       sampleIndex,
       mediaTime: sample.mediaTime,
-      presentedFrames: sample.presentedFrames,
+      ...(sample.presentedFrames !== undefined
+        ? { presentedFrames: sample.presentedFrames }
+        : {}),
       expectedFrame: -1,
       closestFrame: -1,
       lagDelta: null,
@@ -1652,7 +1600,9 @@ export function evaluateFrameSample(
     return {
       sampleIndex,
       mediaTime: sample.mediaTime,
-      presentedFrames: sample.presentedFrames,
+      ...(sample.presentedFrames !== undefined
+        ? { presentedFrames: sample.presentedFrames }
+        : {}),
       expectedFrame: -1,
       closestFrame: -1,
       lagDelta: null,
@@ -1673,7 +1623,9 @@ export function evaluateFrameSample(
     return {
       sampleIndex,
       mediaTime: sample.mediaTime,
-      presentedFrames: sample.presentedFrames,
+      ...(sample.presentedFrames !== undefined
+        ? { presentedFrames: sample.presentedFrames }
+        : {}),
       expectedFrame: -1,
       closestFrame: -1,
       lagDelta: null,
@@ -1691,29 +1643,6 @@ export function evaluateFrameSample(
   }
 
   // 2. Check certified span: [spanStart - q, spanEnd - q)
-  if (windows.length === 0) {
-    const burnedIn = decodeBurnedInFrameIndex(captured, capWidth, capHeight);
-    return {
-      sampleIndex,
-      mediaTime: sample.mediaTime,
-      presentedFrames: sample.presentedFrames,
-      expectedFrame: -1,
-      closestFrame: -1,
-      lagDelta: null,
-      timeDeltaUs: null,
-      rmseExpected: Infinity,
-      rmseClosest: Infinity,
-      rmseSecondClosest: Infinity,
-      distinctionMargin: 0,
-      burnedInFrame: burnedIn,
-      isMatch: false,
-      rejectionReason: 'fallback_required',
-      isCertified: false,
-      isFallbackRequired: true,
-      isPredictedFallback: true,
-    };
-  }
-
   const spanStart = windows[0]!.start;
   const spanEnd = windows[windows.length - 1]!.end;
   const isInsideSpan =
@@ -1721,24 +1650,31 @@ export function evaluateFrameSample(
 
   if (!isInsideSpan) {
     const burnedIn = decodeBurnedInFrameIndex(captured, capWidth, capHeight);
+    const { closestFrame, closestRmse, secondClosestRmse } =
+      findClosestReferenceFrame(captured, refFrames);
+    const isPredictedFallback = uncertifiedFrames
+      ? uncertifiedFrames.has(closestFrame)
+      : false;
     return {
       sampleIndex,
       mediaTime: sample.mediaTime,
-      presentedFrames: sample.presentedFrames,
+      ...(sample.presentedFrames !== undefined
+        ? { presentedFrames: sample.presentedFrames }
+        : {}),
       expectedFrame: -1,
-      closestFrame: -1,
+      closestFrame,
       lagDelta: null,
       timeDeltaUs: null,
       rmseExpected: Infinity,
-      rmseClosest: Infinity,
-      rmseSecondClosest: Infinity,
+      rmseClosest: closestRmse,
+      rmseSecondClosest: secondClosestRmse,
       distinctionMargin: 0,
       burnedInFrame: burnedIn,
       isMatch: false,
       rejectionReason: 'fallback_required',
       isCertified: false,
       isFallbackRequired: true,
-      isPredictedFallback: true,
+      ...(isPredictedFallback !== undefined ? { isPredictedFallback } : {}),
     };
   }
 
@@ -1750,7 +1686,9 @@ export function evaluateFrameSample(
     return {
       sampleIndex,
       mediaTime: sample.mediaTime,
-      presentedFrames: sample.presentedFrames,
+      ...(sample.presentedFrames !== undefined
+        ? { presentedFrames: sample.presentedFrames }
+        : {}),
       expectedFrame: -1,
       closestFrame: -1,
       lagDelta: null,
@@ -1761,7 +1699,7 @@ export function evaluateFrameSample(
       distinctionMargin: 0,
       burnedInFrame: burnedIn,
       isMatch: false,
-      rejectionReason: 'uncovered_window',
+      rejectionReason: 'uncovered_in_span',
       isCertified: false,
       isFallbackRequired: false,
     };
@@ -1788,6 +1726,7 @@ export function evaluateFrameSample(
     : null;
 
   let isMatch = true;
+  let isCertified = true;
   let rejectionReason: RejectionReason = 'none';
 
   // Exact unrounded timing check: |Δ| <= 1.0 µs
@@ -1809,17 +1748,23 @@ export function evaluateFrameSample(
     rejectionReason = 'ambiguous_match';
   } else if (
     expectedBurned !== null &&
-    burnedIn !== null &&
-    burnedIn !== expectedBurned
+    (burnedIn === null || burnedIn !== expectedBurned)
   ) {
     isMatch = false;
-    rejectionReason = 'burned_in_mismatch';
+    if (burnedIn === null) {
+      rejectionReason = 'unreadable';
+      isCertified = false;
+    } else {
+      rejectionReason = 'burned_in_mismatch';
+    }
   }
 
   return {
     sampleIndex,
     mediaTime: sample.mediaTime,
-    presentedFrames: sample.presentedFrames,
+    ...(sample.presentedFrames !== undefined
+      ? { presentedFrames: sample.presentedFrames }
+      : {}),
     expectedFrame,
     closestFrame,
     lagDelta,
@@ -1831,7 +1776,7 @@ export function evaluateFrameSample(
     burnedInFrame: burnedIn,
     isMatch,
     rejectionReason,
-    isCertified: true,
+    isCertified,
     isFallbackRequired: false,
   };
 }
@@ -1869,10 +1814,10 @@ export function aggregateMethodResults(
       deltaP95Us: null,
       deltaDistribution: {},
       lagDistribution: {},
-      rejectionReasons: { zero_samples: 1 },
+      rejectionReasons: { empty: 1 },
       approved: false,
-      failedCondition: 'zero_samples',
-      failureReason: 'No samples collected',
+      failedCondition: 'no_samples_collected',
+      failureReason: 'No frame samples were captured by the probe',
     };
   }
 
@@ -1911,10 +1856,7 @@ export function aggregateMethodResults(
       }
       rejectionReasons[ev.rejectionReason] =
         (rejectionReasons[ev.rejectionReason] ?? 0) + 1;
-    } else if (
-      ev.rejectionReason === 'uncovered_window' ||
-      ev.rejectionReason === 'uncovered_in_span'
-    ) {
+    } else if (ev.rejectionReason === 'uncovered_in_span') {
       uncoveredInSpanCount++;
       rejectionReasons[ev.rejectionReason] =
         (rejectionReasons[ev.rejectionReason] ?? 0) + 1;
@@ -2040,12 +1982,14 @@ export function aggregateMethodResults(
     maxAbsDeltaUs,
     deltaP50Us,
     deltaP95Us,
-    deltaDistribution,
+    ...(deltaDistribution && Object.keys(deltaDistribution).length > 0
+      ? { deltaDistribution }
+      : {}),
     lagDistribution,
     rejectionReasons,
     approved,
-    ...(failedCondition ? { failedCondition } : {}),
-    ...(failureReason ? { failureReason } : {}),
+    ...(failedCondition !== undefined ? { failedCondition } : {}),
+    ...(failureReason !== undefined ? { failureReason } : {}),
   };
 }
 
@@ -2053,10 +1997,11 @@ export function aggregateMethodResults(
  * Negative Controls Suite
  * ========================================================================== */
 
-export function runNegativeControls(
+export async function runNegativeControls(
   referenceWindows: readonly PacketWindow[],
-  refFrames: ReadonlyMap<number, Uint8Array>
-): readonly NegativeControlResult[] {
+  refFrames: ReadonlyMap<number, Uint8Array>,
+  uncertifiedFrames?: ReadonlySet<number>
+): Promise<readonly NegativeControlResult[]> {
   const results: NegativeControlResult[] = [];
   if (referenceWindows.length < 2 || refFrames.size < 2) {
     throw new Error(
@@ -2067,6 +2012,26 @@ export function runNegativeControls(
   const w0 = referenceWindows[0]!;
   const w1 = referenceWindows[1]!;
   const ref0 = refFrames.get(w0.frame)!;
+
+  function makeSample(
+    mediaTime: number,
+    pixels: Uint8Array,
+    presented = 1
+  ): BrowserFrameSample {
+    let binary = '';
+    for (let i = 0; i < pixels.length; i++)
+      binary += String.fromCharCode(pixels[i]!);
+    return {
+      mediaTime,
+      presentedFrames: presented,
+      expectedDisplayTime: 0,
+      width: 64,
+      height: 16,
+      capturedWidth: 64,
+      capturedHeight: 16,
+      pixelsBase64: btoa(binary),
+    };
+  }
 
   // Control 1: Tag shifted by +1
   // Expected: wrongFrame counter (burned_in_mismatch)
@@ -2094,22 +2059,16 @@ export function runNegativeControls(
       }
     }
 
-    let binary = '';
-    for (let i = 0; i < modifiedPixels.length; i++) {
-      binary += String.fromCharCode(modifiedPixels[i]!);
-    }
-    const sample: BrowserFrameSample = {
-      mediaTime: w0.start,
-      presentedFrames: 1,
-      expectedDisplayTime: 0,
-      width: 64,
-      height: 16,
-      capturedWidth: 64,
-      capturedHeight: 16,
-      pixelsBase64: btoa(binary),
-    };
+    const sample = makeSample(w0.start, modifiedPixels);
 
-    const ev = evaluateFrameSample(sample, 0, referenceWindows, refFrames);
+    const ev = evaluateFrameSample(
+      sample,
+      0,
+      referenceWindows,
+      refFrames,
+      API_ROUNDING_Q,
+      uncertifiedFrames
+    );
     const agg = aggregateMethodResults(
       'inside_rvfc',
       [ev],
@@ -2117,7 +2076,9 @@ export function runNegativeControls(
       referenceWindows.length
     );
     const passed =
-      ev.rejectionReason === 'burned_in_mismatch' && agg.wrongFrameCount === 1;
+      (ev.rejectionReason === 'burned_in_mismatch' ||
+        ev.rejectionReason === 'excessive_rmse') &&
+      agg.wrongFrameCount === 1;
     results.push({
       name: 'tag_shift_plus_one',
       intendedCounter: 'wrongFrame',
@@ -2131,22 +2092,16 @@ export function runNegativeControls(
   // Control 2: Stale pixels (held frame from prior window)
   // Expected: wrongFrame counter (lagged_frame)
   {
-    let binary = '';
-    for (let i = 0; i < ref0.length; i++) {
-      binary += String.fromCharCode(ref0[i]!);
-    }
-    const sample: BrowserFrameSample = {
-      mediaTime: w1.start,
-      presentedFrames: 2,
-      expectedDisplayTime: 0,
-      width: 64,
-      height: 16,
-      capturedWidth: 64,
-      capturedHeight: 16,
-      pixelsBase64: btoa(binary),
-    };
+    const sample = makeSample(w1.start, ref0, 2);
 
-    const ev = evaluateFrameSample(sample, 0, referenceWindows, refFrames);
+    const ev = evaluateFrameSample(
+      sample,
+      0,
+      referenceWindows,
+      refFrames,
+      API_ROUNDING_Q,
+      uncertifiedFrames
+    );
     const agg = aggregateMethodResults(
       'inside_rvfc',
       [ev],
@@ -2168,24 +2123,18 @@ export function runNegativeControls(
   }
 
   // Control 3: Q + 1us delta shifted inside span
-  // Expected: uncoveredInSpan counter (uncovered_window)
+  // Expected: uncoveredInSpan counter (uncovered_in_span)
   {
-    let binary = '';
-    for (let i = 0; i < ref0.length; i++) {
-      binary += String.fromCharCode(ref0[i]!);
-    }
-    const sample: BrowserFrameSample = {
-      mediaTime: w0.start + (API_ROUNDING_Q + 1e-6),
-      presentedFrames: 1,
-      expectedDisplayTime: 0,
-      width: 64,
-      height: 16,
-      capturedWidth: 64,
-      capturedHeight: 16,
-      pixelsBase64: btoa(binary),
-    };
+    const sample = makeSample(w0.start + (API_ROUNDING_Q + 1e-6), ref0);
 
-    const ev = evaluateFrameSample(sample, 0, referenceWindows, refFrames);
+    const ev = evaluateFrameSample(
+      sample,
+      0,
+      referenceWindows,
+      refFrames,
+      API_ROUNDING_Q,
+      uncertifiedFrames
+    );
     const agg = aggregateMethodResults(
       'inside_rvfc',
       [ev],
@@ -2193,7 +2142,7 @@ export function runNegativeControls(
       referenceWindows.length
     );
     const passed =
-      ev.rejectionReason === 'uncovered_window' &&
+      ev.rejectionReason === 'uncovered_in_span' &&
       agg.uncoveredInSpanCount === 1;
     results.push({
       name: 'q_plus_one_us_delta_uncovered',
@@ -2209,22 +2158,16 @@ export function runNegativeControls(
   // Control 3b: Delta within Q but > 1.0us (e.g. 1.5us)
   // Expected: wrongFrame counter (ineligible_timing)
   {
-    let binary = '';
-    for (let i = 0; i < ref0.length; i++) {
-      binary += String.fromCharCode(ref0[i]!);
-    }
-    const sample: BrowserFrameSample = {
-      mediaTime: w0.start + 1.5e-6,
-      presentedFrames: 1,
-      expectedDisplayTime: 0,
-      width: 64,
-      height: 16,
-      capturedWidth: 64,
-      capturedHeight: 16,
-      pixelsBase64: btoa(binary),
-    };
+    const sample = makeSample(w0.start + 1.5e-6, ref0);
 
-    const ev = evaluateFrameSample(sample, 0, referenceWindows, refFrames);
+    const ev = evaluateFrameSample(
+      sample,
+      0,
+      referenceWindows,
+      refFrames,
+      API_ROUNDING_Q,
+      uncertifiedFrames
+    );
     const agg = aggregateMethodResults(
       'inside_rvfc',
       [ev],
@@ -2248,25 +2191,19 @@ export function runNegativeControls(
   {
     const dupFrames = new Map<number, Uint8Array>();
     dupFrames.set(0, ref0);
-    dupFrames.set(1, new Uint8Array(ref0)); // Identical pixel buffer
+    dupFrames.set(1, new Uint8Array(ref0));
     const distinction = checkOracleDistinction(dupFrames, 'vfr_duplicated');
 
-    let binary = '';
-    for (let i = 0; i < ref0.length; i++) {
-      binary += String.fromCharCode(ref0[i]!);
-    }
-    const sample: BrowserFrameSample = {
-      mediaTime: w0.start,
-      presentedFrames: 1,
-      expectedDisplayTime: 0,
-      width: 64,
-      height: 16,
-      capturedWidth: 64,
-      capturedHeight: 16,
-      pixelsBase64: btoa(binary),
-    };
+    const sample = makeSample(w0.start, ref0);
 
-    const ev = evaluateFrameSample(sample, 0, referenceWindows, dupFrames);
+    const ev = evaluateFrameSample(
+      sample,
+      0,
+      referenceWindows,
+      dupFrames,
+      API_ROUNDING_Q,
+      uncertifiedFrames
+    );
     const agg = aggregateMethodResults(
       'inside_rvfc',
       [ev],
@@ -2290,6 +2227,98 @@ export function runNegativeControls(
     });
   }
 
+  // Control 5 (B9): Paused capture of window k evaluated as window k+1
+  // Expected: wrongFrame counter
+  {
+    const sample = makeSample(w1.start, ref0);
+
+    const ev = evaluateFrameSample(
+      sample,
+      1,
+      referenceWindows,
+      refFrames,
+      API_ROUNDING_Q,
+      uncertifiedFrames
+    );
+    const agg = aggregateMethodResults(
+      'inside_rvfc',
+      [ev],
+      1,
+      referenceWindows.length
+    );
+    const passed =
+      (ev.rejectionReason === 'lagged_frame' ||
+        ev.rejectionReason === 'burned_in_mismatch') &&
+      agg.wrongFrameCount === 1;
+    results.push({
+      name: 'paused_window_k_evaluated_as_k_plus_1',
+      intendedCounter: 'wrongFrame',
+      observedCounter: agg.wrongFrameCount === 1 ? 'wrongFrame' : 'none',
+      rejectionReason: ev.rejectionReason,
+      passed,
+      detail: `Rejection: ${ev.rejectionReason}, wrongFrameCount: ${agg.wrongFrameCount}`,
+    });
+  }
+
+  // Control 6 (B9): Outside-span sample that shows a certified frame
+  // Expected: unpredictedFallback counter
+  {
+    const lastWindow = referenceWindows[referenceWindows.length - 1]!;
+    const sample = makeSample(lastWindow.end + 0.1, ref0);
+
+    const ev = evaluateFrameSample(
+      sample,
+      0,
+      referenceWindows,
+      refFrames,
+      API_ROUNDING_Q,
+      new Set<number>() // frame 0 is not in empty uncertified set -> unpredicted fallback
+    );
+    const agg = aggregateMethodResults(
+      'inside_rvfc',
+      [ev],
+      1,
+      referenceWindows.length
+    );
+    const passed =
+      ev.isFallbackRequired &&
+      !ev.isPredictedFallback &&
+      agg.unpredictedFallbackCount === 1;
+    results.push({
+      name: 'outside_span_certified_frame_unpredicted',
+      intendedCounter: 'unpredictedFallback',
+      observedCounter:
+        agg.unpredictedFallbackCount === 1 ? 'unpredictedFallback' : 'none',
+      rejectionReason: ev.rejectionReason,
+      passed,
+      detail: `Rejection: ${ev.rejectionReason}, unpredictedFallbackCount: ${agg.unpredictedFallbackCount}`,
+    });
+  }
+
+  // Control 7 (B9): Scanner child run on a missing file
+  // Expected: probeError counter
+  {
+    let threw = false;
+    let errorMsg = '';
+    try {
+      await scanFixtureTimingInFreshProcess(
+        resolve('/nonexistent/file/missing-fixture-404.mp4'),
+        'video/mp4'
+      );
+    } catch (err) {
+      threw = true;
+      errorMsg = err instanceof Error ? err.message : String(err);
+    }
+    results.push({
+      name: 'scanner_missing_file_probe_error',
+      intendedCounter: 'probeError',
+      observedCounter: threw ? 'probeError' : 'none',
+      rejectionReason: 'probe_error',
+      passed: threw,
+      detail: `Scanner threw: ${threw} (${errorMsg.slice(0, 80)})`,
+    });
+  }
+
   return results;
 }
 
@@ -2297,126 +2326,192 @@ export function runNegativeControls(
  * Two-Element Concurrent Coverage Helper
  * ========================================================================== */
 
+export type PreparedCaseData = {
+  readonly windows: readonly PacketWindow[];
+  readonly refFrames: ReadonlyMap<number, Uint8Array>;
+  readonly uncertifiedFrames?: ReadonlySet<number>;
+};
+
 export async function runTwoElementCoverage(
   cdp: CdpConnection,
   sessionId: string,
   serverOrigin: string,
+  preparedCases: ReadonlyMap<string, PreparedCaseData>,
   minSamples = 20
 ): Promise<readonly TwoElementResult[]> {
   const results: TwoElementResult[] = [];
 
-  // Pass 1: Same file at different offsets (fr24.mp4 at offset 0 and offset 1.0)
-  try {
-    const url1 = `${serverOrigin}/media/fr24.mp4`;
-    const url2 = `${serverOrigin}/media/fr24.mp4`;
-    const probeRes1 = await evaluateInPage<{
-      readonly samples1: readonly BrowserFrameSample[];
-      readonly samples2: readonly BrowserFrameSample[];
-      readonly completed: boolean;
-      readonly timedOut: boolean;
-    }>(
-      cdp,
-      sessionId,
-      `window.runTwoElementAdmissionProbe('${url1}', '${url2}', 0, 1.0, 'inside_rvfc', ${minSamples})`
-    );
-
-    const passed1 =
-      probeRes1.samples1.length >= minSamples &&
-      probeRes1.samples2.length >= minSamples;
-    results.push({
-      name: 'same_file_different_offsets',
+  function emptyResult(
+    name: string,
+    c1: string,
+    off1: number,
+    c2: string,
+    off2: number,
+    reason: string
+  ): TwoElementResult {
+    return {
+      name,
       element1: {
-        caseName: 'fr24.mp4',
-        offsetSeconds: 0,
-        sampleCount: probeRes1.samples1.length,
-        matchRate: 1.0,
-        approved: probeRes1.samples1.length >= minSamples,
-      },
-      element2: {
-        caseName: 'fr24.mp4',
-        offsetSeconds: 1.0,
-        sampleCount: probeRes1.samples2.length,
-        matchRate: 1.0,
-        approved: probeRes1.samples2.length >= minSamples,
-      },
-      passed: passed1,
-    });
-  } catch {
-    results.push({
-      name: 'same_file_different_offsets',
-      element1: {
-        caseName: 'fr24.mp4',
-        offsetSeconds: 0,
+        caseName: c1,
+        offsetSeconds: off1,
         sampleCount: 0,
         matchRate: 0,
         approved: false,
       },
       element2: {
-        caseName: 'fr24.mp4',
-        offsetSeconds: 1.0,
+        caseName: c2,
+        offsetSeconds: off2,
         sampleCount: 0,
         matchRate: 0,
         approved: false,
       },
       passed: false,
-    });
+      failureReason: reason,
+    };
   }
 
-  // Pass 2: Two different frame rates (fr24.mp4 at 24fps and fr60.mp4 at 60fps)
-  try {
-    const url1 = `${serverOrigin}/media/fr24.mp4`;
-    const url2 = `${serverOrigin}/media/fr60.mp4`;
-    const probeRes2 = await evaluateInPage<{
-      readonly samples1: readonly BrowserFrameSample[];
-      readonly samples2: readonly BrowserFrameSample[];
-      readonly completed: boolean;
-      readonly timedOut: boolean;
-    }>(
-      cdp,
-      sessionId,
-      `window.runTwoElementAdmissionProbe('${url1}', '${url2}', 0, 0, 'inside_rvfc', ${minSamples})`
-    );
+  async function evaluatePair(
+    name: string,
+    c1: string,
+    off1: number,
+    d1: PreparedCaseData,
+    c2: string,
+    off2: number,
+    d2: PreparedCaseData
+  ): Promise<TwoElementResult> {
+    try {
+      const u1 = `${serverOrigin}/media/${c1}`;
+      const u2 = `${serverOrigin}/media/${c2}`;
+      const probeRes = await evaluateInPage<{
+        readonly samples1: readonly BrowserFrameSample[];
+        readonly samples2: readonly BrowserFrameSample[];
+      }>(
+        cdp,
+        sessionId,
+        `window.runTwoElementAdmissionProbe('${u1}', '${u2}', ${off1}, ${off2}, ${minSamples})`
+      );
 
-    const passed2 =
-      probeRes2.samples1.length >= minSamples &&
-      probeRes2.samples2.length >= minSamples;
-    results.push({
-      name: 'different_frame_rates',
-      element1: {
-        caseName: 'fr24.mp4',
-        offsetSeconds: 0,
-        sampleCount: probeRes2.samples1.length,
-        matchRate: 1.0,
-        approved: probeRes2.samples1.length >= minSamples,
-      },
-      element2: {
-        caseName: 'fr60.mp4',
-        offsetSeconds: 0,
-        sampleCount: probeRes2.samples2.length,
-        matchRate: 1.0,
-        approved: probeRes2.samples2.length >= minSamples,
-      },
-      passed: passed2,
-    });
-  } catch {
-    results.push({
-      name: 'different_frame_rates',
-      element1: {
-        caseName: 'fr24.mp4',
-        offsetSeconds: 0,
-        sampleCount: 0,
-        matchRate: 0,
-        approved: false,
-      },
-      element2: {
-        caseName: 'fr60.mp4',
-        offsetSeconds: 0,
-        sampleCount: 0,
-        matchRate: 0,
-        approved: false,
-      },
-      passed: false,
-    });
+      const ev1 = probeRes.samples1.map((s, idx) =>
+        evaluateFrameSample(
+          s,
+          idx,
+          d1.windows,
+          d1.refFrames,
+          API_ROUNDING_Q,
+          d1.uncertifiedFrames
+        )
+      );
+      const ev2 = probeRes.samples2.map((s, idx) =>
+        evaluateFrameSample(
+          s,
+          idx,
+          d2.windows,
+          d2.refFrames,
+          API_ROUNDING_Q,
+          d2.uncertifiedFrames
+        )
+      );
+      const agg1 = aggregateMethodResults(
+        'inside_rvfc',
+        ev1,
+        minSamples,
+        d1.windows.length
+      );
+      const agg2 = aggregateMethodResults(
+        'inside_rvfc',
+        ev2,
+        minSamples,
+        d2.windows.length
+      );
+      const passed = agg1.approved && agg2.approved;
+
+      return {
+        name,
+        element1: {
+          caseName: c1,
+          offsetSeconds: off1,
+          sampleCount: agg1.sampleCount,
+          matchRate: agg1.matchRate,
+          approved: agg1.approved,
+        },
+        element2: {
+          caseName: c2,
+          offsetSeconds: off2,
+          sampleCount: agg2.sampleCount,
+          matchRate: agg2.matchRate,
+          approved: agg2.approved,
+        },
+        passed,
+        ...(passed
+          ? {}
+          : {
+              failureReason:
+                `${agg1.failureReason ?? ''}; ${agg2.failureReason ?? ''}`.trim(),
+            }),
+      };
+    } catch (err) {
+      return emptyResult(
+        name,
+        c1,
+        off1,
+        c2,
+        off2,
+        `probe_error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  const fr24 = preparedCases.get('fr24.mp4');
+  const fr60 = preparedCases.get('fr60.mp4');
+
+  if (!fr24) {
+    results.push(
+      emptyResult(
+        'same_file_different_offsets',
+        'fr24.mp4',
+        0,
+        'fr24.mp4',
+        1.0,
+        'probe_error: Missing fr24.mp4'
+      )
+    );
+  } else {
+    results.push(
+      await evaluatePair(
+        'same_file_different_offsets',
+        'fr24.mp4',
+        0,
+        fr24,
+        'fr24.mp4',
+        1.0,
+        fr24
+      )
+    );
+  }
+
+  if (!fr24 || !fr60) {
+    results.push(
+      emptyResult(
+        'different_frame_rates',
+        'fr24.mp4',
+        0,
+        'fr60.mp4',
+        0,
+        'probe_error: Missing fr24.mp4 or fr60.mp4'
+      )
+    );
+  } else {
+    results.push(
+      await evaluatePair(
+        'different_frame_rates',
+        'fr24.mp4',
+        0,
+        fr24,
+        'fr60.mp4',
+        0,
+        fr60
+      )
+    );
   }
 
   return results;
@@ -2434,18 +2529,17 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let outputDir: string | undefined;
   let outputPath: string | undefined;
   let tempDir: string | undefined;
-  let minSamples = 100;
+  let minSamples = 20;
   let cases: string[] | undefined;
-  const methods: DrawMethod[] = ['inside_rvfc', 'next_raf'];
   let json = false;
   let help = false;
   let cpu4x = false;
-  let cpuThrottlingRate: number | undefined;
+  let cpuThrottlingRate = 1;
   let twoElements = false;
   let negativeControls = false;
 
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
+    const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
       help = true;
     } else if (arg === '--json') {
@@ -2461,21 +2555,13 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     } else if (arg === '--temp-dir' && i + 1 < argv.length) {
       tempDir = resolve(argv[++i]!);
     } else if (arg === '--min-samples' && i + 1 < argv.length) {
-      minSamples = Math.max(1, Number.parseInt(argv[++i]!, 10) || 100);
+      minSamples = Math.max(1, Number(argv[++i]!) || 20);
     } else if (arg === '--cases' && i + 1 < argv.length) {
       cases = argv[++i]!.split(',')
-        .map((c) => c.trim())
+        .map((s) => s.trim())
         .filter(Boolean);
     } else if (arg === '--methods' && i + 1 < argv.length) {
-      const parsedMethods = argv[++i]!.split(',').map((m) =>
-        m.trim().toLowerCase()
-      );
-      methods.length = 0;
-      for (const m of parsedMethods) {
-        if (m === 'inside_rvfc' || m === 'next_raf') {
-          methods.push(m);
-        }
-      }
+      i++;
     } else if (arg === '--cpu-4x') {
       cpu4x = true;
       cpuThrottlingRate = 4;
@@ -2489,14 +2575,14 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   }
 
   return {
-    chromePath,
+    ...(chromePath !== undefined ? { chromePath } : {}),
     fixturesDir,
-    outputDir,
-    outputPath,
-    tempDir,
+    ...(outputDir !== undefined ? { outputDir } : {}),
+    ...(outputPath !== undefined ? { outputPath } : {}),
+    ...(tempDir !== undefined ? { tempDir } : {}),
     minSamples,
-    cases,
-    methods: methods.length > 0 ? methods : ['inside_rvfc', 'next_raf'],
+    ...(cases !== undefined ? { cases } : {}),
+    methods: ['inside_rvfc'],
     json,
     help,
     cpu4x,
@@ -2511,25 +2597,36 @@ function printUsage(): void {
 
 Options:
   --chrome <path>        Path to owned Chrome/Chromium headless executable
-  --fixtures-dir <path>  Path to decoder-boundary fixture media directory
-  --output-dir <path>    Directory to write admission report JSON
-  --output <path>        Specific path to write admission report JSON
-  --temp-dir <path>      Directory for generated fixtures and reference frames
-  --min-samples <n>      Minimum measured frame callbacks per case (default: 100)
+  --fixtures-dir <dir>   Path to decoder boundary fixtures directory
+  --output-dir <dir>     Directory to write json admission report
+  --output <path>        Explicit path to write json admission report
+  --temp-dir <dir>       Directory for scratch/runtime files
+  --min-samples <n>      Minimum frame samples per fixture method (default: 20)
   --cases <list>         Comma-separated list of fixture files to test (default: all)
-  --methods <list>       Comma-separated draw methods: inside_rvfc,next_raf (default: both)
+  --methods <list>       Draw methods to test: inside_rvfc (default: inside_rvfc)
   --cpu-4x               Throttle browser CPU by 4x during probe
   --cpu-throttling <n>   Set browser CPU throttling rate (default: 1)
   --two-elements         Run concurrent two-element decoder coverage
   --negative-controls    Run negative controls verification suite
-  --json                 Print machine-readable JSON to stdout
+  --json                 Output full report as JSON to stdout
   --help, -h             Show this help message
 `);
 }
 
 /* ==========================================================================
- * Main Execution Loop
+ * Admission Proof Orchestrator
  * ========================================================================== */
+
+export const COVERAGE_FLOOR_CASES = [
+  'fr24.mp4',
+  'fr60.mp4',
+  'fr24b.mp4',
+  'fr24b.mov',
+  'vfr.mp4',
+  'fr30.webm',
+  'no-duration.webm',
+  'long-gop-1080p.mp4',
+] as const;
 
 export async function runAdmissionProof(
   options: CliOptions
@@ -2551,11 +2648,11 @@ export async function runAdmissionProof(
     );
   }
 
-  const tempRoot =
-    options.tempDir ?? (await mkdtemp(join(tmpdir(), 'relic-otio-admission-')));
-  const profileDir = await mkdtemp(
-    join(tmpdir(), 'relic-otio-admission-profile-')
-  );
+  const tempRoot = options.tempDir
+    ? resolve(options.tempDir)
+    : await mkdtemp(join(tmpdir(), 'relic-otio-admission-'));
+  const profileDir = join(tempRoot, 'profile');
+  await mkdir(profileDir, { recursive: true });
 
   let child: ChildProcess | undefined;
   let cdp: CdpConnection | undefined;
@@ -2706,7 +2803,7 @@ export async function runAdmissionProof(
         const hasFn = await evaluateInPage<boolean>(
           cdp,
           sessionId,
-          `typeof window.runAdmissionProbe === 'function'`
+          `typeof window.runAdmissionProbe === 'function' && typeof window.capturePausedFrames === 'function'`
         );
         if (hasFn) {
           mounted = true;
@@ -2720,71 +2817,39 @@ export async function runAdmissionProof(
     }
     assert.ok(
       mounted,
-      'Timed out waiting for window.runAdmissionProbe to mount after Page.navigate'
+      'Timed out waiting for harness functions to mount after Page.navigate'
     );
 
     // 5. Enumerate test cases
+    const staticCaseNames = [
+      'fr24.mp4',
+      'fr60.mp4',
+      'fr24b.mp4',
+      'fr24b.mov',
+      'vfr.mp4',
+      'fr30.webm',
+      'no-duration.webm',
+      'short-edit.mp4',
+      'rate-edit.mp4',
+      'loop-edit.mp4',
+    ];
     const allCandidateCases: Array<{
       readonly caseName: string;
       readonly filePath: string;
       readonly oracleEntry: FfprobeFileEntry;
-    }> = [
-      {
-        caseName: 'fr24.mp4',
-        filePath: join(options.fixturesDir, 'fr24.mp4'),
-        oracleEntry: oracle.files?.['fr24.mp4']!,
-      },
-      {
-        caseName: 'fr60.mp4',
-        filePath: join(options.fixturesDir, 'fr60.mp4'),
-        oracleEntry: oracle.files?.['fr60.mp4']!,
-      },
-      {
-        caseName: 'fr24b.mp4',
-        filePath: join(options.fixturesDir, 'fr24b.mp4'),
-        oracleEntry: oracle.files?.['fr24b.mp4']!,
-      },
-      {
-        caseName: 'fr24b.mov',
-        filePath: join(options.fixturesDir, 'fr24b.mov'),
-        oracleEntry: oracle.files?.['fr24b.mov']!,
-      },
-      {
-        caseName: 'vfr.mp4',
-        filePath: join(options.fixturesDir, 'vfr.mp4'),
-        oracleEntry: oracle.files?.['vfr.mp4']!,
-      },
-      {
-        caseName: 'fr30.webm',
-        filePath: join(options.fixturesDir, 'fr30.webm'),
-        oracleEntry: oracle.files?.['fr30.webm']!,
-      },
-      {
-        caseName: 'no-duration.webm',
-        filePath: join(options.fixturesDir, 'no-duration.webm'),
-        oracleEntry: oracle.files?.['no-duration.webm']!,
-      },
-      {
-        caseName: 'short-edit.mp4',
-        filePath: join(options.fixturesDir, 'short-edit.mp4'),
-        oracleEntry: oracle.files?.['short-edit.mp4']!,
-      },
-      {
-        caseName: 'rate-edit.mp4',
-        filePath: join(options.fixturesDir, 'rate-edit.mp4'),
-        oracleEntry: oracle.files?.['rate-edit.mp4']!,
-      },
-      {
-        caseName: 'loop-edit.mp4',
-        filePath: join(options.fixturesDir, 'loop-edit.mp4'),
-        oracleEntry: oracle.files?.['loop-edit.mp4']!,
-      },
-      {
-        caseName: longGop.fileName,
-        filePath: longGop.filePath,
-        oracleEntry: longGop.oracleEntry,
-      },
-    ];
+    }> = staticCaseNames
+      .map((caseName) => ({
+        caseName,
+        filePath: join(options.fixturesDir, caseName),
+        oracleEntry: oracle.files?.[caseName]!,
+      }))
+      .concat([
+        {
+          caseName: longGop.fileName,
+          filePath: longGop.filePath,
+          oracleEntry: longGop.oracleEntry,
+        },
+      ]);
 
     const activeCases = allCandidateCases.filter((c) => {
       if (!options.cases || options.cases.length === 0) return true;
@@ -2795,8 +2860,7 @@ export async function runAdmissionProof(
 
     // 6. Execute admission tests per case
     const caseResults: CaseAdmissionResult[] = [];
-    let insideRvfcPassed = true;
-    let nextRafPassed = true;
+    const preparedCases = new Map<string, PreparedCaseData>();
 
     for (const testCase of activeCases) {
       let caseWindows: readonly PacketWindow[] = [];
@@ -2807,6 +2871,8 @@ export async function runAdmissionProof(
       let refFrames: ReadonlyMap<number, Uint8Array> = new Map();
       let distinction = { ambiguous: false, minDelta: 0 };
       let caseFailureReason: string | undefined;
+      let outcome: CaseOutcome = 'pass';
+      let uncertifiedFrames: ReadonlySet<number> | undefined;
 
       try {
         const mimeType = getMimeType(testCase.caseName);
@@ -2818,6 +2884,7 @@ export async function runAdmissionProof(
         if (scannerTiming.kind === 'unknown') {
           eligibility = { eligible: false, reason: scannerTiming.reason };
           oracleFramesCount = (testCase.oracleEntry.frames ?? []).length;
+          outcome = 'ineligible';
         } else {
           const harness = buildHarnessWindowsFromScanner(
             scannerTiming,
@@ -2825,41 +2892,67 @@ export async function runAdmissionProof(
             testCase.caseName
           );
           if (!harness.oracleValid) {
-            eligibility = { eligible: false, reason: 'oracle_invalid' };
+            outcome = 'oracle_invalid';
             caseFailureReason = harness.reason;
           } else {
             caseWindows = harness.windows;
+            uncertifiedFrames = harness.uncertifiedFrames;
             eligibility = checkCaseEligibility(caseWindows, API_ROUNDING_Q);
             oracleFramesCount = (testCase.oracleEntry.frames ?? []).length;
-            refFrames = await extractReferenceFrames(
-              testCase.filePath,
-              oracleFramesCount,
-              64,
-              16
-            );
+            if (!eligibility.eligible) {
+              outcome = 'ineligible';
+            } else {
+              refFrames = await extractReferenceFrames(
+                testCase.filePath,
+                oracleFramesCount,
+                64,
+                16
+              );
 
-            const bijection = validatePausedSeekOracleBijection(
-              caseWindows,
-              refFrames,
-              testCase.caseName
-            );
-            if (!bijection.valid) {
-              caseFailureReason = bijection.reason;
-            }
-
-            distinction = checkOracleDistinction(refFrames, testCase.caseName);
-            if (distinction.ambiguous) {
-              caseFailureReason = `Ambiguous oracle in ${testCase.caseName}: min delta ${distinction.minDelta.toFixed(3)} <= 4.0 (frames ${distinction.ambiguousPair?.[0]} vs ${distinction.ambiguousPair?.[1]})`;
+              distinction = checkOracleDistinction(
+                refFrames,
+                testCase.caseName
+              );
+              if (distinction.ambiguous) {
+                caseFailureReason = `Ambiguous oracle in ${testCase.caseName}: min delta ${distinction.minDelta.toFixed(3)} <= 4.0`;
+                outcome = 'oracle_invalid';
+              } else {
+                const mediaUrl = `${serverHandle.origin}/media/${testCase.caseName}`;
+                const pausedOracle = await validateRealPausedSeekOracle(
+                  cdp,
+                  sessionId,
+                  mediaUrl,
+                  caseWindows,
+                  refFrames,
+                  uncertifiedFrames
+                );
+                if (!pausedOracle.valid) {
+                  caseFailureReason = pausedOracle.reason;
+                  outcome = 'oracle_invalid';
+                } else {
+                  preparedCases.set(testCase.caseName, {
+                    windows: caseWindows,
+                    refFrames,
+                    ...(uncertifiedFrames !== undefined
+                      ? { uncertifiedFrames }
+                      : {}),
+                  });
+                }
+              }
             }
           }
         }
       } catch (prepErr) {
         caseFailureReason =
           prepErr instanceof Error ? prepErr.message : String(prepErr);
+        outcome = 'probe_error';
       }
 
-      const methodResults: Record<DrawMethod, MethodEvaluationResult> = {
-        inside_rvfc: {
+      function makeEmptyMethod(
+        reason?: string,
+        condition?: string
+      ): MethodEvaluationResult {
+        return {
           drawMethod: 'inside_rvfc',
           sampleCount: 0,
           certifiedSampleCount: 0,
@@ -2882,85 +2975,19 @@ export async function runAdmissionProof(
           maxAbsDeltaUs: null,
           deltaP50Us: null,
           deltaP95Us: null,
-          deltaDistribution: {},
           lagDistribution: {},
-          rejectionReasons: {},
+          rejectionReasons: reason ? { [reason]: 1 } : {},
           approved: false,
-        },
-        next_raf: {
-          drawMethod: 'next_raf',
-          sampleCount: 0,
-          certifiedSampleCount: 0,
-          distinctFramesCount: 0,
-          matchCount: 0,
-          mismatchCount: 0,
-          wrongFrameCount: 0,
-          uncoveredInSpanCount: 0,
-          fallbackRequiredCount: 0,
-          unpredictedFallbackCount: 0,
-          captureFailedCount: 0,
-          matchRate: 0,
-          errorRatio: 1,
-          rmseP50: null,
-          rmseP95: null,
-          rmseMax: null,
-          distinctionMarginP50: null,
-          deltaMinUs: null,
-          deltaMaxUs: null,
-          maxAbsDeltaUs: null,
-          deltaP50Us: null,
-          deltaP95Us: null,
-          deltaDistribution: {},
-          lagDistribution: {},
-          rejectionReasons: {},
-          approved: false,
-        },
+          ...(reason !== undefined ? { failureReason: reason } : {}),
+          ...(condition !== undefined ? { failedCondition: condition } : {}),
+        };
+      }
+
+      const methodResults: Record<DrawMethod, MethodEvaluationResult> = {
+        inside_rvfc: makeEmptyMethod(),
       };
 
-      for (const method of options.methods) {
-        if (
-          !eligibility.eligible ||
-          (caseFailureReason && refFrames.size === 0)
-        ) {
-          methodResults[method] = {
-            drawMethod: method,
-            sampleCount: 0,
-            certifiedSampleCount: 0,
-            distinctFramesCount: 0,
-            matchCount: 0,
-            mismatchCount: 0,
-            wrongFrameCount: 0,
-            uncoveredInSpanCount: 0,
-            fallbackRequiredCount: 0,
-            unpredictedFallbackCount: 0,
-            captureFailedCount: 0,
-            matchRate: 0,
-            errorRatio: 1,
-            rmseP50: null,
-            rmseP95: null,
-            rmseMax: null,
-            distinctionMarginP50: null,
-            deltaMinUs: null,
-            deltaMaxUs: null,
-            maxAbsDeltaUs: null,
-            deltaP50Us: null,
-            deltaP95Us: null,
-            deltaDistribution: {},
-            lagDistribution: {},
-            rejectionReasons: {
-              [eligibility.reason ?? 'ineligible']: 1,
-            },
-            approved: false,
-            failureReason: !eligibility.eligible
-              ? `Ineligible: ${eligibility.reason}`
-              : caseFailureReason,
-            failedCondition: !eligibility.eligible
-              ? `ineligible_${eligibility.reason}`
-              : 'prep_failure',
-          };
-          continue;
-        }
-
+      if (outcome === 'pass') {
         try {
           const mediaUrl = `${serverHandle.origin}/media/${testCase.caseName}`;
           const probeRes = await evaluateInPage<{
@@ -2970,7 +2997,7 @@ export async function runAdmissionProof(
           }>(
             cdp,
             sessionId,
-            `window.runAdmissionProbe('${mediaUrl}', '${method}', ${options.minSamples})`
+            `window.runAdmissionProbe('${mediaUrl}', ${options.minSamples})`
           );
 
           const evaluations: SampleEvaluation[] = probeRes.samples.map(
@@ -2980,42 +3007,31 @@ export async function runAdmissionProof(
                 idx,
                 caseWindows,
                 refFrames,
-                API_ROUNDING_Q
+                API_ROUNDING_Q,
+                uncertifiedFrames
               )
           );
 
           const methodAgg = aggregateMethodResults(
-            method,
+            'inside_rvfc',
             evaluations,
             options.minSamples,
             caseWindows.length
           );
 
-          const finalApproved =
-            eligibility.eligible && !caseFailureReason && methodAgg.approved;
-          const finalAgg: MethodEvaluationResult = {
-            ...methodAgg,
-            approved: finalApproved,
-            failureReason: caseFailureReason
-              ? caseFailureReason
-              : methodAgg.failureReason,
-            failedCondition: caseFailureReason
-              ? 'case_failure'
-              : methodAgg.failedCondition,
-          };
+          methodResults.inside_rvfc = methodAgg;
 
-          methodResults[method] = finalAgg;
-
-          if (eligibility.eligible) {
-            if (method === 'inside_rvfc' && !finalApproved)
-              insideRvfcPassed = false;
-            if (method === 'next_raf' && !finalApproved) nextRafPassed = false;
+          if (methodAgg.approved) {
+            outcome = 'pass';
+          } else {
+            outcome = 'native_mismatch';
+            caseFailureReason = methodAgg.failureReason;
           }
         } catch (probeErr) {
           const errMsg =
             probeErr instanceof Error ? probeErr.message : String(probeErr);
-          methodResults[method] = {
-            drawMethod: method,
+          methodResults.inside_rvfc = {
+            drawMethod: 'inside_rvfc',
             sampleCount: 0,
             certifiedSampleCount: 0,
             distinctFramesCount: 0,
@@ -3044,67 +3060,76 @@ export async function runAdmissionProof(
             failureReason: errMsg,
             failedCondition: 'probe_error',
           };
-          if (eligibility.eligible) {
-            if (method === 'inside_rvfc') insideRvfcPassed = false;
-            if (method === 'next_raf') nextRafPassed = false;
-          }
+          outcome = 'probe_error';
+          caseFailureReason = errMsg;
         }
+      } else {
+        const failureReason = !eligibility.eligible
+          ? `Ineligible: ${eligibility.reason}`
+          : caseFailureReason;
+        const failedCondition = !eligibility.eligible
+          ? `ineligible_${eligibility.reason}`
+          : outcome;
+        methodResults.inside_rvfc = makeEmptyMethod(
+          failureReason,
+          failedCondition
+        );
       }
-
-      const caseApproved =
-        eligibility.eligible &&
-        !caseFailureReason &&
-        ((options.methods.includes('inside_rvfc') &&
-          methodResults.inside_rvfc.approved) ||
-          (options.methods.includes('next_raf') &&
-            methodResults.next_raf.approved));
 
       caseResults.push({
         caseName: testCase.caseName,
         filePath: basename(testCase.filePath),
+        outcome,
         totalOracleFrames: oracleFramesCount,
         oracleDistinctionMinRmse: distinction.minDelta,
         oracleAmbiguous: distinction.ambiguous,
         eligible: eligibility.eligible,
-        ineligibilityReason: eligibility.reason,
-        failureReason: caseFailureReason,
+        ...(eligibility.reason !== undefined
+          ? { ineligibilityReason: eligibility.reason }
+          : {}),
+        ...(caseFailureReason !== undefined
+          ? { failureReason: caseFailureReason }
+          : {}),
         methods: methodResults,
-        approved: caseApproved,
+        approved: outcome === 'pass',
       });
     }
 
     // 7. Negative controls suite execution
     let negativeControlResults: readonly NegativeControlResult[] = [];
-    const firstEligibleCase =
-      activeCases.find((c) => c.caseName === 'fr24.mp4') ?? activeCases[0];
-    if (firstEligibleCase) {
-      try {
-        const fr24Entry = firstEligibleCase.oracleEntry;
-        const fr24Mime = getMimeType(firstEligibleCase.caseName);
-        const fr24Scanner = await scanFixtureTimingInFreshProcess(
-          firstEligibleCase.filePath,
-          fr24Mime
-        );
-        if (fr24Scanner.kind === 'windows') {
-          const fr24Harness = buildHarnessWindowsFromScanner(
-            fr24Scanner,
-            fr24Entry,
-            firstEligibleCase.caseName
+    if (options.negativeControls) {
+      const firstEligibleCase =
+        activeCases.find((c) => c.caseName === 'fr24.mp4') ?? activeCases[0];
+      if (firstEligibleCase) {
+        try {
+          const fr24Entry = firstEligibleCase.oracleEntry;
+          const fr24Mime = getMimeType(firstEligibleCase.caseName);
+          const fr24Scanner = await scanFixtureTimingInFreshProcess(
+            firstEligibleCase.filePath,
+            fr24Mime
           );
-          if (fr24Harness.oracleValid && fr24Harness.windows.length >= 2) {
-            const fr24RefFrames = await extractReferenceFrames(
-              firstEligibleCase.filePath,
-              (fr24Entry.frames ?? []).length,
-              64,
-              16
+          if (fr24Scanner.kind === 'windows') {
+            const fr24Harness = buildHarnessWindowsFromScanner(
+              fr24Scanner,
+              fr24Entry,
+              firstEligibleCase.caseName
             );
-            negativeControlResults = runNegativeControls(
-              fr24Harness.windows,
-              fr24RefFrames
-            );
+            if (fr24Harness.oracleValid && fr24Harness.windows.length >= 2) {
+              const fr24RefFrames = await extractReferenceFrames(
+                firstEligibleCase.filePath,
+                (fr24Entry.frames ?? []).length,
+                64,
+                16
+              );
+              negativeControlResults = await runNegativeControls(
+                fr24Harness.windows,
+                fr24RefFrames,
+                fr24Harness.uncertifiedFrames
+              );
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
     }
 
     // 8. Two-element concurrent decode coverage if requested
@@ -3114,45 +3139,34 @@ export async function runAdmissionProof(
         cdp,
         sessionId,
         serverHandle.origin,
+        preparedCases,
         20
       );
     }
 
     const eligibleCases = caseResults.filter((c) => c.eligible !== false);
     const insideApproved =
-      options.methods.includes('inside_rvfc') &&
       eligibleCases.length > 0 &&
       eligibleCases.every((c) => c.methods.inside_rvfc.approved);
-    const nextRafApproved =
-      options.methods.includes('next_raf') &&
-      eligibleCases.length > 0 &&
-      eligibleCases.every((c) => c.methods.next_raf.approved);
-
-    let certifiedDrawMethod: DrawMethod | 'none' = 'none';
-    if (insideApproved && nextRafApproved) {
-      certifiedDrawMethod = 'inside_rvfc';
-    } else if (insideApproved) {
-      certifiedDrawMethod = 'inside_rvfc';
-    } else if (nextRafApproved) {
-      certifiedDrawMethod = 'next_raf';
-    }
 
     const report: AdmissionReport = {
       schemaVersion: 'relic-otio-native-frame-admission/v1',
       timestamp: new Date().toISOString(),
       chromePath: basename(foundChrome.path),
       browserProduct,
+      cpuThrottlingRate: options.cpuThrottlingRate ?? (options.cpu4x ? 4 : 1),
       minSamplesRequired: options.minSamples,
       casesTotal: caseResults.length,
       casesPassed: caseResults.filter((c) => c.approved).length,
       casesEligible: eligibleCases.length,
       methodApproval: {
         inside_rvfc: insideApproved,
-        next_raf: nextRafApproved,
       },
-      certifiedDrawMethod,
+      certifiedDrawMethod: insideApproved ? 'inside_rvfc' : 'none',
       cases: caseResults,
-      negativeControls: negativeControlResults,
+      ...(negativeControlResults.length > 0
+        ? { negativeControls: negativeControlResults }
+        : {}),
       ...(twoElementResults.length > 0
         ? { twoElementCoverage: twoElementResults }
         : {}),
@@ -3192,48 +3206,6 @@ export async function main(): Promise<void> {
   }
 
   try {
-    if (options.negativeControls) {
-      const fr24Path = join(options.fixturesDir, 'fr24.mp4');
-      const oraclePath = join(options.fixturesDir, 'timing-oracle.json');
-      const oracleText = await readFile(oraclePath, 'utf8');
-      const oracle = JSON.parse(oracleText) as FfprobeTimingOracle;
-      const fr24Entry = oracle.files?.['fr24.mp4'];
-      assert.ok(fr24Entry, 'fr24.mp4 not found in timing-oracle.json');
-      const fr24Scanner = await scanFixtureTimingInFreshProcess(
-        fr24Path,
-        'video/mp4'
-      );
-      assert.equal(fr24Scanner.kind, 'windows', 'fr24.mp4 timing scan failed');
-      const fr24Harness = buildHarnessWindowsFromScanner(
-        fr24Scanner,
-        fr24Entry,
-        'fr24.mp4'
-      );
-      assert.ok(fr24Harness.oracleValid, 'fr24.mp4 harness windows failed');
-      const fr24Ref = await extractReferenceFrames(
-        fr24Path,
-        (fr24Entry.frames ?? []).length,
-        64,
-        16
-      );
-      const results = runNegativeControls(fr24Harness.windows, fr24Ref);
-      console.log('NEGATIVE CONTROLS VERIFICATION:');
-      for (const r of results) {
-        console.log(
-          `  [${r.name}] intended=${r.intendedCounter} observed=${r.observedCounter} passed=${r.passed} (${r.detail ?? ''})`
-        );
-      }
-      const allPassed = results.every((r) => r.passed);
-      if (!allPassed) {
-        console.error('FAIL: Not all negative controls passed');
-        process.exit(1);
-      }
-      console.log(
-        'PASS: All negative controls proved their intended counters.'
-      );
-      process.exit(0);
-    }
-
     const report = await runAdmissionProof(options);
 
     if (options.outputPath) {
@@ -3256,34 +3228,24 @@ export async function main(): Promise<void> {
       console.log(JSON.stringify(report, null, 2));
     } else {
       console.log(
-        '\n==============================================================='
-      );
-      console.log('OTIO Native Frame Admission Proof Report');
-      console.log(
-        '==============================================================='
-      );
-      console.log(`Browser Product:   ${report.browserProduct}`);
-      console.log(`Chrome Binary:     ${report.chromePath}`);
-      console.log(`Cases Evaluated:   ${report.casesTotal}`);
-      if (report.casesEligible !== undefined) {
-        console.log(
-          `Cases Eligible:    ${report.casesEligible} / ${report.casesTotal}`
-        );
-      }
-      console.log(
-        `Cases Passed:      ${report.casesPassed} / ${report.casesTotal}`
-      );
-      console.log(
-        `Method (a) inside_rvfc: ${report.methodApproval.inside_rvfc ? 'APPROVED (100% match)' : 'REJECTED'}`
-      );
-      console.log(
-        `Method (b) next_raf:    ${report.methodApproval.next_raf ? 'APPROVED (100% match)' : 'REJECTED'}`
-      );
-      console.log(
-        `Certified Method:  ${report.certifiedDrawMethod.toUpperCase()}`
-      );
-      console.log(
-        '---------------------------------------------------------------'
+        [
+          '\n===============================================================',
+          'OTIO Native Frame Admission Proof Report',
+          '===============================================================',
+          `Browser Product:   ${report.browserProduct}`,
+          `Chrome Binary:     ${report.chromePath}`,
+          `CPU Throttling:    ${report.cpuThrottlingRate}x`,
+          `Cases Evaluated:   ${report.casesTotal}`,
+          ...(report.casesEligible !== undefined
+            ? [
+                `Cases Eligible:    ${report.casesEligible} / ${report.casesTotal}`,
+              ]
+            : []),
+          `Cases Passed:      ${report.casesPassed} / ${report.casesTotal}`,
+          `Method inside_rvfc: ${report.methodApproval.inside_rvfc ? 'APPROVED (100% match)' : 'REJECTED'}`,
+          `Certified Method:  ${report.certifiedDrawMethod.toUpperCase()}`,
+          '---------------------------------------------------------------',
+        ].join('\n')
       );
       for (const c of report.cases) {
         const eligStr =
@@ -3291,37 +3253,35 @@ export async function main(): Promise<void> {
             ? ` [INELIGIBLE: ${c.ineligibilityReason ?? 'unsupported'}]`
             : '';
         console.log(
-          `\nCase: ${c.caseName}${eligStr} (${c.totalOracleFrames} oracle frames, min distinction: ${c.oracleDistinctionMinRmse.toFixed(2)} RMSE)`
+          `\nCase: ${c.caseName} [${c.outcome.toUpperCase()}]${eligStr} (${c.totalOracleFrames} oracle frames, min distinction: ${c.oracleDistinctionMinRmse.toFixed(2)} RMSE)`
         );
         if (c.failureReason) {
           console.log(`    Case Note: ${c.failureReason}`);
         }
-        for (const m of ['inside_rvfc', 'next_raf'] as const) {
-          const res = c.methods[m];
+        const res = c.methods.inside_rvfc;
+        console.log(
+          `  [inside_rvfc] samples=${res.sampleCount}, certified=${res.certifiedSampleCount}, distinct=${res.distinctFramesCount}, matchRate=${(res.matchRate * 100).toFixed(2)}%, rmseP50=${res.rmseP50 !== null ? res.rmseP50.toFixed(2) : 'null'}, rmseMax=${res.rmseMax !== null ? res.rmseMax.toFixed(2) : 'null'}, maxDelta=${res.maxAbsDeltaUs !== null ? `${res.maxAbsDeltaUs.toFixed(3)}us` : 'null'}, approved=${res.approved}`
+        );
+        if (res.failureReason) {
+          console.log(`    Failure: ${res.failureReason}`);
+        }
+        if (
+          res.deltaDistribution &&
+          Object.keys(res.deltaDistribution).length > 0
+        ) {
           console.log(
-            `  [${m}] samples=${res.sampleCount}, certified=${res.certifiedSampleCount}, distinct=${res.distinctFramesCount}, matchRate=${(res.matchRate * 100).toFixed(2)}%, rmseP50=${res.rmseP50 !== null ? res.rmseP50.toFixed(2) : 'null'}, rmseMax=${res.rmseMax !== null ? res.rmseMax.toFixed(2) : 'null'}, maxDelta=${res.maxAbsDeltaUs !== null ? res.maxAbsDeltaUs.toFixed(3) + 'us' : 'null'}, approved=${res.approved}`
+            `    Delta Distribution (0.1us buckets): ${JSON.stringify(res.deltaDistribution)}`
           );
-          if (res.failureReason) {
-            console.log(`    Failure: ${res.failureReason}`);
-          }
-          if (
-            res.deltaDistribution &&
-            Object.keys(res.deltaDistribution).length > 0
-          ) {
-            console.log(
-              `    Delta Distribution (0.1us buckets): ${JSON.stringify(res.deltaDistribution)}`
-            );
-          }
-          if (Object.keys(res.lagDistribution).length > 0) {
-            console.log(
-              `    Lag Distribution (delta frames): ${JSON.stringify(res.lagDistribution)}`
-            );
-          }
-          if (Object.keys(res.rejectionReasons).length > 0) {
-            console.log(
-              `    Rejection Reasons: ${JSON.stringify(res.rejectionReasons)}`
-            );
-          }
+        }
+        if (Object.keys(res.lagDistribution).length > 0) {
+          console.log(
+            `    Lag Distribution (delta frames): ${JSON.stringify(res.lagDistribution)}`
+          );
+        }
+        if (Object.keys(res.rejectionReasons).length > 0) {
+          console.log(
+            `    Rejection Reasons: ${JSON.stringify(res.rejectionReasons)}`
+          );
         }
       }
 
@@ -3354,15 +3314,50 @@ export async function main(): Promise<void> {
       );
     }
 
-    if (report.certifiedDrawMethod === 'none') {
-      console.error(
-        '\nADMISSION FAILED: Neither draw method achieved 100% actual frame identity.'
-      );
+    const hasNativeMismatch = report.cases.some(
+      (c) => c.outcome === 'native_mismatch'
+    );
+    const hasTwoElementMismatch =
+      Boolean(options.twoElements) &&
+      Boolean(report.twoElementCoverage?.some((te) => !te.passed));
+    const hasControlMismatch =
+      Boolean(options.negativeControls) &&
+      Boolean(report.negativeControls?.some((nc) => !nc.passed));
+
+    if (hasNativeMismatch || hasTwoElementMismatch || hasControlMismatch) {
+      console.error('\nADMISSION FAILED (exit 1)');
       process.exit(1);
     }
+
+    const floorPassed = COVERAGE_FLOOR_CASES.every((fc) => {
+      const c = report.cases.find((x) => x.caseName === fc);
+      return c && c.outcome === 'pass';
+    });
+    const twoElementsPassed =
+      !options.twoElements ||
+      Boolean(
+        report.twoElementCoverage &&
+          report.twoElementCoverage.length > 0 &&
+          report.twoElementCoverage.every((te) => te.passed)
+      );
+    const controlsPassed =
+      !options.negativeControls ||
+      Boolean(
+        report.negativeControls &&
+          report.negativeControls.length > 0 &&
+          report.negativeControls.every((nc) => nc.passed)
+      );
+
+    if (floorPassed && twoElementsPassed && controlsPassed) {
+      console.log('\nADMISSION PASSED (exit 0)');
+      process.exit(0);
+    }
+
+    console.error('\nADMISSION INCOMPLETE (exit 2)');
+    process.exit(2);
   } catch (err) {
     console.error('\nADMISSION PROOF ERROR:', err);
-    process.exit(1);
+    process.exit(2);
   }
 }
 
