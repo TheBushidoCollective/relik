@@ -2076,6 +2076,164 @@ describe('rate limiting', () => {
     expect(second.status).toBe(429);
     expect((await second.json()).code).toBe('auth_rate_limited');
   });
+
+  test('two IPv6 addresses in the same /64 share a rate limit budget', async () => {
+    app = build({ config: { authRateLimit: { limit: 1, windowSeconds: 60 } } });
+    const lbIp = '130.211.0.1';
+    const ip1 = '2001:db8:abcd:12::1';
+    const ip2 = '2001:db8:abcd:12:dead:beef::2';
+
+    const first = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `${ip1}, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader@example.com' }),
+      })
+    );
+    expect(first.status).toBe(202);
+
+    const second = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `${ip2}, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader@example.com' }),
+      })
+    );
+    expect(second.status).toBe(429);
+    expect((await second.json()).code).toBe('auth_rate_limited');
+  });
+
+  test('IPv6 addresses in different /64s have independent rate limit budgets', async () => {
+    app = build({ config: { authRateLimit: { limit: 1, windowSeconds: 60 } } });
+    const lbIp = '130.211.0.1';
+    const ip1 = '2001:db8:abcd:12::1';
+    const ip2 = '2001:db8:abcd:13::1';
+
+    const first = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `${ip1}, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader1@example.com' }),
+      })
+    );
+    expect(first.status).toBe(202);
+
+    const second = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `${ip2}, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader2@example.com' }),
+      })
+    );
+    expect(second.status).toBe(202);
+  });
+
+  test('IPv4 addresses retain their individual budgets', async () => {
+    app = build({ config: { authRateLimit: { limit: 1, windowSeconds: 60 } } });
+    const lbIp = '130.211.0.1';
+
+    const first = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `198.51.100.1, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader1@example.com' }),
+      })
+    );
+    expect(first.status).toBe(202);
+
+    const firstAgain = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `198.51.100.1, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader1@example.com' }),
+      })
+    );
+    expect(firstAgain.status).toBe(429);
+
+    const second = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `198.51.100.2, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader2@example.com' }),
+      })
+    );
+    expect(second.status).toBe(202);
+  });
+
+  test('IPv4-mapped IPv6 shares budget with direct IPv4', async () => {
+    app = build({ config: { authRateLimit: { limit: 1, windowSeconds: 60 } } });
+    const lbIp = '130.211.0.1';
+
+    const first = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `198.51.100.5, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader@example.com' }),
+      })
+    );
+    expect(first.status).toBe(202);
+
+    const mapped = await app.fetch(
+      new Request('https://relic.example/api/auth/request', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': `::ffff:198.51.100.5, ${lbIp}`,
+        },
+        body: JSON.stringify({ email: 'reader@example.com' }),
+      })
+    );
+    expect(mapped.status).toBe(429);
+    expect((await mapped.json()).code).toBe('auth_rate_limited');
+  });
+
+  test('stored relic and mint records keep the full client IP rather than rate limit key', async () => {
+    const store = new MemoryStore();
+    app = build({ store });
+    const lbIp = '130.211.0.1';
+    const fullIpv6 = '2001:db8:abcd:12:dead:beef:1234:5678';
+
+    const { id } = await publish({ ip: fullIpv6 });
+    const row = await store.getRelic(id);
+    expect(row).toBeDefined();
+    expect(row?.publishIp).toBe(fullIpv6);
+
+    await app.fetch(
+      new Request(`https://relic.example/api/relics/${id}/mint`, {
+        method: 'POST',
+        headers: {
+          'x-forwarded-for': `${fullIpv6}, ${lbIp}`,
+        },
+      })
+    );
+    const mintEntries = await store.readMintLog();
+    expect(mintEntries.length).toBeGreaterThan(0);
+    expect(mintEntries[0]?.ip).toBe(fullIpv6);
+  });
 });
 
 describe('problem documents', () => {

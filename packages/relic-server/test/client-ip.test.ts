@@ -84,6 +84,16 @@ describe('clientIp extraction', () => {
       });
       expect(clientIp(request, lbConfig)).toBe('192.0.2.55');
     });
+
+    test('extracts full IPv6 address from proxy headers without truncating', () => {
+      const ipv6 = '2001:db8:abcd:12:dead:beef:1234:5678';
+      const request = new Request('https://relic.example/api/challenge', {
+        headers: {
+          'x-forwarded-for': `${ipv6}, 130.211.0.1`,
+        },
+      });
+      expect(clientIp(request, lbConfig)).toBe(ipv6);
+    });
   });
 
   describe('direct Cloud Run topology (1 hop from right)', () => {
@@ -148,6 +158,52 @@ describe('clientIp extraction', () => {
           trustedProxyHops: 1.5,
         })
       ).toThrow('trustedProxyHops must be a non-negative integer');
+    });
+
+    test('rejects non-positive or non-integer limiterMaxEntries', () => {
+      expect(() =>
+        assertConfig({
+          ...DEFAULT_CONFIG,
+          limiterMaxEntries: 0,
+        })
+      ).toThrow('limiterMaxEntries must be a positive integer');
+
+      expect(() =>
+        assertConfig({
+          ...DEFAULT_CONFIG,
+          limiterMaxEntries: -10,
+        })
+      ).toThrow('limiterMaxEntries must be a positive integer');
+
+      expect(() =>
+        assertConfig({
+          ...DEFAULT_CONFIG,
+          limiterMaxEntries: 10.5,
+        })
+      ).toThrow('limiterMaxEntries must be a positive integer');
+    });
+
+    test('rejects non-positive or non-integer limiterSweepInterval', () => {
+      expect(() =>
+        assertConfig({
+          ...DEFAULT_CONFIG,
+          limiterSweepInterval: 0,
+        })
+      ).toThrow('limiterSweepInterval must be a positive integer');
+
+      expect(() =>
+        assertConfig({
+          ...DEFAULT_CONFIG,
+          limiterSweepInterval: -5,
+        })
+      ).toThrow('limiterSweepInterval must be a positive integer');
+
+      expect(() =>
+        assertConfig({
+          ...DEFAULT_CONFIG,
+          limiterSweepInterval: 5.5,
+        })
+      ).toThrow('limiterSweepInterval must be a positive integer');
     });
   });
 });
