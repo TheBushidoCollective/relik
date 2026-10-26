@@ -33,11 +33,16 @@ import {
   authenticationResponseToJSON,
   ceremonyCode,
   ceremonySignal,
+  COPY_LINK_FAILED,
+  COPY_LINK_FINE,
+  COPY_LINK_REQUIRED_LEAD,
+  COPY_LINK_SEND,
   type CredentialsLike,
   creationOptionsFromJSON,
   el,
   glyph,
   ICON_KEY,
+  type LinkRequestOutcome,
   parseCreationOptions,
   parseRequestOptions,
   plain,
@@ -54,6 +59,7 @@ export const DECISION_LEAD =
 export const DECISION_TOFU =
   'The first passkey set up for an address becomes the only way to record ' +
   'decisions as that address. Adding another later needs this one.';
+export const DECISION_LINK_REQUIRED = `${COPY_LINK_REQUIRED_LEAD} Send a new one, open it, then choose again. Nothing was recorded.`;
 export const DECISION_CANCELLED = 'Cancelled. Nothing was recorded.';
 export const DECISION_UNAVAILABLE =
   'Decisions open on this relic once its publisher republishes it.';
@@ -104,6 +110,8 @@ export interface DecisionPanelOptions {
   readonly onOpenVersion: (version: number) => void;
   /** Called once, after the sheet has left the page. */
   readonly onClose: () => void;
+  /** Requests a fresh sign-in link be emailed to the given address. */
+  readonly requestLink: (email: string) => Promise<LinkRequestOutcome>;
   /** Defaults to `navigator.credentials`. */
   readonly credentials?: CredentialsLike | undefined;
 }
@@ -131,7 +139,12 @@ type PasskeyStep =
   | { readonly phase: 'add'; readonly options: RequestOptionsJSON }
   /** The existing passkey answered; creating the new one is a second press. */
   | { readonly phase: 'asserted'; readonly options: CreationOptionsJSON }
-  | { readonly phase: 'working'; readonly mode: 'create' | 'add' };
+  | { readonly phase: 'working'; readonly mode: 'create' | 'add' }
+  | {
+      readonly phase: 'link';
+      readonly state: 'required' | 'sending' | 'sent' | 'failed';
+      readonly outcome?: LinkRequestOutcome;
+    };
 
 interface Outcome {
   readonly state: 'recorded' | 'cancelled' | 'error';
@@ -590,6 +603,162 @@ export function openDecisionPanel(
       step = { kind: 'choose' };
       paint();
     });
+    if (passkey.phase === 'link') {
+      box.setAttribute('data-passkey-link', '');
+      box.setAttribute('data-state', passkey.state);
+      box.append(el('h3', '', 'Set up a passkey to decide'), identity('For '));
+
+      if (passkey.state === 'required' || passkey.state === 'sending') {
+        const warning = el('p', 'compose-warning', DECISION_LINK_REQUIRED);
+        const sendBtn = el(
+          'button',
+          'action primary',
+          COPY_LINK_SEND
+        ) as HTMLButtonElement;
+        sendBtn.setAttribute('type', 'button');
+        sendBtn.setAttribute('data-passkey-link-send', '');
+        if (passkey.state === 'sending') {
+          sendBtn.disabled = true;
+        }
+        sendBtn.addEventListener('click', () => {
+          const email = sessionEmail();
+          if (!email) {
+            lapse();
+            return;
+          }
+          step = {
+            kind: 'passkey',
+            verdict,
+            passkey: { phase: 'link', state: 'sending' },
+          };
+          paint();
+          track(
+            (async () => {
+              try {
+                const outcome = await options.requestLink(email);
+                if (!open) return;
+                if (outcome.kind === 'sent') {
+                  step = {
+                    kind: 'passkey',
+                    verdict,
+                    passkey: { phase: 'link', state: 'sent', outcome },
+                  };
+                } else {
+                  step = {
+                    kind: 'passkey',
+                    verdict,
+                    passkey: { phase: 'link', state: 'failed', outcome },
+                  };
+                }
+              } catch {
+                if (!open) return;
+                step = {
+                  kind: 'passkey',
+                  verdict,
+                  passkey: {
+                    phase: 'link',
+                    state: 'failed',
+                    outcome: { kind: 'failed' },
+                  },
+                };
+              }
+              paint();
+            })()
+          );
+        });
+        box.append(
+          warning,
+          sendBtn,
+          el('p', 'decision-fine', COPY_LINK_FINE),
+          notNow
+        );
+        return box;
+      }
+
+      if (passkey.state === 'failed') {
+        const errorText = el('p', 'compose-warning', COPY_LINK_FAILED);
+        const sendBtn = el(
+          'button',
+          'action primary',
+          COPY_LINK_SEND
+        ) as HTMLButtonElement;
+        sendBtn.setAttribute('type', 'button');
+        sendBtn.setAttribute('data-passkey-link-send', '');
+        sendBtn.addEventListener('click', () => {
+          const email = sessionEmail();
+          if (!email) {
+            lapse();
+            return;
+          }
+          step = {
+            kind: 'passkey',
+            verdict,
+            passkey: { phase: 'link', state: 'sending' },
+          };
+          paint();
+          track(
+            (async () => {
+              try {
+                const outcome = await options.requestLink(email);
+                if (!open) return;
+                if (outcome.kind === 'sent') {
+                  step = {
+                    kind: 'passkey',
+                    verdict,
+                    passkey: { phase: 'link', state: 'sent', outcome },
+                  };
+                } else {
+                  step = {
+                    kind: 'passkey',
+                    verdict,
+                    passkey: { phase: 'link', state: 'failed', outcome },
+                  };
+                }
+              } catch {
+                if (!open) return;
+                step = {
+                  kind: 'passkey',
+                  verdict,
+                  passkey: {
+                    phase: 'link',
+                    state: 'failed',
+                    outcome: { kind: 'failed' },
+                  },
+                };
+              }
+              paint();
+            })()
+          );
+        });
+        box.append(
+          errorText,
+          sendBtn,
+          el('p', 'decision-fine', COPY_LINK_FINE),
+          notNow
+        );
+        return box;
+      }
+
+      if (passkey.state === 'sent') {
+        const note = el(
+          'p',
+          'decision-note',
+          passkey.outcome && passkey.outcome.kind === 'sent'
+            ? passkey.outcome.message
+            : ''
+        );
+        box.appendChild(note);
+        if (
+          passkey.outcome &&
+          passkey.outcome.kind === 'sent' &&
+          passkey.outcome.warning
+        ) {
+          box.appendChild(el('p', 'compose-warning', passkey.outcome.warning));
+        }
+        box.appendChild(notNow);
+        return box;
+      }
+    }
     if (passkey.phase === 'loading') {
       box.append(
         el('h3', '', 'Set up a passkey to decide'),
@@ -650,6 +819,9 @@ export function openDecisionPanel(
           'Confirm on your device. Nothing is stored until it answers.'
         )
       );
+      return box;
+    }
+    if (passkey.phase !== 'create' && passkey.phase !== 'asserted') {
       return box;
     }
     const creation = passkey.options;
@@ -1077,7 +1249,7 @@ export function openDecisionPanel(
         ? dialog.querySelector?.<HTMLElement>('.decision-title')
         : (dialog.querySelector?.<HTMLElement>('[data-decision-outcome]') ??
           dialog.querySelector?.<HTMLElement>(
-            '[data-decision-confirm]:not([disabled]), [data-passkey-create]:not([disabled]), [data-passkey-add]:not([disabled])'
+            '[data-decision-confirm]:not([disabled]), [data-passkey-create]:not([disabled]), [data-passkey-add]:not([disabled]), [data-passkey-link-send]:not([disabled])'
           ));
     target?.focus?.({ preventScroll: true });
   };
@@ -1211,6 +1383,15 @@ export function openDecisionPanel(
         const reply = await api('auth/passkeys/options', {});
         if (!open) return;
         if (!reply.ok) {
+          if (reply.code === 'passkey_fresh_link_required') {
+            step = {
+              kind: 'passkey',
+              verdict,
+              passkey: { phase: 'link', state: 'required' },
+            };
+            paint();
+            return;
+          }
           if (needsSignIn(reply.code)) lapse();
           else errorOutcome(verdict, reply, 'passkey-create');
           return;

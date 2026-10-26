@@ -17,8 +17,13 @@ import {
   ceremonySignal,
   creationOptionsFromJSON,
   type CredentialsLike,
+  COPY_LINK_FAILED,
+  COPY_LINK_FINE,
+  COPY_LINK_REQUIRED_LEAD,
+  COPY_LINK_SEND,
   el,
   ICON_KEY,
+  type LinkRequestOutcome,
   parseCreationOptions,
   parseRequestOptions,
   pressable,
@@ -662,8 +667,8 @@ export interface PasskeyOfferMount {
   readonly credentials?: CredentialsLike;
   readonly store: Pick<Storage, 'getItem' | 'setItem'> | undefined;
   readonly onDone: () => void;
+  readonly requestLink: () => Promise<LinkRequestOutcome>;
 }
-
 export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
   const { host, deps, onDone } = mount;
 
@@ -700,20 +705,127 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
   const bodyEl = el('p', 'passkey-offer-body', initialOfferBody);
   const fineEl = el('p', 'passkey-offer-fine', COPY_OFFER_FINE);
 
+  const warningEl = el('p', 'compose-warning');
+  warningEl.setAttribute('data-passkey-offer-warning', '');
+  warningEl.hidden = true;
+  warningEl.setAttribute('hidden', '');
+
   const createBtn = el('button', 'action primary', COPY_OFFER_CREATE);
   createBtn.setAttribute('type', 'button');
   createBtn.setAttribute('data-passkey-offer-create', '');
+
+  const linkBtn = el(
+    'button',
+    'action primary',
+    COPY_LINK_SEND
+  ) as HTMLButtonElement;
+  linkBtn.setAttribute('type', 'button');
+  linkBtn.setAttribute('data-passkey-offer-link', '');
+  linkBtn.hidden = true;
+  linkBtn.setAttribute('hidden', '');
 
   const dismissBtn = el('button', 'passkey-link', COPY_OFFER_NOT_NOW);
   dismissBtn.setAttribute('type', 'button');
   dismissBtn.setAttribute('data-passkey-offer-dismiss', '');
 
-  card.replaceChildren(titleEl, bodyEl, fineEl, createBtn, dismissBtn);
+  card.replaceChildren(
+    titleEl,
+    bodyEl,
+    warningEl,
+    fineEl,
+    createBtn,
+    linkBtn,
+    dismissBtn
+  );
 
   function hideCreateButton(): void {
     createBtn.hidden = true;
     createBtn.setAttribute('hidden', '');
   }
+
+  function showCreateButton(): void {
+    createBtn.hidden = false;
+    createBtn.removeAttribute('hidden');
+  }
+
+  function hideLinkButton(): void {
+    linkBtn.hidden = true;
+    linkBtn.setAttribute('hidden', '');
+  }
+
+  function showLinkButton(disabled: boolean): void {
+    linkBtn.hidden = false;
+    linkBtn.removeAttribute('hidden');
+    linkBtn.disabled = disabled;
+  }
+
+  function hideWarning(): void {
+    warningEl.hidden = true;
+    warningEl.setAttribute('hidden', '');
+    warningEl.textContent = '';
+  }
+
+  function showWarning(text: string): void {
+    warningEl.textContent = text;
+    warningEl.hidden = false;
+    warningEl.removeAttribute('hidden');
+  }
+
+  function linkRequiredBody(): string {
+    return typeof mount.email === 'string' && mount.email.length > 0
+      ? `${COPY_LINK_REQUIRED_LEAD} Send a new one to ${mount.email}, open it, then add your passkey.`
+      : `${COPY_LINK_REQUIRED_LEAD} Send yourself a new one, open it, then add your passkey.`;
+  }
+
+  async function handleSendLink(): Promise<void> {
+    setState('link-sending');
+    hideWarning();
+    hideCreateButton();
+    showLinkButton(true);
+    dismissBtn.textContent = COPY_OFFER_NOT_NOW;
+
+    try {
+      const outcome = await mount.requestLink();
+      if (outcome.kind === 'sent') {
+        setState('link-sent');
+        bodyEl.textContent = outcome.message;
+        fineEl.hidden = true;
+        fineEl.setAttribute('hidden', '');
+        if (outcome.warning) {
+          showWarning(outcome.warning);
+        } else {
+          hideWarning();
+        }
+        hideCreateButton();
+        hideLinkButton();
+        dismissBtn.textContent = COPY_OFFER_CLOSE;
+      } else {
+        setState('link-failed');
+        bodyEl.textContent = COPY_LINK_FAILED;
+        fineEl.hidden = false;
+        fineEl.removeAttribute('hidden');
+        fineEl.textContent = COPY_LINK_FINE;
+        hideWarning();
+        hideCreateButton();
+        showLinkButton(false);
+        dismissBtn.textContent = COPY_OFFER_NOT_NOW;
+      }
+    } catch {
+      setState('link-failed');
+      bodyEl.textContent = COPY_LINK_FAILED;
+      fineEl.hidden = false;
+      fineEl.removeAttribute('hidden');
+      fineEl.textContent = COPY_LINK_FINE;
+      hideWarning();
+      hideCreateButton();
+      showLinkButton(false);
+      dismissBtn.textContent = COPY_OFFER_NOT_NOW;
+    }
+  }
+
+  linkBtn.addEventListener('click', () => {
+    void handleSendLink();
+  });
 
   let currentState = 'loading';
   let cachedCreation: CreationOptionsJSON | undefined;
@@ -740,6 +852,35 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
         }
       );
 
+      let problemCode: string | undefined;
+      try {
+        const cloned = res.clone();
+        const bodyText = await cloned.text();
+        if (bodyText) {
+          const parsed = JSON.parse(bodyText);
+          if (
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            'code' in parsed
+          ) {
+            problemCode = String(parsed.code);
+          }
+        }
+      } catch {}
+
+      if (problemCode === 'passkey_fresh_link_required') {
+        setState('link-required');
+        bodyEl.textContent = linkRequiredBody();
+        fineEl.hidden = false;
+        fineEl.removeAttribute('hidden');
+        fineEl.textContent = COPY_LINK_FINE;
+        hideWarning();
+        hideCreateButton();
+        showLinkButton(false);
+        dismissBtn.textContent = COPY_OFFER_NOT_NOW;
+        return;
+      }
+
       if (res.status === 401) {
         onDone();
         return;
@@ -750,6 +891,8 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
         bodyEl.textContent = COPY_OFFER_ERROR;
         dismissBtn.textContent = COPY_OFFER_CLOSE;
         hideCreateButton();
+        hideLinkButton();
+        hideWarning();
         return;
       }
 
@@ -778,8 +921,14 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
         bodyEl.textContent = isSecondStep
           ? COPY_OFFER_SECOND_STEP
           : initialOfferBody;
+        fineEl.hidden = false;
+        fineEl.removeAttribute('hidden');
+        fineEl.textContent = COPY_OFFER_FINE;
+        showCreateButton();
+        hideLinkButton();
+        hideWarning();
+        dismissBtn.textContent = COPY_OFFER_NOT_NOW;
         createBtn.textContent = COPY_OFFER_CREATE;
-
         const timeout =
           typeof creation.timeout === 'number' ? creation.timeout : 300_000;
         scheduleRefresh(timeout);
@@ -795,8 +944,14 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
         cachedAssert = assertion;
         setState('assert');
         bodyEl.textContent = COPY_OFFER_ASSERT_BODY;
+        fineEl.hidden = false;
+        fineEl.removeAttribute('hidden');
+        fineEl.textContent = COPY_OFFER_FINE;
+        showCreateButton();
+        hideLinkButton();
+        hideWarning();
+        dismissBtn.textContent = COPY_OFFER_NOT_NOW;
         createBtn.textContent = COPY_OFFER_ASSERT_BUTTON;
-
         const timeout =
           typeof assertion.timeout === 'number' ? assertion.timeout : 300_000;
         scheduleRefresh(timeout);
@@ -1067,7 +1222,8 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
     if (
       currentState === 'created' ||
       currentState === 'exists' ||
-      currentState === 'error'
+      currentState === 'error' ||
+      currentState === 'link-sent'
     ) {
       card.remove();
       onDone();

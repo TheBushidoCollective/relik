@@ -888,6 +888,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
       host: host as unknown as HTMLElement,
       deps: { serviceOrigin: 'https://relik.example', fetch },
       store: mockStore,
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
       onDone: () => {
         done = true;
       },
@@ -946,6 +947,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
       deps: { serviceOrigin: 'https://relik.example', fetch },
       credentials: creds,
       store: mockStore,
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
       onDone: () => {},
     });
 
@@ -1027,6 +1029,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
       deps: { serviceOrigin: 'https://relik.example', fetch },
       credentials: creds,
       store: mockStore,
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
       onDone: () => {},
     });
 
@@ -1100,6 +1103,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
       deps: { serviceOrigin: 'https://relik.example', fetch },
       credentials: creds,
       store: mockStore,
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
       onDone: () => {},
     });
 
@@ -1141,6 +1145,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
       deps: { serviceOrigin: 'https://relik.example', fetch },
       email: 'reader@example.com',
       store: { getItem: () => null, setItem: () => {} },
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
       onDone: () => {},
     });
     await tick(10);
@@ -1160,6 +1165,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
       deps: { serviceOrigin: 'https://relik.example', fetch },
       email: malicious,
       store: { getItem: () => null, setItem: () => {} },
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
       onDone: () => {},
     });
     await tick(10);
@@ -1178,6 +1184,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
       host: host3 as unknown as HTMLElement,
       deps: { serviceOrigin: 'https://relik.example', fetch },
       store: { getItem: () => null, setItem: () => {} },
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
       onDone: () => {},
     });
     await tick(10);
@@ -1188,5 +1195,128 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
     expect(bodyEl3?.textContent).toBe(
       'Add a passkey and this device signs you in without a link.'
     );
+  });
+
+  test('16. Fresh link required transitions offer card through link-* states and plain 401 closes it', async () => {
+    // Subtest A: Plain 401 (e.g. sign_in_required or no code) closes the offer card
+    let plainClosed = false;
+    const { fetch: plainFetch } = makeMockFetch({
+      '/api/auth/passkeys/options': () => {
+        return new Response(JSON.stringify({ code: 'sign_in_required' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    const plainHost = new ElementStub('div');
+    mountPasskeyOffer({
+      host: plainHost as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch: plainFetch },
+      store: { getItem: () => null, setItem: () => {} },
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
+      onDone: () => {
+        plainClosed = true;
+      },
+    });
+    await tick(10);
+    expect(plainClosed).toBe(true);
+
+    // Subtest B: passkey_fresh_link_required moves to link-required, link-sending, link-sent
+    let linkRequested = false;
+    const { fetch: freshFetch } = makeMockFetch({
+      '/api/auth/passkeys/options': () => {
+        return new Response(
+          JSON.stringify({ code: 'passkey_fresh_link_required' }),
+          { status: 401, headers: { 'content-type': 'application/json' } }
+        );
+      },
+    });
+
+    const host = new ElementStub('div');
+    const storage = new Map<string, string>();
+    const mockStore = {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        storage.set(k, v);
+      },
+    };
+
+    mountPasskeyOffer({
+      host: host as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch: freshFetch },
+      email: 'reader@example.com',
+      store: mockStore,
+      requestLink: async () => {
+        linkRequested = true;
+        return {
+          kind: 'sent',
+          message:
+            'If reader@example.com can receive mail, a link is on its way.',
+          warning: 'Keep this tab open.',
+        };
+      },
+      onDone: () => {},
+    });
+
+    await tick(10);
+
+    const offer = one(host, 'data-passkey-offer');
+    expect(offer.getAttribute('data-state')).toBe('link-required');
+    expect(textOf(offer)).toContain(
+      'A first passkey can only be added right after you sign in with a link.'
+    );
+    expect(textOf(offer)).toContain('reader@example.com');
+
+    const linkBtn = one(host, 'data-passkey-offer-link');
+    expect(linkBtn.hidden).toBe(false);
+    expect(linkBtn.disabled).toBe(false);
+    expect(linkBtn.textContent).toBe('Send me a new link');
+
+    const createBtn = one(host, 'data-passkey-offer-create');
+    expect(createBtn.hidden).toBe(true);
+
+    // Click Send me a new link
+    linkBtn.fire('click');
+    expect(offer.getAttribute('data-state')).toBe('link-sending');
+    expect(linkBtn.disabled).toBe(true);
+
+    await tick(20);
+
+    expect(linkRequested).toBe(true);
+    expect(offer.getAttribute('data-state')).toBe('link-sent');
+    expect(textOf(offer)).toContain(
+      'If reader@example.com can receive mail, a link is on its way.'
+    );
+    const warningEl = one(host, 'data-passkey-offer-warning');
+    expect(warningEl.hidden).toBe(false);
+    expect(warningEl.textContent).toBe('Keep this tab open.');
+
+    const dismissBtn = one(host, 'data-passkey-offer-dismiss');
+    expect(dismissBtn.textContent).toBe('Close');
+    dismissBtn.fire('click');
+    // In link-sent, dismiss stores nothing in storage
+    expect(storage.get('relic:passkey-offer')).toBeUndefined();
+
+    // Subtest C: failure path transitions to link-failed
+    const hostFail = new ElementStub('div');
+    mountPasskeyOffer({
+      host: hostFail as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch: freshFetch },
+      store: { getItem: () => null, setItem: () => {} },
+      requestLink: async () => ({ kind: 'failed' }),
+      onDone: () => {},
+    });
+    await tick(10);
+
+    const offerFail = one(hostFail, 'data-passkey-offer');
+    const linkBtnFail = one(hostFail, 'data-passkey-offer-link');
+    linkBtnFail.fire('click');
+    await tick(20);
+
+    expect(offerFail.getAttribute('data-state')).toBe('link-failed');
+    expect(textOf(offerFail)).toContain(
+      'Relic could not send a link just now. Try again later.'
+    );
+    expect(linkBtnFail.disabled).toBe(false);
   });
 });
