@@ -3186,8 +3186,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
             code
           );
         } catch (error) {
+          // The subject now carries the code and the provider's refusal can
+          // echo a subject or an address, so neither may reach the log.
           console.error(
-            `relic: sign-in mail failed: ${(error as Error).message}`
+            `relic: sign-in mail failed: ${sanitizeMailError(error, email).replaceAll(code, '[redacted-code]')}`
           );
         }
       }
@@ -3248,6 +3250,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_sign_in_code');
     }
 
+    // The request's `now` was taken when its headers arrived, and the body
+    // can finish much later. Every time-dependent check below uses the time
+    // the check runs, so a slow body cannot outlive the code or be charged to
+    // an attempt window it was not in.
+    const checkedAt = clock();
     const nonce = signInRequestCookie(request);
     if (nonce === undefined || !/^[A-Za-z0-9_-]{43}$/.test(nonce)) {
       return refuse('sign_in_code_failed');
@@ -3255,7 +3262,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     const requestHash = await signInRequestHash(nonce);
     const row = await store.getSignInCode(requestHash);
-    if (row === undefined || row.expiresAt <= now) {
+    if (row === undefined || row.expiresAt <= checkedAt) {
       return refuse('sign_in_code_failed');
     }
 
@@ -3263,7 +3270,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     try {
       allowed = await store.reserveSignInCodeAttempt(
         row.addressHash,
-        now,
+        checkedAt,
         config.signInCodeAddressAttemptLimit.limit,
         config.signInCodeAddressAttemptLimit.windowSeconds * 1000
       );
@@ -3281,11 +3288,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     const link = await store.consumeAuthLink(row.linkTokenHash);
     await store.deleteSignInCode(row.requestHash);
-    if (link === undefined || link.expiresAt <= now) {
+    if (link === undefined || link.expiresAt <= checkedAt) {
       return refuse('sign_in_code_failed');
     }
 
-    const readerCookie = await mintReaderSession(link.email, now, 'code');
+    const readerCookie = await mintReaderSession(link.email, checkedAt, 'code');
     const offerCookie = passkeyOfferCookie();
     const clearRequestCookie =
       'relic_sign_in_request=; Path=/api/auth/code; HttpOnly; Secure; SameSite=Strict; Max-Age=0';
@@ -5847,7 +5854,7 @@ mechanism.
 
 Anyone holding a relic's link can read its comments and add one. Comment
 bodies are encrypted with a key derived from the link, so we cannot read them.
-We do keep who commented on which relic and when: a commenter is the email address they verified with a sign-in email, by following its link or typing its code, stored in the clear beside each comment. A sign-in email, and every email below, passes the address through our mail provider. A sign-in code works once, only in the browser that asked for it: until it is used or expires, the service keeps it as a hash keyed by a random value that only that browser holds, and for a day it counts code attempts for each address, filed under a hash of the address. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
+We do keep who commented on which relic and when: a commenter is the email address they verified with a sign-in email, by following its link or typing its code, stored in the clear beside each comment. A sign-in email, and every email below, passes the address through our mail provider. A sign-in code works once, only in the browser that asked for it: until it is used or the storage cleanup removes it, which takes about a day, the service keeps it as a hash keyed by a random value that only that browser holds, and for a day it counts code attempts for each address, filed under a hash of the address. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
 
 **When someone comments or a relic gets a new version, we email the people following it.**
 That is every verified address that commented on it, every address its publisher or a reader

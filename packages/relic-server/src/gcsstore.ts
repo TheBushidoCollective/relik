@@ -830,10 +830,12 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       );
       for (let i = 0; i < casAttempts; i++) {
         const current = await get<SignInCodeBudgetRow>(name);
+        // A caller whose `now` is earlier than the window's start still draws
+        // on that window: requests finish out of order, and counting one as
+        // outside the window would let it reset the row and forget every
+        // attempt already charged.
         const inWindow =
-          current !== undefined &&
-          now >= current.value.windowStart &&
-          now < current.value.windowStart + windowMs;
+          current !== undefined && now < current.value.windowStart + windowMs;
         const before = inWindow ? current.value.attempts : 0;
         const windowStart = inWindow ? current.value.windowStart : now;
         const next: SignInCodeBudgetRow = {

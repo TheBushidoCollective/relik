@@ -1036,10 +1036,12 @@ export class MemoryStore implements RelicStore {
     windowMs: number
   ): Promise<boolean> {
     const current = this.signInCodeBudgets.get(addressHash);
+    // A caller whose `now` is earlier than the window's start still draws on
+    // that window: requests finish out of order, and counting one as outside
+    // the window would let it reset the row and forget every attempt already
+    // charged.
     const inWindow =
-      current !== undefined &&
-      now >= current.windowStart &&
-      now < current.windowStart + windowMs;
+      current !== undefined && now < current.windowStart + windowMs;
     const before = inWindow ? current.attempts : 0;
     const windowStart = inWindow ? current.windowStart : now;
     const next: SignInCodeBudgetRow = {

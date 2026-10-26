@@ -1831,6 +1831,38 @@ describe('gcsStore', () => {
       expect(parsed.attempts).toBe(12);
     });
 
+    test('a reservation stamped before the window opened still draws on that window instead of resetting it', async () => {
+      // Requests finish out of order: the headers of one arrived before the
+      // headers of another, but its body was read and its reservation made
+      // after. If an earlier `now` counted as outside the window, it would
+      // rewrite the row at attempts: 1 and forget every charged attempt.
+      for (const store of [storeOn(fakeGcs()), new MemoryStore()]) {
+        const windowMs = 86_400_000;
+        const opened = 50_000;
+        const earlier = 40_000;
+
+        expect(
+          await store.reserveSignInCodeAttempt('addr-late', opened, 1, windowMs)
+        ).toBe(true);
+        expect(
+          await store.reserveSignInCodeAttempt(
+            'addr-late',
+            earlier,
+            1,
+            windowMs
+          )
+        ).toBe(false);
+        expect(
+          await store.reserveSignInCodeAttempt(
+            'addr-late',
+            opened + 1,
+            1,
+            windowMs
+          )
+        ).toBe(false);
+      }
+    });
+
     test('a both-stores conformance test covers the new methods', async () => {
       const stores = [storeOn(fakeGcs()), new MemoryStore()];
 
