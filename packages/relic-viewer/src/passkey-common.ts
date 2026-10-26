@@ -402,5 +402,11 @@ export type LinkRequestOutcome =
       readonly kind: 'sent';
       readonly message: string;
       readonly warning?: string;
+      /**
+       * Builds the field for the code in that email. The surface appends it under the message and
+       * continues from `onVerified`, which runs after the session cookie is set, the offer marker is
+       * consumed, and other tabs are told.
+       */
+      readonly codeEntry?: (onVerified: (email: string) => void) => HTMLElement;
     }
   | { readonly kind: 'failed' };
