@@ -89,6 +89,9 @@ const app = createApp({
   assets: diskAssets(viewerDist),
   mailer: {
     send: async (to, link, code) => {
+      if (code === undefined) {
+        throw new Error('the sign-in request mailed a link with no code');
+      }
       const m = signInMail(link, code);
       mails.push({
         to,
