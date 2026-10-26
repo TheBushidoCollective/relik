@@ -231,10 +231,14 @@ export function signInCodeEntry(options: SignInCodeEntryOptions): HTMLElement {
       return;
     }
 
-    // result.kind === 'failed'
+    // result.kind === 'failed'. The field was disabled while checking, which
+    // dropped focus, and a failed check selects nothing, so give it back.
     lastSubmitted = '';
     root.setAttribute('data-state', 'failed');
     statusEl.textContent = SIGN_IN_CODE_FAILED;
+    if (typeof input.focus === 'function') {
+      input.focus();
+    }
   }
 
   input.addEventListener('input', () => {

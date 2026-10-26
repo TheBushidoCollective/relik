@@ -705,6 +705,11 @@ describe('signInCodeEntry DOM and states', () => {
       '[data-sign-in-code-status]'
     ) as ElementStub;
 
+    let refocused = 0;
+    input.focus = () => {
+      refocused++;
+    };
+
     input.value = '123456';
     input.dispatchEvent({ type: 'input', preventDefault: () => {} });
     await flushMicrotasks();
@@ -714,6 +719,9 @@ describe('signInCodeEntry DOM and states', () => {
     expect(statusEl.textContent).toBe(SIGN_IN_CODE_FAILED);
     expect(input.disabled).toBe(false);
     expect(button.disabled).toBe(false);
+    // Disabling the field while checking dropped focus; a network failure
+    // must hand it back so the reader can retry without reaching for it.
+    expect(refocused).toBe(1);
 
     // Because failed clears lastSubmitted, submitting 123456 again by click or enter works
     button.click();
