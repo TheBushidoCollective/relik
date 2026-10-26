@@ -2495,6 +2495,49 @@ async function sampleCanvas(
   return pixels;
 }
 
+async function sampleAtFrames(
+  browser: ChromeSession,
+  width: number,
+  height: number,
+  targets: readonly number[],
+  label: string
+): Promise<
+  Array<{ sample: SampledCanvas; dataFrame: number; center: number }>
+> {
+  const samples: Array<{
+    sample: SampledCanvas;
+    dataFrame: number;
+    center: number;
+  }> = [];
+  for (const [i, target] of targets.entries()) {
+    let found: SampledCanvas | null = null;
+    for (let poll = 0; poll < 600 && found === null; poll++) {
+      const probe = await sampleCanvas(browser, width, height);
+      if (
+        typeof probe.dataFrame === 'number' &&
+        Number.isFinite(probe.dataFrame) &&
+        probe.dataFrame >= target
+      ) {
+        found = probe;
+      }
+    }
+    assert.ok(
+      found !== null,
+      `${label} sample ${i + 1}/${targets.length} never reached data-frame ${target}`
+    );
+    assert.ok(
+      typeof found.center === 'number' && Number.isFinite(found.center),
+      `${label} sample ${i + 1}/${targets.length} missing center row bar measurement at data-frame ${found.dataFrame}`
+    );
+    samples.push({
+      sample: found,
+      dataFrame: found.dataFrame as number,
+      center: found.center,
+    });
+  }
+  return samples;
+}
+
 async function canvasRowCenter(browser: ChromeSession): Promise<number> {
   const row = await browser.evaluate<number[] | null>(`(() => {
     const canvas = document.querySelector('canvas.otio-canvas');
@@ -7682,40 +7725,17 @@ try {
     })()`);
     assert.ok(playbackStarted, 'steady playback did not enter playing state');
 
-    // Eight samples at 220 ms stay at or before timeline frame 44. The
-    // Picture-in-Picture layer ends at frame 48, where the drawn set changes
-    // and the exact resync paints before the clock label updates.
-    const sampleIntervalMs = 220;
-    const playbackSamples: Array<{
-      sample: SampledCanvas;
-      dataFrame: number;
-      center: number;
-    }> = [];
-
-    for (let i = 0; i < 8; i++) {
-      const { promise: delayPromise, resolve: delayResolve } =
-        Promise.withResolvers<void>();
-      setTimeout(delayResolve, sampleIntervalMs);
-      await delayPromise;
-      const sample = await sampleCanvas(browser, width, height);
-      assert.ok(
-        sample.dataFrame !== null &&
-          sample.dataFrame !== undefined &&
-          Number.isFinite(sample.dataFrame),
-        `playback sample ${i + 1}/8 missing data-frame in Runtime.evaluate`
-      );
-      assert.ok(
-        sample.center !== null &&
-          sample.center !== undefined &&
-          Number.isFinite(sample.center),
-        `playback sample ${i + 1}/8 missing center row bar measurement at data-frame ${sample.dataFrame}`
-      );
-      playbackSamples.push({
-        sample,
-        dataFrame: sample.dataFrame,
-        center: sample.center,
-      });
-    }
+    // Samples are taken when the clock first reaches each target frame, all at
+    // or before frame 44. The Picture-in-Picture layer ends at frame 48, where
+    // the drawn set changes and the exact resync paints before the clock label
+    // updates.
+    const playbackSamples = await sampleAtFrames(
+      browser,
+      width,
+      height,
+      [4, 10, 16, 22, 28, 34, 38, 41],
+      'playback'
+    );
 
     await browser.evaluate<void>(`(() => {
       const root = document.querySelector('section.otio-view');
@@ -7913,38 +7933,15 @@ try {
         'late playback did not enter playing state'
       );
 
-      // Eight samples at 180 ms keep every sample inside timeline frames 0..44.
-      const lateSampleIntervalMs = 180;
-      const latePlaybackSamples: Array<{
-        sample: SampledCanvas;
-        dataFrame: number;
-        center: number;
-      }> = [];
-
-      for (let i = 0; i < 8; i++) {
-        const { promise: delayPromise, resolve: delayResolve } =
-          Promise.withResolvers<void>();
-        setTimeout(delayResolve, lateSampleIntervalMs);
-        await delayPromise;
-        const sample = await sampleCanvas(lateBrowser, width, height);
-        assert.ok(
-          sample.dataFrame !== null &&
-            sample.dataFrame !== undefined &&
-            Number.isFinite(sample.dataFrame),
-          `late playback sample ${i + 1}/8 missing data-frame in Runtime.evaluate`
-        );
-        assert.ok(
-          sample.center !== null &&
-            sample.center !== undefined &&
-            Number.isFinite(sample.center),
-          `late playback sample ${i + 1}/8 missing center row bar measurement at data-frame ${sample.dataFrame}`
-        );
-        latePlaybackSamples.push({
-          sample,
-          dataFrame: sample.dataFrame,
-          center: sample.center,
-        });
-      }
+      // Samples are taken when the clock first reaches each target frame, all
+      // at or before frame 44, so none lands on the frame-48 drawn-set change.
+      const latePlaybackSamples = await sampleAtFrames(
+        lateBrowser,
+        width,
+        height,
+        [3, 8, 13, 18, 23, 28, 33, 38],
+        'late playback'
+      );
 
       await lateBrowser.evaluate<void>(`(() => {
         const root = document.querySelector('section.otio-view');
