@@ -38,7 +38,8 @@ export type HTMLVideoElementWithRvfc = Omit<
 export type PresentedWindowOutcome =
   | { readonly kind: 'match'; readonly index: number }
   | { readonly kind: 'uncovered' }
-  | { readonly kind: 'outside' };
+  | { readonly kind: 'outside' }
+  | { readonly kind: 'readout-failed' };
 
 export function compareDecoderSourceTimes(
   sourceTime: OtioRationalTime,
@@ -466,6 +467,7 @@ export class NativeDecoderRing {
   lastCapturedTag: number | null = null;
   isStarting = false;
   startupFirstAdvancedTag: number | null = null;
+  timing: OtioVideoTiming | null = null;
   startupWaiter: {
     resolve: (sample: { now: number; tag: number }) => void;
     reject?: (reason?: unknown) => void;
@@ -557,27 +559,59 @@ export class NativeDecoderRing {
     }
   }
 
-  capturePausedFrame(tag: number, epoch: number): void {
-    if (this.slots.length === 0) return;
-    const slot = this.slots[this.nextSlotIndex];
-    this.nextSlotIndex = (this.nextSlotIndex + 1) % this.slots.length;
-    if (!slot) return;
-    slot.tag = tag;
-    slot.epoch = epoch;
-    slot.lead = 0;
-    this.lastCapturedTag = tag;
-    if (slot.ctx) {
-      try {
-        slot.ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
-        slot.ctx.drawImage(
-          this.videoElement,
-          0,
-          0,
-          slot.canvas.width,
-          slot.canvas.height
-        );
-      } catch {}
+  readoutFrame(timing: OtioVideoTiming, epoch: number): PresentedWindowOutcome {
+    if (this.slots.length === 0) {
+      return { kind: 'readout-failed' };
     }
+    const slot = this.slots[this.nextSlotIndex];
+    if (!slot) {
+      return { kind: 'readout-failed' };
+    }
+    this.nextSlotIndex = (this.nextSlotIndex + 1) % this.slots.length;
+    let vf: VideoFrame | null = null;
+    try {
+      vf = new VideoFrame(this.videoElement);
+      const outcome = presentedWindowOutcome(vf.timestamp / 1e6, timing);
+      if (outcome.kind !== 'match') return outcome;
+      const ctx = slot.ctx;
+      const w = slot.canvas.width;
+      const h = slot.canvas.height;
+      if (!ctx) {
+        throw new Error('canvas context missing');
+      }
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(vf, 0, 0, w, h);
+      slot.tag = outcome.index;
+      slot.epoch = epoch;
+      slot.lead = 0;
+      this.lastCapturedTag = outcome.index;
+      return outcome;
+    } catch {
+      slot.tag = null;
+      slot.epoch = -1;
+      return { kind: 'readout-failed' };
+    } finally {
+      vf?.close();
+    }
+  }
+
+  capturePausedFrame(
+    expectedTag: number,
+    epoch: number,
+    timing?: OtioVideoTiming
+  ): boolean {
+    if (timing) {
+      this.timing = timing;
+    }
+    const effectiveTiming = timing ?? this.timing;
+    if (!effectiveTiming) {
+      return false;
+    }
+    if (this.currentEpoch !== epoch) {
+      return false;
+    }
+    const outcome = this.readoutFrame(effectiveTiming, epoch);
+    return outcome.kind === 'match' && outcome.index === expectedTag;
   }
 
   findSlotWithTag(tag: number, epoch: number): NativeSnapshotSlot | null {
@@ -624,6 +658,7 @@ export class NativeDecoderRing {
     _rL: number,
     onUncoveredStickyIneligible: () => void
   ): void {
+    this.timing = timing;
     const rvfcVideo = this.videoElement as HTMLVideoElementWithRvfc;
     if (typeof rvfcVideo.requestVideoFrameCallback !== 'function') {
       return;
@@ -636,43 +671,15 @@ export class NativeDecoderRing {
       }
       try {
         this.rVfcHandle = rvfcVideo.requestVideoFrameCallback!(
-          (now: number, metadata: VideoFrameCallbackMetadata) => {
+          (now: number, _metadata: VideoFrameCallbackMetadata) => {
             this.rVfcHandle = null;
             if (this.currentEpoch !== epoch || this.videoElement.paused) {
               return;
             }
             this.lastCallbackWallMs = now;
-            const outcome = presentedWindowOutcome(metadata.mediaTime, timing);
+            const outcome = this.readoutFrame(timing, epoch);
             if (outcome.kind === 'match') {
               this.consecutiveUncovered = 0;
-              if (this.slots.length > 0) {
-                const slot = this.slots[this.nextSlotIndex];
-                this.nextSlotIndex =
-                  (this.nextSlotIndex + 1) % this.slots.length;
-                if (slot) {
-                  slot.tag = outcome.index;
-                  slot.epoch = epoch;
-                  slot.lead = 0;
-                  this.lastCapturedTag = outcome.index;
-                  if (slot.ctx) {
-                    try {
-                      slot.ctx.clearRect(
-                        0,
-                        0,
-                        slot.canvas.width,
-                        slot.canvas.height
-                      );
-                      slot.ctx.drawImage(
-                        this.videoElement,
-                        0,
-                        0,
-                        slot.canvas.width,
-                        slot.canvas.height
-                      );
-                    } catch {}
-                  }
-                }
-              }
               if (
                 this.startupWaiter &&
                 this.startupFirstAdvancedTag !== null &&
@@ -683,14 +690,23 @@ export class NativeDecoderRing {
                 waiter.resolve({ now, tag: outcome.index });
               }
               loop();
-            } else if (outcome.kind === 'uncovered') {
+            } else if (
+              outcome.kind === 'uncovered' ||
+              outcome.kind === 'readout-failed'
+            ) {
               this.consecutiveUncovered += 1;
               this.totalUncovered += 1;
               if (this.isStarting || this.consecutiveUncovered >= 2) {
                 if (this.startupWaiter) {
                   const waiter = this.startupWaiter;
                   this.startupWaiter = null;
-                  waiter.reject?.(new Error('uncovered-during-startup'));
+                  waiter.reject?.(
+                    new Error(
+                      outcome.kind === 'readout-failed'
+                        ? 'readout-failed-during-startup'
+                        : 'uncovered-during-startup'
+                    )
+                  );
                 }
                 onUncoveredStickyIneligible();
                 return;

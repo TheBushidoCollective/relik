@@ -434,6 +434,53 @@ class MockAudioContext {
   }
 }
 
+class MockVideoFrame {
+  static constructions = 0;
+  static closes = 0;
+  static throwInConstructor = false;
+  static timestampOverride: number | null = null;
+
+  static reset(): void {
+    MockVideoFrame.constructions = 0;
+    MockVideoFrame.closes = 0;
+    MockVideoFrame.throwInConstructor = false;
+    MockVideoFrame.timestampOverride = null;
+  }
+
+  readonly timestamp: number;
+  readonly pixel: Pixel;
+  private closed = false;
+
+  constructor(source: unknown) {
+    MockVideoFrame.constructions++;
+    if (MockVideoFrame.throwInConstructor) {
+      throw new Error('VideoFrame constructor failed');
+    }
+    const media = source as { currentTime?: number; pixel?: Pixel };
+    const timeSeconds = media.currentTime ?? 0;
+    let effectiveSeconds = timeSeconds;
+    for (const r of [30, 24]) {
+      const k = Math.floor(timeSeconds * r + 1e-4);
+      if (Math.abs(timeSeconds - (k + 0.5) / r) < 1e-5) {
+        effectiveSeconds = k / r;
+        break;
+      }
+    }
+    this.timestamp =
+      MockVideoFrame.timestampOverride !== null
+        ? MockVideoFrame.timestampOverride
+        : Math.round(effectiveSeconds * 1e6);
+    this.pixel = media.pixel ? { ...media.pixel } : { r: 0, g: 0, b: 0, a: 1 };
+  }
+
+  close(): void {
+    if (!this.closed) {
+      this.closed = true;
+      MockVideoFrame.closes++;
+    }
+  }
+}
+
 function hostElement(): {
   className: string;
   style: Record<string, string>;
@@ -1299,6 +1346,7 @@ const playbackGlobalKeys = [
   'AudioContext',
   'requestAnimationFrame',
   'cancelAnimationFrame',
+  'VideoFrame',
 ] as const;
 type PlaybackGlobalKey = (typeof playbackGlobalKeys)[number];
 const urlMethodNames = ['createObjectURL', 'revokeObjectURL'] as const;
@@ -3689,6 +3737,7 @@ describe('otio native video playback S-C and S-B', () => {
     createdUrls.length = 0;
     revokedUrls.length = 0;
     raf = null;
+    MockVideoFrame.reset();
     originalGlobals = propertyDescriptors(globalThis, playbackGlobalKeys);
     originalUrlMethods = propertyDescriptors(URL, urlMethodNames);
     try {
@@ -3696,6 +3745,7 @@ describe('otio native video playback S-C and S-B', () => {
         ['Image', MockMedia],
         ['Audio', MockMedia],
         ['AudioContext', MockAudioContext],
+        ['VideoFrame', MockVideoFrame],
         [
           'document',
           {
@@ -4191,7 +4241,6 @@ describe('otio native video playback S-C and S-B', () => {
       expect(
         playback.getState().diagnostics.some((d) => d.code === 'invalid-timing')
       ).toBe(false);
-
       outCanvas.ctx.drawnSources.length = 0;
       raf?.(wallFor(7.5));
       expect(outCanvas.pixel.r).toBe(2);

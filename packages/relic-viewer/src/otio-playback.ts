@@ -2222,6 +2222,10 @@ export function createOtioPlayback(
           break;
         }
 
+        if (typeof VideoFrame !== 'function') {
+          eligible = false;
+          break;
+        }
         const rvfcVideo = video.element as HTMLVideoElementWithRvfc;
         if (typeof rvfcVideo.requestVideoFrameCallback !== 'function') {
           eligible = false;
@@ -2309,12 +2313,26 @@ export function createOtioPlayback(
         await enqueueRender(T0, gen);
         if (stale(gen)) return;
       }
+      let pausedCaptureOk = true;
       for (const leaf of drawnVideoLeaves) {
         const ring = nativeRings.get(leaf.key);
         if (ring) {
           ring.resetEpoch(nativeEpoch);
-          ring.capturePausedFrame(leaf.iL0, nativeEpoch);
+          const ok = ring.capturePausedFrame(
+            leaf.iL0,
+            nativeEpoch,
+            leaf.timing
+          );
+          if (!ok) {
+            pausedCaptureOk = false;
+          }
         }
+      }
+
+      if (!pausedCaptureOk) {
+        if (attempt === 0) continue;
+        fallbackToSeekCadence();
+        return;
       }
 
       const firstAdvancedPromises: Promise<{ now: number; tag: number }>[] = [];
@@ -2473,7 +2491,6 @@ export function createOtioPlayback(
       scheduleTick();
       return;
     }
-
     if (nativeMode && nativeAnchor !== null) {
       const elapsed = (now - nativeAnchor.wallMs) / 1000;
       let T: OtioRationalTime;
@@ -2736,6 +2753,10 @@ export function createOtioPlayback(
         for (const key of lastRenderDrawnOccurrenceKeys) {
           const video = videos.get(key);
           if (!video) {
+            canGoNative = false;
+            break;
+          }
+          if (typeof VideoFrame !== 'function') {
             canGoNative = false;
             break;
           }
