@@ -13,10 +13,8 @@ import {
   createBrowserHeadlessLaunch,
   type BrowserHeadlessLaunch,
 } from './browser-headless.ts';
-import {
-  scanOtioVideoTiming,
-  type OtioVideoTiming,
-} from '../../relic-viewer/src/otio-video-timing-scanner.ts';
+import { scanOtioVideoTiming } from '../../relic-viewer/src/otio-video-timing-scanner.ts';
+import type { OtioVideoTiming } from '../../relic-viewer/src/otio-video-timing.ts';
 
 export interface WindowOption {
   readonly name: string;
@@ -1745,28 +1743,66 @@ export function formatReportSummary(report: BenchmarkReport): string {
   };
 
   const rowSpecs: Array<[string, (m: AggregatedMetrics) => string]> = [
-    ['M1 Wall Cadence (paint/wall)', (m) => typeof m.wallCadence === 'number' ? m.wallCadence.toFixed(3) : 'n/a'],
-    ['M1 Transport Cadence (paint/trans)', (m) => typeof m.transportCadence === 'number' ? m.transportCadence.toFixed(3) : 'n/a'],
+    [
+      'M1 Wall Cadence (paint/wall)',
+      (m) =>
+        typeof m.wallCadence === 'number' ? m.wallCadence.toFixed(3) : 'n/a',
+    ],
+    [
+      'M1 Transport Cadence (paint/trans)',
+      (m) =>
+        typeof m.transportCadence === 'number'
+          ? m.transportCadence.toFixed(3)
+          : 'n/a',
+    ],
     ['M1 Clock Cadence (data-frame parity)', (m) => m.clockCadence.toFixed(3)],
     ['M2 Frame Gap p50 (ms)', (m) => m.gaps.p50.toFixed(1)],
     ['M2 Frame Gap p95 (ms)', (m) => m.gaps.p95.toFixed(1)],
     ['M2 Stutters Count (> 1.5 frame)', (m) => String(m.gaps.stutterCount)],
-    ['Paused Seek Latency (host proxy ms)', (m) => m.pausedSeekLatencyMs.toFixed(1)],
+    [
+      'Paused Seek Latency (host proxy ms)',
+      (m) => m.pausedSeekLatencyMs.toFixed(1),
+    ],
     ['Play to First Frame (ms)', (m) => m.playToFirstFrameMs.toFixed(1)],
     ['M3 Video Seeks / sec', (m) => m.seeks.video.perSecond.toFixed(1)],
-    ['M3 Video Seek Latency p50 (ms)', (m) => m.seeks.video.latencyP50Ms.toFixed(1)],
-    ['M3 Video Seek Latency p95 (ms)', (m) => m.seeks.video.latencyP95Ms.toFixed(1)],
-    ['M3 Seek Window Share (%)', (m) => `${(m.seeks.windowShare * 100).toFixed(1)}%`],
-    ['M4 Buffering Duration (ms)', (m) => m.buffering.totalBufferingMs.toFixed(1)],
+    [
+      'M3 Video Seek Latency p50 (ms)',
+      (m) => m.seeks.video.latencyP50Ms.toFixed(1),
+    ],
+    [
+      'M3 Video Seek Latency p95 (ms)',
+      (m) => m.seeks.video.latencyP95Ms.toFixed(1),
+    ],
+    [
+      'M3 Seek Window Share (%)',
+      (m) => `${(m.seeks.windowShare * 100).toFixed(1)}%`,
+    ],
+    [
+      'M4 Buffering Duration (ms)',
+      (m) => m.buffering.totalBufferingMs.toFixed(1),
+    ],
     ['M4 Resync Episodes', (m) => String(m.buffering.resyncEpisodes)],
     ['M5 Vsync Interval p50 (ms)', (m) => m.vsync.p50IntervalMs.toFixed(1)],
     ['M5 Vsync Interval p95 (ms)', (m) => m.vsync.p95IntervalMs.toFixed(1)],
-    ['M6 Canvas Resets / composite', (m) => m.canvas.resetsPerComposite.toFixed(2)],
-    ['M7 Visible Draws / composite', (m) => m.canvas.visibleDrawsPerComposite.toFixed(2)],
-    ['M7 Live Video Draws (must be 0)', (m) => String(m.canvas.liveElementDraws)],
+    [
+      'M6 Canvas Resets / composite',
+      (m) => m.canvas.resetsPerComposite.toFixed(2),
+    ],
+    [
+      'M7 Visible Draws / composite',
+      (m) => m.canvas.visibleDrawsPerComposite.toFixed(2),
+    ],
+    [
+      'M7 Live Video Draws (must be 0)',
+      (m) => String(m.canvas.liveElementDraws),
+    ],
     ['M8 Decoder Insertions', (m) => String(m.decoders.insertionsCount)],
-    ['M9 Audio play() calls / sec', (m) => m.audio.playCallsPerSecond.toFixed(1)],
-    ['M10 Long Tasks Count', (m) => String(m.mainThread.longTasksCount)],];
+    [
+      'M9 Audio play() calls / sec',
+      (m) => m.audio.playCallsPerSecond.toFixed(1),
+    ],
+    ['M10 Long Tasks Count', (m) => String(m.mainThread.longTasksCount)],
+  ];
   for (const [label, getter] of rowSpecs) lines.push(formatRow(label, getter));
 
   lines.push('');
@@ -1811,21 +1847,35 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? '';
     const next = () => argv[++i] ?? '';
-    const val = (pre: string) => (a.startsWith(pre) ? a.slice(pre.length) : next());
-    if (a === '--url-file' || a.startsWith('--url-file=')) urlFile = val('--url-file=');
+    const val = (pre: string) =>
+      a.startsWith(pre) ? a.slice(pre.length) : next();
+    if (a === '--url-file' || a.startsWith('--url-file='))
+      urlFile = val('--url-file=');
     else if (a === '--url' || a.startsWith('--url=')) url = val('--url=');
-    else if (a === '--chrome-path' || a.startsWith('--chrome-path=')) chromePath = val('--chrome-path=');
-    else if (a === '--output' || a.startsWith('--output=')) outputJsonPath = val('--output=');
-    else if (a === '--duration' || a.startsWith('--duration=')) durationSeconds = Number(val('--duration='));
-    else if (a === '--warmup' || a.startsWith('--warmup=')) warmupSeconds = Number(val('--warmup='));
-    else if (a === '--ceiling-duration' || a.startsWith('--ceiling-duration=')) ceilingDurationSeconds = Number(val('--ceiling-duration='));
-    else if (a === '--repetitions' || a.startsWith('--repetitions=')) repetitions = Number(val('--repetitions='));
+    else if (a === '--chrome-path' || a.startsWith('--chrome-path='))
+      chromePath = val('--chrome-path=');
+    else if (a === '--output' || a.startsWith('--output='))
+      outputJsonPath = val('--output=');
+    else if (a === '--duration' || a.startsWith('--duration='))
+      durationSeconds = Number(val('--duration='));
+    else if (a === '--warmup' || a.startsWith('--warmup='))
+      warmupSeconds = Number(val('--warmup='));
+    else if (a === '--ceiling-duration' || a.startsWith('--ceiling-duration='))
+      ceilingDurationSeconds = Number(val('--ceiling-duration='));
+    else if (a === '--repetitions' || a.startsWith('--repetitions='))
+      repetitions = Number(val('--repetitions='));
     else if (a === '--format' || a.startsWith('--format=')) {
       const f = val('--format=');
       if (f === 'json' || f === 'table') format = f;
-    } else if (a === '--window' || a.startsWith('--window=')) rawWindowArgs.push(val('--window='));
-    else if (a === '--cpu-throttle' || a.startsWith('--cpu-throttle=')) cpuThrottle = Number(val('--cpu-throttle='));
-    else if (a === '--cpu-throttling-rate' || a.startsWith('--cpu-throttling-rate=')) cpuThrottle = Number(val('--cpu-throttling-rate='));
+    } else if (a === '--window' || a.startsWith('--window='))
+      rawWindowArgs.push(val('--window='));
+    else if (a === '--cpu-throttle' || a.startsWith('--cpu-throttle='))
+      cpuThrottle = Number(val('--cpu-throttle='));
+    else if (
+      a === '--cpu-throttling-rate' ||
+      a.startsWith('--cpu-throttling-rate=')
+    )
+      cpuThrottle = Number(val('--cpu-throttling-rate='));
   }
 
   const windows: WindowOption[] = [];
@@ -1836,10 +1886,12 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
       if (trimmed.includes('=')) {
         const [name, valStr] = trimmed.split('=');
         const start = Number(valStr);
-        if (name && Number.isFinite(start)) windows.push({ name: name.trim(), start });
+        if (name && Number.isFinite(start))
+          windows.push({ name: name.trim(), start });
       } else {
         const start = Number(trimmed);
-        if (Number.isFinite(start)) windows.push({ name: `W${windows.length + 1}`, start });
+        if (Number.isFinite(start))
+          windows.push({ name: `W${windows.length + 1}`, start });
       }
     }
   }
@@ -1858,5 +1910,3 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
     ...(cpuThrottle !== undefined ? { cpuThrottle } : {}),
   };
 }
-
-
