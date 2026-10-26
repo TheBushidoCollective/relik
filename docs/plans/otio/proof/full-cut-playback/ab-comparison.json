@@ -1,0 +1,1013 @@
+{
+  "schemaVersion": 1,
+  "description": "Interleaved baseline and candidate playback of the reported full cut on a local loopback replay, three windows of 15 seconds after a 2 second warmup, one repetition per window per run, every window from a fresh page load.",
+  "baselineSourceRevision": "4a01a783ce830556a889b8c29ffc92abc6fa4ff0",
+  "candidateSourceRevision": "1328684ef258af552856fa2a32d6e21d30602f33",
+  "cut": {
+    "durationSeconds": 491.67,
+    "timelineRate": 30,
+    "videoWidth": 1920,
+    "videoHeight": 1080,
+    "videoTracks": 1,
+    "decoders": 1
+  },
+  "windows": {
+    "W1": {
+      "startSeconds": 24,
+      "durationSeconds": 15
+    },
+    "W2": {
+      "startSeconds": 240,
+      "durationSeconds": 15
+    },
+    "W3": {
+      "startSeconds": 460,
+      "durationSeconds": 15
+    }
+  },
+  "order": ["B1", "C1", "B2", "C2", "B3", "C3"],
+  "environment": {
+    "browser": "HeadlessChrome/149.0.7827.55",
+    "platform": "darwin",
+    "cpuCores": 18,
+    "rendering": {
+      "canvas2d": "disabled_software",
+      "gpuCompositing": "disabled_software",
+      "rasterization": "disabled_software"
+    },
+    "commandLine": [
+      "--headless",
+      "--remote-debugging-pipe",
+      "--user-data-dir=<profile>",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-default-apps",
+      "--disable-extensions",
+      "--disable-sync",
+      "--disable-domain-reliability",
+      "--disable-breakpad",
+      "--disable-crash-reporter",
+      "--metrics-recording-only",
+      "--mute-audio",
+      "--hide-scrollbars",
+      "--force-color-profile=srgb",
+      "--use-mock-keychain",
+      "--password-store=basic",
+      "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+      "--proxy-server=[REDACTED_URL]",
+      "--proxy-bypass-list=<-loopback>;127.0.0.1",
+      "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+      "--disable-quic",
+      "--enable-automation",
+      "about:blank",
+      "--autoplay-policy=no-user-gesture-required"
+    ],
+    "hostLoadAverageRange": [5.3, 32.4]
+  },
+  "hostProxy": {
+    "baselineMedianMs": 153.6,
+    "candidateMedianMs": 153.1,
+    "ratio": 0.997,
+    "withinFifteenPercent": true
+  },
+  "runs": [
+    {
+      "run": "B1",
+      "build": "baseline",
+      "windows": {
+        "W1": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.6,
+          "transportCadence": 0.603,
+          "clockCadence": 0.598,
+          "distinctFrames": 270,
+          "composites": 356,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 23.9,
+          "measuredEndSeconds": 38.83,
+          "pausedSeekLatencyMs": 152.6,
+          "startLatencyMs": 21.9,
+          "gapMs": {
+            "p50": 41.7,
+            "p95": 140.3,
+            "p99": 168.3,
+            "max": 181.5,
+            "startEdge": 137.3,
+            "endEdge": 88.1,
+            "stutters": 77
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 270,
+            "p50Ms": 36.7,
+            "p95Ms": 71.2
+          },
+          "audioSeeks": {
+            "count": 48
+          },
+          "seekWindowShare": 0.709,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 5.4
+        },
+        "W2": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.669,
+          "transportCadence": 0.671,
+          "clockCadence": 0.669,
+          "distinctFrames": 301,
+          "composites": 430,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 239.97,
+          "measuredEndSeconds": 254.93,
+          "pausedSeekLatencyMs": 154.5,
+          "startLatencyMs": 21.2,
+          "gapMs": {
+            "p50": 39,
+            "p95": 147.3,
+            "p99": 179.7,
+            "max": 198.3,
+            "startEdge": 2.5,
+            "endEdge": 33.1,
+            "stutters": 53
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 300,
+            "p50Ms": 30.5,
+            "p95Ms": 75
+          },
+          "audioSeeks": {
+            "count": 42
+          },
+          "seekWindowShare": 0.711,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 5.3
+        },
+        "W3": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.647,
+          "transportCadence": 0.648,
+          "clockCadence": 0.644,
+          "distinctFrames": 291,
+          "composites": 376,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 459.98,
+          "measuredEndSeconds": 474.95,
+          "pausedSeekLatencyMs": 205.6,
+          "startLatencyMs": 22.1,
+          "gapMs": {
+            "p50": 40,
+            "p95": 150.8,
+            "p99": 185.5,
+            "max": 201.8,
+            "startEdge": 10.7,
+            "endEdge": 7.5,
+            "stutters": 63
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 290,
+            "p50Ms": 34.6,
+            "p95Ms": 74.3
+          },
+          "audioSeeks": {
+            "count": 41
+          },
+          "seekWindowShare": 0.739,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 6.8
+        }
+      },
+      "nativeCeiling": {
+        "ratio": 1,
+        "windowsPresented": 299,
+        "windowsElapsed": 299,
+        "skips": 0
+      },
+      "diagnosticsByCode": {}
+    },
+    {
+      "run": "C1",
+      "build": "candidate",
+      "windows": {
+        "W1": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15,
+          "measuredStartSeconds": 23.95,
+          "measuredEndSeconds": 38.94,
+          "pausedSeekLatencyMs": 153.1,
+          "startLatencyMs": 59.9,
+          "gapMs": {
+            "p50": 33.3,
+            "p95": 39.9,
+            "p99": 40,
+            "max": 40.3,
+            "startEdge": 1.8,
+            "endEdge": 12.8,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 1.8,
+            "p95": 2.2,
+            "count": 450
+          },
+          "loadAvg1": 8.9
+        },
+        "W2": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 239.95,
+          "measuredEndSeconds": 254.94,
+          "pausedSeekLatencyMs": 102.8,
+          "startLatencyMs": 67.4,
+          "gapMs": {
+            "p50": 33.4,
+            "p95": 34.5,
+            "p99": 34.9,
+            "max": 35.9,
+            "startEdge": 3.1,
+            "endEdge": 3.6,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 2,
+            "p95": 2.6,
+            "count": 450
+          },
+          "loadAvg1": 10.4
+        },
+        "W3": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15,
+          "measuredStartSeconds": 459.95,
+          "measuredEndSeconds": 474.94,
+          "pausedSeekLatencyMs": 204.2,
+          "startLatencyMs": 66.7,
+          "gapMs": {
+            "p50": 33.3,
+            "p95": 34.3,
+            "p99": 34.7,
+            "max": 35.1,
+            "startEdge": 2.1,
+            "endEdge": 4.7,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 1.9,
+            "p95": 2.3,
+            "count": 450
+          },
+          "loadAvg1": 9.8
+        }
+      },
+      "nativeCeiling": {
+        "ratio": 1,
+        "windowsPresented": 299,
+        "windowsElapsed": 299,
+        "skips": 0
+      },
+      "diagnosticsByCode": {}
+    },
+    {
+      "run": "B2",
+      "build": "baseline",
+      "windows": {
+        "W1": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.531,
+          "transportCadence": 0.533,
+          "clockCadence": 0.533,
+          "distinctFrames": 239,
+          "composites": 295,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 23.87,
+          "measuredEndSeconds": 38.81,
+          "pausedSeekLatencyMs": 153,
+          "startLatencyMs": 21.8,
+          "gapMs": {
+            "p50": 41.8,
+            "p95": 155.4,
+            "p99": 178,
+            "max": 196.9,
+            "startEdge": 112.8,
+            "endEdge": 110.7,
+            "stutters": 74
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 239,
+            "p50Ms": 37.8,
+            "p95Ms": 77.5
+          },
+          "audioSeeks": {
+            "count": 64
+          },
+          "seekWindowShare": 0.663,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 14.7
+        },
+        "W2": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.64,
+          "transportCadence": 0.643,
+          "clockCadence": 0.64,
+          "distinctFrames": 288,
+          "composites": 383,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 240,
+          "measuredEndSeconds": 254.92,
+          "pausedSeekLatencyMs": 153.6,
+          "startLatencyMs": 21.5,
+          "gapMs": {
+            "p50": 37.8,
+            "p95": 152.7,
+            "p99": 195.2,
+            "max": 221.3,
+            "startEdge": 3.8,
+            "endEdge": 29,
+            "stutters": 69
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 287,
+            "p50Ms": 33.6,
+            "p95Ms": 77.3
+          },
+          "audioSeeks": {
+            "count": 37
+          },
+          "seekWindowShare": 0.739,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 19
+        },
+        "W3": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.569,
+          "transportCadence": 0.566,
+          "clockCadence": 0.571,
+          "distinctFrames": 256,
+          "composites": 325,
+          "actualDurationSeconds": 15.002,
+          "measuredStartSeconds": 459.86,
+          "measuredEndSeconds": 474.93,
+          "pausedSeekLatencyMs": 254.3,
+          "startLatencyMs": 22.1,
+          "gapMs": {
+            "p50": 40.6,
+            "p95": 160.6,
+            "p99": 193.7,
+            "max": 213.7,
+            "startEdge": 112.5,
+            "endEdge": 27.9,
+            "stutters": 82
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 256,
+            "p50Ms": 35.5,
+            "p95Ms": 81.8
+          },
+          "audioSeeks": {
+            "count": 53
+          },
+          "seekWindowShare": 0.695,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 19.3
+        }
+      },
+      "nativeCeiling": {
+        "ratio": 1,
+        "windowsPresented": 299,
+        "windowsElapsed": 299,
+        "skips": 0
+      },
+      "diagnosticsByCode": {}
+    },
+    {
+      "run": "C2",
+      "build": "candidate",
+      "windows": {
+        "W1": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1,
+          "transportCadence": 1.001,
+          "clockCadence": 1,
+          "distinctFrames": 450,
+          "composites": 1800,
+          "actualDurationSeconds": 15.002,
+          "measuredStartSeconds": 23.94,
+          "measuredEndSeconds": 38.93,
+          "pausedSeekLatencyMs": 153,
+          "startLatencyMs": 70.8,
+          "gapMs": {
+            "p50": 33.3,
+            "p95": 38.9,
+            "p99": 40.1,
+            "max": 41.6,
+            "startEdge": 2.3,
+            "endEdge": 32.3,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 1.9,
+            "p95": 2.3,
+            "count": 450
+          },
+          "loadAvg1": 26.1
+        },
+        "W2": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 239.95,
+          "measuredEndSeconds": 254.94,
+          "pausedSeekLatencyMs": 102.4,
+          "startLatencyMs": 67.9,
+          "gapMs": {
+            "p50": 33.3,
+            "p95": 34.2,
+            "p99": 34.5,
+            "max": 35.1,
+            "startEdge": 3.5,
+            "endEdge": 4.7,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 1.9,
+            "p95": 2.3,
+            "count": 450
+          },
+          "loadAvg1": 28.6
+        },
+        "W3": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 459.95,
+          "measuredEndSeconds": 474.94,
+          "pausedSeekLatencyMs": 204.2,
+          "startLatencyMs": 70.5,
+          "gapMs": {
+            "p50": 33.4,
+            "p95": 34.5,
+            "p99": 34.7,
+            "max": 35.6,
+            "startEdge": 3.9,
+            "endEdge": 3.5,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 1.9,
+            "p95": 2.4,
+            "count": 450
+          },
+          "loadAvg1": 25.8
+        }
+      },
+      "nativeCeiling": {
+        "ratio": 1,
+        "windowsPresented": 299,
+        "windowsElapsed": 299,
+        "skips": 0
+      },
+      "diagnosticsByCode": {}
+    },
+    {
+      "run": "B3",
+      "build": "baseline",
+      "windows": {
+        "W1": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.509,
+          "transportCadence": 0.51,
+          "clockCadence": 0.511,
+          "distinctFrames": 229,
+          "composites": 294,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 23.86,
+          "measuredEndSeconds": 38.83,
+          "pausedSeekLatencyMs": 151.6,
+          "startLatencyMs": 21.7,
+          "gapMs": {
+            "p50": 41.8,
+            "p95": 152.3,
+            "p99": 190.9,
+            "max": 249.1,
+            "startEdge": 89.6,
+            "endEdge": 82.3,
+            "stutters": 76
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 229,
+            "p50Ms": 37.4,
+            "p95Ms": 77.1
+          },
+          "audioSeeks": {
+            "count": 70
+          },
+          "seekWindowShare": 0.638,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 26.1
+        },
+        "W2": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.573,
+          "transportCadence": 0.575,
+          "clockCadence": 0.569,
+          "distinctFrames": 258,
+          "composites": 316,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 239.97,
+          "measuredEndSeconds": 254.94,
+          "pausedSeekLatencyMs": 101.2,
+          "startLatencyMs": 21.9,
+          "gapMs": {
+            "p50": 35.9,
+            "p95": 169.8,
+            "p99": 238.4,
+            "max": 243.4,
+            "startEdge": 7.3,
+            "endEdge": 17,
+            "stutters": 60
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 257,
+            "p50Ms": 33.5,
+            "p95Ms": 84.8
+          },
+          "audioSeeks": {
+            "count": 61
+          },
+          "seekWindowShare": 0.674,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 23.1
+        },
+        "W3": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 0.549,
+          "transportCadence": 0.551,
+          "clockCadence": 0.549,
+          "distinctFrames": 247,
+          "composites": 333,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 460,
+          "measuredEndSeconds": 474.94,
+          "pausedSeekLatencyMs": 204.5,
+          "startLatencyMs": 22.3,
+          "gapMs": {
+            "p50": 40.3,
+            "p95": 175.4,
+            "p99": 228.7,
+            "max": 233.7,
+            "startEdge": 30.1,
+            "endEdge": 15.2,
+            "stutters": 67
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 247,
+            "p50Ms": 35.8,
+            "p95Ms": 87.6
+          },
+          "audioSeeks": {
+            "count": 57
+          },
+          "seekWindowShare": 0.664,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 0,
+            "p95": 0,
+            "count": 0
+          },
+          "loadAvg1": 25.7
+        }
+      },
+      "nativeCeiling": {
+        "ratio": 1,
+        "windowsPresented": 299,
+        "windowsElapsed": 299,
+        "skips": 0
+      },
+      "diagnosticsByCode": {}
+    },
+    {
+      "run": "C3",
+      "build": "candidate",
+      "windows": {
+        "W1": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15,
+          "measuredStartSeconds": 23.95,
+          "measuredEndSeconds": 38.94,
+          "pausedSeekLatencyMs": 154.1,
+          "startLatencyMs": 67.6,
+          "gapMs": {
+            "p50": 33.3,
+            "p95": 39.6,
+            "p99": 41.2,
+            "max": 41.9,
+            "startEdge": 8.6,
+            "endEdge": 6.3,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 1.8,
+            "p95": 2.3,
+            "count": 450
+          },
+          "loadAvg1": 28.6
+        },
+        "W2": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15.001,
+          "measuredStartSeconds": 239.95,
+          "measuredEndSeconds": 254.95,
+          "pausedSeekLatencyMs": 102.7,
+          "startLatencyMs": 66.7,
+          "gapMs": {
+            "p50": 33.3,
+            "p95": 34.3,
+            "p99": 34.9,
+            "max": 35.1,
+            "startEdge": 7,
+            "endEdge": 8.5,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 2.1,
+            "p95": 2.5,
+            "count": 450
+          },
+          "loadAvg1": 28.8
+        },
+        "W3": {
+          "presentedMetricsAvailable": true,
+          "wallCadence": 1.002,
+          "transportCadence": 1.003,
+          "clockCadence": 1.002,
+          "distinctFrames": 451,
+          "composites": 1800,
+          "actualDurationSeconds": 15,
+          "measuredStartSeconds": 459.95,
+          "measuredEndSeconds": 474.95,
+          "pausedSeekLatencyMs": 203,
+          "startLatencyMs": 65,
+          "gapMs": {
+            "p50": 33.3,
+            "p95": 34.1,
+            "p99": 34.4,
+            "max": 36,
+            "startEdge": 5.9,
+            "endEdge": 11.5,
+            "stutters": 0
+          },
+          "buffering": {
+            "totalMs": 0,
+            "resyncEpisodes": 0
+          },
+          "videoSeeks": {
+            "count": 0,
+            "p50Ms": 0,
+            "p95Ms": 0
+          },
+          "audioSeeks": {
+            "count": 0
+          },
+          "seekWindowShare": 0,
+          "longTasks": 0,
+          "liveElementDraws": 0,
+          "callbackReadoutMs": {
+            "p50": 1.8,
+            "p95": 2.2,
+            "count": 450
+          },
+          "loadAvg1": 32.4
+        }
+      },
+      "nativeCeiling": {
+        "ratio": 1,
+        "windowsPresented": 299,
+        "windowsElapsed": 299,
+        "skips": 0
+      },
+      "diagnosticsByCode": {}
+    }
+  ],
+  "medians": {
+    "baseline": {
+      "W1": {
+        "wallCadenceMedian": 0.531,
+        "transportCadenceMedian": 0.533,
+        "p95GapMsMedian": 152.3,
+        "maxGapMsMedian": 196.9,
+        "videoSeeksMedian": 239,
+        "audioSeeksMedian": 64,
+        "seekWindowShareMedian": 0.66
+      },
+      "W2": {
+        "wallCadenceMedian": 0.64,
+        "transportCadenceMedian": 0.643,
+        "p95GapMsMedian": 152.7,
+        "maxGapMsMedian": 221.3,
+        "videoSeeksMedian": 287,
+        "audioSeeksMedian": 42,
+        "seekWindowShareMedian": 0.71
+      },
+      "W3": {
+        "wallCadenceMedian": 0.569,
+        "transportCadenceMedian": 0.566,
+        "p95GapMsMedian": 160.6,
+        "maxGapMsMedian": 213.7,
+        "videoSeeksMedian": 256,
+        "audioSeeksMedian": 53,
+        "seekWindowShareMedian": 0.7
+      }
+    },
+    "candidate": {
+      "W1": {
+        "wallCadenceMedian": 1.002,
+        "transportCadenceMedian": 1.003,
+        "p95GapMsMedian": 39.6,
+        "maxGapMsMedian": 41.6,
+        "videoSeeksMedian": 0,
+        "audioSeeksMedian": 0,
+        "seekWindowShareMedian": 0
+      },
+      "W2": {
+        "wallCadenceMedian": 1.002,
+        "transportCadenceMedian": 1.003,
+        "p95GapMsMedian": 34.3,
+        "maxGapMsMedian": 35.1,
+        "videoSeeksMedian": 0,
+        "audioSeeksMedian": 0,
+        "seekWindowShareMedian": 0
+      },
+      "W3": {
+        "wallCadenceMedian": 1.002,
+        "transportCadenceMedian": 1.003,
+        "p95GapMsMedian": 34.3,
+        "maxGapMsMedian": 35.6,
+        "videoSeeksMedian": 0,
+        "audioSeeksMedian": 0,
+        "seekWindowShareMedian": 0
+      }
+    }
+  },
+  "checks": {
+    "everyCandidateRepVideoSeeksAtMost2": true,
+    "everyCandidateRepAudioSeeks0": true,
+    "everyCandidateRepLiveElementDraws0": true,
+    "everyCandidateRepLongTasks0": true,
+    "everyCandidateRepResyncs0": true,
+    "candidateWallCadenceAtLeast095": true,
+    "candidateTransportCadenceAtLeast095": true,
+    "candidateP95GapAtMost50Ms": true,
+    "candidateMaxGapAtMost100Ms": true,
+    "nativeCeilingAtLeast095AllRuns": true,
+    "diagnosticsIdenticalAllRuns": true,
+    "commandLinesIdentical": true
+  },
+  "baselineMeetsTargets": {
+    "W1": false,
+    "W2": false,
+    "W3": false
+  },
+  "notes": [
+    "Cadence is distinct painted source frames on the visible canvas divided by wall time times timeline rate (wall) or by timeline time advanced (transport), measured from canvas draw provenance, not from the clock label.",
+    "The headless shell renders in software; absolute numbers differ on a GPU browser, the baseline cause is seek wait (share of window spent waiting on video seeks).",
+    "Per-run load averages vary because the host was shared."
+  ]
+}

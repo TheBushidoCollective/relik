@@ -125,6 +125,9 @@ const REQUIRED = [
   'decrypted',
   'official-archive',
   'pixels-offset',
+  'native-playback',
+  'native-playback-late',
+  'paint-parity',
   'default-view-negative-head',
   'nested-200',
   'nested-no-spill',
@@ -348,6 +351,9 @@ interface Plan {
   readonly primary_file_frame: number;
   readonly primary_wrong_file_frame: number;
   readonly primary_media: string;
+  readonly primary_start?: number;
+  readonly primary_end?: number;
+  readonly primary_clip_frames?: Record<string, number>;
   readonly source_pixel_probes: readonly SourcePixelProbe[];
   readonly default_view_negative_head: DefaultViewNegativeHead;
   readonly dissolve_frame: number;
@@ -863,6 +869,11 @@ def derive(archive, out_dir):
             or any(source_pixel_probes[index]["file_frame"] != source_pixel_probes[0]["file_frame"] + index
                    for index in range(len(source_pixel_probes)))):
         raise SystemExit("source-pixel probes are not consecutive official file samples")
+    primary_clip_frames = {}
+    for frame in range(primary_start, primary_end):
+        span = span_for(timeline, primary, otio.opentime.RationalTime(frame, rate))
+        if span["file_frame"] is not None:
+            primary_clip_frames[str(frame)] = span["file_frame"]
     (Path(out_dir) / primary_media).parent.mkdir(parents=True, exist_ok=True)
     (Path(out_dir) / primary_media).write_bytes(zf.read(primary_media))
 
@@ -1071,6 +1082,9 @@ def derive(archive, out_dir):
         "primary_file_frame": primary_span["file_frame"],
         "primary_wrong_file_frame": primary_span["file_frame"] + 2,
         "primary_media": primary_media,
+        "primary_start": primary_start,
+        "primary_end": primary_end,
+        "primary_clip_frames": primary_clip_frames,
         "source_pixel_probes": source_pixel_probes,
         "default_view_negative_head": {
             "timeline_frame": negative_head_frame,
@@ -1622,6 +1636,8 @@ interface OpenBrowserOptions {
   readonly label?: string;
   readonly recordMediaSeekTargets?: boolean;
   readonly blockWebCodecs?: boolean;
+  readonly blockRequestVideoFrameCallback?: boolean;
+  readonly rvfcBusyWaitMs?: number;
 }
 
 function loopbackUrl(value: string): boolean {
@@ -1994,10 +2010,39 @@ async function openBrowser(
       });
     }
   })();`;
+    const blockRVFC = Boolean(
+      options.blockRequestVideoFrameCallback ||
+        process.env.RELIC_OTIO_BLOCK_RVFC === '1'
+    );
+    const rvfcTrap = String.raw`(() => {
+      try {
+        delete HTMLVideoElement.prototype.requestVideoFrameCallback;
+      } catch {}
+      try {
+        delete globalThis.requestVideoFrameCallback;
+      } catch {}
+    })();`;
+    const busyWaitMs = options.rvfcBusyWaitMs ?? 0;
+    const rvfcLateTrap =
+      busyWaitMs > 0
+        ? `(() => {
+      const busy = ${busyWaitMs};
+      const orig = HTMLVideoElement.prototype.requestVideoFrameCallback;
+      if (typeof orig !== 'function') return;
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) {
+        return orig.call(this, (_now, metadata) => {
+          const start = performance.now();
+          while (performance.now() - start < busy) {}
+          return callback.call(this, performance.now(), metadata);
+        });
+      };
+    })();`
+        : '';
     const pagePrelude = [
       options.recordMediaSeekTargets
         ? String.raw`(() => {
           const key = '__relicOtioMediaSeekTargets';
+          const videoKey = '__relicOtioVideoSeekTargets';
           const descriptor = Object.getOwnPropertyDescriptor(
             HTMLMediaElement.prototype,
             'currentTime'
@@ -2013,11 +2058,18 @@ async function openBrowser(
               const targets = Reflect.get(globalThis, key) ?? [];
               targets.push(Number(value));
               Reflect.set(globalThis, key, targets);
+              if (this instanceof HTMLVideoElement || this.tagName === 'VIDEO') {
+                const videoTargets = Reflect.get(globalThis, videoKey) ?? [];
+                videoTargets.push(Number(value));
+                Reflect.set(globalThis, videoKey, videoTargets);
+              }
               descriptor.set.call(this, value);
             },
           });
         })();`
         : '',
+      blockRVFC ? rvfcTrap : '',
+      rvfcLateTrap,
       contextEventLogPrelude,
       options.blockWebCodecs ? webCodecsTrap : '',
     ]
@@ -2327,11 +2379,16 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
   );
 }
 
+interface SampledCanvas extends Uint8Array {
+  dataFrame?: number | null;
+  center?: number | null;
+}
+
 async function sampleCanvas(
   browser: ChromeSession,
   width: number,
   height: number
-): Promise<Uint8Array> {
+): Promise<SampledCanvas> {
   const read = await browser.evaluate<{
     values: number[] | null;
     lost: boolean;
@@ -2341,7 +2398,12 @@ async function sampleCanvas(
       target: string | null;
     }>;
     alpha: CanvasAlphaStatistics;
+    data_frame: number | null;
+    center: number | null;
   }>(`(() => {
+    const view = document.querySelector('section.otio-view');
+    const dataFrameAttr = view?.getAttribute('data-frame') ?? null;
+    const data_frame = dataFrameAttr !== null ? Number(dataFrameAttr) : null;
     const canvas = document.querySelector('canvas.otio-canvas');
     if (!canvas) return null;
     const ctx = canvas.getContext('2d');
@@ -2373,6 +2435,26 @@ async function sampleCanvas(
         if (a === 255) alphaOpaqueCount++;
       }
     }
+    let center = null;
+    if (src && canvas.width > 0) {
+      const cy = Math.floor(canvas.height / 2);
+      const lum = [];
+      for (let x = 0; x < canvas.width; x++) {
+        const i = (cy * canvas.width + x) * 4;
+        lum.push((src[i] ?? 0) + (src[i + 1] ?? 0) + (src[i + 2] ?? 0));
+      }
+      const half = (Math.min(...lum) + Math.max(...lum)) / 2;
+      let sum = 0;
+      let weight = 0;
+      for (let x = 0; x < canvas.width; x++) {
+        const w = Math.max(0, (lum[x] ?? 0) - half);
+        sum += (x + 0.5) * w;
+        weight += w;
+      }
+      if (weight > 0) {
+        center = sum / weight / canvas.width;
+      }
+    }
     const sample_count = ${width} * ${height};
     return {
       values: out,
@@ -2386,6 +2468,8 @@ async function sampleCanvas(
         zero_count: alphaZeroCount,
         opaque_count: alphaOpaqueCount,
       },
+      data_frame,
+      center,
     };
   })()`);
   assert.ok(
@@ -2405,7 +2489,53 @@ async function sampleCanvas(
   canvasAlphaCensus.push(record);
   latestCanvasAlphaRecord = record;
   await persistCanvasAlphaCensus();
-  return Uint8Array.from(read.values);
+  const pixels = Uint8Array.from(read.values) as SampledCanvas;
+  pixels.dataFrame = read.data_frame;
+  pixels.center = read.center;
+  return pixels;
+}
+
+async function sampleAtFrames(
+  browser: ChromeSession,
+  width: number,
+  height: number,
+  targets: readonly number[],
+  label: string
+): Promise<
+  Array<{ sample: SampledCanvas; dataFrame: number; center: number }>
+> {
+  const samples: Array<{
+    sample: SampledCanvas;
+    dataFrame: number;
+    center: number;
+  }> = [];
+  for (const [i, target] of targets.entries()) {
+    let found: SampledCanvas | null = null;
+    for (let poll = 0; poll < 600 && found === null; poll++) {
+      const probe = await sampleCanvas(browser, width, height);
+      if (
+        typeof probe.dataFrame === 'number' &&
+        Number.isFinite(probe.dataFrame) &&
+        probe.dataFrame >= target
+      ) {
+        found = probe;
+      }
+    }
+    assert.ok(
+      found !== null,
+      `${label} sample ${i + 1}/${targets.length} never reached data-frame ${target}`
+    );
+    assert.ok(
+      typeof found.center === 'number' && Number.isFinite(found.center),
+      `${label} sample ${i + 1}/${targets.length} missing center row bar measurement at data-frame ${found.dataFrame}`
+    );
+    samples.push({
+      sample: found,
+      dataFrame: found.dataFrame as number,
+      center: found.center,
+    });
+  }
+  return samples;
 }
 
 async function canvasRowCenter(browser: ChromeSession): Promise<number> {
@@ -6935,7 +7065,10 @@ async function assertInvalidTiming(
 }
 
 async function clearMediaSeekTargets(browser: ChromeSession): Promise<void> {
-  await browser.evaluate<void>(`globalThis.__relicOtioMediaSeekTargets = []`);
+  await browser.evaluate<void>(`(() => {
+    globalThis.__relicOtioMediaSeekTargets = [];
+    globalThis.__relicOtioVideoSeekTargets = [];
+  })()`);
 }
 
 async function assertExactMediaTarget(
@@ -7459,6 +7592,10 @@ try {
   let reaimed: HeldComposerProbe | undefined;
   const browser = await openBrowser(shareUrl, sessionToken, {
     label: 'qualification',
+    recordMediaSeekTargets: true,
+    blockRequestVideoFrameCallback: Boolean(
+      process.env.RELIC_OTIO_BLOCK_RVFC === '1'
+    ),
   });
   try {
     await waitReady(browser);
@@ -7548,6 +7685,330 @@ try {
       );
     }
     pass('pixels-offset');
+
+    await seekTo(browser, 0);
+    await clearMediaSeekTargets(browser);
+
+    await browser.evaluate<void>(`(() => {
+      globalThis.__otioObservedFrames = [];
+      const root = document.querySelector('section.otio-view');
+      if (root?.dataset?.frame != null) {
+        globalThis.__otioObservedFrames.push(Number(root.dataset.frame));
+      }
+      const observer = new MutationObserver(() => {
+        const view = document.querySelector('section.otio-view');
+        if (view?.dataset?.frame != null) {
+          globalThis.__otioObservedFrames.push(Number(view.dataset.frame));
+        }
+      });
+      if (root) {
+        observer.observe(root, { attributes: true, attributeFilter: ['data-frame'] });
+      }
+      globalThis.__otioFrameObserver = observer;
+    })()`);
+
+    const playbackStarted = await browser.evaluate<boolean>(`(() => {
+      const { promise, resolve } = Promise.withResolvers();
+      const btn = document.querySelector('button.otio-play');
+      const root = document.querySelector('section.otio-view');
+      if (!btn || !root) { resolve(false); return promise; }
+      if (root.dataset.playing === 'true') { resolve(true); return promise; }
+      btn.click();
+      const start = Date.now();
+      const check = () => {
+        if (root.dataset.playing === 'true') resolve(true);
+        else if (Date.now() - start > 4000) resolve(false);
+        else setTimeout(check, 25);
+      };
+      check();
+      return promise;
+    })()`);
+    assert.ok(playbackStarted, 'steady playback did not enter playing state');
+
+    // Samples are taken when the clock first reaches each target frame, all at
+    // or before frame 44. The Picture-in-Picture layer ends at frame 48, where
+    // the drawn set changes and the exact resync paints before the clock label
+    // updates.
+    const playbackSamples = await sampleAtFrames(
+      browser,
+      width,
+      height,
+      [4, 10, 16, 22, 28, 34, 38, 41],
+      'playback'
+    );
+
+    await browser.evaluate<void>(`(() => {
+      const root = document.querySelector('section.otio-view');
+      const btn = document.querySelector('button.otio-play');
+      if (root?.dataset.playing === 'true' && btn instanceof HTMLButtonElement) {
+        btn.click();
+      }
+      if (globalThis.__otioFrameObserver) {
+        globalThis.__otioFrameObserver.disconnect();
+      }
+    })()`);
+
+    const observedPlaybackFrames = await browser.evaluate<number[]>(`(() => {
+      return (globalThis.__otioObservedFrames || []).slice();
+    })()`);
+    const seekTargets = await browser.evaluate<number[]>(`(() => {
+      return (
+        globalThis.__relicOtioVideoSeekTargets ??
+        globalThis.__relicOtioMediaSeekTargets ??
+        []
+      ).slice();
+    })()`);
+
+    const minObserved =
+      observedPlaybackFrames.length > 0
+        ? Math.min(...observedPlaybackFrames)
+        : (playbackSamples[0]?.dataFrame ?? 0);
+    const maxObserved =
+      observedPlaybackFrames.length > 0
+        ? Math.max(...observedPlaybackFrames)
+        : (playbackSamples[playbackSamples.length - 1]?.dataFrame ?? 72);
+    const elapsedMediaFrames = Math.max(
+      24,
+      Math.round(maxObserved - minObserved)
+    );
+
+    const distinctFloors = new Set(
+      observedPlaybackFrames.map((f) => Math.floor(f))
+    );
+    const floorProgressRatio = distinctFloors.size / elapsedMediaFrames;
+    assert.ok(
+      floorProgressRatio >= 0.6,
+      `distinct floor(data-frame) progress ${distinctFloors.size}/${elapsedMediaFrames} (${(floorProgressRatio * 100).toFixed(1)}%) below 60% floor (frozen hold)`
+    );
+
+    const seekRatio = seekTargets.length / elapsedMediaFrames;
+    assert.ok(
+      seekRatio <= 0.1,
+      `steady playback seek ratio ${(seekRatio * 100).toFixed(1)}% exceeded 10% ceiling (${seekTargets.length} seeks / ${elapsedMediaFrames} elapsed frames: ${seekTargets.slice(0, 10).join(', ')}...)`
+    );
+
+    for (const [idx, item] of playbackSamples.entries()) {
+      const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+      assert.ok(
+        timelineFrame <= 44,
+        `playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44, the Picture-in-Picture layer ends at frame 48`
+      );
+      const expectedFileFrame =
+        plan.primary_clip_frames?.[String(timelineFrame)] ??
+        plan.primary_file_frame + (timelineFrame - plan.primary_frame);
+
+      const expectedRow = await frameRowCenter(
+        join(mediaDir, plan.primary_media),
+        expectedFileFrame
+      );
+      const wrongRow = await frameRowCenter(
+        join(mediaDir, plan.primary_media),
+        expectedFileFrame + 2
+      );
+
+      const toExpectedPx =
+        Math.abs(item.center - expectedRow.center) * expectedRow.width;
+      const toWrongPx =
+        Math.abs(item.center - wrongRow.center) * wrongRow.width;
+
+      assert.ok(
+        toExpectedPx <= 3,
+        `playback sample ${idx + 1}/8 canvas bar is ${toExpectedPx.toFixed(2)} px from official file frame ${expectedFileFrame} at timeline frame ${timelineFrame}`
+      );
+      assert.ok(
+        toWrongPx >= 12,
+        `playback sample ${idx + 1}/8 canvas bar is ${toWrongPx.toFixed(2)} px from wrong file frame ${expectedFileFrame + 2} at timeline frame ${timelineFrame}`
+      );
+
+      const expectedFrame = await extractFrame(
+        join(mediaDir, plan.primary_media),
+        expectedFileFrame,
+        width,
+        height
+      );
+      const expectedBar = barColumn(expectedFrame, width, height);
+      const actualBar = barColumn(item.sample, width, height);
+      assert.ok(
+        Math.abs(actualBar - expectedBar) <= 1,
+        `playback sample ${idx + 1}/8 bar column ${actualBar} does not match official expected column ${expectedBar} at timeline frame ${timelineFrame}`
+      );
+    }
+    pass('native-playback');
+    // Paint parity: the same timeline frame painted during native playback and
+    // while paused must match. The Picture-in-Picture layer runs at 30 fps on
+    // a 24 fps timeline, so its window stays constant over [f, f + 0.8) only
+    // when f is a multiple of 4. Sample playback until it lands on such frames.
+    const parityPlaying: Array<{ frame: number; sample: SampledCanvas }> = [];
+    for (let round = 0; round < 4 && parityPlaying.length < 2; round++) {
+      await seekTo(browser, 16);
+      await browser.evaluate<void>(`(() => {
+        const btn = document.querySelector('button.otio-play');
+        const root = document.querySelector('section.otio-view');
+        if (btn && root?.dataset.playing !== 'true') btn.click();
+      })()`);
+      for (let poll = 0; poll < 200; poll++) {
+        const probe = await sampleCanvas(browser, width, height);
+        const df = probe.dataFrame;
+        if (df === null || df === undefined || !Number.isFinite(df)) continue;
+        const f = Math.floor(df + 1e-4);
+        if (f > 44) break;
+        if (
+          f >= 20 &&
+          f % 4 === 0 &&
+          df - f < 0.6 &&
+          !parityPlaying.some((item) => item.frame === f)
+        ) {
+          parityPlaying.push({ frame: f, sample: probe });
+          if (parityPlaying.length >= 2) break;
+        }
+      }
+      await browser.evaluate<void>(`(() => {
+        const btn = document.querySelector('button.otio-play');
+        const root = document.querySelector('section.otio-view');
+        if (btn && root?.dataset.playing === 'true') btn.click();
+      })()`);
+    }
+    assert.equal(
+      parityPlaying.length,
+      2,
+      'paint parity found fewer than 2 playback samples on frames 20 to 44 that are multiples of 4'
+    );
+    for (const item of parityPlaying) {
+      await seekTo(browser, item.frame);
+      const pausedSample = await sampleCanvas(browser, width, height);
+      const parityRmse = rmse(item.sample, pausedSample);
+      assert.ok(
+        parityRmse <= 1,
+        `paint parity RMSE ${parityRmse.toFixed(3)} exceeded 1 for chosen frame ${item.frame}`
+      );
+    }
+    pass('paint-parity');
+
+    const lateBrowser = await openBrowser(shareUrl, sessionToken, {
+      label: 'native-playback-late',
+      recordMediaSeekTargets: true,
+      rvfcBusyWaitMs: 60,
+    });
+    try {
+      await waitReady(lateBrowser);
+      await seekTo(lateBrowser, 0);
+      await clearMediaSeekTargets(lateBrowser);
+
+      await lateBrowser.evaluate<void>(`(() => {
+        globalThis.__otioObservedFrames = [];
+        const root = document.querySelector('section.otio-view');
+        if (root?.dataset?.frame != null) {
+          globalThis.__otioObservedFrames.push(Number(root.dataset.frame));
+        }
+        const observer = new MutationObserver(() => {
+          const view = document.querySelector('section.otio-view');
+          if (view?.dataset?.frame != null) {
+            globalThis.__otioObservedFrames.push(Number(view.dataset.frame));
+          }
+        });
+        if (root) {
+          observer.observe(root, { attributes: true, attributeFilter: ['data-frame'] });
+        }
+        globalThis.__otioFrameObserver = observer;
+      })()`);
+
+      const latePlaybackStarted = await lateBrowser.evaluate<boolean>(`(() => {
+        const { promise, resolve } = Promise.withResolvers();
+        const btn = document.querySelector('button.otio-play');
+        const root = document.querySelector('section.otio-view');
+        if (!btn || !root) { resolve(false); return promise; }
+        if (root.dataset.playing === 'true') { resolve(true); return promise; }
+        btn.click();
+        const start = Date.now();
+        const check = () => {
+          if (root.dataset.playing === 'true') resolve(true);
+          else if (Date.now() - start > 4000) resolve(false);
+          else setTimeout(check, 25);
+        };
+        check();
+        return promise;
+      })()`);
+      assert.ok(
+        latePlaybackStarted,
+        'late playback did not enter playing state'
+      );
+
+      // Samples are taken when the clock first reaches each target frame, all
+      // at or before frame 44, so none lands on the frame-48 drawn-set change.
+      const latePlaybackSamples = await sampleAtFrames(
+        lateBrowser,
+        width,
+        height,
+        [3, 8, 13, 18, 23, 28, 33, 38],
+        'late playback'
+      );
+
+      await lateBrowser.evaluate<void>(`(() => {
+        const root = document.querySelector('section.otio-view');
+        const btn = document.querySelector('button.otio-play');
+        if (root?.dataset.playing === 'true' && btn instanceof HTMLButtonElement) {
+          btn.click();
+        }
+        if (globalThis.__otioFrameObserver) {
+          globalThis.__otioFrameObserver.disconnect();
+        }
+      })()`);
+      assert.equal(
+        latePlaybackSamples.length,
+        8,
+        'late playback did not collect 8 samples'
+      );
+
+      for (const [idx, item] of latePlaybackSamples.entries()) {
+        const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+        assert.ok(
+          timelineFrame <= 44,
+          `late playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44 ceiling`
+        );
+        const expectedFileFrame =
+          plan.primary_clip_frames?.[String(timelineFrame)] ??
+          plan.primary_file_frame + (timelineFrame - plan.primary_frame);
+
+        const expectedRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame
+        );
+        const wrongRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame + 2
+        );
+
+        const toExpectedPx =
+          Math.abs(item.center - expectedRow.center) * expectedRow.width;
+        const toWrongPx =
+          Math.abs(item.center - wrongRow.center) * wrongRow.width;
+
+        assert.ok(
+          toExpectedPx <= 3,
+          `late playback sample ${idx + 1}/8 canvas bar is ${toExpectedPx.toFixed(2)} px from official file frame ${expectedFileFrame} at timeline frame ${timelineFrame}`
+        );
+        assert.ok(
+          toWrongPx >= 12,
+          `late playback sample ${idx + 1}/8 canvas bar is ${toWrongPx.toFixed(2)} px from wrong file frame ${expectedFileFrame + 2} at timeline frame ${timelineFrame}`
+        );
+
+        const expectedFrame = await extractFrame(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame,
+          width,
+          height
+        );
+        const expectedBar = barColumn(expectedFrame, width, height);
+        const actualBar = barColumn(item.sample, width, height);
+        assert.ok(
+          Math.abs(actualBar - expectedBar) <= 1,
+          `late playback sample ${idx + 1}/8 bar column ${actualBar} does not match official expected column ${expectedBar} at timeline frame ${timelineFrame}`
+        );
+      }
+      pass('native-playback-late');
+    } finally {
+      await lateBrowser.close();
+    }
 
     const negativeHead = plan.default_view_negative_head;
     assert.ok(

@@ -910,6 +910,43 @@ No MCP tool can record a decision. Decisions are recorded only by human readers 
 
 **Every relic page shows the bar and a named phase from the first frame.** The shell carries a static plate, so the page is never blank before `viewer.js` runs. The viewer then shows Opening, Fetching with bytes against the mint's object length, Decrypting, and Rendering, as `viewer.md` §6.3 and §6.4 and `surface.md` §7 already specified. Try again now reruns the open with the key in memory instead of reloading a page whose key was stripped.
 
+## 2026-10-25: Continuous native video decode, synchronous frame callback capture, and bounded seek cadence fallback for OpenTimelineIO
+
+**Measured seek bottleneck during full-cut playback.**
+Profiling full-cut playback (such as a 491.7 s 1080p30 timeline) under the existing midpoint-seek engine revealed that steady-state per-frame seeks formed the primary playback bottleneck. Seeking decoders on every frame generated roughly 257 to 400 seeks in a 15-second window (approximately 19 to 26 seeks per second), spending roughly 77 percent of playback time waiting on decoder seeks and dropping cadence.
+
+**Continuous native decode instead of WASM or WebCodecs.**
+The same bundled video decoded continuously at 30 fps in the native HTML video path. The measured bottleneck was repeated seeking, so the repair keeps that decoder and changes how frames are captured and approved.
+- WASM would add a software decoder without addressing the measured per-frame seek policy.
+- WebCodecs would add a demuxing and codec-feed pipeline; the measured seek bottleneck can be removed using the existing media element.
+- The boundary from the 2026-10-20 OpenTimelineIO native playback decision is retained: browser playback operates under browser-managed SDR decoding with canvas composition and additive audio, without transcode services, WASM decoders, or WebCodecs pipelines.
+
+`VideoFrame` is used only to read the media element's current frame together with its timestamp inside `requestVideoFrameCallback`. No WebCodecs decoder, demuxer or codec configuration is involved. Tagging from the callback metadata can pair a tag with a newer frame when the main thread is late. The admission probe measured it: one fr60 sample in twenty disagreed in a two-decoder run under host load, and with a 40 ms delay injected into the callback the metadata method disagreed on every sample in four classes (fr60, fr30 WebM, no-duration WebM and the 1080p long-GOP file). The `VideoFrame` method matched every sample in every class in the unthrottled, 4x CPU and 40 ms delay runs. Native playback also requires `VideoFrame`; without it the viewer plays on seek cadence.
+
+**No format, CSP, or privacy change.**
+Continuous native decoding introduces no changes to the Relic container format, the encryption envelope, or network posture.
+- The sandbox boundary and CSP remain unchanged (`default-src 'none'`, no remote fetching, isolated origin). Decrypted media Blobs are decoded locally through object URLs.
+- No new privacy disclosures are created, and no keys or decrypted bytes cross origins.
+
+**Synchronous inside-callback capture and strict packet matching.**
+Rather than painting playing video elements directly (which can tear, jitter, or advance between approval and painting), frames are captured synchronously into a fixed three-slot output-sized snapshot canvas ring inside `requestVideoFrameCallback`.
+- Presented frames are matched to scanner packet starts with a strict tolerance Q = 2 µs (`2e-6` s).
+- The compositor paints only approved snapshots whose tag matches the rational half-open required window index `req` for the transport time T. If any drawn leaf is not ready, the composite holds.
+
+**Certified-span tail rule and eligibility fallback.**
+Media Blobs whose scanner index stops short of the file end (such as `no-duration.webm`) maintain native playback across their certified span `[starts[0], ends[last])`.
+- Decoder callbacks outside the span (running ahead into uncertified tail frames or lead-in) are ignored without poisoning the media path or causing resyncs.
+- When the timeline reaches an uncertified sample, an eligibility discontinuity drops that drawn set to exact seek cadence with the existing `invalid-timing` diagnostic, without approving uncertified frames. Subsequent certified clips return to native playback upon the next discontinuity.
+
+**Bounded set-change resync tradeoff.**
+Every change to the set of drawn video occurrences (cuts, unhiding a track, soloing, or entering a dissolve) triggers one exact resync (pausing, running exact `renderAt`, and re-anchoring phase).
+- In admitted native mode, video decoders run continuously rather than seeking on every transport tick.
+- For rapid cuts or montages, frequent resyncs could hitch; this is bounded by a change-rate guard (more than 3 changes in 5 s falls back to seek cadence) and a storm guard (3 failure resyncs in 10 s falls back to seek cadence). Lookahead preroll remains an uncommitted future consideration if measured multi-clip cut performance requires it.
+
+**Residuals:**
+- Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
+- Any media path failing native admission criteria runs on today's exact midpoint seek cadence with existing diagnostic reporting.
+
 ## 2026-10-25: A passkey signs a returning reader in, without an email
 
 Authorised by Jason Waldrip on 2026-10-25: passkeys serve as an alternative sign-in mechanism for returning readers, minting the exact same `relic_session` cookie as a magic link without sending email.
