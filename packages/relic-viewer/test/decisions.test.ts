@@ -8,21 +8,24 @@ import {
 } from '@relic/format';
 import type { SessionState } from '../src/comments.ts';
 import {
-  authenticationResponseToJSON,
-  base64urlDecode,
-  base64urlEncode,
-  type CredentialsLike,
-  creationOptionsFromJSON,
   DECISION_CANCELLED,
   DECISION_TOFU,
   DECISION_UNAVAILABLE,
   type DecisionPanelHandle,
   mismatchCopy,
   openDecisionPanel,
-  registrationResponseToJSON,
-  requestOptionsFromJSON,
   staleCopy,
 } from '../src/decision-panel.ts';
+import {
+  authenticationResponseToJSON,
+  base64urlDecode,
+  base64urlEncode,
+  ceremonySignal,
+  type CredentialsLike,
+  creationOptionsFromJSON,
+  registrationResponseToJSON,
+  requestOptionsFromJSON,
+} from '../src/passkey-common.ts';
 import {
   type DecisionTally,
   decisionAccess,
@@ -1086,5 +1089,34 @@ describe('the decisions sheet', () => {
     handle.close();
     expect(dom.body.children).toHaveLength(0);
     expect(dom.active?.tagName).toBe('BUTTON');
+  });
+
+  test('decision ceremonies abort an earlier ceremonySignal()', async () => {
+    const { deps, calls } = service({
+      '/decisions/list': listReply(RECORDS),
+      '/decisions/options': () =>
+        json({
+          version: 3,
+          version_digest: PAGE_DIGEST,
+          public_key: REQUEST_OPTIONS,
+        }),
+    });
+    const auth = authenticator(calls);
+    const { panel, handle } = await openPanel(deps, {
+      credentials: auth.credentials,
+    });
+    const priorSignal = ceremonySignal();
+    expect(priorSignal.aborted).toBe(false);
+
+    press(verdict(panel, 'approve'));
+    await settle(handle);
+    press(one(panel, 'data-decision-confirm'));
+    await settle(handle);
+
+    expect(priorSignal.aborted).toBe(true);
+    expect((priorSignal.reason as DOMException).name).toBe('AbortError');
+    expect((priorSignal.reason as DOMException).message).toBe(
+      'A newer passkey request replaced this one'
+    );
   });
 });

@@ -8,11 +8,10 @@
  * lets a page start a WebAuthn ceremony from inside a user activation, and an
  * `await` between the click and the call would spend it.
  *
- * Every runtime value from the app shell arrives through the options. This
- * chunk imports types only, so the bundler has no shared module to move out of
- * `viewer.js`. That is also why base64url is written out here rather than
- * borrowed, and why the WebAuthn JSON conversion is hand-rolled: browsers
- * without `PublicKeyCredential.parseRequestOptionsFromJSON` still have to work.
+ * Every runtime value from the app shell arrives through the options, and
+ * the WebAuthn helpers and ceremony controller live in passkey-common.ts so
+ * the shell never carries them. That chunk is imported only by lazy loaders
+ * (decisions and passkey sign-in), keeping WebAuthn conversion out of viewer.js.
  *
  * The sheet is not modal. The comment sidebar stays open and live beside it,
  * because the two are separate places: one for talking about a version, one
@@ -24,203 +23,28 @@ import type {
   CreationOptionsJSON,
   DecisionRecord,
   DecisionVerdict,
-  PasskeyDescriptorJSON,
   RegistrationResponseJSON,
   RequestOptionsJSON,
 } from '@relic/format';
 import type { SessionState } from './comments.ts';
 import type { DecisionListOutcome, DecisionTally } from './decisions.ts';
 import type { ReadyView, ViewerDeps } from './viewer.ts';
-
-/* ---------- WebAuthn JSON and binary ---------- */
-
-const B64URL =
-  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-
-/** Unpadded base64url, as every WebAuthn wire field is. */
-export function base64urlEncode(input: ArrayBuffer | Uint8Array): string {
-  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-  let out = '';
-  let accumulator = 0;
-  let held = 0;
-  for (const byte of bytes) {
-    accumulator = ((accumulator << 8) | byte) & 0xffff;
-    held += 8;
-    while (held >= 6) {
-      held -= 6;
-      out += B64URL[(accumulator >>> held) & 0x3f];
-    }
-  }
-  if (held > 0) out += B64URL[(accumulator << (6 - held)) & 0x3f];
-  return out;
-}
-
-/** The inverse, refusing anything outside the alphabet (padding included). */
-export function base64urlDecode(text: string): ArrayBuffer {
-  const out = new Uint8Array(Math.floor((text.length * 6) / 8));
-  let accumulator = 0;
-  let held = 0;
-  let index = 0;
-  for (const ch of text) {
-    const value = B64URL.indexOf(ch);
-    if (value < 0) throw new TypeError('not unpadded base64url');
-    accumulator = ((accumulator << 6) | value) & 0xffff;
-    held += 6;
-    if (held >= 8) {
-      held -= 8;
-      out[index] = (accumulator >>> held) & 0xff;
-      index += 1;
-    }
-  }
-  return out.buffer;
-}
-
-function descriptors(
-  list: readonly PasskeyDescriptorJSON[] | undefined
-): PublicKeyCredentialDescriptor[] {
-  return (list ?? []).map((entry) => ({
-    type: 'public-key',
-    id: base64urlDecode(entry.id),
-    ...(entry.transports === undefined
-      ? {}
-      : { transports: [...entry.transports] as AuthenticatorTransport[] }),
-  }));
-}
-
-export function creationOptionsFromJSON(
-  json: CreationOptionsJSON
-): PublicKeyCredentialCreationOptions {
-  const selection = json.authenticatorSelection;
-  return {
-    challenge: base64urlDecode(json.challenge),
-    rp: { id: json.rp.id, name: json.rp.name },
-    user: {
-      id: base64urlDecode(json.user.id),
-      name: json.user.name,
-      displayName: json.user.displayName,
-    },
-    pubKeyCredParams: json.pubKeyCredParams.map((param) => ({
-      type: 'public-key',
-      alg: param.alg,
-    })),
-    excludeCredentials: descriptors(json.excludeCredentials),
-    ...(json.timeout === undefined ? {} : { timeout: json.timeout }),
-    ...(json.attestation === undefined
-      ? {}
-      : { attestation: json.attestation as AttestationConveyancePreference }),
-    ...(selection === undefined
-      ? {}
-      : {
-          authenticatorSelection: {
-            ...(selection.residentKey === undefined
-              ? {}
-              : {
-                  residentKey: selection.residentKey as ResidentKeyRequirement,
-                }),
-            ...(selection.userVerification === undefined
-              ? {}
-              : {
-                  userVerification:
-                    selection.userVerification as UserVerificationRequirement,
-                }),
-          },
-        }),
-  };
-}
-
-export function requestOptionsFromJSON(
-  json: RequestOptionsJSON
-): PublicKeyCredentialRequestOptions {
-  return {
-    challenge: base64urlDecode(json.challenge),
-    rpId: json.rpId,
-    allowCredentials: descriptors(json.allowCredentials),
-    ...(json.timeout === undefined ? {} : { timeout: json.timeout }),
-    ...(json.userVerification === undefined
-      ? {}
-      : {
-          userVerification:
-            json.userVerification as UserVerificationRequirement,
-        }),
-  };
-}
-
-interface CredentialShape {
-  readonly id: string;
-  readonly rawId: ArrayBuffer;
-  readonly type: string;
-  readonly response: unknown;
-}
-
-function credentialShape(credential: Credential): CredentialShape {
-  const shaped = credential as unknown as Partial<CredentialShape>;
-  if (
-    typeof shaped.id !== 'string' ||
-    !(shaped.rawId instanceof ArrayBuffer) ||
-    typeof shaped.response !== 'object' ||
-    shaped.response === null
-  ) {
-    throw new TypeError('not a public key credential');
-  }
-  return shaped as CredentialShape;
-}
-
-function bufferField(source: unknown, name: string): ArrayBuffer {
-  const value: unknown = Reflect.get(source as object, name);
-  if (!(value instanceof ArrayBuffer)) {
-    throw new TypeError(`credential response has no ${name}`);
-  }
-  return value;
-}
-
-export function registrationResponseToJSON(
-  credential: Credential
-): RegistrationResponseJSON {
-  const shaped = credentialShape(credential);
-  const response = shaped.response as {
-    getTransports?: () => string[];
-  };
-  const transports =
-    typeof response.getTransports === 'function'
-      ? response.getTransports()
-      : undefined;
-  return {
-    id: shaped.id,
-    rawId: base64urlEncode(shaped.rawId),
-    type: 'public-key',
-    response: {
-      clientDataJSON: base64urlEncode(bufferField(response, 'clientDataJSON')),
-      attestationObject: base64urlEncode(
-        bufferField(response, 'attestationObject')
-      ),
-      ...(transports === undefined ? {} : { transports }),
-    },
-  };
-}
-
-export function authenticationResponseToJSON(
-  credential: Credential
-): AuthenticationResponseJSON {
-  const shaped = credentialShape(credential);
-  const response = shaped.response;
-  const handle: unknown = Reflect.get(response as object, 'userHandle');
-  return {
-    id: shaped.id,
-    rawId: base64urlEncode(shaped.rawId),
-    type: 'public-key',
-    response: {
-      clientDataJSON: base64urlEncode(bufferField(response, 'clientDataJSON')),
-      authenticatorData: base64urlEncode(
-        bufferField(response, 'authenticatorData')
-      ),
-      signature: base64urlEncode(bufferField(response, 'signature')),
-      userHandle:
-        handle instanceof ArrayBuffer && handle.byteLength > 0
-          ? base64urlEncode(handle)
-          : null,
-    },
-  };
-}
+import {
+  authenticationResponseToJSON,
+  ceremonyCode,
+  ceremonySignal,
+  type CredentialsLike,
+  creationOptionsFromJSON,
+  el,
+  glyph,
+  ICON_KEY,
+  parseCreationOptions,
+  parseRequestOptions,
+  plain,
+  pressable,
+  registrationResponseToJSON,
+  requestOptionsFromJSON,
+} from './passkey-common.ts';
 
 /* ---------- copy ---------- */
 
@@ -248,8 +72,6 @@ export function mismatchCopy(version: number): string {
   );
 }
 
-const ICON_KEY =
-  'M5 5.5a3 3 0 1 1 5.6 1.5l4.4 4.4V14h-2.2v-1.3h-1.3v-1.3h-1.3L7.5 8.6A3 3 0 0 1 5 5.5zm2.5-1.2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z';
 const ICON_CLOSE =
   'M4.2 3.5 8 7.3l3.8-3.8.7.7L8.7 8l3.8 3.8-.7.7L8 8.7l-3.8 3.8-.7-.7L7.3 8 3.5 4.2z';
 const ICON_VERDICT: Record<DecisionVerdict, string> = {
@@ -263,12 +85,6 @@ const verb = (v: DecisionVerdict): string =>
   v === 'approve' ? 'Approve' : 'Reject';
 
 /* ---------- the panel ---------- */
-
-/** The slice of `navigator.credentials` the ceremony uses. */
-export interface CredentialsLike {
-  create(options: CredentialCreationOptions): Promise<Credential | null>;
-  get(options: CredentialRequestOptions): Promise<Credential | null>;
-}
 
 export interface DecisionPanelOptions {
   readonly view: ReadyView;
@@ -371,50 +187,6 @@ interface Reply {
 /** Both ways the service says the session is gone: either way, sign in. */
 function needsSignIn(code: string): boolean {
   return code === 'sign_in_required' || code === 'invalid_session';
-}
-
-function el(tag: string, className?: string, text?: string): HTMLElement {
-  const node = document.createElement(tag);
-  if (className !== undefined && className.length > 0) {
-    node.className = className;
-  }
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function glyph(path: string): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 16 16');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  svg.classList.add('icon');
-  const node = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  node.setAttribute('d', path);
-  svg.appendChild(node);
-  return svg;
-}
-
-function pressable(
-  className: string,
-  label: string,
-  onClick: () => void,
-  iconPath?: string
-): HTMLButtonElement {
-  const node = document.createElement('button');
-  node.type = 'button';
-  node.className = className;
-  if (iconPath !== undefined) {
-    node.append(glyph(iconPath), el('span', '', label));
-  } else {
-    node.textContent = label;
-  }
-  node.addEventListener('click', onClick);
-  return node;
-}
-
-/** Strips the bidirectional controls an untrusted address could carry. */
-function plain(text: string): string {
-  return text.replace(/[\u202a-\u202e\u2066-\u2069\u200e\u200f]/g, '');
 }
 
 function when(iso: string): string {
@@ -523,102 +295,6 @@ function isDigest(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 }
 
-function parseDescriptors(
-  value: unknown
-): readonly PasskeyDescriptorJSON[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new TypeError('descriptors');
-  return value.map((entry: unknown) => {
-    const id: unknown = Reflect.get(entry as object, 'id');
-    const transports: unknown = Reflect.get(entry as object, 'transports');
-    if (typeof id !== 'string') throw new TypeError('descriptor id');
-    return {
-      id,
-      type: 'public-key' as const,
-      ...(Array.isArray(transports) &&
-      transports.every((t): t is string => typeof t === 'string')
-        ? { transports }
-        : {}),
-    };
-  });
-}
-
-function parseRequestOptions(value: unknown): RequestOptionsJSON | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
-  const o = value as Record<string, unknown>;
-  if (typeof o.challenge !== 'string' || typeof o.rpId !== 'string') {
-    return undefined;
-  }
-  try {
-    const allow = parseDescriptors(o.allowCredentials);
-    return {
-      challenge: o.challenge,
-      rpId: o.rpId,
-      ...(typeof o.timeout === 'number' ? { timeout: o.timeout } : {}),
-      ...(typeof o.userVerification === 'string'
-        ? { userVerification: o.userVerification }
-        : {}),
-      ...(allow === undefined ? {} : { allowCredentials: allow }),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function parseCreationOptions(value: unknown): CreationOptionsJSON | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
-  const o = value as Record<string, unknown>;
-  const rp = o.rp as Record<string, unknown> | undefined;
-  const user = o.user as Record<string, unknown> | undefined;
-  if (
-    typeof o.challenge !== 'string' ||
-    typeof rp?.id !== 'string' ||
-    typeof rp.name !== 'string' ||
-    typeof user?.id !== 'string' ||
-    typeof user.name !== 'string' ||
-    typeof user.displayName !== 'string' ||
-    !Array.isArray(o.pubKeyCredParams)
-  ) {
-    return undefined;
-  }
-  try {
-    const params = o.pubKeyCredParams.map((entry: unknown) => {
-      const alg: unknown = Reflect.get(entry as object, 'alg');
-      if (typeof alg !== 'number') throw new TypeError('alg');
-      return { type: 'public-key' as const, alg };
-    });
-    const exclude = parseDescriptors(o.excludeCredentials);
-    const selection = o.authenticatorSelection as
-      | Record<string, unknown>
-      | undefined;
-    return {
-      challenge: o.challenge,
-      rp: { id: rp.id, name: rp.name },
-      user: { id: user.id, name: user.name, displayName: user.displayName },
-      pubKeyCredParams: params,
-      ...(typeof o.timeout === 'number' ? { timeout: o.timeout } : {}),
-      ...(typeof o.attestation === 'string'
-        ? { attestation: o.attestation }
-        : {}),
-      ...(typeof selection === 'object' && selection !== null
-        ? {
-            authenticatorSelection: {
-              ...(typeof selection.residentKey === 'string'
-                ? { residentKey: selection.residentKey }
-                : {}),
-              ...(typeof selection.userVerification === 'string'
-                ? { userVerification: selection.userVerification }
-                : {}),
-            },
-          }
-        : {}),
-      ...(exclude === undefined ? {} : { excludeCredentials: exclude }),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 function parseRecord(value: unknown): DecisionRecord | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const r = value as Record<string, unknown>;
@@ -640,18 +316,6 @@ function parseRecord(value: unknown): DecisionRecord | undefined {
     created_at: r.created_at,
     version_digest: r.version_digest,
   };
-}
-
-/** Why a ceremony ended without an answer, from the DOMException's name. */
-function ceremonyCode(error: unknown): string {
-  const name =
-    typeof error === 'object' && error !== null && 'name' in error
-      ? String(error.name)
-      : '';
-  if (name === 'NotAllowedError' || name === 'AbortError') return 'not_allowed';
-  if (name === 'InvalidStateError') return 'passkey_exists';
-  if (name === 'SecurityError') return 'passkey_security';
-  return 'passkey_failed';
 }
 
 export function openDecisionPanel(
@@ -1599,7 +1263,10 @@ export function openDecisionPanel(
     // Called before anything is awaited, inside the press that asked for it.
     let pending: Promise<Credential | null>;
     try {
-      pending = api_.create({ publicKey: creationOptionsFromJSON(creation) });
+      pending = api_.create({
+        publicKey: creationOptionsFromJSON(creation),
+        signal: ceremonySignal(),
+      });
     } catch (error) {
       pending = Promise.reject(error);
     }
@@ -1683,7 +1350,10 @@ export function openDecisionPanel(
     }
     let pending: Promise<Credential | null>;
     try {
-      pending = api_.get({ publicKey: requestOptionsFromJSON(request) });
+      pending = api_.get({
+        publicKey: requestOptionsFromJSON(request),
+        signal: ceremonySignal(),
+      });
     } catch (error) {
       pending = Promise.reject(error);
     }
@@ -1779,6 +1449,7 @@ export function openDecisionPanel(
     try {
       pending = api_.get({
         publicKey: requestOptionsFromJSON(decisionOptions.publicKey),
+        signal: ceremonySignal(),
       });
     } catch (error) {
       pending = Promise.reject(error);

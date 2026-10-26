@@ -1461,3 +1461,35 @@ export function collectDisplayedEntries(
   walk(nodes);
   return out;
 }
+
+const consumedDocs = new WeakSet<object>();
+
+/**
+ * Returns true if the offer marker cookie is present, and deletes the cookie.
+ * Returns true at most once per document.
+ */
+export function takePasskeyOfferMarker(
+  doc: { cookie?: string } = globalThis.document
+): boolean {
+  if (!doc || typeof doc !== 'object') return false;
+  if (consumedDocs.has(doc)) return false;
+  const cookie = doc.cookie ?? '';
+  const match = /(?:^|;\s*)relic_passkey_offer=([^;]*)/.exec(cookie);
+  if (!match || match[1] !== '1') return false;
+  consumedDocs.add(doc);
+  try {
+    doc.cookie = 'relic_passkey_offer=; Path=/; Max-Age=0; SameSite=Lax';
+    if (
+      typeof doc.cookie === 'string' &&
+      doc.cookie.includes('relic_passkey_offer=')
+    ) {
+      doc.cookie = doc.cookie
+        .split(';')
+        .filter((c) => !c.trim().startsWith('relic_passkey_offer='))
+        .join(';');
+    }
+  } catch {
+    // Ignore environments where setting cookie throws
+  }
+  return true;
+}
