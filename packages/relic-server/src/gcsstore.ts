@@ -1043,7 +1043,24 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       const norm = normalizeEmail(record.email);
       const hash = await sha256Hex(norm);
       const name = key('passkey', `${hash}.json`);
-      return put(name, record, '0');
+      const created = await put(name, record, '0');
+      if (created) {
+        try {
+          const handleHash = await sha256Hex(record.userHandle);
+          const handleName = key('passkey-handle', `${handleHash}.json`);
+          await put(
+            handleName,
+            { emailHash: hash, createdAt: Date.now() },
+            '0'
+          );
+        } catch (err) {
+          console.warn(
+            'failed to maintain passkey handle index on create',
+            err
+          );
+        }
+      }
+      return created;
     },
 
     async updatePasskeys(
@@ -1074,6 +1091,20 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         }
 
         if (await put(name, next, current.generation)) {
+          try {
+            const handleHash = await sha256Hex(next.userHandle);
+            const handleName = key('passkey-handle', `${handleHash}.json`);
+            await put(
+              handleName,
+              { emailHash: hash, createdAt: Date.now() },
+              '0'
+            );
+          } catch (err) {
+            console.warn(
+              'failed to maintain passkey handle index on update',
+              err
+            );
+          }
           return next;
         }
       }
@@ -1097,6 +1128,49 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       const deleted = await remove(name, found.generation);
       if (!deleted) return undefined;
       return found.value;
+    },
+    async getPasskeysByUserHandle(
+      userHandle: string
+    ): Promise<PasskeyRecord | undefined> {
+      const handleHash = await sha256Hex(userHandle);
+      const name = key('passkey-handle', `${handleHash}.json`);
+      const index = await get<{ emailHash: string; createdAt: number }>(name);
+      if (index === undefined) return undefined;
+      const passkeyName = key('passkey', `${index.value.emailHash}.json`);
+      const record = (await get<PasskeyRecord>(passkeyName))?.value;
+      if (record === undefined || record.userHandle !== userHandle) {
+        return undefined;
+      }
+      return record;
+    },
+    async passkeyDecoyKey(): Promise<Uint8Array> {
+      const secretName = key('secret', 'passkey-decoy-key.json');
+      const existing = await get<{ key: string; createdAt: number }>(
+        secretName
+      );
+      if (existing !== undefined) {
+        return new Uint8Array(Buffer.from(existing.value.key, 'base64url'));
+      }
+      const random = new Uint8Array(32);
+      crypto.getRandomValues(random);
+      const encoded = Buffer.from(random).toString('base64url');
+      const stored = await put(
+        secretName,
+        { key: encoded, createdAt: Date.now() },
+        '0'
+      );
+      if (stored) {
+        return random;
+      }
+      const readBack = await get<{ key: string; createdAt: number }>(
+        secretName
+      );
+      if (readBack === undefined) {
+        throw new Error(
+          'gcs passkey decoy key could not be written or read back'
+        );
+      }
+      return new Uint8Array(Buffer.from(readBack.value.key, 'base64url'));
     },
   };
 

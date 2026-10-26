@@ -121,14 +121,18 @@ export interface PasskeyCredential {
 
 export interface PasskeyRecord {
   readonly email: string;
+  readonly address?: string;
   readonly userHandle: string;
   readonly credentials: readonly PasskeyCredential[];
 }
 
 export interface WebauthnChallengeRow {
   readonly challengeHash: string;
-  readonly email: string;
-  readonly purpose: 'register' | 'enroll' | 'decide';
+  /**
+   * The normalized address; absent only on a usernameless `sign_in` challenge.
+   */
+  readonly email?: string;
+  readonly purpose: 'register' | 'enroll' | 'decide' | 'sign_in';
   readonly expiresAt: number;
   readonly userHandle?: string;
   readonly assertedBy?: string;
@@ -487,6 +491,10 @@ export interface RelicStore {
   consumeWebauthnChallenge(
     challengeHash: string
   ): Promise<WebauthnChallengeRow | undefined>;
+  getPasskeysByUserHandle(
+    userHandle: string
+  ): Promise<PasskeyRecord | undefined>;
+  passkeyDecoyKey(): Promise<Uint8Array>;
 }
 
 export class MemoryStore implements RelicStore {
@@ -513,6 +521,8 @@ export class MemoryStore implements RelicStore {
   private readonly decisions = new Map<string, Map<string, DecisionRow>>();
   private readonly passkeys = new Map<string, PasskeyRecord>();
   private readonly webauthnChallenges = new Map<string, WebauthnChallengeRow>();
+  private readonly passkeyHandles = new Map<string, string>();
+  private passkeyDecoySecret: Uint8Array | undefined;
   async getRelic(id: string): Promise<RelicRow | undefined> {
     return this.relics.get(id);
   }
@@ -1046,6 +1056,7 @@ export class MemoryStore implements RelicStore {
       return false;
     }
     this.passkeys.set(norm, record);
+    this.passkeyHandles.set(record.userHandle, norm);
     return true;
   }
 
@@ -1073,7 +1084,29 @@ export class MemoryStore implements RelicStore {
     }
 
     this.passkeys.set(norm, next);
+    this.passkeyHandles.set(next.userHandle, norm);
     return next;
+  }
+
+  async getPasskeysByUserHandle(
+    userHandle: string
+  ): Promise<PasskeyRecord | undefined> {
+    const norm = this.passkeyHandles.get(userHandle);
+    if (norm === undefined) return undefined;
+    const record = this.passkeys.get(norm);
+    if (record === undefined || record.userHandle !== userHandle) {
+      return undefined;
+    }
+    return record;
+  }
+
+  async passkeyDecoyKey(): Promise<Uint8Array> {
+    if (this.passkeyDecoySecret === undefined) {
+      const bytes = new Uint8Array(32);
+      crypto.getRandomValues(bytes);
+      this.passkeyDecoySecret = bytes;
+    }
+    return new Uint8Array(this.passkeyDecoySecret);
   }
 
   async putWebauthnChallenge(row: WebauthnChallengeRow): Promise<void> {

@@ -118,6 +118,16 @@ export interface RelicConfig {
   readonly decisionReadRateLimit: RateLimitConfig;
   /** Passkey operations per IP. */
   readonly passkeyRateLimit: RateLimitConfig;
+  /** Passkey sign-in options requests per IP. */
+  readonly passkeySignInOptionsRateLimit: RateLimitConfig;
+  /** Passkey sign-in requests per IP. */
+  readonly passkeySignInRateLimit: RateLimitConfig;
+  /** Size of the allowCredentials list on email-first passkey sign-in. */
+  readonly passkeySignInAllowListSize: number;
+  /** Lengths in bytes to pick from for passkey sign-in decoy credential IDs. */
+  readonly passkeyDecoyIdLengths: readonly number[];
+  /** How long the passkey offer cookie marker lasts in seconds. */
+  readonly passkeyOfferMarkerSeconds: number;
   /** Engaged when egress spend crosses the ceiling. Refuses every mint. */
   readonly killSwitchEngaged: boolean;
   /**
@@ -177,6 +187,11 @@ export const DEFAULT_CONFIG: RelicConfig = {
   decisionRateLimit: { limit: 30, windowSeconds: 3600 },
   decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
+  passkeySignInOptionsRateLimit: { limit: 240, windowSeconds: 3600 },
+  passkeySignInRateLimit: { limit: 30, windowSeconds: 3600 },
+  passkeySignInAllowListSize: 4,
+  passkeyDecoyIdLengths: [16, 20, 32, 64],
+  passkeyOfferMarkerSeconds: 600,
   killSwitchEngaged: false,
   trustedProxyHops: 2,
 };
@@ -224,5 +239,28 @@ export function assertConfig(config: RelicConfig): void {
   }
   if (config.shareMaxPerCall > config.shareMaxPerRelic) {
     throw new Error('shareMaxPerCall cannot exceed shareMaxPerRelic');
+  }
+  if (
+    !Number.isInteger(config.passkeySignInAllowListSize) ||
+    config.passkeySignInAllowListSize < 1
+  ) {
+    throw new Error('passkeySignInAllowListSize must be an integer >= 1');
+  }
+  if (
+    !Array.isArray(config.passkeyDecoyIdLengths) ||
+    config.passkeyDecoyIdLengths.length === 0 ||
+    config.passkeyDecoyIdLengths.some(
+      (len) => !Number.isInteger(len) || len < 16 || len > 1023
+    )
+  ) {
+    throw new Error(
+      'passkeyDecoyIdLengths must be non-empty with integers between 16 and 1023'
+    );
+  }
+  if (
+    !Number.isInteger(config.passkeyOfferMarkerSeconds) ||
+    config.passkeyOfferMarkerSeconds <= 0
+  ) {
+    throw new Error('passkeyOfferMarkerSeconds must be an integer > 0');
   }
 }
