@@ -512,10 +512,11 @@ It exercises:
 2. Installing a script wrapper recording `credentials.get` calls `{mediation, aborted}`, opening the relic anonymously, and asserting autocomplete and `[data-passkey-sign-in]`.
 3. Requesting a sign-in magic link from the comment composer, following it, and asserting `[data-passkey-offer]` is shown and the offer marker cookie is deleted.
 4. Clicking `[data-passkey-offer-create]`, waiting for `data-state="created"`, checking that WebAuthn holds 1 resident credential, and verifying `store.getPasskeysByUserHandle` resolves it.
-5. Deleting the `relic_session` cookie via CDP, reopening the relic URL, and asserting `/api/auth/session` returns `email: null`.
-6. Clicking `[data-passkey-sign-in]`, verifying "Commenting as <addr>" appears, confirming zero emails were sent during sign-in, and checking the conditional request was aborted if armed.
+5. Reporting conditional mediation unavailable (a virtual authenticator answers an autofill request by itself, so this keeps the button path deliberate), deleting the `relic_session` cookie via CDP, reopening the relic URL, and asserting `/api/auth/session` returns `email: null` with no conditional request armed.
+6. Clicking `[data-passkey-sign-in]`, verifying "Commenting as <addr>" appears, a sign-in POST was made, and zero emails were sent.
+6b. Making conditional mediation available again, signing out and reopening, and verifying the autofill request alone signs the reader in: "Commenting as <addr>", a conditional request armed, a sign-in POST, and zero emails.
 7. Posting a comment through `textarea.compose-textarea` and "Post comment", and reading it back via `relic_read_comments` to verify author attribution.
-8. Negative controls: replaying the captured sign-in POST gives 401, text/plain gives 400, email-first options for unknown and known addresses match in shape and count, and a decision POST without a credential gives 400.
+8. Negative controls: replaying the captured sign-in POST gives 401, text/plain gives 400, email-first options for unknown and known addresses match in shape and count, and a decision POST carrying the passkey-minted session but no credential gives 400.
 
 Success ends with:
 
@@ -526,6 +527,7 @@ PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown
 PASSKEY_STEP_4_ENROLL_OK resident=true
 PASSKEY_STEP_5_SIGNED_OUT_OK
 PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0
+PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0
 PASSKEY_STEP_7_COMMENT_OK author=<addr>
 PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400
 PASSKEY_SIGN_IN_PATH_OK
@@ -561,6 +563,7 @@ PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown
 PASSKEY_STEP_4_ENROLL_OK resident=true
 PASSKEY_STEP_5_SIGNED_OUT_OK
 PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0
+PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0
 PASSKEY_STEP_7_COMMENT_OK author=<addr>
 PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400
 PASSKEY_SIGN_IN_LIVE_OK relic=<id> client=relic-mcp@<version>

@@ -845,18 +845,19 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
     expect(outcome.textContent).toBe('');
   });
 
-  // 10. The offer marker is consumed once.
-  test('10. The offer marker is consumed once', () => {
+  // 10. The offer marker is deleted on first read, and every build in the
+  // same document sees it: the viewer rebuilds the thread on one page load.
+  test('10. The offer marker is consumed once per document and stays visible to rebuilds', () => {
     const docStub = {
       cookie: 'relic_session=abc; relic_passkey_offer=1; other=123',
     };
 
-    const first = takePasskeyOfferMarker(docStub);
-    expect(first).toBe(true);
+    expect(takePasskeyOfferMarker(docStub)).toBe(true);
     expect(docStub.cookie).not.toContain('relic_passkey_offer=1');
+    expect(takePasskeyOfferMarker(docStub)).toBe(true);
 
-    const second = takePasskeyOfferMarker(docStub);
-    expect(second).toBe(false);
+    const reloaded = { cookie: docStub.cookie };
+    expect(takePasskeyOfferMarker(reloaded)).toBe(false);
   });
 
   // 11. "Not now" stores dismissed.

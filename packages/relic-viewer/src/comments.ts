@@ -1462,34 +1462,31 @@ export function collectDisplayedEntries(
   return out;
 }
 
-const consumedDocs = new WeakSet<object>();
+const offerMarkers = new WeakMap<object, boolean>();
 
 /**
- * Returns true if the offer marker cookie is present, and deletes the cookie.
- * Returns true at most once per document.
+ * Whether the sign-in callback left the one-shot passkey offer marker. The
+ * first read deletes the cookie, so a reload never offers again, and every
+ * later read in the same document gets the same answer: the viewer can build
+ * the thread more than once per page load, and a build that discards an
+ * earlier one must still see the marker the earlier one consumed.
  */
 export function takePasskeyOfferMarker(
   doc: { cookie?: string } = globalThis.document
 ): boolean {
   if (!doc || typeof doc !== 'object') return false;
-  if (consumedDocs.has(doc)) return false;
-  const cookie = doc.cookie ?? '';
-  const match = /(?:^|;\s*)relic_passkey_offer=([^;]*)/.exec(cookie);
-  if (!match || match[1] !== '1') return false;
-  consumedDocs.add(doc);
-  try {
-    doc.cookie = 'relic_passkey_offer=; Path=/; Max-Age=0; SameSite=Lax';
-    if (
-      typeof doc.cookie === 'string' &&
-      doc.cookie.includes('relic_passkey_offer=')
-    ) {
-      doc.cookie = doc.cookie
-        .split(';')
-        .filter((c) => !c.trim().startsWith('relic_passkey_offer='))
-        .join(';');
+  const known = offerMarkers.get(doc);
+  if (known !== undefined) return known;
+  const match = /(?:^|;\s*)relic_passkey_offer=([^;]*)/.exec(doc.cookie ?? '');
+  const present = match?.[1] === '1';
+  offerMarkers.set(doc, present);
+  if (present) {
+    try {
+      doc.cookie =
+        'relic_passkey_offer=; Path=/; Max-Age=0; Secure; SameSite=Lax';
+    } catch {
+      // A document that refuses cookie writes keeps the marker until it expires.
     }
-  } catch {
-    // Ignore environments where setting cookie throws
   }
-  return true;
+  return present;
 }

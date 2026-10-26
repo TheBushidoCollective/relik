@@ -17,12 +17,14 @@
  *      WebAuthn.getCredentials shows 1 resident credential; convert base64 to base64url.
  *      On loopback, store.getPasskeysByUserHandle resolves it
  *      -> PASSKEY_STEP_4_ENROLL_OK resident=true
- *   5. Network.deleteCookies({name:'relic_session', url}) on owned browser, reopen URL with fragment;
- *      /api/auth/session gives email:null
+ *   5. Report conditional mediation unavailable, Network.deleteCookies({name:'relic_session', url}),
+ *      reopen URL with fragment; /api/auth/session gives email:null; no conditional request armed
  *      -> PASSKEY_STEP_5_SIGNED_OUT_OK
- *   6. Click [data-passkey-sign-in]; "Commenting as <addr>" shows; mail count unchanged;
- *      conditional request aborted if armed
+ *   6. Click [data-passkey-sign-in]; "Commenting as <addr>" shows; sign-in POST made; mail count unchanged
  *      -> PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0
+ *   6b. Conditional mediation available again; sign out, reopen; the autofill request alone signs
+ *      the reader in; mail count unchanged
+ *      -> PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0
  *   7. Post through textarea.compose-textarea and "Post comment";
  *      relic_read_comments {relic_id, version:'*'} returns author and body
  *      -> PASSKEY_STEP_7_COMMENT_OK author=<addr>
@@ -349,28 +351,47 @@ export async function runPasskeySignInSequence(
 
     console.log('PASSKEY_STEP_4_ENROLL_OK resident=true');
 
-    // Step 5: Network.deleteCookies({name:'relic_session', url}) on owned browser, reopen URL with fragment
-    await browser.cdp.send(
-      'Network.deleteCookies',
+    // A virtual authenticator answers a conditional (autofill) request on its
+    // own, so a page that arms one signs the reader in before anything can be
+    // clicked. Each sign-in path is therefore driven deliberately: the button
+    // with conditional mediation reported unavailable, then autofill with it
+    // available again.
+    const signOutAndReopen = async (): Promise<void> => {
+      await browser.cdp.send(
+        'Network.deleteCookies',
+        { name: 'relic_session', url: serviceOrigin },
+        browser.sessionId
+      );
+      // The tab is already on /<id> with its fragment stripped, so navigating
+      // straight to /<id>#<key> would be a same-document fragment change with
+      // no load event and no fresh viewer. Leave the document first.
+      for (const url of ['about:blank', relicUrl]) {
+        const loaded = browser.cdp.waitForEvent('Page.loadEventFired', {
+          sessionId: browser.sessionId,
+          timeoutMs: 25000,
+        });
+        await browser.cdp.send('Page.navigate', { url }, browser.sessionId);
+        await loaded;
+      }
+    };
+    const identitySource = `document.querySelector('#comment-thread .compose-identity')?.textContent ?? ''`;
+    const conditionalArmedSource = `(window.__relicPasskeyGets || []).some((g) => g.mediation === 'conditional')`;
+
+    // Step 5: sign out and reopen with conditional mediation unavailable.
+    const noConditional = (await browser.cdp.send(
+      'Page.addScriptToEvaluateOnNewDocument',
       {
-        name: 'relic_session',
-        url: serviceOrigin,
+        source: `(() => {
+          if (typeof PublicKeyCredential === 'function') {
+            PublicKeyCredential.isConditionalMediationAvailable = async () => false;
+          }
+        })()`,
       },
       browser.sessionId
-    );
+    )) as { identifier: string };
+    await signOutAndReopen();
+    await browser.waitForSelector('[data-passkey-sign-in]');
 
-    const pageLoaded2 = browser.cdp.waitForEvent('Page.loadEventFired', {
-      sessionId: browser.sessionId,
-      timeoutMs: 25000,
-    });
-    await browser.cdp.send(
-      'Page.navigate',
-      { url: relicUrl },
-      browser.sessionId
-    );
-    await pageLoaded2;
-
-    // Check /api/auth/session gives email:null
     const sessionRes = await fetch(`${serviceOrigin}/api/auth/session`, {
       headers: {
         cookie: (await browser.getCookies())
@@ -384,54 +405,68 @@ export async function runPasskeySignInSequence(
       null,
       `expected null session email after cookie deletion, got ${sessionBody.email}`
     );
+    assert.equal(
+      await browser.evaluate<boolean>(conditionalArmedSource),
+      false,
+      'a conditional request was armed although mediation was unavailable'
+    );
 
     console.log('PASSKEY_STEP_5_SIGNED_OUT_OK');
 
-    // Step 6: Click [data-passkey-sign-in]; "Commenting as <addr>" shows; mail count unchanged;
-    // conditional request was aborted if armed
-    const mailsBefore = getMailsSentCount ? getMailsSentCount() : 0;
-
-    await browser.waitForSelector('[data-passkey-sign-in]');
+    // Step 6: the button signs in; no mail is sent.
+    const mailsBeforeButton = getMailsSentCount ? getMailsSentCount() : 0;
+    lastCapturedSignInPost = undefined;
     await browser.clickSelector('[data-passkey-sign-in]');
-
     await browser.waitForSelector('#comment-thread .compose-identity', 20000);
-
-    const identityText = await browser.evaluate<string>(`
-      (() => {
-        const idEl = document.querySelector('#comment-thread .compose-identity');
-        return idEl ? idEl.textContent || '' : '';
-      })()
-    `);
-
+    const buttonIdentity = await browser.evaluate<string>(identitySource);
     assert.ok(
-      identityText.includes('Commenting as'),
-      `expected "Commenting as" in compose identity, got "${identityText}"`
+      buttonIdentity.includes(`Commenting as ${readerEmail}`),
+      `expected "Commenting as ${readerEmail}", got "${buttonIdentity}"`
     );
-
-    const mailsAfter = getMailsSentCount ? getMailsSentCount() : 0;
-    const mailsSentDuringSignIn = mailsAfter - mailsBefore;
+    assert.ok(lastCapturedSignInPost, 'no passkey sign-in POST was observed');
+    const mailsSentDuringSignIn =
+      (getMailsSentCount ? getMailsSentCount() : 0) - mailsBeforeButton;
     assert.equal(
       mailsSentDuringSignIn,
       0,
       `mails were sent during passkey sign-in: ${mailsSentDuringSignIn}`
     );
 
-    // Conditional request aborted if it was armed
-    const conditionalAborted = await browser.evaluate<boolean>(`
-      (() => {
-        const gets = window.__relicPasskeyGets || [];
-        const cond = gets.find(g => g.mediation === 'conditional');
-        if (!cond) return true; // not armed, vacuously true
-        return cond.aborted;
-      })()
-    `);
+    console.log(
+      `PASSKEY_STEP_6_SIGN_IN_OK mails_sent=${mailsSentDuringSignIn}`
+    );
+
+    // Step 6b: sign out again with conditional mediation available; the
+    // autofill request alone signs the reader in, with no click and no mail.
+    await browser.cdp.send(
+      'Page.removeScriptToEvaluateOnNewDocument',
+      { identifier: noConditional.identifier },
+      browser.sessionId
+    );
+    const mailsBeforeAutofill = getMailsSentCount ? getMailsSentCount() : 0;
+    lastCapturedSignInPost = undefined;
+    await signOutAndReopen();
+    await browser.waitForSelector('#comment-thread .compose-identity', 20000);
+    const autofillIdentity = await browser.evaluate<string>(identitySource);
     assert.ok(
-      conditionalAborted,
-      'conditional passkey request was armed but was not aborted upon sign-in'
+      autofillIdentity.includes(`Commenting as ${readerEmail}`),
+      `expected autofill sign-in as ${readerEmail}, got "${autofillIdentity}"`
+    );
+    assert.ok(
+      await browser.evaluate<boolean>(conditionalArmedSource),
+      'autofill sign-in without a conditional request'
+    );
+    assert.ok(lastCapturedSignInPost, 'no passkey sign-in POST from autofill');
+    const mailsSentDuringAutofill =
+      (getMailsSentCount ? getMailsSentCount() : 0) - mailsBeforeAutofill;
+    assert.equal(
+      mailsSentDuringAutofill,
+      0,
+      `mails were sent during autofill sign-in: ${mailsSentDuringAutofill}`
     );
 
     console.log(
-      `PASSKEY_STEP_6_SIGN_IN_OK mails_sent=${mailsSentDuringSignIn}`
+      `PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=${mailsSentDuringAutofill}`
     );
 
     // Step 7: Post through textarea.compose-textarea and "Post comment";
@@ -596,13 +631,23 @@ export async function runPasskeySignInSequence(
       'email-first options returned empty allowCredentials (oracle leak)'
     );
 
-    // 4. A decision POST without a credential gives 400
+    // 4. A session minted by a passkey still cannot decide without its own
+    // assertion: a decision POST carrying that session and no credential is 400.
+    const passkeySessionCookie = (await browser.getCookies())
+      .filter((c) => c.name === 'relic_session')
+      .map((c) => `${c.name}=${c.value}`)
+      .join('; ');
+    assert.ok(
+      passkeySessionCookie,
+      'no passkey-minted session cookie to decide with'
+    );
     const emptyDecisionRes = await fetch(
       `${serviceOrigin}/api/relics/${relicId}/decisions`,
       {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          cookie: passkeySessionCookie,
         },
         body: JSON.stringify({
           version: 1,

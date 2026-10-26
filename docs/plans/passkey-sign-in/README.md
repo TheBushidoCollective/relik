@@ -464,8 +464,9 @@ All slices branch from the S0 commit on `feat/passkey-commenting` in isolated wo
 | 2 | Install a `Page.addScriptToEvaluateOnNewDocument` wrapper recording `credentials.get` calls `{mediation, aborted}`. Open the relic anonymously; assert autocomplete and `[data-passkey-sign-in]` | `PASSKEY_STEP_2_ANON_SURFACE_OK conditional=<armed\|unavailable>` |
 | 3 | Type the address into `#comment-thread form.compose`, submit, resolve the link, navigate; assert `[data-passkey-offer]` and that the marker is gone | `PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown` |
 | 4 | Click `[data-passkey-offer-create]` and wait for `data-state="created"`. `WebAuthn.getCredentials` shows 1 resident credential; convert its base64 to base64url. On loopback, `store.getPasskeysByUserHandle` resolves it | `PASSKEY_STEP_4_ENROLL_OK resident=true` |
-| 5 | `Network.deleteCookies({name:'relic_session', url})` on the owned browser, reopen the URL with its fragment; `/api/auth/session` gives `email:null` | `PASSKEY_STEP_5_SIGNED_OUT_OK` |
-| 6 | Click `[data-passkey-sign-in]`; "Commenting as <addr>" shows; mail count unchanged; the conditional request was aborted if it was armed | `PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0` |
+| 5 | Report conditional mediation unavailable (the CDP virtual authenticator answers an autofill request by itself), `Network.deleteCookies({name:'relic_session', url})`, reopen the URL with its fragment via `about:blank`; `/api/auth/session` gives `email:null`; no conditional request armed | `PASSKEY_STEP_5_SIGNED_OUT_OK` |
+| 6 | Click `[data-passkey-sign-in]`; "Commenting as <addr>" shows; a sign-in POST was made; mail count unchanged | `PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0` |
+| 6b | Conditional mediation available again; sign out and reopen; the autofill request alone signs the reader in; mail count unchanged | `PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0` |
 | 7 | Post through `textarea.compose-textarea` and "Post comment"; `relic_read_comments {relic_id, version:'*'}` returns the author and body | `PASSKEY_STEP_7_COMMENT_OK author=<addr>` |
 | Negatives | Replay the captured sign-in POST (via `Network.requestWillBeSent`, as at `decision-proof-steps.ts:259-285`) gives 401; text/plain gives 400; email-first for an unknown address and the reader's address have the same shape and count; a decision POST without a credential gives 400 | `PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400` |
 | End | | `PASSKEY_SIGN_IN_PATH_OK` |
@@ -502,7 +503,7 @@ All slices branch from the S0 commit on `feat/passkey-commenting` in isolated wo
 - **A passkey outlives loss of the mailbox, and nothing can remove one.** Whoever registered the first passkey for an address can sign in as it without the mailbox. There is no route to remove a passkey.
 - **Decoys leak in a few cases.** Records holding more than 4 credentials, or ids of unusual lengths, are distinguishable. A sub-millisecond timing gap exists under a 30-per-hour limit.
 - **Some old records stay as they are.** Mixed-case records created before this change mint with the normalized address, and existing passkeys need one email-first sign-in or decision before usernameless sign-in works.
-- **Proof gaps.** Headless Chrome can't pick from autofill, so the proof exercises the button path and only observes the conditional lifecycle. A U2F-only key can no longer register.
+- **Proof gaps.** The CDP virtual authenticator answers an autofill request by itself, so the proof drives both paths (the button with conditional mediation reported unavailable, then autofill with it available) but never sees the browser's own autofill picker. A U2F-only key can no longer register.
 - **The decision panel's create step can still orphan a credential.** Its prefetched options can expire if the reader waits past the timeout, and the device keeps a credential the server never stored. This predates the change and isn't fixed here.
 
 ## 8. What would prove this spec wrong
