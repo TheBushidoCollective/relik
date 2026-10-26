@@ -21,20 +21,16 @@ import {
   type OtioPreparedLeaf,
   type OtioVideoCompositionTree,
   renderOtioVideoTree,
-  certifiedWindowIndex,
   checkNativeTimingEligibility,
   computePhaseAnchor,
   OTIO_PACKET_START_TOLERANCE_SECONDS,
-  OTIO_RETAINED_SNAPSHOT_PIXELS,
   presentedWindowOutcome,
   SNAPSHOT_SLOTS_PER_DECODER,
-  videoDecoderTime,
 } from '../src/otio-playback.ts';
 import {
   minWindowDuration,
   NativeDecoderRing,
   SnapshotPixelBudget,
-  VsyncTracker,
 } from '../src/otio-video-decoders.ts';
 import type {
   OtioVideoTiming,
@@ -5141,7 +5137,6 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
   });
 
   test('3. Draw throws: the slot stays untagged and the frame holds', async () => {
-    const mediaBlob = new Blob(['draw throws video'], { type: 'video/mp4' });
     const timing: OtioVideoTiming = {
       kind: 'windows',
       starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
