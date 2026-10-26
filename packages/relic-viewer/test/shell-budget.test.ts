@@ -29,6 +29,9 @@ const pkgDir = new URL('..', import.meta.url).pathname;
  * ~890 KB with the PDF renderer inline. 475 KiB sits safely above the first
  * and far below the second, so ordinary growth does not trip it and the
  * regression cannot hide under it.
+ *
+ * The smoke test of the deployed shell in .github/workflows/deploy.yml holds
+ * the same number in bytes (486400). Change both together.
  */
 const SHELL_CEILING_BYTES = 475 * 1024;
 
