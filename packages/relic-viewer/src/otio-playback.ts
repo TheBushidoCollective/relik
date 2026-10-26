@@ -24,7 +24,6 @@ import {
   otioSamplingMap,
   rangeContainsTime,
   rescaleTime,
-  timeToSeconds,
 } from '@relic/format';
 import { inferMediaMimeType, type OtioMediaResolver } from './otio-media.ts';
 import {
@@ -35,7 +34,6 @@ import {
   acceptsDecoderLocalZero,
   certifiedWindowIndex,
   checkNativeTimingEligibility,
-  compareDecoderSourceTimes,
   computePhaseAnchor,
   containerTimeAtSourceRate,
   decoderLocalSeconds,
@@ -81,7 +79,6 @@ const HAVE_CURRENT_DATA = 2;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
-const DECODER_LOCAL_ZERO_SOURCE_VALUE_TOLERANCE = 1e-7;
 export interface OtioTrackState {
   readonly id: string;
   readonly name: string;
@@ -2628,7 +2625,7 @@ export function createOtioPlayback(
           !ring.hasTag(leaf.req, nativeEpoch)
         ) {
           allApproved = false;
-          if (ring && ring.hasLostContext()) {
+          if (ring?.hasLostContext()) {
             ring.resetEpoch(nativeEpoch);
           }
           const missingWindowSec =

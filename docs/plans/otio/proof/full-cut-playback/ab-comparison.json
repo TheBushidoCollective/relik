@@ -25,14 +25,7 @@
       "durationSeconds": 15
     }
   },
-  "order": [
-    "B1",
-    "C1",
-    "B2",
-    "C2",
-    "B3",
-    "C3"
-  ],
+  "order": ["B1", "C1", "B2", "C2", "B3", "C3"],
   "environment": {
     "browser": "HeadlessChrome/149.0.7827.55",
     "platform": "darwin",
@@ -71,10 +64,7 @@
       "about:blank",
       "--autoplay-policy=no-user-gesture-required"
     ],
-    "hostLoadAverageRange": [
-      5.3,
-      32.4
-    ]
+    "hostLoadAverageRange": [5.3, 32.4]
   },
   "hostProxy": {
     "baselineMedianMs": 153.6,
