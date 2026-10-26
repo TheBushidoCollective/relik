@@ -7682,9 +7682,10 @@ try {
     })()`);
     assert.ok(playbackStarted, 'steady playback did not enter playing state');
 
-    // Eight samples at 250 ms keep the sampled frames inside the first 72
-    // timeline frames, the single-video segment of primary_a.mp4.
-    const sampleIntervalMs = 250;
+    // Eight samples at 220 ms stay at or before timeline frame 44. The
+    // Picture-in-Picture layer ends at frame 48, where the drawn set changes
+    // and the exact resync paints before the clock label updates.
+    const sampleIntervalMs = 220;
     const playbackSamples: Array<{
       sample: SampledCanvas;
       dataFrame: number;
@@ -7768,6 +7769,10 @@ try {
 
     for (const [idx, item] of playbackSamples.entries()) {
       const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+      assert.ok(
+        timelineFrame <= 44,
+        `playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44, the Picture-in-Picture layer ends at frame 48`
+      );
       const expectedFileFrame =
         plan.primary_clip_frames?.[String(timelineFrame)] ??
         plan.primary_file_frame + (timelineFrame - plan.primary_frame);
@@ -7809,22 +7814,52 @@ try {
       );
     }
     pass('native-playback');
-    const parityCandidates = playbackSamples.filter((item) => {
-      const f = Math.floor(item.dataFrame + 1e-4);
-      return f === 24 || f === 30 || f === 36;
-    });
-    assert.ok(
-      parityCandidates.length > 0,
-      'no playback sample with floor matching chosen frames 24, 30, or 36'
+    // Paint parity: the same timeline frame painted during native playback and
+    // while paused must match. The Picture-in-Picture layer runs at 30 fps on
+    // a 24 fps timeline, so its window stays constant over [f, f + 0.8) only
+    // when f is a multiple of 4. Sample playback until it lands on such frames.
+    const parityPlaying: Array<{ frame: number; sample: SampledCanvas }> = [];
+    for (let round = 0; round < 4 && parityPlaying.length < 2; round++) {
+      await seekTo(browser, 16);
+      await browser.evaluate<void>(`(() => {
+        const btn = document.querySelector('button.otio-play');
+        const root = document.querySelector('section.otio-view');
+        if (btn && root?.dataset.playing !== 'true') btn.click();
+      })()`);
+      for (let poll = 0; poll < 200; poll++) {
+        const probe = await sampleCanvas(browser, width, height);
+        const df = probe.dataFrame;
+        if (df === null || df === undefined || !Number.isFinite(df)) continue;
+        const f = Math.floor(df + 1e-4);
+        if (f > 44) break;
+        if (
+          f >= 20 &&
+          f % 4 === 0 &&
+          df - f < 0.6 &&
+          !parityPlaying.some((item) => item.frame === f)
+        ) {
+          parityPlaying.push({ frame: f, sample: probe });
+          if (parityPlaying.length >= 2) break;
+        }
+      }
+      await browser.evaluate<void>(`(() => {
+        const btn = document.querySelector('button.otio-play');
+        const root = document.querySelector('section.otio-view');
+        if (btn && root?.dataset.playing === 'true') btn.click();
+      })()`);
+    }
+    assert.equal(
+      parityPlaying.length,
+      2,
+      'paint parity found fewer than 2 playback samples on frames 20 to 44 that are multiples of 4'
     );
-    for (const item of parityCandidates) {
-      const chosenFrame = Math.floor(item.dataFrame + 1e-4);
-      await seekTo(browser, chosenFrame);
+    for (const item of parityPlaying) {
+      await seekTo(browser, item.frame);
       const pausedSample = await sampleCanvas(browser, width, height);
       const parityRmse = rmse(item.sample, pausedSample);
       assert.ok(
         parityRmse <= 1,
-        `paint parity RMSE ${parityRmse.toFixed(3)} exceeded 1 for chosen frame ${chosenFrame}`
+        `paint parity RMSE ${parityRmse.toFixed(3)} exceeded 1 for chosen frame ${item.frame}`
       );
     }
     pass('paint-parity');

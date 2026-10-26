@@ -5587,8 +5587,12 @@ describe('otio native playback regressions 5-9, clock and capability gate', () =
       // Tick at frame 48 -> enters Clip B, triggering drawn-set resync
       raf?.(wallFor(48));
 
+      // The buffering notification fires before the exact paint, so it still
+      // reports the time of the frame on screen.
       expect(bufferingAtResync).toBe(true);
-      expect(timeAtResyncNotification).toBeCloseTo(48, 4);
+      expect(timeAtResyncNotification).toBeCloseTo(47, 4);
+      for (let k = 0; k < 20; k++) await Promise.resolve();
+      // The exact paint publishes the new time together with the canvas.
       expect(playback.getState().time.value).toBeCloseTo(48, 4);
       unsub();
     } finally {

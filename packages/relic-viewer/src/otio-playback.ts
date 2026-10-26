@@ -2126,12 +2126,14 @@ export function createOtioPlayback(
     }
     startingStartTime =
       typeof performance !== 'undefined' ? performance.now() : Date.now();
-    currentTime = T0;
     nativeEpoch++;
     nativeAnchor = null;
     clockAnchor = null;
     pauseAllMedia();
     notify();
+    // The new time is published by renderAt together with the exact paint, so
+    // the clock never runs ahead of the canvas during the resync.
+    currentTime = T0;
 
     await enqueueRender(T0, gen);
     if (stale(gen)) return;
