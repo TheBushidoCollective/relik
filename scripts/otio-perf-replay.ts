@@ -1,5 +1,6 @@
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { decodeKey, relicUrl } from '../packages/relic-format/src/index.ts';
 import { createApp } from '../packages/relic-server/src/app.ts';
 import { diskAssets } from '../packages/relic-server/src/assets.ts';
 import { MemoryStorage } from '../packages/relic-server/src/storage.ts';
@@ -74,7 +75,7 @@ handler = async (request) => {
 };
 await writeFile(
   join(dirname(inputPath), 'replay-url.txt'),
-  `${origin}/${id}#${input.key}`,
+  relicUrl(origin, id, decodeKey(input.key)),
   { mode: 0o600 }
 );
 console.log(`OTIO_PERF_REPLAY_READY ${origin}`);

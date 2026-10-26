@@ -1,0 +1,83 @@
+{
+  "sourceRevision": "4a01a783ce830556a889b8c29ffc92abc6fa4ff0",
+  "input": {
+    "exactPublishedCiphertextDigestVerified": true,
+    "bytes": 36482700,
+    "productionMints": 0,
+    "productionWrites": 0,
+    "privateInputsOutsideRepo": true
+  },
+  "browser": "HeadlessChrome/149.0.7827.55",
+  "baseline": {
+    "windowMs": 15005.100000023842,
+    "framesShown": 288,
+    "timelineFramesAdvanced": 442.87499999999864,
+    "gapMs": {
+      "median": 43.39999997615814,
+      "p95": 108,
+      "max": 219
+    },
+    "frameJump": {
+      "median": 1.2630000000001473,
+      "p95": 3.2490000000000236
+    },
+    "vsyncMs": {
+      "median": 8.30000000000291,
+      "p95": 9.200000000011642
+    },
+    "seeks": {
+      "video": 257,
+      "audio": 26
+    },
+    "seekLatencyMs": {
+      "video": {
+        "median": 43.799999952316284,
+        "p95": 91.09999990463257,
+        "total": 11962.099999070168
+      },
+      "audio": {
+        "median": 54.39999997615814,
+        "p95": 76.40000009536743,
+        "total": 1381.4000002145767
+      }
+    },
+    "drawCalls": 1156,
+    "drawMs": 594.0000011920929,
+    "canvasResets": 1734,
+    "domMutations": 5185,
+    "longTasks": [],
+    "media": [
+      {
+        "kind": "video",
+        "paused": true,
+        "readyState": 4,
+        "seeking": false,
+        "width": 1920,
+        "height": 1080,
+        "duration": 491.7
+      },
+      {
+        "kind": "audio",
+        "paused": false,
+        "readyState": 1,
+        "seeking": true,
+        "width": null,
+        "height": null,
+        "duration": 491.7
+      }
+    ]
+  },
+  "nativeCeiling": {
+    "applicable": true,
+    "wallMs": 10000.599999904633,
+    "callbackFrames": 300,
+    "mediaSeconds": 9.966667,
+    "totalFrames": 304,
+    "droppedFrames": 0
+  },
+  "observedAt": "2026-10-26T04:16:38.223Z",
+  "probeNotes": [
+    "Native initialization hook runs in page main world; measurements use CDP Runtime.evaluate in that world. An initial isolated-world read failed before sampling and was excluded.",
+    "No private URLs, item identifiers, media names or pixels are included."
+  ]
+}
