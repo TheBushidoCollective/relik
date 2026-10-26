@@ -4409,4 +4409,48 @@ describe('otio native video playback S-C and S-B', () => {
       playback.dispose();
     }
   });
+  test('regression P0: play with a frame-callback decoder succeeds in registering rvfc before play completes', async () => {
+    const mediaBlob = new Blob(['p0 video test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 10 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 10 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 10,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+
+      const playPromise = playback.play();
+      await waitForRvfc(videoMedia!);
+      expect(videoMedia!.rvfcCallbacks.size).toBeGreaterThan(0);
+
+      videoMedia!.triggerRvfc(100, 1 / 30);
+      await playPromise;
+      expect(playback.getState().playing).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
 });
