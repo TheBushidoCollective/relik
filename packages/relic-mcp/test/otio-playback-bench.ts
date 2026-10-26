@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { Script } from 'node:vm';
@@ -13,6 +13,16 @@ import {
   createBrowserHeadlessLaunch,
   type BrowserHeadlessLaunch,
 } from './browser-headless.ts';
+import {
+  scanOtioVideoTiming,
+  type OtioVideoTiming,
+} from '../../relic-viewer/src/otio-video-timing-scanner.ts';
+
+export interface WindowOption {
+  readonly name: string;
+  readonly start: number;
+  readonly duration?: number;
+}
 
 export interface BenchmarkOptions {
   readonly urlFile?: string;
@@ -24,29 +34,88 @@ export interface BenchmarkOptions {
   readonly repetitions?: number;
   readonly outputJsonPath?: string;
   readonly format?: 'table' | 'json';
+  readonly windows?: readonly WindowOption[];
+  readonly cpuThrottle?: number;
 }
 
 export interface WindowDefinition {
+  readonly name: string;
   readonly start: number;
   readonly end: number;
   readonly duration: number;
   readonly description?: string;
 }
 
+export interface SeekMetricsByKind {
+  readonly count: number;
+  readonly perSecond: number;
+  readonly latencyP50Ms: number;
+  readonly latencyP95Ms: number;
+  readonly latencyMaxMs: number;
+  readonly supersededCount: number;
+}
+
+export interface GapsMetrics {
+  readonly p50: number;
+  readonly p95: number;
+  readonly p99: number;
+  readonly max: number;
+  readonly startEdgeGapMs: number;
+  readonly endEdgeGapMs: number;
+  readonly stutterCount: number;
+}
+export interface BufferingMetrics {
+  readonly totalBufferingMs: number;
+  readonly resyncEpisodes: number;
+}
+export interface CanvasMetrics {
+  readonly resetsCount: number;
+  readonly resetsPerComposite: number;
+  readonly visibleDrawCount: number;
+  readonly visibleDrawsPerComposite: number;
+  readonly offscreenDrawCount: number;
+  readonly offscreenDrawsPerComposite: number;
+  readonly liveElementDraws: number;
+}
+export interface MainThreadMetrics {
+  readonly longTasksCount: number;
+  readonly totalLongTaskDurationMs: number;
+  readonly loafCount: number;
+  readonly totalLoafBlockingMs: number;
+  readonly totalLoafStyleLayoutMs: number;
+}
+export interface DecoderMetrics {
+  readonly insertionsCount: number;
+  readonly stuttersNearInsertions: number;
+  readonly stuttersNearInsertionsPercent: number;
+}
+export interface CpuMetrics {
+  readonly processCpuDeltaMs: number;
+  readonly loadAvg: readonly number[];
+}
+
 export interface RepetitionMetrics {
-  readonly windowKey: 'W1' | 'W2' | 'W3';
+  readonly windowKey: string;
   readonly repetitionIndex: number;
   readonly actualDurationSeconds: number;
+  readonly measuredStart: number;
+  readonly measuredEnd: number;
+  readonly pausedSeekLatencyMs: number;
+  readonly playToFirstFrameMs: number;
+  readonly mediaInterval: {
+    readonly start: number;
+    readonly end: number;
+    readonly duration: number;
+  };
+  readonly presentedMetricsAvailable: boolean;
+  readonly wallCadence: number | 'n/a';
+  readonly transportCadence: number | 'n/a';
+  readonly clockCadence: number;
+  readonly cadenceRatio: number;
   readonly compositesCount: number;
   readonly distinctFramesCount: number;
-  readonly cadenceRatio: number;
-  readonly gaps: {
-    readonly p50: number;
-    readonly p95: number;
-    readonly p99: number;
-    readonly max: number;
-    readonly stutterCount: number;
-  };
+  readonly gaps: GapsMetrics;
+  readonly buffering: BufferingMetrics;
   readonly jumpedHistogram: Record<'0' | '1' | '2' | '3+', number>;
   readonly seeks: {
     readonly videoSeeksCount: number;
@@ -56,49 +125,44 @@ export interface RepetitionMetrics {
     readonly cumulativeLatencyMs: number;
     readonly latencyP50Ms: number;
     readonly latencyP95Ms: number;
+    readonly video: SeekMetricsByKind;
+    readonly audio: SeekMetricsByKind;
+    readonly windowShare: number;
   };
   readonly audio: {
     readonly playCallsCount: number;
     readonly playCallsPerSecond: number;
   };
-  readonly canvas: {
-    readonly resetsCount: number;
-    readonly resetsPerComposite: number;
-    readonly visibleDrawCount: number;
-    readonly visibleDrawsPerComposite: number;
-    readonly offscreenDrawCount: number;
-    readonly offscreenDrawsPerComposite: number;
-  };
+  readonly canvas: CanvasMetrics;
   readonly vsync: {
     readonly p50IntervalMs: number;
     readonly p95IntervalMs: number;
   };
-  readonly mainThread: {
-    readonly longTasksCount: number;
-    readonly totalLongTaskDurationMs: number;
-    readonly loafCount: number;
-    readonly totalLoafBlockingMs: number;
-    readonly totalLoafStyleLayoutMs: number;
-  };
-  readonly decoders: {
-    readonly insertionsCount: number;
-    readonly stuttersNearInsertions: number;
-    readonly stuttersNearInsertionsPercent: number;
-  };
+  readonly mainThread: MainThreadMetrics;
+  readonly decoders: DecoderMetrics;
+  readonly cpu: CpuMetrics;
 }
 
 export interface AggregatedMetrics {
   readonly actualDurationSeconds: number;
+  readonly measuredStart: number;
+  readonly measuredEnd: number;
+  readonly pausedSeekLatencyMs: number;
+  readonly playToFirstFrameMs: number;
+  readonly mediaInterval: {
+    readonly start: number;
+    readonly end: number;
+    readonly duration: number;
+  };
+  readonly presentedMetricsAvailable: boolean;
+  readonly wallCadence: number | 'n/a';
+  readonly transportCadence: number | 'n/a';
+  readonly clockCadence: number;
+  readonly cadenceRatio: number;
   readonly compositesCount: number;
   readonly distinctFramesCount: number;
-  readonly cadenceRatio: number;
-  readonly gaps: {
-    readonly p50: number;
-    readonly p95: number;
-    readonly p99: number;
-    readonly max: number;
-    readonly stutterCount: number;
-  };
+  readonly gaps: GapsMetrics;
+  readonly buffering: BufferingMetrics;
   readonly seeks: {
     readonly videoSeeksCount: number;
     readonly audioSeeksCount: number;
@@ -107,35 +171,22 @@ export interface AggregatedMetrics {
     readonly cumulativeLatencyMs: number;
     readonly latencyP50Ms: number;
     readonly latencyP95Ms: number;
+    readonly video: SeekMetricsByKind;
+    readonly audio: SeekMetricsByKind;
+    readonly windowShare: number;
   };
   readonly audio: {
     readonly playCallsCount: number;
     readonly playCallsPerSecond: number;
   };
-  readonly canvas: {
-    readonly resetsCount: number;
-    readonly resetsPerComposite: number;
-    readonly visibleDrawCount: number;
-    readonly visibleDrawsPerComposite: number;
-    readonly offscreenDrawCount: number;
-    readonly offscreenDrawsPerComposite: number;
-  };
+  readonly canvas: CanvasMetrics;
   readonly vsync: {
     readonly p50IntervalMs: number;
     readonly p95IntervalMs: number;
   };
-  readonly mainThread: {
-    readonly longTasksCount: number;
-    readonly totalLongTaskDurationMs: number;
-    readonly loafCount: number;
-    readonly totalLoafBlockingMs: number;
-    readonly totalLoafStyleLayoutMs: number;
-  };
-  readonly decoders: {
-    readonly insertionsCount: number;
-    readonly stuttersNearInsertions: number;
-    readonly stuttersNearInsertionsPercent: number;
-  };
+  readonly mainThread: MainThreadMetrics;
+  readonly decoders: DecoderMetrics;
+  readonly cpu: CpuMetrics;
 }
 
 export type NativeCeilingResult =
@@ -148,6 +199,9 @@ export type NativeCeilingResult =
       readonly nativeFps: number;
       readonly mediaFps: number;
       readonly ceilingRatio: number;
+      readonly distinctWindowsPresented?: number;
+      readonly windowsElapsed?: number;
+      readonly skipsCount?: number;
       readonly nativeFrameHz?: number;
       readonly mediaSeconds?: number;
       readonly callbackFrames?: number;
@@ -165,6 +219,8 @@ export interface BenchmarkReport {
     readonly browserVersion: string;
     readonly platform: string;
     readonly cpuCores: number;
+    readonly loadAvg: readonly number[];
+    readonly commandLine: readonly string[];
     readonly gpuFeatures?: Record<string, unknown> | undefined;
     readonly nonLoopbackBlockedCount?: number;
   };
@@ -181,21 +237,9 @@ export interface BenchmarkReport {
     readonly diagnosticsByCode: Record<string, number>;
     readonly decodersCount: number;
   };
-  readonly windows: {
-    readonly W1: WindowDefinition;
-    readonly W2: WindowDefinition;
-    readonly W3: WindowDefinition;
-  };
-  readonly repetitions: {
-    readonly W1: readonly RepetitionMetrics[];
-    readonly W2: readonly RepetitionMetrics[];
-    readonly W3: readonly RepetitionMetrics[];
-  };
-  readonly medians: {
-    readonly W1: AggregatedMetrics;
-    readonly W2: AggregatedMetrics;
-    readonly W3: AggregatedMetrics;
-  };
+  readonly windows: Record<string, WindowDefinition>;
+  readonly repetitions: Record<string, readonly RepetitionMetrics[]>;
+  readonly medians: Record<string, AggregatedMetrics>;
   readonly nativeCeiling: NativeCeilingResult;
   readonly causeClassification: {
     readonly primaryCause:
@@ -214,9 +258,8 @@ export function loopbackUrl(value: string): boolean {
     value.startsWith('blob:') ||
     value.startsWith('data:') ||
     value.startsWith('about:')
-  ) {
+  )
     return true;
-  }
   try {
     const host = new URL(value).hostname;
     return (
@@ -234,22 +277,16 @@ export async function readUrlFromProtectedFile(
   filePath: string
 ): Promise<string> {
   const fileStat = await stat(filePath);
-  if (process.platform !== 'win32') {
-    const mode = fileStat.mode & 0o777;
-    if ((mode & 0o077) !== 0) {
-      throw new Error(
-        `Insecure URL file permissions: ${filePath} has mode 0o${mode.toString(8)}, expected 0600 (owner-only access)`
-      );
-    }
+  if (process.platform !== 'win32' && (fileStat.mode & 0o077) !== 0) {
+    throw new Error(
+      `Insecure URL file permissions: ${filePath} has mode 0o${(fileStat.mode & 0o777).toString(8)}, expected 0600`
+    );
   }
   const content = await readFile(filePath, 'utf-8');
   const url = content.trim();
-  if (!url) {
-    throw new Error(`URL file is empty: ${filePath}`);
-  }
-  if (!loopbackUrl(url)) {
+  if (!url) throw new Error(`URL file is empty: ${filePath}`);
+  if (!loopbackUrl(url))
     throw new Error('Non-loopback URL refused in replay URL file');
-  }
   return url;
 }
 
@@ -257,55 +294,78 @@ export function createOtioPageProfilerScript(): string {
   return `(() => {
     if (globalThis.__relicOtioProfilerInstalled) return;
     globalThis.__relicOtioProfilerInstalled = true;
-
-    // 1. WebCodecs trap (contract requirement)
     for (const name of ['VideoDecoder', 'AudioDecoder']) {
-      const constructor = Reflect.get(globalThis, name);
-      if (typeof constructor !== 'function') continue;
-      Object.defineProperty(globalThis, name, {
-        configurable: true,
-        get() {
-          throw new Error('__RELIC_OTIO_WEB_CODECS__ ' + name);
-        },
-      });
-    }
-    // Bounded buffers to avoid unbounded memory growth
-    const MAX_BUFFER_SAMPLES = 10000;
-    let profilerBufferOverflow = false;
-
-    function pushBounded(arr, item, limit = MAX_BUFFER_SAMPLES) {
-      if (arr.length < limit) {
-        arr.push(item);
-      } else {
-        profilerBufferOverflow = true;
+      const c = Reflect.get(globalThis, name);
+      if (typeof c === 'function') {
+        Object.defineProperty(globalThis, name, { configurable: true, get() { throw new Error('__RELIC_OTIO_WEB_CODECS__ ' + name); } });
       }
     }
-
-    // State collections
-    const activeSeeks = [];
-    const completedSeeks = [];
-    const audioPlays = [];
-    let visibleDrawCount = 0;
-    let offscreenDrawCount = 0;
-    let canvasResetsCount = 0;
-    const compositeFrames = [];
-    const decoderInsertions = [];
-    const longTasks = [];
-    const loaves = [];
-    const vsyncIntervals = [];
-    let lastVsyncTime = null;
-    let isRecording = false;
-    let recordingStartTime = 0;
-    // 2. currentTime setter trap on HTMLMediaElement
+    let activeTimingWorkers = 0;
+    const origWorker = globalThis.Worker;
+    if (typeof origWorker === 'function') {
+      globalThis.Worker = function(...args) {
+        const w = new origWorker(...args);
+        const urlStr = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].href ? args[0].href : '');
+        if (urlStr.includes('timing-worker')) {
+          activeTimingWorkers++;
+          const done = () => { w.removeEventListener('message', done); w.removeEventListener('error', done); activeTimingWorkers = Math.max(0, activeTimingWorkers - 1); };
+          w.addEventListener('message', done); w.addEventListener('error', done);
+          const origTerm = w.terminate;
+          w.terminate = function() { done(); return origTerm.apply(this, arguments); };
+        }
+        return w;
+      };
+    }
+    const MAX_BUFFER = 10000;
+    let bufferOverflow = false;
+    function pushBounded(arr, item, limit = MAX_BUFFER) {
+      if (arr.length < limit) arr.push(item);
+      else bufferOverflow = true;
+    }
+    const activeSeeks = []; const completedSeeks = []; const activeElementSeeks = new WeakMap();
+    const audioPlays = []; const visiblePresents = []; const compositeFrames = []; const decoderInsertions = [];
+    const longTasks = []; const loaves = []; const vsyncIntervals = [];
+    let visibleDrawCount = 0; let offscreenDrawCount = 0; let canvasResetsCount = 0; let liveElementDraws = 0;
+    let lastVsyncTime = null; let isRecording = false; let recordingStartTime = 0;
+    let totalBufferingMs = 0; let bufferingStartTime = null; let resyncEpisodes = 0;
+    const decoderOrdinals = new WeakMap();
+    let nextDecoderOrdinal = 0;
+    function getDecoderOrdinal(video) {
+      let ord = decoderOrdinals.get(video);
+      if (ord === undefined) { ord = nextDecoderOrdinal++; decoderOrdinals.set(video, ord); }
+      return ord;
+    }
+    const canvasKeySets = new WeakMap();
+    function getCanvasKeys(c) {
+      let s = canvasKeySets.get(c);
+      if (!s) { s = new Set(); canvasKeySets.set(c, s); }
+      return s;
+    }
+    function clearCanvasKeys(c) { const s = canvasKeySets.get(c); if (s) s.clear(); }
+    const activeCallbackMediaTimes = new WeakMap();
+    try {
+      const origRVFC = HTMLVideoElement.prototype.requestVideoFrameCallback;
+      if (typeof origRVFC === 'function') {
+        HTMLVideoElement.prototype.requestVideoFrameCallback = function(callback) {
+          const self = this;
+          return origRVFC.call(this, (now, metadata) => {
+            const prev = activeCallbackMediaTimes.get(self);
+            activeCallbackMediaTimes.set(self, (metadata && typeof metadata.mediaTime === 'number') ? metadata.mediaTime : null);
+            try { return callback(now, metadata); }
+            finally {
+              if (prev !== undefined) activeCallbackMediaTimes.set(self, prev);
+              else activeCallbackMediaTimes.delete(self);
+            }
+          });
+        };
+      }
+    } catch {}
     try {
       const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
       if (desc && desc.set && desc.get) {
         Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
-          configurable: true,
-          enumerable: desc.enumerable,
-          get() {
-            return desc.get.call(this);
-          },
+          configurable: true, enumerable: desc.enumerable,
+          get() { return desc.get.call(this); },
           set(targetVal) {
             const now = performance.now();
             const fromVal = desc.get.call(this);
@@ -313,40 +373,33 @@ export function createOtioPageProfilerScript(): string {
             const isVideo = this instanceof HTMLVideoElement || this.tagName === 'VIDEO';
             const isAudio = this instanceof HTMLAudioElement || this.tagName === 'AUDIO';
             const kind = isVideo ? 'video' : isAudio ? 'audio' : 'other';
-            const paused = Boolean(this.paused);
-            const dist = Math.abs(numTarget - fromVal);
-
             if (isRecording) {
+              const prevSeek = activeElementSeeks.get(this);
+              if (prevSeek && !prevSeek.settled) prevSeek.superseded = true;
               const seekRecord = {
-                kind,
-                paused,
-                from: fromVal,
-                to: numTarget,
-                distance: dist,
-                startTime: now,
-                latency: null,
+                kind, paused: Boolean(this.paused), from: fromVal, to: numTarget,
+                distance: Math.abs(numTarget - fromVal), startTime: now, latency: null,
+                superseded: false, settled: false,
               };
+              activeElementSeeks.set(this, seekRecord);
               pushBounded(activeSeeks, seekRecord, 5000);
-
               const onSeeked = () => {
                 this.removeEventListener('seeked', onSeeked);
                 this.removeEventListener('error', onSeeked);
+                seekRecord.settled = true;
                 seekRecord.latency = performance.now() - now;
-                pushBounded(completedSeeks, seekRecord, 5000);
+                if (isRecording && seekRecord.startTime >= recordingStartTime) {
+                  pushBounded(completedSeeks, seekRecord, 5000);
+                }
               };
               this.addEventListener('seeked', onSeeked, { once: true });
               this.addEventListener('error', onSeeked, { once: true });
             }
-
             desc.set.call(this, targetVal);
           },
         });
       }
-    } catch (e) {
-      console.error('[Profiler] currentTime trap failed', e);
-    }
-
-    // 3. play() call trap on audio elements
+    } catch {}
     try {
       const origPlay = HTMLMediaElement.prototype.play;
       HTMLMediaElement.prototype.play = function(...args) {
@@ -355,140 +408,121 @@ export function createOtioPageProfilerScript(): string {
         }
         return origPlay.apply(this, args);
       };
-    } catch (e) {
-      console.error('[Profiler] play trap failed', e);
-    }
-
-    // 4. drawImage trap on 2D context
-    try {
-      const origDraw = CanvasRenderingContext2D.prototype.drawImage;
-      CanvasRenderingContext2D.prototype.drawImage = function(...args) {
-        if (isRecording) {
-          const isVisible = Boolean(
-            this.canvas &&
-            ((this.canvas.matches && this.canvas.matches('canvas.otio-canvas')) ||
-             (this.canvas.classList && this.canvas.classList.contains('otio-canvas')))
-          );
-          if (isVisible) {
-            visibleDrawCount++;
-          } else {
-            offscreenDrawCount++;
-          }
-        }
-        return origDraw.apply(this, args);
-      };
-    } catch (e) {
-      console.error('[Profiler] drawImage trap failed', e);
-    }
-
-    // 5. width / height setters trap on HTMLCanvasElement
+    } catch {}
     try {
       for (const prop of ['width', 'height']) {
         const desc = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, prop);
         if (desc && desc.set && desc.get) {
           Object.defineProperty(HTMLCanvasElement.prototype, prop, {
-            configurable: true,
-            enumerable: desc.enumerable,
-            get() {
-              return desc.get.call(this);
-            },
-            set(val) {
-              if (isRecording) {
-                canvasResetsCount++;
-              }
-              desc.set.call(this, val);
-            },
+            configurable: true, enumerable: desc.enumerable,
+            get() { return desc.get.call(this); },
+            set(val) { clearCanvasKeys(this); if (isRecording) canvasResetsCount++; desc.set.call(this, val); },
           });
         }
       }
-    } catch (e) {
-      console.error('[Profiler] canvas reset trap failed', e);
-    }
-
-    // 6. PerformanceObserver for longtask & long-animation-frame
+    } catch {}
     try {
-      const longTaskObs = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          if (isRecording) {
-            pushBounded(
-              longTasks,
-              {
-                startTime: entry.startTime,
-                duration: entry.duration,
-              },
-              2000
-            );
+      const origClearRect = CanvasRenderingContext2D.prototype.clearRect;
+      CanvasRenderingContext2D.prototype.clearRect = function(x, y, w, h) {
+        if (this.canvas && x <= 0 && y <= 0 && w >= this.canvas.width && h >= this.canvas.height) {
+          clearCanvasKeys(this.canvas);
+          if (isRecording) canvasResetsCount++;
+        }
+        return origClearRect.apply(this, arguments);
+      };
+      const origFillRect = CanvasRenderingContext2D.prototype.fillRect;
+      CanvasRenderingContext2D.prototype.fillRect = function(x, y, w, h) {
+        if (this.canvas && x <= 0 && y <= 0 && w >= this.canvas.width && h >= this.canvas.height) {
+          clearCanvasKeys(this.canvas);
+          if (isRecording) canvasResetsCount++;
+        }
+        return origFillRect.apply(this, arguments);
+      };
+    } catch {}
+    try {
+      const origDraw = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function(image, ...args) {
+        if (this.canvas) {
+          const destKeys = getCanvasKeys(this.canvas);
+          if (image instanceof HTMLVideoElement || (image && image.tagName === 'VIDEO')) {
+            const ord = getDecoderOrdinal(image);
+            const cbMedia = activeCallbackMediaTimes.get(image);
+            let frameKey;
+            if (cbMedia !== undefined && cbMedia !== null) {
+              frameKey = cbMedia;
+            } else if (image.paused) {
+              frameKey = image.currentTime;
+            } else {
+              liveElementDraws++;
+              frameKey = image.currentTime;
+            }
+            destKeys.add(ord + ':' + frameKey);
+          } else if (image instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== 'undefined' && image instanceof OffscreenCanvas) || (image && image.tagName === 'CANVAS')) {
+            const srcKeys = canvasKeySets.get(image);
+            if (srcKeys) { for (const k of srcKeys) destKeys.add(k); }
+          }
+          const isVisible = Boolean(
+            (this.canvas.matches && this.canvas.matches('canvas.otio-canvas')) ||
+            (this.canvas.classList && this.canvas.classList.contains('otio-canvas'))
+          );
+          if (isVisible) {
+            visibleDrawCount++;
+            if (isRecording) {
+              pushBounded(visiblePresents, { t: performance.now(), keys: Array.from(destKeys).sort() }, MAX_BUFFER);
+            }
+          } else {
+            offscreenDrawCount++;
           }
         }
-      });
-      longTaskObs.observe({ type: 'longtask', buffered: true });
+        return origDraw.apply(this, [image, ...args]);
+      };
     } catch {}
-
     try {
-      const loafObs = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          if (isRecording) {
-            pushBounded(
-              loaves,
-              {
-                startTime: entry.startTime,
-                duration: entry.duration,
-                blockingDuration: entry.blockingDuration,
-                styleAndLayoutDuration: entry.styleAndLayoutDuration,
-              },
-              2000
-            );
-        }
-        }
-      });
-      loafObs.observe({ type: 'long-animation-frame', buffered: true });
+      new PerformanceObserver((list) => {
+        if (!isRecording) return;
+        for (const e of list.getEntries()) pushBounded(longTasks, { startTime: e.startTime, duration: e.duration }, 2000);
+      }).observe({ type: 'longtask', buffered: true });
     } catch {}
-
-    // 7. Vsync rAF loop
-    function onVsync(now) {
-      if (lastVsyncTime !== null) {
-        const delta = now - lastVsyncTime;
-        if (isRecording) {
-          pushBounded(vsyncIntervals, delta, MAX_BUFFER_SAMPLES);
+    try {
+      new PerformanceObserver((list) => {
+        if (!isRecording) return;
+        for (const e of list.getEntries()) {
+          pushBounded(loaves, {
+            startTime: e.startTime, duration: e.duration,
+            blockingDuration: e.blockingDuration, styleAndLayoutDuration: e.styleAndLayoutDuration,
+          }, 2000);
         }
-      }
+      }).observe({ type: 'long-animation-frame', buffered: true });
+    } catch {}
+    function onVsync(now) {
+      if (lastVsyncTime !== null && isRecording) pushBounded(vsyncIntervals, now - lastVsyncTime, MAX_BUFFER);
       lastVsyncTime = now;
       requestAnimationFrame(onVsync);
     }
     requestAnimationFrame(onVsync);
-
-    // 8. MutationObserver on root section.otio-view for data-frame
     let otioViewObserver = null;
     function attachViewObserver(root) {
       if (otioViewObserver) otioViewObserver.disconnect();
       otioViewObserver = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          if (mutation.type === 'attributes' && mutation.attributeName === 'data-frame') {
-            const frameStr = root.dataset.frame;
-            if (frameStr !== undefined && frameStr !== null) {
-              const frameNum = Number(frameStr);
-              if (isRecording) {
-                pushBounded(
-                  compositeFrames,
-                  {
-                    frame: frameNum,
-                    timestamp: performance.now(),
-                    buffering: root.dataset.buffering === 'true',
-                  },
-                  MAX_BUFFER_SAMPLES
-                );
-              }
+        for (const m of mutations) {
+          if (m.type !== 'attributes') continue;
+          if (m.attributeName === 'data-frame' && isRecording) {
+            const f = Number(root.dataset.frame);
+            if (Number.isFinite(f)) {
+              pushBounded(compositeFrames, { frame: f, timestamp: performance.now(), buffering: root.dataset.buffering === 'true' }, MAX_BUFFER);
+            }
+          } else if (m.attributeName === 'data-buffering' && isRecording) {
+            const now = performance.now();
+            if (root.dataset.buffering === 'true') {
+              resyncEpisodes++; bufferingStartTime = now;
+            } else if (bufferingStartTime !== null) {
+              totalBufferingMs += (now - bufferingStartTime); bufferingStartTime = null;
             }
           }
         }
       });
-      otioViewObserver.observe(root, {
-        attributes: true,
-        attributeFilter: ['data-frame', 'data-buffering', 'data-playing'],
-      });
+      otioViewObserver.observe(root, { attributes: true, attributeFilter: ['data-frame', 'data-buffering', 'data-playing'] });
     }
-
-    // 9. MutationObserver on .otio-video-decoders for new decoders
     let decoderObserver = null;
     function attachDecoderObserver(host) {
       if (decoderObserver) decoderObserver.disconnect();
@@ -496,20 +530,17 @@ export function createOtioPageProfilerScript(): string {
         for (const m of mutations) {
           for (const node of m.addedNodes) {
             if (node instanceof HTMLVideoElement || node.tagName === 'VIDEO') {
+              const ord = getDecoderOrdinal(node);
               const now = performance.now();
-              const record = {
-                insertionTime: now,
-                loadedDataLatency: null,
-              };
-              pushBounded(decoderInsertions, record, 2000);
+              const rec = { ordinal: ord, insertionTime: now, loadedDataLatency: null };
+              pushBounded(decoderInsertions, rec, 2000);
               const onLoaded = () => {
                 node.removeEventListener('loadeddata', onLoaded);
                 node.removeEventListener('error', onLoaded);
-                record.loadedDataLatency = performance.now() - now;
+                rec.loadedDataLatency = performance.now() - now;
               };
-              if (node.readyState >= 2) {
-                record.loadedDataLatency = 0;
-              } else {
+              if (node.readyState >= 2) rec.loadedDataLatency = 0;
+              else {
                 node.addEventListener('loadeddata', onLoaded, { once: true });
                 node.addEventListener('error', onLoaded, { once: true });
               }
@@ -519,82 +550,41 @@ export function createOtioPageProfilerScript(): string {
       });
       decoderObserver.observe(host, { childList: true });
     }
-
     function getAuthoritativeTimelineRate() {
-      // The ruler carries the timeline duration's rate.
-      const rulerLabel = document.querySelector('.otio-ruler-label');
-      if (rulerLabel && rulerLabel.textContent) {
-        const match = rulerLabel.textContent.trim().match(/^([\\d.]+)\\s*fps$/i);
-        if (match) {
-          const r = Number(match[1]);
-          if (Number.isFinite(r) && r > 0) return r;
-        }
+      const ruler = document.querySelector('.otio-ruler-label');
+      if (ruler && ruler.textContent) {
+        const m = ruler.textContent.trim().match(/^([\\d.]+)\\s*fps$/i);
+        if (m && Number(m[1]) > 0) return Number(m[1]);
       }
-
-      // 2. Check clock output element: clock.dataset['rate'] = String(state.time.rate)
       const clock = document.querySelector('output.otio-time, .otio-time');
-      if (clock && clock.dataset.rate) {
-        const r = Number(clock.dataset.rate);
-        if (Number.isFinite(r) && r > 0) return r;
-      }
-
-      // 3. Check root dataset if ever set
+      if (clock && Number(clock.dataset.rate) > 0) return Number(clock.dataset.rate);
       const root = document.querySelector('section.otio-view, .otio-view');
-      if (root && root.dataset.rate) {
-        const r = Number(root.dataset.rate);
-        if (Number.isFinite(r) && r > 0) return r;
-      }
-
-      // 4. Check placed items mode rate as secondary cross-check
-      const items = document.querySelectorAll('.otio-item[data-rate]');
-      if (items.length > 0) {
-        const counts = new Map();
-        for (const item of items) {
-          const r = Number(item.dataset.rate);
-          if (Number.isFinite(r) && r > 0) {
-            counts.set(r, (counts.get(r) || 0) + 1);
-          }
-        }
-        let bestRate = 0;
-        let maxCount = 0;
-        for (const [r, count] of counts.entries()) {
-          if (count > maxCount) {
-            maxCount = count;
-            bestRate = r;
-          }
-        }
-        if (bestRate > 0) return bestRate;
-      }
-
-      throw new Error('Authoritative timeline rate missing from DOM metadata (no ruler, clock, or item rate found)');
+      if (root && Number(root.dataset.rate) > 0) return Number(root.dataset.rate);
+      throw new Error('Authoritative timeline rate missing from DOM metadata');
     }
-
-    // Global profiler helper interface
     globalThis.__relicOtioProfiler = {
-      async waitForMount(timeoutMs = 30000) {
-        const delay = (ms) => {
-          const { promise, resolve } = Promise.withResolvers();
-          setTimeout(resolve, ms);
-          return promise;
-        };
+      async waitForReady(timeoutMs = 30000) {
         const start = performance.now();
         while (performance.now() - start < timeoutMs) {
           const root = document.querySelector('section.otio-view');
           const seek = document.querySelector('input.otio-seek');
           const play = document.querySelector('button.otio-play');
           const decoders = document.querySelector('.otio-video-decoders');
-          if (root && seek && play) {
+          if (root && seek && play && decoders) {
             if (!otioViewObserver) attachViewObserver(root);
-            if (decoders && !decoderObserver) attachDecoderObserver(decoders);
-            if (root.dataset.buffering === 'false') {
-              return { mounted: true };
+            if (!decoderObserver) attachDecoderObserver(decoders);
+            const isReady = root.dataset.ready === 'true' || root.dataset.ready === 'diagnostic';
+            if (isReady && root.dataset.buffering === 'false' && activeTimingWorkers === 0) {
+              return { mounted: true, ready: true };
             }
           }
-          await delay(100);
+          const { promise, resolve } = Promise.withResolvers();
+          setTimeout(resolve, 50);
+          await promise;
         }
-        throw new Error('OTIO viewer mount timeout');
+        throw new Error('OTIO viewer wait for ready/timing-worker timeout');
       },
-
+      waitForMount(timeoutMs = 30000) { return this.waitForReady(timeoutMs); },
       getTimelineStructure() {
         const root = document.querySelector('section.otio-view');
         if (!root) throw new Error('section.otio-view not found');
@@ -603,147 +593,68 @@ export function createOtioPageProfilerScript(): string {
         const diagnostics = [...document.querySelectorAll('.otio-diagnostic')];
         const decoders = [...document.querySelectorAll('.otio-video-decoders video')];
         const audios = [...document.querySelectorAll('audio')];
-
         const diagCodes = {};
         for (const d of diagnostics) {
           const text = (d.textContent || '').trim();
-          let code = 'unknown';
-          if (text.includes(' · ')) {
-            const candidate = text.split(' · ')[0].trim();
-            if (/^[a-zA-Z0-9_-]{1,64}$/.test(candidate)) {
-              code = candidate;
-            } else {
-              code = 'unclassified-diagnostic';
-            }
-          } else {
-            code = 'generic-diagnostic';
-          }
+          const code = (text.includes(' · ') && /^[a-zA-Z0-9_-]{1,64}$/.test(text.split(' · ')[0].trim()))
+            ? text.split(' · ')[0].trim() : 'diagnostic';
           diagCodes[code] = (diagCodes[code] || 0) + 1;
         }
-
         const timelineRate = getAuthoritativeTimelineRate();
-
-        let maxEnd = 0;
-        const boundaries = new Set();
-        const parsedItems = [];
-        let transitionCount = 0;
-
+        let maxEnd = 0; let transitionCount = 0; const boundaries = [];
         for (const item of items) {
-          if (!item.dataset.start || !item.dataset.duration) {
-            continue;
+          if (!item.dataset.start || !item.dataset.duration) continue;
+          const s = Number(item.dataset.start); const d = Number(item.dataset.duration);
+          const r = Number(item.dataset.rate) || timelineRate;
+          if (r > 0) {
+            const endSec = (s + d) / r;
+            if (endSec > maxEnd) maxEnd = endSec;
+            boundaries.push(s / r, endSec);
+            if (item.classList.contains('is-transition')) transitionCount++;
           }
-          const startVal = Number(item.dataset.start);
-          const durVal = Number(item.dataset.duration);
-          const itemRate = item.dataset.rate ? Number(item.dataset.rate) : timelineRate;
-          if (
-            !Number.isFinite(startVal) ||
-            !Number.isFinite(durVal) ||
-            !Number.isFinite(itemRate) ||
-            itemRate <= 0
-          ) {
-            continue;
-          }
-          const startSec = startVal / itemRate;
-          const endSec = (startVal + durVal) / itemRate;
-          if (endSec > maxEnd) maxEnd = endSec;
-          boundaries.add(startSec);
-          boundaries.add(endSec);
-          const isTransition = item.classList.contains('is-transition');
-          if (isTransition) transitionCount++;
-          parsedItems.push({
-            startSec,
-            endSec,
-            durationSec: durVal / itemRate,
-            isTransition,
-            isGap: item.classList.contains('is-gap'),
-          });
         }
-
         const seekInput = document.querySelector('input.otio-seek');
-        if (seekInput && seekInput.max) {
-          const seekFrames = Number(seekInput.max) + 1;
-          if (Number.isFinite(seekFrames) && seekFrames > 0 && timelineRate > 0) {
-            const seekDuration = seekFrames / timelineRate;
-            if (seekDuration > maxEnd) maxEnd = seekDuration;
-          }
+        if (seekInput && seekInput.max && Number(seekInput.max) > 0 && timelineRate > 0) {
+          const seekDur = (Number(seekInput.max) + 1) / timelineRate;
+          if (seekDur > maxEnd) maxEnd = seekDur;
         }
-
-        if (maxEnd <= 0) {
-          throw new Error('Timeline duration could not be determined from DOM');
-        }
-
-        const sortedBoundaries = [...boundaries].sort((a, b) => a - b);
-        const itemLengths = parsedItems.map((i) => i.durationSec).sort((a, b) => a - b);
-        const medianLength = itemLengths.length ? itemLengths[Math.floor(itemLengths.length / 2)] : 0;
-        const p10Length = itemLengths.length ? itemLengths[Math.floor(itemLengths.length * 0.1)] : 0;
-
-        // Discover W1: longest stretch with no clip boundaries across all video rails
-        let w1Best = { start: 0, end: Math.min(maxEnd, 6), duration: Math.min(maxEnd, 6) };
-        let maxGap = 0;
-        for (let i = 0; i < sortedBoundaries.length - 1; i++) {
-          const gap = sortedBoundaries[i + 1] - sortedBoundaries[i];
-          if (gap > maxGap) {
-            maxGap = gap;
-            w1Best = {
-              start: sortedBoundaries[i],
-              end: sortedBoundaries[i + 1],
-              duration: gap,
-            };
-          }
-        }
-        if (maxGap < 6 && maxEnd >= 6) {
-          w1Best = { start: 0, end: Math.min(maxEnd, 15), duration: Math.min(maxEnd, 15) };
-        }
-
-        // Discover W2: 20s window with the most boundaries
-        const windowSize = Math.min(maxEnd, 20);
-        let w2Best = { start: 0, end: windowSize, count: 0 };
-        for (let t = 0; t <= Math.max(0, maxEnd - windowSize); t += 0.5) {
-          const count = sortedBoundaries.filter((b) => b >= t && b <= t + windowSize).length;
-          if (count > w2Best.count) {
-            w2Best = { start: t, end: t + windowSize, count };
-          }
-        }
-
-        // Discover W3: 20s window with most transitions or highest active layers
-        let w3Best = { start: 0, end: windowSize, score: 0 };
-        for (let t = 0; t <= Math.max(0, maxEnd - windowSize); t += 0.5) {
-          let score = 0;
-          for (const item of parsedItems) {
-            if (item.startSec <= t + windowSize && item.endSec >= t) {
-              score += item.isTransition ? 5 : 1;
-            }
-          }
-          if (score > w3Best.score) {
-            w3Best = { start: t, end: t + windowSize, score };
-          }
-        }
-
-        const editPointsPerMin = maxEnd > 0 ? (sortedBoundaries.length / (maxEnd / 60)) : 0;
-
+        if (maxEnd <= 0) throw new Error('Timeline duration could not be determined');
+        boundaries.sort((a, b) => a - b);
         return {
-          durationSeconds: maxEnd,
-          timelineRate,
-          railsCount: rails.length,
-          totalItems: items.length,
-          editPointsCount: sortedBoundaries.length,
-          editPointsPerMinute: editPointsPerMin,
-          medianItemLengthSeconds: medianLength,
-          p10ItemLengthSeconds: p10Length,
-          transitionCount,
-          diagnosticsByCode: diagCodes,
-          decodersCount: decoders.length,
-          audioCount: audios.length,
-          windows: {
-            W1: { start: w1Best.start, end: w1Best.end, duration: w1Best.duration, description: 'Longest continuous stretch with no boundaries' },
-            W2: { start: w2Best.start, end: w2Best.end, duration: windowSize, description: '20s with highest clip boundary density' },
-            W3: { start: w3Best.start, end: w3Best.end, duration: windowSize, description: '20s with most active layers / transitions' },
-          },
+          durationSeconds: maxEnd, timelineRate, railsCount: rails.length, totalItems: items.length,
+          editPointsCount: boundaries.length, editPointsPerMinute: maxEnd > 0 ? (boundaries.length / (maxEnd / 60)) : 0,
+          medianItemLengthSeconds: 0, p10ItemLengthSeconds: 0, transitionCount,
+          diagnosticsByCode: diagCodes, decodersCount: decoders.length, audioCount: audios.length,
         };
       },
-
-      async runWindowRepetition({ windowKey, startSeconds, durationSeconds = 15, warmupSeconds = 2 }) {
-        const delay = (ms) => {
+      async getDecodersMedia() {
+        const decoders = [...document.querySelectorAll('.otio-video-decoders video')];
+        const list = []; const seenSrcs = new Set();
+        for (const v of decoders) {
+          const src = v.src;
+          if (!src || seenSrcs.has(src)) continue;
+          seenSrcs.add(src);
+          let base64 = null; let mimeType = 'video/mp4';
+          try {
+            const resp = await fetch(src);
+            const blob = await resp.blob();
+            mimeType = blob.type || (src.includes('.webm') ? 'video/webm' : 'video/mp4');
+            const buf = await blob.arrayBuffer();
+            let binary = ''; const bytes = new Uint8Array(buf);
+            for (let i = 0; i < bytes.byteLength; i += 8192) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.byteLength)));
+            }
+            base64 = btoa(binary);
+          } catch {}
+          list.push({
+            ordinal: getDecoderOrdinal(v), src, duration: v.duration || 0,
+            videoWidth: v.videoWidth || 0, videoHeight: v.videoHeight || 0, mimeType, base64,
+          });
+        }
+        return list;
+      },
+      async runWindowRepetition({ windowKey, startSeconds, durationSeconds = 15, warmupSeconds = 2, isCutWindow = false, isLayeredWindow = false }) {
+        const sleep = (ms) => {
           const { promise, resolve } = Promise.withResolvers();
           setTimeout(resolve, ms);
           return promise;
@@ -752,366 +663,245 @@ export function createOtioPageProfilerScript(): string {
         const seekInput = document.querySelector('input.otio-seek');
         const playBtn = document.querySelector('button.otio-play');
         if (!root || !seekInput || !playBtn) throw new Error('Viewer controls missing');
-
-        if (root.dataset.playing === 'true') {
-          playBtn.click();
-          await delay(200);
-        }
-
+        if (root.dataset.playing === 'true') { playBtn.click(); await sleep(200); }
         const rate = getAuthoritativeTimelineRate();
-        const targetFrame = Math.round(startSeconds * rate);
-
+        const targetFrame = Math.round(Math.max(0, startSeconds - warmupSeconds) * rate);
+        const scrubStart = performance.now();
         seekInput.value = String(targetFrame);
         seekInput.dispatchEvent(new Event('input', { bubbles: true }));
-
-        const seekStart = performance.now();
-        let seekSettled = false;
-        let lastObservedFrame = null;
-
-        await delay(50);
-
-        while (performance.now() - seekStart < 10000) {
-          const currentBuffering = root.dataset.buffering;
-          const currentFrameStr = root.dataset.frame;
-          if (currentFrameStr !== undefined && currentFrameStr !== null) {
-            lastObservedFrame = Number(currentFrameStr);
+        let seekSettled = false; let lastObservedFrame = null;
+        await sleep(50);
+        while (performance.now() - scrubStart < 10000) {
+          if (root.dataset.frame !== undefined && root.dataset.frame !== null) {
+            lastObservedFrame = Number(root.dataset.frame);
           }
-          if (
-            currentBuffering === 'false' &&
-            lastObservedFrame !== null &&
-            Number.isFinite(lastObservedFrame) &&
-            Math.abs(Math.floor(lastObservedFrame) - Math.floor(targetFrame)) <= 1
-          ) {
-            seekSettled = true;
-            break;
+          if (root.dataset.buffering === 'false' && lastObservedFrame !== null && Number.isFinite(lastObservedFrame) && Math.abs(Math.floor(lastObservedFrame) - Math.floor(targetFrame)) <= 1) {
+            seekSettled = true; break;
           }
-          await delay(50);
+          await sleep(50);
         }
-
-        if (!seekSettled) {
-          throw new Error(
-            'Seek to target frame ' + targetFrame + ' failed to settle at the requested position'
-          );
-        }
+        const pausedSeekLatencyMs = performance.now() - scrubStart;
+        if (!seekSettled) throw new Error('Seek to target frame ' + targetFrame + ' failed to settle');
+        const playStart = performance.now();
         playBtn.click();
-        await delay(warmupSeconds * 1000);
-
-        activeSeeks.length = 0;
-        completedSeeks.length = 0;
-        audioPlays.length = 0;
-        visibleDrawCount = 0;
-        offscreenDrawCount = 0;
-        canvasResetsCount = 0;
-        compositeFrames.length = 0;
-        decoderInsertions.length = 0;
-        longTasks.length = 0;
-        loaves.length = 0;
-        vsyncIntervals.length = 0;
-
+        let playToFirstFrameMs = 0;
+        while (performance.now() - playStart < 5000) {
+          if (visiblePresents.length > 0) { playToFirstFrameMs = performance.now() - playStart; break; }
+          await sleep(10);
+        }
+        if (playToFirstFrameMs === 0) playToFirstFrameMs = performance.now() - playStart;
+        const remainingWarmup = Math.max(0, warmupSeconds * 1000 - playToFirstFrameMs);
+        if (remainingWarmup > 0) await sleep(remainingWarmup);
+        activeSeeks.length = 0; completedSeeks.length = 0; audioPlays.length = 0;
+        visibleDrawCount = 0; offscreenDrawCount = 0; canvasResetsCount = 0; liveElementDraws = 0;
+        visiblePresents.length = 0; compositeFrames.length = 0; decoderInsertions.length = 0;
+        longTasks.length = 0; loaves.length = 0; vsyncIntervals.length = 0;
+        totalBufferingMs = 0; bufferingStartTime = null; resyncEpisodes = 0; bufferOverflow = false;
         isRecording = true;
         recordingStartTime = performance.now();
-
-        await delay(durationSeconds * 1000);
+        await sleep(durationSeconds * 1000);
         isRecording = false;
         const recordingEndTime = performance.now();
         const actualDurationSeconds = (recordingEndTime - recordingStartTime) / 1000;
-
-        if (root.dataset.playing === 'true') {
-          playBtn.click();
+        if (bufferingStartTime !== null) { totalBufferingMs += (recordingEndTime - bufferingStartTime); bufferingStartTime = null; }
+        if (root.dataset.playing === 'true') playBtn.click();
+        if (bufferOverflow) throw new Error('Profiler buffer overflow: max samples exceeded');
+        if (isCutWindow) {
+          let changes = 0; let lastOrd = null;
+          for (const p of visiblePresents) {
+            for (const k of p.keys) {
+              const ord = k.split(':')[0];
+              if (lastOrd !== null && ord !== lastOrd) changes++;
+              lastOrd = ord;
+            }
+          }
+          if (changes < 2) throw new Error('Cut-window check failed: fewer than 2 decoder changes (' + changes + ')');
         }
-        if (profilerBufferOverflow) {
-          throw new Error(
-            'Profiler buffer overflow: max samples exceeded during window repetition (inconclusive)'
-          );
+        if (isLayeredWindow) {
+          const hasLayered = visiblePresents.some((p) => new Set(p.keys.map((k) => k.split(':')[0])).size >= 2);
+          if (!hasLayered) throw new Error('Layered-window check failed: no present contained >= 2 decoders');
         }
-
-        if (compositeFrames.length === 0) {
-          throw new Error(
-            'No composite frames recorded during ' + windowKey + ' repetition'
-          );
+        let distinctFramesCount = 0; const distinctPresents = []; let prevKeyStr = null;
+        let unresolvedPresents = 0; let minMt = Infinity; let maxMt = -Infinity;
+        for (const p of visiblePresents) {
+          if (p.keys.length === 0) unresolvedPresents++;
+          for (const k of p.keys) {
+            const mt = Number(k.split(':')[1]);
+            if (Number.isFinite(mt)) { if (mt < minMt) minMt = mt; if (mt > maxMt) maxMt = mt; }
+          }
+          const keyStr = p.keys.join(',');
+          if (keyStr !== prevKeyStr) { distinctFramesCount++; distinctPresents.push(p); prevKeyStr = keyStr; }
         }
-
-        const distinctTimelineFrames = new Set(
-          compositeFrames.map((c) => Math.floor(c.frame))
-        );
-        const framesElapsed = actualDurationSeconds * rate;
-        const cadenceRatio =
-          framesElapsed > 0 ? distinctTimelineFrames.size / framesElapsed : 0;
-
-        const frameGaps = [];
+        const mediaInterval = {
+          start: Number.isFinite(minMt) ? minMt : 0, end: Number.isFinite(maxMt) ? maxMt : 0,
+          duration: (Number.isFinite(minMt) && Number.isFinite(maxMt)) ? Math.max(0, maxMt - minMt) : 0,
+        };
+        const measuredStart = compositeFrames.length > 0 ? (compositeFrames[0].frame / rate) : startSeconds;
+        const measuredEnd = compositeFrames.length > 0 ? (compositeFrames[compositeFrames.length - 1].frame / rate) : (startSeconds + actualDurationSeconds);
+        const wallGapsMs = [];
+        const startEdge = distinctPresents.length > 0 ? (distinctPresents[0].t - recordingStartTime) : actualDurationSeconds * 1000;
+        const endEdge = distinctPresents.length > 0 ? (recordingEndTime - distinctPresents[distinctPresents.length - 1].t) : 0;
+        wallGapsMs.push(startEdge);
+        for (let i = 0; i < distinctPresents.length - 1; i++) wallGapsMs.push(distinctPresents[i + 1].t - distinctPresents[i].t);
+        wallGapsMs.push(endEdge);
+        wallGapsMs.sort((a, b) => a - b);
+        const p50Gap = wallGapsMs.length ? wallGapsMs[Math.floor(wallGapsMs.length * 0.5)] : 0;
+        const p95Gap = wallGapsMs.length ? wallGapsMs[Math.floor(wallGapsMs.length * 0.95)] : 0;
+        const p99Gap = wallGapsMs.length ? wallGapsMs[Math.floor(wallGapsMs.length * 0.99)] : 0;
+        const maxGap = wallGapsMs.length ? wallGapsMs[wallGapsMs.length - 1] : 0;
+        const stutterCount = wallGapsMs.filter((g) => g > 1.5 * (1000 / rate)).length;
         const jumpedHistogram = { '0': 0, '1': 0, '2': 0, '3+': 0 };
         for (let i = 0; i < compositeFrames.length - 1; i++) {
-          const delta = compositeFrames[i + 1].frame - compositeFrames[i].frame;
-          frameGaps.push(delta);
-          const jumpStep = Math.max(
-            0,
-            Math.floor(compositeFrames[i + 1].frame) -
-              Math.floor(compositeFrames[i].frame)
-          );
-          if (jumpStep === 0) jumpedHistogram['0']++;
-          else if (jumpStep === 1) jumpedHistogram['1']++;
-          else if (jumpStep === 2) jumpedHistogram['2']++;
-          else jumpedHistogram['3+']++;
+          const step = Math.max(0, Math.floor(compositeFrames[i + 1].frame) - Math.floor(compositeFrames[i].frame));
+          if (step === 0) jumpedHistogram['0']++; else if (step === 1) jumpedHistogram['1']++;
+          else if (step === 2) jumpedHistogram['2']++; else jumpedHistogram['3+']++;
         }
-
-        const sortedGaps = [...frameGaps].sort((a, b) => a - b);
-        const p50Gap = sortedGaps.length ? sortedGaps[Math.floor(sortedGaps.length * 0.5)] : 0;
-        const p95Gap = sortedGaps.length ? sortedGaps[Math.floor(sortedGaps.length * 0.95)] : 0;
-        const p99Gap = sortedGaps.length ? sortedGaps[Math.floor(sortedGaps.length * 0.99)] : 0;
-        const maxGap = sortedGaps.length ? sortedGaps[sortedGaps.length - 1] : 0;
-        const stutterCount = sortedGaps.filter((g) => g > 1.5).length;
-
-        const videoSeeks = completedSeeks.filter((s) => s.kind === 'video');
-        const audioSeeks = completedSeeks.filter((s) => s.kind === 'audio');
-        const videoSeeksPerSec = actualDurationSeconds > 0 ? (videoSeeks.length / actualDurationSeconds) : 0;
-        const audioSeeksPerSec = actualDurationSeconds > 0 ? (audioSeeks.length / actualDurationSeconds) : 0;
-
-        const allLatencies = completedSeeks.map((s) => s.latency).filter((l) => typeof l === 'number').sort((a, b) => a - b);
-        const cumSeekLatency = allLatencies.reduce((sum, l) => sum + l, 0);
-        const p50Latency = allLatencies.length ? allLatencies[Math.floor(allLatencies.length * 0.5)] : 0;
-        const p95Latency = allLatencies.length ? allLatencies[Math.floor(allLatencies.length * 0.95)] : 0;
-
+        const inWindowSeeks = completedSeeks.filter((s) => s.startTime >= recordingStartTime);
+        const videoSeeks = inWindowSeeks.filter((s) => s.kind === 'video');
+        const audioSeeks = inWindowSeeks.filter((s) => s.kind === 'audio');
+        const calcStats = (list) => {
+          const lats = list.map((s) => s.latency).filter((l) => typeof l === 'number').sort((a, b) => a - b);
+          return {
+            count: list.length, perSecond: actualDurationSeconds > 0 ? list.length / actualDurationSeconds : 0,
+            latencyP50Ms: lats.length ? lats[Math.floor(lats.length * 0.5)] : 0,
+            latencyP95Ms: lats.length ? lats[Math.floor(lats.length * 0.95)] : 0,
+            latencyMaxMs: lats.length ? lats[lats.length - 1] : 0,
+            supersededCount: list.filter((s) => s.superseded).length,
+          };
+        };
+        const videoStats = calcStats(videoSeeks);
+        const audioStats = calcStats(audioSeeks);
+        const vIntervals = videoSeeks.filter((s) => s.latency !== null)
+          .map((s) => [Math.max(recordingStartTime, s.startTime), Math.min(recordingEndTime, s.startTime + s.latency)])
+          .filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
+        let unionMs = 0;
+        if (vIntervals.length > 0) {
+          let [curS, curE] = vIntervals[0];
+          for (let i = 1; i < vIntervals.length; i++) {
+            const [s, e] = vIntervals[i];
+            if (s <= curE) curE = Math.max(curE, e);
+            else { unionMs += (curE - curS); curS = s; curE = e; }
+          }
+          unionMs += (curE - curS);
+        }
+        const seekWindowShare = actualDurationSeconds > 0 ? Math.min(1.0, unionMs / (actualDurationSeconds * 1000)) : 0;
+        const allLats = inWindowSeeks.map((s) => s.latency).filter((l) => typeof l === 'number');
+        const cumSeekLatency = allLats.reduce((sum, l) => sum + l, 0);
         const sortedVsync = [...vsyncIntervals].sort((a, b) => a - b);
         const p50Vsync = sortedVsync.length ? sortedVsync[Math.floor(sortedVsync.length * 0.5)] : 0;
         const p95Vsync = sortedVsync.length ? sortedVsync[Math.floor(sortedVsync.length * 0.95)] : 0;
-
-        const numComposites = compositeFrames.length || 1;
-        const resetsPerComposite = canvasResetsCount / numComposites;
-        const visibleDrawsPerComposite = visibleDrawCount / numComposites;
-        const offscreenDrawsPerComposite = offscreenDrawCount / numComposites;
-
-        const totalLongTaskDuration = longTasks.reduce((acc, t) => acc + t.duration, 0);
-        const totalLoafBlocking = loaves.reduce((acc, l) => acc + (l.blockingDuration || 0), 0);
-        const totalLoafStyleLayout = loaves.reduce((acc, l) => acc + (l.styleAndLayoutDuration || 0), 0);
-
         let stuttersNearInsertions = 0;
         if (stutterCount > 0 && decoderInsertions.length > 0) {
           for (let i = 0; i < compositeFrames.length - 1; i++) {
-            const delta = compositeFrames[i + 1].frame - compositeFrames[i].frame;
-            if (delta > 1.5) {
-              const stutterTime = compositeFrames[i].timestamp;
-              const near = decoderInsertions.some((d) => Math.abs(d.insertionTime - stutterTime) <= 250);
-              if (near) stuttersNearInsertions++;
+            if (compositeFrames[i + 1].frame - compositeFrames[i].frame > 1.5) {
+              const t = compositeFrames[i].timestamp;
+              if (decoderInsertions.some((d) => Math.abs(d.insertionTime - t) <= 250)) stuttersNearInsertions++;
             }
           }
         }
-        const stuttersNearInsertionsPercent = stutterCount > 0 ? (stuttersNearInsertions / stutterCount) * 100 : 0;
-
+        const distinctTf = new Set(compositeFrames.map((c) => Math.floor(c.frame)));
+        const clockCadence = (actualDurationSeconds * rate > 0) ? (distinctTf.size / (actualDurationSeconds * rate)) : 0;
+        const presentedDecoderOrdinals = Array.from(new Set(visiblePresents.flatMap((p) => p.keys.map((k) => Number(k.split(':')[0])))));
         return {
-          windowKey,
-          actualDurationSeconds,
-          compositesCount: compositeFrames.length,
-          distinctFramesCount: distinctTimelineFrames.size,
-          cadenceRatio,
-          gaps: {
-            p50: p50Gap,
-            p95: p95Gap,
-            p99: p99Gap,
-            max: maxGap,
-            stutterCount,
-          },
-          jumpedHistogram,
+          windowKey, actualDurationSeconds, measuredStart, measuredEnd, pausedSeekLatencyMs, playToFirstFrameMs,
+          mediaInterval, distinctFramesCount, compositesCount: compositeFrames.length, clockCadence,
+          unresolvedPresents, liveElementDraws, presentedDecoderOrdinals,
+          gaps: { p50: p50Gap, p95: p95Gap, p99: p99Gap, max: maxGap, startEdgeGapMs: startEdge, endEdgeGapMs: endEdge, stutterCount },
+          buffering: { totalBufferingMs, resyncEpisodes }, jumpedHistogram,
           seeks: {
-            videoSeeksCount: videoSeeks.length,
-            audioSeeksCount: audioSeeks.length,
-            videoSeeksPerSecond: videoSeeksPerSec,
-            audioSeeksPerSecond: audioSeeksPerSec,
-            cumulativeLatencyMs: cumSeekLatency,
-            latencyP50Ms: p50Latency,
-            latencyP95Ms: p95Latency,
+            videoSeeksCount: videoSeeks.length, audioSeeksCount: audioSeeks.length,
+            videoSeeksPerSecond: videoStats.perSecond, audioSeeksPerSecond: audioStats.perSecond,
+            cumulativeLatencyMs: cumSeekLatency, latencyP50Ms: videoStats.latencyP50Ms, latencyP95Ms: videoStats.latencyP95Ms,
+            video: videoStats, audio: audioStats, windowShare: seekWindowShare,
           },
-          audio: {
-            playCallsCount: audioPlays.length,
-            playCallsPerSecond: actualDurationSeconds > 0 ? (audioPlays.length / actualDurationSeconds) : 0,
-          },
+          audio: { playCallsCount: audioPlays.length, playCallsPerSecond: actualDurationSeconds > 0 ? (audioPlays.length / actualDurationSeconds) : 0 },
           canvas: {
-            resetsCount: canvasResetsCount,
-            resetsPerComposite,
-            visibleDrawCount,
-            visibleDrawsPerComposite,
-            offscreenDrawCount,
-            offscreenDrawsPerComposite,
+            resetsCount: canvasResetsCount, resetsPerComposite: compositeFrames.length > 0 ? canvasResetsCount / compositeFrames.length : 0,
+            visibleDrawCount, visibleDrawsPerComposite: compositeFrames.length > 0 ? visibleDrawCount / compositeFrames.length : 0,
+            offscreenDrawCount, offscreenDrawsPerComposite: compositeFrames.length > 0 ? offscreenDrawCount / compositeFrames.length : 0,
+            liveElementDraws,
           },
-          vsync: {
-            p50IntervalMs: p50Vsync,
-            p95IntervalMs: p95Vsync,
-          },
+          vsync: { p50IntervalMs: p50Vsync, p95IntervalMs: p95Vsync },
           mainThread: {
-            longTasksCount: longTasks.length,
-            totalLongTaskDurationMs: totalLongTaskDuration,
-            loafCount: loaves.length,
-            totalLoafBlockingMs: totalLoafBlocking,
-            totalLoafStyleLayoutMs: totalLoafStyleLayout,
+            longTasksCount: longTasks.length, totalLongTaskDurationMs: longTasks.reduce((acc, t) => acc + t.duration, 0),
+            loafCount: loaves.length, totalLoafBlockingMs: loaves.reduce((acc, l) => acc + (l.blockingDuration || 0), 0),
+            totalLoafStyleLayoutMs: loaves.reduce((acc, l) => acc + (l.styleAndLayoutDuration || 0), 0),
           },
           decoders: {
-            insertionsCount: decoderInsertions.length,
-            stuttersNearInsertions,
-            stuttersNearInsertionsPercent,
+            insertionsCount: decoderInsertions.length, stuttersNearInsertions,
+            stuttersNearInsertionsPercent: stutterCount > 0 ? (stuttersNearInsertions / stutterCount) * 100 : 0,
           },
         };
       },
-
       async measureNativeCeiling(durationSeconds = 10) {
         const decoders = [...document.querySelectorAll('.otio-video-decoders video')];
-        if (decoders.length === 0) {
-          return {
-            available: false,
-            reason: 'No video decoders in timeline (images or audio-only)',
-            ceilingRatio: 'n/a',
-          };
-        }
-
-        const sourceVideo = decoders[0];
-        const src = sourceVideo.src;
-        if (!src) {
-          return {
-            available: false,
-            reason: 'No src attribute on video decoder',
-            ceilingRatio: 'n/a',
-          };
-        }
-
-        const host = document.querySelector('.otio-video-decoders') || document.body;
+        if (decoders.length === 0) return { available: false, reason: 'No video decoders in timeline', ceilingRatio: 'n/a' };
+        const src = decoders[0].src;
+        if (!src) return { available: false, reason: 'No src attribute on video decoder', ceilingRatio: 'n/a' };
+        const parent = document.querySelector('section.otio-view') || document.body;
+        const host = document.createElement('div');
+        host.className = 'otio-native-ceiling-host';
+        host.setAttribute('aria-hidden', 'true');
+        host.style.position = 'absolute';
+        host.style.width = '1px';
+        host.style.height = '1px';
+        host.style.overflow = 'hidden';
+        host.style.clipPath = 'inset(50%)';
+        host.style.pointerEvents = 'none';
+        parent.appendChild(host);
         const testVid = document.createElement('video');
-        testVid.muted = true;
-        testVid.playsInline = true;
-        testVid.preload = 'auto';
-        testVid.src = src;
-        testVid.style.position = 'fixed';
-        testVid.style.left = '-9999px';
-        testVid.style.top = '-9999px';
-        testVid.style.width = '1px';
-        testVid.style.height = '1px';
-        testVid.style.opacity = '0.01';
-        testVid.style.pointerEvents = 'none';
+        testVid.muted = true; testVid.playsInline = true; testVid.preload = 'auto'; testVid.src = src;
+        testVid.style.width = '1px'; testVid.style.height = '1px'; testVid.style.opacity = '1'; testVid.style.pointerEvents = 'none';
         host.appendChild(testVid);
-
         try {
-          const delay = (ms) => {
+          const sleep = (ms) => {
             const { promise, resolve } = Promise.withResolvers();
             setTimeout(resolve, ms);
             return promise;
           };
           if (typeof testVid.requestVideoFrameCallback !== 'function') {
-            return {
-              available: false,
-              reason: 'requestVideoFrameCallback is not supported',
-              ceilingRatio: 'n/a',
-            };
+            return { available: false, reason: 'requestVideoFrameCallback not supported', ceilingRatio: 'n/a' };
           }
-
           if (testVid.readyState < 2) {
-            const { promise: loadedPromise, resolve: onLoaded } = Promise.withResolvers();
+            const { promise, resolve } = Promise.withResolvers();
+            const onLoaded = () => { testVid.removeEventListener('loadeddata', onLoaded); resolve(); };
             testVid.addEventListener('loadeddata', onLoaded, { once: true });
             testVid.addEventListener('error', onLoaded, { once: true });
-            await loadedPromise;
+            await promise;
           }
-
-          let presentedFrames = 0;
-          let firstMediaTime = null;
-          let lastMediaTime = null;
-          let firstPresentationTime = null;
-          let lastPresentationTime = null;
+          const samples = [];
           let running = true;
-
           function onFrame(now, metadata) {
             if (!running) return;
-            presentedFrames++;
-            if (metadata && typeof metadata.mediaTime === 'number') {
-              if (firstMediaTime === null) firstMediaTime = metadata.mediaTime;
-              lastMediaTime = metadata.mediaTime;
-            }
-            if (metadata && typeof metadata.presentationTime === 'number') {
-              if (firstPresentationTime === null) firstPresentationTime = metadata.presentationTime;
-              lastPresentationTime = metadata.presentationTime;
-            } else {
-              if (firstPresentationTime === null) firstPresentationTime = now;
-              lastPresentationTime = now;
-            }
+            samples.push({
+              now, mediaTime: metadata && typeof metadata.mediaTime === 'number' ? metadata.mediaTime : null,
+              presentedFrames: metadata && typeof metadata.presentedFrames === 'number' ? metadata.presentedFrames : samples.length + 1,
+            });
             if (running && typeof testVid.requestVideoFrameCallback === 'function') {
               testVid.requestVideoFrameCallback(onFrame);
             }
           }
-
           testVid.requestVideoFrameCallback(onFrame);
           const start = performance.now();
           await testVid.play();
-          await delay(durationSeconds * 1000);
+          await sleep(durationSeconds * 1000);
           running = false;
           testVid.pause();
           const elapsedSec = (performance.now() - start) / 1000;
-
-          let droppedFrames = 0;
-          let totalFrames = presentedFrames;
+          let droppedFrames = 0; let totalFrames = samples.length;
           if (typeof testVid.getVideoPlaybackQuality === 'function') {
-            const quality = testVid.getVideoPlaybackQuality();
-            droppedFrames = quality.droppedVideoFrames || 0;
-            totalFrames = quality.totalVideoFrames || presentedFrames;
+            const q = testVid.getVideoPlaybackQuality();
+            droppedFrames = q.droppedVideoFrames || 0;
+            totalFrames = q.totalVideoFrames || samples.length;
           }
-
-          if (presentedFrames === 0) {
-            return {
-              available: false,
-              reason: 'Zero frames presented during native ceiling playback (inconclusive / rVFC stalled)',
-              ceilingRatio: 'n/a',
-            };
-          }
-
-          const presentationElapsedSec =
-            lastPresentationTime !== null &&
-            firstPresentationTime !== null &&
-            lastPresentationTime > firstPresentationTime
-              ? (lastPresentationTime - firstPresentationTime) / 1000
-              : elapsedSec;
-
-          const nativeFps =
-            presentationElapsedSec > 0
-              ? presentedFrames / presentationElapsedSec
-              : elapsedSec > 0
-                ? presentedFrames / elapsedSec
-                : 0;
-
-          let mediaFps = 0;
-          let mediaDurationSec = 0;
-          if (
-            lastMediaTime !== null &&
-            firstMediaTime !== null &&
-            lastMediaTime > firstMediaTime &&
-            presentedFrames > 1
-          ) {
-            mediaDurationSec = lastMediaTime - firstMediaTime;
-            const calculatedFps = (presentedFrames - 1) / mediaDurationSec;
-            mediaFps = Math.round(calculatedFps * 100) / 100;
-            if (Math.abs(mediaFps - Math.round(mediaFps)) < 0.15) {
-              mediaFps = Math.round(mediaFps);
-            }
-          } else {
-            mediaFps = getAuthoritativeTimelineRate();
-          }
-
-          const ceilingRatio = mediaFps > 0 ? nativeFps / mediaFps : 0;
-
           return {
-            available: true,
-            presentedFrames,
-            totalFrames,
-            droppedFrames,
-            elapsedSeconds: elapsedSec,
-            nativeFps,
-            mediaFps,
-            ceilingRatio,
-            nativeFrameHz: nativeFps,
-            mediaSeconds: mediaDurationSec,
-            callbackFrames: presentedFrames,
-            wallMs: elapsedSec * 1000,
+            available: true, src, duration: testVid.duration || 0,
+            videoWidth: testVid.videoWidth || 0, videoHeight: testVid.videoHeight || 0,
+            samples, droppedFrames, totalFrames, elapsedSeconds: elapsedSec,
           };
         } finally {
-          try {
-            testVid.pause();
-            testVid.removeAttribute('src');
-            testVid.load();
-          } catch {}
-          testVid.remove();
+          try { testVid.pause(); testVid.removeAttribute('src'); testVid.load(); } catch {}
+          testVid.remove(); host.remove();
         }
       },
     };
@@ -1125,12 +915,7 @@ async function evaluate<T>(
 ): Promise<T> {
   const res = await cdp.send(
     'Runtime.evaluate',
-    {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-      timeout: 60000,
-    },
+    { expression, awaitPromise: true, returnByValue: true, timeout: 60000 },
     sessionId
   );
   const exception = res['exceptionDetails'] as
@@ -1145,8 +930,7 @@ async function evaluate<T>(
     );
     throw new Error(`Page evaluation failed: ${safeError}`);
   }
-  const result = res['result'] as { value?: T } | undefined;
-  return result?.value as T;
+  return (res['result'] as { value?: T } | undefined)?.value as T;
 }
 
 function median(values: readonly number[]): number {
@@ -1158,82 +942,126 @@ function median(values: readonly number[]): number {
 function aggregateRepetitions(
   reps: readonly RepetitionMetrics[]
 ): AggregatedMetrics {
-  if (reps.length === 0) {
+  if (reps.length === 0)
     throw new Error('Cannot aggregate 0 repetitions: missing metric samples');
-  }
-  const getMedian = (getter: (r: RepetitionMetrics) => number) =>
+  const getMed = (getter: (r: RepetitionMetrics) => number) =>
     median(reps.map(getter));
-
+  const allAvailable = reps.every((r) => r.presentedMetricsAvailable);
   return {
-    actualDurationSeconds: getMedian((r) => r.actualDurationSeconds),
-    compositesCount: getMedian((r) => r.compositesCount),
-    distinctFramesCount: getMedian((r) => r.distinctFramesCount),
-    cadenceRatio: getMedian((r) => r.cadenceRatio),
+    actualDurationSeconds: getMed((r) => r.actualDurationSeconds),
+    measuredStart: getMed((r) => r.measuredStart),
+    measuredEnd: getMed((r) => r.measuredEnd),
+    pausedSeekLatencyMs: getMed((r) => r.pausedSeekLatencyMs),
+    playToFirstFrameMs: getMed((r) => r.playToFirstFrameMs),
+    mediaInterval: {
+      start: getMed((r) => r.mediaInterval.start),
+      end: getMed((r) => r.mediaInterval.end),
+      duration: getMed((r) => r.mediaInterval.duration),
+    },
+    presentedMetricsAvailable: allAvailable,
+    wallCadence: allAvailable
+      ? getMed((r) => (typeof r.wallCadence === 'number' ? r.wallCadence : 0))
+      : 'n/a',
+    transportCadence: allAvailable
+      ? getMed((r) =>
+          typeof r.transportCadence === 'number' ? r.transportCadence : 0
+        )
+      : 'n/a',
+    clockCadence: getMed((r) => r.clockCadence),
+    cadenceRatio: getMed((r) => r.cadenceRatio),
+    compositesCount: getMed((r) => r.compositesCount),
+    distinctFramesCount: getMed((r) => r.distinctFramesCount),
     gaps: {
-      p50: getMedian((r) => r.gaps.p50),
-      p95: getMedian((r) => r.gaps.p95),
-      p99: getMedian((r) => r.gaps.p99),
-      max: getMedian((r) => r.gaps.max),
-      stutterCount: getMedian((r) => r.gaps.stutterCount),
+      p50: getMed((r) => r.gaps.p50),
+      p95: getMed((r) => r.gaps.p95),
+      p99: getMed((r) => r.gaps.p99),
+      max: getMed((r) => r.gaps.max),
+      startEdgeGapMs: getMed((r) => r.gaps.startEdgeGapMs),
+      endEdgeGapMs: getMed((r) => r.gaps.endEdgeGapMs),
+      stutterCount: getMed((r) => r.gaps.stutterCount),
+    },
+    buffering: {
+      totalBufferingMs: getMed((r) => r.buffering.totalBufferingMs),
+      resyncEpisodes: getMed((r) => r.buffering.resyncEpisodes),
     },
     seeks: {
-      videoSeeksCount: getMedian((r) => r.seeks.videoSeeksCount),
-      audioSeeksCount: getMedian((r) => r.seeks.audioSeeksCount),
-      videoSeeksPerSecond: getMedian((r) => r.seeks.videoSeeksPerSecond),
-      audioSeeksPerSecond: getMedian((r) => r.seeks.audioSeeksPerSecond),
-      cumulativeLatencyMs: getMedian((r) => r.seeks.cumulativeLatencyMs),
-      latencyP50Ms: getMedian((r) => r.seeks.latencyP50Ms),
-      latencyP95Ms: getMedian((r) => r.seeks.latencyP95Ms),
+      videoSeeksCount: getMed((r) => r.seeks.videoSeeksCount),
+      audioSeeksCount: getMed((r) => r.seeks.audioSeeksCount),
+      videoSeeksPerSecond: getMed((r) => r.seeks.videoSeeksPerSecond),
+      audioSeeksPerSecond: getMed((r) => r.seeks.audioSeeksPerSecond),
+      cumulativeLatencyMs: getMed((r) => r.seeks.cumulativeLatencyMs),
+      latencyP50Ms: getMed((r) => r.seeks.latencyP50Ms),
+      latencyP95Ms: getMed((r) => r.seeks.latencyP95Ms),
+      video: {
+        count: getMed((r) => r.seeks.video.count),
+        perSecond: getMed((r) => r.seeks.video.perSecond),
+        latencyP50Ms: getMed((r) => r.seeks.video.latencyP50Ms),
+        latencyP95Ms: getMed((r) => r.seeks.video.latencyP95Ms),
+        latencyMaxMs: getMed((r) => r.seeks.video.latencyMaxMs),
+        supersededCount: getMed((r) => r.seeks.video.supersededCount),
+      },
+      audio: {
+        count: getMed((r) => r.seeks.audio.count),
+        perSecond: getMed((r) => r.seeks.audio.perSecond),
+        latencyP50Ms: getMed((r) => r.seeks.audio.latencyP50Ms),
+        latencyP95Ms: getMed((r) => r.seeks.audio.latencyP95Ms),
+        latencyMaxMs: getMed((r) => r.seeks.audio.latencyMaxMs),
+        supersededCount: getMed((r) => r.seeks.audio.supersededCount),
+      },
+      windowShare: getMed((r) => r.seeks.windowShare),
     },
     audio: {
-      playCallsCount: getMedian((r) => r.audio.playCallsCount),
-      playCallsPerSecond: getMedian((r) => r.audio.playCallsPerSecond),
+      playCallsCount: getMed((r) => r.audio.playCallsCount),
+      playCallsPerSecond: getMed((r) => r.audio.playCallsPerSecond),
     },
     canvas: {
-      resetsCount: getMedian((r) => r.canvas.resetsCount),
-      resetsPerComposite: getMedian((r) => r.canvas.resetsPerComposite),
-      visibleDrawCount: getMedian((r) => r.canvas.visibleDrawCount),
-      visibleDrawsPerComposite: getMedian(
+      resetsCount: getMed((r) => r.canvas.resetsCount),
+      resetsPerComposite: getMed((r) => r.canvas.resetsPerComposite),
+      visibleDrawCount: getMed((r) => r.canvas.visibleDrawCount),
+      visibleDrawsPerComposite: getMed(
         (r) => r.canvas.visibleDrawsPerComposite
       ),
-      offscreenDrawCount: getMedian((r) => r.canvas.offscreenDrawCount),
-      offscreenDrawsPerComposite: getMedian(
+      offscreenDrawCount: getMed((r) => r.canvas.offscreenDrawCount),
+      offscreenDrawsPerComposite: getMed(
         (r) => r.canvas.offscreenDrawsPerComposite
       ),
+      liveElementDraws: getMed((r) => r.canvas.liveElementDraws),
     },
     vsync: {
-      p50IntervalMs: getMedian((r) => r.vsync.p50IntervalMs),
-      p95IntervalMs: getMedian((r) => r.vsync.p95IntervalMs),
+      p50IntervalMs: getMed((r) => r.vsync.p50IntervalMs),
+      p95IntervalMs: getMed((r) => r.vsync.p95IntervalMs),
     },
     mainThread: {
-      longTasksCount: getMedian((r) => r.mainThread.longTasksCount),
-      totalLongTaskDurationMs: getMedian(
+      longTasksCount: getMed((r) => r.mainThread.longTasksCount),
+      totalLongTaskDurationMs: getMed(
         (r) => r.mainThread.totalLongTaskDurationMs
       ),
-      loafCount: getMedian((r) => r.mainThread.loafCount),
-      totalLoafBlockingMs: getMedian((r) => r.mainThread.totalLoafBlockingMs),
-      totalLoafStyleLayoutMs: getMedian(
+      loafCount: getMed((r) => r.mainThread.loafCount),
+      totalLoafBlockingMs: getMed((r) => r.mainThread.totalLoafBlockingMs),
+      totalLoafStyleLayoutMs: getMed(
         (r) => r.mainThread.totalLoafStyleLayoutMs
       ),
     },
     decoders: {
-      insertionsCount: getMedian((r) => r.decoders.insertionsCount),
-      stuttersNearInsertions: getMedian(
-        (r) => r.decoders.stuttersNearInsertions
-      ),
-      stuttersNearInsertionsPercent: getMedian(
+      insertionsCount: getMed((r) => r.decoders.insertionsCount),
+      stuttersNearInsertions: getMed((r) => r.decoders.stuttersNearInsertions),
+      stuttersNearInsertionsPercent: getMed(
         (r) => r.decoders.stuttersNearInsertionsPercent
       ),
+    },
+    cpu: {
+      processCpuDeltaMs: getMed((r) => r.cpu.processCpuDeltaMs),
+      loadAvg: [
+        getMed((r) => r.cpu.loadAvg[0] ?? 0),
+        getMed((r) => r.cpu.loadAvg[1] ?? 0),
+        getMed((r) => r.cpu.loadAvg[2] ?? 0),
+      ],
     },
   };
 }
 
 function classifyCauses(
-  medians: {
-    W1: AggregatedMetrics;
-    W2: AggregatedMetrics;
-    W3: AggregatedMetrics;
-  },
+  medians: Record<string, AggregatedMetrics>,
   ceiling: NativeCeilingResult,
   timelineRate = 30
 ): {
@@ -1241,57 +1069,56 @@ function classifyCauses(
   observations: readonly string[];
 } {
   const observations: string[] = [];
+  const w1 = medians['W1'] ?? Object.values(medians)[0];
+  if (!w1)
+    return {
+      primaryCause: 'Indeterminate',
+      observations: ['No window metrics available'],
+    };
 
-  // Check 1: Environment ceiling
   if (
     ceiling.available &&
     typeof ceiling.ceilingRatio === 'number' &&
     ceiling.ceilingRatio < 0.9
   ) {
     observations.push(
-      `Native video decoding ceiling (${ceiling.nativeFps.toFixed(1)} fps, ratio ${ceiling.ceilingRatio.toFixed(2)}) is below 0.9: headless browser cannot decode media in real time.`
+      `Native video decoding ceiling (${ceiling.nativeFps.toFixed(1)} fps, scanner ratio ${ceiling.ceilingRatio.toFixed(2)}) is below 0.9`
     );
     return { primaryCause: 'The environment itself', observations };
   }
 
-  // Check 2: Decoder seeks dominate
-  const w1SeekWaitMs = medians.W1.seeks.cumulativeLatencyMs;
-  const w1TotalTimeMs = medians.W1.actualDurationSeconds * 1000;
-  const seekWaitShare = w1TotalTimeMs > 0 ? w1SeekWaitMs / w1TotalTimeMs : 0;
+  const seekWaitShare = w1.seeks.windowShare;
   if (
-    medians.W1.vsync.p95IntervalMs <= 20 &&
-    (seekWaitShare >= 0.5 || medians.W1.seeks.videoSeeksPerSecond >= 10)
+    w1.vsync.p95IntervalMs <= 20 &&
+    (seekWaitShare >= 0.5 || w1.seeks.video.perSecond >= 10)
   ) {
     observations.push(
-      `Steady vsync (p95: ${medians.W1.vsync.p95IntervalMs.toFixed(1)} ms) with high seek rate (${medians.W1.seeks.videoSeeksPerSecond.toFixed(1)} seeks/s) and seek wait accounting for ${(seekWaitShare * 100).toFixed(1)}% of duration.`
+      `Steady vsync (${w1.vsync.p95IntervalMs.toFixed(1)} ms) with high seek rate (${w1.seeks.video.perSecond.toFixed(1)}/s) and seek wait ${(seekWaitShare * 100).toFixed(1)}% of duration.`
     );
     return { primaryCause: 'Decoder seeks', observations };
   }
 
-  // Check 3: Edit points (decoder insertions)
-  if (medians.W2.decoders.stuttersNearInsertionsPercent >= 30) {
+  const w2 = medians['W2'];
+  if (w2 && w2.decoders.stuttersNearInsertionsPercent >= 30) {
     observations.push(
-      `${medians.W2.decoders.stuttersNearInsertionsPercent.toFixed(1)}% of stutters in W2 occurred within ±250ms of a new decoder insertion.`
+      `${w2.decoders.stuttersNearInsertionsPercent.toFixed(1)}% of stutters in W2 occurred within ±250ms of decoder insertion.`
     );
     return { primaryCause: 'Edit points', observations };
   }
 
-  // Check 4: Controller or DOM work
   const frameBudgetMs = 1000 / Math.max(1, timelineRate);
   const mainThreadPerFrame =
-    medians.W1.mainThread.totalLoafStyleLayoutMs /
-    Math.max(1, medians.W1.compositesCount);
+    w1.mainThread.totalLoafStyleLayoutMs / Math.max(1, w1.compositesCount);
   if (mainThreadPerFrame >= 0.15 * frameBudgetMs) {
     observations.push(
-      `Main-thread style/layout per composite (${mainThreadPerFrame.toFixed(2)} ms) exceeds 15% of frame budget (${(0.15 * frameBudgetMs).toFixed(2)} ms).`
+      `Main-thread style/layout per composite (${mainThreadPerFrame.toFixed(2)} ms) exceeds 15% of frame budget.`
     );
     return { primaryCause: 'Controller or DOM work', observations };
   }
 
-  // Check 5: Compositor or GPU
-  if (medians.W1.vsync.p95IntervalMs > 25 && seekWaitShare < 0.3) {
+  if (w1.vsync.p95IntervalMs > 25 && seekWaitShare < 0.3) {
     observations.push(
-      `Vsync interval unstable (p95: ${medians.W1.vsync.p95IntervalMs.toFixed(1)} ms) while seek wait is low (${(seekWaitShare * 100).toFixed(1)}%).`
+      `Vsync interval unstable (${w1.vsync.p95IntervalMs.toFixed(1)} ms) while seek wait is low (${(seekWaitShare * 100).toFixed(1)}%).`
     );
     return { primaryCause: 'Compositor or GPU', observations };
   }
@@ -1306,8 +1133,9 @@ function sanitizeReport(report: BenchmarkReport): BenchmarkReport {
   const json = JSON.stringify(report);
   const urlPattern = /(?:https?|blob|file|data):\/\/[^\s"'\\]+/gi;
   if (urlPattern.test(json)) {
-    const clean = json.replace(urlPattern, '[REDACTED_URL]');
-    return JSON.parse(clean) as BenchmarkReport;
+    return JSON.parse(
+      json.replace(urlPattern, '[REDACTED_URL]')
+    ) as BenchmarkReport;
   }
   return report;
 }
@@ -1316,25 +1144,22 @@ export async function runOtioPlaybackBenchmark(
   options: BenchmarkOptions
 ): Promise<BenchmarkReport> {
   let targetUrl: string;
-  if (options.urlFile) {
+  if (options.urlFile)
     targetUrl = await readUrlFromProtectedFile(options.urlFile);
-  } else if (options.url) {
-    if (!loopbackUrl(options.url)) {
-      throw new Error('Non-loopback URL refused');
-    }
+  else if (options.url) {
+    if (!loopbackUrl(options.url)) throw new Error('Non-loopback URL refused');
     targetUrl = options.url;
   } else {
     const envUrlFile =
       process.env['RELIC_OTIO_URL_FILE'] ??
       process.env['RELIC_OTIO_REPLAY_URL_FILE'];
-    if (envUrlFile) {
-      targetUrl = await readUrlFromProtectedFile(envUrlFile);
-    } else {
+    if (envUrlFile) targetUrl = await readUrlFromProtectedFile(envUrlFile);
+    else
       throw new Error(
-        'Replay URL must be provided via --url-file <path>, --url <loopback-url>, or RELIC_OTIO_URL_FILE'
+        'Replay URL must be provided via --url-file, --url, or RELIC_OTIO_URL_FILE'
       );
-    }
   }
+
   const profilerScript = createOtioPageProfilerScript();
   new Script(profilerScript, { filename: 'otio-profiler-injected.js' });
 
@@ -1352,11 +1177,10 @@ export async function runOtioPlaybackBenchmark(
       ? namedChrome
       : undefined
   );
-  if (foundChrome.kind !== 'found') {
+  if (foundChrome.kind !== 'found')
     throw new Error(
       `Chrome discovery failed: ${foundChrome.kind === 'not_found' ? foundChrome.detail : foundChrome.kind}`
     );
-  }
 
   const profile = await mkdtemp(join(tmpdir(), 'relic-otio-bench-'));
   const shared = chromeArgs(foundChrome.path, profile);
@@ -1367,12 +1191,12 @@ export async function runOtioPlaybackBenchmark(
   try {
     launch = createBrowserHeadlessLaunch(
       [
-        ...shared.map((arg) =>
-          arg === '--proxy-bypass-list=<-loopback>'
+        ...shared.map((a) =>
+          a === '--proxy-bypass-list=<-loopback>'
             ? '--proxy-bypass-list=<-loopback>;127.0.0.1'
-            : arg === '--host-resolver-rules=MAP * ~NOTFOUND'
+            : a === '--host-resolver-rules=MAP * ~NOTFOUND'
               ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
-              : arg
+              : a
         ),
         '--autoplay-policy=no-user-gesture-required',
       ],
@@ -1382,7 +1206,6 @@ export async function runOtioPlaybackBenchmark(
     child = spawn(foundChrome.path, launch.args, {
       stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
     });
-
     const toChrome = child.stdio[3];
     const fromChrome = child.stdio[4];
     assert.ok(
@@ -1416,14 +1239,12 @@ export async function runOtioPlaybackBenchmark(
     );
 
     let nonLoopbackBlockedCount = 0;
-
     cdp.onEvent((event) => {
       if (
         event.method !== 'Fetch.requestPaused' ||
         event.sessionId !== sessionId
-      ) {
+      )
         return;
-      }
       const params = event.params as {
         requestId?: string;
         request?: { url?: string };
@@ -1431,14 +1252,12 @@ export async function runOtioPlaybackBenchmark(
       const reqUrl = params.request?.url ?? '';
       const reqId = params.requestId;
       if (!reqId) return;
-
       if (loopbackUrl(reqUrl)) {
         void cdp
           ?.send('Fetch.continueRequest', { requestId: reqId }, sessionId)
           .catch(() => {});
         return;
       }
-
       nonLoopbackBlockedCount++;
       void cdp
         ?.send(
@@ -1451,15 +1270,16 @@ export async function runOtioPlaybackBenchmark(
 
     await cdp.send(
       'Emulation.setDeviceMetricsOverride',
-      {
-        width: 1440,
-        height: 900,
-        deviceScaleFactor: 1,
-        mobile: false,
-      },
+      { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false },
       sessionId
     );
-
+    if (options.cpuThrottle && options.cpuThrottle > 1) {
+      await cdp.send(
+        'Emulation.setCPUThrottlingRate',
+        { rate: options.cpuThrottle },
+        sessionId
+      );
+    }
     await cdp.send(
       'Page.addScriptToEvaluateOnNewDocument',
       { source: profilerScript },
@@ -1467,30 +1287,10 @@ export async function runOtioPlaybackBenchmark(
     );
 
     await cdp.send('Page.navigate', { url: targetUrl }, sessionId);
-
-    await evaluate<{ mounted: boolean }>(
+    await evaluate<{ mounted: boolean; ready: boolean }>(
       cdp,
       sessionId,
-      `(async () => {
-        const delay = (ms) => {
-          const { promise, resolve } = Promise.withResolvers();
-          setTimeout(resolve, ms);
-          return promise;
-        };
-        const start = performance.now();
-        while (performance.now() - start < 5000) {
-          if (
-            typeof globalThis.__relicOtioProfiler === 'object' &&
-            globalThis.__relicOtioProfiler !== null &&
-            typeof globalThis.__relicOtioProfiler.waitForMount === 'function'
-          ) {
-            const remainingMs = 30000;
-            return await globalThis.__relicOtioProfiler.waitForMount(remainingMs);
-          }
-          await delay(50);
-        }
-        throw new Error('Profiler not installed');
-      })()`
+      'window.__relicOtioProfiler.waitForReady(30000)'
     );
 
     let gpuFeatures: Record<string, unknown> | undefined;
@@ -1513,66 +1313,341 @@ export async function runOtioPlaybackBenchmark(
       transitionCount: number;
       diagnosticsByCode: Record<string, number>;
       decodersCount: number;
-      windows: {
-        W1: WindowDefinition;
-        W2: WindowDefinition;
-        W3: WindowDefinition;
-      };
     }>(cdp, sessionId, 'window.__relicOtioProfiler.getTimelineStructure()');
 
-    const repetitionResults: {
-      W1: RepetitionMetrics[];
-      W2: RepetitionMetrics[];
-      W3: RepetitionMetrics[];
-    } = {
-      W1: [],
-      W2: [],
-      W3: [],
-    };
+    const decodersMedia = await evaluate<
+      Array<{
+        ordinal: number;
+        src: string;
+        duration: number;
+        videoWidth: number;
+        videoHeight: number;
+        mimeType: string;
+        base64: string | null;
+      }>
+    >(cdp, sessionId, 'window.__relicOtioProfiler.getDecodersMedia()');
 
-    const windowKeys = ['W1', 'W2', 'W3'] as const;
-    for (const key of windowKeys) {
-      const win = structure.windows[key];
-      const winDuration = Math.min(win.duration, durationSeconds);
+    const scannedMediaList: Array<{
+      duration: number;
+      videoWidth: number;
+      videoHeight: number;
+      timing: OtioVideoTiming;
+    }> = [];
+    for (const item of decodersMedia) {
+      if (item.base64) {
+        const buf = Buffer.from(item.base64, 'base64');
+        const blob = new Blob([buf], { type: item.mimeType });
+        const timing = await scanOtioVideoTiming(blob, item.mimeType);
+        scannedMediaList.push({
+          duration: item.duration,
+          videoWidth: item.videoWidth,
+          videoHeight: item.videoHeight,
+          timing,
+        });
+      }
+    }
+
+    let configuredWindows: WindowOption[] = [];
+    if (options.windows && options.windows.length > 0) {
+      configuredWindows = [...options.windows];
+    } else if (structure.durationSeconds >= 480) {
+      configuredWindows = [
+        { name: 'start', start: 24, duration: durationSeconds },
+        { name: 'middle', start: 240, duration: durationSeconds },
+        { name: 'tail', start: 460, duration: durationSeconds },
+      ];
+    } else {
+      const winDur = Math.min(
+        durationSeconds,
+        Math.max(1, Math.floor(structure.durationSeconds / 3))
+      );
+      configuredWindows = [
+        { name: 'start', start: 0, duration: winDur },
+        { name: 'middle', start: winDur, duration: winDur },
+        { name: 'tail', start: 2 * winDur, duration: winDur },
+      ];
+    }
+
+    const resolvedWindows: Record<string, WindowDefinition> = {};
+    const winKeys = ['W1', 'W2', 'W3'] as const;
+    const sortedWindows = configuredWindows
+      .map((w, idx) => ({
+        key: winKeys[idx] ?? `W${idx + 1}`,
+        name: w.name,
+        start: w.start,
+        duration: w.duration ?? durationSeconds,
+      }))
+      .sort((a, b) => a.start - b.start);
+
+    for (let i = 0; i < sortedWindows.length; i++) {
+      const w = sortedWindows[i]!;
+      assert.ok(
+        w.start >= 0,
+        `Window ${w.name} start must be non-negative: ${w.start}`
+      );
+      assert.ok(
+        w.start + w.duration <= structure.durationSeconds + 0.05,
+        `Window ${w.name} extends past timeline duration (${w.start + w.duration} > ${structure.durationSeconds})`
+      );
+      if (i > 0) {
+        const prev = sortedWindows[i - 1]!;
+        assert.ok(
+          prev.start + prev.duration <= w.start + 0.05,
+          `Windows ${prev.name} and ${w.name} overlap`
+        );
+      }
+      resolvedWindows[w.key] = {
+        name: w.name,
+        start: w.start,
+        end: w.start + w.duration,
+        duration: w.duration,
+        description: `Window ${w.name} at ${w.start}s`,
+      };
+    }
+
+    const repetitionResults: Record<string, RepetitionMetrics[]> = {};
+    for (const key of Object.keys(resolvedWindows)) repetitionResults[key] = [];
+
+    for (const [key, win] of Object.entries(resolvedWindows)) {
+      const isCutWindow = win.name.toLowerCase().includes('cut');
+      const isLayeredWindow = win.name.toLowerCase().includes('layer');
 
       for (let rep = 0; rep < repetitionsCount; rep++) {
-        const repMetrics = await evaluate<
-          Omit<RepetitionMetrics, 'repetitionIndex'>
+        await cdp.send('Page.navigate', { url: targetUrl }, sessionId);
+        await evaluate<{ mounted: boolean; ready: boolean }>(
+          cdp,
+          sessionId,
+          'window.__relicOtioProfiler.waitForReady(30000)'
+        );
+
+        let cpuStart = 0;
+        try {
+          const sysProc = (await cdp.send('SystemInfo.getProcessInfo')) as {
+            processInfo?: Array<{ cpuTime?: number }>;
+          };
+          cpuStart = (sysProc?.processInfo ?? []).reduce(
+            (acc, p) => acc + (p.cpuTime ?? 0),
+            0
+          );
+        } catch {}
+
+        const raw = await evaluate<
+          Omit<
+            RepetitionMetrics,
+            'wallCadence' | 'transportCadence' | 'cadenceRatio' | 'cpu'
+          > & {
+            unresolvedPresents: number;
+            liveElementDraws: number;
+            presentedDecoderOrdinals: number[];
+          }
         >(
           cdp,
           sessionId,
           `window.__relicOtioProfiler.runWindowRepetition(${JSON.stringify({
             windowKey: key,
             startSeconds: win.start,
-            durationSeconds: winDuration,
+            durationSeconds: win.duration,
             warmupSeconds,
+            isCutWindow,
+            isLayeredWindow,
           })})`
         );
-        repetitionResults[key].push({
-          ...repMetrics,
+
+        let cpuEnd = 0;
+        try {
+          const sysProc = (await cdp.send('SystemInfo.getProcessInfo')) as {
+            processInfo?: Array<{ cpuTime?: number }>;
+          };
+          cpuEnd = (sysProc?.processInfo ?? []).reduce(
+            (acc, p) => acc + (p.cpuTime ?? 0),
+            0
+          );
+        } catch {}
+        const processCpuDeltaMs = Math.max(0, cpuEnd - cpuStart);
+
+        let presentedMetricsAvailable =
+          raw.unresolvedPresents === 0 && raw.liveElementDraws === 0;
+        for (const ord of raw.presentedDecoderOrdinals) {
+          const decoderMeta = decodersMedia.find((d) => d.ordinal === ord);
+          if (!decoderMeta) {
+            presentedMetricsAvailable = false;
+            break;
+          }
+          const matches = scannedMediaList.filter(
+            (m) =>
+              Math.abs(m.duration - decoderMeta.duration) < 0.1 &&
+              m.videoWidth === decoderMeta.videoWidth &&
+              m.videoHeight === decoderMeta.videoHeight
+          );
+          if (matches.length !== 1 || matches[0]?.timing.kind !== 'windows') {
+            presentedMetricsAvailable = false;
+            break;
+          }
+        }
+
+        let wallCadence: number | 'n/a' = 'n/a';
+        let transportCadence: number | 'n/a' = 'n/a';
+        if (presentedMetricsAvailable) {
+          const wallElapsed =
+            raw.actualDurationSeconds * structure.timelineRate;
+          wallCadence =
+            wallElapsed > 0 ? raw.distinctFramesCount / wallElapsed : 0;
+          const transportElapsed =
+            Math.abs(raw.measuredEnd - raw.measuredStart) *
+            structure.timelineRate;
+          transportCadence =
+            transportElapsed > 0
+              ? raw.distinctFramesCount / transportElapsed
+              : 0;
+        }
+
+        repetitionResults[key]!.push({
+          windowKey: key,
           repetitionIndex: rep + 1,
+          actualDurationSeconds: raw.actualDurationSeconds,
+          measuredStart: raw.measuredStart,
+          measuredEnd: raw.measuredEnd,
+          pausedSeekLatencyMs: raw.pausedSeekLatencyMs,
+          playToFirstFrameMs: raw.playToFirstFrameMs,
+          mediaInterval: raw.mediaInterval,
+          presentedMetricsAvailable,
+          wallCadence,
+          transportCadence,
+          clockCadence: raw.clockCadence,
+          cadenceRatio:
+            typeof wallCadence === 'number' ? wallCadence : raw.clockCadence,
+          compositesCount: raw.compositesCount,
+          distinctFramesCount: raw.distinctFramesCount,
+          gaps: raw.gaps,
+          buffering: raw.buffering,
+          jumpedHistogram: raw.jumpedHistogram,
+          seeks: raw.seeks,
+          audio: raw.audio,
+          canvas: raw.canvas,
+          vsync: raw.vsync,
+          mainThread: raw.mainThread,
+          decoders: raw.decoders,
+          cpu: { processCpuDeltaMs, loadAvg: os.loadavg() },
         });
       }
     }
 
-    const nativeCeiling = await evaluate<NativeCeilingResult>(
+    const rawCeiling = await evaluate<
+      | { available: false; reason: string; ceilingRatio: 'n/a' }
+      | {
+          available: true;
+          src: string;
+          duration: number;
+          videoWidth: number;
+          videoHeight: number;
+          samples: Array<{
+            now: number;
+            mediaTime: number | null;
+            presentedFrames: number;
+          }>;
+          droppedFrames: number;
+          totalFrames: number;
+          elapsedSeconds: number;
+        }
+    >(
       cdp,
       sessionId,
       `window.__relicOtioProfiler.measureNativeCeiling(${ceilingDurationSeconds})`
     );
 
-    const medians = {
-      W1: aggregateRepetitions(repetitionResults.W1),
-      W2: aggregateRepetitions(repetitionResults.W2),
-      W3: aggregateRepetitions(repetitionResults.W3),
-    };
+    let nativeCeiling: NativeCeilingResult;
+    if (!rawCeiling.available) {
+      nativeCeiling = rawCeiling;
+    } else {
+      const matchedMedia = scannedMediaList.find(
+        (m) =>
+          Math.abs(m.duration - rawCeiling.duration) < 0.1 &&
+          m.videoWidth === rawCeiling.videoWidth &&
+          m.videoHeight === rawCeiling.videoHeight
+      );
+      if (!matchedMedia || matchedMedia.timing.kind !== 'windows') {
+        nativeCeiling = {
+          available: false,
+          reason: 'Media scanner timing unavailable for ceiling video',
+          ceilingRatio: 'n/a',
+        };
+      } else {
+        const starts = matchedMedia.timing.starts;
+        const ends = matchedMedia.timing.ends;
+        const matchedWindows = new Set<number>();
+        let skipsCount = 0;
+        let lastWinIdx = -1;
+        const findWin = (t: number) => {
+          for (let i = 0; i < starts.length; i++) {
+            if (t >= (starts[i] ?? 0) - 1e-6 && t <= (ends[i] ?? 0) + 1e-6)
+              return i;
+          }
+          return -1;
+        };
+        const validSamples = rawCeiling.samples.filter(
+          (
+            s
+          ): s is { now: number; mediaTime: number; presentedFrames: number } =>
+            typeof s.mediaTime === 'number'
+        );
+        for (const s of validSamples) {
+          const w = findWin(s.mediaTime);
+          if (w >= 0) {
+            matchedWindows.add(w);
+            if (lastWinIdx >= 0 && w > lastWinIdx + 1)
+              skipsCount += w - lastWinIdx - 1;
+            lastWinIdx = Math.max(lastWinIdx, w);
+          }
+        }
+        const firstMt = validSamples[0]?.mediaTime ?? 0;
+        const lastMt = validSamples[validSamples.length - 1]?.mediaTime ?? 0;
+        const firstWin = findWin(firstMt);
+        const lastWin = findWin(lastMt);
+        const windowsElapsed =
+          firstWin >= 0 && lastWin >= 0 && lastWin >= firstWin
+            ? lastWin - firstWin + 1
+            : 0;
+        const distinctWindows = matchedWindows.size;
+        const ceilingRatio =
+          windowsElapsed > 0 ? distinctWindows / windowsElapsed : 0;
+        const nativeFps =
+          rawCeiling.elapsedSeconds > 0
+            ? distinctWindows / rawCeiling.elapsedSeconds
+            : 0;
+        const mediaFps =
+          lastMt > firstMt && windowsElapsed > 0
+            ? windowsElapsed / (lastMt - firstMt)
+            : structure.timelineRate;
+
+        nativeCeiling = {
+          available: true,
+          presentedFrames: distinctWindows,
+          totalFrames: rawCeiling.totalFrames,
+          droppedFrames: rawCeiling.droppedFrames,
+          elapsedSeconds: rawCeiling.elapsedSeconds,
+          nativeFps,
+          mediaFps,
+          ceilingRatio,
+          distinctWindowsPresented: distinctWindows,
+          windowsElapsed,
+          skipsCount,
+          nativeFrameHz: nativeFps,
+          mediaSeconds: Math.max(0, lastMt - firstMt),
+          callbackFrames: validSamples.length,
+          wallMs: rawCeiling.elapsedSeconds * 1000,
+        };
+      }
+    }
+
+    const medians: Record<string, AggregatedMetrics> = {};
+    for (const [k, reps] of Object.entries(repetitionResults))
+      medians[k] = aggregateRepetitions(reps);
 
     const causeClassification = classifyCauses(
       medians,
       nativeCeiling,
       structure.timelineRate
     );
-
     const report: BenchmarkReport = {
       timestamp: new Date().toISOString(),
       environment: {
@@ -1581,6 +1656,8 @@ export async function runOtioPlaybackBenchmark(
         cpuCores:
           (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ||
           8,
+        loadAvg: os.loadavg(),
+        commandLine: launch.args,
         gpuFeatures,
         nonLoopbackBlockedCount,
       },
@@ -1597,7 +1674,7 @@ export async function runOtioPlaybackBenchmark(
         diagnosticsByCode: structure.diagnosticsByCode,
         decodersCount: structure.decodersCount,
       },
-      windows: structure.windows,
+      windows: resolvedWindows,
       repetitions: repetitionResults,
       medians,
       nativeCeiling,
@@ -1605,7 +1682,6 @@ export async function runOtioPlaybackBenchmark(
     };
 
     const sanitizedReport = sanitizeReport(report);
-
     if (options.outputJsonPath) {
       await writeFile(
         options.outputJsonPath,
@@ -1613,7 +1689,6 @@ export async function runOtioPlaybackBenchmark(
         'utf-8'
       );
     }
-
     return sanitizedReport;
   } finally {
     if (child !== undefined) {
@@ -1648,160 +1723,60 @@ export function formatReportSummary(report: BenchmarkReport): string {
   lines.push('--- MEASUREMENT WINDOWS ---');
   for (const [k, win] of Object.entries(report.windows)) {
     lines.push(
-      `  ${k}: [${win.start.toFixed(1)}s - ${win.end.toFixed(1)}s] (${win.duration.toFixed(1)}s) ${win.description ?? ''}`
+      `  ${k} (${win.name}): [${win.start.toFixed(1)}s - ${win.end.toFixed(1)}s] (${win.duration.toFixed(1)}s)`
     );
   }
   lines.push('');
-  lines.push('--- MEDIAN STEADY-STATE METRICS (3 REPETITIONS) ---');
+
+  const keys = Object.keys(report.medians);
+  const headerCols = keys.map((k) => k.padEnd(11)).join(' | ');
+  lines.push(`--- MEDIAN STEADY-STATE METRICS (${keys.length} WINDOWS) ---`);
+  lines.push(`Metric                               | ${headerCols}`);
   lines.push(
-    'Metric                               | W1 (Steady) | W2 (Cuts)   | W3 (Layers) '
-  );
-  lines.push(
-    '-------------------------------------+-------------+-------------+-------------'
+    `-------------------------------------+${keys.map(() => '-------------').join('+')}`
   );
 
-  const formatRow = (label: string, v1: string, v2: string, v3: string) =>
-    `${label.padEnd(36)} | ${v1.padEnd(11)} | ${v2.padEnd(11)} | ${v3.padEnd(11)}`;
+  const formatRow = (
+    label: string,
+    getter: (m: AggregatedMetrics) => string
+  ) => {
+    const vals = keys.map((k) => getter(report.medians[k]!).padEnd(11));
+    return `${label.padEnd(36)} | ${vals.join(' | ')}`;
+  };
 
-  const m = report.medians;
-  lines.push(
-    formatRow(
-      'M1 Cadence Ratio (shown/elapsed)',
-      m.W1.cadenceRatio.toFixed(3),
-      m.W2.cadenceRatio.toFixed(3),
-      m.W3.cadenceRatio.toFixed(3)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M2 Frame Gap p50 (timeline frames)',
-      m.W1.gaps.p50.toFixed(2),
-      m.W2.gaps.p50.toFixed(2),
-      m.W3.gaps.p50.toFixed(2)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M2 Frame Gap p95 (timeline frames)',
-      m.W1.gaps.p95.toFixed(2),
-      m.W2.gaps.p95.toFixed(2),
-      m.W3.gaps.p95.toFixed(2)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M2 Stutters Count (gaps > 1.5)',
-      String(m.W1.gaps.stutterCount),
-      String(m.W2.gaps.stutterCount),
-      String(m.W3.gaps.stutterCount)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M4 Video Seeks / sec',
-      m.W1.seeks.videoSeeksPerSecond.toFixed(1),
-      m.W2.seeks.videoSeeksPerSecond.toFixed(1),
-      m.W3.seeks.videoSeeksPerSecond.toFixed(1)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M4 Audio Seeks / sec',
-      m.W1.seeks.audioSeeksPerSecond.toFixed(1),
-      m.W2.seeks.audioSeeksPerSecond.toFixed(1),
-      m.W3.seeks.audioSeeksPerSecond.toFixed(1)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M4 Seek Latency p50 (ms)',
-      m.W1.seeks.latencyP50Ms.toFixed(1),
-      m.W2.seeks.latencyP50Ms.toFixed(1),
-      m.W3.seeks.latencyP50Ms.toFixed(1)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M4 Seek Latency p95 (ms)',
-      m.W1.seeks.latencyP95Ms.toFixed(1),
-      m.W2.seeks.latencyP95Ms.toFixed(1),
-      m.W3.seeks.latencyP95Ms.toFixed(1)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M6 Vsync Interval p50 (ms)',
-      m.W1.vsync.p50IntervalMs.toFixed(1),
-      m.W2.vsync.p50IntervalMs.toFixed(1),
-      m.W3.vsync.p50IntervalMs.toFixed(1)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M6 Vsync Interval p95 (ms)',
-      m.W1.vsync.p95IntervalMs.toFixed(1),
-      m.W2.vsync.p95IntervalMs.toFixed(1),
-      m.W3.vsync.p95IntervalMs.toFixed(1)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M7 Canvas Resets / composite',
-      m.W1.canvas.resetsPerComposite.toFixed(2),
-      m.W2.canvas.resetsPerComposite.toFixed(2),
-      m.W3.canvas.resetsPerComposite.toFixed(2)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M7 Draws / composite',
-      (
-        m.W1.canvas.visibleDrawsPerComposite +
-        m.W1.canvas.offscreenDrawsPerComposite
-      ).toFixed(2),
-      (
-        m.W2.canvas.visibleDrawsPerComposite +
-        m.W2.canvas.offscreenDrawsPerComposite
-      ).toFixed(2),
-      (
-        m.W3.canvas.visibleDrawsPerComposite +
-        m.W3.canvas.offscreenDrawsPerComposite
-      ).toFixed(2)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M8 Stutters Near Decoder Insert %',
-      `${m.W1.decoders.stuttersNearInsertionsPercent.toFixed(0)}%`,
-      `${m.W2.decoders.stuttersNearInsertionsPercent.toFixed(0)}%`,
-      `${m.W3.decoders.stuttersNearInsertionsPercent.toFixed(0)}%`
-    )
-  );
-  lines.push(
-    formatRow(
-      'M9 Audio play() calls / sec',
-      m.W1.audio.playCallsPerSecond.toFixed(1),
-      m.W2.audio.playCallsPerSecond.toFixed(1),
-      m.W3.audio.playCallsPerSecond.toFixed(1)
-    )
-  );
-  lines.push(
-    formatRow(
-      'M10 Long Tasks Count',
-      String(m.W1.mainThread.longTasksCount),
-      String(m.W2.mainThread.longTasksCount),
-      String(m.W3.mainThread.longTasksCount)
-    )
-  );
+  const rowSpecs: Array<[string, (m: AggregatedMetrics) => string]> = [
+    ['M1 Wall Cadence (paint/wall)', (m) => typeof m.wallCadence === 'number' ? m.wallCadence.toFixed(3) : 'n/a'],
+    ['M1 Transport Cadence (paint/trans)', (m) => typeof m.transportCadence === 'number' ? m.transportCadence.toFixed(3) : 'n/a'],
+    ['M1 Clock Cadence (data-frame parity)', (m) => m.clockCadence.toFixed(3)],
+    ['M2 Frame Gap p50 (ms)', (m) => m.gaps.p50.toFixed(1)],
+    ['M2 Frame Gap p95 (ms)', (m) => m.gaps.p95.toFixed(1)],
+    ['M2 Stutters Count (> 1.5 frame)', (m) => String(m.gaps.stutterCount)],
+    ['Paused Seek Latency (host proxy ms)', (m) => m.pausedSeekLatencyMs.toFixed(1)],
+    ['Play to First Frame (ms)', (m) => m.playToFirstFrameMs.toFixed(1)],
+    ['M3 Video Seeks / sec', (m) => m.seeks.video.perSecond.toFixed(1)],
+    ['M3 Video Seek Latency p50 (ms)', (m) => m.seeks.video.latencyP50Ms.toFixed(1)],
+    ['M3 Video Seek Latency p95 (ms)', (m) => m.seeks.video.latencyP95Ms.toFixed(1)],
+    ['M3 Seek Window Share (%)', (m) => `${(m.seeks.windowShare * 100).toFixed(1)}%`],
+    ['M4 Buffering Duration (ms)', (m) => m.buffering.totalBufferingMs.toFixed(1)],
+    ['M4 Resync Episodes', (m) => String(m.buffering.resyncEpisodes)],
+    ['M5 Vsync Interval p50 (ms)', (m) => m.vsync.p50IntervalMs.toFixed(1)],
+    ['M5 Vsync Interval p95 (ms)', (m) => m.vsync.p95IntervalMs.toFixed(1)],
+    ['M6 Canvas Resets / composite', (m) => m.canvas.resetsPerComposite.toFixed(2)],
+    ['M7 Visible Draws / composite', (m) => m.canvas.visibleDrawsPerComposite.toFixed(2)],
+    ['M7 Live Video Draws (must be 0)', (m) => String(m.canvas.liveElementDraws)],
+    ['M8 Decoder Insertions', (m) => String(m.decoders.insertionsCount)],
+    ['M9 Audio play() calls / sec', (m) => m.audio.playCallsPerSecond.toFixed(1)],
+    ['M10 Long Tasks Count', (m) => String(m.mainThread.longTasksCount)],];
+  for (const [label, getter] of rowSpecs) lines.push(formatRow(label, getter));
 
   lines.push('');
   lines.push('--- NATIVE SPEED LIMIT (CEILING) ---');
   if (cleanReport.nativeCeiling.available) {
     lines.push(
-      `  Native Presented FPS: ${cleanReport.nativeCeiling.nativeFps.toFixed(1)} Hz / ${cleanReport.nativeCeiling.mediaFps} media fps`
+      `  Native Presented FPS: ${cleanReport.nativeCeiling.nativeFps.toFixed(1)} Hz / ${cleanReport.nativeCeiling.mediaFps.toFixed(1)} media fps`
     );
     lines.push(
-      `  Ceiling Ratio: ${cleanReport.nativeCeiling.ceilingRatio.toFixed(3)} (Dropped: ${cleanReport.nativeCeiling.droppedFrames} / ${cleanReport.nativeCeiling.totalFrames})`
+      `  Scanner Ceiling Ratio: ${cleanReport.nativeCeiling.ceilingRatio.toFixed(3)} (Windows: ${cleanReport.nativeCeiling.distinctWindowsPresented ?? cleanReport.nativeCeiling.presentedFrames}/${cleanReport.nativeCeiling.windowsElapsed ?? '?'}, Skips: ${cleanReport.nativeCeiling.skipsCount ?? 0}, Dropped: ${cleanReport.nativeCeiling.droppedFrames} / ${cleanReport.nativeCeiling.totalFrames})`
     );
   } else {
     lines.push(`  Ceiling: n/a (${cleanReport.nativeCeiling.reason})`);
@@ -1812,9 +1787,8 @@ export function formatReportSummary(report: BenchmarkReport): string {
   lines.push(
     `  Primary Identified Cause: ${report.causeClassification.primaryCause}`
   );
-  for (const obs of report.causeClassification.observations) {
+  for (const obs of report.causeClassification.observations)
     lines.push(`  - ${obs}`);
-  }
   lines.push('==================================================');
   return lines
     .join('\n')
@@ -1831,84 +1805,58 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
   let ceilingDurationSeconds: number | undefined;
   let repetitions: number | undefined;
   let format: 'table' | 'json' = 'table';
+  let cpuThrottle: number | undefined;
+  const rawWindowArgs: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === '--url-file' && i + 1 < argv.length) {
-      urlFile = argv[++i];
-    } else if (arg?.startsWith('--url-file=')) {
-      urlFile = arg.slice('--url-file='.length);
-    } else if (arg === '--url' && i + 1 < argv.length) {
-      url = argv[++i];
-    } else if (arg?.startsWith('--url=')) {
-      url = arg.slice('--url='.length);
-    } else if (arg === '--chrome-path' && i + 1 < argv.length) {
-      chromePath = argv[++i];
-    } else if (arg?.startsWith('--chrome-path=')) {
-      chromePath = arg.slice('--chrome-path='.length);
-    } else if (arg === '--output' && i + 1 < argv.length) {
-      outputJsonPath = argv[++i];
-    } else if (arg?.startsWith('--output=')) {
-      outputJsonPath = arg.slice('--output='.length);
-    } else if (arg === '--duration' && i + 1 < argv.length) {
-      durationSeconds = Number(argv[++i]);
-    } else if (arg?.startsWith('--duration=')) {
-      durationSeconds = Number(arg.slice('--duration='.length));
-    } else if (arg === '--warmup' && i + 1 < argv.length) {
-      warmupSeconds = Number(argv[++i]);
-    } else if (arg?.startsWith('--warmup=')) {
-      warmupSeconds = Number(arg.slice('--warmup='.length));
-    } else if (arg === '--ceiling-duration' && i + 1 < argv.length) {
-      ceilingDurationSeconds = Number(argv[++i]);
-    } else if (arg?.startsWith('--ceiling-duration=')) {
-      ceilingDurationSeconds = Number(arg.slice('--ceiling-duration='.length));
-    } else if (arg === '--repetitions' && i + 1 < argv.length) {
-      repetitions = Number(argv[++i]);
-    } else if (arg?.startsWith('--repetitions=')) {
-      repetitions = Number(arg.slice('--repetitions='.length));
-    } else if (arg === '--format' && i + 1 < argv.length) {
-      const f = argv[++i];
+    const a = argv[i] ?? '';
+    const next = () => argv[++i] ?? '';
+    const val = (pre: string) => (a.startsWith(pre) ? a.slice(pre.length) : next());
+    if (a === '--url-file' || a.startsWith('--url-file=')) urlFile = val('--url-file=');
+    else if (a === '--url' || a.startsWith('--url=')) url = val('--url=');
+    else if (a === '--chrome-path' || a.startsWith('--chrome-path=')) chromePath = val('--chrome-path=');
+    else if (a === '--output' || a.startsWith('--output=')) outputJsonPath = val('--output=');
+    else if (a === '--duration' || a.startsWith('--duration=')) durationSeconds = Number(val('--duration='));
+    else if (a === '--warmup' || a.startsWith('--warmup=')) warmupSeconds = Number(val('--warmup='));
+    else if (a === '--ceiling-duration' || a.startsWith('--ceiling-duration=')) ceilingDurationSeconds = Number(val('--ceiling-duration='));
+    else if (a === '--repetitions' || a.startsWith('--repetitions=')) repetitions = Number(val('--repetitions='));
+    else if (a === '--format' || a.startsWith('--format=')) {
+      const f = val('--format=');
       if (f === 'json' || f === 'table') format = f;
-    } else if (arg?.startsWith('--format=')) {
-      const f = arg.slice('--format='.length);
-      if (f === 'json' || f === 'table') format = f;
+    } else if (a === '--window' || a.startsWith('--window=')) rawWindowArgs.push(val('--window='));
+    else if (a === '--cpu-throttle' || a.startsWith('--cpu-throttle=')) cpuThrottle = Number(val('--cpu-throttle='));
+    else if (a === '--cpu-throttling-rate' || a.startsWith('--cpu-throttling-rate=')) cpuThrottle = Number(val('--cpu-throttling-rate='));
+  }
+
+  const windows: WindowOption[] = [];
+  for (const raw of rawWindowArgs) {
+    for (const p of raw.split(',')) {
+      const trimmed = p.trim();
+      if (!trimmed) continue;
+      if (trimmed.includes('=')) {
+        const [name, valStr] = trimmed.split('=');
+        const start = Number(valStr);
+        if (name && Number.isFinite(start)) windows.push({ name: name.trim(), start });
+      } else {
+        const start = Number(trimmed);
+        if (Number.isFinite(start)) windows.push({ name: `W${windows.length + 1}`, start });
+      }
     }
   }
 
   return {
-    urlFile,
-    url,
-    chromePath,
-    outputJsonPath,
-    durationSeconds,
-    warmupSeconds,
-    ceilingDurationSeconds,
-    repetitions,
     format,
+    ...(urlFile !== undefined ? { urlFile } : {}),
+    ...(url !== undefined ? { url } : {}),
+    ...(chromePath !== undefined ? { chromePath } : {}),
+    ...(outputJsonPath !== undefined ? { outputJsonPath } : {}),
+    ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+    ...(warmupSeconds !== undefined ? { warmupSeconds } : {}),
+    ...(ceilingDurationSeconds !== undefined ? { ceilingDurationSeconds } : {}),
+    ...(repetitions !== undefined ? { repetitions } : {}),
+    ...(windows.length > 0 ? { windows } : {}),
+    ...(cpuThrottle !== undefined ? { cpuThrottle } : {}),
   };
 }
 
-if (
-  import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith('otio-playback-bench.ts')
-) {
-  const options = parseCliArgs(process.argv.slice(2));
-  runOtioPlaybackBenchmark(options)
-    .then((report) => {
-      if (options.format === 'json') {
-        console.log(JSON.stringify(report, null, 2));
-      } else {
-        console.log(formatReportSummary(report));
-      }
-      process.exit(0);
-    })
-    .catch((error) => {
-      const raw = error instanceof Error ? error.message : String(error);
-      const clean = raw.replace(
-        /(?:https?|blob|file|data):\/\/[^\s"']+/gi,
-        '[URL]'
-      );
-      console.error(`Benchmark failed: ${clean}`);
-      process.exit(1);
-    });
-}
+
