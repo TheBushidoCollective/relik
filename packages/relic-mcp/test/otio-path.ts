@@ -126,6 +126,8 @@ const REQUIRED = [
   'official-archive',
   'pixels-offset',
   'native-playback',
+  'native-playback-late',
+  'paint-parity',
   'default-view-negative-head',
   'nested-200',
   'nested-no-spill',
@@ -1635,6 +1637,7 @@ interface OpenBrowserOptions {
   readonly recordMediaSeekTargets?: boolean;
   readonly blockWebCodecs?: boolean;
   readonly blockRequestVideoFrameCallback?: boolean;
+  readonly rvfcBusyWaitMs?: number;
 }
 
 function loopbackUrl(value: string): boolean {
@@ -2019,6 +2022,22 @@ async function openBrowser(
         delete globalThis.requestVideoFrameCallback;
       } catch {}
     })();`;
+    const busyWaitMs = options.rvfcBusyWaitMs ?? 0;
+    const rvfcLateTrap =
+      busyWaitMs > 0
+        ? `(() => {
+      const busy = ${busyWaitMs};
+      const orig = HTMLVideoElement.prototype.requestVideoFrameCallback;
+      if (typeof orig !== 'function') return;
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) {
+        return orig.call(this, (_now, metadata) => {
+          const start = performance.now();
+          while (performance.now() - start < busy) {}
+          return callback.call(this, performance.now(), metadata);
+        });
+      };
+    })();`
+        : '';
     const pagePrelude = [
       options.recordMediaSeekTargets
         ? String.raw`(() => {
@@ -2050,6 +2069,7 @@ async function openBrowser(
         })();`
         : '',
       blockRVFC ? rvfcTrap : '',
+      rvfcLateTrap,
       contextEventLogPrelude,
       options.blockWebCodecs ? webCodecsTrap : '',
     ]
@@ -7789,6 +7809,174 @@ try {
       );
     }
     pass('native-playback');
+    const parityCandidates = playbackSamples.filter((item) => {
+      const f = Math.floor(item.dataFrame + 1e-4);
+      return f === 24 || f === 30 || f === 36;
+    });
+    assert.ok(
+      parityCandidates.length > 0,
+      'no playback sample with floor matching chosen frames 24, 30, or 36'
+    );
+    for (const item of parityCandidates) {
+      const chosenFrame = Math.floor(item.dataFrame + 1e-4);
+      await seekTo(browser, chosenFrame);
+      const pausedSample = await sampleCanvas(browser, width, height);
+      const parityRmse = rmse(item.sample, pausedSample);
+      assert.ok(
+        parityRmse <= 1,
+        `paint parity RMSE ${parityRmse.toFixed(3)} exceeded 1 for chosen frame ${chosenFrame}`
+      );
+    }
+    pass('paint-parity');
+
+    const lateBrowser = await openBrowser(shareUrl, sessionToken, {
+      label: 'native-playback-late',
+      recordMediaSeekTargets: true,
+      rvfcBusyWaitMs: 60,
+    });
+    try {
+      await waitReady(lateBrowser);
+      await seekTo(lateBrowser, 0);
+      await clearMediaSeekTargets(lateBrowser);
+
+      await lateBrowser.evaluate<void>(`(() => {
+        globalThis.__otioObservedFrames = [];
+        const root = document.querySelector('section.otio-view');
+        if (root?.dataset?.frame != null) {
+          globalThis.__otioObservedFrames.push(Number(root.dataset.frame));
+        }
+        const observer = new MutationObserver(() => {
+          const view = document.querySelector('section.otio-view');
+          if (view?.dataset?.frame != null) {
+            globalThis.__otioObservedFrames.push(Number(view.dataset.frame));
+          }
+        });
+        if (root) {
+          observer.observe(root, { attributes: true, attributeFilter: ['data-frame'] });
+        }
+        globalThis.__otioFrameObserver = observer;
+      })()`);
+
+      const latePlaybackStarted = await lateBrowser.evaluate<boolean>(`(() => {
+        const { promise, resolve } = Promise.withResolvers();
+        const btn = document.querySelector('button.otio-play');
+        const root = document.querySelector('section.otio-view');
+        if (!btn || !root) { resolve(false); return promise; }
+        if (root.dataset.playing === 'true') { resolve(true); return promise; }
+        btn.click();
+        const start = Date.now();
+        const check = () => {
+          if (root.dataset.playing === 'true') resolve(true);
+          else if (Date.now() - start > 4000) resolve(false);
+          else setTimeout(check, 25);
+        };
+        check();
+        return promise;
+      })()`);
+      assert.ok(
+        latePlaybackStarted,
+        'late playback did not enter playing state'
+      );
+
+      // Eight samples at 180 ms keep every sample inside timeline frames 0..44.
+      const lateSampleIntervalMs = 180;
+      const latePlaybackSamples: Array<{
+        sample: SampledCanvas;
+        dataFrame: number;
+        center: number;
+      }> = [];
+
+      for (let i = 0; i < 8; i++) {
+        const { promise: delayPromise, resolve: delayResolve } =
+          Promise.withResolvers<void>();
+        setTimeout(delayResolve, lateSampleIntervalMs);
+        await delayPromise;
+        const sample = await sampleCanvas(lateBrowser, width, height);
+        assert.ok(
+          sample.dataFrame !== null &&
+            sample.dataFrame !== undefined &&
+            Number.isFinite(sample.dataFrame),
+          `late playback sample ${i + 1}/8 missing data-frame in Runtime.evaluate`
+        );
+        assert.ok(
+          sample.center !== null &&
+            sample.center !== undefined &&
+            Number.isFinite(sample.center),
+          `late playback sample ${i + 1}/8 missing center row bar measurement at data-frame ${sample.dataFrame}`
+        );
+        latePlaybackSamples.push({
+          sample,
+          dataFrame: sample.dataFrame,
+          center: sample.center,
+        });
+      }
+
+      await lateBrowser.evaluate<void>(`(() => {
+        const root = document.querySelector('section.otio-view');
+        const btn = document.querySelector('button.otio-play');
+        if (root?.dataset.playing === 'true' && btn instanceof HTMLButtonElement) {
+          btn.click();
+        }
+        if (globalThis.__otioFrameObserver) {
+          globalThis.__otioFrameObserver.disconnect();
+        }
+      })()`);
+      assert.equal(
+        latePlaybackSamples.length,
+        8,
+        'late playback did not collect 8 samples'
+      );
+
+      for (const [idx, item] of latePlaybackSamples.entries()) {
+        const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+        assert.ok(
+          timelineFrame <= 44,
+          `late playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44 ceiling`
+        );
+        const expectedFileFrame =
+          plan.primary_clip_frames?.[String(timelineFrame)] ??
+          plan.primary_file_frame + (timelineFrame - plan.primary_frame);
+
+        const expectedRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame
+        );
+        const wrongRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame + 2
+        );
+
+        const toExpectedPx =
+          Math.abs(item.center - expectedRow.center) * expectedRow.width;
+        const toWrongPx =
+          Math.abs(item.center - wrongRow.center) * wrongRow.width;
+
+        assert.ok(
+          toExpectedPx <= 3,
+          `late playback sample ${idx + 1}/8 canvas bar is ${toExpectedPx.toFixed(2)} px from official file frame ${expectedFileFrame} at timeline frame ${timelineFrame}`
+        );
+        assert.ok(
+          toWrongPx >= 12,
+          `late playback sample ${idx + 1}/8 canvas bar is ${toWrongPx.toFixed(2)} px from wrong file frame ${expectedFileFrame + 2} at timeline frame ${timelineFrame}`
+        );
+
+        const expectedFrame = await extractFrame(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame,
+          width,
+          height
+        );
+        const expectedBar = barColumn(expectedFrame, width, height);
+        const actualBar = barColumn(item.sample, width, height);
+        assert.ok(
+          Math.abs(actualBar - expectedBar) <= 1,
+          `late playback sample ${idx + 1}/8 bar column ${actualBar} does not match official expected column ${expectedBar} at timeline frame ${timelineFrame}`
+        );
+      }
+      pass('native-playback-late');
+    } finally {
+      await lateBrowser.close();
+    }
 
     const negativeHead = plan.default_view_negative_head;
     assert.ok(
