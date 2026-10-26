@@ -4708,4 +4708,62 @@ describe('otio native video playback S-C and S-B', () => {
       playback.dispose();
     }
   });
+  test('regression 3: when first advanced tag is 2, the tick at the tau-correct wallFor(2.25) approves pixel 2', async () => {
+    const mediaBlob = new Blob(['reg 3 video test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      videoMedia!.advanceTo(0);
+
+      // First advanced tag skips to tag 2
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 2,
+      });
+
+      // Tick at tau-correct wallFor(2.25)
+      outCanvas.ctx.drawnSources.length = 0;
+      raf?.(tau + (2.25 / 30) * 1000);
+      expect(outCanvas.pixel.r).toBe(2);
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
+    } finally {
+      playback.dispose();
+    }
+  });
 });
