@@ -5994,6 +5994,19 @@ canvas.relic-page {
   border-left-color: var(--oxide);
 }
 
+/* Asking for a fresh sign-in link. A send in flight dims its button, as a
+   loading offer does, and a send that failed takes the oxide rule an error
+   takes. The refusal itself keeps the patina rule: it is a step, not a fault. */
+.passkey-offer[data-state="link-sending"] [data-passkey-offer-link],
+.decision-passkey[data-state="sending"] [data-passkey-link-send] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.passkey-offer[data-state="link-failed"] {
+  border-left-color: var(--oxide);
+}
+
 @keyframes passkey-running {
   from {
     background-position: 100% 0;
