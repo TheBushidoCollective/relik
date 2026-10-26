@@ -1319,4 +1319,38 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
     );
     expect(linkBtnFail.disabled).toBe(false);
   });
+
+  // A press while the options are still loading would be dropped: the
+  // handler only acts once a challenge is cached. On a real network that
+  // window lasts a second or more, so the button must not be pressable then.
+  test('The offer button is disabled until its options arrive', async () => {
+    const gate = Promise.withResolvers<void>();
+    const fetch = (async () => {
+      await gate.promise;
+      return new Response(
+        JSON.stringify({ mode: 'create', public_key: SAMPLE_CREATION_OPTIONS }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const host = new ElementStub('div');
+    mountPasskeyOffer({
+      host: host as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch },
+      store: { getItem: () => null, setItem: () => {} },
+      requestLink: async () => ({ kind: 'sent', message: 'Link sent.' }),
+      onDone: () => {},
+    });
+
+    const offer = one(host, 'data-passkey-offer');
+    const createBtn = one(host, 'data-passkey-offer-create');
+    await tick(10);
+    expect(offer.getAttribute('data-state')).toBe('loading');
+    expect(createBtn.disabled).toBe(true);
+
+    gate.resolve();
+    await tick(10);
+    expect(offer.getAttribute('data-state')).toBe('ready');
+    expect(createBtn.disabled).toBe(false);
+  });
 });

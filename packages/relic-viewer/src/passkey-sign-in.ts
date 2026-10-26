@@ -710,9 +710,17 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
   warningEl.hidden = true;
   warningEl.setAttribute('hidden', '');
 
-  const createBtn = el('button', 'action primary', COPY_OFFER_CREATE);
+  const createBtn = el(
+    'button',
+    'action primary',
+    COPY_OFFER_CREATE
+  ) as HTMLButtonElement;
   createBtn.setAttribute('type', 'button');
   createBtn.setAttribute('data-passkey-offer-create', '');
+  // The press only acts once a challenge is cached, so until the options
+  // arrive (and while a ceremony runs) the button must not take presses
+  // it would drop silently. The card starts in `loading`.
+  createBtn.disabled = true;
 
   const linkBtn = el(
     'button',
@@ -839,6 +847,7 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
     if (host !== card) {
       host.setAttribute('data-state', state);
     }
+    createBtn.disabled = state === 'loading' || state === 'working';
   }
 
   async function fetchOptions(): Promise<void> {

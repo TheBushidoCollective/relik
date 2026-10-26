@@ -301,7 +301,13 @@ export async function runPasskeySignInSequence(
 
     console.log('PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown');
 
-    // Step 4: Click [data-passkey-offer-create] and wait for data-state="created"
+    // Step 4: wait until the button takes presses (it stays disabled while
+    // the options load, which on the live service takes a second or more),
+    // click it, and wait for data-state="created".
+    await browser.waitForSelector(
+      '[data-passkey-offer][data-state="ready"] [data-passkey-offer-create]:not([disabled])',
+      20000
+    );
     await browser.clickSelector('[data-passkey-offer-create]');
     await browser.waitForSelector(
       '[data-passkey-offer][data-state="created"]',
