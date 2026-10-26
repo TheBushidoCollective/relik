@@ -59,7 +59,7 @@ export const DECISION_LEAD =
 export const DECISION_TOFU =
   'The first passkey set up for an address becomes the only way to record ' +
   'decisions as that address. Adding another later needs this one.';
-export const DECISION_LINK_REQUIRED = `${COPY_LINK_REQUIRED_LEAD} Send a new one, open it, then choose again. Nothing was recorded.`;
+export const DECISION_LINK_REQUIRED = `${COPY_LINK_REQUIRED_LEAD} Email a new code, type it here, and setting up the passkey carries on. Nothing was recorded.`;
 export const DECISION_CANCELLED = 'Cancelled. Nothing was recorded.';
 export const DECISION_UNAVAILABLE =
   'Decisions open on this relic once its publisher republishes it.';
@@ -143,7 +143,8 @@ type PasskeyStep =
   | {
       readonly phase: 'link';
       readonly state: 'required' | 'sending' | 'sent' | 'failed';
-      readonly outcome?: LinkRequestOutcome;
+      readonly outcome?: LinkRequestOutcome | undefined;
+      readonly codeEl?: HTMLElement | undefined;
     };
 
 interface Outcome {
@@ -638,10 +639,23 @@ export function openDecisionPanel(
                 const outcome = await options.requestLink(email);
                 if (!open) return;
                 if (outcome.kind === 'sent') {
+                  const codeEl =
+                    typeof outcome.codeEntry === 'function'
+                      ? outcome.codeEntry((_email) => {
+                          if (open) {
+                            enterPasskey(verdict);
+                          }
+                        })
+                      : undefined;
                   step = {
                     kind: 'passkey',
                     verdict,
-                    passkey: { phase: 'link', state: 'sent', outcome },
+                    passkey: {
+                      phase: 'link',
+                      state: 'sent',
+                      outcome,
+                      ...(codeEl !== undefined ? { codeEl } : {}),
+                    },
                   };
                 } else {
                   step = {
@@ -702,10 +716,23 @@ export function openDecisionPanel(
                 const outcome = await options.requestLink(email);
                 if (!open) return;
                 if (outcome.kind === 'sent') {
+                  const codeEl =
+                    typeof outcome.codeEntry === 'function'
+                      ? outcome.codeEntry((_email) => {
+                          if (open) {
+                            enterPasskey(verdict);
+                          }
+                        })
+                      : undefined;
                   step = {
                     kind: 'passkey',
                     verdict,
-                    passkey: { phase: 'link', state: 'sent', outcome },
+                    passkey: {
+                      phase: 'link',
+                      state: 'sent',
+                      outcome,
+                      ...(codeEl !== undefined ? { codeEl } : {}),
+                    },
                   };
                 } else {
                   step = {
@@ -754,6 +781,9 @@ export function openDecisionPanel(
           passkey.outcome.warning
         ) {
           box.appendChild(el('p', 'compose-warning', passkey.outcome.warning));
+        }
+        if (passkey.codeEl) {
+          box.appendChild(passkey.codeEl);
         }
         box.appendChild(notNow);
         return box;

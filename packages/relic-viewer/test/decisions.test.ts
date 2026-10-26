@@ -1156,15 +1156,15 @@ describe('the decisions sheet', () => {
     expect(linkSection).toBeDefined();
     expect(linkSection.getAttribute('data-state')).toBe('required');
     expect(textOf(linkSection)).toContain(
-      'A first passkey can only be added right after you sign in with a link.'
+      'A first passkey can only be added right after you sign in from an email.'
     );
     expect(textOf(linkSection)).toContain(
-      'Send a new one, open it, then choose again. Nothing was recorded.'
+      'Email a new code, type it here, and setting up the passkey carries on. Nothing was recorded.'
     );
     expect(textOf(linkSection)).toContain('voter@example.com');
 
     const sendBtn = one(panel, 'data-passkey-link-send');
-    expect(sendBtn.textContent).toBe('Send me a new link');
+    expect(sendBtn.textContent).toBe('Email me a new code');
     expect(sendBtn.disabled).toBe(false);
 
     // Press Send me a new link -> sending -> sent
@@ -1203,9 +1203,60 @@ describe('the decisions sheet', () => {
     const failSectionAfter = one(failPanel, 'data-passkey-link');
     expect(failSectionAfter.getAttribute('data-state')).toBe('failed');
     expect(textOf(failSectionAfter)).toContain(
-      'Relic could not send a link just now. Try again later.'
+      'Relic could not send the email just now. Try again later.'
     );
     const failSendBtnAfter = one(failPanel, 'data-passkey-link-send');
     expect(failSendBtnAfter.disabled).toBe(false);
+  });
+
+  test('with injected codeEntry the panel goes sent to options to create', async () => {
+    let capturedOnVerified: ((email: string) => void) | undefined;
+    const testCodeNode = new ElementStub('div');
+    testCodeNode.setAttribute('data-test-code-field', '');
+    testCodeNode.textContent = 'Decision code field';
+
+    const { deps } = service({
+      '/decisions/list': listReply(RECORDS),
+      '/decisions/options': () => problem('passkey_required', 409),
+      '/api/auth/passkeys/options': [
+        () => problem('passkey_fresh_link_required', 401),
+        () => json({ mode: 'create', public_key: CREATION_OPTIONS }),
+      ],
+    });
+
+    const { panel, handle } = await openPanel(deps, {
+      session: { kind: 'verified', email: 'voter@example.com' },
+      requestLink: async (email: string) => ({
+        kind: 'sent',
+        message: `If ${email} can receive mail, an email with a code is on its way.`,
+        codeEntry: (onVerified) => {
+          capturedOnVerified = onVerified;
+          return testCodeNode as unknown as HTMLElement;
+        },
+      }),
+    });
+
+    press(verdict(panel, 'approve'));
+    await settle(handle);
+
+    const linkSection = one(panel, 'data-passkey-link');
+    expect(linkSection.getAttribute('data-state')).toBe('required');
+
+    const sendBtn = one(panel, 'data-passkey-link-send');
+    press(sendBtn);
+    await settle(handle);
+
+    const sentSection = one(panel, 'data-passkey-link');
+    expect(sentSection.getAttribute('data-state')).toBe('sent');
+    expect(one(sentSection, 'data-test-code-field')).toBe(testCodeNode);
+    expect(capturedOnVerified).toBeDefined();
+
+    // Trigger onVerified: panel should call enterPasskey, fetch options, and reach create
+    capturedOnVerified!('voter@example.com');
+    await settle(handle);
+
+    const createBtn = one(panel, 'data-passkey-create');
+    expect(createBtn).toBeDefined();
+    expect(textOf(panel)).toContain(DECISION_TOFU);
   });
 });
