@@ -147,6 +147,10 @@ export type NativeCeilingResult =
       readonly nativeFps: number;
       readonly mediaFps: number;
       readonly ceilingRatio: number;
+      readonly nativeFrameHz?: number;
+      readonly mediaSeconds?: number;
+      readonly callbackFrames?: number;
+      readonly wallMs?: number;
     }
   | {
       readonly available: false;
@@ -161,6 +165,7 @@ export interface BenchmarkReport {
     readonly platform: string;
     readonly cpuCores: number;
     readonly gpuFeatures?: Record<string, unknown> | undefined;
+    readonly nonLoopbackBlockedCount?: number;
   };
   readonly structure: {
     readonly durationSeconds: number;
@@ -263,6 +268,17 @@ export function createOtioPageProfilerScript(): string {
         },
       });
     }
+    // Bounded buffers to avoid unbounded memory growth
+    const MAX_BUFFER_SAMPLES = 10000;
+    let profilerBufferOverflow = false;
+
+    function pushBounded(arr, item, limit = MAX_BUFFER_SAMPLES) {
+      if (arr.length < limit) {
+        arr.push(item);
+      } else {
+        profilerBufferOverflow = true;
+      }
+    }
 
     // State collections
     const activeSeeks = [];
@@ -279,7 +295,6 @@ export function createOtioPageProfilerScript(): string {
     let lastVsyncTime = null;
     let isRecording = false;
     let recordingStartTime = 0;
-
     // 2. currentTime setter trap on HTMLMediaElement
     try {
       const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
@@ -310,13 +325,13 @@ export function createOtioPageProfilerScript(): string {
                 startTime: now,
                 latency: null,
               };
-              activeSeeks.push(seekRecord);
+              pushBounded(activeSeeks, seekRecord, 5000);
 
               const onSeeked = () => {
                 this.removeEventListener('seeked', onSeeked);
                 this.removeEventListener('error', onSeeked);
                 seekRecord.latency = performance.now() - now;
-                completedSeeks.push(seekRecord);
+                pushBounded(completedSeeks, seekRecord, 5000);
               };
               this.addEventListener('seeked', onSeeked, { once: true });
               this.addEventListener('error', onSeeked, { once: true });
@@ -335,7 +350,7 @@ export function createOtioPageProfilerScript(): string {
       const origPlay = HTMLMediaElement.prototype.play;
       HTMLMediaElement.prototype.play = function(...args) {
         if (isRecording && (this instanceof HTMLAudioElement || this.tagName === 'AUDIO')) {
-          audioPlays.push({ timestamp: performance.now() });
+          pushBounded(audioPlays, { timestamp: performance.now() }, 5000);
         }
         return origPlay.apply(this, args);
       };
@@ -394,10 +409,14 @@ export function createOtioPageProfilerScript(): string {
       const longTaskObs = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           if (isRecording) {
-            longTasks.push({
-              startTime: entry.startTime,
-              duration: entry.duration,
-            });
+            pushBounded(
+              longTasks,
+              {
+                startTime: entry.startTime,
+                duration: entry.duration,
+              },
+              2000
+            );
           }
         }
       });
@@ -408,13 +427,16 @@ export function createOtioPageProfilerScript(): string {
       const loafObs = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           if (isRecording) {
-            loaves.push({
-              startTime: entry.startTime,
-              duration: entry.duration,
-              blockingDuration: entry.blockingDuration,
-              styleAndLayoutDuration: entry.styleAndLayoutDuration,
-            });
-          }
+            pushBounded(
+              loaves,
+              {
+                startTime: entry.startTime,
+                duration: entry.duration,
+                blockingDuration: entry.blockingDuration,
+                styleAndLayoutDuration: entry.styleAndLayoutDuration,
+              },
+              2000
+            );
         }
       });
       loafObs.observe({ type: 'long-animation-frame', buffered: true });
@@ -425,7 +447,7 @@ export function createOtioPageProfilerScript(): string {
       if (lastVsyncTime !== null) {
         const delta = now - lastVsyncTime;
         if (isRecording) {
-          vsyncIntervals.push(delta);
+          pushBounded(vsyncIntervals, delta, MAX_BUFFER_SAMPLES);
         }
       }
       lastVsyncTime = now;
@@ -444,11 +466,15 @@ export function createOtioPageProfilerScript(): string {
             if (frameStr !== undefined && frameStr !== null) {
               const frameNum = Number(frameStr);
               if (isRecording) {
-                compositeFrames.push({
-                  frame: frameNum,
-                  timestamp: performance.now(),
-                  buffering: root.dataset.buffering === 'true',
-                });
+                pushBounded(
+                  compositeFrames,
+                  {
+                    frame: frameNum,
+                    timestamp: performance.now(),
+                    buffering: root.dataset.buffering === 'true',
+                  },
+                  MAX_BUFFER_SAMPLES
+                );
               }
             }
           }
@@ -473,7 +499,7 @@ export function createOtioPageProfilerScript(): string {
                 insertionTime: now,
                 loadedDataLatency: null,
               };
-              decoderInsertions.push(record);
+              pushBounded(decoderInsertions, record, 2000);
               const onLoaded = () => {
                 node.removeEventListener('loadeddata', onLoaded);
                 node.removeEventListener('error', onLoaded);
@@ -492,6 +518,55 @@ export function createOtioPageProfilerScript(): string {
       decoderObserver.observe(host, { childList: true });
     }
 
+    function getAuthoritativeTimelineRate() {
+      // 1. Check .otio-ruler-label: element('div', 'otio-ruler-label', `${rate} fps`)
+      const rulerLabel = document.querySelector('.otio-ruler-label');
+      if (rulerLabel && rulerLabel.textContent) {
+        const match = rulerLabel.textContent.trim().match(/^([\d.]+)\s*fps$/i);
+        if (match) {
+          const r = Number(match[1]);
+          if (Number.isFinite(r) && r > 0) return r;
+        }
+      }
+
+      // 2. Check clock output element: clock.dataset['rate'] = String(state.time.rate)
+      const clock = document.querySelector('output.otio-time, .otio-time');
+      if (clock && clock.dataset.rate) {
+        const r = Number(clock.dataset.rate);
+        if (Number.isFinite(r) && r > 0) return r;
+      }
+
+      // 3. Check root dataset if ever set
+      const root = document.querySelector('section.otio-view, .otio-view');
+      if (root && root.dataset.rate) {
+        const r = Number(root.dataset.rate);
+        if (Number.isFinite(r) && r > 0) return r;
+      }
+
+      // 4. Check placed items mode rate as secondary cross-check
+      const items = document.querySelectorAll('.otio-item[data-rate]');
+      if (items.length > 0) {
+        const counts = new Map();
+        for (const item of items) {
+          const r = Number(item.dataset.rate);
+          if (Number.isFinite(r) && r > 0) {
+            counts.set(r, (counts.get(r) || 0) + 1);
+          }
+        }
+        let bestRate = 0;
+        let maxCount = 0;
+        for (const [r, count] of counts.entries()) {
+          if (count > maxCount) {
+            maxCount = count;
+            bestRate = r;
+          }
+        }
+        if (bestRate > 0) return bestRate;
+      }
+
+      throw new Error('Authoritative timeline rate missing from DOM metadata (no ruler, clock, or item rate found)');
+    }
+
     // Global profiler helper interface
     globalThis.__relicOtioProfiler = {
       async waitForMount(timeoutMs = 30000) {
@@ -507,8 +582,8 @@ export function createOtioPageProfilerScript(): string {
           const play = document.querySelector('button.otio-play');
           const decoders = document.querySelector('.otio-video-decoders');
           if (root && seek && play) {
-            attachViewObserver(root);
-            if (decoders) attachDecoderObserver(decoders);
+            if (!otioViewObserver) attachViewObserver(root);
+            if (decoders && !decoderObserver) attachDecoderObserver(decoders);
             if (root.dataset.buffering === 'false') {
               return { mounted: true };
             }
@@ -522,7 +597,7 @@ export function createOtioPageProfilerScript(): string {
         const root = document.querySelector('section.otio-view');
         if (!root) throw new Error('section.otio-view not found');
         const items = [...document.querySelectorAll('.otio-item')];
-        const rails = [...document.querySelectorAll('.otio-track-row, .otio-rail')];
+        const rails = [...document.querySelectorAll('.otio-track-row')];
         const diagnostics = [...document.querySelectorAll('.otio-diagnostic')];
         const decoders = [...document.querySelectorAll('.otio-video-decoders video')];
         const audios = [...document.querySelectorAll('audio')];
@@ -530,23 +605,44 @@ export function createOtioPageProfilerScript(): string {
         const diagCodes = {};
         for (const d of diagnostics) {
           const text = (d.textContent || '').trim();
-          const code = text.split(' · ')[0] || 'unknown';
+          let code = 'unknown';
+          if (text.includes(' · ')) {
+            const candidate = text.split(' · ')[0].trim();
+            if (/^[a-zA-Z0-9_-]{1,64}$/.test(candidate)) {
+              code = candidate;
+            } else {
+              code = 'unclassified-diagnostic';
+            }
+          } else {
+            code = 'generic-diagnostic';
+          }
           diagCodes[code] = (diagCodes[code] || 0) + 1;
         }
 
+        const timelineRate = getAuthoritativeTimelineRate();
+
         let maxEnd = 0;
-        let timelineRate = 24;
         const boundaries = new Set();
         const parsedItems = [];
         let transitionCount = 0;
 
         for (const item of items) {
-          const startVal = Number(item.dataset.start ?? 0);
-          const durVal = Number(item.dataset.duration ?? 0);
-          const rateVal = Number(item.dataset.rate ?? 24);
-          if (rateVal > 0) timelineRate = rateVal;
-          const startSec = startVal / rateVal;
-          const endSec = (startVal + durVal) / rateVal;
+          if (!item.dataset.start || !item.dataset.duration) {
+            continue;
+          }
+          const startVal = Number(item.dataset.start);
+          const durVal = Number(item.dataset.duration);
+          const itemRate = item.dataset.rate ? Number(item.dataset.rate) : timelineRate;
+          if (
+            !Number.isFinite(startVal) ||
+            !Number.isFinite(durVal) ||
+            !Number.isFinite(itemRate) ||
+            itemRate <= 0
+          ) {
+            continue;
+          }
+          const startSec = startVal / itemRate;
+          const endSec = (startVal + durVal) / itemRate;
           if (endSec > maxEnd) maxEnd = endSec;
           boundaries.add(startSec);
           boundaries.add(endSec);
@@ -555,10 +651,23 @@ export function createOtioPageProfilerScript(): string {
           parsedItems.push({
             startSec,
             endSec,
-            durationSec: durVal / rateVal,
+            durationSec: durVal / itemRate,
             isTransition,
             isGap: item.classList.contains('is-gap'),
           });
+        }
+
+        const seekInput = document.querySelector('input.otio-seek');
+        if (seekInput && seekInput.max) {
+          const seekFrames = Number(seekInput.max) + 1;
+          if (Number.isFinite(seekFrames) && seekFrames > 0 && timelineRate > 0) {
+            const seekDuration = seekFrames / timelineRate;
+            if (seekDuration > maxEnd) maxEnd = seekDuration;
+          }
+        }
+
+        if (maxEnd <= 0) {
+          throw new Error('Timeline duration could not be determined from DOM');
         }
 
         const sortedBoundaries = [...boundaries].sort((a, b) => a - b);
@@ -647,19 +756,41 @@ export function createOtioPageProfilerScript(): string {
           await delay(200);
         }
 
-        const rateStr = root.dataset.rate || '24';
-        const rate = Number(rateStr) || 24;
+        const rate = getAuthoritativeTimelineRate();
         const targetFrame = Math.round(startSeconds * rate);
 
         seekInput.value = String(targetFrame);
         seekInput.dispatchEvent(new Event('input', { bubbles: true }));
 
         const seekStart = performance.now();
+        let seekSettled = false;
+        let lastObservedFrame = null;
+
+        await delay(50);
+
         while (performance.now() - seekStart < 10000) {
-          if (root.dataset.buffering === 'false') break;
+          const currentBuffering = root.dataset.buffering;
+          const currentFrameStr = root.dataset.frame;
+          if (currentFrameStr !== undefined && currentFrameStr !== null) {
+            lastObservedFrame = Number(currentFrameStr);
+          }
+          if (
+            currentBuffering === 'false' &&
+            lastObservedFrame !== null &&
+            Number.isFinite(lastObservedFrame) &&
+            Math.abs(Math.floor(lastObservedFrame) - Math.floor(targetFrame)) <= 1
+          ) {
+            seekSettled = true;
+            break;
+          }
           await delay(50);
         }
 
+        if (!seekSettled) {
+          throw new Error(
+            `Seek to target frame ${targetFrame} (${startSeconds}s) timed out or failed to correlate (observed frame: ${lastObservedFrame}, buffering: ${root.dataset.buffering})`
+          );
+        }
         playBtn.click();
         await delay(warmupSeconds * 1000);
 
@@ -686,19 +817,38 @@ export function createOtioPageProfilerScript(): string {
         if (root.dataset.playing === 'true') {
           playBtn.click();
         }
+        if (profilerBufferOverflow) {
+          throw new Error(
+            'Profiler buffer overflow: max samples exceeded during window repetition (inconclusive)'
+          );
+        }
 
-        const distinctFrames = new Set(compositeFrames.map((c) => c.frame));
+        if (compositeFrames.length === 0) {
+          throw new Error(
+            `No composite frames recorded during ${windowKey} repetition (0 samples)`
+          );
+        }
+
+        const distinctTimelineFrames = new Set(
+          compositeFrames.map((c) => Math.floor(c.frame))
+        );
         const framesElapsed = actualDurationSeconds * rate;
-        const cadenceRatio = framesElapsed > 0 ? (distinctFrames.size / framesElapsed) : 0;
+        const cadenceRatio =
+          framesElapsed > 0 ? distinctTimelineFrames.size / framesElapsed : 0;
 
         const frameGaps = [];
         const jumpedHistogram = { '0': 0, '1': 0, '2': 0, '3+': 0 };
         for (let i = 0; i < compositeFrames.length - 1; i++) {
           const delta = compositeFrames[i + 1].frame - compositeFrames[i].frame;
           frameGaps.push(delta);
-          if (delta === 0) jumpedHistogram['0']++;
-          else if (delta === 1) jumpedHistogram['1']++;
-          else if (delta === 2) jumpedHistogram['2']++;
+          const jumpStep = Math.max(
+            0,
+            Math.floor(compositeFrames[i + 1].frame) -
+              Math.floor(compositeFrames[i].frame)
+          );
+          if (jumpStep === 0) jumpedHistogram['0']++;
+          else if (jumpStep === 1) jumpedHistogram['1']++;
+          else if (jumpStep === 2) jumpedHistogram['2']++;
           else jumpedHistogram['3+']++;
         }
 
@@ -749,7 +899,7 @@ export function createOtioPageProfilerScript(): string {
           windowKey,
           actualDurationSeconds,
           compositesCount: compositeFrames.length,
-          distinctFramesCount: distinctFrames.size,
+          distinctFramesCount: distinctTimelineFrames.size,
           cadenceRatio,
           gaps: {
             p50: p50Gap,
@@ -825,7 +975,13 @@ export function createOtioPageProfilerScript(): string {
         testVid.playsInline = true;
         testVid.preload = 'auto';
         testVid.src = src;
-        testVid.style.display = 'none';
+        testVid.style.position = 'fixed';
+        testVid.style.left = '-9999px';
+        testVid.style.top = '-9999px';
+        testVid.style.width = '1px';
+        testVid.style.height = '1px';
+        testVid.style.opacity = '0.01';
+        testVid.style.pointerEvents = 'none';
         host.appendChild(testVid);
 
         try {
@@ -834,6 +990,14 @@ export function createOtioPageProfilerScript(): string {
             setTimeout(resolve, ms);
             return promise;
           };
+          if (typeof testVid.requestVideoFrameCallback !== 'function') {
+            return {
+              available: false,
+              reason: 'requestVideoFrameCallback is not supported',
+              ceilingRatio: 'n/a',
+            };
+          }
+
           if (testVid.readyState < 2) {
             const { promise: loadedPromise, resolve: onLoaded } = Promise.withResolvers();
             testVid.addEventListener('loadeddata', onLoaded, { once: true });
@@ -842,18 +1006,32 @@ export function createOtioPageProfilerScript(): string {
           }
 
           let presentedFrames = 0;
+          let firstMediaTime = null;
+          let lastMediaTime = null;
+          let firstPresentationTime = null;
+          let lastPresentationTime = null;
           let running = true;
-          function onFrame() {
+
+          function onFrame(now, metadata) {
             if (!running) return;
             presentedFrames++;
-            if ('requestVideoFrameCallback' in testVid) {
+            if (metadata && typeof metadata.mediaTime === 'number') {
+              if (firstMediaTime === null) firstMediaTime = metadata.mediaTime;
+              lastMediaTime = metadata.mediaTime;
+            }
+            if (metadata && typeof metadata.presentationTime === 'number') {
+              if (firstPresentationTime === null) firstPresentationTime = metadata.presentationTime;
+              lastPresentationTime = metadata.presentationTime;
+            } else {
+              if (firstPresentationTime === null) firstPresentationTime = now;
+              lastPresentationTime = now;
+            }
+            if (running && typeof testVid.requestVideoFrameCallback === 'function') {
               testVid.requestVideoFrameCallback(onFrame);
             }
           }
-          if ('requestVideoFrameCallback' in testVid) {
-            testVid.requestVideoFrameCallback(onFrame);
-          }
 
+          testVid.requestVideoFrameCallback(onFrame);
           const start = performance.now();
           await testVid.play();
           await delay(durationSeconds * 1000);
@@ -869,10 +1047,47 @@ export function createOtioPageProfilerScript(): string {
             totalFrames = quality.totalVideoFrames || presentedFrames;
           }
 
-          const nativeFps = elapsedSec > 0 ? (presentedFrames / elapsedSec) : 0;
-          const root = document.querySelector('section.otio-view');
-          const mediaFps = Number(root?.dataset?.rate || '24') || 24;
-          const ceilingRatio = mediaFps > 0 ? (nativeFps / mediaFps) : 0;
+          if (presentedFrames === 0) {
+            return {
+              available: false,
+              reason: 'Zero frames presented during native ceiling playback (inconclusive / rVFC stalled)',
+              ceilingRatio: 'n/a',
+            };
+          }
+
+          const presentationElapsedSec =
+            lastPresentationTime !== null &&
+            firstPresentationTime !== null &&
+            lastPresentationTime > firstPresentationTime
+              ? (lastPresentationTime - firstPresentationTime) / 1000
+              : elapsedSec;
+
+          const nativeFps =
+            presentationElapsedSec > 0
+              ? presentedFrames / presentationElapsedSec
+              : elapsedSec > 0
+                ? presentedFrames / elapsedSec
+                : 0;
+
+          let mediaFps = 0;
+          let mediaDurationSec = 0;
+          if (
+            lastMediaTime !== null &&
+            firstMediaTime !== null &&
+            lastMediaTime > firstMediaTime &&
+            presentedFrames > 1
+          ) {
+            mediaDurationSec = lastMediaTime - firstMediaTime;
+            const calculatedFps = (presentedFrames - 1) / mediaDurationSec;
+            mediaFps = Math.round(calculatedFps * 100) / 100;
+            if (Math.abs(mediaFps - Math.round(mediaFps)) < 0.15) {
+              mediaFps = Math.round(mediaFps);
+            }
+          } else {
+            mediaFps = getAuthoritativeTimelineRate();
+          }
+
+          const ceilingRatio = mediaFps > 0 ? nativeFps / mediaFps : 0;
 
           return {
             available: true,
@@ -883,8 +1098,17 @@ export function createOtioPageProfilerScript(): string {
             nativeFps,
             mediaFps,
             ceilingRatio,
+            nativeFrameHz: nativeFps,
+            mediaSeconds: mediaDurationSec,
+            callbackFrames: presentedFrames,
+            wallMs: elapsedSec * 1000,
           };
         } finally {
+          try {
+            testVid.pause();
+            testVid.removeAttribute('src');
+            testVid.load();
+          } catch {}
           testVid.remove();
         }
       },
@@ -911,9 +1135,13 @@ async function evaluate<T>(
     | { text?: string; exception?: { description?: string } }
     | undefined;
   if (exception) {
-    throw new Error(
-      `Page evaluation failed: ${exception.text ?? exception.exception?.description ?? 'unknown error'}`
+    const rawError =
+      exception.text ?? exception.exception?.description ?? 'unknown error';
+    const safeError = rawError.replace(
+      /(?:https?|blob|file|data):\/\/[^\s"']+/gi,
+      '[URL]'
     );
+    throw new Error(`Page evaluation failed: ${safeError}`);
   }
   const result = res['result'] as { value?: T } | undefined;
   return result?.value as T;
@@ -928,6 +1156,9 @@ function median(values: readonly number[]): number {
 function aggregateRepetitions(
   reps: readonly RepetitionMetrics[]
 ): AggregatedMetrics {
+  if (reps.length === 0) {
+    throw new Error('Cannot aggregate 0 repetitions: missing metric samples');
+  }
   const getMedian = (getter: (r: RepetitionMetrics) => number) =>
     median(reps.map(getter));
 
@@ -1001,7 +1232,8 @@ function classifyCauses(
     W2: AggregatedMetrics;
     W3: AggregatedMetrics;
   },
-  ceiling: NativeCeilingResult
+  ceiling: NativeCeilingResult,
+  timelineRate = 30
 ): {
   primaryCause: BenchmarkReport['causeClassification']['primaryCause'];
   observations: readonly string[];
@@ -1043,7 +1275,7 @@ function classifyCauses(
   }
 
   // Check 4: Controller or DOM work
-  const frameBudgetMs = 1000 / 24;
+  const frameBudgetMs = 1000 / Math.max(1, timelineRate);
   const mainThreadPerFrame =
     medians.W1.mainThread.totalLoafStyleLayoutMs /
     Math.max(1, medians.W1.compositesCount);
@@ -1068,6 +1300,16 @@ function classifyCauses(
   return { primaryCause: 'Indeterminate', observations };
 }
 
+function sanitizeReport(report: BenchmarkReport): BenchmarkReport {
+  const json = JSON.stringify(report);
+  const urlPattern = /(?:https?|blob|file|data):\/\/[^\s"'\\]+/gi;
+  if (urlPattern.test(json)) {
+    const clean = json.replace(urlPattern, '[REDACTED_URL]');
+    return JSON.parse(clean) as BenchmarkReport;
+  }
+  return report;
+}
+
 export async function runOtioPlaybackBenchmark(
   options: BenchmarkOptions
 ): Promise<BenchmarkReport> {
@@ -1076,7 +1318,7 @@ export async function runOtioPlaybackBenchmark(
     targetUrl = await readUrlFromProtectedFile(options.urlFile);
   } else if (options.url) {
     if (!loopbackUrl(options.url)) {
-      throw new Error(`Non-loopback URL refused: ${options.url}`);
+      throw new Error('Non-loopback URL refused');
     }
     targetUrl = options.url;
   } else {
@@ -1169,6 +1411,8 @@ export async function runOtioPlaybackBenchmark(
       sessionId
     );
 
+    let nonLoopbackBlockedCount = 0;
+
     cdp.onEvent((event) => {
       if (
         event.method !== 'Fetch.requestPaused' ||
@@ -1191,6 +1435,7 @@ export async function runOtioPlaybackBenchmark(
         return;
       }
 
+      nonLoopbackBlockedCount++;
       void cdp
         ?.send(
           'Fetch.failRequest',
@@ -1223,7 +1468,26 @@ export async function runOtioPlaybackBenchmark(
     await evaluate<{ mounted: boolean }>(
       cdp,
       sessionId,
-      'window.__relicOtioProfiler.waitForMount(30000)'
+      `(async () => {
+        const delay = (ms) => {
+          const { promise, resolve } = Promise.withResolvers();
+          setTimeout(resolve, ms);
+          return promise;
+        };
+        const start = performance.now();
+        while (performance.now() - start < 30000) {
+          if (
+            typeof globalThis.__relicOtioProfiler === 'object' &&
+            globalThis.__relicOtioProfiler !== null &&
+            typeof globalThis.__relicOtioProfiler.waitForMount === 'function'
+          ) {
+            const remainingMs = Math.max(1000, 30000 - Math.round(performance.now() - start));
+            return await globalThis.__relicOtioProfiler.waitForMount(remainingMs);
+          }
+          await delay(50);
+        }
+        throw new Error('Timeout waiting for __relicOtioProfiler installation');
+      })()`
     );
 
     let gpuFeatures: Record<string, unknown> | undefined;
@@ -1300,7 +1564,11 @@ export async function runOtioPlaybackBenchmark(
       W3: aggregateRepetitions(repetitionResults.W3),
     };
 
-    const causeClassification = classifyCauses(medians, nativeCeiling);
+    const causeClassification = classifyCauses(
+      medians,
+      nativeCeiling,
+      structure.timelineRate
+    );
 
     const report: BenchmarkReport = {
       timestamp: new Date().toISOString(),
@@ -1311,6 +1579,7 @@ export async function runOtioPlaybackBenchmark(
           (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ||
           8,
         gpuFeatures,
+        nonLoopbackBlockedCount,
       },
       structure: {
         durationSeconds: structure.durationSeconds,
@@ -1332,15 +1601,17 @@ export async function runOtioPlaybackBenchmark(
       causeClassification,
     };
 
+    const sanitizedReport = sanitizeReport(report);
+
     if (options.outputJsonPath) {
       await writeFile(
         options.outputJsonPath,
-        JSON.stringify(report, null, 2),
+        JSON.stringify(sanitizedReport, null, 2),
         'utf-8'
       );
     }
 
-    return report;
+    return sanitizedReport;
   } finally {
     if (child !== undefined) {
       await cleanupOwnedBrowserStartup({
@@ -1357,14 +1628,18 @@ export async function runOtioPlaybackBenchmark(
 }
 
 export function formatReportSummary(report: BenchmarkReport): string {
+  const cleanReport = sanitizeReport(report);
   const lines: string[] = [];
   lines.push('=== OTIO PLAYBACK PERFORMANCE BENCHMARK REPORT ===');
-  lines.push(`Timestamp: ${report.timestamp}`);
+  lines.push(`Timestamp: ${cleanReport.timestamp}`);
   lines.push(
-    `Browser: ${report.environment.browserVersion} (${report.environment.platform})`
+    `Browser: ${cleanReport.environment.browserVersion} (${cleanReport.environment.platform})`
   );
   lines.push(
-    `Timeline: ${report.structure.durationSeconds.toFixed(1)}s, ${report.structure.timelineRate} fps, ${report.structure.totalItems} items, ${report.structure.railsCount} rails, ${report.structure.editPointsPerMinute.toFixed(1)} edit pts/min`
+    `Timeline: ${cleanReport.structure.durationSeconds.toFixed(1)}s, ${cleanReport.structure.timelineRate} fps, ${cleanReport.structure.totalItems} items, ${cleanReport.structure.railsCount} rails, ${cleanReport.structure.editPointsPerMinute.toFixed(1)} edit pts/min`
+  );
+  lines.push(
+    `Network: loopback only (blocked non-loopback requests: ${cleanReport.environment.nonLoopbackBlockedCount ?? 0})`
   );
   lines.push('');
   lines.push('--- MEASUREMENT WINDOWS ---');
@@ -1518,15 +1793,15 @@ export function formatReportSummary(report: BenchmarkReport): string {
 
   lines.push('');
   lines.push('--- NATIVE SPEED LIMIT (CEILING) ---');
-  if (report.nativeCeiling.available) {
+  if (cleanReport.nativeCeiling.available) {
     lines.push(
-      `  Native Presented FPS: ${report.nativeCeiling.nativeFps.toFixed(1)} / ${report.nativeCeiling.mediaFps} fps`
+      `  Native Presented FPS: ${cleanReport.nativeCeiling.nativeFps.toFixed(1)} Hz / ${cleanReport.nativeCeiling.mediaFps} media fps`
     );
     lines.push(
-      `  Ceiling Ratio: ${report.nativeCeiling.ceilingRatio.toFixed(3)} (Dropped: ${report.nativeCeiling.droppedFrames} / ${report.nativeCeiling.totalFrames})`
+      `  Ceiling Ratio: ${cleanReport.nativeCeiling.ceilingRatio.toFixed(3)} (Dropped: ${cleanReport.nativeCeiling.droppedFrames} / ${cleanReport.nativeCeiling.totalFrames})`
     );
   } else {
-    lines.push(`  Ceiling: n/a (${report.nativeCeiling.reason})`);
+    lines.push(`  Ceiling: n/a (${cleanReport.nativeCeiling.reason})`);
   }
 
   lines.push('');
@@ -1538,7 +1813,9 @@ export function formatReportSummary(report: BenchmarkReport): string {
     lines.push(`  - ${obs}`);
   }
   lines.push('==================================================');
-  return lines.join('\n');
+  return lines
+    .join('\n')
+    .replace(/(?:https?|blob|file|data):\/\/[^\s"'\\]+/gi, '[REDACTED_URL]');
 }
 
 function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
@@ -1623,9 +1900,12 @@ if (
       process.exit(0);
     })
     .catch((error) => {
-      console.error(
-        `Benchmark failed: ${error instanceof Error ? error.message : String(error)}`
+      const raw = error instanceof Error ? error.message : String(error);
+      const clean = raw.replace(
+        /(?:https?|blob|file|data):\/\/[^\s"']+/gi,
+        '[URL]'
       );
+      console.error(`Benchmark failed: ${clean}`);
       process.exit(1);
     });
 }
