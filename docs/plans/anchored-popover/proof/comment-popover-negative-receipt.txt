@@ -1,6 +1,6 @@
 ANCHORED POPOVER NEGATIVE CONTROL RECEIPT
 Base: origin/main at 76269ed597adb36a4a53a06896dd5d502e08aa15
-Date: 2026-10-25T11:35:34.760Z
+Date: 2026-10-26T02:56:37.595Z
 Harness: packages/relic-mcp/test/comment-popover-path.ts
 
 CHECK 1: Stage composer .popover-card.popover-composer on text selection

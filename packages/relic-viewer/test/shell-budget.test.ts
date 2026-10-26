@@ -18,6 +18,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { unlink } from 'node:fs/promises';
 
 const pkgDir = new URL('..', import.meta.url).pathname;
 
@@ -72,6 +73,42 @@ describe('the app shell', () => {
       }
     }
     expect(carriesMnemonic).toBe(true);
+  });
+  test('keeps passkey sign-in and ceremony controller out of viewer.js', async () => {
+    for (const stale of new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)) {
+      await unlink(`${pkgDir}dist/${stale}`).catch(() => {});
+    }
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+
+    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+
+    const markers = [
+      'isConditionalMediationAvailable',
+      'authenticatorData',
+      'A newer passkey request replaced this one',
+    ];
+    const inlined = markers.filter((marker) => shell.includes(marker));
+    expect(inlined).toEqual([]);
+
+    expect(shell.length).toBeLessThan(SHELL_CEILING_BYTES);
+
+    const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
+    let chunksWithCeremonyAborted = 0;
+    let chunkWithSignInText = false;
+    for (const chunk of chunks) {
+      const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (content.includes('A newer passkey request replaced this one')) {
+        chunksWithCeremonyAborted++;
+      }
+      if (content.includes('Sign in with passkey')) {
+        chunkWithSignInText = true;
+      }
+    }
+    expect(chunksWithCeremonyAborted).toBe(1);
+    expect(chunkWithSignInText).toBe(true);
   });
 
   test('the renderer is emitted as its own chunk', async () => {

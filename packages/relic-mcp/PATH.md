@@ -457,6 +457,7 @@ DECISION_D_OK count=2 latest=reject
 DECISION_C_OK v4_count=0 v3_count=2
 DECISION_E_OK total_decisions=2
 DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403
+DECISION_FRESH_LINK_OK state=required orphans=0 link_sent=1
 DECISION_PATH_OK
 ```
 
@@ -490,7 +491,88 @@ DECISION_D_OK count=2 latest=reject
 DECISION_C_OK v4_count=0 v3_count=2
 DECISION_E_OK total_decisions=2
 DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403
+DECISION_FRESH_LINK_SKIPPED live
 DECISION_LIVE_OK relic=<id> client=relic-mcp@<version>
+```
+
+## Passkey sign-in for returning readers
+
+Run the full loopback proof from the repository root:
+
+```bash
+RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/passkey-sign-in-path.ts
+```
+
+The command starts a service on loopback with `MemoryStore` and `MemoryStorage`,
+serving built viewer assets. It binds 127.0.0.1 but browses with
+`serviceOrigin = http://localhost:<port>` so WebAuthn RP ID checks pass.
+Every MCP operation runs through a fresh Node stdio process with `title: ""`,
+`cover: false`, and `ttl_days: 1`.
+
+It exercises:
+1. Publishing an initial document with title: "", cover: false, ttl_days: 1.
+2. Installing a script wrapper recording `credentials.get` calls `{mediation, aborted}`, opening the relic anonymously, and asserting autocomplete and `[data-passkey-sign-in]`.
+3. Requesting a sign-in magic link from the comment composer, following it, and asserting `[data-passkey-offer]` is shown and the offer marker cookie is deleted.
+4. Clicking `[data-passkey-offer-create]`, waiting for `data-state="created"`, checking that WebAuthn holds 1 resident credential, and verifying `store.getPasskeysByUserHandle` resolves it.
+5. Reporting conditional mediation unavailable (a virtual authenticator answers an autofill request by itself, so this keeps the button path deliberate), deleting the `relic_session` cookie via CDP, reopening the relic URL, and asserting `/api/auth/session` returns `email: null` with no conditional request armed.
+6. Clicking `[data-passkey-sign-in]`, verifying "Commenting as <addr>" appears, a sign-in POST was made, and zero emails were sent.
+6b. Making conditional mediation available again, signing out and reopening, and verifying the autofill request alone signs the reader in: "Commenting as <addr>", a conditional request armed, a sign-in POST, and zero emails.
+7. Posting a comment through `textarea.compose-textarea` and "Post comment", and reading it back via `relic_read_comments` to verify author attribution.
+8. Negative controls: replaying the captured sign-in POST gives 401, text/plain gives 400, email-first options for unknown and known addresses match in shape and count, and a decision POST carrying the passkey-minted session but no credential gives 400.
+
+Success ends with:
+
+```text
+PASSKEY_STEP_1_PUBLISH_OK relic_id=<id>
+PASSKEY_STEP_2_ANON_SURFACE_OK conditional=<armed|unavailable>
+PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown
+PASSKEY_STEP_4_ENROLL_OK resident=true
+PASSKEY_STEP_4B_NOTICE_OK to=<addr>
+PASSKEY_STEP_5_SIGNED_OUT_OK
+PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0
+PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0
+PASSKEY_STEP_7_COMMENT_OK author=<addr>
+PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400
+PASSKEY_STEP_8_FRESH_LINK_OK refused=passkey_fresh_link_required orphans=0 recovered=created notice=1
+PASSKEY_SIGN_IN_PATH_OK
+```
+
+## Passkey sign-in on the live service
+
+Run against the live deployment from the repository root:
+
+```bash
+RELIC_PASSKEY_PROBE_MAILBOX=user@example.com bun packages/relic-mcp/test/passkey-sign-in-live-probe.ts
+```
+
+The probe exercises passkey sign-in against a live service deployment (defaulting to `https://relik.link`).
+It reads the base recipient address from `RELIC_PASSKEY_PROBE_MAILBOX` and derives a fresh per-run plus-addressed email `<local>+relic-passkey-<runId>@<domain>`.
+The probe refuses to run without a plus-tag, ensuring test passkeys never claim TOFU for a real mailbox.
+
+It respects:
+- `RELIC_SERVICE_ORIGIN`: destination service, defaults to `https://relik.link`
+- `RELIC_PASSKEY_PROBE_CLIENT`: `'source'` or `'npx:<version>'` (defaults to `npx:0.14.0`)
+- `RELIC_PUBLISH_STATE`: optional fixed state path (defaults to scratch)
+- `RELIC_CHROME_PATH`: optional browser executable path
+
+The probe prints `PROBE_AWAIT_MAGIC_LINK email=<addr>` and blocks on stdin. The operator retrieves the magic link from the destination mailbox and pastes it into stdin.
+The probe then prints `PROBE_AWAIT_PASSKEY_NOTICE email=<addr>` and blocks on stdin for the first line of the passkey notice email, asserting it matches the expected notice text.
+
+Success ends with:
+
+```text
+PASSKEY_STEP_1_PUBLISH_OK relic_id=<id>
+PASSKEY_STEP_2_ANON_SURFACE_OK conditional=<armed|unavailable>
+PASSKEY_STEP_3_MAGIC_LINK_OK offer=shown
+PASSKEY_STEP_4_ENROLL_OK resident=true
+PASSKEY_STEP_4B_NOTICE_OK to=<addr>
+PASSKEY_STEP_5_SIGNED_OUT_OK
+PASSKEY_STEP_6_SIGN_IN_OK mails_sent=0
+PASSKEY_STEP_6B_AUTOFILL_OK mails_sent=0
+PASSKEY_STEP_7_COMMENT_OK author=<addr>
+PASSKEY_NEG_OK replay=401 wrong_content_type=400 email_first_shape=equal decision_without_assertion=400
+PASSKEY_STEP_8_FRESH_LINK_SKIPPED live
+PASSKEY_SIGN_IN_LIVE_OK relic=<id> client=relic-mcp@<version>
 ```
 
 ## Anchored comment popovers on every class

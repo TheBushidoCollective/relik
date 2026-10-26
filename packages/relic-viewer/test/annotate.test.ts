@@ -110,6 +110,9 @@ export class Node {
     return this.attributes.get(name) ?? null;
   }
 
+  hasAttribute(name: string): boolean {
+    return this.attributes.has(name);
+  }
   appendChild(child: Node): Node {
     child.remove();
     child.parent = this;

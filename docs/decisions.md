@@ -909,3 +909,56 @@ No MCP tool can record a decision. Decisions are recorded only by human readers 
 **A truncated container is refused.** `openRelic` accepted an object cut at a record boundary. In a probe it returned 196,557 of 196,567 declared bytes, because nothing checked for the final record or the envelope's length. Every relic ever written satisfies the stricter rule, since there has only ever been one encoder.
 
 **Every relic page shows the bar and a named phase from the first frame.** The shell carries a static plate, so the page is never blank before `viewer.js` runs. The viewer then shows Opening, Fetching with bytes against the mint's object length, Decrypting, and Rendering, as `viewer.md` §6.3 and §6.4 and `surface.md` §7 already specified. Try again now reruns the open with the key in memory instead of reloading a page whose key was stripped.
+
+## 2026-10-25: A passkey signs a returning reader in, without an email
+
+Authorised by Jason Waldrip on 2026-10-25: passkeys serve as an alternative sign-in mechanism for returning readers, minting the exact same `relic_session` cookie as a magic link without sending email.
+
+**The problem.** Verified commenters who returned to leave another comment or review a thread had to request a magic link every time, wait for transactional email delivery, and switch back to their browser. Since passkeys were already supported for decision confirmation, returning readers can use that same registered passkey to sign in directly.
+
+**One page-wide ceremony controller.** Only one WebAuthn ceremony can be pending per page. Any new ceremony call aborts any previous ceremony controller via an `AbortSignal`, avoiding conflicts between background conditional mediation requests and modal user interactions across sign-in, fallback, and decision panels.
+
+**User-handle index in storage.** To allow discoverable, usernameless passkey sign-in without requiring the reader to enter their email address, GCS stores an index object at `m/passkey-handle/{sha256Hex(userHandle)}.json` containing `{ emailHash, createdAt }`. The store writes this index inside `createPasskeys` and upon `updatePasskeys`. Reads verify that `record.userHandle === userHandle`. Existing records created before this change heal on their next decision, enrollment, or email-first sign-in.
+
+**Resident keys required for new registrations.** New passkey registrations use `residentKey: 'required'` and `requireResidentKey: true`. Discoverable credentials are required so browsers can offer passkey sign-in in conditional autofill and usernameless flows. Non-resident U2F-only keys can no longer register.
+
+**One refusal code for sign-in failures.** Once a sign-in challenge is consumed, all assertion failures return `401 passkey_sign_in_failed` without diagnostic `passkey_check` extensions. Only pre-store syntax and shape errors return `400 invalid_passkey`.
+
+**Email-first decoys prevent address enumeration.** If usernameless sign-in fails or a non-discoverable passkey is used, the reader can enter their address. To prevent this endpoint from becoming an address or passkey oracle, the server pads the `allowCredentials` list with deterministic HMAC-SHA256 decoys up to `passkeySignInAllowListSize` (default 4). Requests for non-existent addresses and addresses with fewer credentials return the same count and format, sorted by credential id, with transports omitted.
+
+**The passkey offer after any magic-link sign-in.** On 2026-10-25, Jason Waldrip decided that any magic-link sign-in sets a short-lived `relic_passkey_offer=1` cookie. When a verified session loads and local storage has no record of `relic:passkey-offer`, the viewer shows an offer card prompting the reader to add a passkey on this device. If the reader already has a passkey on another device, the offer steps through confirming with the existing passkey before adding a new one. Dismissing the offer records `'dismissed'` in local storage so the reader is not prompted again in that browser.
+
+**Dashboard gets passkey sign-in.** The dashboard sign-in form also supports passkey sign-in with autocomplete and usernameless credentials, reloading on success.
+
+**Session address preservation.** Passkey records store the exact session address (`record.address ?? record.email`) from the registering session, ensuring mixed-case email addresses can sign in and edit or delete their prior comments without casing mismatches.
+
+**Residuals:**
+- A passkey outlives loss of the mailbox, and nothing can remove one. Whoever registered the first passkey for an address can sign in as it without the mailbox. There is no route to remove a passkey.
+- Decoys leak in a few cases: records holding more than 4 credentials, ids of unusual lengths, or structured authenticator ids (such as UUIDv4 ids with fixed version and variant bits) are distinguishable from decoys. Polling the email-first allow list over time reveals when a passkey is registered because a real id replaces a decoy. The decoy key stored at `m/secret/passkey-decoy-key.json` must never rotate, as rotation would change all decoys at once while real ids remain unchanged, exposing every real id. A sub-millisecond timing gap exists, bounded per IP per instance plus the per-address limit (30 sign-in requests per hour).
+- Some old records stay as they are: mixed-case records created before this change mint with the normalized address, and existing passkeys need one email-first sign-in or decision before usernameless sign-in works.
+- Proof gaps: the CDP virtual authenticator answers an autofill request by itself, so automated proof drives both paths (the button with conditional mediation reported unavailable, then autofill with it available) but never sees the browser's own autofill picker. A real device check covers that picker. A U2F-only key can no longer register.
+- The decision panel's create step can still orphan a credential: its prefetched options can expire if the reader waits past the timeout, and the device keeps a credential the server never stored. This predates the change and is not fixed here.
+- An attacker can block the email-first fallback for an address: anyone who knows an address can request options for it and spend its email-first sign-in budget, returning 429 to the legitimate user on the fallback path. The primary usernameless path uses a separate handle-keyed budget and remains unblocked.
+
+## 2026-10-25: A first passkey needs a fresh link, and every added passkey is announced
+
+Authorised by Jason Waldrip on 2026-10-25: email the address whenever a passkey is added, and refuse a first passkey unless a sign-in link started the session within a short window.
+
+**The problem.** Passkey sign-in made a first passkey into lasting access. Anyone holding a `relic_session` cookie, which lives 30 days, could register the first passkey for an address that had none, from a shared machine or with a stolen cookie, and sign in as that address from then on. Nothing told the mailbox owner. The security review recorded this as L5.
+
+**Sessions record what started them.** `SessionRow` gains `via: 'link' | 'passkey'`, and every mint writes it. Rows without it predate passkey sign-in, so a link started every one of them, and they count as links. `createdAt` is the mint time the window measures from.
+
+**The window is 15 minutes (`passkeyFreshLinkSeconds`, 900).** It matches the life of the link itself (`authLinkTtlSeconds`), and it equals the offer marker's 600 seconds plus one 300-second challenge, so an offer card shown from a live marker can always finish the ceremony its first challenge starts. A reader who signs in to decide and takes longer is asked for a new link once, for the address's first passkey only. An hour or a day would remove that one-time cost by widening what a stolen cookie can do, and was rejected. `assertConfig` requires whole minutes, because the disclosure states the window in minutes, and at least the marker's life, so no card is offered that the service would refuse at once.
+
+**The check sits where the challenge is issued.** `POST /api/auth/passkeys/options` answers `401 passkey_fresh_link_required` instead of issuing a first-passkey challenge. `POST /api/auth/passkeys` does not check again: that branch is the only source of a first-passkey challenge, which is single use, bound to the address, and lasts 300 seconds, and checking again would refuse a reader whose window closed mid-ceremony after their device had already stored a credential the service would never keep. The status is 401 because the remedy is signing in again; a 409 like `passkey_assertion_required` was rejected because nothing about the address is in conflict. The refusal has no extension, reads the same for an old link session and a passkey session, and comes only after the record lookup that already decides `mode`.
+
+**Adding a passkey to an address that has one needs no fresh link.** The assertion from an existing passkey happens inside the same ceremony and proves more than a link can.
+
+**Every added passkey is announced.** After a first passkey is created or another is added, the service emails the session's address with the time, how many passkeys the address now has, and how the passkey was allowed. It has no stop link: it concerns the address rather than a relic, stop records are kept per relic, and a notice someone could switch off would fail exactly when it matters. A failed send is logged with a hash of the address; the passkey stays stored and the response is still `201`. The email tells a reader who did not add it what to check and says plainly that Relic cannot remove a passkey. Pointing it at `/abuse` was rejected: that form reports relics, asks for a relic id, and its operator has no tool to remove a passkey.
+
+**Residuals:**
+- Nothing removes a passkey or ends another browser's session. A reader who learns of a passkey they did not add can do nothing about it in Relic.
+- A session a link started can still add the first passkey inside the window, on a shared machine left signed in or with a cookie stolen and used within minutes. The email is what catches that.
+- The window is checked when the challenge is issued, so a first passkey can be stored up to 300 seconds after the window closes.
+- The email depends on delivery. A refused send, or one Resend accepts and pauses at a spent quota (`quotaWarning`), leaves only a log line.
+- A login CSRF lands inside the window by construction. The offer naming the address (L6) stays the control, and in that case the email goes to the attacker's own mailbox.

@@ -1,7 +1,8 @@
 /**
  * Wire representations for WebAuthn passkeys (spec §4.2, §4.6).
  *
- * Decisions in the Relic viewer are bound to a WebAuthn passkey ceremony.
+ * Decisions in the Relic viewer are bound to a WebAuthn passkey ceremony,
+ * and a passkey can also sign a returning reader in instead of a magic link.
  * The wire types follow the W3C WebAuthn level 3 `toJSON()` representations,
  * where all binary fields are transported as unpadded base64url strings.
  */
@@ -39,6 +40,7 @@ export interface CreationOptionsJSON {
   readonly attestation?: string;
   readonly authenticatorSelection?: {
     readonly residentKey?: string;
+    readonly requireResidentKey?: boolean;
     readonly userVerification?: string;
   };
   readonly excludeCredentials?: readonly PasskeyDescriptorJSON[];
@@ -87,4 +89,27 @@ export interface AuthenticationResponseJSON {
   };
   readonly authenticatorAttachment?: string;
   readonly clientExtensionResults?: Record<string, unknown>;
+}
+
+/**
+ * `POST /api/auth/passkeys/sign-in/options` body. No address: usernameless.
+ * An address: email-first.
+ */
+export interface PasskeySignInOptionsRequestJSON {
+  readonly email?: string;
+}
+
+/** `POST /api/auth/passkeys/sign-in/options` 200 body. */
+export interface PasskeySignInOptionsJSON {
+  readonly public_key: RequestOptionsJSON;
+}
+
+/** `POST /api/auth/passkeys/sign-in` body. */
+export interface PasskeySignInRequestJSON {
+  readonly credential: AuthenticationResponseJSON;
+}
+
+/** `POST /api/auth/passkeys/sign-in` 200 body; the response also sets `relic_session`. */
+export interface PasskeySignInResultJSON {
+  readonly email: string;
 }
