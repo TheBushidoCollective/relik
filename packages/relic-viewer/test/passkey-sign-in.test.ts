@@ -1263,14 +1263,14 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
     const offer = one(host, 'data-passkey-offer');
     expect(offer.getAttribute('data-state')).toBe('link-required');
     expect(textOf(offer)).toContain(
-      'A first passkey can only be added right after you sign in with a link.'
+      'A first passkey can only be added right after you sign in from an email.'
     );
     expect(textOf(offer)).toContain('reader@example.com');
 
     const linkBtn = one(host, 'data-passkey-offer-link');
     expect(linkBtn.hidden).toBe(false);
     expect(linkBtn.disabled).toBe(false);
-    expect(linkBtn.textContent).toBe('Send me a new link');
+    expect(linkBtn.textContent).toBe('Email me a new code');
 
     const createBtn = one(host, 'data-passkey-offer-create');
     expect(createBtn.hidden).toBe(true);
@@ -1315,7 +1315,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
 
     expect(offerFail.getAttribute('data-state')).toBe('link-failed');
     expect(textOf(offerFail)).toContain(
-      'Relic could not send a link just now. Try again later.'
+      'Relic could not send the email just now. Try again later.'
     );
     expect(linkBtnFail.disabled).toBe(false);
   });
@@ -1352,5 +1352,91 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
     await tick(10);
     expect(offer.getAttribute('data-state')).toBe('ready');
     expect(createBtn.disabled).toBe(false);
+  });
+
+  test('With an injected codeEntry factory, offer card goes link-sent -> loading -> ready with create button enabled', async () => {
+    let linkRequested = false;
+    let codeEntryRendered = false;
+    let capturedOnVerified: ((email: string) => void) | undefined;
+    let fetchCount = 0;
+
+    const fetch = (async (url: string) => {
+      fetchCount++;
+      if (url.endsWith('/api/auth/passkeys/options')) {
+        return new Response(
+          JSON.stringify(
+            fetchCount === 1
+              ? {
+                  code: 'passkey_fresh_link_required',
+                  message: 'A link is required.',
+                }
+              : { mode: 'create', public_key: SAMPLE_CREATION_OPTIONS }
+          ),
+          {
+            status: fetchCount === 1 ? 401 : 200,
+            headers: { 'content-type': 'application/json' },
+          }
+        );
+      }
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const host = new ElementStub('div');
+    mountPasskeyOffer({
+      host: host as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch },
+      email: 'reader@example.com',
+      store: { getItem: () => null, setItem: () => {} },
+      requestLink: async () => {
+        linkRequested = true;
+        return {
+          kind: 'sent',
+          message:
+            'If reader@example.com can receive mail, an email is on its way.',
+          codeEntry: (onVerified) => {
+            capturedOnVerified = onVerified;
+            const stub = new ElementStub('div');
+            stub.setAttribute('data-test-code-field', '');
+            stub.textContent = 'Enter code here';
+            codeEntryRendered = true;
+            return stub as unknown as HTMLElement;
+          },
+        };
+      },
+      onDone: () => {},
+    });
+
+    await tick(10);
+    const offer = one(host, 'data-passkey-offer');
+    expect(offer.getAttribute('data-state')).toBe('link-required');
+
+    const linkBtn = one(host, 'data-passkey-offer-link');
+    linkBtn.fire('click');
+    expect(offer.getAttribute('data-state')).toBe('link-sending');
+
+    await tick(20);
+    expect(linkRequested).toBe(true);
+    expect(offer.getAttribute('data-state')).toBe('link-sent');
+    expect(codeEntryRendered).toBe(true);
+
+    const codeEl = one(host, 'data-passkey-offer-code');
+    expect(codeEl).toBeDefined();
+    expect(one(codeEl, 'data-test-code-field')).toBeDefined();
+
+    // Trigger onVerified
+    expect(capturedOnVerified).toBeDefined();
+    capturedOnVerified!('reader@example.com');
+
+    // It should immediately empty codeEl and transition to loading
+    expect(codeEl.children.length).toBe(0);
+    expect(offer.getAttribute('data-state')).toBe('loading');
+
+    await tick(20);
+    // After fetchOptions completes, it transitions to ready with createBtn enabled
+    expect(offer.getAttribute('data-state')).toBe('ready');
+    const createBtn = one(host, 'data-passkey-offer-create');
+    expect(createBtn.hidden).toBe(false);
+    expect(createBtn.disabled).toBe(false);
+    expect(codeEl.children.length).toBe(0);
   });
 });

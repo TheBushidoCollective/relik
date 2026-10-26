@@ -389,12 +389,12 @@ export function ceremonySignal(): AbortSignal {
 }
 
 export const COPY_LINK_REQUIRED_LEAD =
-  'A first passkey can only be added right after you sign in with a link.';
+  'A first passkey can only be added right after you sign in from an email.';
 export const COPY_LINK_FINE =
   'This stops anyone holding an older sign-in from adding a passkey as you.';
-export const COPY_LINK_SEND = 'Send me a new link';
+export const COPY_LINK_SEND = 'Email me a new code';
 export const COPY_LINK_FAILED =
-  'Relic could not send a link just now. Try again later.';
+  'Relic could not send the email just now. Try again later.';
 
 /** The shell's answer after emailing a new link on a surface's behalf. Resolves, never rejects. */
 export type LinkRequestOutcome =

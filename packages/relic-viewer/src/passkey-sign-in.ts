@@ -68,7 +68,7 @@ const COPY_OFFER_EXISTS =
   'This device already has your passkey. Next time, choose Sign in with passkey.';
 const COPY_OFFER_CANCELLED = 'No passkey was added.';
 const COPY_OFFER_ERROR =
-  'Relic could not set up a passkey just now. You can add one the next time you sign in with a link.';
+  'Relic could not set up a passkey just now. You can add one the next time you sign in from an email.';
 const COPY_OFFER_CLOSE = 'Close';
 
 function setOutcome(
@@ -736,10 +736,15 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
   dismissBtn.setAttribute('type', 'button');
   dismissBtn.setAttribute('data-passkey-offer-dismiss', '');
 
+  const codeEl = el('div') as HTMLDivElement;
+  codeEl.setAttribute('data-passkey-offer-code', '');
+  codeEl.hidden = true;
+  codeEl.setAttribute('hidden', '');
   card.replaceChildren(
     titleEl,
     bodyEl,
     warningEl,
+    codeEl,
     fineEl,
     createBtn,
     linkBtn,
@@ -781,8 +786,8 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
 
   function linkRequiredBody(): string {
     return typeof mount.email === 'string' && mount.email.length > 0
-      ? `${COPY_LINK_REQUIRED_LEAD} Send a new one to ${mount.email}, open it, then add your passkey.`
-      : `${COPY_LINK_REQUIRED_LEAD} Send yourself a new one, open it, then add your passkey.`;
+      ? `${COPY_LINK_REQUIRED_LEAD} Email a new code to ${mount.email}, type it here, then add your passkey.`
+      : `${COPY_LINK_REQUIRED_LEAD} Email yourself a new code, type it here, then add your passkey.`;
   }
 
   async function handleSendLink(): Promise<void> {
@@ -803,6 +808,23 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
           showWarning(outcome.warning);
         } else {
           hideWarning();
+        }
+        if (typeof outcome.codeEntry === 'function') {
+          codeEl.hidden = false;
+          codeEl.removeAttribute('hidden');
+          codeEl.replaceChildren(
+            outcome.codeEntry((_email) => {
+              codeEl.replaceChildren();
+              codeEl.hidden = true;
+              codeEl.setAttribute('hidden', '');
+              setState('loading');
+              void fetchOptions();
+            })
+          );
+        } else {
+          codeEl.replaceChildren();
+          codeEl.hidden = true;
+          codeEl.setAttribute('hidden', '');
         }
         hideCreateButton();
         hideLinkButton();
@@ -848,6 +870,11 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
       host.setAttribute('data-state', state);
     }
     createBtn.disabled = state === 'loading' || state === 'working';
+    if (state !== 'link-sent') {
+      codeEl.replaceChildren();
+      codeEl.hidden = true;
+      codeEl.setAttribute('hidden', '');
+    }
   }
 
   async function fetchOptions(): Promise<void> {
