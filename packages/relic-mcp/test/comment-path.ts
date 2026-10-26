@@ -20,80 +20,90 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createApp } from '@relic/server/src/app.ts';
+import { diskAssets } from '@relic/server/src/assets.ts';
+import { MemoryStorage } from '@relic/server/src/storage.ts';
+import { MemoryStore } from '@relic/server/src/store.ts';
 import { nodeFiles } from '../src/files.ts';
 import { type PublishDeps, publish } from '../src/publish.ts';
 import { COMMENT_TOOL_NAME, READ_COMMENTS_TOOL_NAME } from '../src/server.ts';
-import { publishStatePath } from '../src/state.ts';
-
-interface CommentRow {
-  comment_id: string;
-  author: string;
-  created_at: string;
-  ciphertext: string;
-}
+import { loadPublishState, publishStatePath } from '../src/state.ts';
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
+const viewerDist = fileURLToPath(
+  new URL('../../relic-viewer/dist/', import.meta.url)
+);
 const scratch = await mkdtemp(join(tmpdir(), 'relic-comment-path-'));
 process.env['RELIC_PUBLISH_STATE'] = join(scratch, 'state.json');
 
-const rows: CommentRow[] = [];
-let acceptedToken: string | undefined;
+const store = new MemoryStore();
+const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 
+let handler: ((request: Request) => Promise<Response>) | undefined;
 const service = Bun.serve({
   port: 0,
   async fetch(request) {
-    const url = new URL(request.url);
-
-    if (url.pathname === '/api/challenge') {
-      return Response.json({
-        challenge_nonce: 'comment-path-challenge',
-        size_limit_bytes: 1_000_000,
-        size_basis: 'plaintext',
-      });
-    }
-    if (url.pathname === '/api/grant') {
-      return Response.json({
-        publish_token: 'comment-path-publish-token',
-        upload_url: `${origin()}/upload`,
-        relic_expires_at: null,
-        report_url: `${origin()}/abuse`,
-        disclosure_url: `${origin()}/disclosure`,
-      });
-    }
-    if (url.pathname === '/upload') return new Response(null, { status: 200 });
-    if (url.pathname.endsWith('/complete')) return Response.json({});
-
-    if (url.pathname.endsWith('/comments')) {
-      if (request.method === 'POST') {
-        const body = (await request.json()) as Record<string, unknown>;
-        // The service authorizes on the token and stores what it is given. It
-        // has no key, so the body is opaque to it by construction.
-        acceptedToken = String(body['publish_token']);
-        const row = {
-          comment_id: `c${rows.length + 1}`,
-          author: 'publisher',
-          created_at: new Date(
-            Date.UTC(2026, 7, 20, rows.length)
-          ).toISOString(),
-          ciphertext: String(body['ciphertext']),
-        };
-        rows.push(row);
-        return Response.json({
-          comment_id: row.comment_id,
-          author: row.author,
-          created_at: row.created_at,
-        });
-      }
-      return Response.json(rows);
-    }
-
-    return new Response(null, { status: 404 });
+    if (!handler) return new Response('Not ready', { status: 503 });
+    return handler(request);
   },
 });
 
 function origin(): string {
   return `http://127.0.0.1:${service.port}`;
 }
+
+const storage = new MemoryStorage(`${origin()}/__storage`);
+
+const app = createApp({
+  config: {
+    serviceOrigin: origin(),
+  },
+  store,
+  storage,
+  now: () => Date.now(),
+  operatorTokens,
+  assets: diskAssets(viewerDist),
+  mailer: {
+    send: async () => {},
+    sendMail: async () => {},
+  },
+});
+
+let acceptedToken: string | undefined;
+
+handler = async (request: Request): Promise<Response> => {
+  const url = new URL(request.url);
+  if (
+    url.pathname.startsWith('/__storage/upload/') &&
+    request.method === 'PUT'
+  ) {
+    const relicId = url.pathname.slice('/__storage/upload/'.length);
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    storage.put(relicId, bytes);
+    return new Response(null, { status: 200 });
+  }
+  if (url.pathname.startsWith('/__storage/o/') && request.method === 'GET') {
+    const relicId = url.pathname.slice('/__storage/o/'.length);
+    const bytes = await storage.read(relicId);
+    if (!bytes) return new Response('Not found', { status: 404 });
+    return new Response(Buffer.from(bytes), {
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream' },
+    });
+  }
+  if (url.pathname.endsWith('/comments') && request.method === 'POST') {
+    const clone = request.clone();
+    const body = (await clone.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
+    acceptedToken =
+      typeof body['publish_token'] === 'string'
+        ? body['publish_token']
+        : undefined;
+  }
+  return app.fetch(request);
+};
 
 /** A fresh process, holding nothing but the state file on disk. */
 async function callFresh(
@@ -164,14 +174,16 @@ try {
     unknown
   >;
   assert.equal(writtenContent['author'], 'publisher');
-  assert.equal(acceptedToken, 'comment-path-publish-token');
+  const localState = await loadPublishState(relicId);
+  assert.equal(acceptedToken, localState?.publish_token);
   console.log(
     `COMMENTED comment_id=${writtenContent['comment_id']} ` +
       `author=${writtenContent['author']}`
   );
 
   // What the operator holds. Nothing in it is the comment.
-  const storedRow = rows[0];
+  const storedRows = await store.listComments(relicId);
+  const storedRow = storedRows[0];
   assert.ok(storedRow);
   assert.ok(!storedRow.ciphertext.includes('chart'));
   assert.ok(!storedRow.ciphertext.includes('quarter'));
