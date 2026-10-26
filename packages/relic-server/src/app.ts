@@ -55,7 +55,7 @@ import {
   replyNotificationMail,
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
-import { RateLimiter } from './ratelimit.ts';
+import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import {
   ciphertextHash,
   MemoryStorage,
@@ -150,7 +150,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
   const operators = options.operatorTokens ?? new Map<string, string>();
   const assets = options.assets ?? memoryAssets({});
   const mailer = options.mailer;
-  const limiter = options.limiter ?? new RateLimiter();
+  const limiter =
+    options.limiter ??
+    new RateLimiter({
+      maxEntries: config.limiterMaxEntries,
+      sweepInterval: config.limiterSweepInterval,
+    });
 
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -576,7 +581,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('service_paused', { retry_after_seconds: 300 });
     }
     const verdict = limiter.check(
-      `publish ${ip}`,
+      rateLimitKey('publish', ip),
       config.publishRateLimit,
       now
     );
@@ -607,7 +612,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const verdict = limiter.check(
-      `publish ${ip}`,
+      rateLimitKey('publish', ip),
       config.publishRateLimit,
       now
     );
@@ -854,7 +859,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // A republish is a publish. The same per-IP budget covers both, so a
     // holder guessing at tokens cannot outrun the publish limiter.
     const verdict = limiter.check(
-      `publish ${ip}`,
+      rateLimitKey('publish', ip),
       config.publishRateLimit,
       now
     );
@@ -1057,7 +1062,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ip: string
   ): Promise<Response> {
     const verdict = limiter.check(
-      `complete ${ip}`,
+      rateLimitKey('complete', ip),
       config.publishRateLimit,
       now
     );
@@ -1143,7 +1148,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('service_paused', { retry_after_seconds: 300 });
     }
 
-    const verdict = limiter.check(`cover ${ip}`, config.publishRateLimit, now);
+    const verdict = limiter.check(
+      rateLimitKey('cover', ip),
+      config.publishRateLimit,
+      now
+    );
     if (!verdict.allowed) {
       return refuse('publish_rate_limited', {
         retry_after_seconds: verdict.retryAfterSeconds,
@@ -1355,7 +1364,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     }
 
-    const verdict = limiter.check(`mint ${ip}`, config.mintRateLimit, now);
+    const verdict = limiter.check(
+      rateLimitKey('mint', ip),
+      config.mintRateLimit,
+      now
+    );
     if (!verdict.allowed) {
       return logAndRefuse(rawId, ip, now, occurrenceId, 'mint_rate_limited', {
         retry_after_seconds: verdict.retryAfterSeconds,
@@ -2026,7 +2039,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('service_paused', { retry_after_seconds: 300 });
     }
 
-    const ipVerdict = limiter.check(`share ${ip}`, config.shareRateLimit, now);
+    const ipVerdict = limiter.check(
+      rateLimitKey('share', ip),
+      config.shareRateLimit,
+      now
+    );
     if (!ipVerdict.allowed) {
       return refuse('share_rate_limited', {
         retry_after_seconds: ipVerdict.retryAfterSeconds,
@@ -2308,7 +2325,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
   ): Promise<Response> {
     const isHead = request.method === 'HEAD';
     const ipVerdict = limiter.check(
-      `unsubscribe ${ip}`,
+      rateLimitKey('unsubscribe', ip),
       config.unsubscribeRateLimit,
       now
     );
@@ -2699,7 +2716,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const verdict = limiter.check(
-      `comment ${ip}`,
+      rateLimitKey('comment', ip),
       config.commentRateLimit,
       now
     );
@@ -2941,7 +2958,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // One budget for every comment write from one address, so an edit
     // cannot become the cheap way around the posting limit.
     const verdict = limiter.check(
-      `comment ${ip}`,
+      rateLimitKey('comment', ip),
       config.commentRateLimit,
       now
     );
@@ -3095,7 +3112,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ip: string,
     now: number
   ): Promise<Response> {
-    const verdict = limiter.check(`auth ${ip}`, config.authRateLimit, now);
+    const verdict = limiter.check(
+      rateLimitKey('auth', ip),
+      config.authRateLimit,
+      now
+    );
     if (!verdict.allowed) {
       return refuse('auth_rate_limited', {
         retry_after_seconds: verdict.retryAfterSeconds,
@@ -3475,7 +3496,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const ipVerdict = limiter.check(
-      `decision ${ip}`,
+      rateLimitKey('decision', ip),
       config.decisionRateLimit,
       now
     );
@@ -3862,7 +3883,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     now: number
   ): Promise<Response> {
     const ipVerdict = limiter.check(
-      `decision-read ${ip}`,
+      rateLimitKey('decision-read', ip),
       config.decisionReadRateLimit,
       now
     );
@@ -3980,7 +4001,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const email = normalizeEmail(session.email);
 
     const ipVerdict = limiter.check(
-      `passkey ${ip}`,
+      rateLimitKey('passkey', ip),
       config.passkeyRateLimit,
       now
     );
@@ -4205,7 +4226,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const email = normalizeEmail(session.email);
 
     const ipVerdict = limiter.check(
-      `passkey ${ip}`,
+      rateLimitKey('passkey', ip),
       config.passkeyRateLimit,
       now
     );
