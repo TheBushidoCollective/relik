@@ -24,7 +24,6 @@ export interface WindowOption {
 
 export interface BenchmarkOptions {
   readonly urlFile?: string;
-  readonly url?: string;
   readonly chromePath?: string;
   readonly durationSeconds?: number;
   readonly warmupSeconds?: number;
@@ -1277,17 +1276,14 @@ export async function runOtioPlaybackBenchmark(
   let targetUrl: string;
   if (options.urlFile)
     targetUrl = await readUrlFromProtectedFile(options.urlFile);
-  else if (options.url) {
-    if (!loopbackUrl(options.url)) throw new Error('Non-loopback URL refused');
-    targetUrl = options.url;
-  } else {
+  else {
     const envUrlFile =
       process.env['RELIC_OTIO_URL_FILE'] ??
       process.env['RELIC_OTIO_REPLAY_URL_FILE'];
     if (envUrlFile) targetUrl = await readUrlFromProtectedFile(envUrlFile);
     else
       throw new Error(
-        'Replay URL must be provided via --url-file, --url, or RELIC_OTIO_URL_FILE'
+        'Replay URL must be provided via --url-file or RELIC_OTIO_URL_FILE'
       );
   }
 
@@ -2016,7 +2012,6 @@ export function formatReportSummary(report: BenchmarkReport): string {
 
 function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
   let urlFile: string | undefined;
-  let url: string | undefined;
   let chromePath: string | undefined;
   let outputJsonPath: string | undefined;
   let durationSeconds: number | undefined;
@@ -2035,7 +2030,6 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
       a.startsWith(pre) ? a.slice(pre.length) : next();
     if (a === '--url-file' || a.startsWith('--url-file='))
       urlFile = val('--url-file=');
-    else if (a === '--url' || a.startsWith('--url=')) url = val('--url=');
     else if (a === '--chrome-path' || a.startsWith('--chrome-path='))
       chromePath = val('--chrome-path=');
     else if (a === '--output' || a.startsWith('--output='))
@@ -2085,7 +2079,6 @@ function parseCliArgs(argv: readonly string[]): BenchmarkOptions {
   return {
     format,
     ...(urlFile !== undefined ? { urlFile } : {}),
-    ...(url !== undefined ? { url } : {}),
     ...(chromePath !== undefined ? { chromePath } : {}),
     ...(outputJsonPath !== undefined ? { outputJsonPath } : {}),
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),

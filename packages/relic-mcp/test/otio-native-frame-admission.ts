@@ -2791,13 +2791,10 @@ export const COVERAGE_FLOOR_CASES = [
 export async function runAdmissionProof(
   options: CliOptions
 ): Promise<AdmissionReport> {
-  const defaultOwnedShell =
-    '/Users/jwaldrip/.omp/owned-shells/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell';
   const chromePath =
     options.chromePath ??
     process.env['RELIC_OTIO_CHROME_PATH'] ??
-    process.env['RELIC_CHROME_PATH'] ??
-    defaultOwnedShell;
+    process.env['RELIC_CHROME_PATH'];
 
   const foundChrome = await discoverChrome(
     chromePath && chromePath !== 'none' && chromePath !== 'disabled'

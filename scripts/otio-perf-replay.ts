@@ -1,4 +1,4 @@
-import { readFile, writeFile, stat } from 'node:fs/promises';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { decodeKey, relicUrl } from '../packages/relic-format/src/index.ts';
 import { createApp } from '../packages/relic-server/src/app.ts';
@@ -73,9 +73,10 @@ handler = async (request) => {
   }
   return app.fetch(request);
 };
-await writeFile(
-  join(dirname(inputPath), 'replay-url.txt'),
-  relicUrl(origin, id, decodeKey(input.key)),
-  { mode: 0o600 }
-);
+const urlPath = join(dirname(inputPath), 'replay-url.txt');
+await rm(urlPath, { force: true });
+await writeFile(urlPath, relicUrl(origin, id, decodeKey(input.key)), {
+  mode: 0o600,
+  flag: 'wx',
+});
 console.log(`OTIO_PERF_REPLAY_READY ${origin}`);
