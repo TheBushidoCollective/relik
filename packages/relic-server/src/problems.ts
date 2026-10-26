@@ -71,7 +71,8 @@ export type ProblemCode =
   | 'passkey_assertion_required'
   | 'invalid_passkey'
   | 'passkey_verification_failed'
-  | 'passkey_rate_limited';
+  | 'passkey_rate_limited'
+  | 'passkey_sign_in_failed';
 
 const STATUS: Readonly<Record<ProblemCode, number>> = {
   relic_not_found: 404,
@@ -115,6 +116,7 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   invalid_passkey: 400,
   passkey_verification_failed: 403,
   passkey_rate_limited: 429,
+  passkey_sign_in_failed: 401,
 };
 
 /** `title` SHOULD NOT change from occurrence to occurrence, per RFC 9457. */
@@ -162,6 +164,7 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   invalid_passkey: 'Invalid passkey payload',
   passkey_verification_failed: 'Passkey did not verify',
   passkey_rate_limited: 'Too many passkey requests',
+  passkey_sign_in_failed: 'Passkey sign-in did not work',
 };
 
 export interface ProblemExtensions {

@@ -31,6 +31,7 @@ import {
   POLICY_LINK_LABEL,
   REPORT_LINK_LABEL,
   RESERVED_SEGMENTS,
+  type PasskeyDescriptorJSON,
   type RendererClass,
 } from '@relic/format';
 import {
@@ -539,6 +540,21 @@ export function createApp(options: AppOptions = {}): RelicApp {
         request.method === 'POST'
       ) {
         return postPasskeyOptions(request, ip, now);
+      }
+      if (
+        third === 'sign-in' &&
+        fourth === undefined &&
+        request.method === 'POST'
+      ) {
+        return postPasskeySignIn(request, ip, now);
+      }
+      if (
+        third === 'sign-in' &&
+        fourth === 'options' &&
+        rest[4] === undefined &&
+        request.method === 'POST'
+      ) {
+        return postPasskeySignInOptions(request, ip, now);
       }
       return new Response('Method not allowed', { status: 405 });
     }
@@ -3130,6 +3146,29 @@ export function createApp(options: AppOptions = {}): RelicApp {
    * verified reader unable to decrypt the thing they just signed in to
    * discuss.
    */
+  async function mintReaderSession(
+    email: string,
+    now: number
+  ): Promise<string> {
+    const session = newAuthToken();
+    await store.putSession({
+      tokenHash: await sha256Hex(session),
+      email,
+      createdAt: now,
+      expiresAt: now + config.sessionTtlSeconds * 1000,
+    });
+    await store.recordVerifiedIdentity(email, now);
+
+    return [
+      `relic_session=${session}`,
+      'Path=/',
+      'HttpOnly',
+      'Secure',
+      'SameSite=Lax',
+      `Max-Age=${config.sessionTtlSeconds}`,
+    ].join('; ');
+  }
+
   async function authCallback(url: URL, now: number): Promise<Response> {
     const token = url.searchParams.get('token');
     if (token === null) return refuse('invalid_session');
@@ -3139,28 +3178,23 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_session');
     }
 
-    const session = newAuthToken();
-    await store.putSession({
-      tokenHash: await sha256Hex(session),
-      email: link.email,
-      createdAt: now,
-      expiresAt: now + config.sessionTtlSeconds * 1000,
-    });
-    await store.recordVerifiedIdentity(link.email, now);
+    const readerCookie = await mintReaderSession(link.email, now);
+    const offerCookie = [
+      'relic_passkey_offer=1',
+      'Path=/',
+      'Secure',
+      'SameSite=Lax',
+      `Max-Age=${config.passkeyOfferMarkerSeconds}`,
+    ].join('; ');
+
+    const headers = new Headers();
+    headers.set('location', link.returnTo);
+    headers.append('set-cookie', readerCookie);
+    headers.append('set-cookie', offerCookie);
 
     return new Response(null, {
       status: 303,
-      headers: {
-        location: link.returnTo,
-        'set-cookie': [
-          `relic_session=${session}`,
-          'Path=/',
-          'HttpOnly',
-          'Secure',
-          'SameSite=Lax',
-          `Max-Age=${config.sessionTtlSeconds}`,
-        ].join('; '),
-      },
+      headers,
     });
   }
 
@@ -3560,6 +3594,101 @@ export function createApp(options: AppOptions = {}): RelicApp {
       throw error;
     }
   }
+  async function verifyStoredAssertion(
+    record: PasskeyRecord,
+    credential: unknown,
+    clientChallenge: string,
+    now: number
+  ): Promise<
+    | { ok: true; credentialId: string }
+    | {
+        ok: false;
+        code: 'invalid_passkey' | 'passkey_verification_failed';
+        check: string;
+      }
+  > {
+    const credId = (credential as Record<string, unknown> | null | undefined)?.[
+      'id'
+    ];
+    if (typeof credId !== 'string') {
+      return { ok: false, code: 'invalid_passkey', check: 'shape' };
+    }
+
+    const cred = record.credentials.find((c) => c.credentialId === credId);
+    if (cred === undefined) {
+      return {
+        ok: false,
+        code: 'passkey_verification_failed',
+        check: 'credential',
+      };
+    }
+
+    const rpId = new URL(config.serviceOrigin).hostname;
+    const origin = new URL(config.serviceOrigin).origin;
+
+    let assertion: { credentialId: string; signCount: number };
+    try {
+      assertion = await verifyAssertion(credential, {
+        challenge: clientChallenge,
+        origin,
+        rpId,
+        stored: cred,
+        userHandle: record.userHandle,
+      });
+    } catch (err) {
+      if (err instanceof WebauthnError) {
+        return {
+          ok: false,
+          code:
+            err.kind === 'malformed'
+              ? 'invalid_passkey'
+              : 'passkey_verification_failed',
+          check: err.check,
+        };
+      }
+      return { ok: false, code: 'invalid_passkey', check: 'shape' };
+    }
+
+    try {
+      await store.updatePasskeys(record.email, (current) => {
+        const target = current.credentials.find(
+          (c) => c.credentialId === cred.credentialId
+        );
+        if (
+          target !== undefined &&
+          (target.signCount > 0 || assertion.signCount > 0) &&
+          assertion.signCount <= target.signCount
+        ) {
+          throw new ProblemError('passkey_verification_failed', {
+            passkey_check: 'counter',
+          });
+        }
+        return {
+          ...current,
+          credentials: current.credentials.map((c) =>
+            c.credentialId === cred.credentialId
+              ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
+              : c
+          ),
+        };
+      });
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        const code =
+          err.code === 'invalid_passkey'
+            ? 'invalid_passkey'
+            : 'passkey_verification_failed';
+        return {
+          ok: false,
+          code,
+          check: err.options.passkey_check ?? 'counter',
+        };
+      }
+      throw err;
+    }
+
+    return { ok: true, credentialId: cred.credentialId };
+  }
 
   async function postDecision(
     rawId: string,
@@ -3622,72 +3751,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
         });
       }
 
-      const credId = (credential as Record<string, unknown>)['id'];
-      if (typeof credId !== 'string') {
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      const cred = passkeyRecord.credentials.find(
-        (c) => c.credentialId === credId
+      const verified = await verifyStoredAssertion(
+        passkeyRecord,
+        credential,
+        clientChallenge,
+        now
       );
-      if (cred === undefined) {
-        return refuse('passkey_verification_failed', {
-          passkey_check: 'credential',
-        });
-      }
-
-      const rpId = new URL(config.serviceOrigin).hostname;
-      const origin = new URL(config.serviceOrigin).origin;
-
-      let assertion: { credentialId: string; signCount: number };
-      try {
-        assertion = await verifyAssertion(credential, {
-          challenge: clientChallenge,
-          origin,
-          rpId,
-          stored: cred,
-          userHandle: passkeyRecord.userHandle,
-        });
-      } catch (err) {
-        if (err instanceof WebauthnError) {
-          return refuse(
-            err.kind === 'malformed'
-              ? 'invalid_passkey'
-              : 'passkey_verification_failed',
-            { passkey_check: err.check }
-          );
-        }
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      try {
-        await store.updatePasskeys(email, (current) => {
-          const target = current.credentials.find(
-            (c) => c.credentialId === cred.credentialId
-          );
-          if (
-            target !== undefined &&
-            (target.signCount > 0 || assertion.signCount > 0) &&
-            assertion.signCount <= target.signCount
-          ) {
-            throw new ProblemError('passkey_verification_failed', {
-              passkey_check: 'counter',
-            });
-          }
-          return {
-            ...current,
-            credentials: current.credentials.map((c) =>
-              c.credentialId === cred.credentialId
-                ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
-                : c
-            ),
-          };
-        });
-      } catch (err) {
-        if (err instanceof ProblemError) {
-          return refuse(err.code, err.options);
-        }
-        throw err;
+      if (!verified.ok) {
+        return refuse(verified.code, { passkey_check: verified.check });
       }
 
       const recordDigest = await digestOnRecord(row, version);
@@ -3711,7 +3782,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         author: email,
         createdAt,
         versionDigest: recordDigest,
-        credentialId: cred.credentialId,
+        credentialId: verified.credentialId,
       };
       const tombstoneBefore = await store.getTombstone(relicId);
       if (tombstoneBefore !== undefined) {
@@ -3957,69 +4028,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
         });
       }
 
-      const credId = (credential as Record<string, unknown>)['id'];
-      if (typeof credId !== 'string') {
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      const cred = passkeyRecord.credentials.find(
-        (c) => c.credentialId === credId
+      const verified = await verifyStoredAssertion(
+        passkeyRecord,
+        credential,
+        clientChallenge,
+        now
       );
-      if (cred === undefined) {
-        return refuse('passkey_verification_failed', {
-          passkey_check: 'credential',
-        });
-      }
-
-      let assertion: { credentialId: string; signCount: number };
-      try {
-        assertion = await verifyAssertion(credential, {
-          challenge: clientChallenge,
-          origin,
-          rpId,
-          stored: cred,
-          userHandle: passkeyRecord.userHandle,
-        });
-      } catch (err) {
-        if (err instanceof WebauthnError) {
-          return refuse(
-            err.kind === 'malformed'
-              ? 'invalid_passkey'
-              : 'passkey_verification_failed',
-            { passkey_check: err.check }
-          );
-        }
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      try {
-        await store.updatePasskeys(email, (current) => {
-          const target = current.credentials.find(
-            (c) => c.credentialId === cred.credentialId
-          );
-          if (
-            target !== undefined &&
-            (target.signCount > 0 || assertion.signCount > 0) &&
-            assertion.signCount <= target.signCount
-          ) {
-            throw new ProblemError('passkey_verification_failed', {
-              passkey_check: 'counter',
-            });
-          }
-          return {
-            ...current,
-            credentials: current.credentials.map((c) =>
-              c.credentialId === cred.credentialId
-                ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
-                : c
-            ),
-          };
-        });
-      } catch (err) {
-        if (err instanceof ProblemError) {
-          return refuse(err.code, err.options);
-        }
-        throw err;
+      if (!verified.ok) {
+        return refuse(verified.code, { passkey_check: verified.check });
       }
 
       const challengeBytes = new Uint8Array(32);
@@ -4031,7 +4047,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         challengeHash: newChallengeHash,
         email,
         purpose: 'register',
-        assertedBy: cred.credentialId,
+        assertedBy: verified.credentialId,
         userHandle: passkeyRecord.userHandle,
         expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
       });
@@ -4053,7 +4069,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
           timeout: 300000,
           attestation: 'none',
           authenticatorSelection: {
-            residentKey: 'preferred',
+            residentKey: 'required',
+            requireResidentKey: true,
             userVerification: 'required',
           },
           excludeCredentials: passkeyRecord.credentials.map((c) => ({
@@ -4100,7 +4117,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
           timeout: 300000,
           attestation: 'none',
           authenticatorSelection: {
-            residentKey: 'preferred',
+            residentKey: 'required',
+            requireResidentKey: true,
             userVerification: 'required',
           },
           excludeCredentials: [],
@@ -4261,6 +4279,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
       const record: PasskeyRecord = {
         email,
+        address: session.email,
         userHandle,
         credentials: [newCred],
       };
@@ -4334,6 +4353,254 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
       throw err;
     }
+  }
+
+  async function signInAllowList(
+    norm: string
+  ): Promise<PasskeyDescriptorJSON[]> {
+    const [passkeyRecord, decoyKey] = await Promise.all([
+      store.getPasskeys(norm),
+      store.passkeyDecoyKey(),
+    ]);
+
+    const size = config.passkeySignInAllowListSize;
+    const n = config.passkeyDecoyIdLengths.length;
+
+    const decoys: PasskeyDescriptorJSON[] = [];
+    for (let i = 0; i < size; i++) {
+      const lenSig = await hmacSha256(
+        decoyKey,
+        `relic-passkey-decoy:v1:length:${norm}:${i}`
+      );
+      const lenIdx = (lenSig[0] ?? 0) % n;
+      const len = config.passkeyDecoyIdLengths[lenIdx] ?? 32;
+
+      const chunks: Uint8Array[] = [];
+      let gathered = 0;
+      let j = 0;
+      while (gathered < len) {
+        const block = await hmacSha256(
+          decoyKey,
+          `relic-passkey-decoy:v1:id:${norm}:${i}:${j}`
+        );
+        chunks.push(block);
+        gathered += block.length;
+        j++;
+      }
+      const full = new Uint8Array(gathered);
+      let offset = 0;
+      for (const chunk of chunks) {
+        full.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const id = Buffer.from(full.subarray(0, len)).toString('base64url');
+      decoys.push({ type: 'public-key', id });
+    }
+
+    const realDescriptors: PasskeyDescriptorJSON[] = (
+      passkeyRecord?.credentials ?? []
+    ).map((c) => ({
+      type: 'public-key',
+      id: c.credentialId,
+    }));
+
+    const neededDecoys = Math.max(0, size - realDescriptors.length);
+    const combined = [...realDescriptors, ...decoys.slice(0, neededDecoys)];
+    combined.sort((a, b) => a.id.localeCompare(b.id));
+    return combined;
+  }
+
+  async function postPasskeySignInOptions(
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const ipVerdict = limiter.check(
+      `passkey-sign-in-options ${ip}`,
+      config.passkeySignInOptionsRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      return refuse('passkey_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    const contentType = request.headers.get('content-type') ?? '';
+    if (!contentType.toLowerCase().startsWith('application/json')) {
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = await readBoundedJson(request, 'invalid_passkey');
+      if (parsed !== undefined) {
+        if (
+          parsed === null ||
+          typeof parsed !== 'object' ||
+          Array.isArray(parsed)
+        ) {
+          return refuse('invalid_passkey', { passkey_check: 'shape' });
+        }
+        body = parsed as Record<string, unknown>;
+      }
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(
+          err.code,
+          err.options?.passkey_check ? err.options : { passkey_check: 'shape' }
+        );
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let email: string | undefined;
+    if ('email' in body && body['email'] !== undefined) {
+      if (typeof body['email'] !== 'string') {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+      email = body['email'];
+    }
+
+    const challengeBytes = new Uint8Array(32);
+    crypto.getRandomValues(challengeBytes);
+    const challenge = Buffer.from(challengeBytes).toString('base64url');
+    const challengeHash = await sha256Hex(challenge);
+
+    await store.putWebauthnChallenge({
+      challengeHash,
+      purpose: 'sign_in',
+      expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
+      ...(email !== undefined ? { email: normalizeEmail(email) } : {}),
+    });
+
+    const allowCredentials =
+      email !== undefined ? await signInAllowList(normalizeEmail(email)) : [];
+
+    const rpId = new URL(config.serviceOrigin).hostname;
+    return json({
+      public_key: {
+        challenge,
+        rpId,
+        timeout: config.passkeyChallengeTtlSeconds * 1000,
+        userVerification: 'required',
+        allowCredentials,
+      },
+    });
+  }
+
+  async function postPasskeySignIn(
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const ipVerdict = limiter.check(
+      `passkey-sign-in ${ip}`,
+      config.passkeySignInRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      return refuse('passkey_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    const contentType = request.headers.get('content-type') ?? '';
+    if (!contentType.toLowerCase().startsWith('application/json')) {
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      const parsed = await readBoundedJson(request, 'invalid_passkey');
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed)
+      ) {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+      body = parsed as Record<string, unknown>;
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(
+          err.code,
+          err.options?.passkey_check ? err.options : { passkey_check: 'shape' }
+        );
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    const credential = body['credential'];
+    if (
+      typeof credential !== 'object' ||
+      credential === null ||
+      Array.isArray(credential)
+    ) {
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let clientChallenge: string;
+    try {
+      clientChallenge = extractClientDataChallenge(credential);
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    const challengeHash = await sha256Hex(clientChallenge);
+    const challengeRow = await store.consumeWebauthnChallenge(challengeHash);
+    if (
+      challengeRow === undefined ||
+      challengeRow.purpose !== 'sign_in' ||
+      challengeRow.expiresAt <= now
+    ) {
+      return refuse('passkey_sign_in_failed');
+    }
+
+    let record: PasskeyRecord | undefined;
+    if (challengeRow.email !== undefined) {
+      record = await store.getPasskeys(challengeRow.email);
+    } else {
+      const resp = (credential as Record<string, unknown>)['response'] as
+        | Record<string, unknown>
+        | undefined;
+      const userHandle = resp?.['userHandle'];
+      if (
+        typeof userHandle !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,86}$/.test(userHandle)
+      ) {
+        return refuse('passkey_sign_in_failed');
+      }
+      record = await store.getPasskeysByUserHandle(userHandle);
+    }
+
+    if (record === undefined) {
+      return refuse('passkey_sign_in_failed');
+    }
+
+    const verified = await verifyStoredAssertion(
+      record,
+      credential,
+      clientChallenge,
+      now
+    );
+    if (!verified.ok) {
+      return refuse('passkey_sign_in_failed');
+    }
+
+    const address = record.address ?? record.email;
+    const cookie = await mintReaderSession(address, now);
+
+    return new Response(JSON.stringify({ email: address }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': cookie,
+      },
+    });
   }
   // --- helpers ------------------------------------------------------------
 
@@ -5317,7 +5584,7 @@ bodies are encrypted with a key derived from the link, so we cannot read them.
 We do keep who commented on which relic and when: a commenter is the email
 address they verified by following a sign-in link, stored in the clear beside
 each comment. A sign-in link, and every email below, passes the address
-through our mail provider.
+through our mail provider. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
 
 **When someone comments or a relic gets a new version, we email the people following it.**
 That is every verified address that commented on it, every address its publisher or a reader
@@ -5354,7 +5621,7 @@ relic sends no more emails, and those records stay until it is deleted, like the
 
 **Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
 
-**Passkeys.** A decision must be confirmed with a passkey registered to the reader's verified address. The service stores the passkey's public key, its credential id, a signature counter, and when it was created and last used, under a hash of the address. The first passkey registered for an address is trusted on first use; adding another requires confirming with an existing one. The service never receives a private key.
+**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use; adding another requires confirming with an existing one. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
 
 **Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
 
