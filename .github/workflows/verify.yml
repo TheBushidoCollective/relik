@@ -107,6 +107,8 @@ jobs:
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/decision-path.ts
       - name: Passkey sign-in path
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/passkey-sign-in-path.ts
+      - name: Email code sign-in path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/email-code-sign-in-path.ts
 
       # Official OpenTimelineIO 0.18.1 conformance. The generator derives
       # expected ranges from the pinned library, not from this repo's
