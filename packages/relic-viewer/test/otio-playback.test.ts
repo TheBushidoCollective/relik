@@ -21,20 +21,16 @@ import {
   type OtioPreparedLeaf,
   type OtioVideoCompositionTree,
   renderOtioVideoTree,
-  certifiedWindowIndex,
   checkNativeTimingEligibility,
   computePhaseAnchor,
   OTIO_PACKET_START_TOLERANCE_SECONDS,
-  OTIO_RETAINED_SNAPSHOT_PIXELS,
   presentedWindowOutcome,
   SNAPSHOT_SLOTS_PER_DECODER,
-  videoDecoderTime,
 } from '../src/otio-playback.ts';
 import {
   minWindowDuration,
   NativeDecoderRing,
   SnapshotPixelBudget,
-  VsyncTracker,
 } from '../src/otio-video-decoders.ts';
 import type {
   OtioVideoTiming,
@@ -5141,7 +5137,6 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
   });
 
   test('3. Draw throws: the slot stays untagged and the frame holds', async () => {
-    const mediaBlob = new Blob(['draw throws video'], { type: 'video/mp4' });
     const timing: OtioVideoTiming = {
       kind: 'windows',
       starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
@@ -5373,6 +5368,945 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
       expect(videoMedia!.seekTargets.length).toBeGreaterThan(initialSeeks);
     } finally {
       MockVideoFrame.timestampOverride = null;
+      playback.dispose();
+    }
+  });
+});
+
+describe('otio native playback regressions 5-9, clock and capability gate', () => {
+  const created: MockMedia[] = [];
+  let raf: FrameRequestCallback | null = null;
+  let originalGlobals = new Map<
+    PlaybackGlobalKey,
+    PropertyDescriptor | undefined
+  >();
+  let originalUrlMethods = new Map<
+    UrlMethodName,
+    PropertyDescriptor | undefined
+  >();
+  const createdUrls: string[] = [];
+  const revokedUrls: string[] = [];
+
+  beforeEach(() => {
+    created.length = 0;
+    createdUrls.length = 0;
+    revokedUrls.length = 0;
+    raf = null;
+    MockVideoFrame.reset();
+    originalGlobals = propertyDescriptors(globalThis, playbackGlobalKeys);
+    originalUrlMethods = propertyDescriptors(URL, urlMethodNames);
+    try {
+      for (const [name, value] of [
+        ['Image', MockMedia],
+        ['Audio', MockMedia],
+        ['AudioContext', MockAudioContext],
+        ['VideoFrame', MockVideoFrame],
+        [
+          'document',
+          {
+            createElement: (tag: string) => {
+              if (tag === 'canvas') return new SoftCanvas();
+              if (tag === 'video' || tag === 'audio') {
+                const media = new MockMedia();
+                created.push(media);
+                return media;
+              }
+              return hostElement();
+            },
+            body: hostElement(),
+          },
+        ],
+        [
+          'requestAnimationFrame',
+          (cb: FrameRequestCallback) => {
+            raf = cb;
+            return 1;
+          },
+        ],
+        [
+          'cancelAnimationFrame',
+          () => {
+            raf = null;
+          },
+        ],
+      ] as const) {
+        Object.defineProperty(globalThis, name, {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value,
+        });
+      }
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        writable: true,
+        value: () => {
+          const url = `blob:owned-${createdUrls.length}`;
+          createdUrls.push(url);
+          return url;
+        },
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        writable: true,
+        value: (url: string) => {
+          revokedUrls.push(url);
+        },
+      });
+    } catch {
+      // Ignore definition errors
+    }
+  });
+
+  afterEach(() => {
+    try {
+      restorePlaybackEnvironment(originalGlobals, originalUrlMethods);
+    } finally {
+      createdUrls.length = 0;
+      revokedUrls.length = 0;
+    }
+  });
+
+  test('clock: when a drawn-set resync fires, state.time equals the T0 that was painted', async () => {
+    const rate = 24;
+    const timingA: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 48 }, (_, i) => i / rate),
+      ends: Float64Array.from({ length: 48 }, (_, i) => (i + 1) / rate),
+    };
+    const timingB: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 48 }, (_, i) => i / rate),
+      ends: Float64Array.from({ length: 48 }, (_, i) => (i + 1) / rate),
+    };
+    const blobA = new Blob(['clip A'], { type: 'video/mp4' });
+    const blobB = new Blob(['clip B'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/clipA.mp4', blobA],
+        ['media/clipB.mp4', blobB],
+      ]),
+      timings: new Map([
+        [blobA, timingA],
+        [blobB, timingB],
+      ]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const time = (value: number) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate,
+    });
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_1' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_v' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_a' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(48),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clipA.mp4',
+                  },
+                },
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_b' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(48),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clipB.mp4',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate });
+      const videoA = created.find((m) => m.src.includes('media/clipA.mp4'));
+      expect(videoA).toBeDefined();
+      videoA!.enableRvfc();
+      videoA!.pixelAt = () => ({ r: 10, g: 0, b: 0, a: 1 });
+      videoA!.advanceTo(0);
+
+      const tau = await startNative(playback, videoA!, timingA, {
+        d1: 100,
+        tag: 1,
+        rL: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / rate) * 1000;
+
+      // Tick at frame 47 on Clip A
+      videoA!.triggerRvfc(wallFor(47), 47 / rate);
+      raf?.(wallFor(47));
+      expect(playback.getState().time.value).toBeCloseTo(47, 3);
+
+      let timeAtResyncNotification: number | null = null;
+      let bufferingAtResync = false;
+      const unsub = playback.subscribe((state) => {
+        if (state.buffering && timeAtResyncNotification === null) {
+          timeAtResyncNotification = state.time.value;
+          bufferingAtResync = state.buffering;
+        }
+      });
+
+      // Tick at frame 48 -> enters Clip B, triggering drawn-set resync
+      raf?.(wallFor(48));
+
+      expect(bufferingAtResync).toBe(true);
+      expect(timeAtResyncNotification).toBeCloseTo(48, 4);
+      expect(playback.getState().time.value).toBeCloseTo(48, 4);
+      unsub();
+    } finally {
+      playback.dispose();
+    }
+  });
+  test('capability gate: with no VideoFrame global, native path never calls play() on decoder and playback is not held in buffering for startup timeout', async () => {
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const mediaBlob = new Blob(['cap gate video test'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    delete (globalThis as { VideoFrame?: unknown }).VideoFrame;
+
+    const origCapturePausedFrame =
+      NativeDecoderRing.prototype.capturePausedFrame;
+    let capturePausedFrameCalled = false;
+    NativeDecoderRing.prototype.capturePausedFrame = () => {
+      capturePausedFrameCalled = true;
+      return true;
+    };
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+
+      let playCalled = false;
+      const originalPlay = videoMedia!.play;
+      videoMedia!.play = function (this: MockMedia) {
+        playCalled = true;
+        return originalPlay.call(this);
+      };
+
+      const playStart = Date.now();
+      await playback.play();
+      const playDuration = Date.now() - playStart;
+
+      expect(capturePausedFrameCalled).toBe(false);
+      expect(playCalled).toBe(false);
+      expect(playback.getState().buffering).toBe(false);
+      expect(playDuration).toBeLessThan(250);
+    } finally {
+      NativeDecoderRing.prototype.capturePausedFrame = origCapturePausedFrame;
+      playback.dispose();
+    }
+  });
+
+  test('regression 5: clip, gap, clip runs native, then seek cadence at gap, then native again ending with approved pixel from clip B', async () => {
+    const rate = 30;
+    const timingA: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 30 }, (_, i) => i / rate),
+      ends: Float64Array.from({ length: 30 }, (_, i) => (i + 1) / rate),
+    };
+    const timingB: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 30 }, (_, i) => i / rate),
+      ends: Float64Array.from({ length: 30 }, (_, i) => (i + 1) / rate),
+    };
+    const blobA = new Blob(['clip A 5'], { type: 'video/mp4' });
+    const blobB = new Blob(['clip B 5'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/clipA.mp4', blobA],
+        ['media/clipB.mp4', blobB],
+      ]),
+      timings: new Map([
+        [blobA, timingA],
+        [blobB, timingB],
+      ]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const time = (value: number) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate,
+    });
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_1' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_v' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_a' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(30),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clipA.mp4',
+                  },
+                },
+                {
+                  OTIO_SCHEMA: 'Gap.1',
+                  metadata: { relic: { id: 'gap_1' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(10),
+                  },
+                },
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_b' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(30),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clipB.mp4',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+    const origCreate = document.createElement;
+    document.createElement = (tag: string) => {
+      const el = origCreate.call(document, tag);
+      if (tag === 'video') {
+        const media = el as unknown as MockMedia;
+        media.enableRvfc();
+        media.pixelAt = (s) => ({
+          r:
+            (media.src.includes('clipB') ? 200 : 100) +
+            Math.floor(s * rate + 1e-4),
+          g: 0,
+          b: 0,
+          a: 1,
+        });
+      }
+      return el;
+    };
+
+    try {
+      await playback.seek({ value: 0, rate });
+      const videoA = created.find((m) => m.src.includes('media/clipA.mp4'));
+      expect(videoA).toBeDefined();
+      videoA!.advanceTo(0);
+
+      const tau = await startNative(playback, videoA!, timingA, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / rate) * 1000;
+
+      // Native playback on Clip A: tick at frame 10 approves pixel 110
+      videoA!.triggerRvfc(wallFor(10), 10 / rate);
+      raf?.(wallFor(10));
+      expect(outCanvas.pixel.r).toBe(110);
+      expect(videoA!.rvfcCallbacks.size).toBeGreaterThan(0);
+
+      // Tick at frame 32 (gap): drawn-set changed to empty, drops to seek cadence
+      raf?.(wallFor(32));
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(videoA!.paused).toBe(true);
+      expect(videoA!.rvfcCallbacks.size).toBe(0);
+
+      // Seek cadence ticks advance playhead through the gap into Clip B
+      for (let f = 33; f <= 43; f++) {
+        raf?.(wallFor(f));
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+      }
+
+      const videoB = created.find((m) => m.src.includes('media/clipB.mp4'));
+      expect(videoB).toBeDefined();
+      // Wait for rvfc callback registration on Clip B (native returned!)
+      await waitForRvfc(videoB!);
+      expect(videoB!.rvfcCallbacks.size).toBeGreaterThan(0);
+
+      // Trigger first advanced rvfc on Clip B
+      videoB!.triggerRvfc(wallFor(43), 1 / rate);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      // Native tick on Clip B approves pixel from Clip B (>= 200)
+      videoB!.triggerRvfc(wallFor(44), 2 / rate);
+      raf?.(wallFor(44));
+      expect(outCanvas.pixel.r).toBeGreaterThanOrEqual(200);
+    } finally {
+      document.createElement = origCreate;
+      playback.dispose();
+    }
+  });
+  test('regression 6: audio stays paused while start is pending and plays within 2 frames of audio source time at first approved tick', async () => {
+    const rate = 30;
+    const duration = 60;
+    const doc = sampledAvDocument({ rate, duration });
+    const videoBlob = new Blob(['reg 6 video'], { type: 'video/mp4' });
+    const audioBlob = new Blob(['reg 6 audio'], { type: 'audio/wav' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: duration }, (_, i) => i / rate),
+      ends: Float64Array.from({ length: duration }, (_, i) => (i + 1) / rate),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/clip.mp4', videoBlob],
+        ['media/dialogue.wav', audioBlob],
+      ]),
+      timings: new Map([[videoBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      const audioMedia = created.find((m) =>
+        m.src.includes('media/dialogue.wav')
+      );
+      expect(videoMedia).toBeDefined();
+      expect(audioMedia).toBeDefined();
+
+      videoMedia!.enableRvfc();
+      videoMedia!.advanceTo(0);
+
+      const playPromise = playback.play();
+      await waitForRvfc(videoMedia!);
+
+      // Audio stays paused while start is pending
+      expect(audioMedia!.paused).toBe(true);
+
+      // Deliver first advanced rvfc to complete start
+      videoMedia!.triggerRvfc(100, 1 / rate);
+      await playPromise;
+
+      const nu = 1 / 60;
+      const wMin = minWindowDuration(timing, 1);
+      const tau = 100 + ((nu + 2 * wMin) / 2 - 1 / rate) * 1000;
+      const wallFor = (frame: number): number => tau + (frame / rate) * 1000;
+
+      videoMedia!.triggerRvfc(wallFor(1.0), 1 / rate);
+
+      // First approved tick
+      raf?.(wallFor(1.5));
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      // Audio must play and be within 2 frames of audio source time
+      expect(audioMedia!.paused).toBe(false);
+      const expectedAudioTime = 1.5 / rate;
+      const twoFramesTolerance = 2 / rate;
+      expect(
+        Math.abs(audioMedia!.currentTime - expectedAudioTime)
+      ).toBeLessThanOrEqual(twoFramesTolerance);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('regression 7: 0.25x speed on 30 fps windows and 500 ms VFR window: 1 s of consistent ticks with zero resyncs', async () => {
+    const rate = 30;
+    // Starts: 15 frames at 30fps (0..0.5s), 1 frame 500ms VFR (0.5..1.0s), 15 frames at 30fps (1.0..1.5s)
+    const startsList: number[] = [];
+    const endsList: number[] = [];
+    for (let i = 0; i < 15; i++) {
+      startsList.push(i / rate);
+      endsList.push((i + 1) / rate);
+    }
+    // VFR window of 500ms
+    startsList.push(15 / rate);
+    endsList.push(15 / rate + 0.5);
+    // Subsequent 30fps windows
+    for (let i = 0; i < 15; i++) {
+      startsList.push(15 / rate + 0.5 + i / rate);
+      endsList.push(15 / rate + 0.5 + (i + 1) / rate);
+    }
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from(startsList),
+      ends: Float64Array.from(endsList),
+    };
+
+    const mediaBlob = new Blob(['reg 7 video'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const time = (value: number) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate,
+    });
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_1' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_v' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_warp' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(120),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clip.mp4',
+                  },
+                  effects: [
+                    {
+                      OTIO_SCHEMA: 'LinearTimeWarp.1',
+                      name: 'LinearTimeWarp',
+                      time_scalar: 0.25,
+                      enabled: true,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * rate + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      videoMedia!.advanceTo(0);
+
+      const tau = await startNative(playback, videoMedia!, timing, {
+        d1: 100,
+        tag: 1,
+        rL: 0.25,
+      });
+
+      let resyncCount = 0;
+      playback.subscribe((state) => {
+        if (state.buffering) resyncCount++;
+      });
+
+      // Run 1s of consistent ticks at 60Hz (60 ticks, 16.67ms each)
+      let lastTag = -1;
+      for (let tick = 1; tick <= 60; tick++) {
+        const now = tau + (tick * 1000) / 60;
+        const sourceTime = (tick / 60) * 0.25;
+        let tag = 0;
+        for (let i = 0; i < timing.starts.length; i++) {
+          if ((timing.starts[i] ?? 0) <= sourceTime + 1e-6) tag = i;
+        }
+        if (tag !== lastTag) {
+          lastTag = tag;
+          videoMedia!.triggerRvfc(now, timing.starts[tag] ?? 0);
+        }
+        raf?.(now);
+      }
+
+      expect(resyncCount).toBe(0);
+      expect(playback.getState().playing).toBe(true);
+      expect(playback.getState().buffering).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('regression 8: 1920x1080 output, 6 clips scrubbed while paused, then play on clip 6: a frame callback registers; rings only for drawn leaves, budget', async () => {
+    const rate = 30;
+    const numClips = 6;
+    const clipBlobs: Blob[] = [];
+    const blobsMap = new Map<string, Blob>();
+    const timingsMap = new Map<Blob, OtioVideoTiming>();
+    const children: Record<string, unknown>[] = [];
+
+    const time = (value: number) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate,
+    });
+
+    for (let c = 0; c < numClips; c++) {
+      const blob = new Blob([`clip ${c}`], { type: 'video/mp4' });
+      clipBlobs.push(blob);
+      const url = `media/clip${c}.mp4`;
+      blobsMap.set(url, blob);
+      const timing: OtioVideoTiming = {
+        kind: 'windows',
+        starts: Float64Array.from({ length: 30 }, (_, i) => i / rate),
+        ends: Float64Array.from({ length: 30 }, (_, i) => (i + 1) / rate),
+      };
+      timingsMap.set(blob, timing);
+      children.push({
+        OTIO_SCHEMA: 'Clip.1',
+        metadata: { relic: { id: `clip_${c}` } },
+        source_range: {
+          OTIO_SCHEMA: 'TimeRange.1',
+          start_time: time(0),
+          duration: time(10),
+        },
+        media_reference: {
+          OTIO_SCHEMA: 'ExternalReference.1',
+          target_url: url,
+        },
+      });
+    }
+
+    const fixture = timingMediaFixture({
+      blobs: blobsMap,
+      timings: timingsMap,
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 1920;
+    outCanvas.height = 1080;
+
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_1' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_v' } },
+              kind: 'Video',
+              children,
+            },
+          ],
+        },
+      })
+    );
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      // Scrub while paused across all 6 clips
+      for (let c = 0; c < numClips; c++) {
+        await playback.seek({ value: c * 10 + 5, rate });
+      }
+
+      // Clip 6 is at frame 55 (the active clip)
+      const clip6Media = created.find((m) => m.src.includes('media/clip5.mp4'));
+      expect(clip6Media).toBeDefined();
+      clip6Media!.enableRvfc();
+      clip6Media!.advanceTo(5 / rate);
+
+      // Play on clip 6: native ring is allocated within budget because only drawn leaves get rings
+      const playPromise = playback.play();
+      await waitForRvfc(clip6Media!);
+
+      // Frame callback registers successfully
+      expect(clip6Media!.rvfcCallbacks.size).toBeGreaterThan(0);
+      clip6Media!.triggerRvfc(100, 6 / rate);
+      await playPromise;
+      expect(playback.getState().playing).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('regression 9: hidden track clip with missing media enters mid-run: missing-media diagnostic appears without a discontinuity', async () => {
+    const rate = 30;
+    const timingA: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / rate),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / rate),
+    };
+    const blobA = new Blob(['clip A 9'], { type: 'video/mp4' });
+    const blobMissing = new Blob(['clip missing 9'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/clipA.mp4', blobA],
+        ['media/missing.mp4', blobMissing],
+      ]),
+      timings: new Map([
+        [blobA, timingA],
+        [blobMissing, timingA],
+      ]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const time = (value: number) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate,
+    });
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_1' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          metadata: { relic: { id: 'stack_1' } },
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_visible' } },
+              kind: 'Video',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_a' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(60),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/clipA.mp4',
+                  },
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              metadata: { relic: { id: 'track_hidden' } },
+              kind: 'Video',
+              enabled: false,
+              children: [
+                {
+                  OTIO_SCHEMA: 'Gap.1',
+                  metadata: { relic: { id: 'gap_h' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(30),
+                  },
+                },
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  metadata: { relic: { id: 'clip_missing' } },
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(0),
+                    duration: time(30),
+                  },
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/missing.mp4',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+    const origCreate = document.createElement;
+    document.createElement = (tag: string) => {
+      const el = origCreate.call(document, tag);
+      if (tag === 'video') {
+        const media = el as unknown as MockMedia;
+        const desc = Object.getOwnPropertyDescriptor(
+          MockMedia.prototype,
+          'src'
+        );
+        Object.defineProperty(media, 'src', {
+          set(val: string) {
+            desc?.set?.call(this, val);
+            if (val.includes('missing')) {
+              Object.defineProperty(this, 'currentTime', {
+                set() {
+                  throw new Error('Unplayable media');
+                },
+                get() {
+                  return 0;
+                },
+              });
+            }
+          },
+          get() {
+            return desc?.get?.call(this);
+          },
+        });
+      }
+      return el;
+    };
+
+    try {
+      await playback.seek({ value: 0, rate });
+      const videoA = created.find((m) => m.src.includes('media/clipA.mp4'));
+      expect(videoA).toBeDefined();
+      videoA!.enableRvfc();
+      videoA!.pixelAt = () => ({ r: 77, g: 0, b: 0, a: 1 });
+      videoA!.advanceTo(0);
+
+      const tau = await startNative(playback, videoA!, timingA, {
+        d1: 100,
+        tag: 1,
+      });
+      const wallFor = (frame: number): number => tau + (frame / rate) * 1000;
+
+      // Frame 10: visible clip plays, hidden clip has not entered, no missing-media
+      videoA!.triggerRvfc(wallFor(10), 10 / rate);
+      raf?.(wallFor(10));
+      expect(outCanvas.pixel.r).toBe(77);
+      expect(
+        playback.getState().diagnostics.some((d) => d.code === 'missing-media')
+      ).toBe(false);
+
+      // Frame 35: hidden clip with missing media enters mid-run
+      videoA!.triggerRvfc(wallFor(35), 35 / rate);
+      raf?.(wallFor(35));
+      for (let i = 0; i < 50; i++) await Promise.resolve();
+
+      // Diagnostic appears
+      expect(
+        playback.getState().diagnostics.some((d) => d.code === 'missing-media')
+      ).toBe(true);
+
+      // Native playback continues without discontinuity (playing stays true, buffering false, decoder not paused)
+      expect(playback.getState().playing).toBe(true);
+      expect(playback.getState().buffering).toBe(false);
+      expect(videoA!.paused).toBe(false);
+      expect(outCanvas.pixel.r).toBe(77);
+    } finally {
+      document.createElement = origCreate;
       playback.dispose();
     }
   });
