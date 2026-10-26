@@ -4609,4 +4609,103 @@ describe('otio native video playback S-C and S-B', () => {
       playback.dispose();
     }
   });
+  test('regression 2b: rejectNextPlay plus first advanced delivered causes attempt 1 to seek mid(0) again and first approved pixel is 0', async () => {
+    const mediaBlob = new Blob(['reg 2b video test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+      videoMedia!.pixelAt = (s) => ({
+        r: Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      videoMedia!.advanceTo(0);
+
+      // Reject next play on attempt 0 while unpausing so rvfc callback can register
+      videoMedia!.play = function (this: MockMedia): Promise<void> {
+        this.paused = false;
+        if (this.rejectNextPlay) {
+          this.rejectNextPlay = false;
+          return Promise.reject(new Error('play-rejected'));
+        }
+        return Promise.resolve();
+      };
+      videoMedia!.rejectNextPlay = true;
+      const playPromise = playback.play();
+
+      // Wait for attempt 0 callback registration
+      await waitForRvfc(videoMedia!);
+      // Deliver first advanced for attempt 0 -> moves videoMedia to 1/30 (pixel.r = 1)
+      videoMedia!.triggerRvfc(100, 1 / 30);
+
+      // Yield to allow attempt 0 rejection to process and attempt 1 to begin
+      for (let i = 0; i < 20; i++) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 5);
+        await promise;
+        if (
+          videoMedia!.seekTargets.filter((t) => Math.abs(t - 1 / 60) < 1e-4)
+            .length >= 2
+        ) {
+          break;
+        }
+      }
+
+      const mid0Seeks = videoMedia!.seekTargets.filter(
+        (t) => Math.abs(t - 1 / 60) < 1e-4
+      );
+      expect(mid0Seeks.length).toBeGreaterThanOrEqual(2);
+
+      // Wait for attempt 1 callback registration
+      await waitForRvfc(videoMedia!);
+      // Deliver first advanced for attempt 1
+      const d1 = 150;
+      videoMedia!.triggerRvfc(d1, 1 / 30);
+      await playPromise;
+      expect(playback.getState().playing).toBe(true);
+
+      const nu = 1 / 60;
+      const wMin = minWindowDuration(timing, 1);
+      const tau = d1 + ((nu + 2 * wMin) / 2 - (timing.starts[1]! - 0)) * 1000;
+
+      // Tick at req = iL0 = 0 -> must approve pixel 0
+      outCanvas.ctx.drawnSources.length = 0;
+      raf?.(tau + (0.1 / 30) * 1000);
+      expect(outCanvas.pixel.r).toBe(0);
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
+    } finally {
+      playback.dispose();
+    }
+  });
 });
