@@ -2126,6 +2126,7 @@ export function createOtioPlayback(
     }
     startingStartTime =
       typeof performance !== 'undefined' ? performance.now() : Date.now();
+    currentTime = T0;
     nativeEpoch++;
     nativeAnchor = null;
     clockAnchor = null;
