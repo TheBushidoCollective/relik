@@ -2126,9 +2126,9 @@ export function createOtioPlayback(
     );
 
     const drawnVideoLeaves: {
-      contrib: OtioVideoContribution;
+      contrib: OtioVideoContribution & { bundle_path: OtioBundleEntryName };
       video: LoadedVideo;
-      timing: OtioVideoTiming;
+      timing: Extract<OtioVideoTiming, { kind: 'windows' }>;
       rL: number;
       wMinSeconds: number;
       key: string;
@@ -2141,7 +2141,7 @@ export function createOtioPlayback(
       const vsync = vsyncTracker.medianSeconds;
       for (const idx of drawnLeafIndices) {
         const contrib = evaluation.video_contributions[idx];
-        if (!contrib) continue;
+        if (!contrib || contrib.bundle_path === null) continue;
         const mime = inferMediaMimeType(contrib.bundle_path);
         if (!mime.startsWith('video/')) continue;
         const fidelity = effectFidelity(
@@ -2209,7 +2209,9 @@ export function createOtioPlayback(
         }
 
         drawnVideoLeaves.push({
-          contrib,
+          contrib: contrib as OtioVideoContribution & {
+            bundle_path: OtioBundleEntryName;
+          },
           video,
           timing,
           rL,
@@ -2240,12 +2242,12 @@ export function createOtioPlayback(
       if (attempt > 0) {
         nativeEpoch++;
         pauseAllMedia();
-        for (const leaf of drawnVideoLeaves) {
-          const ring = nativeRings.get(leaf.key);
-          if (ring) {
-            ring.resetEpoch(nativeEpoch);
-            ring.capturePausedFrame(leaf.iL0, nativeEpoch);
-          }
+      }
+      for (const leaf of drawnVideoLeaves) {
+        const ring = nativeRings.get(leaf.key);
+        if (ring) {
+          ring.resetEpoch(nativeEpoch);
+          ring.capturePausedFrame(leaf.iL0, nativeEpoch);
         }
       }
 
@@ -2257,16 +2259,16 @@ export function createOtioPlayback(
         if (!ring) continue;
         ring.isStarting = true;
         ring.startupFirstAdvancedTag = leaf.iL0 + 1;
-        const { promise, resolve } = Promise.withResolvers<{
+        const { promise, resolve, reject } = Promise.withResolvers<{
           now: number;
           tag: number;
         }>();
-        ring.startupWaiter = { resolve };
+        ring.startupWaiter = { resolve, reject };
         firstAdvancedPromises.push(promise);
         applyRate(leaf.video.element, leaf.rL);
         ring.startCallbacks(leaf.timing, leaf.rL, () => {
           nativeIneligiblePaths.add(leaf.contrib.bundle_path);
-          if (isPlaying) {
+          if (isPlaying && !isStarting) {
             void startSequence(currentTime, true);
           }
         });
@@ -2306,11 +2308,19 @@ export function createOtioPlayback(
         timeoutMs
       );
 
-      const raceResult = await Promise.race([waitAll, timeoutPromise]);
+      let raceResult:
+        | [{ now: number; tag: number }[], PromiseSettledResult<void>[]]
+        | 'timeout'
+        | 'failed';
+      try {
+        raceResult = await Promise.race([waitAll, timeoutPromise]);
+      } catch {
+        raceResult = 'failed';
+      }
       clearTimeout(timeoutTimer);
       if (stale(gen)) return;
 
-      if (raceResult === 'timeout') {
+      if (raceResult === 'timeout' || raceResult === 'failed') {
         if (attempt === 0) continue;
         fallbackToSeekCadence();
         return;
@@ -2444,9 +2454,9 @@ export function createOtioPlayback(
 
       const currentDrawnOccurrenceKeys = new Set<string>();
       const drawnNativeLeaves: {
-        contrib: OtioVideoContribution;
+        contrib: OtioVideoContribution & { bundle_path: OtioBundleEntryName };
         key: string;
-        timing: OtioVideoTiming;
+        timing: Extract<OtioVideoTiming, { kind: 'windows' }>;
         req: number;
         idx: number;
       }[] = [];
@@ -2454,7 +2464,7 @@ export function createOtioPlayback(
 
       for (const idx of drawnLeafIndices) {
         const contrib = evaluation.video_contributions[idx];
-        if (!contrib) continue;
+        if (!contrib || contrib.bundle_path === null) continue;
         const mime = inferMediaMimeType(contrib.bundle_path);
         if (mime.startsWith('image/')) {
           if (!imageElements.has(contrib.bundle_path)) {
@@ -2476,14 +2486,16 @@ export function createOtioPlayback(
 
         const timing = videoTimingCache.get(contrib.bundle_path);
         const req = certifiedWindowIndex(contrib.source_time, timing ?? null);
-        if (req === null) {
+        if (req === null || !timing || timing.kind !== 'windows') {
           uncertifiedTailSample = true;
           break;
         }
         drawnNativeLeaves.push({
-          contrib,
+          contrib: contrib as OtioVideoContribution & {
+            bundle_path: OtioBundleEntryName;
+          },
           key,
-          timing: timing!,
+          timing,
           req,
           idx,
         });
@@ -2586,6 +2598,7 @@ export function createOtioPlayback(
             !baseMediaPreviewAllowed &&
             (fidelity.kind === 'effect' || fidelity.kind === 'rate');
           if (withheld) return { kind: 'empty' as const };
+          if (contrib.bundle_path === null) return { kind: 'empty' as const };
           const mime = inferMediaMimeType(contrib.bundle_path);
           if (mime.startsWith('image/')) {
             const loaded = imageElements.get(contrib.bundle_path);
