@@ -5595,4 +5595,70 @@ describe('otio native playback regressions 5-9, clock and capability gate', () =
       playback.dispose();
     }
   });
+  test('capability gate: with no VideoFrame global, native path never calls play() on decoder and playback is not held in buffering for startup timeout', async () => {
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const mediaBlob = new Blob(['cap gate video test'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    delete (globalThis as { VideoFrame?: unknown }).VideoFrame;
+
+    const origCapturePausedFrame =
+      NativeDecoderRing.prototype.capturePausedFrame;
+    let capturePausedFrameCalled = false;
+    NativeDecoderRing.prototype.capturePausedFrame = function () {
+      capturePausedFrameCalled = true;
+      return true;
+    };
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia!.enableRvfc();
+
+      let playCalled = false;
+      const originalPlay = videoMedia!.play;
+      videoMedia!.play = function (this: MockMedia) {
+        playCalled = true;
+        return originalPlay.call(this);
+      };
+
+      const playStart = Date.now();
+      await playback.play();
+      const playDuration = Date.now() - playStart;
+
+      expect(capturePausedFrameCalled).toBe(false);
+      expect(playCalled).toBe(false);
+      expect(playback.getState().buffering).toBe(false);
+      expect(playDuration).toBeLessThan(250);
+    } finally {
+      NativeDecoderRing.prototype.capturePausedFrame = origCapturePausedFrame;
+      playback.dispose();
+    }
+  });
 });
