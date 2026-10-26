@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
+import { Script } from 'node:vm';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import {
@@ -438,6 +439,7 @@ export function createOtioPageProfilerScript(): string {
               2000
             );
         }
+        }
       });
       loafObs.observe({ type: 'long-animation-frame', buffered: true });
     } catch {}
@@ -519,10 +521,10 @@ export function createOtioPageProfilerScript(): string {
     }
 
     function getAuthoritativeTimelineRate() {
-      // 1. Check .otio-ruler-label: element('div', 'otio-ruler-label', `${rate} fps`)
+      // The ruler carries the timeline duration's rate.
       const rulerLabel = document.querySelector('.otio-ruler-label');
       if (rulerLabel && rulerLabel.textContent) {
-        const match = rulerLabel.textContent.trim().match(/^([\d.]+)\s*fps$/i);
+        const match = rulerLabel.textContent.trim().match(/^([\\d.]+)\\s*fps$/i);
         if (match) {
           const r = Number(match[1]);
           if (Number.isFinite(r) && r > 0) return r;
@@ -788,7 +790,7 @@ export function createOtioPageProfilerScript(): string {
 
         if (!seekSettled) {
           throw new Error(
-            `Seek to target frame ${targetFrame} (${startSeconds}s) timed out or failed to correlate (observed frame: ${lastObservedFrame}, buffering: ${root.dataset.buffering})`
+            'Seek to target frame ' + targetFrame + ' failed to settle at the requested position'
           );
         }
         playBtn.click();
@@ -825,7 +827,7 @@ export function createOtioPageProfilerScript(): string {
 
         if (compositeFrames.length === 0) {
           throw new Error(
-            `No composite frames recorded during ${windowKey} repetition (0 samples)`
+            'No composite frames recorded during ' + windowKey + ' repetition'
           );
         }
 
@@ -1333,6 +1335,8 @@ export async function runOtioPlaybackBenchmark(
       );
     }
   }
+  const profilerScript = createOtioPageProfilerScript();
+  new Script(profilerScript, { filename: 'otio-profiler-injected.js' });
 
   const durationSeconds = options.durationSeconds ?? 15;
   const warmupSeconds = options.warmupSeconds ?? 2;
@@ -1456,7 +1460,6 @@ export async function runOtioPlaybackBenchmark(
       sessionId
     );
 
-    const profilerScript = createOtioPageProfilerScript();
     await cdp.send(
       'Page.addScriptToEvaluateOnNewDocument',
       { source: profilerScript },
@@ -1475,18 +1478,18 @@ export async function runOtioPlaybackBenchmark(
           return promise;
         };
         const start = performance.now();
-        while (performance.now() - start < 30000) {
+        while (performance.now() - start < 5000) {
           if (
             typeof globalThis.__relicOtioProfiler === 'object' &&
             globalThis.__relicOtioProfiler !== null &&
             typeof globalThis.__relicOtioProfiler.waitForMount === 'function'
           ) {
-            const remainingMs = Math.max(1000, 30000 - Math.round(performance.now() - start));
+            const remainingMs = 30000;
             return await globalThis.__relicOtioProfiler.waitForMount(remainingMs);
           }
           await delay(50);
         }
-        throw new Error('Timeout waiting for __relicOtioProfiler installation');
+        throw new Error('Profiler not installed');
       })()`
     );
 
