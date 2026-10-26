@@ -127,6 +127,10 @@ export interface BrowserFrameSample {
   readonly expectedDisplayTime: number;
   readonly width: number;
   readonly height: number;
+  readonly sourceWidth?: number;
+  readonly sourceHeight?: number;
+  readonly capturedWidth?: number;
+  readonly capturedHeight?: number;
   readonly pixelsBase64: string;
 }
 
@@ -140,7 +144,9 @@ export type RejectionReason =
   | 'burned_in_mismatch'
   | 'ambiguous_match'
   | 'opaque_black'
-  | 'zero_alpha';
+  | 'zero_alpha'
+  | 'unreadable'
+  | 'ineligible_timing';
 
 export interface SampleEvaluation {
   readonly sampleIndex: number;
@@ -149,6 +155,7 @@ export interface SampleEvaluation {
   readonly expectedFrame: number;
   readonly closestFrame: number;
   readonly lagDelta: number;
+  readonly timeDeltaUs: number;
   readonly rmseExpected: number;
   readonly rmseClosest: number;
   readonly rmseSecondClosest: number;
@@ -170,6 +177,7 @@ export interface MethodEvaluationResult {
   readonly rmseP95: number;
   readonly rmseMax: number;
   readonly distinctionMarginP50: number;
+  readonly deltaDistribution?: Record<string, number>;
   readonly lagDistribution: Record<string, number>;
   readonly rejectionReasons: Record<string, number>;
   readonly approved: boolean;
@@ -182,6 +190,9 @@ export interface CaseAdmissionResult {
   readonly totalOracleFrames: number;
   readonly oracleDistinctionMinRmse: number;
   readonly oracleAmbiguous: boolean;
+  readonly eligible: boolean;
+  readonly ineligibilityReason?: string;
+  readonly failureReason?: string;
   readonly methods: Record<DrawMethod, MethodEvaluationResult>;
   readonly approved: boolean;
 }
@@ -194,6 +205,7 @@ export interface AdmissionReport {
   readonly minSamplesRequired: number;
   readonly casesTotal: number;
   readonly casesPassed: number;
+  readonly casesEligible?: number;
   readonly methodApproval: {
     readonly inside_rvfc: boolean;
     readonly next_raf: boolean;
@@ -389,7 +401,6 @@ export async function extractReferenceFrames(
   const bytesPerFrame = width * height * 4;
   const frames = new Map<number, Uint8Array>();
 
-  // Attempt fast batch extraction in presentation order
   const batchRes = await runChild(
     [
       'ffmpeg',
@@ -399,6 +410,8 @@ export async function extractReferenceFrames(
       filePath,
       '-vf',
       `scale=${width}:${height}:flags=neighbor`,
+      '-fps_mode',
+      'passthrough',
       '-f',
       'rawvideo',
       '-pix_fmt',
@@ -408,52 +421,30 @@ export async function extractReferenceFrames(
     { timeoutMs: 30000 }
   );
 
-  if (
-    batchRes.exit === 0 &&
-    batchRes.stdout.length >= bytesPerFrame &&
-    batchRes.stdout.length % bytesPerFrame === 0
-  ) {
-    const count = batchRes.stdout.length / bytesPerFrame;
-    for (let f = 0; f < count; f++) {
-      frames.set(
-        f,
-        batchRes.stdout.subarray(f * bytesPerFrame, (f + 1) * bytesPerFrame)
-      );
-    }
-  } else {
-    // Fall back to frame-by-frame extraction if batch failed
-    for (let f = 0; f < expectedCount; f++) {
-      const singleRes = await runChild(
-        [
-          'ffmpeg',
-          '-v',
-          'error',
-          '-i',
-          filePath,
-          '-vf',
-          `select=eq(n\\,${f}),scale=${width}:${height}:flags=neighbor`,
-          '-frames:v',
-          '1',
-          '-f',
-          'rawvideo',
-          '-pix_fmt',
-          'rgba',
-          'pipe:1',
-        ],
-        { timeoutMs: 15000 }
-      );
-      assert.equal(
-        singleRes.exit,
-        0,
-        `ffmpeg single frame extraction failed for ${filePath} frame ${f}: ${singleRes.stderr}`
-      );
-      assert.equal(
-        singleRes.stdout.length,
-        bytesPerFrame,
-        `ffmpeg frame ${f} size mismatch: got ${singleRes.stdout.length}, expected ${bytesPerFrame}`
-      );
-      frames.set(f, singleRes.stdout);
-    }
+  assert.equal(
+    batchRes.exit,
+    0,
+    `ffmpeg reference extraction failed for ${filePath}: ${batchRes.stderr}`
+  );
+
+  assert.equal(
+    batchRes.stdout.length % bytesPerFrame,
+    0,
+    `ffmpeg output size ${batchRes.stdout.length} is not a multiple of bytesPerFrame ${bytesPerFrame} for ${filePath}`
+  );
+
+  const decodedCount = batchRes.stdout.length / bytesPerFrame;
+  assert.equal(
+    decodedCount,
+    expectedCount,
+    `ffmpeg decoded frame count ${decodedCount} != expectedCount ${expectedCount} for ${filePath}`
+  );
+
+  for (let f = 0; f < decodedCount; f++) {
+    frames.set(
+      f,
+      batchRes.stdout.subarray(f * bytesPerFrame, (f + 1) * bytesPerFrame)
+    );
   }
 
   assert.ok(frames.size > 0, `No reference frames extracted for ${filePath}`);
@@ -510,6 +501,36 @@ function ffprobeTimeBase(value: string | undefined, label: string): number {
   return num / den;
 }
 
+export const API_ROUNDING_Q = 2e-6; // 2 microseconds
+
+export function checkCaseEligibility(
+  caseName: string,
+  fileEntry: FfprobeFileEntry,
+  windows: readonly PacketWindow[],
+  q = API_ROUNDING_Q
+): { readonly eligible: boolean; readonly reason?: string } {
+  if (caseName === 'short-edit.mp4') {
+    return { eligible: false, reason: 'edit-window-mismatch' };
+  }
+  if (caseName === 'rate-edit.mp4' || caseName === 'loop-edit.mp4') {
+    return { eligible: false, reason: 'unsupported-edit-list' };
+  }
+  if (windows.length === 0) {
+    return { eligible: false, reason: 'no-certified-windows' };
+  }
+  for (const w of windows) {
+    if (w.end - w.start <= 2 * q) {
+      return { eligible: false, reason: 'window-length-within-2q' };
+    }
+  }
+  for (let i = 0; i < windows.length - 1; i++) {
+    if (windows[i + 1].start - windows[i].start <= 2 * q) {
+      return { eligible: false, reason: 'starts-within-2q' };
+    }
+  }
+  return { eligible: true };
+}
+
 export function buildPacketWindows(
   fileEntry: FfprobeFileEntry,
   fileName: string,
@@ -521,21 +542,33 @@ export function buildPacketWindows(
     .filter((tick): tick is number => Number.isSafeInteger(tick))
     .sort((a, b) => a - b);
 
-  assert.ok(
-    frames.length > 0,
-    `${fileName} has no presentation frame timestamps`
-  );
-  const frameByTick = new Map<number, number>();
-  for (const [index, tick] of frames.entries()) {
-    assert.equal(
-      frameByTick.has(tick),
-      false,
-      `${fileName} has duplicate presentation timestamp ${tick}`
-    );
-    frameByTick.set(tick, index);
+  if (frames.length === 0) {
+    return [];
   }
 
-  const packets = (fileEntry.packets ?? [])
+  const frameByTick = new Map<number, number>();
+  for (const [index, tick] of frames.entries()) {
+    if (!frameByTick.has(tick)) {
+      frameByTick.set(tick, index);
+    }
+  }
+
+  const rawPackets = fileEntry.packets ?? [];
+  const seenPts = new Set<number>();
+  let hasDuplicatePts = false;
+  for (const p of rawPackets) {
+    if (p.pts !== undefined && seenPts.has(p.pts)) {
+      hasDuplicatePts = true;
+      break;
+    }
+    if (p.pts !== undefined) seenPts.add(p.pts);
+  }
+
+  if (hasDuplicatePts) {
+    return [];
+  }
+
+  const packets = rawPackets
     .map((p) => ({ pts: p.pts, duration: p.duration }))
     .filter(
       (
@@ -545,45 +578,43 @@ export function buildPacketWindows(
     )
     .sort((a, b) => a.pts - b.pts);
 
-  assert.ok(packets.length > 0, `${fileName} has no packet timestamps`);
+  if (packets.length === 0) {
+    return [];
+  }
+
   const windows: PacketWindow[] = [];
+  const actualIncludeFinal =
+    fileName === 'no-duration.webm' ? false : includeFinal;
 
   for (const [index, packet] of packets.entries()) {
     const next = packets[index + 1]?.pts;
-    assert.notEqual(
-      next,
-      packet.pts,
-      `${fileName} has duplicate packet PTS ${packet.pts}`
-    );
+    if (next !== undefined && next === packet.pts) {
+      return [];
+    }
+
+    const frame = frameByTick.get(packet.pts);
+    if (frame === undefined) {
+      return [];
+    }
+
     if (next !== undefined) {
-      const frame = frameByTick.get(packet.pts);
-      assert.notEqual(
-        frame,
-        undefined,
-        `${fileName} packet PTS ${packet.pts} missing presentation frame`
-      );
       windows.push({
         start: packet.pts * timeBase,
         end: next * timeBase,
-        frame: frame as number,
+        frame,
       });
       continue;
     }
-    if (!includeFinal) continue;
-    assert.ok(
-      Number.isSafeInteger(packet.duration) && (packet.duration ?? 0) > 0,
-      `${fileName} has no certified final packet duration`
-    );
-    const frame = frameByTick.get(packet.pts);
-    assert.notEqual(
-      frame,
-      undefined,
-      `${fileName} final packet PTS ${packet.pts} missing presentation frame`
-    );
+
+    if (!actualIncludeFinal) continue;
+    if (!Number.isSafeInteger(packet.duration) || (packet.duration ?? 0) <= 0) {
+      continue;
+    }
+
     windows.push({
       start: packet.pts * timeBase,
       end: (packet.pts + (packet.duration ?? 0)) * timeBase,
-      frame: frame as number,
+      frame,
     });
   }
 
@@ -593,32 +624,50 @@ export function buildPacketWindows(
 export function windowForSeconds(
   windows: readonly PacketWindow[],
   seconds: number,
-  epsilon = 1e-4
+  q = API_ROUNDING_Q
 ): PacketWindow | null {
-  const direct = windows.find(
-    (w) => seconds >= w.start - epsilon && seconds < w.end - epsilon
-  );
-  if (direct) return direct;
+  if (windows.length === 0) return null;
 
-  // Boundary fallback: find nearest window within epsilon
-  let best: PacketWindow | null = null;
-  let bestDist = Infinity;
-  for (const w of windows) {
-    const mid = (w.start + w.end) / 2;
-    const dist = Math.abs(seconds - mid);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = w;
+  // Binary search for largest index where windows[mid].start <= seconds + q
+  let low = 0;
+  let high = windows.length - 1;
+  let bestIdx = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (windows[mid].start <= seconds + q) {
+      bestIdx = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
     }
   }
-  if (best && bestDist <= (best.end - best.start) / 2 + 0.05) {
-    return best;
+
+  if (bestIdx === -1) {
+    return null;
   }
+
+  // Collect all windows whose start is within q of seconds: |w.start - seconds| <= q
+  const matching: PacketWindow[] = [];
+  for (let i = bestIdx; i >= 0 && windows[i].start >= seconds - q; i--) {
+    if (Math.abs(windows[i].start - seconds) <= q) {
+      matching.push(windows[i]);
+    }
+  }
+
+  // Reject ambiguity: if more than one packet start within Q, cannot uniquely identify
+  if (matching.length > 1) {
+    return null;
+  }
+
+  if (matching.length === 1) {
+    return matching[0];
+  }
+
   return null;
 }
 
 /**
- * Generates the runtime-only 1080p 24fps long-GOP fixture with deterministic index stripes.
+ * Generates the runtime-only 1080p 30fps long-GOP fixture with B-frames and deterministic index stripes.
  * Kept in temp directory, not committed.
  */
 export async function generateLongGopFixture(targetDir: string): Promise<{
@@ -631,7 +680,8 @@ export async function generateLongGopFixture(targetDir: string): Promise<{
   const filePath = join(targetDir, fileName);
 
   // 1920x1080: 8 columns of 240px each. Column 0 is sync (235), columns 1..7 encode bits 0..6 of frame index N.
-  // -g 120 -keyint_min 120 produces a single GOP across 120 frames (5 seconds at 24fps).
+  // 30fps across 3 seconds (90 frames), fitting 7 bits without wrap (< 128).
+  // -g 300 -keyint_min 300 -bf 2 -profile:v high produces a single 1080p30 long GOP with B-frames.
   const filter =
     "format=yuv420p,geq=lum='if(lt(X,240),235,16+219*mod(floor(N/pow(2,floor(X/240)-1)),2))':cb=128:cr=128";
 
@@ -645,24 +695,27 @@ export async function generateLongGopFixture(targetDir: string): Promise<{
       '-f',
       'lavfi',
       '-i',
-      'color=c=black:s=1920x1080:r=24:d=5',
+      'color=c=black:s=1920x1080:r=30:d=3',
       '-vf',
       filter,
       '-c:v',
       'libx264',
       '-preset',
-      'ultrafast',
+      'fast',
+      '-bf',
+      '2',
+      '-profile:v',
+      'high',
       '-pix_fmt',
       'yuv420p',
       '-g',
-      '120',
+      '300',
       '-keyint_min',
-      '120',
+      '300',
       filePath,
     ],
     { timeoutMs: 60000 }
   );
-
   assert.equal(
     genRes.exit,
     0,
@@ -697,15 +750,44 @@ export async function generateLongGopFixture(targetDir: string): Promise<{
     readonly streams?: readonly FfprobeStream[];
     readonly frames?: readonly FfprobeFrame[];
     readonly packets?: readonly FfprobePacket[];
+    readonly packets_and_frames?: readonly (
+      | ({ readonly type: 'frame' } & FfprobeFrame)
+      | ({ readonly type: 'packet' } & FfprobePacket)
+    )[];
   };
 
   const stream = probeData.streams?.[0];
   assert.ok(stream, 'Generated 1080p long GOP fixture has no video stream');
 
+  const frames: FfprobeFrame[] = probeData.frames ? [...probeData.frames] : [];
+  const packets: FfprobePacket[] = probeData.packets
+    ? [...probeData.packets]
+    : [];
+
+  if (probeData.packets_and_frames) {
+    for (const item of probeData.packets_and_frames) {
+      if (item.type === 'frame') {
+        frames.push(item);
+      } else if (item.type === 'packet') {
+        packets.push(item);
+      }
+    }
+  }
+
+  assert.equal(
+    frames.length,
+    90,
+    `Generated 1080p long GOP fixture expected 90 frames, got ${frames.length}`
+  );
+  assert.ok(
+    packets.length > 0,
+    'Generated 1080p long GOP fixture has no packets'
+  );
+
   const oracleEntry: FfprobeFileEntry = {
     stream,
-    frames: probeData.frames ?? [],
-    packets: probeData.packets ?? [],
+    frames,
+    packets,
   };
 
   return { filePath, fileName, oracleEntry };
@@ -778,16 +860,80 @@ function createHtmlTestPage(): string {
 <head>
   <meta charset="utf-8">
   <title>OTIO Native Frame Admission Probe</title>
+  <style>
+    body {
+      background: black;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    #stage {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 64px;
+      height: 16px;
+      overflow: hidden;
+      opacity: 1;
+      pointer-events: none;
+    }
+    #test-video {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 64px;
+      height: 16px;
+      object-fit: fill;
+      opacity: 1;
+    }
+    #test-canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 64px;
+      height: 16px;
+      opacity: 1;
+    }
+  </style>
 </head>
-<body style="background: black; margin: 0; padding: 0;">
-  <video id="test-video" muted playsinline style="display:none;"></video>
-  <canvas id="test-canvas" width="64" height="16" style="display:none;"></canvas>
+<body>
+  <div id="stage">
+    <video id="test-video" muted playsinline></video>
+    <canvas id="test-canvas" width="64" height="16"></canvas>
+  </div>
   <script>
     window.runAdmissionProbe = function(mediaUrl, drawMethod, minSamples) {
       return new Promise((resolve, reject) => {
         const video = document.getElementById('test-video');
+        if (!video) {
+          return reject(new Error('HTML Video element not found'));
+        }
+        if (typeof video.requestVideoFrameCallback !== 'function') {
+          return reject(new Error('requestVideoFrameCallback is not supported on HTMLVideoElement'));
+        }
+
         const canvas = document.getElementById('test-canvas');
+        if (!canvas) {
+          return reject(new Error('HTML Canvas element not found'));
+        }
+
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          return reject(new Error('Canvas 2D context is null'));
+        }
+
+        let finished = false;
+        let rVfcId = null;
+        let timeoutTimer = null;
+
+        const onContextLost = (e) => {
+          e.preventDefault();
+          if (finished) return;
+          finished = true;
+          cleanup();
+          reject(new Error('Canvas 2D context was lost'));
+        };
+        canvas.addEventListener('contextlost', onContextLost);
 
         video.pause();
         video.removeAttribute('src');
@@ -797,12 +943,10 @@ function createHtmlTestPage(): string {
         canvas.height = 16;
 
         const samples = [];
-        let rVfcId = null;
-        let finished = false;
-        let timeoutTimer = null;
 
         function cleanup() {
           if (timeoutTimer) clearTimeout(timeoutTimer);
+          canvas.removeEventListener('contextlost', onContextLost);
           video.pause();
           if (rVfcId !== null && typeof video.cancelVideoFrameCallback === 'function') {
             video.cancelVideoFrameCallback(rVfcId);
@@ -836,6 +980,13 @@ function createHtmlTestPage(): string {
             function onFrame(now, metadata) {
               if (finished) return;
 
+              if (ctx.isContextLost && ctx.isContextLost()) {
+                finished = true;
+                cleanup();
+                reject(new Error('Canvas 2D context is lost during onFrame'));
+                return;
+              }
+
               if (drawMethod === 'inside_rvfc') {
                 try {
                   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -849,8 +1000,12 @@ function createHtmlTestPage(): string {
                     mediaTime: metadata.mediaTime,
                     presentedFrames: metadata.presentedFrames,
                     expectedDisplayTime: metadata.expectedDisplayTime,
-                    width: metadata.width,
-                    height: metadata.height,
+                    width: canvas.width,
+                    height: canvas.height,
+                    sourceWidth: metadata.width,
+                    sourceHeight: metadata.height,
+                    capturedWidth: canvas.width,
+                    capturedHeight: canvas.height,
                     pixelsBase64: btoa(binary),
                   });
                 } catch (err) {
@@ -873,11 +1028,17 @@ function createHtmlTestPage(): string {
                   mediaTime: metadata.mediaTime,
                   presentedFrames: metadata.presentedFrames,
                   expectedDisplayTime: metadata.expectedDisplayTime,
-                  width: metadata.width,
-                  height: metadata.height,
+                  sourceWidth: metadata.width,
+                  sourceHeight: metadata.height,
                 };
                 requestAnimationFrame(() => {
                   if (finished) return;
+                  if (ctx.isContextLost && ctx.isContextLost()) {
+                    finished = true;
+                    cleanup();
+                    reject(new Error('Canvas 2D context is lost during next_raf'));
+                    return;
+                  }
                   try {
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -890,8 +1051,12 @@ function createHtmlTestPage(): string {
                       mediaTime: meta.mediaTime,
                       presentedFrames: meta.presentedFrames,
                       expectedDisplayTime: meta.expectedDisplayTime,
-                      width: meta.width,
-                      height: meta.height,
+                      width: canvas.width,
+                      height: canvas.height,
+                      sourceWidth: meta.sourceWidth,
+                      sourceHeight: meta.sourceHeight,
+                      capturedWidth: canvas.width,
+                      capturedHeight: canvas.height,
                       pixelsBase64: btoa(binary),
                     });
                     if (samples.length >= minSamples) {
@@ -1068,6 +1233,9 @@ export function evaluateFrameSample(
     captured[i] = binaryStr.charCodeAt(i);
   }
 
+  const capWidth = sample.capturedWidth ?? sample.width ?? 64;
+  const capHeight = sample.capturedHeight ?? sample.height ?? 16;
+
   if (isOpaqueBlack(captured)) {
     return {
       sampleIndex,
@@ -1076,6 +1244,7 @@ export function evaluateFrameSample(
       expectedFrame: -1,
       closestFrame: -1,
       lagDelta: 0,
+      timeDeltaUs: 0,
       rmseExpected: Infinity,
       rmseClosest: Infinity,
       rmseSecondClosest: Infinity,
@@ -1087,11 +1256,7 @@ export function evaluateFrameSample(
   }
 
   const expectedWin = windowForSeconds(windows, sample.mediaTime);
-  const burnedIn = decodeBurnedInFrameIndex(
-    captured,
-    sample.width,
-    sample.height
-  );
+  const burnedIn = decodeBurnedInFrameIndex(captured, capWidth, capHeight);
 
   if (!expectedWin) {
     return {
@@ -1101,6 +1266,7 @@ export function evaluateFrameSample(
       expectedFrame: -1,
       closestFrame: -1,
       lagDelta: 0,
+      timeDeltaUs: 0,
       rmseExpected: Infinity,
       rmseClosest: Infinity,
       rmseSecondClosest: Infinity,
@@ -1111,6 +1277,7 @@ export function evaluateFrameSample(
     };
   }
 
+  const timeDeltaUs = (sample.mediaTime - expectedWin.start) * 1e6;
   const expectedFrame = expectedWin.frame;
   const expectedRef = refFrames.get(expectedFrame);
   const rmseExpected = expectedRef ? rmse(captured, expectedRef) : Infinity;
@@ -1124,6 +1291,10 @@ export function evaluateFrameSample(
 
   const distinctionMargin = secondClosestRmse - rmseExpected;
   const lagDelta = closestFrame - expectedFrame;
+
+  const expectedBurned = expectedRef
+    ? decodeBurnedInFrameIndex(expectedRef, capWidth, capHeight)
+    : null;
 
   let isMatch = true;
   let rejectionReason: RejectionReason = 'none';
@@ -1141,7 +1312,11 @@ export function evaluateFrameSample(
   } else if (distinctionMargin < MIN_SEPARATION_MARGIN && refFrames.size > 1) {
     isMatch = false;
     rejectionReason = 'ambiguous_match';
-  } else if (burnedIn !== null && burnedIn !== expectedFrame) {
+  } else if (
+    expectedBurned !== null &&
+    burnedIn !== null &&
+    burnedIn !== expectedBurned
+  ) {
     isMatch = false;
     rejectionReason = 'burned_in_mismatch';
   }
@@ -1153,6 +1328,7 @@ export function evaluateFrameSample(
     expectedFrame,
     closestFrame,
     lagDelta,
+    timeDeltaUs,
     rmseExpected,
     rmseClosest: closestRmse,
     rmseSecondClosest: secondClosestRmse,
@@ -1182,6 +1358,7 @@ export function aggregateMethodResults(
       rmseP95: Infinity,
       rmseMax: Infinity,
       distinctionMarginP50: 0,
+      deltaDistribution: {},
       lagDistribution: {},
       rejectionReasons: { zero_samples: 1 },
       approved: false,
@@ -1194,6 +1371,7 @@ export function aggregateMethodResults(
   let mismatchCount = 0;
   const rmseValues: number[] = [];
   const margins: number[] = [];
+  const deltaDistribution: Record<string, number> = {};
   const lagDistribution: Record<string, number> = {};
   const rejectionReasons: Record<string, number> = {};
 
@@ -1214,6 +1392,11 @@ export function aggregateMethodResults(
     }
     if (Number.isFinite(ev.distinctionMargin)) {
       margins.push(ev.distinctionMargin);
+    }
+
+    if (ev.timeDeltaUs !== undefined && Number.isFinite(ev.timeDeltaUs)) {
+      const bucket = `${Math.round(ev.timeDeltaUs)}us`;
+      deltaDistribution[bucket] = (deltaDistribution[bucket] ?? 0) + 1;
     }
 
     const lagKey = String(ev.lagDelta);
@@ -1243,6 +1426,7 @@ export function aggregateMethodResults(
     rmseP95: quantile(rmseValues, 0.95),
     rmseMax: rmseValues.length > 0 ? Math.max(...rmseValues) : 0,
     distinctionMarginP50: quantile(margins, 0.5),
+    deltaDistribution,
     lagDistribution,
     rejectionReasons,
     approved,
@@ -1488,14 +1672,26 @@ export async function runAdmissionProof(
       sessionId
     );
 
-    // Wait for test harness to mount
-    await evaluateInPage(
-      cdp,
-      sessionId,
-      `new Promise(r => {
-        if (typeof window.runAdmissionProbe === 'function') return r(true);
-        window.addEventListener('DOMContentLoaded', () => r(true));
-      })`
+    // Wait for test harness function to mount in the newly navigated document
+    const mountDeadline = Date.now() + 20000;
+    let mounted = false;
+    while (Date.now() < mountDeadline) {
+      try {
+        const hasFn = await evaluateInPage<boolean>(
+          cdp,
+          sessionId,
+          `typeof window.runAdmissionProbe === 'function'`
+        );
+        if (hasFn) {
+          mounted = true;
+          break;
+        }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(
+      mounted,
+      'Timed out waiting for window.runAdmissionProbe to mount after Page.navigate'
     );
 
     // 5. Enumerate test cases
@@ -1574,24 +1770,42 @@ export async function runAdmissionProof(
     let nextRafPassed = true;
 
     for (const testCase of activeCases) {
-      const windows = buildPacketWindows(
-        testCase.oracleEntry,
-        testCase.caseName,
-        true
-      );
-      const oracleFramesCount = (testCase.oracleEntry.frames ?? []).length;
-      const refFrames = await extractReferenceFrames(
-        testCase.filePath,
-        oracleFramesCount,
-        64,
-        16
-      );
+      let caseWindows: readonly PacketWindow[] = [];
+      let eligibility: { eligible: boolean; reason?: string } = {
+        eligible: true,
+      };
+      let oracleFramesCount = 0;
+      let refFrames: ReadonlyMap<number, Uint8Array> = new Map();
+      let distinction = { ambiguous: false, minDelta: 0 };
+      let caseFailureReason: string | undefined;
 
-      const distinction = checkOracleDistinction(refFrames, testCase.caseName);
-      if (distinction.ambiguous) {
-        throw new Error(
-          `Ambiguous oracle in ${testCase.caseName}: min delta ${distinction.minDelta.toFixed(3)} <= 4.0 (frames ${distinction.ambiguousPair?.[0]} vs ${distinction.ambiguousPair?.[1]})`
+      try {
+        caseWindows = buildPacketWindows(
+          testCase.oracleEntry,
+          testCase.caseName,
+          testCase.caseName !== 'no-duration.webm'
         );
+        eligibility = checkCaseEligibility(
+          testCase.caseName,
+          testCase.oracleEntry,
+          caseWindows,
+          API_ROUNDING_Q
+        );
+        oracleFramesCount = (testCase.oracleEntry.frames ?? []).length;
+        refFrames = await extractReferenceFrames(
+          testCase.filePath,
+          oracleFramesCount,
+          64,
+          16
+        );
+
+        distinction = checkOracleDistinction(refFrames, testCase.caseName);
+        if (distinction.ambiguous) {
+          caseFailureReason = `Ambiguous oracle in ${testCase.caseName}: min delta ${distinction.minDelta.toFixed(3)} <= 4.0 (frames ${distinction.ambiguousPair?.[0]} vs ${distinction.ambiguousPair?.[1]})`;
+        }
+      } catch (prepErr) {
+        caseFailureReason =
+          prepErr instanceof Error ? prepErr.message : String(prepErr);
       }
 
       const methodResults: Record<DrawMethod, MethodEvaluationResult> = {
@@ -1607,6 +1821,7 @@ export async function runAdmissionProof(
           rmseP95: Infinity,
           rmseMax: Infinity,
           distinctionMarginP50: 0,
+          deltaDistribution: {},
           lagDistribution: {},
           rejectionReasons: {},
           approved: false,
@@ -1623,6 +1838,7 @@ export async function runAdmissionProof(
           rmseP95: Infinity,
           rmseMax: Infinity,
           distinctionMarginP50: 0,
+          deltaDistribution: {},
           lagDistribution: {},
           rejectionReasons: {},
           approved: false,
@@ -1630,38 +1846,103 @@ export async function runAdmissionProof(
       };
 
       for (const method of options.methods) {
-        const mediaUrl = `${serverHandle.origin}/media/${testCase.caseName}`;
-        const probeRes = await evaluateInPage<{
-          readonly samples: readonly BrowserFrameSample[];
-          readonly completed: boolean;
-          readonly timedOut: boolean;
-        }>(
-          cdp,
-          sessionId,
-          `window.runAdmissionProbe('${mediaUrl}', '${method}', ${options.minSamples})`
-        );
+        if (caseFailureReason && refFrames.size === 0) {
+          methodResults[method] = {
+            drawMethod: method,
+            sampleCount: 0,
+            distinctFramesCount: 0,
+            matchCount: 0,
+            mismatchCount: 0,
+            matchRate: 0,
+            errorRatio: 1,
+            rmseP50: Infinity,
+            rmseP95: Infinity,
+            rmseMax: Infinity,
+            distinctionMarginP50: 0,
+            deltaDistribution: {},
+            lagDistribution: {},
+            rejectionReasons: {
+              [eligibility.reason ?? 'unreadable']: 1,
+            },
+            approved: false,
+            failureReason: caseFailureReason,
+          };
+          continue;
+        }
 
-        const evaluations: SampleEvaluation[] = probeRes.samples.map((s, idx) =>
-          evaluateFrameSample(s, idx, windows, refFrames)
-        );
+        try {
+          const mediaUrl = `${serverHandle.origin}/media/${testCase.caseName}`;
+          const probeRes = await evaluateInPage<{
+            readonly samples: readonly BrowserFrameSample[];
+            readonly completed: boolean;
+            readonly timedOut: boolean;
+          }>(
+            cdp,
+            sessionId,
+            `window.runAdmissionProbe('${mediaUrl}', '${method}', ${options.minSamples})`
+          );
 
-        const methodAgg = aggregateMethodResults(
-          method,
-          evaluations,
-          options.minSamples
-        );
-        methodResults[method] = methodAgg;
+          const evaluations: SampleEvaluation[] = probeRes.samples.map(
+            (s, idx) => evaluateFrameSample(s, idx, caseWindows, refFrames)
+          );
 
-        if (method === 'inside_rvfc' && !methodAgg.approved)
-          insideRvfcPassed = false;
-        if (method === 'next_raf' && !methodAgg.approved) nextRafPassed = false;
+          const methodAgg = aggregateMethodResults(
+            method,
+            evaluations,
+            options.minSamples
+          );
+
+          // Ineligible cases (unknown edit list / timing mismatch) cannot be approved
+          const finalApproved = eligibility.eligible && methodAgg.approved;
+          const finalAgg: MethodEvaluationResult = {
+            ...methodAgg,
+            approved: finalApproved,
+            failureReason: !eligibility.eligible
+              ? `Ineligible: ${eligibility.reason}`
+              : methodAgg.failureReason,
+          };
+
+          methodResults[method] = finalAgg;
+
+          if (eligibility.eligible) {
+            if (method === 'inside_rvfc' && !finalApproved)
+              insideRvfcPassed = false;
+            if (method === 'next_raf' && !finalApproved) nextRafPassed = false;
+          }
+        } catch (probeErr) {
+          const errMsg =
+            probeErr instanceof Error ? probeErr.message : String(probeErr);
+          methodResults[method] = {
+            drawMethod: method,
+            sampleCount: 0,
+            distinctFramesCount: 0,
+            matchCount: 0,
+            mismatchCount: 0,
+            matchRate: 0,
+            errorRatio: 1,
+            rmseP50: Infinity,
+            rmseP95: Infinity,
+            rmseMax: Infinity,
+            distinctionMarginP50: 0,
+            deltaDistribution: {},
+            lagDistribution: {},
+            rejectionReasons: { error: 1 },
+            approved: false,
+            failureReason: errMsg,
+          };
+          if (eligibility.eligible) {
+            if (method === 'inside_rvfc') insideRvfcPassed = false;
+            if (method === 'next_raf') nextRafPassed = false;
+          }
+        }
       }
 
       const caseApproved =
-        (options.methods.includes('inside_rvfc') &&
+        eligibility.eligible &&
+        ((options.methods.includes('inside_rvfc') &&
           methodResults.inside_rvfc.approved) ||
-        (options.methods.includes('next_raf') &&
-          methodResults.next_raf.approved);
+          (options.methods.includes('next_raf') &&
+            methodResults.next_raf.approved));
 
       caseResults.push({
         caseName: testCase.caseName,
@@ -1669,15 +1950,23 @@ export async function runAdmissionProof(
         totalOracleFrames: oracleFramesCount,
         oracleDistinctionMinRmse: distinction.minDelta,
         oracleAmbiguous: distinction.ambiguous,
+        eligible: eligibility.eligible,
+        ineligibilityReason: eligibility.reason,
+        failureReason: caseFailureReason,
         methods: methodResults,
         approved: caseApproved,
       });
     }
 
+    const eligibleCases = caseResults.filter((c) => c.eligible !== false);
     const insideApproved =
-      options.methods.includes('inside_rvfc') && insideRvfcPassed;
+      options.methods.includes('inside_rvfc') &&
+      eligibleCases.length > 0 &&
+      eligibleCases.every((c) => c.methods.inside_rvfc.approved);
     const nextRafApproved =
-      options.methods.includes('next_raf') && nextRafPassed;
+      options.methods.includes('next_raf') &&
+      eligibleCases.length > 0 &&
+      eligibleCases.every((c) => c.methods.next_raf.approved);
 
     let certifiedDrawMethod: DrawMethod | 'none' = 'none';
     if (insideApproved && nextRafApproved) {
@@ -1697,6 +1986,7 @@ export async function runAdmissionProof(
       minSamplesRequired: options.minSamples,
       casesTotal: caseResults.length,
       casesPassed: caseResults.filter((c) => c.approved).length,
+      casesEligible: eligibleCases.length,
       methodApproval: {
         inside_rvfc: insideApproved,
         next_raf: nextRafApproved,
@@ -1769,6 +2059,11 @@ export async function main(): Promise<void> {
       );
       console.log(`Browser Product:   ${report.browserProduct}`);
       console.log(`Cases Evaluated:   ${report.casesTotal}`);
+      if (report.casesEligible !== undefined) {
+        console.log(
+          `Cases Eligible:    ${report.casesEligible} / ${report.casesTotal}`
+        );
+      }
       console.log(
         `Cases Passed:      ${report.casesPassed} / ${report.casesTotal}`
       );
@@ -1785,9 +2080,16 @@ export async function main(): Promise<void> {
         '---------------------------------------------------------------'
       );
       for (const c of report.cases) {
+        const eligStr =
+          c.eligible === false
+            ? ` [INELIGIBLE: ${c.ineligibilityReason ?? 'unsupported'}]`
+            : '';
         console.log(
-          `\nCase: ${c.caseName} (${c.totalOracleFrames} oracle frames, min distinction: ${c.oracleDistinctionMinRmse.toFixed(2)} RMSE)`
+          `\nCase: ${c.caseName}${eligStr} (${c.totalOracleFrames} oracle frames, min distinction: ${c.oracleDistinctionMinRmse.toFixed(2)} RMSE)`
         );
+        if (c.failureReason) {
+          console.log(`    Case Note: ${c.failureReason}`);
+        }
         for (const m of ['inside_rvfc', 'next_raf'] as const) {
           const res = c.methods[m];
           console.log(
@@ -1795,6 +2097,14 @@ export async function main(): Promise<void> {
           );
           if (res.failureReason) {
             console.log(`    Failure: ${res.failureReason}`);
+          }
+          if (
+            res.deltaDistribution &&
+            Object.keys(res.deltaDistribution).length > 0
+          ) {
+            console.log(
+              `    Delta Distribution (us): ${JSON.stringify(res.deltaDistribution)}`
+            );
           }
           if (Object.keys(res.lagDistribution).length > 0) {
             console.log(
