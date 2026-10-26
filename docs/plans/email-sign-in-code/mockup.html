@@ -1,0 +1,2496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Relic mock: the sign-in code</title>
+<!--
+  The code in the sign-in email, typed on the page that asked for it: the mock
+  for docs/plans/email-sign-in-code/README.md, slice G.
+
+  Self-contained on purpose: inline CSS, JS and SVG, and a CSP that refuses
+  every request, so it opens offline from a file and cannot reach anything.
+
+  Four layers, kept apart:
+  1. The viewer excerpt: tokens, the band, the sidebar and composer, the
+     dashboard, the decision panel and the passkey block, copied from
+     packages/relic-viewer/src/styles.css so the new block sits in its real
+     surroundings, including the rule that centres a `.compose` primary.
+  2. The `/* sign-in code */` block, byte-identical to the one at the end of
+     styles.css. It styles exactly the DOM in spec §4.9.
+  3. The copy: spec §4.8, §4.9 and §4.11 verbatim, and unchanged viewer copy
+     quoted from its source.
+  4. Mock chrome (`.mock-*`, dashed and monospace): the state rail, the
+     service's answer, the mailbox, drawn so nobody reads them as Relic.
+
+  Every code entry is live: type or paste six digits and it submits itself;
+  482913 is the code in the email, anything else is rejected, and the third
+  rejection escalates. The dashed row under an entry makes the next answer a
+  429 or a network error. `?state=<scene>` opens any scene directly and
+  `?scheme=light|dark` pins the scheme.
+-->
+<style>
+/* ---------- tokens (styles.css:14-56), plus a scheme switch for the mock ---------- */
+
+:root {
+  color-scheme: light dark;
+
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --diff-added: #dfeeea;
+  --diff-added-strong: #a7d6ca;
+  --diff-removed: #f3e5df;
+  --diff-removed-strong: #ddb6a6;
+
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino,
+    "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+    Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --bar-height: 3.25rem;
+
+  /* The browser's chrome, not Relic's. */
+  --b-bg: #ffffff;
+  --b-ink: #1f1f1f;
+  --b-soft: #5f6368;
+  --b-line: #e3e3e3;
+  --b-hover: #f2f2f2;
+  --b-accent: #0b57d0;
+  --b-accent-ink: #ffffff;
+  --b-scrim: rgb(0 0 0 / 32%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-scheme="light"]) {
+    --ground: #101314;
+    --surface: #171b1c;
+    --ink: #e6e9e7;
+    --ink-soft: #969e9d;
+    --rule: #2a3032;
+    --rule-strong: #3b4345;
+    --patina: #4fb3a6;
+    --patina-ink: #a7ded6;
+    --oxide: #c98058;
+    --diff-added: #15332f;
+    --diff-added-strong: #24564e;
+    --diff-removed: #34231d;
+    --diff-removed-strong: #684331;
+
+    --b-bg: #282a2d;
+    --b-ink: #e3e3e3;
+    --b-soft: #a8abb0;
+    --b-line: #3c4043;
+    --b-hover: #35373a;
+    --b-accent: #a8c7fa;
+    --b-accent-ink: #062e6f;
+    --b-scrim: rgb(0 0 0 / 55%);
+  }
+}
+
+:root[data-scheme="dark"] {
+  color-scheme: dark;
+  --ground: #101314;
+  --surface: #171b1c;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #2a3032;
+  --rule-strong: #3b4345;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  --oxide: #c98058;
+  --diff-added: #15332f;
+  --diff-added-strong: #24564e;
+  --diff-removed: #34231d;
+  --diff-removed-strong: #684331;
+
+  --b-bg: #282a2d;
+  --b-ink: #e3e3e3;
+  --b-soft: #a8abb0;
+  --b-line: #3c4043;
+  --b-hover: #35373a;
+  --b-accent: #a8c7fa;
+  --b-accent-ink: #062e6f;
+  --b-scrim: rgb(0 0 0 / 55%);
+}
+
+:root[data-scheme="light"] {
+  color-scheme: light;
+}
+
+/* ---------- viewer excerpt (styles.css), only what this screen uses ---------- */
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: none;
+  min-height: var(--bar-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.mark {
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  border-right: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.4rem 1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.filename {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accession {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+.identity-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.identity-meta .accession {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.version-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: stretch;
+  border-left: 1px solid var(--rule);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.actions .action:last-child {
+  border-right: 0;
+}
+
+.action:hover {
+  background: var(--ground);
+  color: var(--patina-ink);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.action.primary {
+  background: var(--patina);
+  color: var(--surface);
+  border: 0;
+  padding: 0.55rem 1rem;
+  align-self: flex-start;
+}
+
+.action.primary:hover {
+  background: var(--patina-ink);
+  color: var(--surface);
+}
+
+.icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: currentColor;
+}
+
+.action-count {
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+@media (max-width: 34rem) {
+  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list, .card-actions) span) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .action span.action-count {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+    display: inline-block;
+  }
+  .action {
+    padding: 0 0.75rem;
+  }
+  .mark {
+    display: none;
+  }
+  .identity {
+    padding: 0.4rem 0.7rem;
+  }
+  .identity-meta {
+    gap: 0.4rem;
+  }
+}
+
+.relic-row {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.stage-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.stage {
+  padding: 2rem 1.25rem 5rem;
+}
+
+.doc {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.prose {
+  font-family: var(--serif);
+  font-size: 1.06rem;
+  line-height: 1.7;
+}
+
+.prose h1,
+.prose h2 {
+  font-family: var(--sans);
+  line-height: 1.25;
+  margin: 2rem 0 0.6rem;
+}
+
+.prose h1 {
+  font-size: 1.7rem;
+  margin-top: 0;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.prose h2 {
+  font-size: 1.32rem;
+}
+
+.prose p {
+  margin: 0 0 1.1rem;
+}
+
+/* Mock only: the excerpt relic is a short list. */
+.prose ul {
+  margin: 0 0 1.1rem;
+  padding-left: 1.3rem;
+}
+
+.prose code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 0.05em 0.3em;
+}
+
+.thread {
+  display: none;
+  flex: 0 0 auto;
+  width: var(--thread-width, 22rem);
+  max-width: 100%;
+  margin: 0;
+  padding: 0 1.25rem 1.5rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--rule-strong);
+}
+
+.thread.is-open {
+  display: block;
+}
+
+.thread-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -1.25rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.thread-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.65rem 1.25rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.thread-toggle::after {
+  width: 0.55rem;
+  height: 0.55rem;
+  content: "";
+  border-top: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+@media (max-width: 44rem) {
+  .thread.is-open {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+.thread-note {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.thread-policy {
+  display: inline-block;
+  margin-bottom: 1rem;
+  color: var(--patina-ink);
+  font-size: 0.8rem;
+  text-underline-offset: 2px;
+}
+
+.compose {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 2px solid var(--patina);
+}
+
+.compose-title {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.compose-identity {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.compose-identity strong {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.compose-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  background: var(--ground);
+  border-left: 3px solid var(--patina);
+  font-size: 0.82rem;
+}
+
+.compose-target-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.compose-note {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--ground);
+  border-left: 2px solid var(--oxide);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.compose-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.compose-warning {
+  margin: 0.5rem 0 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--diff-removed);
+  border-left: 2px solid var(--oxide);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.compose-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.compose-field > span {
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.compose-input,
+.compose-textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.compose-textarea {
+  font-family: var(--serif);
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.compose-input:focus-visible,
+.compose-textarea:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.compose-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.compose-count {
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+.compose .action.primary {
+  justify-self: start;
+  align-self: center;
+}
+
+.thread-outcome {
+  margin-top: 0.75rem;
+}
+
+.thread-outcome .thread-note {
+  margin: 0;
+}
+
+@media (max-width: 34rem) {
+  .compose {
+    padding: 1rem;
+  }
+}
+
+/* ---------- dashboard excerpt (styles.css:4507-4560, 4706-4715, 4770-4778) ---------- */
+
+.stage-dashboard {
+  display: flex;
+  justify-content: center;
+  padding: 2.5rem 1.5rem 5rem;
+  width: 100%;
+  overflow-y: auto;
+}
+
+.dashboard-container {
+  max-width: 48rem;
+  width: 100%;
+}
+
+.dashboard-title {
+  font-family: var(--sans);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule-strong);
+  color: var(--ink);
+}
+
+.dashboard-section {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--patina);
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.dashboard-section-title {
+  font-family: var(--sans);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+  color: var(--ink);
+}
+
+.dashboard-section-note {
+  margin: 0 0 1.25rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.dashboard-session-info {
+  margin: 0 0 1.25rem;
+  font-size: 0.86rem;
+  color: var(--patina);
+  font-weight: 500;
+}
+
+.relic-list-empty {
+  margin: 1.25rem 0;
+  padding: 1.25rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  font-style: italic;
+  text-align: center;
+}
+
+.dashboard-auth-section {
+  border-top-color: var(--rule-strong);
+}
+
+.dashboard-auth-outcome {
+  margin-top: 0.75rem;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+/* ---------- decision panel excerpt (styles.css, the decisions section), what the passkey step uses ---------- */
+
+.decision-panel {
+  position: fixed;
+  inset: var(--decision-top, var(--bar-height)) var(--decision-right, 0) auto
+    auto;
+  z-index: 8;
+  width: min(27rem, 100vw);
+  max-width: 100vw;
+  max-height: calc(100dvh - var(--decision-top, var(--bar-height)));
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  font-family: var(--sans);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.decision-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.decision-title .accession {
+  font-weight: 400;
+}
+
+.decision-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.decision-close:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+}
+
+.decision-close:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.decision-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem 1.4rem;
+}
+
+.decision-body > * {
+  min-width: 0;
+  margin: 0;
+}
+
+.decision-lead {
+  padding: 0.6rem 0.75rem;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  background: var(--ground);
+  border-left: 2px solid var(--ink);
+}
+
+.decision-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.decision-section-title .decision-digest-chip {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-weight: 400;
+}
+
+.decision-empty {
+  padding: 0.9rem 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  font-style: italic;
+  border-bottom: 1px solid var(--rule);
+}
+
+.decision-identity {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+.decision-identity strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.decision-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.decision-digest-chip {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+}
+
+.decision-digest-chip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.decision-digest-chip span {
+  color: var(--ink-soft);
+}
+
+.decision-secondary {
+  justify-self: start;
+  padding: 0;
+  color: var(--patina-ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.decision-note {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.decision-passkey {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.decision-passkey h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.decision-passkey .compose-warning {
+  margin: 0;
+}
+
+.decision-passkey .action.primary,
+.decision-signin .action.primary {
+  align-self: auto;
+  justify-self: start;
+}
+
+@media (max-width: 34rem) {
+  .decision-panel {
+    width: 100vw;
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .decision-head {
+    padding-left: 1rem;
+  }
+
+  .decision-body {
+    padding: 1rem 1rem 1.25rem;
+  }
+}
+
+/* passkey sign-in */
+
+/*
+ * The second way in, and the offer to set it up.
+ *
+ * The link stays the primary act, so the passkey button is not a second
+ * patina slab: it is the band's hairline action, set at the same size as
+ * "Send me a link", and the two read as a choice in order rather than two
+ * equal doors. The "or" is a catalog rule with a word at its head, flush
+ * left with the buttons it divides. The email-first confirm takes a patina
+ * outline, because by then it is the press the reader came back for; it
+ * stays an outline so it never competes with the link as a second slab.
+ *
+ * The offer is the composer's family without being a composer (the proofs
+ * wait on `form.compose`): same surface and hairline, but its patina rule
+ * runs down the left edge, so it reads as a note set beside the form rather
+ * than a second form above it.
+ *
+ * Every label stays on a phone. The band's narrow rule hides `.action span`
+ * everywhere it is not exempted, and a key glyph alone is not an
+ * instruction anybody can follow.
+ */
+.passkey-sign-in {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
+
+.passkey-or {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  margin: 0.15rem 0 0;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.passkey-or::after {
+  flex: 1 1 auto;
+  content: "";
+  border-top: 1px solid var(--rule);
+}
+
+.passkey-sign-in .action.passkey-button {
+  position: relative;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+}
+
+.passkey-sign-in .action.passkey-button .icon {
+  color: var(--patina);
+}
+
+.passkey-sign-in .action.passkey-button:hover {
+  color: var(--patina-ink);
+  background: var(--ground);
+  border-color: var(--patina);
+}
+
+/* The press the reader came back for, once they have typed an address. */
+.passkey-sign-in .action.passkey-button[data-passkey-email-first-confirm] {
+  color: var(--patina-ink);
+  border-color: var(--patina);
+  box-shadow: inset 0 0 0 1px var(--patina);
+}
+
+.passkey-sign-in .action.passkey-button:disabled {
+  cursor: progress;
+}
+
+/* Not ready, or refused for now: the button stays pressable, because the
+   press is what re-arms it, but it stops looking like the next step. */
+.passkey-sign-in[data-state="preparing"] [data-passkey-sign-in],
+.passkey-sign-in[data-state="rate-limited"] [data-passkey-sign-in] {
+  color: var(--ink-soft);
+  border-style: dashed;
+}
+
+.passkey-sign-in[data-state="preparing"] [data-passkey-sign-in] .icon,
+.passkey-sign-in[data-state="rate-limited"] [data-passkey-sign-in] .icon {
+  color: var(--ink-soft);
+}
+
+/* A ceremony in flight: a patina rule runs along the foot of whichever
+   button started it. Nothing glows; the rule moves, and holds still for
+   readers who asked for less motion. */
+.passkey-sign-in[data-state="working"] [data-passkey-sign-in]::after,
+.passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm]::after,
+.passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  left: -1px;
+  height: 2px;
+  content: "";
+  background: linear-gradient(90deg, transparent 0 30%, var(--patina) 30% 70%, transparent 70% 100%);
+  background-size: 250% 100%;
+  animation: passkey-running 1.4s linear infinite;
+}
+
+.passkey-sign-in[data-state="working"]:has([data-passkey-email-first-confirm]:not([hidden])) [data-passkey-sign-in]::after {
+  content: none;
+}
+
+.passkey-sign-in[data-state="working"] [data-passkey-sign-in],
+.passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm] {
+  cursor: progress;
+}
+
+.passkey-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.passkey-fallback-lead {
+  color: var(--ink-soft);
+}
+
+.passkey-link {
+  padding: 0;
+  color: var(--patina-ink);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.passkey-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.passkey-link:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.passkey-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 0 0 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--patina);
+}
+
+.passkey-offer > :not(button) {
+  flex: 1 1 100%;
+}
+
+.passkey-offer-title {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.passkey-offer-body {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.passkey-offer-fine {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.passkey-offer .action.primary {
+  position: relative;
+  align-self: center;
+}
+
+.passkey-offer .passkey-link {
+  white-space: nowrap;
+}
+
+.passkey-offer[data-state="loading"] [data-passkey-offer-create] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.passkey-offer[data-state="working"] [data-passkey-offer-create] {
+  background: var(--patina-ink);
+  cursor: progress;
+}
+
+.passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+  background-image: linear-gradient(90deg, transparent 0 30%, var(--surface) 30% 70%, transparent 70% 100%);
+}
+
+.passkey-offer[data-state="error"] {
+  border-left-color: var(--oxide);
+}
+
+/* Asking for a fresh sign-in link. A send in flight dims its button, as a
+   loading offer does, and a send that failed takes the oxide rule an error
+   takes. The refusal itself keeps the patina rule: it is a step, not a fault. */
+.passkey-offer[data-state="link-sending"] [data-passkey-offer-link],
+.decision-passkey[data-state="sending"] [data-passkey-link-send] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.passkey-offer[data-state="link-failed"] {
+  border-left-color: var(--oxide);
+}
+
+@keyframes passkey-running {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .passkey-sign-in[data-state="working"] [data-passkey-sign-in]::after,
+  .passkey-sign-in[data-state="working"] [data-passkey-email-first-confirm]::after,
+  .passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+    background: var(--patina);
+    animation: none;
+  }
+
+  .passkey-offer[data-state="working"] [data-passkey-offer-create]::after {
+    background: var(--surface);
+  }
+}
+
+@media (max-width: 34rem) {
+  /* Specificity (0,4,1) beats the band rule's (0,3,3). */
+  .passkey-sign-in .action.passkey-button[type="button"] > span {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: nowrap;
+  }
+
+  .passkey-offer {
+    padding: 1rem;
+  }
+}
+
+/* sign-in code */
+
+/*
+ * The code from a sign-in email, typed on the page that asked for it.
+ *
+ * It is the composer's field rather than a new control: the same label, the
+ * same ground and hairline, set in the catalog's monospace with tabular
+ * figures and wide tracking, so six digits read as one catalog number and not
+ * as a sum. The field stops at the width a code fills, and Sign in stands on
+ * its foot at the same height. Where the column is too narrow for both, as
+ * in the dashboard at 320px, Sign in drops under the field rather than
+ * squeezing the digits out of it. The status takes the row under both. It
+ * stays in the tree while it is empty, because it is the live region, and it
+ * adds no space until it has something to say.
+ *
+ * Every state borrows a treatment the viewer already has. Checking dims the
+ * button the way a link send in flight does. A rejected code puts the oxide
+ * rule on the field and on the note under it; a refusal for now and a check
+ * that never ran put it on the note only, because the digits were not the
+ * fault, and a refusal for now stops the button looking like the next step,
+ * as the passkey button does. Verified takes the patina rule.
+ *
+ * It sits in four places: under the composer's sent note, in the dashboard's
+ * form, in the passkey offer and in the decision panel's passkey step. The
+ * dashboard form is a `.compose`, whose rule centres a primary button, so the
+ * button's rule carries more classes than that one.
+ */
+.sign-in-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0 0.75rem;
+  width: 100%;
+  margin: 0.75rem 0 0;
+  color: var(--ink);
+}
+
+.passkey-offer .sign-in-code,
+.decision-passkey .sign-in-code {
+  margin-top: 0;
+}
+
+.sign-in-code-field {
+  flex: 1 1 9rem;
+  min-width: 0;
+  max-width: 12rem;
+}
+
+.sign-in-code .sign-in-code-input {
+  padding: 0.45rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5rem;
+  letter-spacing: 0.3em;
+}
+
+.sign-in-code .sign-in-code-input:disabled {
+  color: var(--ink-soft);
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+  cursor: progress;
+}
+
+.sign-in-code .action.primary.sign-in-code-submit {
+  flex: none;
+  align-self: flex-end;
+  min-height: calc(2.4rem + 2px);
+  margin-top: 0.6rem;
+}
+
+.sign-in-code .action.primary.sign-in-code-submit:disabled {
+  background: var(--patina);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sign-in-code-status {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.sign-in-code-status:not(:empty) {
+  margin-top: 0.6rem;
+}
+
+.sign-in-code[data-state="checking"] .sign-in-code-status {
+  color: var(--ink-soft);
+}
+
+.sign-in-code[data-state="checking"]
+  .action.primary.sign-in-code-submit:disabled {
+  cursor: progress;
+}
+
+.sign-in-code[data-state="rejected"] .sign-in-code-status:not(:empty),
+.sign-in-code[data-state="rate-limited"] .sign-in-code-status:not(:empty),
+.sign-in-code[data-state="failed"] .sign-in-code-status:not(:empty) {
+  padding: 0.6rem 0.75rem;
+  background: var(--diff-removed);
+  border-left: 2px solid var(--oxide);
+}
+
+.sign-in-code[data-state="rejected"] .sign-in-code-input {
+  border-color: var(--oxide);
+}
+
+.sign-in-code[data-state="rejected"] .sign-in-code-input:focus-visible {
+  outline-color: var(--oxide);
+}
+
+.sign-in-code[data-state="rate-limited"] .action.primary.sign-in-code-submit {
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+}
+
+.sign-in-code[data-state="rate-limited"]
+  .action.primary.sign-in-code-submit:hover {
+  color: var(--patina-ink);
+  border-color: var(--patina);
+}
+
+.sign-in-code[data-state="verified"] .sign-in-code-input:disabled {
+  color: var(--ink);
+  border-color: var(--patina);
+  cursor: default;
+}
+
+.sign-in-code[data-state="verified"] .sign-in-code-status:not(:empty) {
+  padding: 0.6rem 0.75rem;
+  background: var(--diff-added);
+  border-left: 2px solid var(--patina);
+}
+
+/* ---------- mock chrome: not product ---------- */
+
+/* The rail is drafting furniture: dashed, monospace, and outside the band,
+   so nobody reads it as a Relic control. */
+.mock-rail {
+  position: relative;
+  z-index: 50;
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.9rem;
+  padding: 0.45rem 0.75rem;
+  overflow-x: auto;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  background: var(--ground);
+  border-bottom: 1px dashed var(--rule-strong);
+  scrollbar-width: thin;
+}
+
+.mock-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+}
+
+.mock-group-name {
+  margin-right: 0.15rem;
+  color: var(--ink-soft);
+}
+
+.mock-chip {
+  flex: none;
+  padding: 0.2rem 0.45rem;
+  color: var(--ink);
+  font: inherit;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px dashed var(--rule-strong);
+  cursor: pointer;
+}
+
+.mock-chip:hover {
+  border-color: var(--patina);
+}
+
+.mock-chip[aria-pressed="true"] {
+  color: var(--surface);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+.mock-chip:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.mock-readout {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The mock's own controls inside the product surface: the service's answer,
+   the mailbox, the reload. Dashed so they never read as Relic's. */
+.mock-aside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  margin-top: 0.6rem;
+  padding: 0.4rem 0.55rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  line-height: 1.5;
+  border: 1px dashed var(--rule-strong);
+}
+
+.mock-aside button {
+  padding: 0.15rem 0.4rem;
+  color: var(--ink);
+  font: inherit;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  cursor: pointer;
+}
+
+.mock-aside button[aria-pressed="true"] {
+  color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.passkey-offer > .mock-aside,
+.decision-passkey > .mock-aside {
+  margin-top: 0;
+}
+
+.mock-tag {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: var(--ground);
+  border: 1px dashed var(--rule-strong);
+}
+
+/* A mail client's reading pane, in the system's look rather than Relic's:
+   the message is mail, not a Relic surface. The body is the message's own
+   HTML part or its text part, and nothing else. */
+.mock-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4.5rem 1rem 1rem;
+  background: var(--b-scrim);
+}
+
+.mock-mail {
+  display: grid;
+  gap: 0.9rem;
+  width: min(100%, 36rem);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 1.4rem;
+  color: var(--b-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--b-bg);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 35%);
+}
+
+.mock-mail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--b-soft);
+  font-size: 12px;
+}
+
+.mock-mail h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.mock-mail-body {
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--b-line);
+}
+
+.mock-mail-body p {
+  margin: 0 0 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.mock-mail-body p:last-child {
+  margin-bottom: 0;
+}
+
+.mock-mail-body a {
+  color: var(--b-accent);
+}
+
+.mock-mail-text {
+  margin: 0;
+  padding-top: 0.9rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--b-line);
+}
+
+.mock-mail .mock-aside {
+  margin: 0;
+  color: var(--b-soft);
+  border-color: var(--b-line);
+  border-radius: 8px;
+}
+
+.mock-mail .mock-aside button {
+  color: var(--b-ink);
+  background: var(--b-hover);
+  border-color: var(--b-line);
+  border-radius: 6px;
+}
+
+.mock-mail .mock-aside button[aria-pressed="true"] {
+  color: var(--b-accent-ink);
+  background: var(--b-accent);
+  border-color: var(--b-accent);
+}
+
+@media (max-width: 34rem) {
+  .mock-rail {
+    flex-wrap: nowrap;
+  }
+  .mock-scrim {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .mock-mail {
+    width: 100%;
+    padding: 1.1rem 1rem 1.5rem;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+/* At this width the viewer gives the row to the sidebar and the relic steps
+   aside; the mock does the same. */
+@media (max-width: 44rem) {
+  .stage-wrap {
+    display: none;
+  }
+}
+
+/* The two pages the mock switches between, each the body's column. */
+.mock-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+</style>
+</head>
+<body>
+<nav class="mock-rail" id="mock-rail" aria-label="Mock states"></nav>
+
+<div class="mock-page" id="relic-page">
+  <header class="bar">
+    <div class="mark">relik.link</div>
+    <div class="identity">
+      <div class="filename" title="README.md">README.md</div>
+      <div class="identity-meta">
+        <div class="accession">v8k2mq7xh4r3b9tc1wn6pd5ze0</div>
+        <span class="version-label">Version 1 of 1</span>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="action" aria-label="No comments"><span>Comments</span><span class="action-count">0</span></button>
+    </div>
+  </header>
+
+  <div class="relic-row">
+    <div class="stage-wrap">
+      <main class="stage">
+        <div class="doc">
+          <article class="prose">
+            <h1>Spec: email sign-in with a code you type, alongside the link</h1>
+            <h2>0. Goal</h2>
+            <p>A reader asks to sign in from a relic's comment composer. One email arrives with a six-digit code and the usual link. The reader types the code into the page that asked and is signed in on that page, with no navigation. The key stays in the tab's memory, the comment they post carries their address, and the link in that email stops working. The link still works on its own, as it does today.</p>
+            <h2>3. Decisions settled here</h2>
+            <ul>
+              <li>One email, one sign-in. Verifying the code spends the link, and following the link spends the code.</li>
+              <li>The email subject carries the code.</li>
+              <li>The code field auto-submits at six digits (typing, paste, or autofill). After a rejection it never auto-resubmits the same value.</li>
+            </ul>
+          </article>
+        </div>
+      </main>
+    </div>
+
+    <aside class="thread is-open" id="thread" aria-label="Comments">
+      <h2 class="thread-title"><button type="button" class="thread-toggle">No comments</button></h2>
+      <p class="thread-note">No comments yet. Anyone holding this link can leave one, and the text is encrypted the same way the file is, so Relic stores it without being able to read it.</p>
+      <div id="composer"></div>
+      <div class="thread-outcome" id="outcome" aria-live="polite"></div>
+    </aside>
+  </div>
+</div>
+
+<div class="mock-page" id="dashboard-page" hidden>
+  <header class="bar">
+    <div class="mark">relik.link</div>
+    <div class="identity">
+      <div class="filename">Dashboard</div>
+      <div class="identity-meta"><div class="accession">CATALOGUE</div></div>
+    </div>
+  </header>
+  <main class="stage stage-dashboard" id="dashboard-host"></main>
+</div>
+
+<div id="decision-host"></div>
+<div id="mock-layer"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const ADDRESS = 'you@example.com';
+  // The code and the link the mock's service mails. Drawn for reference.
+  const CODE = '482913';
+  const LINK =
+    'https://relik.link/api/auth/callback?token=q7Hm2xVb9Kc4TzR1pWn8LsYd3Ae6Gf0JuOi5Xk2MvBc';
+
+  // decision-panel.ts, verbatim.
+  const ICON_KEY =
+    'M5 5.5a3 3 0 1 1 5.6 1.5l4.4 4.4V14h-2.2v-1.3h-1.3v-1.3h-1.3L7.5 8.6A3 3 0 0 1 5 5.5zm2.5-1.2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z';
+  const ICON_CLOSE =
+    'M4.2 3.5 8 7.3l3.8-3.8.7.7L8.7 8l3.8 3.8-.7.7L8 8.7l-3.8 3.8-.7-.7L7.3 8 3.5 4.2z';
+
+  // Spec §4.9, verbatim.
+  const SIGN_IN_CODE_LENGTH = 6;
+  const SIGN_IN_CODE_LABEL = 'Code from the email';
+  const SIGN_IN_CODE_SUBMIT = 'Sign in';
+  const SIGN_IN_CODE_CHECKING = 'Checking the code.';
+  const SIGN_IN_CODE_REJECTED =
+    'That code did not work. Check it against the newest email from Relic, and type it in the browser that asked for it.';
+  const SIGN_IN_CODE_REJECTED_AGAIN =
+    'That code still did not work. A code works once, only in the browser that asked for it, and stops working after a newer email or too many wrong tries. Open the link in the email instead, or send a new one.';
+  const SIGN_IN_CODE_FAILED =
+    'The code could not be checked, which is a network problem rather than a wrong code. Try again.';
+  const signInCodeRateLimitedCopy = (retryAfterSeconds) => {
+    if (retryAfterSeconds === undefined) {
+      return 'Too many codes tried from here. Wait a few minutes, or open the link in the email.';
+    }
+    const m = Math.ceil(retryAfterSeconds / 60);
+    return `Too many codes tried from here. Wait about ${m} minute${m === 1 ? '' : 's'}, or open the link in the email.`;
+  };
+  const signedInCopy = (email) => `Signed in as ${email}.`;
+  const normalizeSignInCode = (raw) =>
+    raw.replace(/[^0-9]/g, '').slice(0, SIGN_IN_CODE_LENGTH);
+
+  // Spec §4.11 (V1 and V2), verbatim. Unchanged copy is quoted from source.
+  const LEAD = 'A first passkey can only be added right after you sign in from an email.';
+  const COPY = {
+    // comments.ts
+    identity:
+      'Your address is shown with your comment and in emails to people following the relic, and Relic sees who commented on what. When someone comments or a new version is published, Relic emails you, with a link to stop.',
+    delivery:
+      'Sending the sign-in email means handling your address in the clear. There is no other way to post it.',
+    keyAtRisk:
+      'This browser is not keeping the key for this relic, so following the link in this tab would lose it. Type the code from the email here instead, or open the link in a new tab and come back to this one, which still holds the key in memory.',
+    displayName: 'Shown beside your address, never instead.',
+    // main.ts
+    send: 'Email me a code',
+    linkSent: `If ${ADDRESS} can receive mail, an email with a code and a link is on its way. Type the code below to sign in on this page, or follow the link: it verifies the address and brings you back here.`,
+    dashSent: `If ${ADDRESS} can receive mail, an email with a code and a link is on its way. Type the code below, or follow the link: it verifies the address and brings you back to this dashboard.`,
+    threadEmpty:
+      'No comments yet. Anyone holding this link can leave one, and the text is encrypted the same way the file is, so Relic stores it without being able to read it.',
+    target: 'Commenting on the whole document',
+    passkeyButton: 'Sign in with passkey',
+    // passkey-sign-in.ts and passkey-common.ts
+    offerTitle: 'Skip the email next time',
+    offerBody: `Add a passkey for ${ADDRESS} and this device signs you in without a link.`,
+    offerFine:
+      'Your first passkey also confirms decisions, and adding one on another device later asks for it.',
+    offerCreate: 'Add a passkey',
+    offerNotNow: 'Not now',
+    offerClose: 'Close',
+    linkFine: 'This stops anyone holding an older sign-in from adding a passkey as you.',
+    linkSend: 'Email me a new code',
+    offerLinkRequired: `${LEAD} Email a new code to ${ADDRESS}, type it here, then add your passkey.`,
+    // decision-panel.ts
+    decisionLinkRequired: `${LEAD} Email a new code, type it here, and setting up the passkey carries on. Nothing was recorded.`,
+    decisionLead:
+      'A decision is a stamp on one exact version, made with a passkey. It is separate from comments: nothing written in a comment counts as one.',
+    decisionTofu:
+      'The first passkey set up for an address becomes the only way to record decisions as that address. Adding another later needs this one.',
+    decisionSetUp: 'Set up a passkey to decide',
+    decisionCreate: 'Create a passkey',
+    decisionKeeps:
+      'Your device keeps the private key. Relic stores the public key, under a hash of your address, and never receives the private one.',
+    decisionEmpty: 'No decisions on version 1 yet.',
+    // main.ts, the dashboard
+    dashLocalNote:
+      'These keys are saved in this browser. You can open these relics without signing in.',
+    dashAuthPrompt:
+      'Sign in with your email address to view relics you have commented on.',
+  };
+
+  // Spec §4.8, verbatim.
+  const escapeHtml = (value) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  const MAIL_CLOSING =
+    'The code and the link are single use and expire shortly, and using either one spends both. Relic never asks you for this code, so do not give it to anyone. If you did not ask to sign in, nothing has happened and you can ignore this message.';
+  const MAIL_TYPE_IT =
+    'Type it on the page where you asked to sign in. It works only in the browser that asked for it.';
+  const MAIL_OR_LINK = 'Or open this link to sign in instead:';
+  const mail = {
+    subject: `${CODE} is your Relic sign-in code`,
+    text: [
+      'Your Relic sign-in code:', '', CODE, '',
+      MAIL_TYPE_IT, '',
+      MAIL_OR_LINK, '', LINK, '',
+      MAIL_CLOSING,
+    ].join('\n'),
+    html: [
+      `<p>${escapeHtml('Your Relic sign-in code:')}</p>`,
+      `<p style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:28px;font-weight:600;letter-spacing:6px;margin:16px 0">${escapeHtml(CODE)}</p>`,
+      `<p>${escapeHtml(MAIL_TYPE_IT)}</p>`,
+      `<p>${escapeHtml(MAIL_OR_LINK)}</p>`,
+      `<p><a href="${escapeHtml(LINK)}">${escapeHtml(LINK)}</a></p>`,
+      `<p>${escapeHtml(MAIL_CLOSING)}</p>`,
+    ].join(''),
+  };
+
+  // ---------- DOM helpers, the shapes main.ts and the passkey modules build ----------
+
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  const glyph = (path) => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.classList.add('icon');
+    const node = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    node.setAttribute('d', path);
+    svg.appendChild(node);
+    return svg;
+  };
+
+  const pressable = (className, label, onClick, iconPath) => {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = className;
+    if (iconPath !== undefined) node.append(glyph(iconPath), el('span', '', label));
+    else node.textContent = label;
+    if (onClick) node.addEventListener('click', onClick);
+    return node;
+  };
+
+  const field = (label, control) => {
+    const node = el('label', 'compose-field');
+    node.append(el('span', '', label), control);
+    return node;
+  };
+
+  const policy = () => {
+    const link = el('a', 'thread-policy', 'What Relic knows');
+    link.href = '#policy';
+    link.addEventListener('click', (event) => event.preventDefault());
+    return link;
+  };
+
+  const targetChip = () => {
+    const chip = el('p', 'compose-target');
+    chip.append(el('span', 'compose-target-label', COPY.target));
+    return chip;
+  };
+
+  /** A dashed mock control row: a label, then buttons that stand in for the world. */
+  const mockAside = (label, choices) => {
+    const aside = el('div', 'mock-aside');
+    aside.append(el('span', '', label));
+    for (const [text, onClick, pressed] of choices) {
+      const button = pressable('', text, onClick);
+      if (pressed !== undefined) button.setAttribute('aria-pressed', String(pressed));
+      aside.append(button);
+    }
+    return aside;
+  };
+
+  // ---------- the mock's service ----------
+
+  /** What the service answers the next code with. Resets after one answer. */
+  let nextAnswer = 'code';
+  /** Whether this browser keeps the relic's key across a navigation. */
+  let keyKept = true;
+
+  const paintNextAnswer = () => {
+    for (const button of document.querySelectorAll('[data-mock-next]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.mockNext === nextAnswer));
+    }
+  };
+
+  const answerAside = () => {
+    const aside = mockAside(`Mock: the email's code is ${CODE}. The service answers the next code`, []);
+    for (const [mode, label] of [['code', 'by the code'], ['rate', 'with 429'], ['net', 'with a network error']]) {
+      const button = pressable('', label, () => {
+        nextAnswer = mode;
+        paintNextAnswer();
+      });
+      button.dataset.mockNext = mode;
+      button.setAttribute('aria-pressed', String(mode === nextAnswer));
+      aside.append(button);
+    }
+    aside.append(pressable('', 'Open the email', () => openMail()));
+    return aside;
+  };
+
+  // ---------- the code entry: spec §4.9's DOM and behaviour ----------
+
+  let entryCount = 0;
+
+  /**
+   * initial: { state, value, rejections, retryAfter } puts the entry straight
+   * into a state for the rail. A live entry starts idle and answers itself.
+   */
+  const signInCodeEntry = ({ onVerified, focus, initial = {} }) => {
+    entryCount += 1;
+    const statusId = `sign-in-code-status-${entryCount}`;
+
+    const root = el('div', 'sign-in-code');
+    root.setAttribute('data-sign-in-code', '');
+    root.dataset.state = 'idle';
+
+    const label = el('label', 'compose-field sign-in-code-field');
+    label.append(el('span', '', SIGN_IN_CODE_LABEL));
+    const input = el('input', 'compose-input sign-in-code-input');
+    input.setAttribute('data-sign-in-code-input', '');
+    input.type = 'text';
+    input.setAttribute('inputmode', 'numeric');
+    input.setAttribute('autocomplete', 'one-time-code');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('enterkeyhint', 'go');
+    input.setAttribute('aria-describedby', statusId);
+    label.append(input);
+
+    const submit = el('button', 'action primary sign-in-code-submit', SIGN_IN_CODE_SUBMIT);
+    submit.type = 'button';
+    submit.setAttribute('data-sign-in-code-submit', '');
+    submit.disabled = true;
+
+    const status = el('p', 'sign-in-code-status');
+    status.setAttribute('data-sign-in-code-status', '');
+    status.id = statusId;
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+
+    root.append(label, submit, status);
+
+    let state = 'idle';
+    let lastSubmitted = '';
+    let rejections = initial.rejections ?? 0;
+    let verified = false;
+
+    const sync = () => {
+      const locked = state === 'checking' || state === 'verified';
+      input.disabled = locked;
+      submit.disabled = locked || input.value.length !== SIGN_IN_CODE_LENGTH;
+    };
+
+    const setState = (next, text) => {
+      state = next;
+      root.dataset.state = next;
+      status.textContent = text;
+      sync();
+      readout();
+    };
+
+    const answer = (value) => {
+      if (!root.isConnected) return;
+      const mode = nextAnswer;
+      nextAnswer = 'code';
+      paintNextAnswer();
+      if (mode === 'rate') {
+        setState('rate-limited', signInCodeRateLimitedCopy(240));
+      } else if (mode === 'net') {
+        lastSubmitted = '';
+        setState('failed', SIGN_IN_CODE_FAILED);
+      } else if (value === CODE) {
+        setState('verified', signedInCopy(ADDRESS));
+        if (!verified) {
+          verified = true;
+          onVerified?.(ADDRESS);
+        }
+        return;
+      } else {
+        rejections += 1;
+        setState('rejected', rejections >= 3 ? SIGN_IN_CODE_REJECTED_AGAIN : SIGN_IN_CODE_REJECTED);
+        input.focus({ preventScroll: true });
+        input.select();
+      }
+    };
+
+    const send = () => {
+      const value = input.value;
+      if (value.length !== SIGN_IN_CODE_LENGTH || state === 'checking' || state === 'verified') return;
+      lastSubmitted = value;
+      setState('checking', SIGN_IN_CODE_CHECKING);
+      window.setTimeout(() => answer(value), 900);
+    };
+
+    input.addEventListener('input', () => {
+      const value = normalizeSignInCode(input.value);
+      if (value !== input.value) input.value = value;
+      sync();
+      if (value.length === SIGN_IN_CODE_LENGTH && value !== lastSubmitted) send();
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      send();
+    });
+    submit.addEventListener('click', send);
+
+    // The rail's starting points.
+    input.value = initial.value ?? '';
+    if (initial.state !== undefined && initial.state !== 'idle') {
+      lastSubmitted = input.value;
+      const text = {
+        checking: SIGN_IN_CODE_CHECKING,
+        rejected: rejections >= 3 ? SIGN_IN_CODE_REJECTED_AGAIN : SIGN_IN_CODE_REJECTED,
+        'rate-limited': signInCodeRateLimitedCopy(initial.retryAfter),
+        failed: SIGN_IN_CODE_FAILED,
+        verified: signedInCopy(ADDRESS),
+      }[initial.state];
+      if (initial.state === 'failed') lastSubmitted = '';
+      if (initial.state === 'verified') verified = true;
+      state = initial.state;
+      root.dataset.state = state;
+      status.textContent = text;
+    }
+    sync();
+
+    if (focus && state !== 'checking' && state !== 'verified') {
+      queueMicrotask(() => {
+        input.focus({ preventScroll: true });
+        if (state === 'rejected') input.select();
+      });
+    }
+    return root;
+  };
+
+  // ---------- scenes ----------
+
+  const composer = document.getElementById('composer');
+  const outcome = document.getElementById('outcome');
+  const relicPage = document.getElementById('relic-page');
+  const dashPage = document.getElementById('dashboard-page');
+  const dashHost = document.getElementById('dashboard-host');
+  const decisionHost = document.getElementById('decision-host');
+  const layer = document.getElementById('mock-layer');
+  const rail = document.getElementById('mock-rail');
+  const thread = document.getElementById('thread');
+
+  let s;
+  let token = 0;
+  let previous = 'compose-form';
+
+  const base = () => ({
+    page: 'relic',
+    signedIn: false,
+    compose: 'form',
+    note: null,
+    code: null,
+    offer: null,
+    decision: null,
+    dash: 'form',
+    mail: null,
+  });
+
+  const CODE_STATES = {
+    'code-typing': { value: '4829' },
+    'code-checking': { state: 'checking', value: CODE },
+    'code-rejected': { state: 'rejected', value: '482193', rejections: 1 },
+    'code-rejected-again': { state: 'rejected', value: '482193', rejections: 3 },
+    'code-rate-limited': { state: 'rate-limited', value: '428913', retryAfter: 240 },
+    'code-failed': { state: 'failed', value: CODE },
+    'code-verified': { state: 'verified', value: CODE },
+  };
+
+  const SCENES = {
+    'compose-form': () => ({}),
+    'compose-sending': () => ({ compose: 'sending' }),
+    'compose-sent': () => ({ compose: 'sent', code: {}, keyLost: false }),
+    'compose-sent-key': () => ({ compose: 'sent', code: {}, keyLost: true }),
+    ...Object.fromEntries(
+      Object.entries(CODE_STATES).map(([id, initial]) => [id, () => ({ compose: 'sent', code: initial, keyLost: false })])
+    ),
+    'signed-in': () => ({ signedIn: true, offer: { state: 'loading', flip: true }, note: signedInCopy(ADDRESS) }),
+    'offer-link-required': () => ({ signedIn: true, offer: { state: 'link-required' } }),
+    'offer-link-sending': () => ({ signedIn: true, offer: { state: 'link-sending' } }),
+    'offer-link-sent': () => ({ signedIn: true, offer: { state: 'link-sent' }, code: {}, keyLost: false }),
+    'offer-link-sent-key': () => ({ signedIn: true, offer: { state: 'link-sent' }, code: {}, keyLost: true }),
+    'offer-checking': () => ({ signedIn: true, offer: { state: 'link-sent' }, code: CODE_STATES['code-checking'] }),
+    'offer-loading': () => ({ signedIn: true, offer: { state: 'loading' } }),
+    'offer-ready': () => ({ signedIn: true, offer: { state: 'ready' } }),
+    'decision-link-required': () => ({ signedIn: true, decision: { state: 'required' } }),
+    'decision-sending': () => ({ signedIn: true, decision: { state: 'sending' } }),
+    'decision-sent': () => ({ signedIn: true, decision: { state: 'sent' }, code: {}, keyLost: false }),
+    'decision-sent-key': () => ({ signedIn: true, decision: { state: 'sent' }, code: {}, keyLost: true }),
+    'decision-rejected': () => ({ signedIn: true, decision: { state: 'sent' }, code: CODE_STATES['code-rejected'] }),
+    'decision-create': () => ({ signedIn: true, decision: { state: 'create' } }),
+    'dash-form': () => ({ page: 'dashboard' }),
+    'dash-sending': () => ({ page: 'dashboard', dash: 'sending' }),
+    'dash-sent': () => ({ page: 'dashboard', dash: 'sent', code: {} }),
+    'dash-rejected': () => ({ page: 'dashboard', dash: 'sent', code: CODE_STATES['code-rejected'] }),
+    'dash-verified': () => ({ page: 'dashboard', dash: 'sent', code: CODE_STATES['code-verified'] }),
+    'dash-signed-in': () => ({ page: 'dashboard', dash: 'signed-in' }),
+    'mail-html': () => ({ mail: 'html' }),
+    'mail-text': () => ({ mail: 'text' }),
+  };
+
+  const RAIL = [
+    ['Composer', [['compose-form', 'Form'], ['compose-sending', 'Sending'], ['compose-sent', 'Sent'], ['compose-sent-key', 'Sent, key at risk']]],
+    ['Code', [['code-typing', 'Typing'], ['code-checking', 'Checking'], ['code-rejected', 'Rejected'], ['code-rejected-again', 'Rejected again'], ['code-rate-limited', 'Rate limited'], ['code-failed', 'Failed'], ['code-verified', 'Verified'], ['signed-in', 'Commenting as']]],
+    ['Offer', [['offer-link-required', 'Link required'], ['offer-link-sending', 'Sending'], ['offer-link-sent', 'Sent'], ['offer-link-sent-key', 'Sent, key at risk'], ['offer-checking', 'Checking'], ['offer-loading', 'Loading'], ['offer-ready', 'Ready']]],
+    ['Decision', [['decision-link-required', 'Link required'], ['decision-sending', 'Sending'], ['decision-sent', 'Sent'], ['decision-sent-key', 'Sent, key at risk'], ['decision-rejected', 'Rejected'], ['decision-create', 'Create']]],
+    ['Dashboard', [['dash-form', 'Form'], ['dash-sending', 'Sending'], ['dash-sent', 'Sent'], ['dash-rejected', 'Rejected'], ['dash-verified', 'Verified'], ['dash-signed-in', 'Reloaded']]],
+    ['Email', [['mail-html', 'HTML part'], ['mail-text', 'Text part']]],
+  ];
+  const SCHEMES = [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']];
+
+  const go = (scene, keep = {}) => {
+    token += 1;
+    if (s !== undefined && s.mail === null) previous = s.scene;
+    const next = { ...base(), ...SCENES[scene](), ...keep, scene };
+    if (next.mail !== null && s !== undefined) {
+      // The email opens over whatever was on screen.
+      s = { ...s, mail: next.mail, scene };
+    } else {
+      if (next.keyLost !== undefined) keyKept = !next.keyLost;
+      s = next;
+    }
+    render();
+    if (s.offer?.state === 'loading') {
+      later(900, () => go(s.offer.flip ? 'signed-in-ready' : 'offer-ready'));
+    }
+  };
+  SCENES['signed-in-ready'] = () => ({ signedIn: true, offer: { state: 'ready' }, note: signedInCopy(ADDRESS) });
+
+  /** A step the world takes after a pause, dropped if the scene changed first. */
+  const later = (ms, fn) => {
+    const mine = token;
+    window.setTimeout(() => {
+      if (mine === token) fn();
+    }, ms);
+  };
+
+  /** The viewer moves on the moment the session is set; the mock holds the verified state long enough to read. */
+  const afterVerified = (scene) => () => later(1100, () => go(scene));
+
+  const openMail = () => go('mail-html');
+  const closeMail = () => go(previous);
+
+  // ---------- painting ----------
+
+  const passkeyHost = () => {
+    const host = el('div', 'passkey-sign-in');
+    host.setAttribute('data-passkey-sign-in-host', '');
+    host.dataset.state = 'ready';
+    const or = el('p', 'passkey-or', 'or');
+    const button = pressable('action passkey-button', COPY.passkeyButton, null, ICON_KEY);
+    button.setAttribute('data-passkey-sign-in', '');
+    host.append(or, button);
+    return host;
+  };
+
+  const sentSaid = (message) => {
+    const said = [el('p', 'thread-note', message)];
+    if (!keyKept) said.push(el('p', 'compose-warning', COPY.keyAtRisk));
+    return said;
+  };
+
+  const composeIdentity = () => {
+    const form = el('form', 'compose');
+    form.noValidate = true;
+    const input = el('input', 'compose-input');
+    input.type = 'email';
+    input.required = true;
+    input.autocomplete = 'username webauthn';
+    input.placeholder = ADDRESS;
+    if (s.compose !== 'form') input.value = ADDRESS;
+    const send = el('button', 'action primary', COPY.send);
+    send.type = 'submit';
+    send.disabled = s.compose === 'sending';
+    form.append(
+      el('h3', 'compose-title', 'Leave a comment'),
+      targetChip(),
+      el('p', 'compose-note', COPY.identity),
+      policy(),
+      field('Email address', input),
+      el('p', 'compose-fine', COPY.delivery),
+      send,
+      passkeyHost()
+    );
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (input.value.trim().length === 0) {
+        input.focus();
+        return;
+      }
+      go('compose-sending');
+      later(700, () => go(keyKept ? 'compose-sent' : 'compose-sent-key'));
+    });
+    return form;
+  };
+
+  const composeComment = () => {
+    const form = el('form', 'compose');
+    const identity = el('p', 'compose-identity');
+    identity.append(document.createTextNode('Commenting as '), el('strong', '', ADDRESS));
+    const name = el('input', 'compose-input');
+    name.type = 'text';
+    name.autocomplete = 'nickname';
+    const body = el('textarea', 'compose-textarea');
+    body.rows = 4;
+    const foot = el('div', 'compose-foot');
+    const post = el('button', 'action primary', 'Post comment');
+    post.type = 'submit';
+    foot.append(el('span', 'compose-count', '0 of 4096 bytes'), post);
+    form.append(
+      el('h3', 'compose-title', 'Leave a comment'),
+      identity,
+      targetChip(),
+      el('p', 'compose-note', COPY.identity),
+      policy(),
+      field('Display name', name),
+      el('p', 'compose-fine', COPY.displayName),
+      field('Comment', body),
+      foot
+    );
+    form.addEventListener('submit', (event) => event.preventDefault());
+    return form;
+  };
+
+  const paintOffer = () => {
+    const o = s.offer;
+    const card = el('section', 'passkey-offer');
+    card.setAttribute('data-passkey-offer', '');
+    card.dataset.state = o.state;
+    card.setAttribute('aria-label', COPY.offerTitle);
+
+    const linkish = o.state === 'link-required' || o.state === 'link-sending';
+    const sent = o.state === 'link-sent';
+    const body = el('p', 'passkey-offer-body',
+      linkish ? COPY.offerLinkRequired : sent || (o.state === 'loading' && !o.flip) ? COPY.linkSent : COPY.offerBody);
+    const warning = el('p', 'compose-warning', COPY.keyAtRisk);
+    warning.setAttribute('data-passkey-offer-warning', '');
+    warning.hidden = !((sent || (o.state === 'loading' && !o.flip)) && !keyKept);
+    const codeHost = el('div');
+    codeHost.setAttribute('data-passkey-offer-code', '');
+    codeHost.hidden = !sent;
+    if (sent) {
+      codeHost.append(signInCodeEntry({ focus: true, initial: s.code ?? {}, onVerified: afterVerified('offer-loading') }));
+    }
+    const fine = el('p', 'passkey-offer-fine', linkish ? COPY.linkFine : COPY.offerFine);
+    fine.hidden = sent || (o.state === 'loading' && !o.flip);
+    const create = el('button', 'action primary', COPY.offerCreate);
+    create.type = 'button';
+    create.setAttribute('data-passkey-offer-create', '');
+    create.hidden = linkish || sent;
+    create.disabled = o.state === 'loading';
+    const link = el('button', 'action primary', COPY.linkSend);
+    link.type = 'button';
+    link.setAttribute('data-passkey-offer-link', '');
+    link.hidden = !linkish;
+    link.disabled = o.state === 'link-sending';
+    link.addEventListener('click', () => {
+      go('offer-link-sending');
+      later(700, () => go(keyKept ? 'offer-link-sent' : 'offer-link-sent-key'));
+    });
+    const afterSent = o.state === 'loading' && !o.flip;
+    const dismiss = pressable('passkey-link', sent || afterSent ? COPY.offerClose : COPY.offerNotNow, () =>
+      go('offer-dismissed')
+    );
+    dismiss.setAttribute('data-passkey-offer-dismiss', '');
+    card.append(el('h3', 'passkey-offer-title', COPY.offerTitle), body, warning, codeHost, fine, create, link, dismiss);
+    if (sent) card.append(answerAside());
+    if (o.state === 'ready') {
+      card.append(mockAside('Mock: a fresh session can add a passkey. A stale one is refused.', [
+        ['Press Add a passkey on a stale session', () => go('offer-link-required')],
+      ]));
+    }
+    return card;
+  };
+  SCENES['offer-dismissed'] = () => ({ signedIn: true });
+
+  const paintDecision = () => {
+    decisionHost.replaceChildren();
+    const d = s.decision;
+    if (d === null) return;
+    const panel = el('dialog', 'decision-panel');
+    panel.open = true;
+    panel.setAttribute('aria-labelledby', 'decision-title');
+    const head = el('div', 'decision-head');
+    const title = el('h2', 'decision-title');
+    title.id = 'decision-title';
+    title.append(document.createTextNode('Decisions'), el('span', 'accession', 'version 1 of 1'));
+    const close = el('button', 'decision-close');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Close decisions');
+    close.append(glyph(ICON_CLOSE));
+    close.addEventListener('click', () => go('offer-dismissed'));
+    head.append(title, close);
+
+    const body = el('div', 'decision-body');
+    const current = el('section', 'decision-current');
+    const heading = el('h3', 'decision-section-title');
+    const chip = el('span', 'decision-digest-chip');
+    chip.append(el('span', '', 'sha256 '), el('b', '', '9c41e07a3fd2'), el('span', '', '\u2026'));
+    heading.append(el('span', '', 'Current on version 1'), chip);
+    current.append(heading, el('p', 'decision-empty', COPY.decisionEmpty));
+    body.append(el('p', 'decision-lead', COPY.decisionLead), current);
+
+    const box = el('section', 'decision-passkey');
+    const identity = el('p', 'decision-identity');
+    identity.append(document.createTextNode('For '), el('strong', '', ADDRESS));
+    const notNow = pressable('decision-secondary', 'Not now', () => go('offer-dismissed'));
+    box.append(el('h3', '', COPY.decisionSetUp), identity);
+    if (d.state === 'create') {
+      const make = pressable('action primary', COPY.decisionCreate, null, ICON_KEY);
+      make.setAttribute('data-passkey-create', '');
+      box.append(el('p', 'compose-warning', COPY.decisionTofu), make, el('p', 'decision-fine', COPY.decisionKeeps), notNow);
+    } else {
+      box.setAttribute('data-passkey-link', '');
+      box.dataset.state = d.state;
+      if (d.state === 'sent') {
+        box.append(el('p', 'decision-note', COPY.linkSent));
+        if (!keyKept) box.append(el('p', 'compose-warning', COPY.keyAtRisk));
+        box.append(
+          signInCodeEntry({ focus: true, initial: s.code ?? {}, onVerified: afterVerified('decision-create') }),
+          notNow,
+          answerAside()
+        );
+      } else {
+        const send = el('button', 'action primary', COPY.linkSend);
+        send.type = 'button';
+        send.setAttribute('data-passkey-link-send', '');
+        send.disabled = d.state === 'sending';
+        send.addEventListener('click', () => {
+          go('decision-sending');
+          later(700, () => go(keyKept ? 'decision-sent' : 'decision-sent-key'));
+        });
+        box.append(el('p', 'compose-warning', COPY.decisionLinkRequired), send, el('p', 'decision-fine', COPY.linkFine), notNow);
+      }
+    }
+    body.append(box);
+    panel.append(head, body);
+    decisionHost.append(panel);
+    placeDecision();
+  };
+
+  /** decision-panel.ts place(): below the band, and beside the open sidebar when there is room. */
+  const placeDecision = () => {
+    const panel = decisionHost.querySelector('.decision-panel');
+    if (!panel) return;
+    const bar = relicPage.querySelector('.bar');
+    panel.style.setProperty('--decision-top', `${Math.round(bar.getBoundingClientRect().bottom)}px`);
+    const wide = window.matchMedia('(min-width: 44.0625rem)').matches;
+    const right = wide ? Math.round(window.innerWidth - thread.getBoundingClientRect().left) : 0;
+    panel.style.setProperty('--decision-right', `${right}px`);
+    panel.style.width = `min(27rem, ${window.innerWidth - right}px)`;
+  };
+
+  const paintRelic = () => {
+    composer.replaceChildren();
+    outcome.replaceChildren();
+    if (s.signedIn) {
+      if (s.offer !== null) composer.append(paintOffer());
+      composer.append(composeComment());
+      if (s.note !== null) outcome.append(el('p', 'thread-note', s.note));
+      if (s.offer === null && s.decision === null) {
+        composer.append(mockAside('Mock: the other ways in to a code.', [
+          ['Offer refuses a stale session', () => go('offer-link-required')],
+          ['Decide on this version', () => go('decision-link-required')],
+        ]));
+      }
+      return;
+    }
+    composer.append(composeIdentity());
+    if (s.compose === 'form') {
+      composer.append(mockAside('Mock: this browser', [
+        ['keeps the key', () => { keyKept = true; render(); }, keyKept],
+        ['does not keep the key', () => { keyKept = false; render(); }, !keyKept],
+      ]));
+    }
+    if (s.compose === 'sending') outcome.append(el('p', 'thread-note', 'Sending.'));
+    if (s.compose === 'sent') {
+      outcome.append(
+        ...sentSaid(COPY.linkSent),
+        signInCodeEntry({ focus: true, initial: s.code ?? {}, onVerified: afterVerified('signed-in') }),
+        answerAside()
+      );
+    }
+  };
+
+  const paintDashboard = () => {
+    const container = el('div', 'dashboard-container');
+    const local = el('section', 'dashboard-section local-relics-section');
+    local.append(
+      el('h2', 'dashboard-section-title', 'Relics this browser can open'),
+      el('p', 'dashboard-section-note', COPY.dashLocalNote),
+      el('p', 'relic-list-empty', 'No relics currently saved in this browser.')
+    );
+    container.append(el('h1', 'dashboard-title', 'Relic Dashboard'), local);
+
+    if (s.dash === 'signed-in') {
+      const section = el('section', 'dashboard-section commented-relics-section');
+      section.append(
+        el('h2', 'dashboard-section-title', 'Relics you have commented on'),
+        el('p', 'dashboard-session-info', `Signed in as ${ADDRESS}.`),
+        el('p', 'relic-list-empty', 'You have not commented on any relics yet.'),
+        mockAside('Mock: the page reloaded after the code.', [['Back to the form', () => go('dash-form')]])
+      );
+      container.append(section);
+      dashHost.replaceChildren(container);
+      return;
+    }
+
+    const section = el('section', 'dashboard-section dashboard-auth-section');
+    const form = el('form', 'compose compose-identity-dashboard');
+    form.noValidate = true;
+    const input = el('input', 'compose-input');
+    input.type = 'email';
+    input.required = true;
+    input.autocomplete = 'username webauthn';
+    input.placeholder = ADDRESS;
+    if (s.dash !== 'form') input.value = ADDRESS;
+    const label = el('label', 'compose-field', 'Email address:');
+    label.append(input);
+    const send = el('button', 'action primary', COPY.send);
+    send.type = 'submit';
+    send.disabled = s.dash === 'sending';
+    const result = el('div', 'dashboard-auth-outcome');
+    if (s.dash === 'sending') result.textContent = 'Sending...';
+    if (s.dash === 'sent') {
+      result.append(
+        document.createTextNode(COPY.dashSent),
+        signInCodeEntry({ focus: true, initial: s.code ?? {}, onVerified: afterVerified('dash-signed-in') })
+      );
+    }
+    form.append(label, el('p', 'compose-fine', COPY.delivery), send, passkeyHost(), result);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (input.value.trim().length === 0) {
+        input.focus();
+        return;
+      }
+      go('dash-sending');
+      later(700, () => go('dash-sent'));
+    });
+    section.append(
+      el('h2', 'dashboard-section-title', 'Relics you have commented on'),
+      el('p', 'dashboard-section-note', COPY.dashAuthPrompt),
+      form
+    );
+    if (s.dash === 'sent') section.append(answerAside());
+    container.append(section);
+    dashHost.replaceChildren(container);
+  };
+
+  const paintMail = () => {
+    layer.replaceChildren();
+    if (s.mail === null) return;
+    const scrim = el('div', 'mock-scrim');
+    const pane = el('article', 'mock-mail');
+    pane.setAttribute('aria-label', 'Email, drawn for reference');
+    const head = el('div', 'mock-mail-head');
+    head.append(el('span', '', `To ${ADDRESS}`), el('span', 'mock-tag', 'Email, drawn for reference'));
+    let part;
+    if (s.mail === 'html') {
+      part = el('div', 'mock-mail-body');
+      part.innerHTML = mail.html;
+    } else {
+      part = el('pre', 'mock-mail-text', mail.text);
+    }
+    pane.append(
+      head,
+      el('h2', '', mail.subject),
+      part,
+      mockAside('Mock:', [
+        ['HTML part', () => go('mail-html'), s.mail === 'html'],
+        ['Text part', () => go('mail-text'), s.mail === 'text'],
+        ['Close the email', closeMail],
+      ])
+    );
+    scrim.append(pane);
+    // Below the rail and the band on a desktop, a sheet from the foot on a phone.
+    if (!window.matchMedia('(max-width: 34rem)').matches) {
+      const bar = document.querySelector('.mock-page:not([hidden]) .bar');
+      scrim.style.paddingTop = `${Math.max(72, Math.round(bar.getBoundingClientRect().bottom) + 16)}px`;
+    }
+    scrim.addEventListener('click', (event) => {
+      if (event.target === scrim) closeMail();
+    });
+    layer.append(scrim);
+  };
+
+  const readout = () => {
+    const node = document.getElementById('mock-readout');
+    if (!node) return;
+    const entry = document.querySelector('[data-sign-in-code]');
+    const parts = [];
+    if (entry) parts.push(`sign-in-code data-state="${entry.dataset.state}"`);
+    if (s.offer) parts.push(`offer data-state="${s.offer.state}"`);
+    if (s.decision && s.decision.state !== 'create') parts.push(`decision-passkey data-state="${s.decision.state}"`);
+    node.textContent = parts.join(' \u00b7 ');
+  };
+
+  const paintRail = () => {
+    rail.replaceChildren();
+    for (const [name, scenes] of RAIL) {
+      const group = el('div', 'mock-group');
+      group.setAttribute('role', 'group');
+      group.setAttribute('aria-label', name);
+      group.append(el('span', 'mock-group-name', `${name}:`));
+      for (const [id, label] of scenes) {
+        const chip = pressable('mock-chip', label, () => go(id));
+        chip.dataset.scene = id;
+        const pressed = s.scene === id || (id === 'signed-in' && s.scene === 'signed-in-ready');
+        chip.setAttribute('aria-pressed', String(pressed));
+        group.append(chip);
+      }
+      rail.append(group);
+    }
+    const schemes = el('div', 'mock-group');
+    schemes.setAttribute('role', 'group');
+    schemes.setAttribute('aria-label', 'Scheme');
+    schemes.append(el('span', 'mock-group-name', 'Scheme:'));
+    const current = document.documentElement.dataset.scheme || 'auto';
+    for (const [id, label] of SCHEMES) {
+      const chip = pressable('mock-chip', label, () => {
+        if (id === 'auto') delete document.documentElement.dataset.scheme;
+        else document.documentElement.dataset.scheme = id;
+        paintRail();
+      });
+      chip.setAttribute('aria-pressed', String(current === id));
+      schemes.append(chip);
+    }
+    rail.append(schemes);
+    const node = el('span', 'mock-readout');
+    node.id = 'mock-readout';
+    rail.append(node);
+    readout();
+  };
+
+  const render = () => {
+    const dashboard = s.page === 'dashboard';
+    relicPage.hidden = dashboard;
+    dashPage.hidden = !dashboard;
+    if (dashboard) {
+      decisionHost.replaceChildren();
+      paintDashboard();
+    } else {
+      paintRelic();
+      paintDecision();
+    }
+    paintMail();
+    paintRail();
+  };
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && s.mail !== null) closeMail();
+  });
+  window.addEventListener('resize', placeDecision);
+
+  const params = new URLSearchParams(location.search);
+  const scheme = params.get('scheme');
+  if (scheme === 'light' || scheme === 'dark') document.documentElement.dataset.scheme = scheme;
+  const initial = params.get('state');
+  go(initial !== null && SCENES[initial] ? initial : 'compose-form');
+})();
+</script>
+</body>
+</html>
