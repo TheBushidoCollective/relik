@@ -129,6 +129,18 @@ export interface RelicConfig {
    * (1 hop from right). Local development with no proxy sets this to 0.
    */
   readonly trustedProxyHops: number;
+  /**
+   * Maximum tracked rate limit windows in memory before eviction.
+   * Bounds memory under address rotation attacks. At the cap the oldest live
+   * windows are evicted, which resets their counters, so the cap must sit far
+   * above what an attacker can churn within the per-IP limits: 100,000 windows
+   * is roughly 20 MB, a small share of a 256 MiB instance.
+   */
+  readonly limiterMaxEntries: number;
+  /**
+   * Number of check operations between routine sweep passes of expired windows.
+   */
+  readonly limiterSweepInterval: number;
 }
 
 export interface RateLimitConfig {
@@ -179,6 +191,8 @@ export const DEFAULT_CONFIG: RelicConfig = {
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
   killSwitchEngaged: false,
   trustedProxyHops: 2,
+  limiterMaxEntries: 100_000,
+  limiterSweepInterval: 100,
 };
 
 /**
@@ -224,5 +238,17 @@ export function assertConfig(config: RelicConfig): void {
   }
   if (config.shareMaxPerCall > config.shareMaxPerRelic) {
     throw new Error('shareMaxPerCall cannot exceed shareMaxPerRelic');
+  }
+  if (
+    !Number.isInteger(config.limiterMaxEntries) ||
+    config.limiterMaxEntries <= 0
+  ) {
+    throw new Error('limiterMaxEntries must be a positive integer');
+  }
+  if (
+    !Number.isInteger(config.limiterSweepInterval) ||
+    config.limiterSweepInterval <= 0
+  ) {
+    throw new Error('limiterSweepInterval must be a positive integer');
   }
 }
