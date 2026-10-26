@@ -682,6 +682,78 @@ function sampledMediaDocument(options: {
   );
 }
 
+function sampledAvDocument(options?: {
+  readonly rate?: number;
+  readonly duration?: number;
+  readonly videoUrl?: string;
+  readonly audioUrl?: string;
+}): OtioDocumentV1 {
+  const rate = options?.rate ?? 30;
+  const duration = options?.duration ?? 60;
+  const videoUrl = options?.videoUrl ?? 'media/clip.mp4';
+  const audioUrl = options?.audioUrl ?? 'media/dialogue.wav';
+  const time = (
+    value: number,
+    timeRate = rate
+  ): Record<string, number | string> => ({
+    OTIO_SCHEMA: 'RationalTime.1',
+    value,
+    rate: timeRate,
+  });
+  return readOtioDocument(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'timeline_1' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        metadata: { relic: { id: 'stack_1' } },
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_v' } },
+            kind: 'Video',
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: 'clip_v' } },
+                source_range: {
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: time(0),
+                  duration: time(duration),
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: videoUrl,
+                },
+              },
+            ],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            metadata: { relic: { id: 'track_a' } },
+            kind: 'Audio',
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: 'clip_a' } },
+                source_range: {
+                  OTIO_SCHEMA: 'TimeRange.1',
+                  start_time: time(0),
+                  duration: time(duration),
+                },
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: audioUrl,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
 function mixedHandleDocument(): OtioDocumentV1 {
   const time = (value: number, rate = 24): Record<string, number | string> => ({
     OTIO_SCHEMA: 'RationalTime.1',
