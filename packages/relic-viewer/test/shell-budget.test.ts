@@ -25,12 +25,12 @@ const pkgDir = new URL('..', import.meta.url).pathname;
 /**
  * Generous against the measured shell, tight against the failure.
  *
- * The shell measured 329,321 bytes with the renderer split out and 741,279
- * with it inline. 450 KB sits far above the first and far below the second,
- * so ordinary growth does not trip it and the regression cannot hide under
- * it.
+ * The shell measured 465,448 bytes with the sign-in code entry included and
+ * ~890 KB with the PDF renderer inline. 475 KiB sits safely above the first
+ * and far below the second, so ordinary growth does not trip it and the
+ * regression cannot hide under it.
  */
-const SHELL_CEILING_BYTES = 450 * 1024;
+const SHELL_CEILING_BYTES = 475 * 1024;
 
 describe('the app shell', () => {
   test('does not carry the PDF renderer', async () => {
