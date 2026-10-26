@@ -1,3 +1,34 @@
+# Email code sign-in
+
+A reader who asks to sign in on a relic gets one email with a six-digit code and a link, types the code into the same page, and is signed in without leaving it: the key stays in the tab, the comment they post carries their address, and the link in that email stops working.
+
+## Acceptance command
+
+The implementation provides this loopback proof:
+
+```sh
+mise exec -- bun run verify
+mise exec -- bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH="$(command -v google-chrome)" mise exec -- bun packages/relic-mcp/test/email-code-sign-in-path.ts
+```
+
+Success requires these lines in order, then `EMAIL_CODE_SIGN_IN_PATH_OK`:
+`EMAIL_CODE_STEP_1_PUBLISH_OK relic_id=<id>`,
+`EMAIL_CODE_STEP_2_CODE_MAILED subject_has_code=true link_present=true`,
+`EMAIL_CODE_STEP_3_SIGNED_IN_IN_PLACE navigations=0 offer=shown`,
+`EMAIL_CODE_STEP_4_COMMENT_OK author=<address>`,
+`EMAIL_CODE_STEP_5_LINK_SPENT callback=401`,
+`EMAIL_CODE_NEG_OK wrong=401 no_cookie=401 unknown_request=401 replay=401 link_first=401 locked=401 link_after_lock=303 shape_equal=true wrong_content_type=400`.
+All proof writes target local in-memory services.
+
+For production verification against a live service:
+
+```sh
+RELIC_EMAIL_CODE_PROBE_MAILBOX=user@example.com RELIC_CHROME_PATH="$(command -v google-chrome)" mise exec -- bun packages/relic-mcp/test/email-code-sign-in-live-probe.ts
+```
+
+The probe prints `PROBE_AWAIT_SIGN_IN_CODE email=<addr>` and blocks on stdin for the code, then `PROBE_AWAIT_SIGN_IN_LINK email=<addr>` and blocks for that email's link. Success requires `EMAIL_CODE_SIGN_IN_LIVE_OK relic=<id> navigations=0 link=401`.
+
 # Passkey sign-in for returning readers
 
 A reader who verified their email once and added a passkey can open a relic later, tap 'Sign in with passkey' (or pick the passkey from the email field's autofill), and post a comment without receiving any email.

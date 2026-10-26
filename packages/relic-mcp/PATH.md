@@ -495,6 +495,60 @@ DECISION_FRESH_LINK_SKIPPED live
 DECISION_LIVE_OK relic=<id> client=relic-mcp@<version>
 ```
 
+## Email code sign-in
+
+Run the full loopback proof from the repository root:
+
+```bash
+RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/email-code-sign-in-path.ts
+```
+
+The command starts a service on loopback with `MemoryStore` and `MemoryStorage`,
+serving built viewer assets. It exercises:
+1. Publishing an initial document with title: "", cover: false, ttl_days: 1.
+2. Requesting a sign-in email from the comment composer, capturing the mailed code and link, and verifying the email subject contains the 6-digit code.
+3. Typing the code into the focused in-place input via CDP `Input.insertText`, verifying that zero navigations occur (`window.__relicCodeProofMarker` survives, `performance.timeOrigin` is unchanged, and zero main-frame `Page.frameNavigated` events fire), and asserting `[data-passkey-offer]` is shown.
+4. Posting a comment through `textarea.compose-textarea` and "Post comment", and reading it back via `relic_read_comments` to verify author attribution.
+5. Following the mailed magic link and verifying it answers 401 now that the code was used.
+6. Negative controls over HTTP with manual cookie jar: wrong code, missing cookie, unknown request nonce, replaying spent code, using link first then code, exhausting address attempt budget (lockout), following link after code lockout, uniform 401 error body shape, and non-JSON content-type.
+
+Success ends with:
+
+```text
+EMAIL_CODE_STEP_1_PUBLISH_OK relic_id=<id>
+EMAIL_CODE_STEP_2_CODE_MAILED subject_has_code=true link_present=true
+EMAIL_CODE_STEP_3_SIGNED_IN_IN_PLACE navigations=0 offer=shown
+EMAIL_CODE_STEP_4_COMMENT_OK author=<address>
+EMAIL_CODE_STEP_5_LINK_SPENT callback=401
+EMAIL_CODE_NEG_OK wrong=401 no_cookie=401 unknown_request=401 replay=401 link_first=401 locked=401 link_after_lock=303 shape_equal=true wrong_content_type=400
+EMAIL_CODE_SIGN_IN_PATH_OK
+```
+
+## Email code sign-in on the live service
+
+Run against the live deployment from the repository root:
+
+```bash
+RELIC_EMAIL_CODE_PROBE_MAILBOX=user@example.com RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/email-code-sign-in-live-probe.ts
+```
+
+The probe exercises email code sign-in against a live service deployment (defaulting to `https://relik.link`).
+It reads the base recipient address from `RELIC_EMAIL_CODE_PROBE_MAILBOX` and derives a fresh per-run plus-addressed email `<local>+relic-code-<runId>@<domain>`.
+The probe refuses to run without a plus-tag, ensuring test sign-ins use an isolated test address.
+
+The probe prints `PROBE_AWAIT_SIGN_IN_CODE email=<addr>` and blocks on stdin for the 6-digit code.
+It then prints `PROBE_AWAIT_SIGN_IN_LINK email=<addr>` and blocks on stdin for that email's magic link.
+
+Success ends with:
+
+```text
+EMAIL_CODE_STEP_1_PUBLISH_OK relic_id=<id>
+EMAIL_CODE_STEP_3_SIGNED_IN_IN_PLACE navigations=0 offer=shown
+EMAIL_CODE_STEP_4_COMMENT_OK author=<address>
+EMAIL_CODE_STEP_5_LINK_SPENT callback=401
+EMAIL_CODE_SIGN_IN_LIVE_OK relic=<id> navigations=0 link=401
+```
+
 ## Passkey sign-in for returning readers
 
 Run the full loopback proof from the repository root:
