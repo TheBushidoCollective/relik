@@ -56,29 +56,40 @@ export interface OutboundMail {
  * from the HTML if one is missing, and a synthesized part is a worse version of
  * the one sentence this message actually contains.
  *
- * The link is the whole message. No branding, no marketing, nothing that reads
+ * The code and the link are the whole message. No branding, no marketing, nothing that reads
  * like a newsletter, because a message that looks like an announcement is a
  * message a spam filter treats like one.
  */
-export function signInMail(link: string): OutboundMail {
-  const subject = 'Your Relic sign-in link';
+export function signInMail(
+  link: string,
+  code: string = '123456'
+): OutboundMail {
+  const subject = `${code} is your Relic sign-in code`;
   const text = [
-    'Open this link to sign in on the relic you were reading, so you can comment on it or share it:',
+    'Your Relic sign-in code:',
+    '',
+    code,
+    '',
+    'Type it on the page where you asked to sign in. It works only in the browser that asked for it.',
+    '',
+    'Or open this link to sign in instead:',
     '',
     link,
     '',
-    'The link is single use and expires shortly. If you did not ask to sign',
-    'in, nothing has happened and you can ignore this message.',
+    'The code and the link are single use and expire shortly, and using either one spends both. Relic never asks you for this code, so do not give it to anyone. If you did not ask to sign in, nothing has happened and you can ignore this message.',
   ].join('\n');
   // Escaping matters even here: the link carries a token this service
   // generated, but it is still interpolated into markup, and a mail client is
   // a renderer like any other.
   const href = escapeHtml(link);
+  const codeHtml = escapeHtml(code);
   const html = [
-    '<p>Open this link to sign in on the relic you were reading, so you can comment on it or share it:</p>',
+    '<p>Your Relic sign-in code:</p>',
+    `<p style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:28px;font-weight:600;letter-spacing:6px;margin:16px 0">${codeHtml}</p>`,
+    '<p>Type it on the page where you asked to sign in. It works only in the browser that asked for it.</p>',
+    '<p>Or open this link to sign in instead:</p>',
     `<p><a href="${href}">${href}</a></p>`,
-    '<p>The link is single use and expires shortly. If you did not ask to ',
-    'sign in, nothing has happened and you can ignore this message.</p>',
+    '<p>The code and the link are single use and expire shortly, and using either one spends both. Relic never asks you for this code, so do not give it to anyone. If you did not ask to sign in, nothing has happened and you can ignore this message.</p>',
   ].join('');
   return { subject, text, html };
 }
@@ -429,7 +440,7 @@ export function passkeyAddedMail(p: {
         `A passkey was added for ${p.address} on ${when}.`,
         `It signs in to Relic as this address without a link, and it confirms decisions. ${countText}`,
         'If you added it, you can ignore this message.',
-        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.',
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.',
       ]
     : [
         `A passkey was added for ${p.address} on ${when}.`,
@@ -600,8 +611,12 @@ export function resendMailer(options: ResendMailerOptions): Mailer {
   }
 
   return {
-    async send(email: string, link: string): Promise<void> {
-      return post(email, signInMail(link));
+    async send(
+      email: string,
+      link: string,
+      code: string = '123456'
+    ): Promise<void> {
+      return post(email, signInMail(link, code));
     },
     async sendMail(email: string, mail: OutboundMail): Promise<void> {
       return post(email, mail);

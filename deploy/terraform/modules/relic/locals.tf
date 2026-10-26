@@ -30,9 +30,10 @@ locals {
   # record of a decision somebody may have to answer for later. Neither gets a
   # delete rule.
   #
-  # Challenges and dedup entries are minutes-lived but the shortest granularity
-  # a lifecycle rule has is a day, so they take the one-day rule below rather
-  # than a schedule that pretends to be exact.
+  # Challenges (sign-in codes and their budget rows included) and dedup entries
+  # are minutes-lived but the shortest granularity a lifecycle rule has is a
+  # day, so they take the one-day rule below rather than a schedule that
+  # pretends to be exact.
   transient_store_prefixes = [
     "${local.store_prefix}/challenge/",
     "${local.store_prefix}/dedup/",

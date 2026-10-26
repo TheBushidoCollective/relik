@@ -104,8 +104,8 @@ describe('the quota Resend reports on an accepted send', () => {
 
 describe('the sign-in mail', () => {
   test('the link is the message, in both parts', () => {
-    const mail = signInMail(LINK);
-    expect(mail.subject).toBe('Your Relic sign-in link');
+    const mail = signInMail(LINK, '123456');
+    expect(mail.subject).toBe('123456 is your Relic sign-in code');
     expect(mail.text).toContain(LINK);
     // Single use and expiring is the part a recipient needs, and the part that
     // makes an unexpected message safe to ignore.
@@ -493,13 +493,13 @@ describe('the passkey-added mail', () => {
       'A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.\n\n' +
         'It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
         'If you added it, you can ignore this message.\n\n' +
-        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.'
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.'
     );
     expect(firstMail.html).toBe(
       '<p>A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.</p>' +
         '<p>It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.</p>' +
         '<p>If you added it, you can ignore this message.</p>' +
-        '<p>If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.</p>'
+        '<p>If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.</p>'
     );
 
     const secondMail = passkeyAddedMail({
@@ -606,7 +606,7 @@ describe('sending through Resend', () => {
     const body = JSON.parse(String(call.init.body)) as Record<string, unknown>;
     expect(body['from']).toBe('Relic <no-reply@relik.link>');
     expect(body['to']).toBe('ada@example.com');
-    expect(body['subject']).toBe('Your Relic sign-in link');
+    expect(body['subject']).toBe('123456 is your Relic sign-in code');
     expect(String(body['text'])).toContain(LINK);
     expect(String(body['html'])).toContain('href=');
   });

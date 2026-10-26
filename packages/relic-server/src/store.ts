@@ -326,7 +326,7 @@ export interface SessionRow {
   readonly createdAt: number;
   readonly expiresAt: number;
   /** What started the session. Absent on rows from before passkey sign-in, all of which a link started. */
-  readonly via?: 'link' | 'passkey';
+  readonly via?: 'link' | 'passkey' | 'code';
 }
 
 /** A pending magic link, before anybody has followed it. */
@@ -335,6 +335,32 @@ export interface AuthLinkRow {
   readonly email: string;
   readonly expiresAt: number;
   readonly returnTo: string;
+}
+
+/**
+ * A typed sign-in code, mailed beside a magic link and bound to the browser
+ * that asked for it. Filed under a hash of the request nonce, which lives only
+ * in that browser's HttpOnly cookie; the code is kept as an HMAC keyed by the
+ * same nonce, so a reader of the bucket can test no guess offline.
+ */
+export interface SignInCodeRow {
+  /** sha256Hex(`relic-sign-in-request:v1:${nonce}`); also the row's name. */
+  readonly requestHash: string;
+  /** Hex HMAC-SHA256 keyed by the nonce's 32 bytes over `relic-sign-in-code:v1:${code}`. */
+  readonly codeMac: string;
+  /** The link mailed with this code. Verifying the code spends that link. */
+  readonly linkTokenHash: string;
+  /** sha256Hex(normalizeEmail(address)): the attempt budget this code draws on. */
+  readonly addressHash: string;
+  /** The link's own expiry: the two die together. */
+  readonly expiresAt: number;
+}
+
+/** Code attempts charged to one address in its current window. */
+export interface SignInCodeBudgetRow {
+  readonly addressHash: string;
+  readonly windowStart: number;
+  readonly attempts: number;
 }
 
 interface Challenge {
@@ -468,8 +494,28 @@ export interface RelicStore {
   putAuthLink(row: AuthLinkRow): Promise<void>;
   listCommenters(relicId: string): Promise<readonly string[]>;
   deleteCommenter(relicId: string, author: string): Promise<void>;
-  /** Single use: reading it consumes it, whether or not it had expired. */
+  /**
+   * Single use: reading it consumes it, whether or not it had expired.
+   * Exactly one of any number of concurrent consumers, on any instance, gets the row.
+   */
   consumeAuthLink(tokenHash: string): Promise<AuthLinkRow | undefined>;
+  putSignInCode(row: SignInCodeRow): Promise<void>;
+  getSignInCode(requestHash: string): Promise<SignInCodeRow | undefined>;
+  deleteSignInCode(requestHash: string): Promise<void>;
+  /**
+   * Charge one code attempt to the address before the code is compared.
+   * True when the address had fewer than `limit` attempts in the window
+   * containing `now` (a window opens at the first attempt after the previous
+   * one ended, and lasts `windowMs`). Charges whether or not it allows, so a
+   * refused attempt costs the same store work. Compare-and-swap safe across
+   * instances; throws rather than allow when it cannot win a write.
+   */
+  reserveSignInCodeAttempt(
+    addressHash: string,
+    now: number,
+    limit: number,
+    windowMs: number
+  ): Promise<boolean>;
   putSession(row: SessionRow): Promise<void>;
   getSession(tokenHash: string): Promise<SessionRow | undefined>;
   hasVerifiedIdentity(email: string): Promise<boolean>;
@@ -525,6 +571,8 @@ export class MemoryStore implements RelicStore {
   private readonly webauthnChallenges = new Map<string, WebauthnChallengeRow>();
   private readonly passkeyHandles = new Map<string, string>();
   private passkeyDecoySecret: Uint8Array | undefined;
+  private readonly signInCodes = new Map<string, SignInCodeRow>();
+  private readonly signInCodeBudgets = new Map<string, SignInCodeBudgetRow>();
   async getRelic(id: string): Promise<RelicRow | undefined> {
     return this.relics.get(id);
   }
@@ -968,6 +1016,39 @@ export class MemoryStore implements RelicStore {
     // finding an expired row it might be tempted to forgive.
     this.authLinks.delete(tokenHash);
     return row;
+  }
+  async putSignInCode(row: SignInCodeRow): Promise<void> {
+    this.signInCodes.set(row.requestHash, row);
+  }
+
+  async getSignInCode(requestHash: string): Promise<SignInCodeRow | undefined> {
+    return this.signInCodes.get(requestHash);
+  }
+
+  async deleteSignInCode(requestHash: string): Promise<void> {
+    this.signInCodes.delete(requestHash);
+  }
+
+  async reserveSignInCodeAttempt(
+    addressHash: string,
+    now: number,
+    limit: number,
+    windowMs: number
+  ): Promise<boolean> {
+    const current = this.signInCodeBudgets.get(addressHash);
+    const inWindow =
+      current !== undefined &&
+      now >= current.windowStart &&
+      now < current.windowStart + windowMs;
+    const before = inWindow ? current.attempts : 0;
+    const windowStart = inWindow ? current.windowStart : now;
+    const next: SignInCodeBudgetRow = {
+      addressHash,
+      windowStart,
+      attempts: before + 1,
+    };
+    this.signInCodeBudgets.set(addressHash, next);
+    return before < limit;
   }
 
   async putSession(row: SessionRow): Promise<void> {

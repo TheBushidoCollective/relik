@@ -18,7 +18,13 @@ import {
  * Testing `consumeMint` against a fake without generations would prove
  * nothing, because the race it exists to prevent is invisible without them.
  */
-function fakeGcs() {
+export interface FakeGcs {
+  fetch: typeof globalThis.fetch;
+  readonly objects: Map<string, { body: string; generation: number }>;
+  contendOn(name: string, times: number): void;
+}
+
+export function fakeGcs(): FakeGcs {
   const objects = new Map<string, { body: string; generation: number }>();
   const media = new Map<string, Uint8Array>();
   let nextGeneration = 1;
@@ -38,10 +44,21 @@ function fakeGcs() {
     if (remaining > 0) bumps.set(name, remaining - 1);
 
     const existing = objects.get(name);
-    if (existing === undefined) return;
+    if (existing === undefined) {
+      objects.set(name, {
+        body: JSON.stringify({}),
+        generation: nextGeneration++,
+      });
+      return;
+    }
 
-    const parsed = JSON.parse(existing.body) as { mintsUsed?: number };
-    parsed.mintsUsed = (parsed.mintsUsed ?? 0) + 1;
+    const parsed = JSON.parse(existing.body) as Record<string, unknown>;
+    if ('mintsUsed' in parsed) {
+      parsed['mintsUsed'] = (Number(parsed['mintsUsed']) || 0) + 1;
+    }
+    if ('attempts' in parsed) {
+      parsed['attempts'] = (Number(parsed['attempts']) || 0) + 1;
+    }
     objects.set(name, {
       body: JSON.stringify(parsed),
       generation: nextGeneration++,
@@ -143,7 +160,7 @@ function fakeGcs() {
   };
 }
 
-function storeOn(gcs: ReturnType<typeof fakeGcs>, casAttempts?: number) {
+export function storeOn(gcs: FakeGcs, casAttempts?: number) {
   return gcsStore({
     bucket: 'relics',
     getAccessToken: async () => 'token',
@@ -647,9 +664,17 @@ describe('gcsStore', () => {
       expiresAt: 9_000_000,
       via: 'passkey',
     });
+    await store.putSession({
+      tokenHash: 'hash-code',
+      email: 'code@example.com',
+      createdAt: 1000,
+      expiresAt: 9_000_000,
+      via: 'code',
+    });
 
     expect((await store.getSession('hash-link'))?.via).toBe('link');
     expect((await store.getSession('hash-passkey'))?.via).toBe('passkey');
+    expect((await store.getSession('hash-code'))?.via).toBe('code');
 
     // Legacy row written without via (e.g. manually or before this field)
     await store.putSession({
@@ -1744,6 +1769,127 @@ describe('gcsStore', () => {
         cur = await store.getRelic('r_surv');
         expect(cur?.version).toBe(2);
         expect(cur?.versionDigests?.['1']).toBe('digest_v1');
+      }
+    });
+    test('two instances racing consumeAuthLink give exactly one row', async () => {
+      const gcs = fakeGcs();
+      const store1 = storeOn(gcs);
+      const store2 = storeOn(gcs);
+
+      await store1.putAuthLink({
+        tokenHash: 'race-token-1',
+        email: 'racer@example.com',
+        expiresAt: 9_000_000,
+        returnTo: '/relic-race',
+      });
+
+      const [res1, res2] = await Promise.all([
+        store1.consumeAuthLink('race-token-1'),
+        store2.consumeAuthLink('race-token-1'),
+      ]);
+
+      const wins = [res1, res2].filter((r) => r !== undefined);
+      expect(wins).toHaveLength(1);
+      expect(wins[0]?.email).toBe('racer@example.com');
+    });
+
+    test('twelve concurrent reservations across two storeOn(gcs, 32) instances with limit 10 give exactly 10 true, and the row reads attempts: 12', async () => {
+      const gcs = fakeGcs();
+      const store1 = storeOn(gcs, 32);
+      const store2 = storeOn(gcs, 32);
+
+      const now = 10_000;
+      const windowMs = 86_400_000;
+      const limit = 10;
+      const addressHash = 'addr-concurrent-12';
+
+      const tasks = Array.from({ length: 12 }, (_, i) => {
+        const store = i % 2 === 0 ? store1 : store2;
+        return store.reserveSignInCodeAttempt(
+          addressHash,
+          now,
+          limit,
+          windowMs
+        );
+      });
+
+      const results = await Promise.all(tasks);
+      const trueCount = results.filter((r) => r === true).length;
+      const falseCount = results.filter((r) => r === false).length;
+
+      expect(trueCount).toBe(10);
+      expect(falseCount).toBe(2);
+
+      const object = gcs.objects.get(
+        `m/challenge/sign-in-code-budget/${addressHash}.json`
+      );
+      expect(object).toBeDefined();
+      const parsed = JSON.parse(object!.body) as {
+        attempts: number;
+        windowStart: number;
+      };
+      expect(parsed.attempts).toBe(12);
+    });
+
+    test('a both-stores conformance test covers the new methods', async () => {
+      const stores = [storeOn(fakeGcs()), new MemoryStore()];
+
+      for (const store of stores) {
+        const codeRow = {
+          requestHash: 'req-hash-1',
+          codeMac: 'mac-1',
+          linkTokenHash: 'link-hash-1',
+          addressHash: 'addr-hash-1',
+          expiresAt: 5000,
+        };
+
+        // putSignInCode and getSignInCode
+        await store.putSignInCode(codeRow);
+        const fetched = await store.getSignInCode('req-hash-1');
+        expect(fetched).toEqual(codeRow);
+
+        // deleteSignInCode
+        await store.deleteSignInCode('req-hash-1');
+        expect(await store.getSignInCode('req-hash-1')).toBeUndefined();
+
+        // reserveSignInCodeAttempt
+        const now = 1000;
+        const windowMs = 60_000;
+        const limit = 2;
+
+        const res1 = await store.reserveSignInCodeAttempt(
+          'addr-1',
+          now,
+          limit,
+          windowMs
+        );
+        expect(res1).toBe(true);
+
+        const res2 = await store.reserveSignInCodeAttempt(
+          'addr-1',
+          now + 10,
+          limit,
+          windowMs
+        );
+        expect(res2).toBe(true);
+
+        // Third attempt exceeds limit
+        const res3 = await store.reserveSignInCodeAttempt(
+          'addr-1',
+          now + 20,
+          limit,
+          windowMs
+        );
+        expect(res3).toBe(false);
+
+        // Beyond windowMs, opens a new window
+        const res4 = await store.reserveSignInCodeAttempt(
+          'addr-1',
+          now + windowMs + 1,
+          limit,
+          windowMs
+        );
+        expect(res4).toBe(true);
       }
     });
   });
