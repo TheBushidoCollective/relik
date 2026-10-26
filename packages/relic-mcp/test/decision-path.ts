@@ -118,7 +118,14 @@ handler = async (request: Request): Promise<Response> => {
 async function resolveMagicLink(email: string): Promise<string> {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    const found = mails.find((m) => m.to.toLowerCase() === email.toLowerCase());
+    let found: { to: string; text: string } | undefined;
+    for (let i = mails.length - 1; i >= 0; i--) {
+      const m = mails[i];
+      if (m && m.to.toLowerCase() === email.toLowerCase()) {
+        found = m;
+        break;
+      }
+    }
     if (found) {
       const match = found.text.match(
         new RegExp(
@@ -134,6 +141,52 @@ async function resolveMagicLink(email: string): Promise<string> {
   throw new Error(`Magic link for ${email} did not arrive in captured mailer`);
 }
 
+async function awaitPasskeyNotice(email: string): Promise<string> {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    let found: { to: string; text: string } | undefined;
+    for (let i = mails.length - 1; i >= 0; i--) {
+      const m = mails[i];
+      if (
+        m &&
+        m.to.toLowerCase() === email.toLowerCase() &&
+        m.text.startsWith('A passkey was added for ')
+      ) {
+        found = m;
+        break;
+      }
+    }
+    if (found) {
+      const firstLine = found.text.split('\n')[0] ?? '';
+      return firstLine;
+    }
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 50);
+    await promise;
+  }
+  throw new Error(
+    `Passkey notice for ${email} did not arrive in captured mailer`
+  );
+}
+
+async function seedStaleSession(email: string): Promise<string> {
+  const tokenBytes = new Uint8Array(32);
+  crypto.getRandomValues(tokenBytes);
+  const token = Buffer.from(tokenBytes).toString('base64url');
+  const tokenHash = Buffer.from(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  ).toString('hex');
+  const passkeyFreshLinkSeconds = 900;
+  await store.putSession({
+    tokenHash,
+    email,
+    createdAt: Date.now() - (passkeyFreshLinkSeconds + 60) * 1000,
+    expiresAt: Date.now() + 3_600_000,
+    via: 'link',
+  } as Parameters<typeof store.putSession>[0]);
+  return token;
+}
+
 try {
   await runDecisionProofSequence({
     serviceOrigin,
@@ -143,9 +196,10 @@ try {
     chromePath,
     readerEmail: 'reader+relic-decision-loopback@example.test',
     resolveMagicLink,
+    awaitPasskeyNotice,
+    seedStaleSession,
     isLive: false,
   });
-
   console.log('DECISION_PATH_OK');
 } finally {
   service.stop();

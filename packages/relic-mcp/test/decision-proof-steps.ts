@@ -56,6 +56,8 @@ export interface DecisionProofOptions {
   readonly chromePath: string;
   readonly readerEmail: string;
   readonly resolveMagicLink: (email: string) => Promise<string>;
+  readonly awaitPasskeyNotice?: (email: string) => Promise<string>;
+  readonly seedStaleSession?: (email: string) => Promise<string>;
   readonly isLive?: boolean;
 }
 
@@ -420,8 +422,8 @@ export async function runDecisionProofSequence(
     chromePath,
     readerEmail,
     resolveMagicLink,
+    seedStaleSession,
   } = options;
-
   // Step 1: Publish v1, republish v2, republish v3. Record v3 version_digest.
   const v1Path = join(scratchDir, 'proof-v1.txt');
   const v2Path = join(scratchDir, 'proof-v2.txt');
@@ -1042,6 +1044,116 @@ export async function runDecisionProofSequence(
     console.log(
       'DECISION_NEG_OK digest_mismatch=409 user_verified=403 challenge_replay=403'
     );
+
+    // Fresh link required for first passkey on decisions
+    if (typeof seedStaleSession !== 'function') {
+      console.log('DECISION_FRESH_LINK_SKIPPED live');
+    } else {
+      const addressC = `reader+c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
+      const staleTokenC = await seedStaleSession(addressC);
+
+      // The checks above removed every virtual authenticator, so this one
+      // gets its own: a refused first passkey must leave it holding nothing.
+      const authC = (await browser.cdp.send(
+        'WebAuthn.addVirtualAuthenticator',
+        {
+          options: {
+            protocol: 'ctap2',
+            transport: 'internal',
+            hasResidentKey: true,
+            hasUserVerification: true,
+            isUserVerified: true,
+            automaticPresenceSimulation: true,
+          },
+        },
+        browser.sessionId
+      )) as { authenticatorId: string };
+
+      // 1. Seed a stale session for C and set the cookie.
+      await browser.cdp.send(
+        'Network.setCookie',
+        {
+          name: 'relic_session',
+          value: staleTokenC,
+          url: serviceOrigin,
+          httpOnly: true,
+          secure: false,
+          sameSite: 'Lax',
+        },
+        browser.sessionId
+      );
+
+      // Count credentials before reopening
+      const credsBeforeC = (await browser.cdp.send(
+        'WebAuthn.getCredentials',
+        { authenticatorId: authC.authenticatorId },
+        browser.sessionId
+      )) as { credentials?: readonly { credentialId?: string }[] };
+      const credCountBeforeC = (credsBeforeC.credentials ?? []).length;
+
+      // 2. Reopen the relic and open the panel.
+      for (const url of ['about:blank', relicUrl]) {
+        const loadedC = browser.cdp.waitForEvent('Page.loadEventFired', {
+          sessionId: browser.sessionId,
+          timeoutMs: 25000,
+        });
+        await browser.cdp.send('Page.navigate', { url }, browser.sessionId);
+        await loadedC;
+      }
+      await browser.clickSelector(
+        'button.action-decisions[data-decision-open]'
+      );
+      await browser.waitForSelector(
+        'dialog.decision-panel[data-decision-version]'
+      );
+
+      // 3. Choose approve.
+      await browser.clickSelector('[data-decision-verdict="approve"]');
+
+      // 4. Wait for [data-passkey-link][data-state="required"].
+      await browser.waitForSelector(
+        '[data-passkey-link][data-state="required"]',
+        20000
+      );
+
+      // 5. Check that the authenticator count is unchanged.
+      const credsAfterRefusalC = (await browser.cdp.send(
+        'WebAuthn.getCredentials',
+        { authenticatorId: authC.authenticatorId },
+        browser.sessionId
+      )) as { credentials?: readonly { credentialId?: string }[] };
+      const credCountAfterC = (credsAfterRefusalC.credentials ?? []).length;
+      const orphansC = credCountAfterC - credCountBeforeC;
+      assert.equal(
+        orphansC,
+        0,
+        `expected 0 orphaned credentials, got ${orphansC}`
+      );
+
+      // 6. Click [data-passkey-link-send], then wait for [data-state="sent"].
+      await browser.clickSelector('[data-passkey-link-send]');
+      await browser.waitForSelector(
+        '[data-passkey-link][data-state="sent"]',
+        20000
+      );
+
+      // 7. Check that resolveMagicLink(C) returns a callback URL.
+      const magicLinkC = await resolveMagicLink(addressC);
+      assert.ok(
+        magicLinkC?.includes('/api/auth/callback'),
+        `expected callback URL for address C, got "${magicLinkC}"`
+      );
+
+      await browser.cdp.send(
+        'WebAuthn.removeVirtualAuthenticator',
+        { authenticatorId: authC.authenticatorId },
+        browser.sessionId
+      );
+
+      console.log(
+        'DECISION_FRESH_LINK_OK state=required orphans=0 link_sent=1'
+      );
+    }
 
     return {
       relicId,

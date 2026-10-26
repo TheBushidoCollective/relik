@@ -5,6 +5,7 @@ import {
   commentNotificationMail,
   MailRefusedError,
   mailerFromEnv,
+  passkeyAddedMail,
   quotaWarning,
   replyNotificationMail,
   resendMailer,
@@ -472,6 +473,112 @@ describe('the change notice mail', () => {
       'List-Unsubscribe': `<${stopUrl}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     });
+  });
+});
+
+describe('the passkey-added mail', () => {
+  const timestamp = Date.parse('2026-10-25T14:03:07Z');
+
+  test('exact subject, text and HTML for both variants, at 2026-10-25T14:03:07Z', () => {
+    const firstMail = passkeyAddedMail({
+      address: 'ada@example.com',
+      at: timestamp,
+      first: true,
+      passkeys: 1,
+    });
+    expect(firstMail.subject).toBe(
+      'A passkey was added for your address on Relic'
+    );
+    expect(firstMail.text).toBe(
+      'A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.\n\n' +
+        'It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
+        'If you added it, you can ignore this message.\n\n' +
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.'
+    );
+    expect(firstMail.html).toBe(
+      '<p>A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.</p>' +
+        '<p>It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.</p>' +
+        '<p>If you added it, you can ignore this message.</p>' +
+        '<p>If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.</p>'
+    );
+
+    const secondMail = passkeyAddedMail({
+      address: 'ada@example.com',
+      at: timestamp,
+      first: false,
+      passkeys: 2,
+    });
+    expect(secondMail.subject).toBe(
+      'A passkey was added for your address on Relic'
+    );
+    expect(secondMail.text).toBe(
+      'A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.\n\n' +
+        'It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.\n\n' +
+        'If you added it, you can ignore this message.\n\n' +
+        'If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.'
+    );
+    expect(secondMail.html).toBe(
+      '<p>A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.</p>' +
+        '<p>It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.</p>' +
+        '<p>If you added it, you can ignore this message.</p>' +
+        '<p>If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.</p>'
+    );
+  });
+
+  test('singular and plural passkey counts', () => {
+    const oneMail = passkeyAddedMail({
+      address: 'bob@example.com',
+      at: timestamp,
+      first: false,
+      passkeys: 1,
+    });
+    expect(oneMail.text).toContain('This address has 1 passkey.');
+    expect(oneMail.html).toContain('This address has 1 passkey.');
+
+    const threeMail = passkeyAddedMail({
+      address: 'bob@example.com',
+      at: timestamp,
+      first: false,
+      passkeys: 3,
+    });
+    expect(threeMail.text).toContain('This address has 3 passkeys.');
+    expect(threeMail.html).toContain('This address has 3 passkeys.');
+  });
+
+  test('an address containing < is escaped in HTML', () => {
+    const mail = passkeyAddedMail({
+      address: 'reader<script>@example.com',
+      at: timestamp,
+      first: true,
+      passkeys: 1,
+    });
+    expect(mail.html).not.toContain('<script>');
+    expect(mail.html).toContain('reader&lt;script&gt;@example.com');
+    expect(mail.text).toContain('reader<script>@example.com');
+  });
+
+  test('headers is undefined', () => {
+    const mail = passkeyAddedMail({
+      address: 'ada@example.com',
+      at: timestamp,
+      first: true,
+      passkeys: 1,
+    });
+    expect(mail.headers).toBeUndefined();
+  });
+
+  test('no U+2014 or U+2013 in the output', () => {
+    for (const first of [true, false]) {
+      const mail = passkeyAddedMail({
+        address: 'ada@example.com',
+        at: timestamp,
+        first,
+        passkeys: 2,
+      });
+      expect(mail.subject).not.toMatch(/[\u2013\u2014]/);
+      expect(mail.text).not.toMatch(/[\u2013\u2014]/);
+      expect(mail.html).not.toMatch(/[\u2013\u2014]/);
+    }
   });
 });
 

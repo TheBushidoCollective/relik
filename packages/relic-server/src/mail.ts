@@ -390,6 +390,64 @@ export function changeNoticeMail(p: {
     },
   };
 }
+
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
+export function passkeyAddedMail(p: {
+  readonly address: string;
+  readonly at: number;
+  readonly first: boolean;
+  readonly passkeys: number;
+}): OutboundMail {
+  const d = new Date(p.at);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const when = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} at ${hh}:${mm} UTC`;
+
+  const subject = 'A passkey was added for your address on Relic';
+
+  const countText =
+    p.passkeys === 1
+      ? 'This address has 1 passkey.'
+      : `This address has ${p.passkeys} passkeys.`;
+
+  const paragraphs: string[] = p.first
+    ? [
+        `A passkey was added for ${p.address} on ${when}.`,
+        `It signs in to Relic as this address without a link, and it confirms decisions. ${countText}`,
+        'If you added it, you can ignore this message.',
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link sent here. Relic has no way to remove a passkey.',
+      ]
+    : [
+        `A passkey was added for ${p.address} on ${when}.`,
+        `It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. ${countText}`,
+        'If you added it, you can ignore this message.',
+        'If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.',
+      ];
+
+  const text = paragraphs.join('\n\n');
+  const html = paragraphs.map((para) => `<p>${escapeHtml(para)}</p>`).join('');
+
+  return {
+    subject,
+    text,
+    html,
+    headers: undefined,
+  };
+}
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')

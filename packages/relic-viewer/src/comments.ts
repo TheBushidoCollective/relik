@@ -1461,3 +1461,32 @@ export function collectDisplayedEntries(
   walk(nodes);
   return out;
 }
+
+const offerMarkers = new WeakMap<object, boolean>();
+
+/**
+ * Whether the sign-in callback left the one-shot passkey offer marker. The
+ * first read deletes the cookie, so a reload never offers again, and every
+ * later read in the same document gets the same answer: the viewer can build
+ * the thread more than once per page load, and a build that discards an
+ * earlier one must still see the marker the earlier one consumed.
+ */
+export function takePasskeyOfferMarker(
+  doc: { cookie?: string } = globalThis.document
+): boolean {
+  if (!doc || typeof doc !== 'object') return false;
+  const known = offerMarkers.get(doc);
+  if (known !== undefined) return known;
+  const match = /(?:^|;\s*)relic_passkey_offer=([^;]*)/.exec(doc.cookie ?? '');
+  const present = match?.[1] === '1';
+  offerMarkers.set(doc, present);
+  if (present) {
+    try {
+      doc.cookie =
+        'relic_passkey_offer=; Path=/; Max-Age=0; Secure; SameSite=Lax';
+    } catch {
+      // A document that refuses cookie writes keeps the marker until it expires.
+    }
+  }
+  return present;
+}

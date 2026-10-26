@@ -105,6 +105,9 @@ class ElementStub {
     this.attributes.set(name, value);
   }
 
+  hasAttribute(name: string): boolean {
+    return this.attributes.has(name);
+  }
   appendChild(child: ElementStub): ElementStub {
     this.children.push(child);
     return child;

@@ -118,6 +118,27 @@ export interface RelicConfig {
   readonly decisionReadRateLimit: RateLimitConfig;
   /** Passkey operations per IP. */
   readonly passkeyRateLimit: RateLimitConfig;
+  /** Passkey sign-in options requests per IP. */
+  readonly passkeySignInOptionsRateLimit: RateLimitConfig;
+  /** Passkey sign-in options requests per target address. */
+  readonly passkeySignInOptionsAddressRateLimit: RateLimitConfig;
+  /** Passkey sign-in requests per IP. */
+  readonly passkeySignInRateLimit: RateLimitConfig;
+  /** Passkey sign-in requests per target address. */
+  readonly passkeySignInAddressRateLimit: RateLimitConfig;
+  /** Size of the allowCredentials list on email-first passkey sign-in. */
+  readonly passkeySignInAllowListSize: number;
+  /** Lengths in bytes to pick from for passkey sign-in decoy credential IDs. */
+  readonly passkeyDecoyIdLengths: readonly number[];
+  /** How long the passkey offer cookie marker lasts in seconds. */
+  readonly passkeyOfferMarkerSeconds: number;
+  /**
+   * How long after a sign-in link starts a session that session may begin
+   * adding the address's first passkey. A session a passkey started never may.
+   * Whole minutes, because the disclosure states it in minutes, and at least
+   * `passkeyOfferMarkerSeconds`, so no offer card is refused at mount.
+   */
+  readonly passkeyFreshLinkSeconds: number;
   /** Engaged when egress spend crosses the ceiling. Refuses every mint. */
   readonly killSwitchEngaged: boolean;
   /**
@@ -129,6 +150,38 @@ export interface RelicConfig {
    * (1 hop from right). Local development with no proxy sets this to 0.
    */
   readonly trustedProxyHops: number;
+  /**
+   * Maximum tracked rate limit windows in memory before eviction.
+   * Bounds memory under address rotation attacks. At the cap the oldest live
+   * windows are evicted, which resets their counters, so the cap must sit far
+   * above what an attacker can churn within the per-IP limits: 100,000 windows
+   * is roughly 20 MB, a small share of a 256 MiB instance.
+   */
+  readonly limiterMaxEntries: number;
+  /**
+   * Number of check operations between routine sweep passes of expired windows.
+   */
+  readonly limiterSweepInterval: number;
+  /**
+   * Maximum tracked entries in the separate address and handle rate limiter
+   * before eviction. Kept separate from per-IP limiter entries so that
+   * churning victim addresses or random user handles cannot evict per-IP
+   * buckets. When capacity is reached, the oldest entries are evicted, which
+   * resets their counts. This trade-off prioritizes preserving IP-based rate
+   * limit state over tracking exhausted address budgets under deliberate
+   * memory-exhaustion pressure.
+   */
+  readonly addressLimiterMaxEntries: number;
+  /**
+   * Maximum milliseconds to await the passkey-added email notice before
+   * timing out. Bounding the await prevents a hung mail provider from turning
+   * a successful passkey enrollment into a client request timeout.
+   */
+  readonly passkeyNoticeTimeoutMs: number;
+  /**
+   * Rate limit for usernameless passkey sign-in keyed on user handle.
+   */
+  readonly passkeySignInHandleRateLimit: RateLimitConfig;
 }
 
 export interface RateLimitConfig {
@@ -177,8 +230,21 @@ export const DEFAULT_CONFIG: RelicConfig = {
   decisionRateLimit: { limit: 30, windowSeconds: 3600 },
   decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
+  passkeySignInOptionsRateLimit: { limit: 240, windowSeconds: 3600 },
+  passkeySignInOptionsAddressRateLimit: { limit: 60, windowSeconds: 3600 },
+  passkeySignInRateLimit: { limit: 30, windowSeconds: 3600 },
+  passkeySignInAddressRateLimit: { limit: 30, windowSeconds: 3600 },
+  passkeySignInHandleRateLimit: { limit: 30, windowSeconds: 3600 },
+  passkeyNoticeTimeoutMs: 5000,
+  addressLimiterMaxEntries: 100_000,
+  passkeySignInAllowListSize: 4,
+  passkeyDecoyIdLengths: [16, 20, 32, 64],
+  passkeyOfferMarkerSeconds: 600,
+  passkeyFreshLinkSeconds: 900,
   killSwitchEngaged: false,
   trustedProxyHops: 2,
+  limiterMaxEntries: 100_000,
+  limiterSweepInterval: 100,
 };
 
 /**
@@ -224,5 +290,93 @@ export function assertConfig(config: RelicConfig): void {
   }
   if (config.shareMaxPerCall > config.shareMaxPerRelic) {
     throw new Error('shareMaxPerCall cannot exceed shareMaxPerRelic');
+  }
+  if (
+    !Number.isInteger(config.passkeySignInAllowListSize) ||
+    config.passkeySignInAllowListSize < 1
+  ) {
+    throw new Error('passkeySignInAllowListSize must be an integer >= 1');
+  }
+  if (
+    !Array.isArray(config.passkeyDecoyIdLengths) ||
+    config.passkeyDecoyIdLengths.length === 0 ||
+    config.passkeyDecoyIdLengths.some(
+      (len) => !Number.isInteger(len) || len < 16 || len > 1023
+    )
+  ) {
+    throw new Error(
+      'passkeyDecoyIdLengths must be non-empty with integers between 16 and 1023'
+    );
+  }
+  if (
+    !Number.isInteger(config.passkeyOfferMarkerSeconds) ||
+    config.passkeyOfferMarkerSeconds <= 0
+  ) {
+    throw new Error('passkeyOfferMarkerSeconds must be an integer > 0');
+  }
+  if (
+    !Number.isInteger(config.passkeyFreshLinkSeconds) ||
+    config.passkeyFreshLinkSeconds % 60 !== 0 ||
+    config.passkeyFreshLinkSeconds < config.passkeyOfferMarkerSeconds
+  ) {
+    throw new Error(
+      'passkeyFreshLinkSeconds must be a whole number of minutes, at least passkeyOfferMarkerSeconds'
+    );
+  }
+  if (
+    !Number.isInteger(config.passkeySignInOptionsAddressRateLimit?.limit) ||
+    config.passkeySignInOptionsAddressRateLimit.limit < 1 ||
+    !Number.isInteger(
+      config.passkeySignInOptionsAddressRateLimit?.windowSeconds
+    ) ||
+    config.passkeySignInOptionsAddressRateLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'passkeySignInOptionsAddressRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (
+    !Number.isInteger(config.passkeySignInAddressRateLimit?.limit) ||
+    config.passkeySignInAddressRateLimit.limit < 1 ||
+    !Number.isInteger(config.passkeySignInAddressRateLimit?.windowSeconds) ||
+    config.passkeySignInAddressRateLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'passkeySignInAddressRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (
+    !Number.isInteger(config.limiterMaxEntries) ||
+    config.limiterMaxEntries <= 0
+  ) {
+    throw new Error('limiterMaxEntries must be a positive integer');
+  }
+  if (
+    !Number.isInteger(config.limiterSweepInterval) ||
+    config.limiterSweepInterval <= 0
+  ) {
+    throw new Error('limiterSweepInterval must be a positive integer');
+  }
+  if (
+    !Number.isInteger(config.passkeySignInHandleRateLimit?.limit) ||
+    config.passkeySignInHandleRateLimit.limit < 1 ||
+    !Number.isInteger(config.passkeySignInHandleRateLimit?.windowSeconds) ||
+    config.passkeySignInHandleRateLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'passkeySignInHandleRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (
+    !Number.isInteger(config.addressLimiterMaxEntries) ||
+    config.addressLimiterMaxEntries <= 0
+  ) {
+    throw new Error('addressLimiterMaxEntries must be a positive integer');
+  }
+  if (
+    !Number.isInteger(config.passkeyNoticeTimeoutMs) ||
+    config.passkeyNoticeTimeoutMs <= 0
+  ) {
+    throw new Error('passkeyNoticeTimeoutMs must be a positive integer');
   }
 }

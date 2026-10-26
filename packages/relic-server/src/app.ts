@@ -31,6 +31,7 @@ import {
   POLICY_LINK_LABEL,
   REPORT_LINK_LABEL,
   RESERVED_SEGMENTS,
+  type PasskeyDescriptorJSON,
   type RendererClass,
 } from '@relic/format';
 import {
@@ -50,10 +51,11 @@ import {
   commentNotificationMail,
   MailRefusedError,
   type OutboundMail,
+  passkeyAddedMail,
   replyNotificationMail,
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
-import { RateLimiter } from './ratelimit.ts';
+import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import {
   ciphertextHash,
   MemoryStorage,
@@ -72,6 +74,7 @@ import {
   type RelicCover,
   type RelicRow,
   type RelicStore,
+  type SessionRow,
   type Tombstone,
 } from './store.ts';
 import {
@@ -113,6 +116,11 @@ export const NULL_MAILER: Mailer = {
   async sendMail(): Promise<void> {},
   async sendBatch(): Promise<void> {},
 };
+let warnedPasskeyNoticeDisabled = false;
+
+export function resetPasskeyNoticeWarningForTesting(): void {
+  warnedPasskeyNoticeDisabled = false;
+}
 
 export interface AppOptions {
   readonly config?: Partial<RelicConfig>;
@@ -127,6 +135,7 @@ export interface AppOptions {
   /** Where a magic link goes. Defaults to sending nothing at all. */
   readonly mailer?: Mailer | undefined;
   readonly limiter?: RateLimiter | undefined;
+  readonly addressLimiter?: RateLimiter | undefined;
 }
 
 export interface RelicApp {
@@ -134,6 +143,7 @@ export interface RelicApp {
   readonly store: RelicStore;
   readonly storage: ObjectStorage;
   readonly limiter: RateLimiter;
+  readonly addressLimiter: RateLimiter;
   fetch(request: Request): Promise<Response>;
 }
 
@@ -147,7 +157,18 @@ export function createApp(options: AppOptions = {}): RelicApp {
   const operators = options.operatorTokens ?? new Map<string, string>();
   const assets = options.assets ?? memoryAssets({});
   const mailer = options.mailer;
-  const limiter = options.limiter ?? new RateLimiter();
+  const limiter =
+    options.limiter ??
+    new RateLimiter({
+      maxEntries: config.limiterMaxEntries,
+      sweepInterval: config.limiterSweepInterval,
+    });
+  const addressLimiter =
+    options.addressLimiter ??
+    new RateLimiter({
+      maxEntries: config.addressLimiterMaxEntries,
+      sweepInterval: config.limiterSweepInterval,
+    });
 
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -540,6 +561,21 @@ export function createApp(options: AppOptions = {}): RelicApp {
       ) {
         return postPasskeyOptions(request, ip, now);
       }
+      if (
+        third === 'sign-in' &&
+        fourth === undefined &&
+        request.method === 'POST'
+      ) {
+        return postPasskeySignIn(request, ip, now);
+      }
+      if (
+        third === 'sign-in' &&
+        fourth === 'options' &&
+        rest[4] === undefined &&
+        request.method === 'POST'
+      ) {
+        return postPasskeySignInOptions(request, ip, now);
+      }
       return new Response('Method not allowed', { status: 405 });
     }
 
@@ -558,7 +594,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('service_paused', { retry_after_seconds: 300 });
     }
     const verdict = limiter.check(
-      `publish ${ip}`,
+      rateLimitKey('publish', ip),
       config.publishRateLimit,
       now
     );
@@ -589,7 +625,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const verdict = limiter.check(
-      `publish ${ip}`,
+      rateLimitKey('publish', ip),
       config.publishRateLimit,
       now
     );
@@ -836,7 +872,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // A republish is a publish. The same per-IP budget covers both, so a
     // holder guessing at tokens cannot outrun the publish limiter.
     const verdict = limiter.check(
-      `publish ${ip}`,
+      rateLimitKey('publish', ip),
       config.publishRateLimit,
       now
     );
@@ -1039,7 +1075,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ip: string
   ): Promise<Response> {
     const verdict = limiter.check(
-      `complete ${ip}`,
+      rateLimitKey('complete', ip),
       config.publishRateLimit,
       now
     );
@@ -1125,7 +1161,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('service_paused', { retry_after_seconds: 300 });
     }
 
-    const verdict = limiter.check(`cover ${ip}`, config.publishRateLimit, now);
+    const verdict = limiter.check(
+      rateLimitKey('cover', ip),
+      config.publishRateLimit,
+      now
+    );
     if (!verdict.allowed) {
       return refuse('publish_rate_limited', {
         retry_after_seconds: verdict.retryAfterSeconds,
@@ -1337,7 +1377,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     }
 
-    const verdict = limiter.check(`mint ${ip}`, config.mintRateLimit, now);
+    const verdict = limiter.check(
+      rateLimitKey('mint', ip),
+      config.mintRateLimit,
+      now
+    );
     if (!verdict.allowed) {
       return logAndRefuse(rawId, ip, now, occurrenceId, 'mint_rate_limited', {
         retry_after_seconds: verdict.retryAfterSeconds,
@@ -2008,7 +2052,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('service_paused', { retry_after_seconds: 300 });
     }
 
-    const ipVerdict = limiter.check(`share ${ip}`, config.shareRateLimit, now);
+    const ipVerdict = limiter.check(
+      rateLimitKey('share', ip),
+      config.shareRateLimit,
+      now
+    );
     if (!ipVerdict.allowed) {
       return refuse('share_rate_limited', {
         retry_after_seconds: ipVerdict.retryAfterSeconds,
@@ -2290,7 +2338,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
   ): Promise<Response> {
     const isHead = request.method === 'HEAD';
     const ipVerdict = limiter.check(
-      `unsubscribe ${ip}`,
+      rateLimitKey('unsubscribe', ip),
       config.unsubscribeRateLimit,
       now
     );
@@ -2681,7 +2729,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const verdict = limiter.check(
-      `comment ${ip}`,
+      rateLimitKey('comment', ip),
       config.commentRateLimit,
       now
     );
@@ -2923,7 +2971,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // One budget for every comment write from one address, so an edit
     // cannot become the cheap way around the posting limit.
     const verdict = limiter.check(
-      `comment ${ip}`,
+      rateLimitKey('comment', ip),
       config.commentRateLimit,
       now
     );
@@ -3077,7 +3125,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ip: string,
     now: number
   ): Promise<Response> {
-    const verdict = limiter.check(`auth ${ip}`, config.authRateLimit, now);
+    const verdict = limiter.check(
+      rateLimitKey('auth', ip),
+      config.authRateLimit,
+      now
+    );
     if (!verdict.allowed) {
       return refuse('auth_rate_limited', {
         retry_after_seconds: verdict.retryAfterSeconds,
@@ -3121,6 +3173,79 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     return new Response(null, { status: 202 });
   }
+  /** Mints a session cookie and persists the session row. */
+  async function mintReaderSession(
+    email: string,
+    now: number,
+    via: 'link' | 'passkey'
+  ): Promise<string> {
+    const session = newAuthToken();
+    await store.putSession({
+      tokenHash: await sha256Hex(session),
+      email,
+      createdAt: now,
+      expiresAt: now + config.sessionTtlSeconds * 1000,
+      via,
+    });
+    await store.recordVerifiedIdentity(email, now);
+
+    return [
+      `relic_session=${session}`,
+      'Path=/',
+      'HttpOnly',
+      'Secure',
+      'SameSite=Lax',
+      `Max-Age=${config.sessionTtlSeconds}`,
+    ].join('; ');
+  }
+
+  function mayAddFirstPasskey(session: SessionRow, now: number): boolean {
+    return (
+      (session.via ?? 'link') === 'link' &&
+      now - session.createdAt <= config.passkeyFreshLinkSeconds * 1000
+    );
+  }
+
+  async function sendPasskeyNotice(
+    address: string,
+    now: number,
+    added: { readonly first: boolean; readonly passkeys: number }
+  ): Promise<void> {
+    if (mailer === undefined || typeof mailer.sendMail !== 'function') {
+      if (!warnedPasskeyNoticeDisabled) {
+        warnedPasskeyNoticeDisabled = true;
+        console.warn(
+          'relic: passkey notices are disabled: mailer has no sendMail'
+        );
+      }
+      return;
+    }
+    const { promise: timeoutPromise, reject } = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `passkey notice timed out after ${config.passkeyNoticeTimeoutMs}ms`
+          )
+        ),
+      config.passkeyNoticeTimeoutMs
+    );
+    try {
+      await Promise.race([
+        mailer.sendMail(
+          address,
+          passkeyAddedMail({ address, at: now, ...added })
+        ),
+        timeoutPromise,
+      ]);
+    } catch (error) {
+      console.error(
+        `relic: passkey notice failed for recipient ${await sha256Hex(normalizeEmail(address))}: ${sanitizeMailError(error, address)}`
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   /**
    * Follow the link: spend the token, mint a session, land back on the relic.
@@ -3139,28 +3264,23 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_session');
     }
 
-    const session = newAuthToken();
-    await store.putSession({
-      tokenHash: await sha256Hex(session),
-      email: link.email,
-      createdAt: now,
-      expiresAt: now + config.sessionTtlSeconds * 1000,
-    });
-    await store.recordVerifiedIdentity(link.email, now);
+    const readerCookie = await mintReaderSession(link.email, now, 'link');
+    const offerCookie = [
+      'relic_passkey_offer=1',
+      'Path=/',
+      'Secure',
+      'SameSite=Lax',
+      `Max-Age=${config.passkeyOfferMarkerSeconds}`,
+    ].join('; ');
+
+    const headers = new Headers();
+    headers.set('location', link.returnTo);
+    headers.append('set-cookie', readerCookie);
+    headers.append('set-cookie', offerCookie);
 
     return new Response(null, {
       status: 303,
-      headers: {
-        location: link.returnTo,
-        'set-cookie': [
-          `relic_session=${session}`,
-          'Path=/',
-          'HttpOnly',
-          'Secure',
-          'SameSite=Lax',
-          `Max-Age=${config.sessionTtlSeconds}`,
-        ].join('; '),
-      },
+      headers,
     });
   }
 
@@ -3412,7 +3532,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const ipVerdict = limiter.check(
-      `decision ${ip}`,
+      rateLimitKey('decision', ip),
       config.decisionRateLimit,
       now
     );
@@ -3560,6 +3680,101 @@ export function createApp(options: AppOptions = {}): RelicApp {
       throw error;
     }
   }
+  async function verifyStoredAssertion(
+    record: PasskeyRecord,
+    credential: unknown,
+    clientChallenge: string,
+    now: number
+  ): Promise<
+    | { ok: true; credentialId: string }
+    | {
+        ok: false;
+        code: 'invalid_passkey' | 'passkey_verification_failed';
+        check: string;
+      }
+  > {
+    const credId = (credential as Record<string, unknown> | null | undefined)?.[
+      'id'
+    ];
+    if (typeof credId !== 'string') {
+      return { ok: false, code: 'invalid_passkey', check: 'shape' };
+    }
+
+    const cred = record.credentials.find((c) => c.credentialId === credId);
+    if (cred === undefined) {
+      return {
+        ok: false,
+        code: 'passkey_verification_failed',
+        check: 'credential',
+      };
+    }
+
+    const rpId = new URL(config.serviceOrigin).hostname;
+    const origin = new URL(config.serviceOrigin).origin;
+
+    let assertion: { credentialId: string; signCount: number };
+    try {
+      assertion = await verifyAssertion(credential, {
+        challenge: clientChallenge,
+        origin,
+        rpId,
+        stored: cred,
+        userHandle: record.userHandle,
+      });
+    } catch (err) {
+      if (err instanceof WebauthnError) {
+        return {
+          ok: false,
+          code:
+            err.kind === 'malformed'
+              ? 'invalid_passkey'
+              : 'passkey_verification_failed',
+          check: err.check,
+        };
+      }
+      return { ok: false, code: 'invalid_passkey', check: 'shape' };
+    }
+
+    try {
+      await store.updatePasskeys(record.email, (current) => {
+        const target = current.credentials.find(
+          (c) => c.credentialId === cred.credentialId
+        );
+        if (
+          target !== undefined &&
+          (target.signCount > 0 || assertion.signCount > 0) &&
+          assertion.signCount <= target.signCount
+        ) {
+          throw new ProblemError('passkey_verification_failed', {
+            passkey_check: 'counter',
+          });
+        }
+        return {
+          ...current,
+          credentials: current.credentials.map((c) =>
+            c.credentialId === cred.credentialId
+              ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
+              : c
+          ),
+        };
+      });
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        const code =
+          err.code === 'invalid_passkey'
+            ? 'invalid_passkey'
+            : 'passkey_verification_failed';
+        return {
+          ok: false,
+          code,
+          check: err.options.passkey_check ?? 'counter',
+        };
+      }
+      throw err;
+    }
+
+    return { ok: true, credentialId: cred.credentialId };
+  }
 
   async function postDecision(
     rawId: string,
@@ -3622,72 +3837,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
         });
       }
 
-      const credId = (credential as Record<string, unknown>)['id'];
-      if (typeof credId !== 'string') {
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      const cred = passkeyRecord.credentials.find(
-        (c) => c.credentialId === credId
+      const verified = await verifyStoredAssertion(
+        passkeyRecord,
+        credential,
+        clientChallenge,
+        now
       );
-      if (cred === undefined) {
-        return refuse('passkey_verification_failed', {
-          passkey_check: 'credential',
-        });
-      }
-
-      const rpId = new URL(config.serviceOrigin).hostname;
-      const origin = new URL(config.serviceOrigin).origin;
-
-      let assertion: { credentialId: string; signCount: number };
-      try {
-        assertion = await verifyAssertion(credential, {
-          challenge: clientChallenge,
-          origin,
-          rpId,
-          stored: cred,
-          userHandle: passkeyRecord.userHandle,
-        });
-      } catch (err) {
-        if (err instanceof WebauthnError) {
-          return refuse(
-            err.kind === 'malformed'
-              ? 'invalid_passkey'
-              : 'passkey_verification_failed',
-            { passkey_check: err.check }
-          );
-        }
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      try {
-        await store.updatePasskeys(email, (current) => {
-          const target = current.credentials.find(
-            (c) => c.credentialId === cred.credentialId
-          );
-          if (
-            target !== undefined &&
-            (target.signCount > 0 || assertion.signCount > 0) &&
-            assertion.signCount <= target.signCount
-          ) {
-            throw new ProblemError('passkey_verification_failed', {
-              passkey_check: 'counter',
-            });
-          }
-          return {
-            ...current,
-            credentials: current.credentials.map((c) =>
-              c.credentialId === cred.credentialId
-                ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
-                : c
-            ),
-          };
-        });
-      } catch (err) {
-        if (err instanceof ProblemError) {
-          return refuse(err.code, err.options);
-        }
-        throw err;
+      if (!verified.ok) {
+        return refuse(verified.code, { passkey_check: verified.check });
       }
 
       const recordDigest = await digestOnRecord(row, version);
@@ -3711,7 +3868,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         author: email,
         createdAt,
         versionDigest: recordDigest,
-        credentialId: cred.credentialId,
+        credentialId: verified.credentialId,
       };
       const tombstoneBefore = await store.getTombstone(relicId);
       if (tombstoneBefore !== undefined) {
@@ -3762,7 +3919,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     now: number
   ): Promise<Response> {
     const ipVerdict = limiter.check(
-      `decision-read ${ip}`,
+      rateLimitKey('decision-read', ip),
       config.decisionReadRateLimit,
       now
     );
@@ -3880,7 +4037,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const email = normalizeEmail(session.email);
 
     const ipVerdict = limiter.check(
-      `passkey ${ip}`,
+      rateLimitKey('passkey', ip),
       config.passkeyRateLimit,
       now
     );
@@ -3911,7 +4068,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const rpId = new URL(config.serviceOrigin).hostname;
-    const origin = new URL(config.serviceOrigin).origin;
 
     const hasCredential =
       'credential' in body && body['credential'] !== undefined;
@@ -3957,69 +4113,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
         });
       }
 
-      const credId = (credential as Record<string, unknown>)['id'];
-      if (typeof credId !== 'string') {
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      const cred = passkeyRecord.credentials.find(
-        (c) => c.credentialId === credId
+      const verified = await verifyStoredAssertion(
+        passkeyRecord,
+        credential,
+        clientChallenge,
+        now
       );
-      if (cred === undefined) {
-        return refuse('passkey_verification_failed', {
-          passkey_check: 'credential',
-        });
-      }
-
-      let assertion: { credentialId: string; signCount: number };
-      try {
-        assertion = await verifyAssertion(credential, {
-          challenge: clientChallenge,
-          origin,
-          rpId,
-          stored: cred,
-          userHandle: passkeyRecord.userHandle,
-        });
-      } catch (err) {
-        if (err instanceof WebauthnError) {
-          return refuse(
-            err.kind === 'malformed'
-              ? 'invalid_passkey'
-              : 'passkey_verification_failed',
-            { passkey_check: err.check }
-          );
-        }
-        return refuse('invalid_passkey', { passkey_check: 'shape' });
-      }
-
-      try {
-        await store.updatePasskeys(email, (current) => {
-          const target = current.credentials.find(
-            (c) => c.credentialId === cred.credentialId
-          );
-          if (
-            target !== undefined &&
-            (target.signCount > 0 || assertion.signCount > 0) &&
-            assertion.signCount <= target.signCount
-          ) {
-            throw new ProblemError('passkey_verification_failed', {
-              passkey_check: 'counter',
-            });
-          }
-          return {
-            ...current,
-            credentials: current.credentials.map((c) =>
-              c.credentialId === cred.credentialId
-                ? { ...c, signCount: assertion.signCount, lastUsedAt: now }
-                : c
-            ),
-          };
-        });
-      } catch (err) {
-        if (err instanceof ProblemError) {
-          return refuse(err.code, err.options);
-        }
-        throw err;
+      if (!verified.ok) {
+        return refuse(verified.code, { passkey_check: verified.check });
       }
 
       const challengeBytes = new Uint8Array(32);
@@ -4031,7 +4132,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         challengeHash: newChallengeHash,
         email,
         purpose: 'register',
-        assertedBy: cred.credentialId,
+        assertedBy: verified.credentialId,
         userHandle: passkeyRecord.userHandle,
         expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
       });
@@ -4053,7 +4154,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
           timeout: 300000,
           attestation: 'none',
           authenticatorSelection: {
-            residentKey: 'preferred',
+            residentKey: 'required',
+            requireResidentKey: true,
             userVerification: 'required',
           },
           excludeCredentials: passkeyRecord.credentials.map((c) => ({
@@ -4070,6 +4172,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     const passkeyRecord = await store.getPasskeys(email);
     if (passkeyRecord === undefined || passkeyRecord.credentials.length === 0) {
+      if (!mayAddFirstPasskey(session, now)) {
+        return refuse('passkey_fresh_link_required');
+      }
       const userHandleBytes = new Uint8Array(32);
       crypto.getRandomValues(userHandleBytes);
       const userHandle = Buffer.from(userHandleBytes).toString('base64url');
@@ -4100,7 +4205,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
           timeout: 300000,
           attestation: 'none',
           authenticatorSelection: {
-            residentKey: 'preferred',
+            residentKey: 'required',
+            requireResidentKey: true,
             userVerification: 'required',
           },
           excludeCredentials: [],
@@ -4155,7 +4261,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const email = normalizeEmail(session.email);
 
     const ipVerdict = limiter.check(
-      `passkey ${ip}`,
+      rateLimitKey('passkey', ip),
       config.passkeyRateLimit,
       now
     );
@@ -4261,6 +4367,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
       const record: PasskeyRecord = {
         email,
+        address: session.email,
         userHandle,
         credentials: [newCred],
       };
@@ -4269,7 +4376,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       if (!created) {
         return refuse('passkey_assertion_required');
       }
-
+      await sendPasskeyNotice(session.email, now, { first: true, passkeys: 1 });
       return json(
         {
           email,
@@ -4318,7 +4425,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
       if (updated === undefined) {
         return refuse('passkey_required');
       }
-
+      await sendPasskeyNotice(session.email, now, {
+        first: false,
+        passkeys: updated.credentials.length,
+      });
       return json(
         {
           email,
@@ -4334,6 +4444,295 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
       throw err;
     }
+  }
+
+  async function signInAllowList(
+    norm: string
+  ): Promise<PasskeyDescriptorJSON[]> {
+    const [passkeyRecord, decoyKey] = await Promise.all([
+      store.getPasskeys(norm),
+      store.passkeyDecoyKey(),
+    ]);
+
+    const size = config.passkeySignInAllowListSize;
+    const n = config.passkeyDecoyIdLengths.length;
+
+    const decoys: PasskeyDescriptorJSON[] = [];
+    for (let i = 0; i < size; i++) {
+      const lenSig = await hmacSha256(
+        decoyKey,
+        `relic-passkey-decoy:v1:length:${norm}:${i}`
+      );
+      const lenIdx = (lenSig[0] ?? 0) % n;
+      const len = config.passkeyDecoyIdLengths[lenIdx] ?? 32;
+
+      const chunks: Uint8Array[] = [];
+      let gathered = 0;
+      let j = 0;
+      while (gathered < len) {
+        const block = await hmacSha256(
+          decoyKey,
+          `relic-passkey-decoy:v1:id:${norm}:${i}:${j}`
+        );
+        chunks.push(block);
+        gathered += block.length;
+        j++;
+      }
+      const full = new Uint8Array(gathered);
+      let offset = 0;
+      for (const chunk of chunks) {
+        full.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const id = Buffer.from(full.subarray(0, len)).toString('base64url');
+      decoys.push({ type: 'public-key', id });
+    }
+
+    const realDescriptors: PasskeyDescriptorJSON[] = (
+      passkeyRecord?.credentials ?? []
+    ).map((c) => ({
+      type: 'public-key',
+      id: c.credentialId,
+    }));
+
+    const neededDecoys = Math.max(0, size - realDescriptors.length);
+    const combined = [...realDescriptors, ...decoys.slice(0, neededDecoys)];
+    combined.sort((a, b) => a.id.localeCompare(b.id));
+    return combined;
+  }
+
+  async function postPasskeySignInOptions(
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const ipVerdict = limiter.check(
+      rateLimitKey('passkey-sign-in-options', ip),
+      config.passkeySignInOptionsRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      return refuse('passkey_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    const contentType = request.headers.get('content-type') ?? '';
+    if (!contentType.toLowerCase().startsWith('application/json')) {
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = await readBoundedJson(request, 'invalid_passkey');
+      if (parsed !== undefined) {
+        if (
+          parsed === null ||
+          typeof parsed !== 'object' ||
+          Array.isArray(parsed)
+        ) {
+          return refuse('invalid_passkey', { passkey_check: 'shape' });
+        }
+        body = parsed as Record<string, unknown>;
+      }
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(
+          err.code,
+          err.options?.passkey_check ? err.options : { passkey_check: 'shape' }
+        );
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let email: string | undefined;
+    if ('email' in body && body['email'] !== undefined) {
+      if (
+        typeof body['email'] !== 'string' ||
+        body['email'].length > 320 ||
+        !looksLikeEmail(body['email'])
+      ) {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+      email = body['email'];
+      const emailHash = await sha256Hex(normalizeEmail(email));
+      const addressVerdict = addressLimiter.check(
+        `passkey-sign-in-options-email ${emailHash}`,
+        config.passkeySignInOptionsAddressRateLimit,
+        now
+      );
+      if (!addressVerdict.allowed) {
+        return refuse('passkey_rate_limited', {
+          retry_after_seconds: addressVerdict.retryAfterSeconds,
+        });
+      }
+    }
+
+    const challengeBytes = new Uint8Array(32);
+    crypto.getRandomValues(challengeBytes);
+    const challenge = Buffer.from(challengeBytes).toString('base64url');
+    const challengeHash = await sha256Hex(challenge);
+
+    await store.putWebauthnChallenge({
+      challengeHash,
+      purpose: 'sign_in',
+      expiresAt: now + config.passkeyChallengeTtlSeconds * 1000,
+      ...(email !== undefined ? { email: normalizeEmail(email) } : {}),
+    });
+
+    const allowCredentials =
+      email !== undefined ? await signInAllowList(normalizeEmail(email)) : [];
+
+    const rpId = new URL(config.serviceOrigin).hostname;
+    return json({
+      public_key: {
+        challenge,
+        rpId,
+        timeout: config.passkeyChallengeTtlSeconds * 1000,
+        userVerification: 'required',
+        allowCredentials,
+      },
+    });
+  }
+
+  async function postPasskeySignIn(
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const ipVerdict = limiter.check(
+      rateLimitKey('passkey-sign-in', ip),
+      config.passkeySignInRateLimit,
+      now
+    );
+    if (!ipVerdict.allowed) {
+      return refuse('passkey_rate_limited', {
+        retry_after_seconds: ipVerdict.retryAfterSeconds,
+      });
+    }
+
+    const contentType = request.headers.get('content-type') ?? '';
+    if (!contentType.toLowerCase().startsWith('application/json')) {
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      const parsed = await readBoundedJson(request, 'invalid_passkey');
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed)
+      ) {
+        return refuse('invalid_passkey', { passkey_check: 'shape' });
+      }
+      body = parsed as Record<string, unknown>;
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(
+          err.code,
+          err.options?.passkey_check ? err.options : { passkey_check: 'shape' }
+        );
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    const credential = body['credential'];
+    if (
+      typeof credential !== 'object' ||
+      credential === null ||
+      Array.isArray(credential)
+    ) {
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    let clientChallenge: string;
+    try {
+      clientChallenge = extractClientDataChallenge(credential);
+    } catch (err) {
+      if (err instanceof ProblemError) {
+        return refuse(err.code, err.options);
+      }
+      return refuse('invalid_passkey', { passkey_check: 'shape' });
+    }
+
+    const challengeHash = await sha256Hex(clientChallenge);
+    const challengeRow = await store.consumeWebauthnChallenge(challengeHash);
+    if (
+      challengeRow === undefined ||
+      challengeRow.purpose !== 'sign_in' ||
+      challengeRow.expiresAt <= now
+    ) {
+      return refuse('passkey_sign_in_failed');
+    }
+
+    let record: PasskeyRecord | undefined;
+    if (challengeRow.email !== undefined) {
+      const addressHash = await sha256Hex(normalizeEmail(challengeRow.email));
+      const addressVerdict = addressLimiter.check(
+        `passkey-sign-in-email ${addressHash}`,
+        config.passkeySignInAddressRateLimit,
+        now
+      );
+      if (!addressVerdict.allowed) {
+        return refuse('passkey_rate_limited', {
+          retry_after_seconds: addressVerdict.retryAfterSeconds,
+        });
+      }
+      record = await store.getPasskeys(challengeRow.email);
+    } else {
+      const resp = (credential as Record<string, unknown>)['response'] as
+        | Record<string, unknown>
+        | undefined;
+      const userHandle = resp?.['userHandle'];
+      if (
+        typeof userHandle !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,86}$/.test(userHandle)
+      ) {
+        return refuse('passkey_sign_in_failed');
+      }
+      record = await store.getPasskeysByUserHandle(userHandle);
+      if (record !== undefined) {
+        const handleHash = await sha256Hex(userHandle);
+        const handleVerdict = addressLimiter.check(
+          `passkey-sign-in-handle ${handleHash}`,
+          config.passkeySignInHandleRateLimit,
+          now
+        );
+        if (!handleVerdict.allowed) {
+          // Usernameless sign-in only learns the target record after loading
+          // by userHandle. Refusing with 429 here would become an oracle,
+          // revealing whether the probed userHandle exists. Refuse with the
+          // identical 401 passkey_sign_in_failed as unknown records.
+          return refuse('passkey_sign_in_failed');
+        }
+      }
+    }
+
+    if (record === undefined) {
+      return refuse('passkey_sign_in_failed');
+    }
+
+    const verified = await verifyStoredAssertion(
+      record,
+      credential,
+      clientChallenge,
+      now
+    );
+    if (!verified.ok) {
+      return refuse('passkey_sign_in_failed');
+    }
+
+    const address = record.address ?? record.email;
+    const cookie = await mintReaderSession(address, now, 'passkey');
+
+    return new Response(JSON.stringify({ email: address }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': cookie,
+      },
+    });
   }
   // --- helpers ------------------------------------------------------------
 
@@ -4469,6 +4868,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     store,
     storage,
     limiter,
+    addressLimiter,
     fetch: handle,
   };
 }
@@ -5317,7 +5717,7 @@ bodies are encrypted with a key derived from the link, so we cannot read them.
 We do keep who commented on which relic and when: a commenter is the email
 address they verified by following a sign-in link, stored in the clear beside
 each comment. A sign-in link, and every email below, passes the address
-through our mail provider.
+through our mail provider. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
 
 **When someone comments or a relic gets a new version, we email the people following it.**
 That is every verified address that commented on it, every address its publisher or a reader
@@ -5354,7 +5754,7 @@ relic sends no more emails, and those records stay until it is deleted, like the
 
 **Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
 
-**Passkeys.** A decision must be confirmed with a passkey registered to the reader's verified address. The service stores the passkey's public key, its credential id, a signature counter, and when it was created and last used, under a hash of the address. The first passkey registered for an address is trusted on first use; adding another requires confirming with an existing one. The service never receives a private key.
+**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in link started in the previous ${config.passkeyFreshLinkSeconds / 60} minutes can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relic. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
 
 **Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
 

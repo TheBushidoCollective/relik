@@ -629,6 +629,40 @@ describe('gcsStore', () => {
     expect(await store.getSession('the-secret')).toBeUndefined();
   });
 
+  test('via survives a round trip, and a legacy row reads back with via undefined', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+
+    await store.putSession({
+      tokenHash: 'hash-link',
+      email: 'link@example.com',
+      createdAt: 1000,
+      expiresAt: 9_000_000,
+      via: 'link',
+    });
+    await store.putSession({
+      tokenHash: 'hash-passkey',
+      email: 'passkey@example.com',
+      createdAt: 1000,
+      expiresAt: 9_000_000,
+      via: 'passkey',
+    });
+
+    expect((await store.getSession('hash-link'))?.via).toBe('link');
+    expect((await store.getSession('hash-passkey'))?.via).toBe('passkey');
+
+    // Legacy row written without via (e.g. manually or before this field)
+    await store.putSession({
+      tokenHash: 'hash-legacy',
+      email: 'legacy@example.com',
+      createdAt: 1000,
+      expiresAt: 9_000_000,
+    });
+    const legacy = await store.getSession('hash-legacy');
+    expect(legacy).toBeDefined();
+    expect(legacy?.via).toBeUndefined();
+  });
+
   test('listCommentedRelics returns relics an author commented on, ordered by most recent engagement first', async () => {
     const store = storeOn(fakeGcs());
     await store.putComment({
@@ -1513,6 +1547,152 @@ describe('gcsStore', () => {
       expect(count).toBe(1);
       const winner = c1 ?? c2;
       expect(winner?.challengeHash).toBe('hash123');
+    });
+    test('14. Index written on create', async () => {
+      const gcs = fakeGcs();
+      const store = storeOn(gcs);
+      const email = 'alice@example.com';
+      const userHandle = 'handle_alice_123';
+      const record = {
+        email,
+        userHandle,
+        credentials: [],
+      };
+      const created = await store.createPasskeys(record);
+      expect(created).toBe(true);
+
+      const handleHash = await sha256Hex(userHandle);
+      const emailHash = await sha256Hex(email);
+      const indexObj = gcs.objects.get(`m/passkey-handle/${handleHash}.json`);
+      expect(indexObj).toBeDefined();
+      const indexData = JSON.parse(indexObj!.body) as {
+        emailHash: string;
+        createdAt: number;
+      };
+      expect(indexData.emailHash).toBe(emailHash);
+      expect(typeof indexData.createdAt).toBe('number');
+
+      const found = await store.getPasskeysByUserHandle(userHandle);
+      expect(found).toBeDefined();
+      expect(found?.email).toBe(email);
+    });
+
+    test('15. A seeded legacy record heals on update', async () => {
+      const gcs = fakeGcs();
+      const store = storeOn(gcs);
+      const email = 'legacy@example.com';
+      const userHandle = 'handle_legacy_456';
+      const emailHash = await sha256Hex(email);
+      const handleHash = await sha256Hex(userHandle);
+
+      gcs.objects.set(`m/passkey/${emailHash}.json`, {
+        body: JSON.stringify({
+          email,
+          userHandle,
+          credentials: [],
+        }),
+        generation: 1,
+      });
+
+      expect(gcs.objects.has(`m/passkey-handle/${handleHash}.json`)).toBe(
+        false
+      );
+      expect(await store.getPasskeysByUserHandle(userHandle)).toBeUndefined();
+
+      const updated = await store.updatePasskeys(email, (curr) => ({
+        ...curr,
+        credentials: [
+          {
+            credentialId: 'cred_new',
+            publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'a', y: 'b' },
+            alg: -7,
+            signCount: 1,
+            createdAt: 1000,
+          },
+        ],
+      }));
+      expect(updated).toBeDefined();
+
+      expect(gcs.objects.has(`m/passkey-handle/${handleHash}.json`)).toBe(true);
+      const found = await store.getPasskeysByUserHandle(userHandle);
+      expect(found).toBeDefined();
+      expect(found?.email).toBe(email);
+    });
+
+    test('16. A stale index entry resolves to nothing', async () => {
+      const gcs = fakeGcs();
+      const store = storeOn(gcs);
+      const userHandle = 'handle_stale_789';
+      const handleHash = await sha256Hex(userHandle);
+
+      const fakeEmailHash =
+        '0000000000000000000000000000000000000000000000000000000000000000';
+      gcs.objects.set(`m/passkey-handle/${handleHash}.json`, {
+        body: JSON.stringify({ emailHash: fakeEmailHash, createdAt: 1000 }),
+        generation: 1,
+      });
+      expect(await store.getPasskeysByUserHandle(userHandle)).toBeUndefined();
+
+      const realEmail = 'other@example.com';
+      const realEmailHash = await sha256Hex(realEmail);
+      gcs.objects.set(`m/passkey/${realEmailHash}.json`, {
+        body: JSON.stringify({
+          email: realEmail,
+          userHandle: 'different_handle',
+          credentials: [],
+        }),
+        generation: 1,
+      });
+      gcs.objects.set(`m/passkey-handle/${handleHash}.json`, {
+        body: JSON.stringify({ emailHash: realEmailHash, createdAt: 1000 }),
+        generation: 2,
+      });
+      expect(await store.getPasskeysByUserHandle(userHandle)).toBeUndefined();
+    });
+
+    test("17. An index write that returns 500 doesn't fail the create", async () => {
+      const gcs = fakeGcs();
+      const customFetch = async (
+        input: string | URL | Request,
+        init?: RequestInit
+      ) => {
+        const url = new URL(
+          typeof input === 'string' ? input : input.toString()
+        );
+        if (url.searchParams.get('name')?.includes('passkey-handle')) {
+          return new Response('Internal error', { status: 500 });
+        }
+        return gcs.fetch(input, init);
+      };
+      const store = gcsStore({
+        bucket: 'relics',
+        getAccessToken: async () => 'token',
+        host: 'https://gcs.test',
+        fetch: customFetch as typeof globalThis.fetch,
+      });
+      const created = await store.createPasskeys({
+        email: 'fail@example.com',
+        userHandle: 'h_fail',
+        credentials: [],
+      });
+      expect(created).toBe(true);
+    });
+
+    test('18. The decoy key is created once under contention', async () => {
+      const gcs = fakeGcs();
+      const store1 = storeOn(gcs);
+      const store2 = storeOn(gcs);
+
+      const [key1, key2] = await Promise.all([
+        store1.passkeyDecoyKey(),
+        store2.passkeyDecoyKey(),
+      ]);
+      expect(key1.byteLength).toBe(32);
+      expect(key2).toEqual(key1);
+
+      const stored = gcs.objects.get('m/secret/passkey-decoy-key.json');
+      expect(stored).toBeDefined();
+      expect(stored?.generation).toBe(1);
     });
 
     test('versionDigests survives beginVersion, markPublished, consumeMint, claimVersionNotice, reserveShares, and putCover in both stores', async () => {

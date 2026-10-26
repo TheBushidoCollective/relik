@@ -93,6 +93,8 @@ jobs:
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/cover-path.ts
       - name: Notify path
         run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/notify-path.ts
+      - name: Comment path
+        run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/comment-path.ts
       - name: Comment popover path
         run: RELIC_POPOVER_CHROME_PATH="$(command -v google-chrome)" env -u DISPLAY -u WAYLAND_DISPLAY bun packages/relic-mcp/test/comment-popover-path.ts
       - name: Upload comment popover shots
@@ -103,6 +105,8 @@ jobs:
           path: comment-popover-path-shots/
       - name: Decision path
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/decision-path.ts
+      - name: Passkey sign-in path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/passkey-sign-in-path.ts
 
       # Official OpenTimelineIO 0.18.1 conformance. The generator derives
       # expected ranges from the pinned library, not from this repo's
