@@ -120,8 +120,12 @@ export interface RelicConfig {
   readonly passkeyRateLimit: RateLimitConfig;
   /** Passkey sign-in options requests per IP. */
   readonly passkeySignInOptionsRateLimit: RateLimitConfig;
+  /** Passkey sign-in options requests per target address. */
+  readonly passkeySignInOptionsAddressRateLimit: RateLimitConfig;
   /** Passkey sign-in requests per IP. */
   readonly passkeySignInRateLimit: RateLimitConfig;
+  /** Passkey sign-in requests per target address. */
+  readonly passkeySignInAddressRateLimit: RateLimitConfig;
   /** Size of the allowCredentials list on email-first passkey sign-in. */
   readonly passkeySignInAllowListSize: number;
   /** Lengths in bytes to pick from for passkey sign-in decoy credential IDs. */
@@ -188,7 +192,9 @@ export const DEFAULT_CONFIG: RelicConfig = {
   decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
   passkeySignInOptionsRateLimit: { limit: 240, windowSeconds: 3600 },
+  passkeySignInOptionsAddressRateLimit: { limit: 60, windowSeconds: 3600 },
   passkeySignInRateLimit: { limit: 30, windowSeconds: 3600 },
+  passkeySignInAddressRateLimit: { limit: 30, windowSeconds: 3600 },
   passkeySignInAllowListSize: 4,
   passkeyDecoyIdLengths: [16, 20, 32, 64],
   passkeyOfferMarkerSeconds: 600,
@@ -262,5 +268,27 @@ export function assertConfig(config: RelicConfig): void {
     config.passkeyOfferMarkerSeconds <= 0
   ) {
     throw new Error('passkeyOfferMarkerSeconds must be an integer > 0');
+  }
+  if (
+    !Number.isInteger(config.passkeySignInOptionsAddressRateLimit?.limit) ||
+    config.passkeySignInOptionsAddressRateLimit.limit < 1 ||
+    !Number.isInteger(
+      config.passkeySignInOptionsAddressRateLimit?.windowSeconds
+    ) ||
+    config.passkeySignInOptionsAddressRateLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'passkeySignInOptionsAddressRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
+  }
+  if (
+    !Number.isInteger(config.passkeySignInAddressRateLimit?.limit) ||
+    config.passkeySignInAddressRateLimit.limit < 1 ||
+    !Number.isInteger(config.passkeySignInAddressRateLimit?.windowSeconds) ||
+    config.passkeySignInAddressRateLimit.windowSeconds < 1
+  ) {
+    throw new Error(
+      'passkeySignInAddressRateLimit must have integer limit >= 1 and windowSeconds >= 1'
+    );
   }
 }

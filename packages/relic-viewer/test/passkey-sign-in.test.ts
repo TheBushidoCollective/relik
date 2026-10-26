@@ -1120,4 +1120,73 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
     const dismissBtn = one(host, 'data-passkey-offer-dismiss');
     expect(dismissBtn.textContent).toBe('Close');
   });
+
+  test('15. L6: Offer card body displays the session address as text and escapes HTML', async () => {
+    const { fetch } = makeMockFetch({
+      '/api/auth/passkeys/options': () => {
+        return new Response(
+          JSON.stringify({
+            mode: 'create',
+            public_key: SAMPLE_CREATION_OPTIONS,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      },
+    });
+
+    // Part A: with email
+    const host1 = new ElementStub('div');
+    mountPasskeyOffer({
+      host: host1 as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch },
+      email: 'reader@example.com',
+      store: { getItem: () => null, setItem: () => {} },
+      onDone: () => {},
+    });
+    await tick(10);
+
+    const bodyEl1 = host1.children[0]?.children.find(
+      (c) => c.className === 'passkey-offer-body'
+    );
+    expect(bodyEl1?.textContent).toBe(
+      'Add a passkey for reader@example.com and this device signs you in without a link.'
+    );
+
+    // Part B: with malicious HTML in email -> rendered as text, never tags
+    const host2 = new ElementStub('div');
+    const malicious = '<script>alert(1)</script>@example.com';
+    mountPasskeyOffer({
+      host: host2 as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch },
+      email: malicious,
+      store: { getItem: () => null, setItem: () => {} },
+      onDone: () => {},
+    });
+    await tick(10);
+
+    const bodyEl2 = host2.children[0]?.children.find(
+      (c) => c.className === 'passkey-offer-body'
+    );
+    expect(bodyEl2?.textContent).toBe(
+      `Add a passkey for ${malicious} and this device signs you in without a link.`
+    );
+    expect(descendants(host2).some((n) => n.tagName === 'SCRIPT')).toBe(false);
+
+    // Part C: without email -> fallback
+    const host3 = new ElementStub('div');
+    mountPasskeyOffer({
+      host: host3 as unknown as HTMLElement,
+      deps: { serviceOrigin: 'https://relik.example', fetch },
+      store: { getItem: () => null, setItem: () => {} },
+      onDone: () => {},
+    });
+    await tick(10);
+
+    const bodyEl3 = host3.children[0]?.children.find(
+      (c) => c.className === 'passkey-offer-body'
+    );
+    expect(bodyEl3?.textContent).toBe(
+      'Add a passkey and this device signs you in without a link.'
+    );
+  });
 });

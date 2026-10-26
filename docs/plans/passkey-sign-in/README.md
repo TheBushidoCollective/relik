@@ -331,7 +331,7 @@ Messages go to the form's existing outcome region. Neither the host nor the card
 | Key | Text |
 |---|---|
 | Title | "Skip the email next time" |
-| Body | "Add a passkey and this device signs you in without a link." |
+| Body | "Add a passkey for <address> and this device signs you in without a link." |
 | Fine | "Your first passkey also confirms decisions, and adding one on another device later asks for it." |
 | Create | "Add a passkey" |
 | Not now | "Not now" |
@@ -501,7 +501,7 @@ All slices branch from the S0 commit on `feat/passkey-commenting` in isolated wo
 ## 7. Residuals (go in decisions.md)
 
 - **A passkey outlives loss of the mailbox, and nothing can remove one.** Whoever registered the first passkey for an address can sign in as it without the mailbox. There is no route to remove a passkey.
-- **Decoys leak in a few cases.** Records holding more than 4 credentials, or ids of unusual lengths, are distinguishable. A sub-millisecond timing gap exists under a 30-per-hour limit.
+- **Decoys leak in a few cases.** Records holding more than 4 credentials, ids of unusual lengths, or structured authenticator ids (such as UUIDv4 ids with fixed version and variant bits) are distinguishable from decoys. Polling the email-first allow list over time reveals when a passkey is registered because a real id replaces a decoy. The decoy key stored at `m/secret/passkey-decoy-key.json` must never rotate, as rotation would change all decoys at once while real ids remain unchanged, exposing every real id. A sub-millisecond timing gap exists, bounded per IP per instance plus the per-address limit (30 sign-in requests per hour).
 - **Some old records stay as they are.** Mixed-case records created before this change mint with the normalized address, and existing passkeys need one email-first sign-in or decision before usernameless sign-in works.
 - **Proof gaps.** The CDP virtual authenticator answers an autofill request by itself, so the proof drives both paths (the button with conditional mediation reported unavailable, then autofill with it available) but never sees the browser's own autofill picker. A U2F-only key can no longer register.
 - **The decision panel's create step can still orphan a credential.** Its prefetched options can expire if the reader waits past the timeout, and the device keeps a credential the server never stored. This predates the change and isn't fixed here.

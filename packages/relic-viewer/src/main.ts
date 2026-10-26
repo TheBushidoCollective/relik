@@ -7213,6 +7213,7 @@ export function buildThread(
               mountPasskeyOffer({
                 host: offerHost,
                 deps,
+                email: discovered.email,
                 store: preferenceStore(),
                 onDone: () => {
                   offerHost = undefined;
@@ -9259,6 +9260,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
         mountPasskeyOffer({
           host: offerHost,
           deps,
+          email: session.email,
           store: preferenceStore(),
           onDone: () => {
             offerHost.remove();

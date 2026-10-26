@@ -4456,10 +4456,25 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     let email: string | undefined;
     if ('email' in body && body['email'] !== undefined) {
-      if (typeof body['email'] !== 'string') {
+      if (
+        typeof body['email'] !== 'string' ||
+        body['email'].length > 320 ||
+        !looksLikeEmail(body['email'])
+      ) {
         return refuse('invalid_passkey', { passkey_check: 'shape' });
       }
       email = body['email'];
+      const emailHash = await sha256Hex(normalizeEmail(email));
+      const addressVerdict = limiter.check(
+        `passkey-sign-in-options ${emailHash}`,
+        config.passkeySignInOptionsAddressRateLimit,
+        now
+      );
+      if (!addressVerdict.allowed) {
+        return refuse('passkey_rate_limited', {
+          retry_after_seconds: addressVerdict.retryAfterSeconds,
+        });
+      }
     }
 
     const challengeBytes = new Uint8Array(32);
@@ -4562,6 +4577,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     let record: PasskeyRecord | undefined;
     if (challengeRow.email !== undefined) {
+      const addressHash = await sha256Hex(normalizeEmail(challengeRow.email));
+      const addressVerdict = limiter.check(
+        `passkey-sign-in ${addressHash}`,
+        config.passkeySignInAddressRateLimit,
+        now
+      );
+      if (!addressVerdict.allowed) {
+        return refuse('passkey_rate_limited', {
+          retry_after_seconds: addressVerdict.retryAfterSeconds,
+        });
+      }
       record = await store.getPasskeys(challengeRow.email);
     } else {
       const resp = (credential as Record<string, unknown>)['response'] as
@@ -4575,6 +4601,23 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return refuse('passkey_sign_in_failed');
       }
       record = await store.getPasskeysByUserHandle(userHandle);
+      if (record !== undefined) {
+        const address = record.address ?? record.email;
+        const addressHash = await sha256Hex(normalizeEmail(address));
+        const addressVerdict = limiter.check(
+          `passkey-sign-in ${addressHash}`,
+          config.passkeySignInAddressRateLimit,
+          now
+        );
+        if (!addressVerdict.allowed) {
+          // Usernameless sign-in only learns the target address after loading
+          // the record by userHandle. Refusing with 429 here would become an
+          // oracle, revealing to an unauthenticated caller whether the probed
+          // userHandle exists. Refuse with the identical 401 passkey_sign_in_failed
+          // as unknown records.
+          return refuse('passkey_sign_in_failed');
+        }
+      }
     }
 
     if (record === undefined) {

@@ -15,6 +15,7 @@ import { createApp, type RelicApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore } from '../src/store.ts';
+import { assertConfig, DEFAULT_CONFIG } from '../src/config.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
 
 const OPERATOR = new Map([['jason', 'operator-secret']]);
@@ -1117,5 +1118,286 @@ describe('S1 Server passkey sign-in', () => {
     expect(text).toContain(
       'A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address.'
     );
+  });
+
+  test('14. L4: POST /api/auth/passkeys/sign-in/options rejects invalid email syntax with 400 invalid_passkey shape', async () => {
+    app = build();
+
+    // non-string email
+    const r1 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        body: JSON.stringify({ email: 12345 }),
+      })
+    );
+    expect(r1.status).toBe(400);
+    const b1 = (await r1.json()) as { code: string; passkey_check: string };
+    expect(b1.code).toBe('invalid_passkey');
+    expect(b1.passkey_check).toBe('shape');
+
+    // fails looksLikeEmail (no @ or domain)
+    const r2 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'not-an-email' }),
+      })
+    );
+    expect(r2.status).toBe(400);
+    const b2 = (await r2.json()) as { code: string; passkey_check: string };
+    expect(b2.code).toBe('invalid_passkey');
+    expect(b2.passkey_check).toBe('shape');
+
+    // longer than 320 characters
+    const longEmail = `${'a'.repeat(315)}@example.com`;
+    expect(longEmail.length).toBeGreaterThan(320);
+    const r3 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        body: JSON.stringify({ email: longEmail }),
+      })
+    );
+    expect(r3.status).toBe(400);
+    const b3 = (await r3.json()) as { code: string; passkey_check: string };
+    expect(b3.code).toBe('invalid_passkey');
+    expect(b3.passkey_check).toBe('shape');
+
+    // whitespace in email
+    const r4 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'user name@example.com' }),
+      })
+    );
+    expect(r4.status).toBe(400);
+    const b4 = (await r4.json()) as { code: string; passkey_check: string };
+    expect(b4.code).toBe('invalid_passkey');
+    expect(b4.passkey_check).toBe('shape');
+
+    // Valid syntax (unknown address) succeeds with 200 and decoys
+    const r5 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'unknown.valid@example.com' }),
+      })
+    );
+    expect(r5.status).toBe(200);
+  });
+
+  test('15. L3: Per-address rate limit bounds email-first options and sign-in by sha256(norm), independent of IP', async () => {
+    app = build({
+      config: {
+        serviceOrigin: ORIGIN,
+        passkeySignInOptionsRateLimit: { limit: 100, windowSeconds: 3600 },
+        passkeySignInOptionsAddressRateLimit: { limit: 2, windowSeconds: 3600 },
+        passkeySignInRateLimit: { limit: 100, windowSeconds: 3600 },
+        passkeySignInAddressRateLimit: { limit: 2, windowSeconds: 3600 },
+      },
+    });
+
+    // Part A: Options per-address limit
+    // Request 1 from IP 1.1.1.1
+    const opt1 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '1.1.1.1, 10.0.0.1' },
+        body: JSON.stringify({ email: 'target@example.com' }),
+      })
+    );
+    expect(opt1.status).toBe(200);
+
+    // Request 2 from different IP 2.2.2.2 with uppercase (normalizes to same hash)
+    const opt2 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '2.2.2.2, 10.0.0.1' },
+        body: JSON.stringify({ email: 'TARGET@example.com' }),
+      })
+    );
+    expect(opt2.status).toBe(200);
+
+    // Request 3 from third IP 3.3.3.3: IP budget is untouched, but address budget is exhausted
+    const opt3 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '3.3.3.3, 10.0.0.1' },
+        body: JSON.stringify({ email: 'target@example.com' }),
+      })
+    );
+    expect(opt3.status).toBe(429);
+    const optBody3 = (await opt3.json()) as { code: string };
+    expect(optBody3.code).toBe('passkey_rate_limited');
+
+    // Different address from IP 3.3.3.3 still works
+    const optOther = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '3.3.3.3, 10.0.0.1' },
+        body: JSON.stringify({ email: 'other@example.com' }),
+      })
+    );
+    expect(optOther.status).toBe(200);
+
+    // Part B: Sign-in per-address limit (email-first)
+    // Build an app with high options limit and low sign-in limit
+    app = build({
+      config: {
+        serviceOrigin: ORIGIN,
+        passkeySignInOptionsAddressRateLimit: {
+          limit: 100,
+          windowSeconds: 3600,
+        },
+        passkeySignInAddressRateLimit: { limit: 2, windowSeconds: 3600 },
+      },
+    });
+    const getChal = async (email: string) => {
+      const r = await app.fetch(
+        req('/api/auth/passkeys/sign-in/options', {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        })
+      );
+      const data = (await r.json()) as { public_key: { challenge: string } };
+      return data.public_key.challenge;
+    };
+
+    const c1 = await getChal('test-signer@example.com');
+    const c2 = await getChal('test-signer@example.com');
+    const c3 = await getChal('test-signer@example.com');
+
+    // Sign-in attempt 1 from IP 1.1.1.1
+    const dummyCred = (challenge: string) => ({
+      id: 'cred-1',
+      rawId: 'cred-1',
+      response: {
+        clientDataJSON: Buffer.from(
+          JSON.stringify({
+            type: 'webauthn.get',
+            challenge,
+            origin: ORIGIN,
+          })
+        ).toString('base64url'),
+        authenticatorData: Buffer.from([0, 0, 0, 0, 0x05, 0, 0, 0, 0]).toString(
+          'base64url'
+        ),
+        signature: 'dummy-sig',
+      },
+      type: 'public-key',
+    });
+
+    const s1 = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '1.1.1.1, 10.0.0.1' },
+        body: JSON.stringify({ credential: dummyCred(c1) }),
+      })
+    );
+    // Fails on assertion or record, not 429
+    expect(s1.status).toBe(401);
+
+    // Sign-in attempt 2 from IP 2.2.2.2
+    const s2 = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '2.2.2.2, 10.0.0.1' },
+        body: JSON.stringify({ credential: dummyCred(c2) }),
+      })
+    );
+    expect(s2.status).toBe(401);
+
+    // Sign-in attempt 3 from IP 3.3.3.3 hits per-address limit -> 429 passkey_rate_limited
+    const s3 = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '3.3.3.3, 10.0.0.1' },
+        body: JSON.stringify({ credential: dummyCred(c3) }),
+      })
+    );
+    expect(s3.status).toBe(429);
+    const sBody3 = (await s3.json()) as { code: string };
+    expect(sBody3.code).toBe('passkey_rate_limited');
+  });
+
+  test('16. L3: Usernameless sign-in rate limit refusal returns 401 passkey_sign_in_failed to avoid address oracle', async () => {
+    const auth = await fakeAuthenticator();
+    app = build({
+      config: {
+        serviceOrigin: ORIGIN,
+        passkeySignInAddressRateLimit: { limit: 1, windowSeconds: 3600 },
+      },
+    });
+
+    const { cookie } = await signInViaLink('user-usernameless@example.com');
+    const { userHandle } = await registerPasskey(cookie, auth);
+
+    // Step 1: Normal usernameless sign-in succeeds
+    const optRes = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', { method: 'POST', body: '{}' })
+    );
+    const optData = (await optRes.json()) as { public_key: RequestOptionsJSON };
+    const assertion = await auth.assert(optData.public_key, ORIGIN, userHandle);
+    const signRes = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        body: JSON.stringify({ credential: assertion }),
+      })
+    );
+    expect(signRes.status).toBe(200);
+
+    // Step 2: Now address rate limit for user-usernameless@example.com is spent (limit is 1).
+    // A second usernameless sign-in attempt must return 401 passkey_sign_in_failed (not 429),
+    // making it indistinguishable from an unknown userHandle.
+    const optRes2 = await app.fetch(
+      req('/api/auth/passkeys/sign-in/options', { method: 'POST', body: '{}' })
+    );
+    const optData2 = (await optRes2.json()) as {
+      public_key: RequestOptionsJSON;
+    };
+    const assertion2 = await auth.assert(
+      optData2.public_key,
+      ORIGIN,
+      userHandle
+    );
+    const signRes2 = await app.fetch(
+      req('/api/auth/passkeys/sign-in', {
+        method: 'POST',
+        body: JSON.stringify({ credential: assertion2 }),
+      })
+    );
+    expect(signRes2.status).toBe(401);
+    const body2 = (await signRes2.json()) as { code: string };
+    expect(body2.code).toBe('passkey_sign_in_failed');
+  });
+
+  test('17. assertConfig validates passkeySignInOptionsAddressRateLimit and passkeySignInAddressRateLimit', () => {
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeySignInOptionsAddressRateLimit: { limit: 0, windowSeconds: 3600 },
+      })
+    ).toThrow('passkeySignInOptionsAddressRateLimit');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeySignInOptionsAddressRateLimit: { limit: 10, windowSeconds: -1 },
+      })
+    ).toThrow('passkeySignInOptionsAddressRateLimit');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeySignInAddressRateLimit: { limit: -5, windowSeconds: 3600 },
+      })
+    ).toThrow('passkeySignInAddressRateLimit');
+
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        passkeySignInAddressRateLimit: { limit: 10, windowSeconds: 0 },
+      })
+    ).toThrow('passkeySignInAddressRateLimit');
+
+    // Valid default passes
+    expect(() => assertConfig(DEFAULT_CONFIG)).not.toThrow();
   });
 });

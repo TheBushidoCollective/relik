@@ -658,6 +658,7 @@ export function resetPasskeySignInForTesting(): void {
 export interface PasskeyOfferMount {
   readonly host: HTMLElement;
   readonly deps: Pick<ViewerDeps, 'serviceOrigin' | 'fetch'>;
+  readonly email?: string;
   readonly credentials?: CredentialsLike;
   readonly store: Pick<Storage, 'getItem' | 'setItem'> | undefined;
   readonly onDone: () => void;
@@ -690,8 +691,13 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
     host.setAttribute('data-state', 'loading');
   }
 
+  const initialOfferBody =
+    typeof mount.email === 'string' && mount.email.length > 0
+      ? `Add a passkey for ${mount.email} and this device signs you in without a link.`
+      : COPY_OFFER_BODY;
+
   const titleEl = el('h3', 'passkey-offer-title', COPY_OFFER_TITLE);
-  const bodyEl = el('p', 'passkey-offer-body', COPY_OFFER_BODY);
+  const bodyEl = el('p', 'passkey-offer-body', initialOfferBody);
   const fineEl = el('p', 'passkey-offer-fine', COPY_OFFER_FINE);
 
   const createBtn = el('button', 'action primary', COPY_OFFER_CREATE);
@@ -771,7 +777,7 @@ export function mountPasskeyOffer(mount: PasskeyOfferMount): void {
         setState('ready');
         bodyEl.textContent = isSecondStep
           ? COPY_OFFER_SECOND_STEP
-          : COPY_OFFER_BODY;
+          : initialOfferBody;
         createBtn.textContent = COPY_OFFER_CREATE;
 
         const timeout =
