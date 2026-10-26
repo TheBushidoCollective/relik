@@ -3128,6 +3128,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ip: string,
     now: number
   ): Promise<Response> {
+    const nonce = newAuthToken();
+    const requestCookie = `relic_sign_in_request=${nonce}; Path=/api/auth/code; HttpOnly; Secure; SameSite=Strict; Max-Age=${config.authLinkTtlSeconds}`;
+
     const verdict = limiter.check(
       rateLimitKey('auth', ip),
       config.authRateLimit,
@@ -3138,9 +3141,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
         retry_after_seconds: verdict.retryAfterSeconds,
       });
     }
-
-    const nonce = newAuthToken();
-    const requestCookie = `relic_sign_in_request=${nonce}; Path=/api/auth/code; HttpOnly; Secure; SameSite=Strict; Max-Age=${config.authLinkTtlSeconds}`;
 
     const body = (await readJson(request)) as Record<string, unknown>;
     const email = body['email'];
