@@ -21,7 +21,20 @@ import {
   type OtioPreparedLeaf,
   type OtioVideoCompositionTree,
   renderOtioVideoTree,
+  certifiedWindowIndex,
+  checkNativeTimingEligibility,
+  computePhaseAnchor,
+  OTIO_PACKET_START_TOLERANCE_SECONDS,
+  OTIO_RETAINED_SNAPSHOT_PIXELS,
+  presentedWindowOutcome,
+  SNAPSHOT_SLOTS_PER_DECODER,
+  videoDecoderTime,
 } from '../src/otio-playback.ts';
+import {
+  NativeDecoderRing,
+  SnapshotPixelBudget,
+  VsyncTracker,
+} from '../src/otio-video-decoders.ts';
 import type {
   OtioVideoTiming,
   readOtioVideoTiming,
@@ -106,6 +119,7 @@ class SoftContext {
   fillStyle = '#000000';
   globalAlpha = 1;
   globalCompositeOperation = 'source-over';
+  readonly drawnSources: Array<{ source: unknown }> = [];
 
   constructor(private readonly canvas: SoftCanvas) {}
 
@@ -118,6 +132,7 @@ class SoftContext {
   }
 
   drawImage(source: { pixel: Pixel }): void {
+    this.drawnSources.push({ source });
     this.blend(source.pixel);
   }
   isContextLost(): boolean {
@@ -199,7 +214,54 @@ class MockMedia {
   naturalHeight = 64;
   error: MediaError | null = null;
   playbackRate = 1;
-  readonly seekTargets: number[] = [];
+  rvfcCallbacks = new Map<
+    number,
+    (
+      now: number,
+      metadata: { mediaTime: number; expectedDisplayTime?: number }
+    ) => void
+  >();
+  private nextRvfcHandle = 1;
+  hasRvfc = false;
+
+  requestVideoFrameCallback?(
+    cb: (
+      now: number,
+      metadata: { mediaTime: number; expectedDisplayTime?: number }
+    ) => void
+  ): number;
+
+  cancelVideoFrameCallback?(handle: number): void;
+
+  enableRvfc(): void {
+    this.hasRvfc = true;
+    this.requestVideoFrameCallback = (
+      cb: (
+        now: number,
+        metadata: { mediaTime: number; expectedDisplayTime?: number }
+      ) => void
+    ): number => {
+      const handle = this.nextRvfcHandle++;
+      this.rvfcCallbacks.set(handle, cb);
+      return handle;
+    };
+    this.cancelVideoFrameCallback = (handle: number): void => {
+      this.rvfcCallbacks.delete(handle);
+    };
+  }
+
+  triggerRvfc(
+    now: number,
+    mediaTime: number,
+    expectedDisplayTime?: number
+  ): void {
+    const cbs = Array.from(this.rvfcCallbacks.values());
+    this.rvfcCallbacks.clear();
+    for (const cb of cbs) {
+      cb(now, { mediaTime, expectedDisplayTime });
+    }
+  }
+
   private time = 0;
   private source = '';
   readonly attrs = new Map<string, string>();
@@ -3465,6 +3527,543 @@ describe('otio playback controller', () => {
       raf?.(1500);
       raf?.(2000); // 0.5s elapsed = 12 frames
       expect(playback.getState().time.value).toBe(12);
+    } finally {
+      playback.dispose();
+    }
+  });
+});
+
+describe('otio native video playback S-C and S-B', () => {
+  test('presentedWindowOutcome: matches at ±Q, uncovered at ±(Q + 1e-7), outside span before head and after tail', () => {
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0.0, 0.04, 0.08]),
+      ends: Float64Array.from([0.04, 0.08, 0.12]),
+    };
+    const Q = OTIO_PACKET_START_TOLERANCE_SECONDS; // 2e-6
+
+    // Exact matches within Q
+    expect(presentedWindowOutcome(0.0, timing)).toEqual({
+      kind: 'match',
+      index: 0,
+    });
+    expect(presentedWindowOutcome(0.0 + Q, timing)).toEqual({
+      kind: 'match',
+      index: 0,
+    });
+    expect(presentedWindowOutcome(0.04 - Q, timing)).toEqual({
+      kind: 'match',
+      index: 1,
+    });
+    expect(presentedWindowOutcome(0.08 + Q, timing)).toEqual({
+      kind: 'match',
+      index: 2,
+    });
+
+    // Inside span [0.0 - Q, 0.12 - Q), but no start matches within Q -> uncovered
+    expect(presentedWindowOutcome(0.0 + Q + 1e-7, timing)).toEqual({
+      kind: 'uncovered',
+    });
+    expect(presentedWindowOutcome(0.02, timing)).toEqual({
+      kind: 'uncovered',
+    });
+    expect(presentedWindowOutcome(0.04 + Q + 1e-7, timing)).toEqual({
+      kind: 'uncovered',
+    });
+    expect(presentedWindowOutcome(0.12 - Q - 1e-7, timing)).toEqual({
+      kind: 'uncovered',
+    });
+
+    // Outside span before head: mediaTime < starts[0] - Q
+    expect(presentedWindowOutcome(-0.01, timing)).toEqual({
+      kind: 'outside',
+    });
+    expect(presentedWindowOutcome(0.0 - Q - 1e-7, timing)).toEqual({
+      kind: 'outside',
+    });
+
+    // Outside span after tail: mediaTime >= ends[last] - Q
+    expect(presentedWindowOutcome(0.12 - Q, timing)).toEqual({
+      kind: 'outside',
+    });
+    expect(presentedWindowOutcome(0.15, timing)).toEqual({
+      kind: 'outside',
+    });
+  });
+
+  test('checkNativeTimingEligibility: validates windows, start gaps, and W_min >= vsync', () => {
+    const Q = OTIO_PACKET_START_TOLERANCE_SECONDS;
+    const vsync = 1 / 60; // ~16.6ms
+
+    // Valid 30fps timing (windows = ~33.3ms > vsync)
+    const validTiming: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0, 1 / 30, 2 / 30]),
+      ends: Float64Array.from([1 / 30, 2 / 30, 3 / 30]),
+    };
+    expect(checkNativeTimingEligibility(validTiming, 1.0, vsync)).toBe(true);
+
+    // Window duration <= 2Q rejected
+    const tinyWindowTiming: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0, 0.04]),
+      ends: Float64Array.from([Q, 0.08]),
+    };
+    expect(checkNativeTimingEligibility(tinyWindowTiming, 1.0, vsync)).toBe(
+      false
+    );
+
+    // Start gap <= 2Q rejected
+    const tinyGapTiming: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0, Q]),
+      ends: Float64Array.from([0.04, 0.08]),
+    };
+    expect(checkNativeTimingEligibility(tinyGapTiming, 1.0, vsync)).toBe(false);
+
+    // W_min < vsync rejected (e.g. 120fps video on 60Hz display: W_min = 8.3ms < 16.6ms)
+    const fastVideoTiming: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0, 1 / 120, 2 / 120]),
+      ends: Float64Array.from([1 / 120, 2 / 120, 3 / 120]),
+    };
+    expect(checkNativeTimingEligibility(fastVideoTiming, 1.0, vsync)).toBe(
+      false
+    );
+  });
+
+  test('computePhaseAnchor: calculates closed-form anchor and tests start spread fallback', () => {
+    const vsync = 1 / 60; // 0.016666s
+    const wMin = 1 / 30; // 0.033333s
+
+    // Single decoder: always in band
+    const singleSample = [
+      {
+        dL: 100, // now in ms
+        iL0Plus1Start: 1 / 30, // nextStart
+        sourceT0Seconds: 0,
+        rL: 1.0,
+        wMinSeconds: wMin,
+      },
+    ];
+    const singleAnchor = computePhaseAnchor(singleSample, vsync);
+    expect(singleAnchor.spreadAcceptable).toBe(true);
+    expect(singleAnchor.maxSpreadMs).toBe(0);
+    expect(singleAnchor.tauStar).toBeGreaterThan(0);
+
+    // Two decoders with small phase spread: acceptable
+    const dualSampleInBand = [
+      {
+        dL: 100,
+        iL0Plus1Start: 1 / 30,
+        sourceT0Seconds: 0,
+        rL: 1.0,
+        wMinSeconds: wMin,
+      },
+      {
+        dL: 110, // 10ms spread < (2*Wmin - vsync)*1000 = (0.0666 - 0.0166)*1000 = 50ms
+        iL0Plus1Start: 1 / 30,
+        sourceT0Seconds: 0,
+        rL: 1.0,
+        wMinSeconds: wMin,
+      },
+    ];
+    const dualAnchor = computePhaseAnchor(dualSampleInBand, vsync);
+    expect(dualAnchor.spreadAcceptable).toBe(true);
+    expect(dualAnchor.maxSpreadMs).toBe(10);
+    expect(dualAnchor.tauStar).toBe(
+      (singleAnchor.tauStar + singleAnchor.tauStar + 10) / 2
+    );
+
+    // Two decoders with wide phase spread > min(2*Wmin - vsync): unacceptable
+    const dualSampleWideSpread = [
+      {
+        dL: 100,
+        iL0Plus1Start: 1 / 30,
+        sourceT0Seconds: 0,
+        rL: 1.0,
+        wMinSeconds: wMin,
+      },
+      {
+        dL: 170, // 70ms spread > 50ms limit
+        iL0Plus1Start: 1 / 30,
+        sourceT0Seconds: 0,
+        rL: 1.0,
+        wMinSeconds: wMin,
+      },
+    ];
+    const wideAnchor = computePhaseAnchor(dualSampleWideSpread, vsync);
+    expect(wideAnchor.spreadAcceptable).toBe(false);
+    expect(wideAnchor.maxSpreadMs).toBe(70);
+    expect(wideAnchor.spreadLimitMs).toBeCloseTo(50, 1);
+  });
+
+  test('NativeDecoderRing: allocates 3 slots once, releases to 0x0, respects budget', () => {
+    const budget = new SnapshotPixelBudget(3 * 960 * 540); // exactly one decoder budget
+    const media = new MockMedia();
+    const ring1 = new NativeDecoderRing(
+      media as unknown as HTMLVideoElement,
+      'occ1',
+      'media/clip1.mp4',
+      budget
+    );
+
+    expect(ring1.allocate(960, 540)).toBe(true);
+    expect(ring1.slots).toHaveLength(SNAPSHOT_SLOTS_PER_DECODER);
+    expect(budget.allocatedPixels).toBe(3 * 960 * 540);
+
+    // Second decoder exceeds budget
+    const ring2 = new NativeDecoderRing(
+      media as unknown as HTMLVideoElement,
+      'occ2',
+      'media/clip2.mp4',
+      budget
+    );
+    expect(ring2.allocate(960, 540)).toBe(false);
+
+    // Releasing ring1 frees budget and sets canvas size to 0x0
+    ring1.release();
+    expect(ring1.slots).toHaveLength(0);
+    expect(budget.allocatedPixels).toBe(0);
+
+    // Now ring2 can allocate
+    expect(ring2.allocate(960, 540)).toBe(true);
+    ring2.release();
+  });
+
+  test('S-C: playing video is never drawn to compositor, only approved snapshot canvas', async () => {
+    const mediaBlob = new Blob(['native video test'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      // Find mock media created for decoder and enable rVFC
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(videoMedia).toBeDefined();
+      videoMedia?.enableRvfc();
+
+      // Start playback
+      const playPromise = playback.play();
+
+      // First advanced callback arrives during startup
+      // T0 = 0 (window 0), first advanced is window 1 (starts at 1/30)
+      videoMedia?.triggerRvfc(100, 1 / 30);
+      await playPromise;
+
+      expect(playback.getState().playing).toBe(true);
+
+      // Clear recorded draw calls on output context
+      outCanvas.ctx.drawnSources.length = 0;
+
+      // Trigger rVFC for window 1 and run tick at matching time
+      videoMedia?.triggerRvfc(133.3, 1 / 30);
+      raf?.(133.3);
+
+      // The output canvas drew a frame
+      expect(outCanvas.ctx.drawnSources.length).toBeGreaterThan(0);
+
+      // CRITICAL INVARIANT: The playing video element is NEVER passed to drawImage!
+      const drawnVideoElements = outCanvas.ctx.drawnSources.filter(
+        (d) => d.source instanceof MockMedia
+      );
+      expect(drawnVideoElements).toHaveLength(0);
+
+      // Every drawn source is a snapshot canvas (SoftCanvas)
+      const drawnCanvases = outCanvas.ctx.drawnSources.filter(
+        (d) => d.source instanceof SoftCanvas
+      );
+      expect(drawnCanvases.length).toBeGreaterThan(0);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('S-C: holds previous composite when required tag is missing; currentTime and notify do not advance', async () => {
+    const mediaBlob = new Blob(['hold test video'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 60,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      videoMedia?.enableRvfc();
+
+      const playPromise = playback.play();
+      videoMedia?.triggerRvfc(100, 1 / 30);
+      await playPromise;
+
+      let notifyCount = 0;
+      playback.subscribe(() => {
+        notifyCount++;
+      });
+      const initialNotifyCount = notifyCount;
+      const timeBefore = playback.getState().time.value;
+
+      // Tick forward in time without triggering rVFC for window 2
+      // Required window 2 is missing from ring -> HOLD!
+      raf?.(200); // 100ms later -> window 2+ is due, but not in ring
+
+      // currentTime has NOT advanced, notify has NOT fired
+      expect(playback.getState().time.value).toBe(timeBefore);
+      expect(notifyCount).toBe(initialNotifyCount);
+
+      // Now trigger rVFC for required window
+      videoMedia?.triggerRvfc(205, 2 / 30);
+      raf?.(210);
+
+      // Now approved! currentTime advances and notify fires
+      expect(playback.getState().time.value).toBeGreaterThan(timeBefore);
+      expect(notifyCount).toBeGreaterThan(initialNotifyCount);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('S-C: uncertified tail sample triggers resync into seek cadence with invalid-timing diagnostic', async () => {
+    // Media has 5 certified windows (frames 0 to 4), frame 5+ is uncertified tail
+    const mediaBlob = new Blob(['no-duration webm mock'], {
+      type: 'video/webm',
+    });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0, 1 / 30, 2 / 30, 3 / 30, 4 / 30]),
+      ends: Float64Array.from([1 / 30, 2 / 30, 3 / 30, 4 / 30, 5 / 30]),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.webm', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 30, // 30 frames total
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      const videoMedia = created.find((m) => m.src.includes('media/clip.webm'));
+      videoMedia?.enableRvfc();
+
+      const playPromise = playback.play();
+      videoMedia?.triggerRvfc(100, 1 / 30);
+      await playPromise;
+
+      // Play through certified windows natively
+      videoMedia?.triggerRvfc(133, 1 / 30);
+      raf?.(133);
+      videoMedia?.triggerRvfc(166, 2 / 30);
+      raf?.(166);
+
+      // Decoder runs ahead into uncertified tail (> 5/30 = 0.1667s)
+      // Callback outside span is IGNORED (no sticky ineligible marking!)
+      videoMedia?.triggerRvfc(200, 0.25);
+
+      // Now transport advances to frame 6 (value 6, which is > 5/30)
+      // This reaches the uncertified tail sample!
+      raf?.(400); // 300ms elapsed at 30fps = 9 frames
+
+      // Wait microtask turns for resync into seek cadence to settle
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+
+      const state = playback.getState();
+      // Reported invalid-timing diagnostic on uncertified sample
+      expect(
+        state.diagnostics.some(
+          (d) =>
+            d.code === 'invalid-timing' &&
+            d.message.includes('outside certified packet timing')
+        )
+      ).toBe(true);
+
+      // Outside-span callback did NOT make the path sticky-ineligible
+      // If we seek back to certified range (frame 2), it can play natively again
+      await playback.seek({ value: 2, rate: 30 });
+      expect(
+        playback.getState().diagnostics.some((d) => d.code === 'invalid-timing')
+      ).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('S-C: uncovered callback inside span marks media path sticky-ineligible', async () => {
+    const mediaBlob = new Blob(['uncovered bad timestamps'], {
+      type: 'video/mp4',
+    });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0, 1 / 30, 2 / 30, 3 / 30]),
+      ends: Float64Array.from([1 / 30, 2 / 30, 3 / 30, 4 / 30]),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 30,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
+      videoMedia?.enableRvfc();
+
+      // Uncovered callback inside span during startup (e.g. 0.015 is inside [0, 4/30] but no start matches)
+      const playPromise = playback.play();
+      videoMedia?.triggerRvfc(100, 0.015); // uncovered inside span!
+      await playPromise;
+
+      // Media path is now sticky-ineligible! Controller falls back to seek cadence
+      // Seeks should use seekElement (video.currentTime)
+      await playback.seek({ value: 2, rate: 30 });
+      expect(playback.getState().playing).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('S-B audio: produces zero steady seeks during normal playback', async () => {
+    const doc = buildDocument({ rate: 30, frames: 60 });
+    const outCanvas = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: async () => 'blob:clip',
+    });
+
+    try {
+      await playback.play();
+      expect(playback.getState().playing).toBe(true);
+
+      const audioMedia = created.find((m) => m.src.includes('blob:clip'));
+      expect(audioMedia).toBeDefined();
+      const initialSeeks = audioMedia?.seekTargets.length ?? 0;
+
+      // Advance ticks smoothly
+      // Since audio is playing, drift within 2 timeline frames (2/30 = 66ms) does NOT seek
+      raf?.(0);
+      if (audioMedia) audioMedia.currentTime = 1 / 30;
+      raf?.(33.3);
+      if (audioMedia) audioMedia.currentTime = 2 / 30;
+      raf?.(66.6);
+      if (audioMedia) audioMedia.currentTime = 3 / 30;
+      raf?.(100);
+
+      // ZERO steady seeks occurred!
+      expect(audioMedia?.seekTargets.length).toBe(initialSeeks);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('S-C: fallback to seek cadence when requestVideoFrameCallback is missing', async () => {
+    const mediaBlob = new Blob(['plain video'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from([0, 1 / 30, 2 / 30]),
+      ends: Float64Array.from([1 / 30, 2 / 30, 3 / 30]),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+
+    const outCanvas = new SoftCanvas();
+    const doc = sampledMediaDocument({
+      kind: 'Video',
+      rate: 30,
+      duration: 30,
+    });
+
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      // MockMedia by default does NOT have requestVideoFrameCallback
+      await playback.play();
+      expect(playback.getState().playing).toBe(true);
+
+      // Runs smoothly on seek cadence
+      raf?.(0);
+      raf?.(100); // 100ms at 30fps = 3 frames
+      expect(playback.getState().time.value).toBe(3);
     } finally {
       playback.dispose();
     }
