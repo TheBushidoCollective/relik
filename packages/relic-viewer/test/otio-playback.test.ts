@@ -4317,7 +4317,7 @@ describe('otio native video playback S-C and S-B', () => {
       timings: new Map([[mediaBlob, timing]]),
     });
 
-    const doc = buildDocument({ rate: 30, frames: 60 });
+    const doc = sampledAvDocument({ rate: 30, duration: 60 });
     const outCanvas = new SoftCanvas();
     const playback = createOtioPlayback({
       document: doc,
@@ -4353,7 +4353,6 @@ describe('otio native video playback S-C and S-B', () => {
         for (let k = 0; k < 5; k++) await Promise.resolve();
       }
 
-      console.log('NATIVE AUDIO seekTargets:', audioMedia?.seekTargets);
       expect(audioMedia?.seekTargets.length).toBe(initialSeeks);
       // Offset by 3 frames (> 2 frames tolerance) -> exactly one async seek!
       const tOff = playback.getState().time;
