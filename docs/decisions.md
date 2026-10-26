@@ -909,3 +909,39 @@ No MCP tool can record a decision. Decisions are recorded only by human readers 
 **A truncated container is refused.** `openRelic` accepted an object cut at a record boundary. In a probe it returned 196,557 of 196,567 declared bytes, because nothing checked for the final record or the envelope's length. Every relic ever written satisfies the stricter rule, since there has only ever been one encoder.
 
 **Every relic page shows the bar and a named phase from the first frame.** The shell carries a static plate, so the page is never blank before `viewer.js` runs. The viewer then shows Opening, Fetching with bytes against the mint's object length, Decrypting, and Rendering, as `viewer.md` §6.3 and §6.4 and `surface.md` §7 already specified. Try again now reruns the open with the key in memory instead of reloading a page whose key was stripped.
+
+## 2026-10-25: Continuous native video decode, synchronous frame callback capture, and bounded seek cadence fallback for OpenTimelineIO
+
+**Measured seek bottleneck during full-cut playback.**
+Profiling full-cut playback (such as a 491.7 s 1080p30 timeline) under the existing midpoint-seek engine revealed that steady-state per-frame seeks formed the primary playback bottleneck. Seeking decoders on every frame generated roughly 257 to 400 seeks in a 15-second window (approximately 19 to 26 seeks per second), spending roughly 77 percent of playback time waiting on decoder seeks and dropping cadence.
+
+**Native hardware decode instead of WASM or WebCodecs.**
+While WASM software decoders and WebCodecs were considered, measurement established that the browser's native HTML5 video element decodes 1080p30 continuously at native display cadence with hardware acceleration already in place.
+- WASM software decoding would burn substantial CPU and memory budgets decoding video frames in software inside the sandbox frame.
+- WebCodecs would require custom demuxing, container parsing, and codec-specific bitstream feeding across varying container formats, increasing complexity and bundle size without delivering better decode throughput than the platform's hardware decoders.
+- Decision line 844 is retained: browser playback operates under browser-managed SDR decoding with canvas composition and additive audio, without transcode services, WASM decoders, or WebCodecs pipelines.
+
+**No format, CSP, or privacy change.**
+Continuous native decoding introduces no changes to the Relic container format, the encryption envelope, or network posture.
+- The sandbox boundary and CSP remain unchanged (`default-src 'none'`, no remote fetching, isolated origin). Decrypted media Blobs are decoded locally through object URLs.
+- No new privacy disclosures are created, and no keys or decrypted bytes cross origins.
+
+**Synchronous inside-callback capture and strict packet matching.**
+Rather than painting playing video elements directly (which can tear, jitter, or advance between approval and painting), frames are captured synchronously into a fixed three-slot output-sized snapshot canvas ring inside `requestVideoFrameCallback`.
+- Presented frames are matched to scanner packet starts with a strict tolerance Q = 2 µs (`2e-6` s).
+- The compositor paints only approved snapshots whose tag matches the rational half-open required window index `req` for the transport time T. If any drawn leaf is not ready, the composite holds.
+
+**Certified-span tail rule and eligibility fallback.**
+Media Blobs whose scanner index stops short of the file end (such as `no-duration.webm`) maintain native playback across their certified span `[starts[0], ends[last])`.
+- Decoder callbacks outside the span (running ahead into uncertified tail frames or lead-in) are ignored without poisoning the media path or causing resyncs.
+- When the timeline reaches an uncertified sample, an eligibility discontinuity drops that drawn set to exact seek cadence with the existing `invalid-timing` diagnostic, without approving uncertified frames. Subsequent certified clips return to native playback upon the next discontinuity.
+
+**Bounded set-change resync tradeoff.**
+Every change to the set of drawn video occurrences (cuts, unhiding a track, soloing, or entering a dissolve) triggers one exact resync (pausing, running exact `renderAt`, and re-anchoring phase).
+- For continuous playback within a clip or a long cut, zero steady video seeks occur.
+- For rapid cuts or montages, frequent resyncs could hitch; this is bounded by a change-rate guard (more than 3 changes in 5 s falls back to seek cadence) and a storm guard (3 failure resyncs in 10 s falls back to seek cadence). Lookahead preroll remains an uncommitted future consideration if measured multi-clip cut performance requires it.
+- Unmeasured claims are excluded: the architecture provides the bounded mechanism, subject to verified benchmark replay.
+
+**Residuals:**
+- Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
+- Any media path failing native admission criteria runs on today's exact midpoint seek cadence with existing diagnostic reporting.
