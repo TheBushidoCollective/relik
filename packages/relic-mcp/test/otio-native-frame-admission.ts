@@ -50,7 +50,7 @@ import { isOpaqueBlack } from './otio-path-pixels.ts';
  * Types & Interfaces
  * ========================================================================== */
 
-export type DrawMethod = 'inside_rvfc';
+export type DrawMethod = 'inside_rvfc' | 'vf_rvfc';
 
 export interface CliOptions {
   readonly chromePath?: string;
@@ -67,6 +67,7 @@ export interface CliOptions {
   readonly cpuThrottlingRate?: number;
   readonly twoElements?: boolean;
   readonly negativeControls?: boolean;
+  readonly delayRvfcMs?: number;
 }
 
 export interface PacketWindow {
@@ -218,6 +219,8 @@ export interface CaseAdmissionResult {
   readonly failureReason?: string;
   readonly methods: Record<DrawMethod, MethodEvaluationResult>;
   readonly approved: boolean;
+  readonly metadataDisagreementCount?: number;
+  readonly metadataDisagreementRate?: number;
 }
 
 export type NegativeControlCounter =
@@ -263,17 +266,27 @@ export interface AdmissionReport {
   readonly chromePath: string;
   readonly browserProduct: string;
   readonly cpuThrottlingRate: number;
+  readonly delayRvfcMs?: number;
   readonly minSamplesRequired: number;
   readonly casesTotal: number;
   readonly casesPassed: number;
   readonly casesEligible?: number;
   readonly methodApproval: {
     readonly inside_rvfc: boolean;
+    readonly vf_rvfc: boolean;
   };
-  readonly certifiedDrawMethod: 'inside_rvfc' | 'none';
+  readonly certifiedDrawMethod: 'inside_rvfc' | 'vf_rvfc' | 'none';
   readonly cases: readonly CaseAdmissionResult[];
   readonly negativeControls?: readonly NegativeControlResult[];
   readonly twoElementCoverage?: readonly TwoElementResult[];
+  readonly metadataDisagreementByClass?: Record<
+    string,
+    {
+      readonly sampleCount: number;
+      readonly disagreementCount: number;
+      readonly disagreementRate: number;
+    }
+  >;
 }
 
 /* ==========================================================================
@@ -1063,7 +1076,7 @@ function getMimeType(fileName: string): string {
   return 'application/octet-stream';
 }
 
-function createHtmlTestPage(): string {
+function createHtmlTestPage(delayRvfcMs = 0): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1073,7 +1086,9 @@ function createHtmlTestPage(): string {
     body { background: black; margin: 0; padding: 0; overflow: hidden; }
     .otio-video-decoders { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); pointer-events: none; }
     #test-canvas { position: absolute; left: 0; top: 0; width: 64px; height: 16px; opacity: 1; }
+    #test-canvas-vf { position: absolute; left: 0; top: 0; width: 64px; height: 16px; opacity: 1; }
     #test-canvas-2 { position: absolute; left: 0; top: 20px; width: 64px; height: 16px; opacity: 1; }
+    #test-canvas-2-vf { position: absolute; left: 0; top: 20px; width: 64px; height: 16px; opacity: 1; }
   </style>
 </head>
 <body>
@@ -1082,10 +1097,25 @@ function createHtmlTestPage(): string {
     <video id="test-video-2" muted playsinline></video>
   </div>
   <canvas id="test-canvas" width="64" height="16"></canvas>
+  <canvas id="test-canvas-vf" width="64" height="16"></canvas>
   <canvas id="test-canvas-2" width="64" height="16"></canvas>
+  <canvas id="test-canvas-2-vf" width="64" height="16"></canvas>
   <script>
-    function readPixels(video, ctx, canvas) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const origRvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    if (${delayRvfcMs > 0 ? delayRvfcMs : 0} > 0) {
+      const delayMs = ${delayRvfcMs > 0 ? delayRvfcMs : 0};
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function(cb) {
+        return origRvfc.call(this, (now, metadata) => {
+          const start = performance.now();
+          while (performance.now() - start < delayMs) {}
+          cb(now, metadata);
+        });
+      };
+    }
+
+    function readPixels(source, ctx, canvas) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
       const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
       let binary = '';
       for (let i = 0; i < d.length; i++) binary += String.fromCharCode(d[i]);
@@ -1101,6 +1131,8 @@ function createHtmlTestPage(): string {
         if (!ctx) return reject(new Error('Canvas 2D context is null'));
 
         video.pause();
+        video.removeAttribute('src');
+        video.load();
         canvas.width = 64;
         canvas.height = 16;
         let finished = false;
@@ -1137,7 +1169,7 @@ function createHtmlTestPage(): string {
               if (i > 0 && samples[i - 1] && samples[i - 1].pixelsBase64 === pixels) {
                 await new Promise((res) => {
                   let timer = setTimeout(() => { video.pause(); res(); }, 500);
-                  video.requestVideoFrameCallback((now, meta) => {
+                  origRvfc.call(video, (now, meta) => {
                     clearTimeout(timer);
                     video.pause();
                     sampleTime = meta.mediaTime;
@@ -1206,10 +1238,15 @@ function createHtmlTestPage(): string {
         if (typeof video.requestVideoFrameCallback !== 'function') {
           return reject(new Error('requestVideoFrameCallback is not supported on HTMLVideoElement'));
         }
+        if (typeof VideoFrame !== 'function') {
+          return reject(new Error('VideoFrame is not supported in this environment'));
+        }
         const canvas = document.getElementById('test-canvas');
-        if (!canvas) return reject(new Error('HTML Canvas element not found'));
+        const canvasVf = document.getElementById('test-canvas-vf');
+        if (!canvas || !canvasVf) return reject(new Error('HTML Canvas element not found'));
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) return reject(new Error('Canvas 2D context is null'));
+        const ctxVf = canvasVf.getContext('2d', { willReadFrequently: true });
+        if (!ctx || !ctxVf) return reject(new Error('Canvas 2D context is null'));
 
         let finished = false;
         let rVfcId = null;
@@ -1223,17 +1260,22 @@ function createHtmlTestPage(): string {
           reject(new Error('Canvas 2D context was lost'));
         };
         canvas.addEventListener('contextlost', onContextLost);
+        canvasVf.addEventListener('contextlost', onContextLost);
 
         video.pause();
         video.removeAttribute('src');
         video.load();
         canvas.width = 64;
         canvas.height = 16;
-        const samples = [];
+        canvasVf.width = 64;
+        canvasVf.height = 16;
+        const insideSamples = [];
+        const vfSamples = [];
 
         function cleanup() {
           if (timeoutTimer) clearTimeout(timeoutTimer);
           canvas.removeEventListener('contextlost', onContextLost);
+          canvasVf.removeEventListener('contextlost', onContextLost);
           video.pause();
           if (rVfcId !== null && typeof video.cancelVideoFrameCallback === 'function') {
             video.cancelVideoFrameCallback(rVfcId);
@@ -1248,8 +1290,17 @@ function createHtmlTestPage(): string {
           if (finished) return;
           finished = true;
           cleanup();
-          if (samples.length > 0) resolve({ samples, completed: false, timedOut: true });
-          else reject(new Error('Timeout waiting for native video frame callbacks'));
+          if (vfSamples.length > 0) {
+            resolve({
+              inside_rvfc: insideSamples,
+              vf_rvfc: vfSamples,
+              samples: vfSamples,
+              completed: false,
+              timedOut: true,
+            });
+          } else {
+            reject(new Error('Timeout waiting for native video frame callbacks'));
+          }
         }, 60000);
 
         video.onerror = () => {
@@ -1263,14 +1314,17 @@ function createHtmlTestPage(): string {
           try {
             function onFrame(now, metadata) {
               if (finished) return;
-              if (ctx.isContextLost && ctx.isContextLost()) {
+              if (
+                (ctx.isContextLost && ctx.isContextLost()) ||
+                (ctxVf.isContextLost && ctxVf.isContextLost())
+              ) {
                 finished = true;
                 cleanup();
                 reject(new Error('Canvas 2D context is lost during onFrame'));
                 return;
               }
               try {
-                samples.push({
+                insideSamples.push({
                   mediaTime: metadata.mediaTime,
                   presentedFrames: metadata.presentedFrames,
                   expectedDisplayTime: metadata.expectedDisplayTime,
@@ -1282,29 +1336,70 @@ function createHtmlTestPage(): string {
                   capturedHeight: canvas.height,
                   pixelsBase64: readPixels(video, ctx, canvas),
                 });
+
+                let vf = null;
+                try {
+                  vf = new VideoFrame(video);
+                  const vfMediaTime = vf.timestamp / 1e6;
+                  vfSamples.push({
+                    mediaTime: vfMediaTime,
+                    presentedFrames: metadata.presentedFrames,
+                    expectedDisplayTime: metadata.expectedDisplayTime,
+                    width: canvasVf.width,
+                    height: canvasVf.height,
+                    sourceWidth: vf.displayWidth || metadata.width,
+                    sourceHeight: vf.displayHeight || metadata.height,
+                    capturedWidth: canvasVf.width,
+                    capturedHeight: canvasVf.height,
+                    pixelsBase64: readPixels(vf, ctxVf, canvasVf),
+                  });
+                } catch (vfErr) {
+                  vfSamples.push({
+                    mediaTime: metadata.mediaTime,
+                    presentedFrames: metadata.presentedFrames,
+                    expectedDisplayTime: metadata.expectedDisplayTime,
+                    width: canvasVf.width,
+                    height: canvasVf.height,
+                    pixelsBase64: '',
+                  });
+                } finally {
+                  vf?.close();
+                }
               } catch (err) {
                 finished = true;
                 cleanup();
                 reject(err);
                 return;
               }
-              if (samples.length >= minSamples) {
+              if (vfSamples.length >= minSamples) {
                 finished = true;
                 cleanup();
-                resolve({ samples, completed: true, timedOut: false });
+                resolve({
+                  inside_rvfc: insideSamples,
+                  vf_rvfc: vfSamples,
+                  samples: vfSamples,
+                  completed: true,
+                  timedOut: false,
+                });
                 return;
               }
               rVfcId = video.requestVideoFrameCallback(onFrame);
             }
 
             video.onended = () => {
-              if (samples.length < minSamples && !finished) {
+              if (vfSamples.length < minSamples && !finished) {
                 video.currentTime = 0;
                 video.play().catch(reject);
               } else if (!finished) {
                 finished = true;
                 cleanup();
-                resolve({ samples, completed: true, timedOut: false });
+                resolve({
+                  inside_rvfc: insideSamples,
+                  vf_rvfc: vfSamples,
+                  samples: vfSamples,
+                  completed: true,
+                  timedOut: false,
+                });
               }
             };
 
@@ -1377,14 +1472,29 @@ function createHtmlTestPage(): string {
 
         function onFrame1(now, metadata) {
           if (finished) return;
-          samples1.push({
-            mediaTime: metadata.mediaTime,
-            presentedFrames: metadata.presentedFrames,
-            expectedDisplayTime: metadata.expectedDisplayTime,
-            width: canvas1.width,
-            height: canvas1.height,
-            pixelsBase64: readPixels(video1, ctx1, canvas1),
-          });
+          let vf = null;
+          try {
+            vf = new VideoFrame(video1);
+            samples1.push({
+              mediaTime: vf.timestamp / 1e6,
+              presentedFrames: metadata.presentedFrames,
+              expectedDisplayTime: metadata.expectedDisplayTime,
+              width: canvas1.width,
+              height: canvas1.height,
+              pixelsBase64: readPixels(vf, ctx1, canvas1),
+            });
+          } catch (e) {
+            samples1.push({
+              mediaTime: metadata.mediaTime,
+              presentedFrames: metadata.presentedFrames,
+              expectedDisplayTime: metadata.expectedDisplayTime,
+              width: canvas1.width,
+              height: canvas1.height,
+              pixelsBase64: '',
+            });
+          } finally {
+            vf?.close();
+          }
           if (samples1.length < minSamples) {
             rVfc1 = video1.requestVideoFrameCallback(onFrame1);
           }
@@ -1393,14 +1503,29 @@ function createHtmlTestPage(): string {
 
         function onFrame2(now, metadata) {
           if (finished) return;
-          samples2.push({
-            mediaTime: metadata.mediaTime,
-            presentedFrames: metadata.presentedFrames,
-            expectedDisplayTime: metadata.expectedDisplayTime,
-            width: canvas2.width,
-            height: canvas2.height,
-            pixelsBase64: readPixels(video2, ctx2, canvas2),
-          });
+          let vf = null;
+          try {
+            vf = new VideoFrame(video2);
+            samples2.push({
+              mediaTime: vf.timestamp / 1e6,
+              presentedFrames: metadata.presentedFrames,
+              expectedDisplayTime: metadata.expectedDisplayTime,
+              width: canvas2.width,
+              height: canvas2.height,
+              pixelsBase64: readPixels(vf, ctx2, canvas2),
+            });
+          } catch (e) {
+            samples2.push({
+              mediaTime: metadata.mediaTime,
+              presentedFrames: metadata.presentedFrames,
+              expectedDisplayTime: metadata.expectedDisplayTime,
+              width: canvas2.width,
+              height: canvas2.height,
+              pixelsBase64: '',
+            });
+          } finally {
+            vf?.close();
+          }
           if (samples2.length < minSamples) {
             rVfc2 = video2.requestVideoFrameCallback(onFrame2);
           }
@@ -1437,9 +1562,10 @@ function createHtmlTestPage(): string {
 
 export async function startLoopbackServer(
   fixturesDir: string,
-  tempDir: string
+  tempDir: string,
+  delayRvfcMs = 0
 ): Promise<{ readonly origin: string; readonly close: () => Promise<void> }> {
-  const htmlPage = createHtmlTestPage();
+  const htmlPage = createHtmlTestPage(delayRvfcMs);
   const fileCache = new Map<string, Uint8Array>();
 
   async function loadFile(name: string): Promise<Uint8Array | null> {
@@ -2000,7 +2126,11 @@ export function aggregateMethodResults(
 export async function runNegativeControls(
   referenceWindows: readonly PacketWindow[],
   refFrames: ReadonlyMap<number, Uint8Array>,
-  uncertifiedFrames?: ReadonlySet<number>
+  uncertifiedFrames?: ReadonlySet<number>,
+  stressOptions?: {
+    readonly delayRvfcMs?: number | undefined;
+    readonly caseResults?: readonly CaseAdmissionResult[] | undefined;
+  }
 ): Promise<readonly NegativeControlResult[]> {
   const results: NegativeControlResult[] = [];
   if (referenceWindows.length < 2 || refFrames.size < 2) {
@@ -2070,7 +2200,7 @@ export async function runNegativeControls(
       uncertifiedFrames
     );
     const agg = aggregateMethodResults(
-      'inside_rvfc',
+      'vf_rvfc',
       [ev],
       1,
       referenceWindows.length
@@ -2103,7 +2233,7 @@ export async function runNegativeControls(
       uncertifiedFrames
     );
     const agg = aggregateMethodResults(
-      'inside_rvfc',
+      'vf_rvfc',
       [ev],
       1,
       referenceWindows.length
@@ -2136,7 +2266,7 @@ export async function runNegativeControls(
       uncertifiedFrames
     );
     const agg = aggregateMethodResults(
-      'inside_rvfc',
+      'vf_rvfc',
       [ev],
       1,
       referenceWindows.length
@@ -2169,7 +2299,7 @@ export async function runNegativeControls(
       uncertifiedFrames
     );
     const agg = aggregateMethodResults(
-      'inside_rvfc',
+      'vf_rvfc',
       [ev],
       1,
       referenceWindows.length
@@ -2205,7 +2335,7 @@ export async function runNegativeControls(
       uncertifiedFrames
     );
     const agg = aggregateMethodResults(
-      'inside_rvfc',
+      'vf_rvfc',
       [ev],
       1,
       referenceWindows.length
@@ -2241,7 +2371,7 @@ export async function runNegativeControls(
       uncertifiedFrames
     );
     const agg = aggregateMethodResults(
-      'inside_rvfc',
+      'vf_rvfc',
       [ev],
       1,
       referenceWindows.length
@@ -2275,7 +2405,7 @@ export async function runNegativeControls(
       new Set<number>() // frame 0 is not in empty uncertified set -> unpredicted fallback
     );
     const agg = aggregateMethodResults(
-      'inside_rvfc',
+      'vf_rvfc',
       [ev],
       1,
       referenceWindows.length
@@ -2316,6 +2446,29 @@ export async function runNegativeControls(
       rejectionReason: 'probe_error',
       passed: threw,
       detail: `Scanner threw: ${threw} (${errorMsg.slice(0, 80)})`,
+    });
+  }
+
+  // Control 8: Stress mode delay causes metadata inside_rvfc to produce wrongFrame on 60 fps class
+  if (
+    stressOptions?.delayRvfcMs !== undefined &&
+    stressOptions.delayRvfcMs >= 40
+  ) {
+    const fr60Case = stressOptions.caseResults?.find(
+      (c) => c.caseName === 'fr60.mp4' || c.caseName.includes('60')
+    );
+    const fr60WrongFrameCount =
+      fr60Case?.methods.inside_rvfc.wrongFrameCount ?? 0;
+    const stressPassed = fr60WrongFrameCount > 0;
+    results.push({
+      name: 'stress_delay_metadata_wrong_frame',
+      intendedCounter: 'wrongFrame',
+      observedCounter: stressPassed ? 'wrongFrame' : 'none',
+      rejectionReason: stressPassed ? 'none' : 'stress_ineffective',
+      passed: stressPassed,
+      detail: fr60Case
+        ? `fr60.mp4 inside_rvfc wrongFrameCount: ${fr60WrongFrameCount}`
+        : 'fr60 class not found in case results',
     });
   }
 
@@ -2412,13 +2565,13 @@ export async function runTwoElementCoverage(
         )
       );
       const agg1 = aggregateMethodResults(
-        'inside_rvfc',
+        'vf_rvfc',
         ev1,
         minSamples,
         d1.windows.length
       );
       const agg2 = aggregateMethodResults(
-        'inside_rvfc',
+        'vf_rvfc',
         ev2,
         minSamples,
         d2.windows.length
@@ -2531,13 +2684,14 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let tempDir: string | undefined;
   let minSamples = 20;
   let cases: string[] | undefined;
+  let methods: DrawMethod[] = ['inside_rvfc', 'vf_rvfc'];
   let json = false;
   let help = false;
   let cpu4x = false;
   let cpuThrottlingRate = 1;
+  let delayRvfcMs: number | undefined;
   let twoElements = false;
   let negativeControls = false;
-
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -2561,7 +2715,11 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
         .map((s) => s.trim())
         .filter(Boolean);
     } else if (arg === '--methods' && i + 1 < argv.length) {
-      i++;
+      methods = argv[++i]!.split(',')
+        .map((s) => s.trim())
+        .filter((s): s is DrawMethod => s === 'inside_rvfc' || s === 'vf_rvfc');
+    } else if (arg === '--delay-rvfc-ms' && i + 1 < argv.length) {
+      delayRvfcMs = Math.max(0, Number(argv[++i]!) || 0);
     } else if (arg === '--cpu-4x') {
       cpu4x = true;
       cpuThrottlingRate = 4;
@@ -2582,11 +2740,12 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     ...(tempDir !== undefined ? { tempDir } : {}),
     minSamples,
     ...(cases !== undefined ? { cases } : {}),
-    methods: ['inside_rvfc'],
+    methods: methods.length > 0 ? methods : ['inside_rvfc', 'vf_rvfc'],
     json,
     help,
     cpu4x,
     cpuThrottlingRate,
+    ...(delayRvfcMs !== undefined ? { delayRvfcMs } : {}),
     twoElements,
     negativeControls,
   };
@@ -2603,9 +2762,10 @@ Options:
   --temp-dir <dir>       Directory for scratch/runtime files
   --min-samples <n>      Minimum frame samples per fixture method (default: 20)
   --cases <list>         Comma-separated list of fixture files to test (default: all)
-  --methods <list>       Draw methods to test: inside_rvfc (default: inside_rvfc)
+  --methods <list>       Draw methods to test: inside_rvfc, vf_rvfc (default: inside_rvfc, vf_rvfc)
   --cpu-4x               Throttle browser CPU by 4x during probe
   --cpu-throttling <n>   Set browser CPU throttling rate (default: 1)
+  --delay-rvfc-ms <n>   Wrap rVFC with <n> ms busy-wait stress delay
   --two-elements         Run concurrent two-element decoder coverage
   --negative-controls    Run negative controls verification suite
   --json                 Output full report as JSON to stdout
@@ -2631,10 +2791,13 @@ export const COVERAGE_FLOOR_CASES = [
 export async function runAdmissionProof(
   options: CliOptions
 ): Promise<AdmissionReport> {
+  const defaultOwnedShell =
+    '/Users/jwaldrip/.omp/owned-shells/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell';
   const chromePath =
     options.chromePath ??
     process.env['RELIC_OTIO_CHROME_PATH'] ??
-    process.env['RELIC_CHROME_PATH'];
+    process.env['RELIC_CHROME_PATH'] ??
+    defaultOwnedShell;
 
   const foundChrome = await discoverChrome(
     chromePath && chromePath !== 'none' && chromePath !== 'disabled'
@@ -2670,7 +2833,11 @@ export async function runAdmissionProof(
     const oracle = JSON.parse(oracleText) as FfprobeTimingOracle;
 
     // 3. Start loopback media server
-    serverHandle = await startLoopbackServer(options.fixturesDir, tempRoot);
+    serverHandle = await startLoopbackServer(
+      options.fixturesDir,
+      tempRoot,
+      options.delayRvfcMs ?? 0
+    );
 
     // 4. Launch headless Chrome with debug pipe and loopback flags
     const sharedArgs = chromeArgs(foundChrome.path, profileDir);
@@ -2949,11 +3116,12 @@ export async function runAdmissionProof(
       }
 
       function makeEmptyMethod(
+        drawMethod: DrawMethod,
         reason?: string,
         condition?: string
       ): MethodEvaluationResult {
         return {
-          drawMethod: 'inside_rvfc',
+          drawMethod,
           sampleCount: 0,
           certifiedSampleCount: 0,
           distinctFramesCount: 0,
@@ -2984,14 +3152,19 @@ export async function runAdmissionProof(
       }
 
       const methodResults: Record<DrawMethod, MethodEvaluationResult> = {
-        inside_rvfc: makeEmptyMethod(),
+        inside_rvfc: makeEmptyMethod('inside_rvfc'),
+        vf_rvfc: makeEmptyMethod('vf_rvfc'),
       };
+
+      let caseDisagreementCount = 0;
+      let caseDisagreementRate = 0;
 
       if (outcome === 'pass') {
         try {
           const mediaUrl = `${serverHandle.origin}/media/${testCase.caseName}`;
           const probeRes = await evaluateInPage<{
-            readonly samples: readonly BrowserFrameSample[];
+            readonly inside_rvfc: readonly BrowserFrameSample[];
+            readonly vf_rvfc: readonly BrowserFrameSample[];
             readonly completed: boolean;
             readonly timedOut: boolean;
           }>(
@@ -3000,66 +3173,88 @@ export async function runAdmissionProof(
             `window.runAdmissionProbe('${mediaUrl}', ${options.minSamples})`
           );
 
-          const evaluations: SampleEvaluation[] = probeRes.samples.map(
-            (s, idx) =>
-              evaluateFrameSample(
-                s,
-                idx,
-                caseWindows,
-                refFrames,
-                API_ROUNDING_Q,
-                uncertifiedFrames
-              )
+          const insideEvaluations: SampleEvaluation[] = (
+            probeRes.inside_rvfc ?? []
+          ).map((s, idx) =>
+            evaluateFrameSample(
+              s,
+              idx,
+              caseWindows,
+              refFrames,
+              API_ROUNDING_Q,
+              uncertifiedFrames
+            )
           );
 
-          const methodAgg = aggregateMethodResults(
+          const vfEvaluations: SampleEvaluation[] = (
+            probeRes.vf_rvfc ?? []
+          ).map((s, idx) =>
+            evaluateFrameSample(
+              s,
+              idx,
+              caseWindows,
+              refFrames,
+              API_ROUNDING_Q,
+              uncertifiedFrames
+            )
+          );
+
+          const insideAgg = aggregateMethodResults(
             'inside_rvfc',
-            evaluations,
+            insideEvaluations,
             options.minSamples,
             caseWindows.length
           );
 
-          methodResults.inside_rvfc = methodAgg;
+          const vfAgg = aggregateMethodResults(
+            'vf_rvfc',
+            vfEvaluations,
+            options.minSamples,
+            caseWindows.length
+          );
 
-          if (methodAgg.approved) {
+          methodResults.inside_rvfc = insideAgg;
+          methodResults.vf_rvfc = vfAgg;
+
+          let disagreementCount = 0;
+          const pairCount = Math.min(
+            insideEvaluations.length,
+            vfEvaluations.length
+          );
+          for (let pIdx = 0; pIdx < pairCount; pIdx++) {
+            const inEv = insideEvaluations[pIdx]!;
+            const vfEv = vfEvaluations[pIdx]!;
+            if (
+              inEv.expectedFrame !== vfEv.expectedFrame ||
+              inEv.isMatch !== vfEv.isMatch
+            ) {
+              disagreementCount++;
+            }
+          }
+          caseDisagreementCount = disagreementCount;
+          caseDisagreementRate =
+            pairCount > 0 ? disagreementCount / pairCount : 0;
+
+          // vf_rvfc is the certified / gating method
+          if (vfAgg.approved) {
             outcome = 'pass';
           } else {
             outcome = 'native_mismatch';
-            caseFailureReason = methodAgg.failureReason;
+            caseFailureReason = vfAgg.failureReason;
           }
         } catch (probeErr) {
           const errMsg =
             probeErr instanceof Error ? probeErr.message : String(probeErr);
-          methodResults.inside_rvfc = {
-            drawMethod: 'inside_rvfc',
-            sampleCount: 0,
-            certifiedSampleCount: 0,
-            distinctFramesCount: 0,
-            matchCount: 0,
-            mismatchCount: 0,
-            wrongFrameCount: 0,
-            uncoveredInSpanCount: 0,
-            fallbackRequiredCount: 0,
-            unpredictedFallbackCount: 0,
-            captureFailedCount: 0,
-            matchRate: 0,
-            errorRatio: 1,
-            rmseP50: null,
-            rmseP95: null,
-            rmseMax: null,
-            distinctionMarginP50: null,
-            deltaMinUs: null,
-            deltaMaxUs: null,
-            maxAbsDeltaUs: null,
-            deltaP50Us: null,
-            deltaP95Us: null,
-            deltaDistribution: {},
-            lagDistribution: {},
-            rejectionReasons: { error: 1 },
-            approved: false,
-            failureReason: errMsg,
-            failedCondition: 'probe_error',
-          };
+          methodResults.inside_rvfc = makeEmptyMethod(
+            'inside_rvfc',
+            errMsg,
+            'probe_error'
+          );
+          methodResults.vf_rvfc = makeEmptyMethod(
+            'vf_rvfc',
+            errMsg,
+            'probe_error'
+          );
           outcome = 'probe_error';
           caseFailureReason = errMsg;
         }
@@ -3071,6 +3266,12 @@ export async function runAdmissionProof(
           ? `ineligible_${eligibility.reason}`
           : outcome;
         methodResults.inside_rvfc = makeEmptyMethod(
+          'inside_rvfc',
+          failureReason,
+          failedCondition
+        );
+        methodResults.vf_rvfc = makeEmptyMethod(
+          'vf_rvfc',
           failureReason,
           failedCondition
         );
@@ -3092,6 +3293,8 @@ export async function runAdmissionProof(
           : {}),
         methods: methodResults,
         approved: outcome === 'pass',
+        metadataDisagreementCount: caseDisagreementCount,
+        metadataDisagreementRate: caseDisagreementRate,
       });
     }
 
@@ -3124,7 +3327,13 @@ export async function runAdmissionProof(
               negativeControlResults = await runNegativeControls(
                 fr24Harness.windows,
                 fr24RefFrames,
-                fr24Harness.uncertifiedFrames
+                fr24Harness.uncertifiedFrames,
+                {
+                  ...(options.delayRvfcMs !== undefined
+                    ? { delayRvfcMs: options.delayRvfcMs }
+                    : {}),
+                  caseResults,
+                }
               );
             }
           }
@@ -3148,6 +3357,28 @@ export async function runAdmissionProof(
     const insideApproved =
       eligibleCases.length > 0 &&
       eligibleCases.every((c) => c.methods.inside_rvfc.approved);
+    const vfApproved =
+      eligibleCases.length > 0 &&
+      eligibleCases.every((c) => c.methods.vf_rvfc.approved);
+
+    const metadataDisagreementByClass: Record<
+      string,
+      {
+        readonly sampleCount: number;
+        readonly disagreementCount: number;
+        readonly disagreementRate: number;
+      }
+    > = {};
+
+    for (const c of caseResults) {
+      if (c.eligible && c.metadataDisagreementCount !== undefined) {
+        metadataDisagreementByClass[c.caseName] = {
+          sampleCount: c.methods.inside_rvfc.sampleCount,
+          disagreementCount: c.metadataDisagreementCount,
+          disagreementRate: c.metadataDisagreementRate ?? 0,
+        };
+      }
+    }
 
     const report: AdmissionReport = {
       schemaVersion: 'relic-otio-native-frame-admission/v1',
@@ -3155,15 +3386,20 @@ export async function runAdmissionProof(
       chromePath: basename(foundChrome.path),
       browserProduct,
       cpuThrottlingRate: options.cpuThrottlingRate ?? (options.cpu4x ? 4 : 1),
+      ...(options.delayRvfcMs !== undefined
+        ? { delayRvfcMs: options.delayRvfcMs }
+        : {}),
       minSamplesRequired: options.minSamples,
       casesTotal: caseResults.length,
       casesPassed: caseResults.filter((c) => c.approved).length,
       casesEligible: eligibleCases.length,
       methodApproval: {
         inside_rvfc: insideApproved,
+        vf_rvfc: vfApproved,
       },
-      certifiedDrawMethod: insideApproved ? 'inside_rvfc' : 'none',
+      certifiedDrawMethod: vfApproved ? 'vf_rvfc' : 'none',
       cases: caseResults,
+      metadataDisagreementByClass,
       ...(negativeControlResults.length > 0
         ? { negativeControls: negativeControlResults }
         : {}),
@@ -3235,6 +3471,9 @@ export async function main(): Promise<void> {
           `Browser Product:   ${report.browserProduct}`,
           `Chrome Binary:     ${report.chromePath}`,
           `CPU Throttling:    ${report.cpuThrottlingRate}x`,
+          ...(report.delayRvfcMs !== undefined
+            ? [`Delay rVFC:       ${report.delayRvfcMs}ms`]
+            : []),
           `Cases Evaluated:   ${report.casesTotal}`,
           ...(report.casesEligible !== undefined
             ? [
@@ -3242,9 +3481,9 @@ export async function main(): Promise<void> {
               ]
             : []),
           `Cases Passed:      ${report.casesPassed} / ${report.casesTotal}`,
-          `Method inside_rvfc: ${report.methodApproval.inside_rvfc ? 'APPROVED (100% match)' : 'REJECTED'}`,
+          `Method vf_rvfc:    ${report.methodApproval.vf_rvfc ? 'APPROVED (100% match)' : 'REJECTED'}`,
+          `Method inside_rvfc: ${report.methodApproval.inside_rvfc ? 'APPROVED (100% match)' : 'REJECTED (non-gating)'}`,
           `Certified Method:  ${report.certifiedDrawMethod.toUpperCase()}`,
-          '---------------------------------------------------------------',
         ].join('\n')
       );
       for (const c of report.cases) {
@@ -3258,29 +3497,45 @@ export async function main(): Promise<void> {
         if (c.failureReason) {
           console.log(`    Case Note: ${c.failureReason}`);
         }
-        const res = c.methods.inside_rvfc;
-        console.log(
-          `  [inside_rvfc] samples=${res.sampleCount}, certified=${res.certifiedSampleCount}, distinct=${res.distinctFramesCount}, matchRate=${(res.matchRate * 100).toFixed(2)}%, rmseP50=${res.rmseP50 !== null ? res.rmseP50.toFixed(2) : 'null'}, rmseMax=${res.rmseMax !== null ? res.rmseMax.toFixed(2) : 'null'}, maxDelta=${res.maxAbsDeltaUs !== null ? `${res.maxAbsDeltaUs.toFixed(3)}us` : 'null'}, approved=${res.approved}`
-        );
-        if (res.failureReason) {
-          console.log(`    Failure: ${res.failureReason}`);
+        const vfRes = c.methods.vf_rvfc;
+        const insideRes = c.methods.inside_rvfc;
+        if (vfRes) {
+          console.log(
+            `  [vf_rvfc]     samples=${vfRes.sampleCount}, certified=${vfRes.certifiedSampleCount}, distinct=${vfRes.distinctFramesCount}, matchRate=${(vfRes.matchRate * 100).toFixed(2)}%, rmseP50=${vfRes.rmseP50 !== null ? vfRes.rmseP50.toFixed(2) : 'null'}, rmseMax=${vfRes.rmseMax !== null ? vfRes.rmseMax.toFixed(2) : 'null'}, maxDelta=${vfRes.maxAbsDeltaUs !== null ? `${vfRes.maxAbsDeltaUs.toFixed(3)}us` : 'null'}, approved=${vfRes.approved}`
+          );
+          if (vfRes.failureReason) {
+            console.log(`    VF Failure: ${vfRes.failureReason}`);
+          }
+        }
+        if (insideRes) {
+          console.log(
+            `  [inside_rvfc] samples=${insideRes.sampleCount}, certified=${insideRes.certifiedSampleCount}, distinct=${insideRes.distinctFramesCount}, matchRate=${(insideRes.matchRate * 100).toFixed(2)}%, wrongFrames=${insideRes.wrongFrameCount}, approved=${insideRes.approved}`
+          );
+          if (insideRes.failureReason) {
+            console.log(`    Metadata Note: ${insideRes.failureReason}`);
+          }
+        }
+        if (c.metadataDisagreementCount !== undefined) {
+          console.log(
+            `  [disagreement] inside_rvfc vs vf_rvfc: count=${c.metadataDisagreementCount}/${insideRes?.sampleCount ?? 0} (${((c.metadataDisagreementRate ?? 0) * 100).toFixed(2)}%)`
+          );
         }
         if (
-          res.deltaDistribution &&
-          Object.keys(res.deltaDistribution).length > 0
+          vfRes.deltaDistribution &&
+          Object.keys(vfRes.deltaDistribution).length > 0
         ) {
           console.log(
-            `    Delta Distribution (0.1us buckets): ${JSON.stringify(res.deltaDistribution)}`
+            `    Delta Distribution (0.1us buckets): ${JSON.stringify(vfRes.deltaDistribution)}`
           );
         }
-        if (Object.keys(res.lagDistribution).length > 0) {
+        if (Object.keys(vfRes.lagDistribution).length > 0) {
           console.log(
-            `    Lag Distribution (delta frames): ${JSON.stringify(res.lagDistribution)}`
+            `    Lag Distribution (delta frames): ${JSON.stringify(vfRes.lagDistribution)}`
           );
         }
-        if (Object.keys(res.rejectionReasons).length > 0) {
+        if (Object.keys(vfRes.rejectionReasons).length > 0) {
           console.log(
-            `    Rejection Reasons: ${JSON.stringify(res.rejectionReasons)}`
+            `    Rejection Reasons: ${JSON.stringify(vfRes.rejectionReasons)}`
           );
         }
       }
@@ -3308,10 +3563,40 @@ export async function main(): Promise<void> {
           );
         }
       }
+      if (
+        report.metadataDisagreementByClass &&
+        Object.keys(report.metadataDisagreementByClass).length > 0
+      ) {
+        console.log(
+          '\n---------------------------------------------------------------'
+        );
+        console.log('Metadata Disagreement Summary (inside_rvfc vs vf_rvfc):');
+        for (const [cls, d] of Object.entries(
+          report.metadataDisagreementByClass
+        )) {
+          console.log(
+            `  ${cls.padEnd(20)}: ${d.disagreementCount}/${d.sampleCount} disagreed (${(d.disagreementRate * 100).toFixed(2)}%)`
+          );
+        }
+      }
 
       console.log(
         '\n==============================================================='
       );
+    }
+
+    if (options.delayRvfcMs !== undefined && options.delayRvfcMs >= 40) {
+      const fr60Case = report.cases.find(
+        (c) => c.caseName === 'fr60.mp4' || c.caseName.includes('60')
+      );
+      const fr60WrongFrameCount =
+        fr60Case?.methods.inside_rvfc.wrongFrameCount ?? 0;
+      if (fr60WrongFrameCount === 0) {
+        console.error(
+          '\nADMISSION INCOMPLETE: stress ineffective (exit 2) - metadata inside_rvfc showed 0 wrongFrame on 60 fps class under delay stress'
+        );
+        process.exit(2);
+      }
     }
 
     const hasNativeMismatch = report.cases.some(
