@@ -6110,11 +6110,15 @@ canvas.relic-page {
   cursor: progress;
 }
 
+/* The transparent border reserves the pixel the rate-limited dashed border
+ * takes, so a refusal for now swaps the border instead of widening the
+ * button and squeezing the field by two pixels. */
 .sign-in-code .action.primary.sign-in-code-submit {
   flex: none;
   align-self: flex-end;
   min-height: calc(2.4rem + 2px);
   margin-top: 0.6rem;
+  border: 1px solid transparent;
 }
 
 .sign-in-code .action.primary.sign-in-code-submit:disabled {
