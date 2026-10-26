@@ -5295,9 +5295,11 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
       // Because VideoFrame is missing, native mode is not used; no rvfc registered
       expect(videoMedia!.rvfcCallbacks.size).toBe(0);
 
-      // Zero snapshot draws: native mode never eligible, no callbacks registered
-      expect(videoMedia!.rvfcCallbacks.size).toBe(0);
-      // Seeks stay exact
+      // Zero attempts or retries in nativeMode: exactly 1 initial seek, no retry re-renders
+      const mid0Seeks = videoMedia!.seekTargets.filter(
+        (t) => Math.abs(t - 1 / 60) < 1e-4
+      );
+      expect(mid0Seeks).toHaveLength(1);
       await playback.seek({ value: 5, rate: 30 });
       expect(playback.getState().time.value).toBe(5);
       expect(outCanvas.pixel.r).toBe(5);
