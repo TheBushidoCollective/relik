@@ -249,7 +249,9 @@ jobs:
           # guarantee, so it is checked against what is actually served rather
           # than against what was built.
           curl -fsS -o/tmp/shell "$SERVICE/assets/viewer.js"
-          test "$(wc -c < /tmp/shell)" -lt 460800
+          # 475 KiB: the same ceiling as SHELL_CEILING_BYTES in
+          # packages/relic-viewer/test/shell-budget.test.ts. Change both together.
+          test "$(wc -c < /tmp/shell)" -lt 486400
           if grep -q 'GlobalWorkerOptions' /tmp/shell; then
             echo "the pdf renderer is inlined in the app shell"
             exit 1
