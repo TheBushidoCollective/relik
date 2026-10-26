@@ -5,7 +5,8 @@
     "bytes": 36482700,
     "productionMints": 0,
     "productionWrites": 0,
-    "privateInputsOutsideRepo": true
+    "privateInputsOutsideRepo": true,
+    "ciphertextCrc32cVerified": true
   },
   "browser": "HeadlessChrome/149.0.7827.55",
   "baseline": {
