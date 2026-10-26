@@ -66,6 +66,7 @@ import {
   keylessLink,
   keyPhraseWords,
 } from './copy-link.ts';
+import type { LinkRequestOutcome } from './passkey-common.ts';
 import type { DecisionPanelHandle } from './decision-panel.ts';
 import {
   type DecisionAccess,
@@ -3238,6 +3239,43 @@ function policyLink(): HTMLElement {
   return link;
 }
 
+export function linkSentCopy(
+  address: string,
+  relicId: string,
+  fragment: string,
+  deps: ViewerDeps
+): { readonly message: string; readonly warning?: string } {
+  const message =
+    `If ${plainLabel(address)} can receive mail, a link is on its way. ` +
+    'Following it verifies the address and brings you back here.';
+  const warning = !keySurvivesNavigation(relicId, fragment, deps)
+    ? KEY_AT_RISK_NOTE
+    : undefined;
+  return { message, ...(warning ? { warning } : {}) };
+}
+
+export function requestFreshLink(
+  relicId: string,
+  fragment: string,
+  deps: ViewerDeps
+): (address: string) => Promise<LinkRequestOutcome> {
+  return async (address: string): Promise<LinkRequestOutcome> => {
+    const result = await requestMagicLink(relicId, address, deps);
+    if (result.kind === 'refused') {
+      return { kind: 'failed' };
+    }
+    const copy = linkSentCopy(address, relicId, fragment, deps);
+    return { kind: 'sent', ...copy };
+  };
+}
+
+export function dashboardLinkSent(address: string): string {
+  return (
+    `If ${plainLabel(address)} can receive mail, a link is on its way. ` +
+    'Following it verifies the address and brings you back to this dashboard.'
+  );
+}
+
 /**
  * The address step, for a reader this browser has not verified.
  *
@@ -3327,16 +3365,10 @@ export function signInForm(
       // answers 202 either way so it cannot be used to find out who has
       // commented before, and copy reading "we sent it" would hand back
       // exactly what that 202 withholds.
-      const said = [
-        line(
-          'thread-note',
-          `If ${plainLabel(address)} can receive mail, a link is on its ` +
-            'way. Following it verifies the address and brings you back ' +
-            'here.'
-        ),
-      ];
-      if (!keySurvivesNavigation(relicId, fragment, deps)) {
-        said.push(line('compose-warning', KEY_AT_RISK_NOTE));
+      const copy = linkSentCopy(address, relicId, fragment, deps);
+      const said = [line('thread-note', copy.message)];
+      if (copy.warning) {
+        said.push(line('compose-warning', copy.warning));
       }
       outcome.replaceChildren(...said);
     });
@@ -7215,6 +7247,8 @@ export function buildThread(
                 deps,
                 email: discovered.email,
                 store: preferenceStore(),
+                requestLink: () =>
+                  requestFreshLink(relicId, fragment, deps)(discovered.email),
                 onDone: () => {
                   offerHost = undefined;
                   paintComposer();
@@ -8188,6 +8222,7 @@ export function renderReady(
           opener,
           ...decisionAccess(shown, relicId, deps),
           readSession: () => readSession(deps),
+          requestLink: requestFreshLink(relicId, fragment, deps),
           signIn: (host) => {
             const outcome = document.createElement('div');
             outcome.setAttribute('aria-live', 'polite');
@@ -9262,6 +9297,30 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
           deps,
           email: session.email,
           store: preferenceStore(),
+          requestLink: async () => {
+            try {
+              const res = await deps.fetch(
+                `${deps.serviceOrigin}/api/auth/request`,
+                {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    email: session.email,
+                    return_to: '/dashboard',
+                  }),
+                }
+              );
+              if (res.status === 202) {
+                return {
+                  kind: 'sent',
+                  message: dashboardLinkSent(session.email),
+                };
+              }
+              return { kind: 'failed' };
+            } catch {
+              return { kind: 'failed' };
+            }
+          },
           onDone: () => {
             offerHost.remove();
           },
@@ -9409,9 +9468,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
           );
           sendBtn.disabled = false;
           if (res.status === 202) {
-            outcome.textContent =
-              `If ${plainLabel(address)} can receive mail, a link is on its way. ` +
-              'Following it verifies the address and brings you back to this dashboard.';
+            outcome.textContent = dashboardLinkSent(address);
           } else {
             outcome.textContent = 'Request refused. Please try again.';
           }

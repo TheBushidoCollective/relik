@@ -498,6 +498,7 @@ async function openPanel(
     readonly view?: ReadyView;
     readonly session?: SessionState;
     readonly credentials?: CredentialsLike;
+    readonly requestLink?: (email: string) => Promise<any>;
   } = {}
 ): Promise<Opened> {
   const shown = options.view ?? view();
@@ -514,14 +515,19 @@ async function openPanel(
       options.session ?? { kind: 'verified', email: READER },
     signIn: (host) => {
       signInHosts.push(host as unknown as ElementStub);
-      host.appendChild(document.createElement('form'));
+      (host as unknown as ElementStub).appendChild(new ElementStub('form'));
     },
     onTally: (tally) => tallies.push(tally),
     onOpenVersion: (version) => opened.push(version),
     onClose: () => {},
+    requestLink:
+      options.requestLink ??
+      (async (email: string) => ({
+        kind: 'sent' as const,
+        message: `If ${email} can receive mail, a link is on its way.`,
+      })),
     credentials: options.credentials,
   });
-  handles.push(handle);
   await handle.ready;
   return {
     panel: handle.element as unknown as ElementStub,
@@ -1118,5 +1124,87 @@ describe('the decisions sheet', () => {
     expect((priorSignal.reason as DOMException).message).toBe(
       'A newer passkey request replaced this one'
     );
+  });
+
+  test('passkey_fresh_link_required moves to data-passkey-link required, sending, sent and failed states', async () => {
+    let linkRequestedEmail: string | undefined;
+    const { deps } = service({
+      '/decisions/list': listReply(RECORDS),
+      '/decisions/options': () => problem('passkey_required', 409),
+      '/api/auth/passkeys/options': () =>
+        problem('passkey_fresh_link_required', 401),
+    });
+
+    const { panel, handle } = await openPanel(deps, {
+      session: { kind: 'verified', email: 'voter@example.com' },
+      requestLink: async (email: string) => {
+        linkRequestedEmail = email;
+        return {
+          kind: 'sent',
+          message: `If ${email} can receive mail, a link is on its way.`,
+          warning: 'Keep this tab open.',
+        };
+      },
+    });
+
+    press(verdict(panel, 'approve'));
+    await settle(handle);
+
+    // Section should have data-passkey-link and data-state="required"
+    const linkSection = one(panel, 'data-passkey-link');
+    expect(linkSection).toBeDefined();
+    expect(linkSection.getAttribute('data-state')).toBe('required');
+    expect(textOf(linkSection)).toContain(
+      'A first passkey can only be added right after you sign in with a link.'
+    );
+    expect(textOf(linkSection)).toContain(
+      'Send a new one, open it, then choose again. Nothing was recorded.'
+    );
+    expect(textOf(linkSection)).toContain('voter@example.com');
+
+    const sendBtn = one(panel, 'data-passkey-link-send');
+    expect(sendBtn.textContent).toBe('Send me a new link');
+    expect(sendBtn.disabled).toBe(false);
+
+    // Press Send me a new link -> sending -> sent
+    press(sendBtn);
+    await settle(handle);
+
+    expect(linkRequestedEmail).toBe('voter@example.com');
+    const sentSection = one(panel, 'data-passkey-link');
+    expect(sentSection.getAttribute('data-state')).toBe('sent');
+    expect(textOf(sentSection)).toContain(
+      'If voter@example.com can receive mail, a link is on its way.'
+    );
+    expect(textOf(sentSection)).toContain('Keep this tab open.');
+
+    // Now test failed state
+    const { deps: failDeps } = service({
+      '/decisions/list': listReply(RECORDS),
+      '/decisions/options': () => problem('passkey_required', 409),
+      '/api/auth/passkeys/options': () =>
+        problem('passkey_fresh_link_required', 401),
+    });
+
+    const { panel: failPanel, handle: failHandle } = await openPanel(failDeps, {
+      session: { kind: 'verified', email: 'voter@example.com' },
+      requestLink: async () => ({ kind: 'failed' }),
+    });
+
+    press(verdict(failPanel, 'reject'));
+    await settle(failHandle);
+
+    const failSection = one(failPanel, 'data-passkey-link');
+    expect(failSection.getAttribute('data-state')).toBe('required');
+    const failSendBtn = one(failPanel, 'data-passkey-link-send');
+    press(failSendBtn);
+    await settle(failHandle);
+    const failSectionAfter = one(failPanel, 'data-passkey-link');
+    expect(failSectionAfter.getAttribute('data-state')).toBe('failed');
+    expect(textOf(failSectionAfter)).toContain(
+      'Relic could not send a link just now. Try again later.'
+    );
+    const failSendBtnAfter = one(failPanel, 'data-passkey-link-send');
+    expect(failSendBtnAfter.disabled).toBe(false);
   });
 });
