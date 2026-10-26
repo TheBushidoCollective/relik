@@ -7662,7 +7662,9 @@ try {
     })()`);
     assert.ok(playbackStarted, 'steady playback did not enter playing state');
 
-    const sampleIntervalMs = 350;
+    // Eight samples at 250 ms keep the sampled frames inside the first 72
+    // timeline frames, the single-video segment of primary_a.mp4.
+    const sampleIntervalMs = 250;
     const playbackSamples: Array<{
       sample: SampledCanvas;
       dataFrame: number;
@@ -7685,7 +7687,7 @@ try {
         sample.center !== null &&
           sample.center !== undefined &&
           Number.isFinite(sample.center),
-        `playback sample ${i + 1}/8 missing center row bar measurement`
+        `playback sample ${i + 1}/8 missing center row bar measurement at data-frame ${sample.dataFrame}`
       );
       playbackSamples.push({
         sample,
