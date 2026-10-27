@@ -2699,9 +2699,9 @@ interface LabelCaptureItem {
   readonly sample: SampledCanvas;
   readonly dataFrame: number;
   readonly center: number;
-  readonly target?: number;
-  readonly frame?: number;
-  readonly span?: number;
+  readonly target?: number | undefined;
+  readonly frame?: number | undefined;
+  readonly span?: number | undefined;
 }
 
 async function collectLabelCaptures(
@@ -2802,7 +2802,7 @@ async function layerPacketStarts(mediaFile: string): Promise<number[]> {
     0,
     `ffprobe failed on ${mediaFile}: ${result.stderr}`
   );
-  const parsed = JSON.parse(result.stdout) as {
+  const parsed = JSON.parse(result.stdout.toString('utf8')) as {
     streams?: Array<{ time_base?: string }>;
     packets?: Array<{ pts?: number }>;
   };
@@ -2824,8 +2824,9 @@ async function layerPacketStarts(mediaFile: string): Promise<number[]> {
     .filter((pts): pts is number => Number.isSafeInteger(pts))
     .sort((a, b) => a - b);
   assert.ok(packets.length > 0, `${mediaFile} has no packets`);
+  const firstPacket = packets[0];
   assert.ok(
-    Math.abs(packets[0] * timeBase) < 1e-9,
+    firstPacket !== undefined && Math.abs(firstPacket * timeBase) < 1e-9,
     `${mediaFile} first packet is not at 0`
   );
   return packets.map((pts) => pts * timeBase);
@@ -8133,8 +8134,9 @@ try {
     }
     pass('native-playback');
     // Parity oracle: determine shared-window intervals across parity layers.
-    assert.ok(
-      Array.isArray(plan.parity_layers) && plan.parity_layers.length === 2,
+    assert.equal(
+      plan.parity_layers.length,
+      2,
       'plan parity_layers must have exactly 2 layers'
     );
 
@@ -8156,7 +8158,13 @@ try {
     const parityWindows: ParityWindow[] = [];
     for (let f = 20; f <= 44; f++) {
       let minSpan = 1;
-      for (const [layerIndex, layer] of plan.parity_layers.entries()) {
+      for (
+        let layerIndex = 0;
+        layerIndex < plan.parity_layers.length;
+        layerIndex++
+      ) {
+        const layer = plan.parity_layers[layerIndex];
+        assert.ok(layer !== undefined, 'parity layer missing');
         const s_f = layer.file_seconds[String(f)];
         const s_f1 = layer.file_seconds[String(f + 1)];
         assert.ok(
@@ -8169,7 +8177,13 @@ try {
           `parity layer ${layer.media} invalid frame duration`
         );
         const packets = layerPackets[layerIndex];
-        const nextStart = packets.find((pts) => pts > s_f + 1e-9);
+        assert.ok(
+          packets !== undefined,
+          `parity layer ${layer.media} has no packet list`
+        );
+        const nextStart: number | undefined = packets.find(
+          (pts) => pts > s_f + 1e-9
+        );
         assert.ok(
           nextStart !== undefined,
           `parity layer ${layer.media} has no packet start after s(${f})=${s_f}`
@@ -8250,7 +8264,9 @@ try {
     } else {
       const stride = (parityCaptures.length - 1) / 7;
       for (let i = 0; i < 8; i++) {
-        chosenCaptures.push(parityCaptures[Math.round(i * stride)]);
+        const pick = parityCaptures[Math.round(i * stride)];
+        assert.ok(pick !== undefined, 'parity capture index out of range');
+        chosenCaptures.push(pick);
       }
     }
 
