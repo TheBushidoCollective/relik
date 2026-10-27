@@ -8001,9 +8001,14 @@ try {
       globalThis.__otioFrameObserver = observer;
     })()`);
 
+    // A label capture reads the first painted label at or past each target, so
+    // a sample can land up to one label step past it. Linux CI measured the
+    // largest step at 3.6 frames over 12 runs of this stage. The last target
+    // stays at or below 44.999 minus twice that step, so a sample cannot cross
+    // the frame-44 ceiling (the overlay ends at frame 48) on an ordinary step.
     await installLabelCapture(browser, width, height, {
       kind: 'targets',
-      targets: [4, 10, 16, 22, 28, 34, 38, 41],
+      targets: [3, 8, 13, 18, 22, 27, 32, 37],
     });
 
     const playbackStarted = await browser.evaluate<boolean>(`(() => {
@@ -8316,9 +8321,12 @@ try {
         globalThis.__otioFrameObserver = observer;
       })()`);
 
+      // Same rule as the native stage, with the step measured under the 60 ms
+      // busy-wait: 4.97 frames at most over 48 Linux CI trials, so the last
+      // target is at or below 44.999 minus twice that.
       await installLabelCapture(lateBrowser, width, height, {
         kind: 'targets',
-        targets: [3, 8, 13, 18, 23, 28, 33, 38],
+        targets: [3, 8, 12, 17, 21, 26, 30, 35],
       });
 
       const latePlaybackStarted = await lateBrowser.evaluate<boolean>(`(() => {
