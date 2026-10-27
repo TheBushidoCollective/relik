@@ -354,6 +354,12 @@ interface Plan {
   readonly primary_start?: number;
   readonly primary_end?: number;
   readonly primary_clip_frames?: Record<string, number>;
+  readonly parity_layers: readonly {
+    readonly relic_id: string | null;
+    readonly track_id: string | null;
+    readonly media: string;
+    readonly file_seconds: Record<string, number>;
+  }[];
   readonly source_pixel_probes: readonly SourcePixelProbe[];
   readonly default_view_negative_head: DefaultViewNegativeHead;
   readonly dissolve_frame: number;
@@ -876,6 +882,38 @@ def derive(archive, out_dir):
             primary_clip_frames[str(frame)] = span["file_frame"]
     (Path(out_dir) / primary_media).parent.mkdir(parents=True, exist_ok=True)
     (Path(out_dir) / primary_media).write_bytes(zf.read(primary_media))
+    parity_layers = []
+    video_tracks = [t for t in timeline.tracks if isinstance(t, otio.schema.Track) and t.kind == otio.schema.TrackKind.Video and t.enabled]
+    for track in video_tracks:
+        covered = [covering_clip(track, otio.opentime.RationalTime(f, rate)) for f in range(20, 46)]
+        if all(c is None for c in covered):
+            continue
+        first_clip = covered[0]
+        if any(c is not first_clip for c in covered):
+            raise SystemExit("parity layer on %s is not one clip across frames 20-45" % track.name)
+        if len(first_clip.effects) > 0:
+            raise SystemExit("parity layer clip %s has effects" % first_clip.name)
+        ref = first_clip.media_reference
+        available = getattr(ref, "available_range", None)
+        avail_start = available.start_time if available is not None else otio.opentime.RationalTime(0, 1)
+        file_seconds = {}
+        for f in range(20, 46):
+            t = otio.opentime.RationalTime(f, rate)
+            s = timeline.tracks.transformed_time(t, first_clip)
+            rel = s - avail_start.rescaled_to(s.rate)
+            file_seconds[str(f)] = rel.to_seconds()
+        parity_layers.append({
+            "relic_id": relic_id(first_clip),
+            "track_id": relic_id(track),
+            "media": bundle_of(first_clip),
+            "file_seconds": file_seconds,
+        })
+    if len(parity_layers) != 2:
+        raise SystemExit("parity layers count is not 2: %d" % len(parity_layers))
+    for layer in parity_layers:
+        media_path = layer["media"]
+        (Path(out_dir) / media_path).parent.mkdir(parents=True, exist_ok=True)
+        (Path(out_dir) / media_path).write_bytes(zf.read(media_path))
 
     timewarp = next(item for item in walk(other) if relic_id(item) == "clip-v2-timewarp")
     if timewarp.parent() is not other:
@@ -1085,6 +1123,7 @@ def derive(archive, out_dir):
         "primary_start": primary_start,
         "primary_end": primary_end,
         "primary_clip_frames": primary_clip_frames,
+        "parity_layers": parity_layers,
         "source_pixel_probes": source_pixel_probes,
         "default_view_negative_head": {
             "timeline_frame": negative_head_frame,
@@ -2384,6 +2423,79 @@ interface SampledCanvas extends Uint8Array {
   center?: number | null;
 }
 
+const CANVAS_READ_FN = `(width, height) => {
+  const view = document.querySelector('section.otio-view');
+  const dataFrameAttr = view?.getAttribute('data-frame') ?? null;
+  const data_frame = dataFrameAttr !== null ? Number(dataFrameAttr) : null;
+  const canvas = document.querySelector('canvas.otio-canvas');
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+  const lost = typeof ctx?.isContextLost === 'function' ? ctx.isContextLost() : false;
+  let src = null;
+  try {
+    src = ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
+  } catch {}
+  if (!src) {
+    src = new Uint8Array(canvas.width * canvas.height * 4);
+  }
+  const out = [];
+  let alphaMin = 255;
+  let alphaMax = 0;
+  let alphaSum = 0;
+  let alphaZeroCount = 0;
+  let alphaOpaqueCount = 0;
+  for (let y = 0; y < height; y++) {
+    const sy = Math.min(canvas.height - 1, Math.floor(y * canvas.height / height));
+    for (let x = 0; x < width; x++) {
+      const sx = Math.min(canvas.width - 1, Math.floor(x * canvas.width / width));
+      const i = (sy * canvas.width + sx) * 4;
+      out.push(src[i], src[i + 1], src[i + 2], src[i + 3]);
+      const a = src[i + 3];
+      if (a < alphaMin) alphaMin = a;
+      if (a > alphaMax) alphaMax = a;
+      alphaSum += a;
+      if (a === 0) alphaZeroCount++;
+      if (a === 255) alphaOpaqueCount++;
+    }
+  }
+  let center = null;
+  if (src && canvas.width > 0) {
+    const cy = Math.floor(canvas.height / 2);
+    const lum = [];
+    for (let x = 0; x < canvas.width; x++) {
+      const i = (cy * canvas.width + x) * 4;
+      lum.push((src[i] ?? 0) + (src[i + 1] ?? 0) + (src[i + 2] ?? 0));
+    }
+    const half = (Math.min(...lum) + Math.max(...lum)) / 2;
+    let sum = 0;
+    let weight = 0;
+    for (let x = 0; x < canvas.width; x++) {
+      const w = Math.max(0, (lum[x] ?? 0) - half);
+      sum += (x + 0.5) * w;
+      weight += w;
+    }
+    if (weight > 0) {
+      center = sum / weight / canvas.width;
+    }
+  }
+  const sample_count = width * height;
+  return {
+    values: out,
+    lost,
+    context_events: (globalThis.__otioContextEvents || []).slice(),
+    alpha: {
+      sample_count,
+      min: sample_count > 0 ? alphaMin : 0,
+      max: sample_count > 0 ? alphaMax : 0,
+      mean: sample_count > 0 ? alphaSum / sample_count : 0,
+      zero_count: alphaZeroCount,
+      opaque_count: alphaOpaqueCount,
+    },
+    data_frame,
+    center,
+  };
+}`;
+
 async function sampleCanvas(
   browser: ChromeSession,
   width: number,
@@ -2400,78 +2512,7 @@ async function sampleCanvas(
     alpha: CanvasAlphaStatistics;
     data_frame: number | null;
     center: number | null;
-  }>(`(() => {
-    const view = document.querySelector('section.otio-view');
-    const dataFrameAttr = view?.getAttribute('data-frame') ?? null;
-    const data_frame = dataFrameAttr !== null ? Number(dataFrameAttr) : null;
-    const canvas = document.querySelector('canvas.otio-canvas');
-    if (!canvas) return null;
-    const ctx = canvas.getContext('2d');
-    const lost = typeof ctx?.isContextLost === 'function' ? ctx.isContextLost() : false;
-    let src = null;
-    try {
-      src = ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
-    } catch {}
-    if (!src) {
-      src = new Uint8Array(canvas.width * canvas.height * 4);
-    }
-    const out = [];
-    let alphaMin = 255;
-    let alphaMax = 0;
-    let alphaSum = 0;
-    let alphaZeroCount = 0;
-    let alphaOpaqueCount = 0;
-    for (let y = 0; y < ${height}; y++) {
-      const sy = Math.min(canvas.height - 1, Math.floor(y * canvas.height / ${height}));
-      for (let x = 0; x < ${width}; x++) {
-        const sx = Math.min(canvas.width - 1, Math.floor(x * canvas.width / ${width}));
-        const i = (sy * canvas.width + sx) * 4;
-        out.push(src[i], src[i + 1], src[i + 2], src[i + 3]);
-        const a = src[i + 3];
-        if (a < alphaMin) alphaMin = a;
-        if (a > alphaMax) alphaMax = a;
-        alphaSum += a;
-        if (a === 0) alphaZeroCount++;
-        if (a === 255) alphaOpaqueCount++;
-      }
-    }
-    let center = null;
-    if (src && canvas.width > 0) {
-      const cy = Math.floor(canvas.height / 2);
-      const lum = [];
-      for (let x = 0; x < canvas.width; x++) {
-        const i = (cy * canvas.width + x) * 4;
-        lum.push((src[i] ?? 0) + (src[i + 1] ?? 0) + (src[i + 2] ?? 0));
-      }
-      const half = (Math.min(...lum) + Math.max(...lum)) / 2;
-      let sum = 0;
-      let weight = 0;
-      for (let x = 0; x < canvas.width; x++) {
-        const w = Math.max(0, (lum[x] ?? 0) - half);
-        sum += (x + 0.5) * w;
-        weight += w;
-      }
-      if (weight > 0) {
-        center = sum / weight / canvas.width;
-      }
-    }
-    const sample_count = ${width} * ${height};
-    return {
-      values: out,
-      lost,
-      context_events: (globalThis.__otioContextEvents || []).slice(),
-      alpha: {
-        sample_count,
-        min: sample_count > 0 ? alphaMin : 0,
-        max: sample_count > 0 ? alphaMax : 0,
-        mean: sample_count > 0 ? alphaSum / sample_count : 0,
-        zero_count: alphaZeroCount,
-        opaque_count: alphaOpaqueCount,
-      },
-      data_frame,
-      center,
-    };
-  })()`);
+  }>(`(${CANVAS_READ_FN})(${width}, ${height})`);
   assert.ok(
     read?.values && read.values.length === width * height * 4,
     'canvas sample missing'
@@ -2495,47 +2536,300 @@ async function sampleCanvas(
   return pixels;
 }
 
-async function sampleAtFrames(
+type LabelCaptureRequest =
+  | {
+      readonly kind: 'targets';
+      readonly targets: readonly number[];
+    }
+  | {
+      readonly kind: 'intervals';
+      readonly intervals: readonly {
+        readonly frame: number;
+        readonly lo: number;
+        readonly hi: number;
+        readonly span: number;
+      }[];
+    };
+
+async function installLabelCapture(
   browser: ChromeSession,
   width: number,
   height: number,
-  targets: readonly number[],
-  label: string
-): Promise<
-  Array<{ sample: SampledCanvas; dataFrame: number; center: number }>
-> {
-  const samples: Array<{
-    sample: SampledCanvas;
-    dataFrame: number;
-    center: number;
-  }> = [];
-  for (const [i, target] of targets.entries()) {
-    let found: SampledCanvas | null = null;
-    for (let poll = 0; poll < 600 && found === null; poll++) {
-      const probe = await sampleCanvas(browser, width, height);
-      if (
-        typeof probe.dataFrame === 'number' &&
-        Number.isFinite(probe.dataFrame) &&
-        probe.dataFrame >= target
-      ) {
-        found = probe;
+  req: LabelCaptureRequest
+): Promise<void> {
+  await browser.evaluate<void>(`(() => {
+    if (globalThis.__otioLabelObserver) {
+      globalThis.__otioLabelObserver.disconnect();
+      delete globalThis.__otioLabelObserver;
+    }
+    globalThis.__otioLabelCaptures = [];
+    const req = ${JSON.stringify(req)};
+    const readCanvas = ${CANVAS_READ_FN};
+    const view = document.querySelector('section.otio-view');
+    if (!view) throw new Error('section.otio-view not found');
+
+    const remainingTargets = req.kind === 'targets' ? [...req.targets] : [];
+    const capturedFrames = new Set();
+
+    const onCallback = () => {
+      if (view.dataset.playing !== 'true') return;
+      const frameAttr = view.dataset.frame;
+      if (frameAttr === undefined || frameAttr === null || frameAttr === '') return;
+      const df = Number(frameAttr);
+      if (!Number.isFinite(df)) return;
+
+      if (req.kind === 'targets') {
+        const reached = [];
+        while (remainingTargets.length > 0 && remainingTargets[0] <= df) {
+          reached.push(remainingTargets.shift());
+        }
+        if (reached.length > 0) {
+          const read = readCanvas(${width}, ${height});
+          if (read) {
+            for (const target of reached) {
+              globalThis.__otioLabelCaptures.push({
+                target,
+                data_frame: df,
+                ...read,
+              });
+            }
+          }
+        }
+      } else if (req.kind === 'intervals') {
+        for (const interval of req.intervals) {
+          if (!capturedFrames.has(interval.frame) && df >= interval.lo && df < interval.hi) {
+            capturedFrames.add(interval.frame);
+            const read = readCanvas(${width}, ${height});
+            if (read) {
+              globalThis.__otioLabelCaptures.push({
+                frame: interval.frame,
+                span: interval.span,
+                data_frame: df,
+                ...read,
+              });
+            }
+            break;
+          }
+        }
+      }
+    };
+
+    const observer = new MutationObserver(() => {
+      onCallback();
+    });
+    observer.observe(view, {
+      attributes: true,
+      attributeFilter: ['data-frame'],
+    });
+    globalThis.__otioLabelObserver = observer;
+  })()`);
+}
+
+interface WaitLabelCapturesOptions {
+  readonly count?: number;
+  readonly untilFrame?: number;
+  readonly ceiling?: number;
+  readonly timeoutMs?: number;
+  readonly label?: string;
+}
+
+async function waitLabelCaptures(
+  browser: ChromeSession,
+  options: WaitLabelCapturesOptions
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const label = options.label ?? 'playback';
+  const start = Date.now();
+  let lastDf: number | null = null;
+  let lastCount = 0;
+
+  while (Date.now() - start < timeoutMs) {
+    const status = await browser.evaluate<{
+      readonly df: number | null;
+      readonly count: number;
+    }>(`(() => {
+      const root = document.querySelector('section.otio-view');
+      const frameAttr = root?.getAttribute('data-frame') ?? null;
+      const df = frameAttr !== null ? Number(frameAttr) : null;
+      const count = (globalThis.__otioLabelCaptures || []).length;
+      return { df: Number.isFinite(df) ? df : null, count };
+    })()`);
+
+    lastDf = status.df;
+    lastCount = status.count;
+
+    if (options.count !== undefined && status.count >= options.count) {
+      return;
+    }
+    if (
+      options.untilFrame !== undefined &&
+      status.df !== null &&
+      status.df >= options.untilFrame
+    ) {
+      return;
+    }
+    if (
+      options.ceiling !== undefined &&
+      status.df !== null &&
+      status.df > options.ceiling
+    ) {
+      if (options.count !== undefined && status.count < options.count) {
+        assert.fail(
+          `${label} captured ${status.count}/${options.count} label samples before timeout; last label ${status.df}`
+        );
       }
     }
+
+    await Bun.sleep(50);
+  }
+
+  if (options.count !== undefined) {
+    assert.fail(
+      `${label} captured ${lastCount}/${options.count} label samples before timeout; last label ${lastDf ?? 'none'}`
+    );
+  }
+  if (options.untilFrame !== undefined) {
+    assert.fail(
+      `${label} reached label ${lastDf ?? 'none'} before timeout waiting for frame ${options.untilFrame}`
+    );
+  }
+}
+
+interface LabelCaptureItem {
+  readonly sample: SampledCanvas;
+  readonly dataFrame: number;
+  readonly center: number;
+  readonly target?: number | undefined;
+  readonly frame?: number | undefined;
+  readonly span?: number | undefined;
+}
+
+async function collectLabelCaptures(
+  browser: ChromeSession,
+  width: number,
+  height: number
+): Promise<readonly LabelCaptureItem[]> {
+  const rawCaptures = await browser.evaluate<
+    Array<{
+      readonly values: number[] | null;
+      readonly lost: boolean;
+      readonly context_events: Array<{
+        readonly type: string;
+        readonly timestamp: number;
+        readonly target: string | null;
+      }>;
+      readonly alpha: CanvasAlphaStatistics;
+      readonly data_frame: number | null;
+      readonly center: number | null;
+      readonly target?: number;
+      readonly frame?: number;
+      readonly span?: number;
+    }>
+  >(`(() => {
+    if (globalThis.__otioLabelObserver) {
+      globalThis.__otioLabelObserver.disconnect();
+      delete globalThis.__otioLabelObserver;
+    }
+    const captures = (globalThis.__otioLabelCaptures || []).slice();
+    delete globalThis.__otioLabelCaptures;
+    return captures;
+  })()`);
+
+  const results: LabelCaptureItem[] = [];
+  for (const capture of rawCaptures) {
     assert.ok(
-      found !== null,
-      `${label} sample ${i + 1}/${targets.length} never reached data-frame ${target}`
+      capture?.values && capture.values.length === width * height * 4,
+      'canvas sample missing'
+    );
+    const record: CanvasAlphaCensusRecord = {
+      sequence: ++nextCanvasAlphaCensusSeq,
+      browser_label: browser.label ?? null,
+      width,
+      height,
+      lost: Boolean(capture.lost),
+      alpha: capture.alpha,
+      context_events: capture.context_events ?? [],
+      timestamp: Date.now(),
+    };
+    canvasAlphaCensus.push(record);
+    latestCanvasAlphaRecord = record;
+
+    const pixels = Uint8Array.from(capture.values) as SampledCanvas;
+    pixels.dataFrame = capture.data_frame;
+    pixels.center = capture.center;
+
+    assert.ok(
+      typeof capture.center === 'number' && Number.isFinite(capture.center),
+      'missing center row bar measurement'
     );
     assert.ok(
-      typeof found.center === 'number' && Number.isFinite(found.center),
-      `${label} sample ${i + 1}/${targets.length} missing center row bar measurement at data-frame ${found.dataFrame}`
+      typeof capture.data_frame === 'number' &&
+        Number.isFinite(capture.data_frame),
+      'missing data_frame in label capture'
     );
-    samples.push({
-      sample: found,
-      dataFrame: found.dataFrame as number,
-      center: found.center,
+
+    results.push({
+      sample: pixels,
+      dataFrame: capture.data_frame,
+      center: capture.center,
+      target: capture.target,
+      frame: capture.frame,
+      span: capture.span,
     });
   }
-  return samples;
+  await persistCanvasAlphaCensus();
+  return results;
+}
+
+async function layerPacketStarts(mediaFile: string): Promise<number[]> {
+  const result = await runChild(
+    [
+      'ffprobe',
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=time_base:packet=pts',
+      '-of',
+      'json',
+      mediaFile,
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(
+    result.exit,
+    0,
+    `ffprobe failed on ${mediaFile}: ${result.stderr}`
+  );
+  const parsed = JSON.parse(result.stdout.toString('utf8')) as {
+    streams?: Array<{ time_base?: string }>;
+    packets?: Array<{ pts?: number }>;
+  };
+  const stream = parsed.streams?.[0];
+  assert.ok(stream?.time_base, `${mediaFile} has no stream time_base`);
+  const [num, den, extra] = stream.time_base.split('/');
+  assert.equal(
+    extra,
+    undefined,
+    `${mediaFile} malformed time_base ${stream.time_base}`
+  );
+  const timeBase = Number(num) / Number(den);
+  assert.ok(
+    Number.isFinite(timeBase) && timeBase > 0,
+    `${mediaFile} invalid timeBase ${stream.time_base}`
+  );
+  const packets = (parsed.packets ?? [])
+    .map((p) => p.pts)
+    .filter((pts): pts is number => Number.isSafeInteger(pts))
+    .sort((a, b) => a - b);
+  assert.ok(packets.length > 0, `${mediaFile} has no packets`);
+  const firstPacket = packets[0];
+  assert.ok(
+    firstPacket !== undefined && Math.abs(firstPacket * timeBase) < 1e-9,
+    `${mediaFile} first packet is not at 0`
+  );
+  return packets.map((pts) => pts * timeBase);
 }
 
 async function canvasRowCenter(browser: ChromeSession): Promise<number> {
@@ -7707,6 +8001,16 @@ try {
       globalThis.__otioFrameObserver = observer;
     })()`);
 
+    // A label capture reads the first painted label at or past each target, so
+    // a sample can land up to one label step past it. Linux CI measured the
+    // largest step at 3.6 frames over 12 runs of this stage. The last target
+    // stays at or below 44.999 minus twice that step, so a sample cannot cross
+    // the frame-44 ceiling (the overlay ends at frame 48) on an ordinary step.
+    await installLabelCapture(browser, width, height, {
+      kind: 'targets',
+      targets: [3, 8, 13, 18, 22, 27, 32, 37],
+    });
+
     const playbackStarted = await browser.evaluate<boolean>(`(() => {
       const { promise, resolve } = Promise.withResolvers();
       const btn = document.querySelector('button.otio-play');
@@ -7725,17 +8029,16 @@ try {
     })()`);
     assert.ok(playbackStarted, 'steady playback did not enter playing state');
 
-    // Samples are taken when the clock first reaches each target frame, all at
-    // or before frame 44. The Picture-in-Picture layer ends at frame 48, where
-    // the drawn set changes and the exact resync paints before the clock label
-    // updates.
-    const playbackSamples = await sampleAtFrames(
-      browser,
-      width,
-      height,
-      [4, 10, 16, 22, 28, 34, 38, 41],
-      'playback'
-    );
+    // Samples are captured in-page via MutationObserver when the clock first
+    // reaches each target frame, all at or before frame 44. The Picture-in-Picture
+    // layer ends at frame 48, where the drawn set changes and the exact resync
+    // paints before the clock label updates.
+    await waitLabelCaptures(browser, {
+      count: 8,
+      ceiling: 45,
+      timeoutMs: 30_000,
+      label: 'playback',
+    });
 
     await browser.evaluate<void>(`(() => {
       const root = document.querySelector('section.otio-view');
@@ -7748,6 +8051,7 @@ try {
       }
     })()`);
 
+    const playbackSamples = await collectLabelCaptures(browser, width, height);
     const observedPlaybackFrames = await browser.evaluate<number[]>(`(() => {
       return (globalThis.__otioObservedFrames || []).slice();
     })()`);
@@ -7834,52 +8138,157 @@ try {
       );
     }
     pass('native-playback');
-    // Paint parity: the same timeline frame painted during native playback and
-    // while paused must match. The Picture-in-Picture layer runs at 30 fps on
-    // a 24 fps timeline, so its window stays constant over [f, f + 0.8) only
-    // when f is a multiple of 4. Sample playback until it lands on such frames.
-    const parityPlaying: Array<{ frame: number; sample: SampledCanvas }> = [];
-    for (let round = 0; round < 4 && parityPlaying.length < 2; round++) {
-      await seekTo(browser, 16);
-      await browser.evaluate<void>(`(() => {
-        const btn = document.querySelector('button.otio-play');
-        const root = document.querySelector('section.otio-view');
-        if (btn && root?.dataset.playing !== 'true') btn.click();
-      })()`);
-      for (let poll = 0; poll < 200; poll++) {
-        const probe = await sampleCanvas(browser, width, height);
-        const df = probe.dataFrame;
-        if (df === null || df === undefined || !Number.isFinite(df)) continue;
-        const f = Math.floor(df + 1e-4);
-        if (f > 44) break;
-        if (
-          f >= 20 &&
-          f % 4 === 0 &&
-          df - f < 0.6 &&
-          !parityPlaying.some((item) => item.frame === f)
-        ) {
-          parityPlaying.push({ frame: f, sample: probe });
-          if (parityPlaying.length >= 2) break;
-        }
-      }
-      await browser.evaluate<void>(`(() => {
-        const btn = document.querySelector('button.otio-play');
-        const root = document.querySelector('section.otio-view');
-        if (btn && root?.dataset.playing === 'true') btn.click();
-      })()`);
-    }
+    // Parity oracle: determine shared-window intervals across parity layers.
     assert.equal(
-      parityPlaying.length,
+      plan.parity_layers.length,
       2,
-      'paint parity found fewer than 2 playback samples on frames 20 to 44 that are multiples of 4'
+      'plan parity_layers must have exactly 2 layers'
     );
-    for (const item of parityPlaying) {
+
+    const layerPackets: number[][] = [];
+    for (const layer of plan.parity_layers) {
+      const mediaFile = join(mediaDir, layer.media);
+      const packets = await layerPacketStarts(mediaFile);
+      layerPackets.push(packets);
+    }
+
+    interface ParityWindow {
+      readonly frame: number;
+      readonly span: number;
+      readonly lo: number;
+      readonly hi: number;
+      readonly admitted: boolean;
+    }
+
+    const parityWindows: ParityWindow[] = [];
+    for (let f = 20; f <= 44; f++) {
+      let minSpan = 1;
+      for (
+        let layerIndex = 0;
+        layerIndex < plan.parity_layers.length;
+        layerIndex++
+      ) {
+        const layer = plan.parity_layers[layerIndex];
+        assert.ok(layer !== undefined, 'parity layer missing');
+        const s_f = layer.file_seconds[String(f)];
+        const s_f1 = layer.file_seconds[String(f + 1)];
+        assert.ok(
+          s_f !== undefined && s_f1 !== undefined,
+          `parity layer ${layer.media} missing file_seconds for frame ${f}`
+        );
+        const denom = s_f1 - s_f;
+        assert.ok(
+          denom > 0,
+          `parity layer ${layer.media} invalid frame duration`
+        );
+        const packets = layerPackets[layerIndex];
+        assert.ok(
+          packets !== undefined,
+          `parity layer ${layer.media} has no packet list`
+        );
+        const nextStart: number | undefined = packets.find(
+          (pts) => pts > s_f + 1e-9
+        );
+        assert.ok(
+          nextStart !== undefined,
+          `parity layer ${layer.media} has no packet start after s(${f})=${s_f}`
+        );
+        const span = Math.min(1, (nextStart - s_f) / denom);
+        if (span < minSpan) minSpan = span;
+      }
+      const lo = f;
+      const hi = f + minSpan - 0.05;
+      const admitted = hi - lo >= 0.1;
+      parityWindows.push({ frame: f, span: minSpan, lo, hi, admitted });
+    }
+
+    console.log(
+      'PARITY_WINDOWS ' +
+        parityWindows.map((w) => `${w.frame}:${w.span.toFixed(3)}`).join(' ')
+    );
+
+    const admittedIntervals = parityWindows
+      .filter((w) => w.admitted)
+      .map((w) => ({
+        frame: w.frame,
+        lo: w.lo,
+        hi: w.hi,
+        span: w.span,
+      }));
+
+    assert.ok(
+      admittedIntervals.length >= 2,
+      'parity oracle produced fewer than 2 admitted intervals'
+    );
+
+    // Paint parity: the same timeline frame painted during native playback and
+    // while paused must match. The Picture-in-Picture overlay media
+    // (overlay_alpha.webm) is a 30 fps WebM with millisecond-quantized packet
+    // presentation times (time_base=1/1000). On a 24 fps timeline, timeline frames
+    // 28 and 40 sit at 1166.67 ms and 1666.67 ms, while overlay frames 35 and 50
+    // start at 1167 ms and 1667 ms, a third of a millisecond later. Under the
+    // half-open window doctrine [start, end), a playing sample at df in [28.008, 28.6)
+    // displays overlay frame 35 whereas a paused seek to frame 28 displays frame 34.
+    // Therefore, frames 28 and 40 have near-zero shared-window spans (0.008 frames)
+    // and are excluded from the parity oracle. Only frames with shared-window
+    // interval span at least 0.1 frames are admitted.
+    await seekTo(browser, 16);
+    await installLabelCapture(browser, width, height, {
+      kind: 'intervals',
+      intervals: admittedIntervals,
+    });
+
+    await browser.evaluate<void>(`(() => {
+      const btn = document.querySelector('button.otio-play');
+      const root = document.querySelector('section.otio-view');
+      if (btn && root?.dataset.playing !== 'true') btn.click();
+    })()`);
+
+    await waitLabelCaptures(browser, {
+      untilFrame: 45,
+      timeoutMs: 15_000,
+      label: 'paint parity',
+    });
+
+    await browser.evaluate<void>(`(() => {
+      const btn = document.querySelector('button.otio-play');
+      const root = document.querySelector('section.otio-view');
+      if (btn && root?.dataset.playing === 'true') btn.click();
+    })()`);
+
+    const parityCaptures = await collectLabelCaptures(browser, width, height);
+
+    assert.ok(
+      parityCaptures.length >= 2,
+      `paint parity captured ${parityCaptures.length} playback labels inside shared-window intervals on frames 20 to 44; need at least 2`
+    );
+
+    const chosenCaptures: LabelCaptureItem[] = [];
+    if (parityCaptures.length <= 8) {
+      chosenCaptures.push(...parityCaptures);
+    } else {
+      const stride = (parityCaptures.length - 1) / 7;
+      for (let i = 0; i < 8; i++) {
+        const pick = parityCaptures[Math.round(i * stride)];
+        assert.ok(pick !== undefined, 'parity capture index out of range');
+        chosenCaptures.push(pick);
+      }
+    }
+
+    for (const item of chosenCaptures) {
+      assert.ok(
+        item.frame !== undefined && item.span !== undefined,
+        'parity capture missing frame or span'
+      );
       await seekTo(browser, item.frame);
       const pausedSample = await sampleCanvas(browser, width, height);
       const parityRmse = rmse(item.sample, pausedSample);
+      console.log(
+        `PARITY frame=${item.frame} span=${item.span.toFixed(3)} df=${item.dataFrame.toFixed(3)} rmse=${parityRmse.toFixed(3)}`
+      );
       assert.ok(
         parityRmse <= 1,
-        `paint parity RMSE ${parityRmse.toFixed(3)} exceeded 1 for chosen frame ${item.frame}`
+        `paint parity RMSE ${parityRmse.toFixed(3)} exceeded 1 for frame ${item.frame} (playing label ${item.dataFrame.toFixed(3)}, shared-window span ${item.span.toFixed(3)})`
       );
     }
     pass('paint-parity');
@@ -7912,6 +8321,14 @@ try {
         globalThis.__otioFrameObserver = observer;
       })()`);
 
+      // Same rule as the native stage, with the step measured under the 60 ms
+      // busy-wait: 4.97 frames at most over 48 Linux CI trials, so the last
+      // target is at or below 44.999 minus twice that.
+      await installLabelCapture(lateBrowser, width, height, {
+        kind: 'targets',
+        targets: [3, 8, 12, 17, 21, 26, 30, 35],
+      });
+
       const latePlaybackStarted = await lateBrowser.evaluate<boolean>(`(() => {
         const { promise, resolve } = Promise.withResolvers();
         const btn = document.querySelector('button.otio-play');
@@ -7933,15 +8350,15 @@ try {
         'late playback did not enter playing state'
       );
 
-      // Samples are taken when the clock first reaches each target frame, all
-      // at or before frame 44, so none lands on the frame-48 drawn-set change.
-      const latePlaybackSamples = await sampleAtFrames(
-        lateBrowser,
-        width,
-        height,
-        [3, 8, 13, 18, 23, 28, 33, 38],
-        'late playback'
-      );
+      // Samples are captured in-page via MutationObserver when the clock first
+      // reaches each target frame, all at or before frame 44, so none lands on
+      // the frame-48 drawn-set change.
+      await waitLabelCaptures(lateBrowser, {
+        count: 8,
+        ceiling: 45,
+        timeoutMs: 30_000,
+        label: 'late playback',
+      });
 
       await lateBrowser.evaluate<void>(`(() => {
         const root = document.querySelector('section.otio-view');
@@ -7953,6 +8370,12 @@ try {
           globalThis.__otioFrameObserver.disconnect();
         }
       })()`);
+
+      const latePlaybackSamples = await collectLabelCaptures(
+        lateBrowser,
+        width,
+        height
+      );
       assert.equal(
         latePlaybackSamples.length,
         8,

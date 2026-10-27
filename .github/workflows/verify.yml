@@ -158,6 +158,8 @@ jobs:
             2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/negative-source.log"
 
       - name: OTIO path
+        env:
+          RELIC_OTIO_SHOTS_DIR: ${{ github.workspace }}/otio-path-shots
         run: |
           set -euo pipefail
           command -v ffmpeg >/dev/null
