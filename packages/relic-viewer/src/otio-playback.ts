@@ -35,7 +35,6 @@ import {
   certifiedWindowIndex,
   checkNativeTimingEligibility,
   computePhaseAnchor,
-  containerTimeAtSourceRate,
   decoderLocalSeconds,
   decoderLocalSourceTime,
   maxWindowDuration,
@@ -763,6 +762,7 @@ export function createOtioPlayback(
   const snapshotBudget = new SnapshotPixelBudget(OTIO_RETAINED_SNAPSHOT_PIXELS);
   const vsyncTracker = new VsyncTracker();
   let nativeAnchor: { wallMs: number; time: OtioRationalTime } | null = null;
+  let nativeLastPresentMs: number | null = null;
   let nativeEpoch = 0;
   let failureResyncTimestamps: number[] = [];
   let drawnSetChangeTimestamps: number[] = [];
@@ -949,6 +949,7 @@ export function createOtioPlayback(
     graphicsLost = false;
     clockAnchor = null;
     nativeAnchor = null;
+    nativeLastPresentMs = null;
     isBuffering = true;
     notify();
     if (isPlaying) {
@@ -2107,6 +2108,7 @@ export function createOtioPlayback(
     isStarting = false;
     isBuffering = false;
     nativeAnchor = null;
+    nativeLastPresentMs = null;
     clockAnchor = null;
     notify();
     if (isPlaying) scheduleTick();
@@ -2125,6 +2127,7 @@ export function createOtioPlayback(
       typeof performance !== 'undefined' ? performance.now() : Date.now();
     nativeEpoch++;
     nativeAnchor = null;
+    nativeLastPresentMs = null;
     clockAnchor = null;
     pauseAllMedia();
     notify();
@@ -2451,7 +2454,7 @@ export function createOtioPlayback(
       }
 
       nativeAnchor = { wallMs: anchorResult.tauStar, time: T0 };
-
+      nativeLastPresentMs = null;
       for (const leaf of drawnVideoLeaves) {
         const ring = nativeRings.get(leaf.key);
         if (ring) ring.isStarting = false;
@@ -2492,6 +2495,9 @@ export function createOtioPlayback(
       return;
     }
     if (nativeMode && nativeAnchor !== null) {
+      if (nativeLastPresentMs === null) {
+        nativeLastPresentMs = now;
+      }
       const elapsed = (now - nativeAnchor.wallMs) / 1000;
       let T: OtioRationalTime;
       if (elapsed <= 0) {
@@ -2507,6 +2513,7 @@ export function createOtioPlayback(
         currentTime = clock.duration;
         isPlaying = false;
         nativeAnchor = null;
+        nativeLastPresentMs = null;
         pauseAllMedia();
         void enqueueRender(currentTime, ++renderGeneration);
         notify();
@@ -2628,22 +2635,6 @@ export function createOtioPlayback(
           if (ring?.hasLostContext()) {
             ring.resetEpoch(nativeEpoch);
           }
-          const missingWindowSec =
-            (leaf.timing.ends[leaf.req] ?? 0) -
-            (leaf.timing.starts[leaf.req] ?? 0);
-          const outOfBandLimit = Math.max(
-            2 * (missingWindowSec / leaf.rL) * 1000,
-            100
-          );
-          if (ring) {
-            if (ring.missingSince === null) ring.missingSince = now;
-            if (now - ring.missingSince > outOfBandLimit) {
-              failureResyncNeeded = true;
-              break;
-            }
-          }
-        } else if (ring) {
-          ring.missingSince = null;
         }
 
         if (ring && ring.lastCallbackWallMs !== null) {
@@ -2662,7 +2653,28 @@ export function createOtioPlayback(
         }
       }
 
-      if (failureResyncNeeded) {
+      const computePresentLimitMs = (): number => {
+        let limit = 100;
+        for (const leaf of drawnNativeLeaves) {
+          const windowSec =
+            (leaf.timing.ends[leaf.req] ?? 0) -
+            (leaf.timing.starts[leaf.req] ?? 0);
+          const leafLimit = Math.max(2 * (windowSec / leaf.rL) * 1000, 100);
+          if (leafLimit > limit) limit = leafLimit;
+        }
+        return limit;
+      };
+
+      if (!allApproved) {
+        if (
+          nativeLastPresentMs !== null &&
+          now - nativeLastPresentMs > computePresentLimitMs()
+        ) {
+          failureResyncNeeded = true;
+        }
+      }
+
+      const triggerFailureResync = (): void => {
         failureResyncTimestamps = failureResyncTimestamps.filter(
           (t) => now - t <= 10000
         );
@@ -2672,6 +2684,10 @@ export function createOtioPlayback(
           return;
         }
         void startSequence(T, true);
+      };
+
+      if (failureResyncNeeded) {
+        triggerFailureResync();
         return;
       }
 
@@ -2737,9 +2753,16 @@ export function createOtioPlayback(
       } catch {}
 
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
+        nativeLastPresentMs = now;
         currentTime = T;
         void reconcileAudio(evaluation, renderGeneration);
         notify();
+      } else if (
+        nativeLastPresentMs !== null &&
+        now - nativeLastPresentMs > computePresentLimitMs()
+      ) {
+        triggerFailureResync();
+        return;
       }
       scheduleTick();
       return;
@@ -2949,6 +2972,7 @@ export function createOtioPlayback(
       isStarting = false;
       clockAnchor = null;
       nativeAnchor = null;
+      nativeLastPresentMs = null;
       if (frameHandle !== null && typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(frameHandle);
         frameHandle = null;
@@ -2963,6 +2987,7 @@ export function createOtioPlayback(
       failureSeekCadence = false;
       clockAnchor = null;
       nativeAnchor = null;
+      nativeLastPresentMs = null;
       if (isPlaying) {
         await startSequence(currentTime);
       } else {
@@ -3055,6 +3080,7 @@ export function createOtioPlayback(
       nativeRings.clear();
       videoTimingCache.clear();
       nativeAnchor = null;
+      nativeLastPresentMs = null;
       vsyncTracker.reset();
       renderGeneration += 1;
       renderInFlight = false;

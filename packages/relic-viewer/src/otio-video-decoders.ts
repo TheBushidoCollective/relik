@@ -472,7 +472,6 @@ export class NativeDecoderRing {
     resolve: (sample: { now: number; tag: number }) => void;
     reject?: (reason?: unknown) => void;
   } | null = null;
-  missingSince: number | null = null;
   constructor(
     readonly videoElement: HTMLVideoElement,
     readonly key: string,
@@ -551,7 +550,6 @@ export class NativeDecoderRing {
     this.nextSlotIndex = 0;
     this.consecutiveUncovered = 0;
     this.startupFirstAdvancedTag = null;
-    this.missingSince = null;
     this.lastCapturedTag = null;
     for (const slot of this.slots) {
       slot.tag = null;
