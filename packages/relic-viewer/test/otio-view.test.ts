@@ -1148,7 +1148,10 @@ describe('OTIO archive projection reader', () => {
         mark.dataset['commentId'] = 'test-c1';
         mark.layout = selection.layout;
         band.append(mark);
-        window.innerHeight = 610;
+        Object.defineProperty(window, 'innerHeight', {
+          configurable: true,
+          value: 610,
+        });
         for (const id of [undefined, 'test-c1']) {
           expect(controller.measure(id)).toMatchObject({
             left: 190,
@@ -1157,7 +1160,10 @@ describe('OTIO archive projection reader', () => {
             height: 10,
           });
         }
-        window.innerHeight = 900;
+        Object.defineProperty(window, 'innerHeight', {
+          configurable: true,
+          value: 900,
+        });
         expect(controller.measure()).toMatchObject({ height: 20 });
         stage.clientHeight = 800;
         expect(controller.measure()).toMatchObject({ height: 22 });
