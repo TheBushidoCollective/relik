@@ -3507,6 +3507,7 @@ interface AuxiliaryCoincidentMarksProbe {
 interface AuxiliaryStageSnapshot {
   readonly stageScrollTop: number | null;
   readonly timelineScrollLeft: number | null;
+  readonly timelineScrollTop: number | null;
   readonly stageContent: DomRectProbe | null;
   readonly bodyRect: DomRectProbe | null;
   readonly markRect: DomRectProbe | null;
@@ -3532,6 +3533,8 @@ interface AuxiliarySidebarRowProbe {
   readonly stageAfter: number | null;
   readonly timelineBefore: number | null;
   readonly timelineAfter: number | null;
+  readonly timelineTopBefore: number | null;
+  readonly timelineTopAfter: number | null;
 }
 
 interface AuxiliarySidebarClickCapture {
@@ -4986,21 +4989,21 @@ async function exposeCommentMarkForPointer(
       setTimeout(finish, 50);
       return promise;
     };
-    const stageScrollHeight = stage.scrollHeight;
-    const stageClientHeight = stage.clientHeight;
+    const stageScrollHeight = timeline.scrollHeight;
+    const stageClientHeight = timeline.clientHeight;
     const maxScrollTop = Math.max(0, stageScrollHeight - stageClientHeight);
     const attempts = [];
     let blocker = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const current = position();
-      const stageBounds = clientBounds(stage);
+      const stageBounds = clientBounds(timeline);
       if (current.exposedRight - current.exposedLeft <= 0) {
         blocker =
           'sticky label leaves no exposed pointer interval: ' +
           JSON.stringify(current);
         break;
       }
-      const beforeScrollTop = stage.scrollTop;
+      const beforeScrollTop = timeline.scrollTop;
       let requestedScrollTop = beforeScrollTop;
       if (current.rect.top < stageBounds.top)
         requestedScrollTop += Math.floor(
@@ -5019,16 +5022,16 @@ async function exposeCommentMarkForPointer(
         0,
         Math.max(0, timeline.scrollWidth - timeline.clientWidth)
       );
-      stage.scrollTop = nextStage;
+      timeline.scrollTop = nextStage;
       timeline.scrollLeft = nextTimeline;
       await frames();
       attempts.push({
         beforeScrollTop,
         requestedScrollTop,
-        appliedScrollTop: stage.scrollTop,
+        appliedScrollTop: timeline.scrollTop,
       });
       const changed =
-        Math.abs(stage.scrollTop - beforeScrollTop) > 0.01 ||
+        Math.abs(timeline.scrollTop - beforeScrollTop) > 0.01 ||
         Math.abs(timeline.scrollLeft - beforeTimelineLeft) > 0.01;
       if (!changed) break;
     }
@@ -5038,8 +5041,8 @@ async function exposeCommentMarkForPointer(
       blocker === null &&
       (after.center.x < after.exposedLeft ||
         after.center.x > after.exposedRight ||
-        after.rect.top < clientBounds(stage).top ||
-        after.rect.bottom > clientBounds(stage).bottom)
+        after.rect.top < Math.max(clientBounds(stage).top, clientBounds(timeline).top, 0) ||
+        after.rect.bottom > Math.min(clientBounds(stage).bottom, clientBounds(timeline).bottom, window.innerHeight))
     )
       blocker =
         'mark cannot be exposed in the stage and sticky-safe interval: ' +
@@ -5562,7 +5565,7 @@ async function waitForAuxiliaryCoincidentMarks(
       };
     };
     const snapshot = () => {
-      const stage = document.querySelector('.stage-wrap');
+      const stage = document.querySelector('.otio-timeline-scroll');
       const thread = document.querySelector('.thread');
       const list = document.querySelector('.thread-list');
       const missing = [];
@@ -5651,6 +5654,7 @@ async function arrangeAuxiliarySidebarActivation(
     const empty = {
       stageScrollTop: null,
       timelineScrollLeft: null,
+      timelineScrollTop: null,
       stageContent: null,
       bodyRect: null,
       markRect: null,
@@ -5688,16 +5692,16 @@ async function arrangeAuxiliarySidebarActivation(
       };
     };
     const stageContent = () => {
-      const value = stage.getBoundingClientRect();
-      const left = value.left + stage.clientLeft;
-      const top = value.top + stage.clientTop;
+      const value = timeline.getBoundingClientRect();
+      const left = value.left + timeline.clientLeft;
+      const top = value.top + timeline.clientTop;
       return {
         left,
         top,
-        right: left + stage.clientWidth,
-        bottom: top + stage.clientHeight,
-        width: stage.clientWidth,
-        height: stage.clientHeight,
+        right: left + timeline.clientWidth,
+        bottom: top + timeline.clientHeight,
+        width: timeline.clientWidth,
+        height: timeline.clientHeight,
       };
     };
     const snapshot = (direction) => {
@@ -5707,6 +5711,7 @@ async function arrangeAuxiliarySidebarActivation(
       return {
         stageScrollTop: stage.scrollTop,
         timelineScrollLeft: timeline.scrollLeft,
+        timelineScrollTop: timeline.scrollTop,
         stageContent: content,
         bodyRect,
         markRect,
@@ -5718,20 +5723,20 @@ async function arrangeAuxiliarySidebarActivation(
       };
     };
     const before = snapshot(null);
-    const maximum = Math.max(0, stage.scrollHeight - stage.clientHeight);
+    const maximum = Math.max(0, timeline.scrollHeight - timeline.clientHeight);
     const epsilon = 0.5;
     const bodySpanMin = Math.max(
       0,
-      stage.scrollTop + before.bodyRect.top - before.stageContent.top + epsilon
+      timeline.scrollTop + before.bodyRect.top - before.stageContent.top + epsilon
     );
     const bodySpanMax = Math.min(
       maximum,
-      stage.scrollTop + before.bodyRect.bottom - before.stageContent.bottom - epsilon
+      timeline.scrollTop + before.bodyRect.bottom - before.stageContent.bottom - epsilon
     );
     const aboveMin =
-      stage.scrollTop + before.markRect.bottom - before.stageContent.top + epsilon;
+      timeline.scrollTop + before.markRect.bottom - before.stageContent.top + epsilon;
     const belowMax =
-      stage.scrollTop + before.markRect.top - before.stageContent.bottom - epsilon;
+      timeline.scrollTop + before.markRect.top - before.stageContent.bottom - epsilon;
     const candidates = [
       {
         direction: 'above',
@@ -5754,7 +5759,7 @@ async function arrangeAuxiliarySidebarActivation(
         before,
         after: empty,
       };
-    stage.scrollTop = (candidate.min + candidate.max) / 2;
+    timeline.scrollTop = (candidate.min + candidate.max) / 2;
     const { promise, resolve } = Promise.withResolvers();
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
@@ -5802,9 +5807,12 @@ async function scrollAuxiliarySidebarRowIntoView(
         stageAfter: null,
         timelineBefore: null,
         timelineAfter: null,
+        timelineTopBefore: null,
+        timelineTopAfter: null,
       };
     const stageBefore = stage.scrollTop;
     const timelineBefore = timeline.scrollLeft;
+    const timelineTopBefore = timeline.scrollTop;
     row.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
     const { promise, resolve } = Promise.withResolvers();
     let done = false;
@@ -5846,6 +5854,8 @@ async function scrollAuxiliarySidebarRowIntoView(
       stageAfter: stage.scrollTop,
       timelineBefore,
       timelineAfter: timeline.scrollLeft,
+      timelineTopBefore,
+      timelineTopAfter: timeline.scrollTop,
     };
   })()`);
 }
@@ -6053,7 +6063,11 @@ async function waitForAuxiliaryReveal(
       return {
         missing,
         markRect,
-        stageContent: stageBounds,
+        stageContent: {
+          ...stageBounds,
+          top: Math.max(stageBounds.top, timelineBounds.top, 0),
+          bottom: Math.min(stageBounds.bottom, timelineBounds.bottom, window.innerHeight),
+        },
         center,
         usableLeft,
         usableRight,
@@ -6093,6 +6107,9 @@ async function waitForAuxiliaryReveal(
         current.usableRight !== null &&
         current.center.x >= current.usableLeft &&
         current.center.x <= current.usableRight &&
+        current.stageContent !== null &&
+        current.center.y >= current.stageContent.top &&
+        current.center.y <= current.stageContent.bottom &&
         current.activeIds.length === 1 &&
         current.activeIds[0] === expectedId &&
         current.cardId === expectedId &&
@@ -6325,6 +6342,16 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
           row.timelineAfter,
           row.timelineBefore,
           `auxiliary ${position} row.scrollIntoView moved timeline time: ${preEvidence}`
+        );
+        assert.equal(
+          row.timelineTopBefore,
+          precondition.after.timelineScrollTop,
+          `auxiliary ${position} precondition changed before row exposure: ${preEvidence}`
+        );
+        assert.equal(
+          row.timelineTopAfter,
+          row.timelineTopBefore,
+          `auxiliary ${position} row.scrollIntoView moved timeline vertically: ${preEvidence}`
         );
         assert.equal(
           row.visible,
@@ -7806,6 +7833,127 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   }
 }
 
+class LayoutOnlyComplete extends Error {}
+
+async function runLayoutMatrix(
+  browser: ChromeSession,
+  state = 'initial'
+): Promise<void> {
+  const receipts: Array<Record<string, unknown>> = [];
+  for (const [width, height] of [
+    [1440, 900],
+    [1440, 600],
+    [390, 900],
+    [390, 568],
+    [320, 900],
+    [320, 480],
+  ] as const) {
+    for (const scheme of ['light', 'dark'] as const) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: width < 600,
+      });
+      await browser.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: scheme }],
+      });
+      for (const inspectorOpen of width < 600 ? [false, true] : [false]) {
+        await browser.evaluate<void>(`(async () => {
+          const toggle = document.querySelector('.otio-inspector-toggle');
+          if (toggle && (toggle.getAttribute('aria-expanded') === 'true') !== ${inspectorOpen}) toggle.click();
+          const { promise, resolve } = Promise.withResolvers();
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+          await promise;
+        })()`);
+        const probe = await browser.evaluate<
+          { failures: string[] } & Record<string, unknown>
+        >(String.raw`(() => {
+          const selectors = {
+            stage: '.stage-wrap', root: '.otio-view', monitor: '.otio-monitor-row',
+            transport: '.otio-transport', heading: '.otio-timeline-heading',
+            timeline: '.otio-timeline-scroll', readout: '.otio-selection-readout',
+            diagnostics: '.otio-diagnostics', preview: '.otio-preview', canvas: '.otio-canvas',
+            inspector: '.otio-inspector',
+          };
+          const nodes = Object.fromEntries(Object.entries(selectors).map(([key, selector]) => [key, document.querySelector(selector)]));
+          const failures = [];
+          for (const [key, node] of Object.entries(nodes)) if (!node) failures.push('missing ' + key);
+          if (innerWidth !== ${width} || innerHeight !== ${height}) failures.push('viewport mismatch');
+          const toggle = document.querySelector('.otio-inspector-toggle');
+          if (${width < 600} && (toggle?.getAttribute('aria-expanded') === 'true') !== ${inspectorOpen}) failures.push('inspector state mismatch');
+          if (failures.length) return { failures, viewport: [innerWidth, innerHeight] };
+          const rect = node => {
+            const r = node.getBoundingClientRect();
+            return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+          };
+          const rectangles = Object.fromEntries(Object.entries(nodes).map(([key, node]) => [key, rect(node)]));
+          const { stage, root, monitor, transport, heading, timeline, readout, diagnostics, preview, canvas } = rectangles;
+          const stageBottom = stage.top + nodes.stage.clientTop + nodes.stage.clientHeight;
+          const near = (a, b, name) => { if (Math.abs(a - b) > 2) failures.push(name + ': ' + a + ' vs ' + b); };
+          near(root.bottom, stageBottom, 'bottom fill');
+          const diagnosticsVisible = nodes.diagnostics.children.length > 0 && diagnostics.height > 0;
+          near(diagnosticsVisible ? diagnostics.bottom : readout.bottom, root.bottom, 'bottom stack');
+          near(monitor.bottom, transport.top, 'monitor/transport adjacency');
+          near(transport.bottom, heading.top, 'transport/heading adjacency');
+          if (document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1) failures.push('document overflow');
+          if (nodes.stage.scrollHeight > nodes.stage.clientHeight + 2) failures.push('stage vertical overflow');
+          if (preview.width <= 0 || preview.height <= 0 || canvas.width <= 0 || canvas.height <= 0) failures.push('empty preview');
+          if (canvas.left < preview.left - 2 || canvas.right > preview.right + 2 || canvas.top < preview.top - 2 || canvas.bottom > preview.bottom + 2) failures.push('canvas outside preview');
+          const canvasStyle = getComputedStyle(nodes.canvas);
+          if (canvasStyle.objectFit !== 'contain' && Math.abs(canvas.width / canvas.height - nodes.canvas.width / nodes.canvas.height) > 0.02) failures.push('preview aspect ratio');
+          if (timeline.height > Math.min(240, root.height * 0.3) + 2) failures.push('timeline exceeds compact budget');
+          const controls = {};
+          for (const selector of ['.otio-selection-in', '.otio-selection-out', '.otio-comment-selection', '.otio-clear-selection']) {
+            const node = document.querySelector(selector);
+            if (!node) { failures.push('missing ' + selector); continue; }
+            const r = rect(node), x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+            const hit = document.elementFromPoint(x, y);
+            controls[selector] = { rect: r, hit: hit?.tagName, owned: node === hit || node.contains(hit) };
+            if (r.width <= 0 || r.height <= 0 || r.left < 0 || r.right > innerWidth || r.top < 0 || r.bottom > innerHeight || !(node === hit || node.contains(hit))) failures.push('obscured ' + selector);
+          }
+          const scroll = Object.fromEntries(['stage', 'timeline', 'inspector'].map(key => {
+            const node = nodes[key];
+            return [key, { top: node.scrollTop, left: node.scrollLeft, height: node.scrollHeight, clientHeight: node.clientHeight, width: node.scrollWidth, clientWidth: node.clientWidth }];
+          }));
+          return { failures, viewport: [innerWidth, innerHeight], rectangles, scroll, controls, diagnosticsVisible, canvasStyle: { objectFit: canvasStyle.objectFit, intrinsic: [nodes.canvas.width, nodes.canvas.height] } };
+        })()`);
+        const name = `layout-${state}-${width}x${height}-${scheme}-${inspectorOpen ? 'inspector-open' : 'inspector-closed'}`;
+        receipts.push({
+          name,
+          requestedViewport: [width, height],
+          scheme,
+          inspectorOpen,
+          ...probe,
+        });
+        await browser.screenshot(name);
+        await writeFile(
+          join(shotDir, `otio-layout-${state}-measurements.json`),
+          `${JSON.stringify(receipts, null, 2)}\n`
+        );
+        assert.deepEqual(
+          probe.failures,
+          [],
+          `${name}: ${JSON.stringify(probe)}`
+        );
+      }
+    }
+  }
+  await browser.evaluate<void>(`(() => {
+    const toggle = document.querySelector('.otio-inspector-toggle');
+    if (toggle?.getAttribute('aria-expanded') === 'true') toggle.click();
+  })()`);
+  await browser.send('Emulation.setDeviceMetricsOverride', {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await browser.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: 'light' }],
+  });
+}
+
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
   const sessionToken = await createSession();
@@ -7893,6 +8041,11 @@ try {
   });
   try {
     await waitReady(browser);
+    await runLayoutMatrix(browser);
+    if (process.env.RELIC_OTIO_LAYOUT_ONLY === '1') {
+      console.log('OTIO_LAYOUT_OK');
+      throw new LayoutOnlyComplete();
+    }
     const who = await browser.evaluate<{ email: string | null }>(
       `fetch('/api/auth/session', { credentials: 'same-origin' }).then((response) => response.json())`
     );
@@ -8984,6 +9137,14 @@ try {
       }
     }
 
+    const layoutPriorFrame = await prepareBlockedPreview(
+      browser,
+      plan.effect_frame
+    );
+    await runLayoutMatrix(browser, 'blocked');
+    await restorePreviewBase(browser);
+    await seekTo(browser, layoutPriorFrame);
+
     for (const [shotWidth, scheme] of [
       [390, 'light'],
       [1440, 'light'],
@@ -9258,18 +9419,18 @@ try {
     );
     const lowerScroll = await browser.evaluate<{ stage: number; page: number }>(
       `(() => {
-        const stage = document.querySelector('.stage-wrap');
-        stage.scrollTop = stage.scrollHeight;
-        return { stage: stage.scrollTop, page: window.scrollY };
+        const timeline = document.querySelector('.otio-timeline-scroll');
+        timeline.scrollTop = timeline.scrollHeight;
+        return { stage: timeline.scrollTop, page: window.scrollY };
       })()`
     );
     assert.ok(
       lowerScroll.stage > 0,
-      'lower-track proof did not scroll the stage'
+      'lower-track proof did not scroll the timeline'
     );
     await openComposer(browser);
     const revealed = await browser.evaluate<{ stage: number; page: number }>(
-      `(() => ({ stage: document.querySelector('.stage-wrap').scrollTop, page: window.scrollY }))()`
+      `(() => ({ stage: document.querySelector('.otio-timeline-scroll').scrollTop, page: window.scrollY }))()`
     );
     assert.equal(
       revealed.page,
@@ -10311,6 +10472,8 @@ try {
   const missing = REQUIRED.filter((stage) => !passed.has(stage));
   assert.deepEqual(missing, [], `stages not passed: ${missing.join(', ')}`);
   console.log('OTIO_PATH_OK');
+} catch (error) {
+  if (!(error instanceof LayoutOnlyComplete)) throw error;
 } finally {
   for (const child of children) child.kill('SIGKILL');
   const kept =
