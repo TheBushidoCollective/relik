@@ -88,6 +88,7 @@ class ElementStub {
   rows = 0;
   readonly dataset: Record<string, string> = {};
   readonly children: ElementStub[] = [];
+  parent: ElementStub | null = null;
   readonly attributes = new Map<string, string>();
   readonly classList = {
     add: (...names: string[]): void => {
@@ -144,6 +145,7 @@ class ElementStub {
   }
 
   appendChild(child: ElementStub): ElementStub {
+    child.parent = this;
     this.children.push(child);
     return child;
   }
@@ -155,15 +157,27 @@ class ElementStub {
         textNode.textContent = k;
         this.children.push(textNode);
       } else {
+        k.parent = this;
         this.children.push(k);
       }
     }
   }
 
   replaceChildren(...kids: Array<ElementStub | string>): void {
+    for (const child of this.children) child.parent = null;
     this.children.length = 0;
     this.textContent = '';
     this.append(...kids);
+  }
+
+  replaceWith(replacement: ElementStub): void {
+    if (this.parent === null) return;
+    const siblings = this.parent.children;
+    const index = siblings.indexOf(this);
+    if (index < 0) return;
+    replacement.parent = this.parent;
+    siblings[index] = replacement;
+    this.parent = null;
   }
 
   addEventListener(
@@ -457,8 +471,43 @@ describe('resolveEnteredKey', () => {
 
 describe('renderDead and Key Entry Form (DOM)', () => {
   let rootBody: ElementStub;
+  let createdElements: ElementStub[];
+
+  const threadFetch = (ciphertext: Uint8Array): typeof globalThis.fetch =>
+    (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === 'https://storage.example/blob') {
+        return new Response(ciphertext as unknown as BodyInit);
+      }
+      if (url.endsWith('/api/auth/session')) {
+        return Response.json({ email: null });
+      }
+      if (url.endsWith('/api/relics/relic123/comments')) {
+        return Response.json([]);
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof globalThis.fetch;
+
+  const expectInitialThreadReady = async (): Promise<void> => {
+    await waitUntil(() => {
+      const thread = rootBody.querySelector('#comment-thread');
+      return thread?.dataset['threadReady'] === 'true';
+    });
+    const thread = rootBody.querySelector('#comment-thread');
+    expect(thread?.dataset['session']).toBe('anonymous');
+    expect(thread?.querySelector('.thread-refusal')).toBeNull();
+    expect(thread?.querySelectorAll('.thread-list')[0]?.children).toHaveLength(
+      0
+    );
+    expect(rootBody.querySelectorAll('#comment-thread')).toHaveLength(1);
+    expect(
+      createdElements.filter((element) => element.id === 'comment-thread')
+    ).toHaveLength(1);
+    expect(rootBody.querySelector('.action-comments')).not.toBeNull();
+  };
 
   beforeEach(() => {
+    createdElements = [];
     rootBody = new ElementStub('body');
     (globalThis as unknown as { document: unknown }).document = {
       body: rootBody,
@@ -468,7 +517,11 @@ describe('renderDead and Key Entry Form (DOM)', () => {
           getPropertyValue: () => '',
         },
       },
-      createElement: (tag: string) => new ElementStub(tag),
+      createElement: (tag: string) => {
+        const element = new ElementStub(tag);
+        createdElements.push(element);
+        return element;
+      },
       createElementNS: (_ns: string, tag: string) => new ElementStub(tag),
       createTextNode: (text: string) => {
         const n = new ElementStub('#text');
@@ -730,12 +783,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: (async (input: RequestInfo | URL) => {
-        if (String(input).includes('/blob')) {
-          return new Response(ciphertext as unknown as BodyInit);
-        }
-        return globalThis.fetch(input);
-      }) as unknown as typeof globalThis.fetch,
+      fetch: threadFetch(ciphertext),
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
@@ -770,6 +818,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     form.submit();
 
     await waitUntil(() => rootBody.querySelector('.stage-dead') === null);
+    expect(rootBody.querySelector('.action-comments')).not.toBeNull();
+    await expectInitialThreadReady();
 
     // Decryption succeeded in place: dead card is gone and document is rendered
     expect(rootBody.querySelector('.stage-dead')).toBeNull();
@@ -800,12 +850,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: (async (input: RequestInfo | URL) => {
-        if (String(input).includes('/blob')) {
-          return new Response(ciphertext as unknown as BodyInit);
-        }
-        return globalThis.fetch(input);
-      }) as unknown as typeof globalThis.fetch,
+      fetch: threadFetch(ciphertext),
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
@@ -840,6 +885,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     form.submit();
 
     await waitUntil(() => rootBody.querySelector('.stage-dead') === null);
+    expect(rootBody.querySelector('.action-comments')).not.toBeNull();
+    await expectInitialThreadReady();
 
     expect(rootBody.querySelector('.stage-dead')).toBeNull();
     expect(rootBody.querySelector('.doc')).not.toBeNull();

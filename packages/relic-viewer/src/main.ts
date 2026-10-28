@@ -8354,7 +8354,6 @@ export function renderReady(
       refreshDecisionTally(viewToShow);
     }
     activeView = viewToShow;
-    bar = barFor(false);
     if (viewToShow.route !== 'download') {
       thread = buildThread(
         viewToShow,
@@ -8374,6 +8373,7 @@ export function renderReady(
     } else {
       thread = undefined;
     }
+    bar = barFor(false);
     const wrap = buildStageWrap(viewToShow, usercontentOrigin);
     const stage = (wrap.firstElementChild as HTMLElement) ?? wrap;
     disposeOtioViews(document.body);
@@ -8463,27 +8463,6 @@ export function renderReady(
       right
     );
   };
-
-  // A download-only relic gets no thread, for the same reason section 6.1
-  // item 13 gives it no comparison control: nothing rendered, so there is
-  // nothing on the page to comment about.
-  if (view.route !== 'download') {
-    thread = buildThread(
-      view,
-      relicId,
-      deps,
-      (count) => {
-        commentCount = count;
-        if (bar === undefined) return;
-        const replacement = barFor(false);
-        bar.replaceWith(replacement);
-        bar = replacement;
-      },
-      (version) => {
-        void showVersion(version);
-      }
-    );
-  }
 
   showSingle(activeView);
 }
