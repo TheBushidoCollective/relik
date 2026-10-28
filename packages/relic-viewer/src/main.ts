@@ -6654,6 +6654,15 @@ export function buildThread(
             const entry = entryById(commentId);
             dropComposing();
             if (entry) {
+              if (aimed?.kind === 'otio') {
+                const controller =
+                  host === undefined ? undefined : otioControllerFor(host);
+                if (controller === undefined) {
+                  closeCard();
+                  return;
+                }
+                controller.reveal(aimed, commentId);
+              }
               let atBox: AnchorBox | undefined;
               const frame = host?.querySelector<HTMLIFrameElement>(
                 'iframe.usercontent-frame'
