@@ -86,7 +86,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .viewer { position: relative; display: flex; align-items: stretch; flex: 1 1 0; min-height: 0; }
 .workbench { position: relative; display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; }
 .version-banner { display: flex; flex: none; justify-content: space-between; align-items: center; gap: .75rem; padding: .55rem 1rem; border-bottom: 1px solid var(--oxide); background: var(--diff-removed); font-size: 12px; }
-.monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 238px; grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 0; border-bottom: 1px solid var(--rule-strong); }
+.monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 238px; grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 20%; border-bottom: 1px solid var(--rule-strong); }
 .composition { min-width: 0; min-height: 0; position: relative; background: #080a0b; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .preview-art { height: 100%; width: 100%; object-fit: contain; }
 .frame-burn { position: absolute; left: 18px; bottom: 14px; color: #fff; padding: .25rem .45rem; background: #080a0bd9; font-size: 11px; border: 1px solid #ffffff38; }
@@ -327,6 +327,10 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   .inspector { display: none; border-top: 1px solid var(--rule-strong); }
   .monitor-row[data-inspector-open="true"] .inspector { display: flex; }
   #inspector-toggle { display: inline-block; font-size: 10px; }
+  .selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }
+  .selection-readout .selection-text { grid-column: 1 / -1; min-width: 0; }
+  .selection-readout label { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+  .selection-readout input { width: 100%; min-width: 0; }
 }
 @media (max-width: 620px) {
   :root { --label-width: 142px; }

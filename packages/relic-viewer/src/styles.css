@@ -4782,7 +4782,7 @@ canvas.relic-page {
 .stage-otio > .notice { flex: none; }
 .otio-view { --otio-label-width: 174px; display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; width: 100%; }
 .otio-loading { margin: 1rem; font: .8rem var(--mono); color: var(--ink-soft); }
-.otio-monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 244px; grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 0; border-bottom: 1px solid var(--rule-strong); }
+.otio-monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 244px; grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 20%; border-bottom: 1px solid var(--rule-strong); }
 .otio-preview { position: relative; background: #080a0b; min-width: 0; min-height: 0; display: grid; place-items: center; overflow: hidden; }
 .otio-canvas { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
 .otio-preview-scope { position: absolute; top: .7rem; left: .7rem; max-width: calc(100% - 1.4rem); padding: .2rem .35rem; color: #e6e9e7; background: #080a0bd9; font: .6rem/1.5 var(--mono); }
@@ -4976,6 +4976,10 @@ canvas.relic-page {
   .otio-track-select { max-width: 160px; }
   .otio-preview-scope { font-size: .5rem; }
   .otio-selection-readout { padding: .6rem .5rem; }
+  .otio-selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }
+  .otio-selection-label { grid-column: 1 / -1; min-width: 0; }
+  .otio-selection-readout label { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+  .otio-selection-readout input { width: 100%; min-width: 0; }
 }
 
 /* ---------- decisions ---------- */
