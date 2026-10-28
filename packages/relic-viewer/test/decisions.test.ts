@@ -483,6 +483,10 @@ interface Opened {
 
 const handles: DecisionPanelHandle[] = [];
 
+function closeHandles(): void {
+  for (const handle of handles.splice(0)) handle.close();
+}
+
 /** Waits for the request chain the sheet exposes, however many steps it takes. */
 async function settle(handle: DecisionPanelHandle): Promise<void> {
   for (let i = 0; i < 12; i += 1) {
@@ -498,6 +502,7 @@ async function openPanel(
   options: {
     readonly view?: ReadyView;
     readonly session?: SessionState;
+    readonly readSession?: () => Promise<SessionState>;
     readonly credentials?: CredentialsLike;
     readonly requestLink?: (email: string) => Promise<LinkRequestOutcome>;
   } = {}
@@ -512,8 +517,9 @@ async function openPanel(
     deps,
     opener: new ElementStub('button') as unknown as HTMLElement,
     ...decisionAccess(shown, RELIC_ID, deps),
-    readSession: async () =>
-      options.session ?? { kind: 'verified', email: READER },
+    readSession:
+      options.readSession ??
+      (async () => options.session ?? { kind: 'verified', email: READER }),
     signIn: (host) => {
       signInHosts.push(host as unknown as ElementStub);
       (host as unknown as ElementStub).appendChild(new ElementStub('form'));
@@ -529,6 +535,7 @@ async function openPanel(
       })),
     credentials: options.credentials,
   });
+  handles.push(handle);
   await handle.ready;
   return {
     panel: handle.element as unknown as ElementStub,
@@ -553,8 +560,91 @@ function outcome(panel: ElementStub): ElementStub {
 
 beforeEach(installDom);
 afterEach(() => {
-  for (const handle of handles.splice(0)) handle.close();
+  closeHandles();
   clearDom();
+});
+
+describe('decision panel fixture lifetime', () => {
+  test('teardown closes channels and prevents an in-flight recheck from painting', async () => {
+    const originalChannel = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'BroadcastChannel'
+    );
+    const channels: TestChannel[] = [];
+    class TestChannel {
+      listener: (() => void) | undefined;
+      closed = false;
+      constructor(readonly name: string) {
+        channels.push(this);
+      }
+      addEventListener(_type: string, listener: () => void): void {
+        this.listener = listener;
+      }
+      close(): void {
+        this.closed = true;
+        this.listener = undefined;
+      }
+      broadcast(): void {
+        this.listener?.();
+      }
+    }
+    Object.defineProperty(globalThis, 'BroadcastChannel', {
+      configurable: true,
+      writable: true,
+      value: TestChannel,
+    });
+
+    try {
+      const pending = Promise.withResolvers<SessionState>();
+      let reads = 0;
+      const { deps } = service({ '/decisions/list': listReply(RECORDS) });
+      const { panel } = await openPanel(deps, {
+        readSession: () => {
+          reads += 1;
+          return reads === 1
+            ? Promise.resolve({ kind: 'verified', email: READER })
+            : pending.promise;
+        },
+      });
+      const channel = channels[0] as TestChannel;
+      expect(channel.name).toBe('relic:auth');
+      let paints = 0;
+      const replaceChildren = panel.replaceChildren.bind(panel);
+      panel.replaceChildren = (...children: ElementStub[]) => {
+        paints += 1;
+        replaceChildren(...children);
+      };
+
+      channel.broadcast();
+      expect(reads).toBe(2);
+      closeHandles();
+      expect(channel.closed).toBe(true);
+      expect(channel.listener).toBeUndefined();
+      channel.broadcast();
+      expect(reads).toBe(2);
+      pending.resolve({ kind: 'anonymous' });
+      await pending.promise;
+      await Promise.resolve();
+      expect(paints).toBe(0);
+
+      const failure = new Error('session discovery failed');
+      await expect(
+        openPanel(deps, { readSession: () => Promise.reject(failure) })
+      ).rejects.toThrow('session discovery failed');
+      const failedChannel = channels[1] as TestChannel;
+      expect(failedChannel.closed).toBe(false);
+      closeHandles();
+      expect(failedChannel.closed).toBe(true);
+      expect(failedChannel.listener).toBeUndefined();
+    } finally {
+      closeHandles();
+      if (originalChannel === undefined) {
+        Reflect.deleteProperty(globalThis, 'BroadcastChannel');
+      } else {
+        Object.defineProperty(globalThis, 'BroadcastChannel', originalChannel);
+      }
+    }
+  });
 });
 
 describe('the band control', () => {
