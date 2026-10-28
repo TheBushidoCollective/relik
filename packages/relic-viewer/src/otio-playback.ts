@@ -78,6 +78,66 @@ const HAVE_CURRENT_DATA = 2;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
+// Diagnostic-only trace, activated by the isolated loopback proof before load.
+function deadlockTrace(
+  event: string,
+  detail: Record<string, unknown> = {}
+): void {
+  const trace = (
+    globalThis as typeof globalThis & { __otioDeadlockTrace?: unknown[] }
+  ).__otioDeadlockTrace;
+  trace?.push({ at: performance.now(), event, ...detail });
+}
+
+function deadlockMedia(media: HTMLMediaElement): Record<string, unknown> {
+  const ranges: number[][] = [];
+  for (let i = 0; i < media.seekable.length; i++)
+    ranges.push([media.seekable.start(i), media.seekable.end(i)]);
+  return {
+    src: media.currentSrc,
+    tag: media.tagName,
+    currentTime: media.currentTime,
+    seeking: media.seeking,
+    readyState: media.readyState,
+    networkState: media.networkState,
+    duration: media.duration,
+    seekable: ranges,
+    error: media.error
+      ? { code: media.error.code, message: media.error.message }
+      : null,
+  };
+}
+
+function traceDecoder(
+  media: HTMLMediaElement,
+  path: string,
+  key: string
+): void {
+  if (
+    !(globalThis as typeof globalThis & { __otioDeadlockTrace?: unknown[] })
+      .__otioDeadlockTrace
+  )
+    return;
+  for (const event of [
+    'loadedmetadata',
+    'loadeddata',
+    'canplay',
+    'seeking',
+    'seeked',
+    'waiting',
+    'stalled',
+    'error',
+  ]) {
+    media.addEventListener(event, () =>
+      deadlockTrace(`media-${event}`, {
+        path,
+        key,
+        media: deadlockMedia(media),
+      })
+    );
+  }
+}
+
 export interface OtioTrackState {
   readonly id: string;
   readonly name: string;
@@ -1361,6 +1421,20 @@ export function createOtioPlayback(
     gen: number
   ): Promise<boolean> {
     if (stale(gen)) return Promise.resolve(false);
+    const traceSeek = (event: string): void => {
+      if (
+        (globalThis as typeof globalThis & { __otioDeadlockTrace?: unknown[] })
+          .__otioDeadlockTrace
+      ) {
+        deadlockTrace(event, {
+          gen,
+          target,
+          decodedAt: decodedAt.get(media) ?? null,
+          media: deadlockMedia(media),
+        });
+      }
+    };
+    traceSeek('seek-enter');
     if (
       !media.seeking &&
       media.currentTime === target &&
@@ -1368,12 +1442,14 @@ export function createOtioPlayback(
       (decodedAt.get(media) === target || !decodedAt.has(media))
     ) {
       decodedAt.set(media, target);
+      traceSeek('seek-fast');
       return Promise.resolve(true);
     }
     const { promise, resolve } = Promise.withResolvers<boolean>();
     let settled = false;
     const finish = (ok: boolean): void => {
       if (settled) return;
+      traceSeek(ok ? 'seek-finish-true' : 'seek-finish-false');
       settled = true;
       media.removeEventListener('seeked', onSeeked);
       media.removeEventListener('loadeddata', onReady);
@@ -1392,6 +1468,7 @@ export function createOtioPlayback(
       resolve(false);
     };
     const onSeeked = (): void => {
+      traceSeek('seek-handler-seeked');
       if (
         !media.seeking &&
         media.currentTime === target &&
@@ -1400,6 +1477,7 @@ export function createOtioPlayback(
         finish(true);
     };
     const onReady = (): void => {
+      traceSeek('seek-handler-loadeddata');
       if (
         !media.seeking &&
         media.readyState >= HAVE_CURRENT_DATA &&
@@ -1413,8 +1491,10 @@ export function createOtioPlayback(
     media.addEventListener('loadeddata', onReady);
     media.addEventListener('error', onError);
     try {
+      traceSeek('seek-before-assignment');
       if (!media.seeking || media.currentTime !== target)
         media.currentTime = target;
+      traceSeek('seek-after-assignment');
     } catch {
       finish(false);
       return promise;
@@ -1429,6 +1509,7 @@ export function createOtioPlayback(
   ): Promise<LoadedVideo | null> {
     const existing = videoPromises.get(key);
     if (existing) return existing;
+    deadlockTrace('video-acquire-start', { key, path, gen: _gen });
     const pending = (async () => {
       const url = await sharedUrl(path);
       if (!url || isDisposed) return null;
@@ -1436,6 +1517,7 @@ export function createOtioPlayback(
         return null;
       const element = document.createElement('video');
       if (isDisposed) return null;
+      traceDecoder(element, path, key);
       element.preload = 'auto';
       element.playsInline = true;
       element.muted = true;
@@ -1480,6 +1562,14 @@ export function createOtioPlayback(
       return entry;
     })();
     videoPromises.set(key, pending);
+    void pending.then((video) =>
+      deadlockTrace('video-acquire-finish', {
+        key,
+        path,
+        gen: _gen,
+        ok: !!video,
+      })
+    );
     return pending;
   }
 
@@ -1491,6 +1581,7 @@ export function createOtioPlayback(
   ): Promise<LoadedAudio | null> {
     const existing = audioPromises.get(key);
     if (existing) return existing;
+    deadlockTrace('audio-acquire-start', { key, path, gen: _gen });
     const pending = (async () => {
       const url = await sharedUrl(path);
       if (!url || isDisposed) return null;
@@ -1501,6 +1592,7 @@ export function createOtioPlayback(
             ? new Audio()
             : null;
       if (!element || isDisposed) return null;
+      traceDecoder(element, path, key);
       element.preload = 'auto';
       element.src = url;
       const entry: LoadedAudio = {
@@ -1550,6 +1642,14 @@ export function createOtioPlayback(
       return entry;
     })();
     audioPromises.set(key, pending);
+    void pending.then((audio) =>
+      deadlockTrace('audio-acquire-finish', {
+        key,
+        path,
+        gen: _gen,
+        ok: !!audio,
+      })
+    );
     return pending;
   }
 
@@ -1801,9 +1901,27 @@ export function createOtioPlayback(
     }
     if (sampleUnavailable(doc, contrib)) return { kind: 'empty' };
     // Key is precomputed by caller
+    deadlockTrace('leaf-acquire-start', {
+      key,
+      path: contrib.bundle_path,
+      gen,
+    });
     const video = await acquireVideo(key, contrib.bundle_path, gen);
+    deadlockTrace('leaf-acquire-finish', {
+      key,
+      path: contrib.bundle_path,
+      gen,
+      ok: !!video,
+    });
     if (stale(gen) || !video) return { kind: 'empty' };
+    deadlockTrace('timing-start', { key, path: contrib.bundle_path, gen });
     const timing = await sharedVideoTiming(contrib.bundle_path, mime);
+    deadlockTrace('timing-finish', {
+      key,
+      path: contrib.bundle_path,
+      gen,
+      timing: timing?.kind,
+    });
     if (stale(gen)) return { kind: 'empty' };
     const midpoint = videoDecoderTime(contrib.source_time, timing);
     const target = midpoint ?? decoderLocalSeconds(contrib.source_time);
@@ -2026,6 +2144,7 @@ export function createOtioPlayback(
 
   async function renderAt(time: OtioRationalTime, gen: number): Promise<void> {
     if (stale(gen)) return;
+    deadlockTrace('render-start', { gen, time, buffering: isBuffering });
     renderInFlight = true;
     try {
       const evaluation = evaluateOtioAt(doc, timelineId, time);
@@ -2046,15 +2165,19 @@ export function createOtioPlayback(
         );
       }
       const leaves = await prepareLeaves(evaluation, tree, gen);
+      deadlockTrace('leaves-prepared', { gen });
       if (stale(gen)) return;
       let presented = false;
       try {
         presented = paint(tree, leaves);
+        deadlockTrace('paint-finish', { gen, presented });
       } catch {
         // A missing surface must not paint a stale frame.
       }
       images.evict();
+      deadlockTrace('audio-reconcile-start', { gen });
       await reconcileAudio(evaluation, gen);
+      deadlockTrace('audio-reconcile-finish', { gen });
       if (stale(gen)) return;
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
         restoreVisibleCanvas();
@@ -2066,6 +2189,7 @@ export function createOtioPlayback(
       }
       notify();
     } finally {
+      deadlockTrace('render-finish', { gen, buffering: isBuffering });
       if (gen === renderGeneration) renderInFlight = false;
     }
   }

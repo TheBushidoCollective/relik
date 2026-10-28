@@ -2078,6 +2078,19 @@ async function openBrowser(
     })();`
         : '';
     const pagePrelude = [
+      String.raw`(() => {
+        globalThis.__otioDeadlockTrace = [];
+        globalThis.__otioPageMessages = [];
+        for (const level of ['log', 'warn', 'error']) {
+          const original = console[level];
+          console[level] = function (...args) {
+            globalThis.__otioPageMessages.push({ at: performance.now(), level, args: args.map(String) });
+            return original.apply(this, args);
+          };
+        }
+        addEventListener('error', (event) => globalThis.__otioPageMessages.push({ at: performance.now(), level: 'exception', message: event.message, stack: event.error?.stack }));
+        addEventListener('unhandledrejection', (event) => globalThis.__otioPageMessages.push({ at: performance.now(), level: 'unhandledrejection', message: String(event.reason), stack: event.reason?.stack }));
+      })();`,
       options.recordMediaSeekTargets
         ? String.raw`(() => {
           const key = '__relicOtioMediaSeekTargets';
@@ -2386,6 +2399,20 @@ async function waitReady(browser: ChromeSession): Promise<string> {
     tick();
     return promise;
   })()`);
+  if (ready !== 'true' && ready !== 'diagnostic' && ready !== 'structural') {
+    const receipt = await browser.evaluate(`(() => ({
+      root: document.querySelector('.otio-view') ? {...document.querySelector('.otio-view').dataset} : null,
+      diagnostics: Array.from(document.querySelectorAll('[class*="diagnostic"], [role="alert"]'), node => node.textContent),
+      trace: globalThis.__otioDeadlockTrace || [],
+      messages: globalThis.__otioPageMessages || [],
+      seekTargets: globalThis.__relicOtioMediaSeekTargets || [],
+      videoSeekTargets: globalThis.__relicOtioVideoSeekTargets || [],
+    }))()`);
+    await writeFile(
+      join(shotDir, 'initial-readiness-deadlock.json'),
+      `${JSON.stringify({ ready, receipt }, null, 2)}\n`
+    );
+  }
   assert.notEqual(ready, 'error', 'OTIO view reported a parse error');
   assert.ok(
     ready === 'true' || ready === 'diagnostic' || ready === 'structural',
