@@ -648,103 +648,115 @@ export async function mountOtioView(
     seekFrame(rescaleTime(range.start_time, rate).value);
     if (focus) emitAim(true);
   }
-  function measure(commentId?: string): DOMRect | undefined {
-    if (commentId !== undefined) {
-      const mark = root.querySelector<HTMLElement>(
-        `.otio-comment-mark[data-comment-id="${commentId}"]`
-      );
-      return mark?.getBoundingClientRect();
-    }
-
-    const anchor = projectedSelection?.anchor ?? selected;
-    if (!anchor) return undefined;
-
-    const trackId = projectedSelection?.target
-      ? projectedSelection.target.track
-      : anchor.track_id;
-    const rail =
-      (trackId ? rails.get(trackId) : null) ??
-      root.querySelector<HTMLElement>('.otio-track-rail');
-    if (!rail) return undefined;
-
-    const row = rail.closest('.otio-track-row') as HTMLElement | null;
-    const label = row?.querySelector('.otio-track-label') as HTMLElement | null;
+  function timelineViewport(target: HTMLElement): DOMRect {
     const scrollRect = scroll.getBoundingClientRect();
+    const stage = root.closest<HTMLElement>('.stage-wrap');
+    const stageRect = stage?.getBoundingClientRect();
+    const label = target
+      .closest('.otio-track-row')
+      ?.querySelector<HTMLElement>('.otio-track-label');
     const labelRect = label?.getBoundingClientRect();
-    const railRect = rail.getBoundingClientRect();
-
-    const clipLeft = labelRect ? labelRect.right : scrollRect.left;
-    const clipRight = scrollRect.right;
-    const clipTop = railRect.top;
-    const clipBottom = railRect.bottom;
-    const trackHeight = clipBottom - clipTop;
-
-    const selNode =
-      rail.querySelector<HTMLElement>('.otio-selection') ??
-      root.querySelector<HTMLElement>('.otio-selection');
-    const selRect = selNode?.getBoundingClientRect();
-    if (!selRect) {
-      return new DOMRect(clipLeft, clipTop, 0, trackHeight);
-    }
-
-    const clampedLeft = Math.max(clipLeft, selRect.left);
-    const clampedRight = Math.min(clipRight, selRect.right);
-    const width = Math.max(0, clampedRight - clampedLeft);
-
-    if (width > 0) {
-      return new DOMRect(
-        clampedLeft,
-        selRect.top,
-        width,
-        selRect.height || trackHeight
-      );
-    }
-
-    if (selRect.right <= clipLeft) {
-      return new DOMRect(clipLeft, clipTop, 0, trackHeight);
-    }
-    if (selRect.left >= clipRight) {
-      return new DOMRect(clipRight, clipTop, 0, trackHeight);
-    }
-    return new DOMRect(clampedLeft, clipTop, 0, trackHeight);
+    const left = Math.max(
+      0,
+      scrollRect.left + scroll.clientLeft,
+      labelRect?.right ?? scrollRect.left,
+      stage && stageRect ? stageRect.left + stage.clientLeft : 0
+    );
+    const top = Math.max(
+      0,
+      scrollRect.top + scroll.clientTop,
+      stage && stageRect ? stageRect.top + stage.clientTop : 0
+    );
+    const right = Math.max(
+      left,
+      Math.min(
+        window.innerWidth,
+        scrollRect.left + scroll.clientLeft + scroll.clientWidth,
+        stage && stageRect
+          ? stageRect.left + stage.clientLeft + stage.clientWidth
+          : window.innerWidth
+      )
+    );
+    const bottom = Math.max(
+      top,
+      Math.min(
+        window.innerHeight,
+        scrollRect.top + scroll.clientTop + scroll.clientHeight,
+        stage && stageRect
+          ? stageRect.top + stage.clientTop + stage.clientHeight
+          : window.innerHeight
+      )
+    );
+    return new DOMRect(left, top, right - left, bottom - top);
   }
 
-  function alignSelection(focus: boolean): void {
-    const trackId = selected?.track_id;
-    if (focus && trackId) {
-      expandTrack(trackId);
-    }
-
-    const currentBox = measure();
-    const clippedEmpty = !currentBox || currentBox.width === 0;
-
-    if (focus || clippedEmpty) {
+  function measure(commentId?: string): DOMRect | undefined {
+    let target: HTMLElement | null | undefined;
+    if (commentId !== undefined) {
+      target = root.querySelector<HTMLElement>(
+        `.otio-comment-mark[data-comment-id="${commentId}"]`
+      );
+    } else {
+      const anchor = projectedSelection?.anchor ?? selected;
+      if (!anchor) return undefined;
+      const trackId = projectedSelection?.target
+        ? projectedSelection.target.track
+        : anchor.track_id;
       const rail =
         (trackId ? rails.get(trackId) : null) ??
         root.querySelector<HTMLElement>('.otio-track-rail');
-      const row = rail?.closest('.otio-track-row') as HTMLElement | null;
-      const label = row?.querySelector(
-        '.otio-track-label'
-      ) as HTMLElement | null;
-      const labelWidth = label?.getBoundingClientRect().width ?? 170;
-      const areaWidth = Math.max(1, scroll.clientWidth - labelWidth);
-
-      const selNode = rail?.querySelector<HTMLElement>('.otio-selection');
-      if (selNode && rail) {
-        const railRect = rail.getBoundingClientRect();
-        const selRect = selNode.getBoundingClientRect();
-        const selStart = selRect.left - railRect.left + scroll.scrollLeft;
-        const selWidth = selRect.width;
-
-        if (selWidth > areaWidth - 32) {
-          scroll.scrollLeft = Math.max(0, selStart - 16);
-        } else if (selStart < scroll.scrollLeft + 16) {
-          scroll.scrollLeft = Math.max(0, selStart - 16);
-        } else if (selStart + selWidth > scroll.scrollLeft + areaWidth - 16) {
-          scroll.scrollLeft = Math.max(0, selStart + selWidth - areaWidth + 16);
-        }
-      }
+      target = rail?.querySelector<HTMLElement>('.otio-selection');
     }
+    if (!target) return undefined;
+
+    const box = target.getBoundingClientRect();
+    const viewport = timelineViewport(target);
+    const left = Math.min(viewport.right, Math.max(viewport.left, box.left));
+    const top = Math.min(viewport.bottom, Math.max(viewport.top, box.top));
+    return new DOMRect(
+      left,
+      top,
+      Math.max(0, Math.min(viewport.right, box.right) - left),
+      Math.max(0, Math.min(viewport.bottom, box.bottom) - top)
+    );
+  }
+
+  function revealTimelineTarget(target: HTMLElement, center = false): void {
+    const box = target.getBoundingClientRect();
+    const viewport = timelineViewport(target);
+    if (viewport.width <= 0 || viewport.height <= 0) return;
+    const inset = Math.min(16, viewport.width / 4);
+    let horizontal = 0;
+    if (center) {
+      horizontal = (box.left + box.right - viewport.left - viewport.right) / 2;
+    } else if (
+      box.width > viewport.width - inset * 2 ||
+      box.left < viewport.left + inset
+    ) {
+      horizontal = box.left - viewport.left - inset;
+    } else if (box.right > viewport.right - inset) {
+      horizontal = box.right - viewport.right + inset;
+    }
+    const vertical =
+      box.height > viewport.height || box.top < viewport.top
+        ? box.top - viewport.top
+        : box.bottom > viewport.bottom
+          ? box.bottom - viewport.bottom
+          : 0;
+    scroll.scrollLeft = Math.max(0, scroll.scrollLeft + horizontal);
+    scroll.scrollTop = Math.max(0, scroll.scrollTop + vertical);
+  }
+
+  function alignSelection(focus: boolean): void {
+    // Only an explicit reveal may move the reader's timeline position.
+    if (!focus) return;
+    const trackId = selected?.track_id;
+    if (trackId) expandTrack(trackId);
+    const rail =
+      (trackId ? rails.get(trackId) : null) ??
+      root.querySelector<HTMLElement>('.otio-track-rail');
+    const target = rail?.querySelector<HTMLElement>('.otio-selection');
+    if (target) revealTimelineTarget(target);
   }
 
   function emitAim(focus: boolean): void {
@@ -1799,11 +1811,7 @@ export async function mountOtioView(
               .get(target.track)
               ?.querySelector<HTMLElement>('.otio-selection')
           : marks.get(commentId)?.find((piece) => piece.isConnected);
-      mark?.scrollIntoView({
-        block: 'nearest',
-        inline: 'center',
-        behavior: 'instant' as ScrollBehavior,
-      });
+      if (mark) revealTimelineTarget(mark, true);
     },
     clearMarks() {
       for (const pieces of marks.values())

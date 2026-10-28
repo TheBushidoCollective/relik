@@ -314,6 +314,12 @@ class ViewElement {
   error: MediaError | null = null;
   width = 0;
   height = 0;
+  clientLeft = 0;
+  clientTop = 0;
+  clientWidth = 1;
+  clientHeight = 1;
+  scrollLeft = 0;
+  scrollTop = 0;
   parentElement: ViewElement | null = null;
   readonly children: ViewElement[] = [];
   layout?: DOMRect;
@@ -330,6 +336,8 @@ class ViewElement {
     pointerEvents: '',
   };
   readonly classList = {
+    contains: (name: string): boolean =>
+      this.className.split(/\s+/).includes(name),
     add: (...names: string[]): void => {
       const current = new Set(this.className.split(/\s+/).filter(Boolean));
       for (const name of names) current.add(name);
@@ -403,6 +411,7 @@ class ViewElement {
   }
 
   dispatchEvent(event: Event): boolean {
+    Object.defineProperty(event, 'target', { configurable: true, value: this });
     for (const listener of this.listeners.get(event.type) ?? [])
       listener(event);
     return true;
@@ -425,18 +434,36 @@ class ViewElement {
     );
   }
 
-  querySelectorAll(): ViewElement[] {
-    return [];
+  querySelectorAll(selector: string): ViewElement[] {
+    const found: ViewElement[] = [];
+    const visit = (parent: ViewElement): void => {
+      for (const child of parent.children) {
+        if (child.matches(selector)) found.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return found;
   }
 
   matches(selector: string): boolean {
-    return selector === '.otio-view'
-      ? this.className.split(/\s+/).includes('otio-view')
-      : false;
+    return (
+      selector.startsWith('.') &&
+      this.className.split(/\s+/).includes(selector.slice(1))
+    );
   }
 
-  closest(): null {
+  closest(selector: string): ViewElement | null {
+    let node: ViewElement | null = this;
+    while (node) {
+      if (node.matches(selector)) return node;
+      node = node.parentElement;
+    }
     return null;
+  }
+
+  get isConnected(): boolean {
+    return this.parentElement !== null;
   }
 
   getBoundingClientRect(): DOMRect {
@@ -475,6 +502,34 @@ function findViewElement(
     if (found) return found;
   }
   return undefined;
+}
+
+function timelineGeometry(root: ViewElement) {
+  const stage = new ViewElement('main');
+  stage.className = 'stage-wrap';
+  stage.layout = new DOMRect(20, 40, 430, 580);
+  stage.clientWidth = 430;
+  stage.clientHeight = 580;
+  stage.append(root);
+  const scroll = root.querySelector('.otio-timeline-scroll');
+  const row = findViewElement(
+    root,
+    (node) =>
+      node.matches('.otio-track-row') &&
+      node.dataset['trackId'] === 'outer-track'
+  );
+  const rail = row?.querySelector('.otio-track-rail');
+  const label = row?.querySelector('.otio-track-label');
+  const band = row?.querySelector('.otio-comment-band');
+  if (!scroll || !rail || !label || !band)
+    throw new Error('expected timeline geometry targets');
+  scroll.layout = new DOMRect(10, 400, 500, 240);
+  scroll.clientLeft = 2;
+  scroll.clientTop = 2;
+  scroll.clientWidth = 480;
+  scroll.clientHeight = 220;
+  label.layout = new DOMRect(12, 402, 178, 54);
+  return { stage, scroll, rail, band };
 }
 
 class ViewCanvas extends ViewElement {
@@ -527,6 +582,8 @@ function installProjectionDom(): () => void {
     configurable: true,
     writable: true,
     value: {
+      innerWidth: 1440,
+      innerHeight: 900,
       addEventListener: (): void => {},
       removeEventListener: (): void => {},
     },
@@ -1071,7 +1128,7 @@ describe('OTIO archive projection reader', () => {
       }
     });
 
-    test('measure(commentId) returns mark element box or undefined when absent', async () => {
+    test('clips live selections and posted marks to timeline, stage and viewport', async () => {
       const root = new ViewElement('div');
       await mountOtioView(root as unknown as HTMLElement, {
         content: nestedSelectionContent(),
@@ -1079,21 +1136,168 @@ describe('OTIO archive projection reader', () => {
       });
       const controller = otioControllerFor(root as unknown as HTMLElement);
       if (!controller) throw new Error('expected controller');
-
       try {
-        const mark = new ViewElement('div');
+        const { stage, scroll, rail, band } = timelineGeometry(root);
+        const select = root.querySelector('.otio-track-select')!;
+        select.value = 'outer-track';
+        select.dispatchEvent(new Event('change'));
+        const selection = rail.querySelector('.otio-selection')!;
+        selection.layout = new DOMRect(180, 600, 300, 54);
+        const mark = new ViewElement('button');
         mark.className = 'otio-comment-mark';
         mark.dataset['commentId'] = 'test-c1';
-        mark.layout = new DOMRect(100, 200, 50, 20);
-        root.appendChild(mark);
-
-        expect(controller.measure('test-c1')).toMatchObject({
-          left: 100,
-          top: 200,
-          width: 50,
-          height: 20,
+        mark.layout = selection.layout;
+        band.append(mark);
+        window.innerHeight = 610;
+        for (const id of [undefined, 'test-c1']) {
+          expect(controller.measure(id)).toMatchObject({
+            left: 190,
+            top: 600,
+            width: 260,
+            height: 10,
+          });
+        }
+        window.innerHeight = 900;
+        expect(controller.measure()).toMatchObject({ height: 20 });
+        stage.clientHeight = 800;
+        expect(controller.measure()).toMatchObject({ height: 22 });
+        selection.layout = new DOMRect(250, 900, 20, 54);
+        expect(controller.measure()).toMatchObject({ top: 622, height: 0 });
+        selection.layout = new DOMRect(80, 350, 20, 14);
+        expect(controller.measure()).toMatchObject({
+          left: 190,
+          top: 402,
+          width: 0,
+          height: 0,
         });
+        scroll.dispatchEvent(new Event('scroll'));
+        expect(scroll.scrollTop).toBe(0);
         expect(controller.measure('absent-id')).toBeUndefined();
+      } finally {
+        controller.dispose();
+      }
+    });
+
+    test('Comment reveals a lower selection on both axes without scrolling its stage', async () => {
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: nestedSelectionContent(),
+        revision: 1,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected controller');
+      try {
+        const { stage, scroll, rail } = timelineGeometry(root);
+        stage.scrollTop = 13;
+        stage.scrollLeft = 7;
+        const select = root.querySelector('.otio-track-select')!;
+        select.value = 'outer-track';
+        select.dispatchEvent(new Event('change'));
+        scroll.scrollLeft = 43;
+        scroll.scrollTop = 79;
+        rail.dispatchEvent(
+          Object.assign(new Event('keydown'), {
+            key: 'ArrowRight',
+            shiftKey: false,
+          })
+        );
+        expect(scroll.scrollLeft).toBe(43);
+        expect(scroll.scrollTop).toBe(79);
+        const selection = rail.querySelector('.otio-selection')!;
+        selection.getBoundingClientRect = () =>
+          new DOMRect(600 - scroll.scrollLeft, 900 - scroll.scrollTop, 20, 54);
+        const emitted: OtioAnchorV1[] = [];
+        root.addEventListener('relic:otio-aim', (event) => {
+          emitted.push(
+            (event as CustomEvent<{ anchor: OtioAnchorV1 }>).detail.anchor
+          );
+        });
+        root
+          .querySelector('.otio-comment-selection')!
+          .dispatchEvent(new Event('click'));
+        expect(scroll.scrollLeft).toBe(186);
+        expect(scroll.scrollTop).toBe(334);
+        expect(controller.measure()).toMatchObject({
+          left: 414,
+          top: 566,
+          width: 20,
+          height: 54,
+        });
+        expect(emitted[0]).toEqual(
+          createOtioSelection(
+            controller.document,
+            controller.document.timeline_ids[0]!,
+            'outer-track',
+            1,
+            range(1, 1)
+          )
+        );
+        expect(stage.scrollLeft).toBe(7);
+        expect(stage.scrollTop).toBe(13);
+      } finally {
+        controller.dispose();
+      }
+    });
+
+    test('sidebar reveal scrolls the exact posted mark, not another comment or the document', async () => {
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: nestedSelectionContent(),
+        revision: 1,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected controller');
+      try {
+        const { stage, scroll } = timelineGeometry(root);
+        const timelineId = controller.document.timeline_ids[0]!;
+        const first = createOtioSelection(
+          controller.document,
+          timelineId,
+          'outer-track',
+          1,
+          range(0, 0)
+        );
+        const second = createOtioSelection(
+          controller.document,
+          timelineId,
+          'outer-track',
+          1,
+          range(12, 0)
+        );
+        expect(controller.paint(first, 'first')).toBe(true);
+        expect(controller.paint(second, 'second')).toBe(true);
+        const firstMark = root.querySelector(
+          '.otio-comment-mark[data-comment-id="first"]'
+        )!;
+        const secondMark = root.querySelector(
+          '.otio-comment-mark[data-comment-id="second"]'
+        )!;
+        firstMark.getBoundingClientRect = () =>
+          new DOMRect(300 - scroll.scrollLeft, 450 - scroll.scrollTop, 5, 14);
+        secondMark.getBoundingClientRect = () =>
+          new DOMRect(600 - scroll.scrollLeft, 900 - scroll.scrollTop, 5, 14);
+        controller.reveal(second, 'second');
+        expect(scroll.scrollTop).toBe(294);
+        expect(controller.measure('second')).toMatchObject({
+          top: 606,
+          height: 14,
+          width: 5,
+        });
+        expect(root.querySelector('.otio-selection')?.dataset['start']).toBe(
+          '12'
+        );
+        controller.reveal(first, 'first');
+        expect(scroll.scrollTop).toBe(48);
+        expect(controller.measure('first')).toMatchObject({
+          top: 402,
+          height: 14,
+          width: 5,
+        });
+        expect(root.querySelector('.otio-selection')?.dataset['start']).toBe(
+          '0'
+        );
+        expect(stage.scrollTop).toBe(0);
+        expect(stage.scrollLeft).toBe(0);
       } finally {
         controller.dispose();
       }
