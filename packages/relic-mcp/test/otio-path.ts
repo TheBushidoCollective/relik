@@ -7834,12 +7834,119 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
 }
 
 class LayoutOnlyComplete extends Error {}
+async function probeMobileInspector(
+  browser: ChromeSession
+): Promise<Record<string, unknown> & { failures: string[] }> {
+  return browser.evaluate(String.raw`(async () => {
+    const failures = [];
+    const root = document.querySelector('.otio-view');
+    const inspector = document.querySelector('.otio-inspector');
+    const tabs = document.querySelector('.otio-inspector-tabs');
+    const context = document.querySelector('.otio-context');
+    const close = document.querySelector('.otio-inspector-close');
+    const toggle = document.querySelector('.otio-inspector-toggle');
+    const readout = document.querySelector('.otio-selection-readout');
+    if (![root, inspector, tabs, context, toggle, readout].every(Boolean))
+      return { failures: ['missing inspector disclosure control'] };
+    if (!close) failures.push('missing inspector close');
+    const rect = node => {
+      const r = node.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+    };
+    const contained = (r, bounds) => r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1;
+    const hits = {};
+    const controls = [...tabs.querySelectorAll('[role=tab]'), ...(close ? [close] : [])];
+    for (const node of controls) {
+      const r = rect(node);
+      const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+      const owned = hit === node || node.contains(hit);
+      hits[node.dataset.tab || 'close'] = { rect: r, owned };
+      if (!owned || !r.width || !r.height) failures.push('obscured inspector ' + (node.dataset.tab || 'close'));
+    }
+    if (controls.length !== 4) failures.push('expected three tabs and close');
+    const inspectorRect = rect(inspector), rootRect = rect(root), readoutBefore = rect(readout);
+    const closeRect = close ? rect(close) : null;
+    if (!contained(inspectorRect, rootRect) || inspectorRect.bottom > readoutBefore.top + 1)
+      failures.push('inspector outside root or over readout');
+    const inspectorTab = tabs.querySelector('[data-tab=inspector]');
+    const markersTab = tabs.querySelector('[data-tab=markers]');
+    const mediaTab = tabs.querySelector('[data-tab=media]');
+    if (!inspectorTab || !markersTab || !mediaTab)
+      return { failures: [...failures, 'missing inspector tabs'], hits };
+    inspectorTab.click();
+    context.scrollTop = 0;
+    const style = getComputedStyle(context);
+    const usableHeight = context.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    if (usableHeight < 128) failures.push('readable context height ' + usableHeight + ' < 128');
+    const contentBounds = rect(context);
+    const heading = context.querySelector('h3');
+    const schema = context.querySelector('.otio-schema');
+    const body = context.querySelector('dl dt, dl dd');
+    const firstLine = (node, last = false) => {
+      if (!node) return null;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const lines = range.getClientRects();
+      const line = lines[last ? lines.length - 1 : 0];
+      return line ? { left: line.left, right: line.right, top: line.top, bottom: line.bottom } : null;
+    };
+    const headingRect = heading ? rect(heading) : null;
+    const schemaRect = schema ? rect(schema) : null;
+    const bodyLine = firstLine(body);
+    if (!headingRect || !schemaRect || !bodyLine || !contained(headingRect, contentBounds) || !contained(schemaRect, contentBounds) || !contained(bodyLine, contentBounds))
+      failures.push('inspector heading, schema, and first body line are not fully visible');
+    markersTab.click();
+    if (markersTab.getAttribute('aria-selected') !== 'true') failures.push('markers tab did not select');
+    mediaTab.click();
+    if (mediaTab.getAttribute('aria-selected') !== 'true') failures.push('media tab did not select');
+    context.scrollTop = 0;
+    const mediaBefore = context.scrollTop;
+    const mediaScrollHeight = context.scrollHeight;
+    const mediaClientHeight = context.clientHeight;
+    context.scrollTop = context.scrollHeight;
+    const { promise, resolve } = Promise.withResolvers();
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+    await promise;
+    const mediaAfter = context.scrollTop;
+    const lastEntry = [...context.querySelectorAll('.otio-media-reference')].at(-1);
+    const trailing = lastEntry?.querySelector('span:last-of-type');
+    const trailingLine = firstLine(trailing, true);
+    if (mediaScrollHeight > mediaClientHeight + 1) {
+      if (mediaAfter <= mediaBefore) failures.push('media context did not scroll');
+      if (!trailingLine || !contained(trailingLine, rect(context))) failures.push('last media entry trailing text not exposed');
+    }
+    const readoutAfter = rect(readout);
+    for (const edge of ['left', 'top', 'right', 'bottom'])
+      if (Math.abs(readoutAfter[edge] - readoutBefore[edge]) > 1) failures.push('readout moved during inspector scroll');
+    const tabsRect = rect(tabs), contextRect = rect(context);
+    close?.click();
+    const collapsed = toggle.getAttribute('aria-expanded') === 'false';
+    const focusRestored = document.activeElement === toggle;
+    if (!collapsed || !focusRestored) failures.push('close did not collapse and restore toggle focus');
+    return { failures, inspectorRect, rootRect, tabs: tabsRect, context: contextRect,
+      close: closeRect, usableHeight, headingRect, schemaRect, bodyLine, hits,
+      media: { before: mediaBefore, after: mediaAfter, scrollHeight: mediaScrollHeight,
+        clientHeight: mediaClientHeight, trailingLine }, readoutBefore, readoutAfter,
+      collapsed, focusRestored };
+  })()`);
+}
 
 async function runLayoutMatrix(
   browser: ChromeSession,
-  state = 'initial'
+  state = 'initial',
+  plan?: Plan
 ): Promise<void> {
   const receipts: Array<Record<string, unknown>> = [];
+  const layoutFailures: string[] = [];
+  const reviewStateExpression = `(() => {
+    const root = document.querySelector('.otio-view');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    return { frame: root.dataset.frame, playing: root.dataset.playing,
+      track: document.querySelector('.otio-track-select').value,
+      input: document.querySelector('.otio-selection-in').value,
+      output: document.querySelector('.otio-selection-out').value,
+      scrollTop: timeline.scrollTop, scrollLeft: timeline.scrollLeft };
+  })()`;
   for (const [width, height] of [
     [1440, 900],
     [1440, 600],
@@ -7858,7 +7965,13 @@ async function runLayoutMatrix(
       await browser.send('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-color-scheme', value: scheme }],
       });
+      let closedGeometry: Record<string, DomRectProbe> | undefined;
       for (const inspectorOpen of width < 600 ? [false, true] : [false]) {
+        const beforeReview = inspectorOpen
+          ? await browser.evaluate<Record<string, unknown>>(
+              reviewStateExpression
+            )
+          : undefined;
         await browser.evaluate<void>(`(async () => {
           const toggle = document.querySelector('.otio-inspector-toggle');
           if (toggle && (toggle.getAttribute('aria-expanded') === 'true') !== ${inspectorOpen}) toggle.click();
@@ -7874,7 +7987,7 @@ async function runLayoutMatrix(
             transport: '.otio-transport', heading: '.otio-timeline-heading',
             timeline: '.otio-timeline-scroll', readout: '.otio-selection-readout',
             diagnostics: '.otio-diagnostics', preview: '.otio-preview', canvas: '.otio-canvas',
-            inspector: '.otio-inspector',
+            inspector: '.otio-inspector', tabs: '.otio-inspector-tabs', context: '.otio-context',
           };
           const nodes = Object.fromEntries(Object.entries(selectors).map(([key, selector]) => [key, document.querySelector(selector)]));
           const failures = [];
@@ -7919,26 +8032,156 @@ async function runLayoutMatrix(
           return { failures, viewport: [innerWidth, innerHeight], rectangles, scroll, controls, diagnosticsVisible, canvasStyle: { objectFit: canvasStyle.objectFit, intrinsic: [nodes.canvas.width, nodes.canvas.height] } };
         })()`);
         const name = `layout-${state}-${width}x${height}-${scheme}-${inspectorOpen ? 'inspector-open' : 'inspector-closed'}`;
+        await browser.screenshot(name);
+        const geometry = probe.rectangles as
+          | Record<string, DomRectProbe>
+          | undefined;
+        if (!inspectorOpen) closedGeometry = geometry;
+        let inspectorInteraction: Record<string, unknown> | undefined;
+        if (inspectorOpen) {
+          for (const key of ['preview', 'canvas']) {
+            const before = closedGeometry?.[key],
+              after = geometry?.[key];
+            if (!before || !after) {
+              probe.failures.push(`missing ${key} before/after inspector`);
+              continue;
+            }
+            for (const edge of ['left', 'top', 'right', 'bottom'] as const)
+              if (Math.abs(before[edge] - after[edge]) > 2)
+                probe.failures.push(`inspector changed ${key} ${edge}`);
+          }
+          const interaction = await probeMobileInspector(browser);
+          const afterReview = await browser.evaluate<Record<string, unknown>>(
+            reviewStateExpression
+          );
+          inspectorInteraction = { ...interaction, beforeReview, afterReview };
+          if (JSON.stringify(beforeReview) !== JSON.stringify(afterReview))
+            probe.failures.push('inspector open/close changed review state');
+          probe.failures.push(...interaction.failures);
+        }
         receipts.push({
           name,
           requestedViewport: [width, height],
           scheme,
           inspectorOpen,
+          inspectorInteraction,
           ...probe,
         });
-        await browser.screenshot(name);
         await writeFile(
           join(shotDir, `otio-layout-${state}-measurements.json`),
           `${JSON.stringify(receipts, null, 2)}\n`
         );
-        assert.deepEqual(
-          probe.failures,
-          [],
-          `${name}: ${JSON.stringify(probe)}`
-        );
+        if (probe.failures.length)
+          layoutFailures.push(`${name}: ${probe.failures.join('; ')}`);
+        if (
+          state === 'initial' &&
+          width === 390 &&
+          height === 568 &&
+          scheme === 'light' &&
+          inspectorOpen &&
+          layoutFailures.length === 0
+        ) {
+          assert.ok(
+            plan,
+            'inspector Comment proof requires the published fixture plan'
+          );
+          await selectTrack(
+            browser,
+            plan.duplicate_track_id,
+            'range',
+            plan.duplicate_frame,
+            plan.duplicate_frame + 2
+          );
+          const before = await browser.evaluate<{
+            frame: string | null;
+            scrollTop: number;
+            scrollLeft: number;
+            input: string;
+            output: string;
+            x: number;
+            y: number;
+          }>(`(() => {
+            const root = document.querySelector('.otio-view');
+            const timeline = document.querySelector('.otio-timeline-scroll');
+            const toggle = document.querySelector('.otio-inspector-toggle');
+            toggle.click();
+            const button = document.querySelector('.otio-comment-selection');
+            const r = button.getBoundingClientRect();
+            return { frame: root.dataset.frame ?? null, scrollTop: timeline.scrollTop, scrollLeft: timeline.scrollLeft,
+              input: document.querySelector('.otio-selection-in').value,
+              output: document.querySelector('.otio-selection-out').value,
+              x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
+          })()`);
+          await clickWithRealPointer(browser, before.x, before.y);
+          const result = await browser.evaluate<{
+            open: boolean;
+            collapsed: boolean;
+            frame: string | null;
+            scrollTop: number;
+            scrollLeft: number;
+            input: string;
+            output: string;
+          }>(`(async () => {
+            const started = Date.now();
+            while (!document.querySelector('.popover-card.is-otio-composer textarea.popover-field') && Date.now() - started < 4000) {
+              const { promise, resolve } = Promise.withResolvers();
+              setTimeout(resolve, 50);
+              await promise;
+            }
+            const timeline = document.querySelector('.otio-timeline-scroll');
+            return { open: !!document.querySelector('.popover-card.is-otio-composer textarea.popover-field'),
+              collapsed: document.querySelector('.otio-inspector-toggle').getAttribute('aria-expanded') === 'false',
+              frame: document.querySelector('.otio-view').dataset.frame ?? null,
+              scrollTop: timeline.scrollTop, scrollLeft: timeline.scrollLeft,
+              input: document.querySelector('.otio-selection-in').value,
+              output: document.querySelector('.otio-selection-out').value };
+          })()`);
+          assert.ok(
+            result.open && result.collapsed,
+            `inspector Comment did not open composer and close inspector: ${JSON.stringify(result)}`
+          );
+          assert.equal(
+            result.frame,
+            before.frame,
+            'inspector Comment changed playback position'
+          );
+          assert.equal(
+            result.input,
+            before.input,
+            'inspector Comment changed selection in'
+          );
+          assert.equal(
+            result.output,
+            before.output,
+            'inspector Comment changed selection out'
+          );
+          const composer = await measureComposer(browser);
+          await browser.screenshot('layout-mobile-inspector-comment-composer');
+          assertComposerProbe(
+            composer,
+            'mobile inspector Comment composer',
+            false
+          );
+          receipts.push({
+            state: 'inspector-comment',
+            before,
+            result,
+            composer,
+          });
+          await writeFile(
+            join(shotDir, `otio-layout-${state}-measurements.json`),
+            `${JSON.stringify(receipts, null, 2)}\n`
+          );
+          await dismissComposer(browser);
+        }
       }
     }
   }
+  assert.deepEqual(
+    layoutFailures,
+    [],
+    `OTIO layout failures: ${layoutFailures.join('\n')}`
+  );
   await browser.evaluate<void>(`(() => {
     const toggle = document.querySelector('.otio-inspector-toggle');
     if (toggle?.getAttribute('aria-expanded') === 'true') toggle.click();
@@ -8041,7 +8284,7 @@ try {
   });
   try {
     await waitReady(browser);
-    await runLayoutMatrix(browser);
+    await runLayoutMatrix(browser, 'initial', plan);
     if (process.env.RELIC_OTIO_LAYOUT_ONLY === '1') {
       console.log('OTIO_LAYOUT_OK');
       throw new LayoutOnlyComplete();
