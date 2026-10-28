@@ -139,8 +139,8 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .composition:has(> .base-preview-note:not([hidden])) > .base-preview-note { top: auto; bottom: 12px; }
 .inspector { background: var(--surface); min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .inspector-tabs { display: flex; flex: none; border-bottom: 1px solid var(--rule); }
-.tab { border: 0; border-bottom: 2px solid transparent; background: none; padding: .65rem .55rem; font-size: 11px; flex: 1; }
-.inspector-content { flex: 1 1 auto; min-height: 0; padding: .9rem; overflow-y: auto; overscroll-behavior: contain; }
+.tab { border: 0; border-bottom: 2px solid transparent; background: none; padding: .6rem .4rem; font: .7rem var(--sans); flex: 1; }
+.inspector-content { flex: 1 1 auto; min-height: 0; padding: .8rem; overflow-y: auto; overscroll-behavior: contain; }
 #inspector-close { display: none; padding: .3rem .45rem; font: .65rem var(--sans); }
 .inspector h2 { margin: 0 0 .3rem; font-size: 13px; font-weight: 600; }
 .schema { color: var(--ink-soft); font: 10px var(--mono); margin: 0 0 .8rem; }
@@ -237,7 +237,9 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .selection-readout button { font: 10px var(--sans); }
 .selection-readout label { display: inline-flex; align-items: center; gap: .25rem; }
 .frame-input { width: 64px; border: 1px solid var(--rule-strong); padding: .25rem .3rem; background: var(--ground); font: 10px var(--mono); }
-.mock-controls { display: flex; flex: 0 1 auto; min-height: 0; max-height: 20%; overflow-y: auto; align-items: center; gap: .6rem; flex-wrap: wrap; padding: .6rem .85rem; font-size: 10px; color: var(--ink-soft); }
+.mock-controls { position: relative; flex: none; min-width: 0; color: var(--ink-soft); font-size: 10px; }
+.mock-controls summary { cursor: pointer; font: .55rem/1.5 var(--mono); }
+.mock-controls-body { position: absolute; right: 0; bottom: calc(100% + .5rem); z-index: 12; display: flex; flex-direction: column; gap: .6rem; width: min(20rem, calc(100vw - 2rem)); max-height: min(14rem, 35dvh); overflow-y: auto; padding: .65rem; border: 1px solid var(--rule-strong); background: var(--surface); box-shadow: 0 6px 18px #0003; }
 .mock-controls label { display: flex; align-items: center; gap: .35rem; }
 .mock-controls select { font-size: 10px; max-width: 170px; }
 .mock-controls .mock-label { font-family: var(--mono); margin-right: auto; }
@@ -343,7 +345,9 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   :root { --label-width: 142px; }
   .bar { padding: .6rem .75rem; gap: .65rem; }
   .wordmark { font-size: 24px; padding-right: .65rem; }
-  .identity-meta .format-label, #comments-toggle .button-label { display: none; }
+  .identity-meta .format-label, .identity-meta .mock-version-label, #comments-toggle .button-label { display: none; }
+  .identity-meta label { min-width: 0; }
+  .identity-meta select { max-width: 100%; }
   .filename { font-size: 11px; }
   #comments-toggle { padding: .35rem .4rem; }
   .bar-actions { gap: .2rem; }
@@ -365,8 +369,9 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   .track-name small { font-size: 8px; }
   .selection-readout { padding: .6rem; gap: .4rem; }
   .selection-readout .selection-text { flex-basis: 100%; }
-  .mock-controls { gap: .55rem; padding: .65rem .6rem; }
-  .mock-controls .mock-label { flex-basis: 100%; }
+  .timeline-heading .timeline-meta { display: none; }
+  .transport button, .transport .play { display: inline-flex; align-items: center; justify-content: center; padding: .3rem .45rem; font: .65rem var(--sans); }
+  .transport button svg { width: 12px; height: 12px; }
   #thread-list { display: block; }
   .comment { border-right: 0; }
   .compose { margin: .85rem; }
@@ -411,7 +416,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   <div class="wordmark">relic</div>
   <div class="identity">
     <div class="filename">standard-sample.otioz</div>
-    <div class="identity-meta"><span class="format-label">OTIO</span><label><span class="sr-only">Version</span><select id="revision-select"><option value="2">v2 · latest</option><option value="1">v1 · original</option></select></label><span>OTIO mock</span></div>
+    <div class="identity-meta"><span class="format-label">OTIO</span><label><span class="sr-only">Version</span><select id="revision-select"><option value="2">v2 · latest</option><option value="1">v1 · original</option></select></label><span class="mock-version-label">OTIO mock</span></div>
   </div>
   <div class="bar-actions">
     <label><span class="sr-only">Color scheme</span><select id="theme-select"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
@@ -451,6 +456,14 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     <section class="timeline" aria-label="Multiple-track timeline">
       <div class="timeline-heading">
         <div><h1>Relik Feature Editorial</h1><div class="timeline-meta">24 fps · 240 frames · 01:00:00:00</div></div>
+        <details class="mock-controls" aria-label="Mock state controls">
+          <summary class="mock-label">Mock · local only</summary>
+          <div class="mock-controls-body">
+            <label>Preview state <select id="preview-state"><option value="supported">supported</option><option value="missing-media">missing-media</option><option value="unsupported-codec">unsupported-codec</option><option value="unsupported-effect">unsupported-effect</option><option value="buffering">Buffering</option></select></label>
+            <label>v1 projection <select id="projection-select"><option value="ambiguous">ambiguous</option><option value="mapped">mapped</option><option value="partial">partial</option><option value="changed">changed</option><option value="missing">missing</option><option value="same">same</option></select></label>
+            <button type="button" id="reset-mock">Reset mock</button>
+          </div>
+        </details>
         <div class="selection-tools">
           <div class="mode-controls" aria-label="Selection mode"><button type="button" data-mode="point" aria-pressed="false">Point</button><button type="button" data-mode="range" aria-pressed="true">Range</button><button type="button" data-mode="track" aria-pressed="false">Track</button></div>
           <label><span class="sr-only">Comment track</span><select id="anchor-track"></select></label>
@@ -471,12 +484,6 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
         <button type="button" id="clear-selection" class="quiet">Clear</button>
       </div>
     </section>
-    <div class="mock-controls" aria-label="Mock state controls">
-      <span class="mock-label">Mock · local only</span>
-      <label>Preview state <select id="preview-state"><option value="supported">supported</option><option value="missing-media">missing-media</option><option value="unsupported-codec">unsupported-codec</option><option value="unsupported-effect">unsupported-effect</option><option value="buffering">Buffering</option></select></label>
-      <label>v1 projection <select id="projection-select"><option value="ambiguous">ambiguous</option><option value="mapped">mapped</option><option value="partial">partial</option><option value="changed">changed</option><option value="missing">missing</option><option value="same">same</option></select></label>
-      <button type="button" id="reset-mock">Reset mock</button>
-    </div>
   </section>
   <aside class="thread" id="thread" aria-label="Comments">
     <div class="thread-head"><div class="thread-head-line"><h2 id="thread-title">Comments · 3</h2><button type="button" id="close-comments" aria-label="Close comments"><svg aria-hidden="true"><use href="#i-chevron"/></svg></button></div><div class="thread-filters" aria-label="Filter comments"><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="open" aria-pressed="false">Open</button><button type="button" data-filter="resolved" aria-pressed="false">Resolved</button></div></div>
