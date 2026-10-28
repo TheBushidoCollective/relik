@@ -1771,6 +1771,82 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('paused seek accepts the native microsecond-rounded midpoint only after seeked', async () => {
+    const blob = new Blob(['rounded seek video'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', blob]]),
+      timings: new Map([
+        [
+          blob,
+          {
+            kind: 'windows',
+            starts: Float64Array.from({ length: 48 }, (_, frame) => frame / 24),
+            ends: Float64Array.from(
+              { length: 48 },
+              (_, frame) => (frame + 1) / 24
+            ),
+          },
+        ],
+      ]),
+    });
+    const output = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 24, duration: 48 }),
+      timelineId: 'timeline_1',
+      canvas: output as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+    try {
+      await playback.seek({ value: 0, rate: 24 });
+      const decoder = created.find((element) => element.muted);
+      if (!decoder) throw new Error('video decoder did not load');
+      let currentTime = decoder.currentTime;
+      let seeking = false;
+      let requested = 0;
+      let assignments = 0;
+      Object.defineProperty(decoder, 'seeking', { get: () => seeking });
+      Object.defineProperty(decoder, 'currentTime', {
+        get: () => currentTime,
+        set: (value: number) => {
+          assignments++;
+          requested = value;
+          currentTime = Math.trunc(value * 1_000_000) / 1_000_000;
+          seeking = true;
+        },
+      });
+      let settled = false;
+      const pending = playback.seek({ value: 24, rate: 24 }).then(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(requested).toBeCloseTo(1.0208333333333335, 14);
+      expect(currentTime).toBe(1.020833);
+      expect(seeking).toBe(true);
+      expect(settled).toBe(false);
+      expect(playback.getState().buffering).toBe(true);
+      decoder.pixel = { r: 0, g: 0, b: 1, a: 1 };
+      seeking = false;
+      decoder.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(settled).toBe(true);
+      await pending;
+      expect(output.pixel).toEqual(decoder.pixel);
+      expect(playback.getState().buffering).toBe(false);
+      const before = assignments;
+      let cachedSettled = false;
+      const cached = playback.seek({ value: 24, rate: 24 }).then(() => {
+        cachedSettled = true;
+      });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(cachedSettled).toBe(true);
+      expect(assignments).toBe(before);
+      await cached;
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('seek wait is not added to the transport clock', async () => {
     const pending: Array<(value: string | null) => void> = [];
     const clipStarted = Promise.withResolvers<void>();

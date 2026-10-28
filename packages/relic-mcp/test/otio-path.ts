@@ -2438,6 +2438,18 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
     tick();
     return promise;
   })()`);
+  if (!landed) {
+    const receipt = await browser.evaluate(`(() => ({
+      root: document.querySelector('.otio-view') ? {...document.querySelector('.otio-view').dataset} : null,
+      trace: globalThis.__otioDeadlockTrace || [],
+      messages: globalThis.__otioPageMessages || [],
+      seekTargets: globalThis.__relicOtioMediaSeekTargets || [],
+    }))()`);
+    await writeFile(
+      join(shotDir, 'seek-deadlock.json'),
+      `${JSON.stringify({ frame, receipt }, null, 2)}\n`
+    );
+  }
   assert.equal(
     landed,
     true,
