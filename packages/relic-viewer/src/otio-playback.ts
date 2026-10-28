@@ -75,6 +75,9 @@ export const OTIO_MAX_IMAGE_EDGE = 4096;
 export const OTIO_MAX_IMAGE_PIXELS = 4096 * 4096;
 export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
 const HAVE_CURRENT_DATA = 2;
+// Chromium reports media times at microsecond precision, even for a more
+// precise midpoint assignment. This is a time-match tolerance, not a frame.
+const MEDIA_SEEK_TIME_PRECISION_SECONDS = 1e-6;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
@@ -1361,9 +1364,11 @@ export function createOtioPlayback(
     gen: number
   ): Promise<boolean> {
     if (stale(gen)) return Promise.resolve(false);
+    const matchesTarget = (): boolean =>
+      Math.abs(media.currentTime - target) <= MEDIA_SEEK_TIME_PRECISION_SECONDS;
     if (
       !media.seeking &&
-      media.currentTime === target &&
+      matchesTarget() &&
       media.readyState >= HAVE_CURRENT_DATA &&
       (decodedAt.get(media) === target || !decodedAt.has(media))
     ) {
@@ -1382,7 +1387,7 @@ export function createOtioPlayback(
         ok &&
         !stale(gen) &&
         !media.seeking &&
-        media.currentTime === target &&
+        matchesTarget() &&
         media.readyState >= HAVE_CURRENT_DATA
       ) {
         decodedAt.set(media, target);
@@ -1394,7 +1399,7 @@ export function createOtioPlayback(
     const onSeeked = (): void => {
       if (
         !media.seeking &&
-        media.currentTime === target &&
+        matchesTarget() &&
         media.readyState >= HAVE_CURRENT_DATA
       )
         finish(true);
@@ -1403,7 +1408,7 @@ export function createOtioPlayback(
       if (
         !media.seeking &&
         media.readyState >= HAVE_CURRENT_DATA &&
-        media.currentTime === target
+        matchesTarget()
       ) {
         finish(true);
       }
@@ -1413,8 +1418,7 @@ export function createOtioPlayback(
     media.addEventListener('loadeddata', onReady);
     media.addEventListener('error', onError);
     try {
-      if (!media.seeking || media.currentTime !== target)
-        media.currentTime = target;
+      if (!media.seeking || !matchesTarget()) media.currentTime = target;
     } catch {
       finish(false);
       return promise;
