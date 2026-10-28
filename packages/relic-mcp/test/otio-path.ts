@@ -6599,6 +6599,14 @@ interface BlockedPreviewTextProbe {
   readonly clipping: readonly DomRectProbe[];
   readonly lines: readonly BlockedPreviewLineProbe[];
 }
+interface BlockedPreviewExposure {
+  readonly target: string;
+  readonly line: BlockedPreviewLineProbe;
+  readonly scrollTop: number;
+  readonly scopeStable: boolean;
+  readonly readoutStable: boolean;
+  readonly outerScrollStable: boolean;
+}
 
 interface BlockedPreviewProbe {
   readonly missing: readonly string[];
@@ -6617,6 +6625,9 @@ interface BlockedPreviewProbe {
   readonly scopeStatusGap: number | null;
   readonly diagnosticButtonGap: number | null;
   readonly requiredGap: number;
+  readonly exposures: readonly BlockedPreviewExposure[];
+  readonly buttonCenterOwned: boolean;
+  readonly scrollRange: number;
 }
 
 function assertBlockedPreviewReadable(
@@ -6674,32 +6685,54 @@ function assertBlockedPreviewReadable(
   ]) {
     assert.equal(node.visible, true, `${label} text is hidden: ${node.text}`);
     assert.ok(node.opacity > 0, `${label} text is transparent: ${node.text}`);
-    assert.equal(
-      node.contained,
-      true,
-      `${label} element escapes preview containment: ${node.text}`
-    );
+    if (node === probe.scope || node === probe.scopeText) {
+      assert.equal(
+        node.contained,
+        true,
+        `${label} scope escapes preview: ${node.text}`
+      );
+    }
     assert.ok(
       node.lines.length > 0,
       `${label} has no text lines: ${node.text}`
     );
-    for (const line of node.lines) {
-      assert.equal(
-        line.contained,
-        true,
-        `${label} text line escapes preview, stage, or viewport`
-      );
-      assert.equal(
-        line.clippingContained,
-        true,
-        `${label} text line is clipped by an ancestor`
-      );
-      assert.ok(
-        line.hits.every((hit) => hit.owned),
-        `${label} text line is covered at ${JSON.stringify(line.hits)}`
-      );
-    }
   }
+  const expectedLines = [...probe.diagnostics, probe.button].reduce(
+    (total, node) => total + node.lines.length,
+    0
+  );
+  assert.equal(
+    probe.exposures.length,
+    expectedLines,
+    `${label} did not expose every diagnostic and consent line`
+  );
+  for (const line of [...probe.scope.lines, ...probe.scopeText.lines]) {
+    assert.ok(
+      line.contained &&
+        line.clippingContained &&
+        line.hits.every((hit) => hit.owned),
+      `${label} scope line is clipped or covered: ${JSON.stringify(line)}`
+    );
+  }
+  for (const exposure of probe.exposures) {
+    assert.ok(
+      exposure.scopeStable &&
+        exposure.readoutStable &&
+        exposure.outerScrollStable,
+      `${label} scrolling status moved surrounding controls: ${JSON.stringify(exposure)}`
+    );
+    assert.ok(
+      exposure.line.contained &&
+        exposure.line.clippingContained &&
+        exposure.line.hits.every((hit) => hit.owned),
+      `${label} status line is clipped or covered when exposed: ${JSON.stringify(exposure)}`
+    );
+  }
+  assert.equal(
+    probe.buttonCenterOwned,
+    true,
+    `${label} consent button cannot be hit when exposed`
+  );
   assert.ok(
     probe.scopeStatusGap !== null && probe.scopeStatusGap >= probe.requiredGap,
     `${label} scope-to-status gap is ${probe.scopeStatusGap}px`
@@ -6714,13 +6747,14 @@ function assertBlockedPreviewReadable(
 async function measureBlockedPreview(
   browser: ChromeSession
 ): Promise<BlockedPreviewProbe> {
-  return browser.evaluate<BlockedPreviewProbe>(String.raw`(() => {
+  return browser.evaluate<BlockedPreviewProbe>(String.raw`(async () => {
     const root = document.querySelector('.otio-view');
     const stage = document.querySelector('.stage-wrap');
     const preview = document.querySelector('.otio-preview');
     const scope = document.querySelector('.otio-preview > .otio-preview-scope');
     const scopeText = document.querySelector('.otio-preview > .otio-preview-scope > span');
     const status = document.querySelector('.otio-preview > .otio-preview-status');
+    const readout = document.querySelector('.otio-selection-readout');
     const diagnostics = status ? [...status.querySelectorAll(':scope > p')] : [];
     const button = status?.querySelector(':scope > button.otio-preview-base') ?? null;
     const missing = [];
@@ -6731,6 +6765,7 @@ async function measureBlockedPreview(
     if (!scopeText) missing.push('.otio-preview > .otio-preview-scope > span');
     if (!status) missing.push('.otio-preview > .otio-preview-status');
     if (!button) missing.push('.otio-preview > .otio-preview-status button.otio-preview-base');
+    if (!readout) missing.push('.otio-selection-readout');
     const empty = {
       missing,
       state: {
@@ -6748,8 +6783,13 @@ async function measureBlockedPreview(
       scopeStatusGap: null,
       diagnosticButtonGap: null,
       requiredGap: 0,
+      exposures: [],
+      buttonCenterOwned: false,
+      scrollRange: 0,
     };
     if (missing.length > 0) return empty;
+    const originalStatusTop = status.scrollTop;
+    status.scrollTop = 0;
     const rect = (node) => {
       const value = node.getBoundingClientRect();
       return {
@@ -6867,9 +6907,9 @@ async function measureBlockedPreview(
     const scopeProbe = describe(scope, [scope, scopeText]);
     const scopeTextProbe = describe(scopeText, [scope, scopeText]);
     const diagnosticProbes = diagnostics.map((diagnostic) =>
-      describe(diagnostic, [status, diagnostic])
+      describe(diagnostic, [diagnostic])
     );
-    const buttonProbe = describe(button, [status, button]);
+    const buttonProbe = describe(button, [button]);
     const diagnosticLines = diagnosticProbes.flatMap((diagnostic) => diagnostic.lines);
     const buttonLines = buttonProbe.lines;
     const scopeRect = rect(scope);
@@ -6886,6 +6926,44 @@ async function measureBlockedPreview(
       ? Math.min(...buttonLines.map((line) => line.rect.top))
       : null;
     const requiredGap = parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.65;
+    const readoutRect = rect(readout);
+    const stageTop = stage.scrollTop;
+    const documentX = window.scrollX, documentY = window.scrollY;
+    const scrollRange = Math.max(0, status.scrollHeight - status.clientHeight);
+    const stable = (a, b) => ['left', 'top', 'right', 'bottom'].every(key => Math.abs(a[key] - b[key]) <= 1);
+    const frame = async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      setTimeout(resolve, 50);
+      await promise;
+    };
+    const centerInStatus = async (targetRect) => {
+      const statusRect = status.getBoundingClientRect();
+      const center = statusRect.top + status.clientTop + status.clientHeight / 2;
+      status.scrollTop += (targetRect.top + targetRect.bottom) / 2 - center;
+      await frame();
+    };
+    const exposures = [];
+    for (const [target, node] of [...diagnostics.map((node, index) => ['diagnostic-' + index, node]), ['consent', button]]) {
+      const count = textLines(node).length;
+      for (let index = 0; index < count; index++) {
+        const current = textLines(node)[index];
+        await centerInStatus(current);
+        const line = describe(node, [node]).lines[index];
+        exposures.push({ target, line, scrollTop: status.scrollTop,
+          scopeStable: stable(scopeRect, rect(scope)),
+          readoutStable: stable(readoutRect, rect(readout)),
+          outerScrollStable: stage.scrollTop === stageTop && window.scrollX === documentX && window.scrollY === documentY });
+      }
+    }
+    await centerInStatus(rect(button));
+    const buttonRect = rect(button);
+    const hit = document.elementFromPoint((buttonRect.left + buttonRect.right) / 2, (buttonRect.top + buttonRect.bottom) / 2);
+    const buttonCenterOwned = (hit === button || button.contains(hit)) &&
+      stable(scopeRect, rect(scope)) && stable(readoutRect, rect(readout)) &&
+      stage.scrollTop === stageTop && window.scrollX === documentX && window.scrollY === documentY;
+    status.scrollTop = originalStatusTop;
+    await frame();
     return {
       missing,
       state: {
@@ -6910,6 +6988,9 @@ async function measureBlockedPreview(
           ? firstButtonTop - lastDiagnosticBottom
           : null,
       requiredGap,
+      exposures,
+      buttonCenterOwned,
+      scrollRange,
     };
   })()`);
 }
