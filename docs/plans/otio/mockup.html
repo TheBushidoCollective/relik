@@ -309,12 +309,13 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .popover-card .popover-action.is-primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
 .popover-card .compose-fine { font-size: 12px; line-height: 1.5; }
 .foreground-popover.popover-card { display: flex; flex-direction: column; overflow: hidden; padding: .25rem .45rem; }
-.foreground-popover .popover-composer { display: flex; flex-direction: column; min-height: 0; margin: 0; }
-.foreground-popover .bounded-body { min-height: 1.35rem; flex: 0 1 auto; overflow-y: auto; overscroll-behavior: contain; }
+.foreground-popover .popover-composer { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin: 0; }
+.foreground-popover .bounded-body { min-height: 1.35rem; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
 .foreground-popover .compose-target { overflow-wrap: anywhere; }
-.foreground-popover .popover-composer label:has(textarea) { min-height: 0; flex: 0 1 72px; }
-.foreground-popover .popover-composer textarea { min-height: calc(1.55em + .8rem + 2px); height: 72px; resize: none; }
+.foreground-popover .popover-composer label:has(textarea) { display: flex; flex-direction: column; min-height: calc(1.55em + .8rem + 2px); flex: 0 1 72px; }
+.foreground-popover .popover-composer textarea { flex: 1 1 auto; min-height: calc(1.55em + .8rem + 2px); height: 72px; resize: none; }
 .foreground-popover .popover-composer .compose-foot { flex: none; background: var(--surface); }
+.foreground-popover .popover-tools { margin-top: .15rem; padding-top: .15rem; }
 .foreground-popover .bounded-body .compose-fine { display: block; margin: .2rem 0; }
 .foreground-popover .bounded-body .compose-outcome { display: block; }
 @media (prefers-reduced-motion: no-preference) { .spinner { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } }
@@ -954,50 +955,39 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   }
   function positionForegroundComposer() {
     if (!foregroundComposer) return;
-    const host = $('.workbench');
-    const hostRect = host.getBoundingClientRect();
-    const preview = $('#composition-preview').getBoundingClientRect();
-    const scope = $('#preview-scope');
-    const controls = [scope, ...$$('#composition-preview button')].filter(node => {
-      const rect = node.getBoundingClientRect();
-      return !node.hidden && rect.width > 0 && rect.height > 0;
-    }).map(node => node.getBoundingClientRect());
-    const edges = [preview.top, preview.bottom, ...controls.flatMap(rect =>
-      [Math.max(preview.top, rect.top), Math.min(preview.bottom, rect.bottom)]
-    )].sort((a, b) => a - b);
-    const track = state.selection?.track;
-    const rail = track && $('.track-rail[data-track-id="' + track + '"]');
-    const railRect = rail?.getBoundingClientRect();
-    const useRail = railRect && railRect.top >= 0 && railRect.top < innerHeight;
-    const anchor = useRail ? rail : $('#comment-selection');
-    const rect = anchor.getBoundingClientRect();
-    const frame = state.selection ? (state.selection.start + state.selection.end) / 2 : state.frame;
-    const point = useRail ? rect.width * frame / TOTAL : rect.width / 2;
-    const aimY = rect.top + rect.height / 2;
-    const bands = edges.slice(0, -1).map((top, index) => ({ top, bottom: edges[index + 1] }))
-      .filter(band => band.bottom > band.top && !controls.some(box =>
-        box.top < band.bottom && box.bottom > band.top
-      )).sort((a, b) => b.bottom - b.top - (a.bottom - a.top) ||
-        Math.abs((a.top + a.bottom) / 2 - aimY) - Math.abs((b.top + b.bottom) / 2 - aimY));
-    const band = bands[0];
-    if (!band) { foregroundComposer.style.visibility = 'hidden'; return; }
-    const leftLimit = Math.max(preview.left, hostRect.left) + 8;
-    const rightLimit = Math.min(preview.right, hostRect.right) - 8;
-    const topLimit = Math.max(band.top, hostRect.top) + 8;
-    const bottomLimit = Math.min(band.bottom, hostRect.bottom) - 8;
-    if (foregroundComposer.dataset.initialOpen === 'true' && host.scrollTop > 0 &&
-        bottomLimit - topLimit < Math.min(band.bottom - band.top, host.clientHeight) - 16) {
-      const prior = host.scrollTop;
-      host.scrollTop = Math.max(0, host.scrollTop + band.top - hostRect.top - 8);
-      if (host.scrollTop !== prior) { positionForegroundComposer(); return; }
+    const host = $('.workbench'), hostRect = host.getBoundingClientRect();
+    const timeline = $('#timeline-scroll'), timelineRect = timeline.getBoundingClientRect();
+    const readout = $('.selection-readout').getBoundingClientRect();
+    const selection = $('.otio-selection');
+    if (!selection) { foregroundComposer.style.visibility = 'hidden'; return; }
+    const selected = selection.getBoundingClientRect();
+    const label = selection.closest('.track-row')?.querySelector('.track-label')?.getBoundingClientRect();
+    const anchor = {
+      left: Math.max(selected.left, timelineRect.left + timeline.clientLeft, label?.right || 0, hostRect.left, 0),
+      right: Math.min(selected.right, timelineRect.left + timeline.clientLeft + timeline.clientWidth, hostRect.right, innerWidth),
+      top: Math.max(selected.top, timelineRect.top + timeline.clientTop, hostRect.top, 0),
+      bottom: Math.min(selected.bottom, timelineRect.top + timeline.clientTop + timeline.clientHeight, hostRect.bottom, innerHeight)
+    };
+    if (anchor.right <= anchor.left || anchor.bottom <= anchor.top) {
+      foregroundComposer.style.visibility = 'hidden'; return;
     }
+    const leftLimit = Math.max(hostRect.left + host.clientLeft, 0) + 8;
+    const rightLimit = Math.min(hostRect.left + host.clientLeft + host.clientWidth, innerWidth) - 8;
+    const topLimit = Math.max(hostRect.top + host.clientTop, 0) + 8;
+    const bottomLimit = Math.min(readout.top, hostRect.top + host.clientTop + host.clientHeight, innerHeight) - 8;
     foregroundComposer.style.maxWidth = Math.max(0, rightLimit - leftLimit) + 'px';
-    foregroundComposer.style.maxHeight = Math.max(0, bottomLimit - topLimit) + 'px';
-    foregroundComposer.style.visibility = bottomLimit > topLimit ? '' : 'hidden';
-    const left = rect.left + point - foregroundComposer.offsetWidth / 2;
-    const top = rect.top - foregroundComposer.offsetHeight - 8;
+    foregroundComposer.style.maxHeight = '';
+    const desired = foregroundComposer.offsetHeight;
+    const above = anchor.top - topLimit - 8, below = bottomLimit - anchor.bottom - 8;
+    const side = above >= desired || above >= below ? 'above' : 'below';
+    const available = Math.max(0, side === 'above' ? above : below);
+    foregroundComposer.style.maxHeight = available + 'px';
+    foregroundComposer.style.visibility = available > 0 ? '' : 'hidden';
+    foregroundComposer.dataset.side = side;
+    const left = (anchor.left + anchor.right - foregroundComposer.offsetWidth) / 2;
+    const top = side === 'above' ? anchor.top - foregroundComposer.offsetHeight - 8 : anchor.bottom + 8;
     foregroundComposer.style.left = clamp(left, leftLimit, Math.max(leftLimit, rightLimit - foregroundComposer.offsetWidth)) - hostRect.left + host.scrollLeft + 'px';
-    foregroundComposer.style.top = clamp(top, topLimit, Math.max(topLimit, bottomLimit - foregroundComposer.offsetHeight)) - hostRect.top + host.scrollTop + 'px';
+    foregroundComposer.style.top = top - hostRect.top + host.scrollTop + 'px';
   }
   function openForegroundComposer() {
     closeForegroundComposer();
@@ -1012,10 +1002,8 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     box.append(form);
     $('.workbench').append(box);
     foregroundComposer = box;
-    box.dataset.initialOpen = 'true';
     paintComposer();
     positionForegroundComposer();
-    box.dataset.initialOpen = 'false';
     $('#comment-body').focus({ preventScroll: true });
   }
   function paintComposer() {
@@ -1030,6 +1018,8 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     if (matchMedia('(max-width: 44rem)').matches) setInspectorOpen(false);
     closePopover(); composeMode = { kind, id }; $('#compose-outcome').textContent = '';
     $('#comment-body').value = kind === 'edit' ? commentById(id).body : ''; paintByteCount();
+    if (kind === 'new' && !state.selection)
+      setSelection('composition', state.frame, state.mode === 'point' ? state.frame : state.frame + 1, { newComment: false });
     if (kind === 'new') revealTimelineTarget($('.otio-selection'));
     if (kind === 'new' && $('#viewer').dataset.commentsOpen === 'false') {
       openForegroundComposer();
@@ -1119,6 +1109,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   document.addEventListener('pointerdown', e => { if (popover && !e.target.closest('.popover, .otio-comment-mark')) closePopover(); if (foregroundComposer && !e.target.closest('.foreground-popover, #comment-selection')) closeForegroundComposer(); });
   window.addEventListener('resize', () => { closePopover(); packMockComments(); positionForegroundComposer(); }); window.addEventListener('pagehide', pause);
   $('.workbench').addEventListener('scroll', positionForegroundComposer);
+  $('#timeline-scroll').addEventListener('scroll', positionForegroundComposer);
   function render() {
     setCommentsOpen($('#viewer').dataset.commentsOpen === 'true');
     setTheme(state.theme); renderVersion(); renderTracks(); renderThread(); renderInspector(); paintSelection(); paintByteCount(); setFrame(state.frame);
