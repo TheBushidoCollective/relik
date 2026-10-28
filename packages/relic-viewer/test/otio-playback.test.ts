@@ -1668,6 +1668,16 @@ describe('otio playback controller', () => {
         pixel: oldPixel,
       });
       expect(completed).toEqual({ buffering: false, pixel: newPixel });
+      const seekCount = decoder.seekTargets.length;
+      let cachedSettled = false;
+      const cached = playback.seek({ value: 4, rate: 24 }).then(() => {
+        cachedSettled = true;
+      });
+      await tick();
+      expect(cachedSettled).toBe(true);
+      expect(decoder.seekTargets.length).toBe(seekCount);
+      expect(output.pixel).toEqual(newPixel);
+      await cached;
     } finally {
       playback.dispose();
     }
@@ -1715,6 +1725,17 @@ describe('otio playback controller', () => {
         buffering: playback.getState().buffering,
         pixel: { ...output.pixel },
       };
+      const target = currentTime;
+      seeking = false;
+      currentTime = target - 1 / 24;
+      decoder.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      const afterMismatchedEvent = {
+        settled,
+        buffering: playback.getState().buffering,
+        pixel: { ...output.pixel },
+      };
+      currentTime = target;
       seeking = false;
       decoder.pixel = newPixel;
       decoder.dispatch('seeked');
@@ -1725,10 +1746,21 @@ describe('otio playback controller', () => {
       };
       console.log(
         'SEEK_STALE_EVENT_CONTROL',
-        JSON.stringify({ oldPixel, newPixel, afterStaleEvent, completed })
+        JSON.stringify({
+          oldPixel,
+          newPixel,
+          afterStaleEvent,
+          afterMismatchedEvent,
+          completed,
+        })
       );
       expect(afterStaleEvent).toEqual({
         seeking: true,
+        settled: false,
+        buffering: true,
+        pixel: oldPixel,
+      });
+      expect(afterMismatchedEvent).toEqual({
         settled: false,
         buffering: true,
         pixel: oldPixel,
