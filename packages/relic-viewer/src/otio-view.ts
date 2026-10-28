@@ -352,7 +352,19 @@ export async function mountOtioView(
     tab.setAttribute('role', 'tab');
     tabs.append(tab);
   }
-  inspector.append(tabs, context);
+  const inspectClose = button('Close inspector', 'otio-inspector-close', () =>
+    setInspectorOpen(false, true)
+  );
+  inspector.append(tabs, context, inspectClose);
+  inspector.addEventListener('keydown', (event) => {
+    if (
+      event.key === 'Escape' &&
+      window.matchMedia('(max-width: 44rem)').matches
+    ) {
+      event.preventDefault();
+      setInspectorOpen(false, true);
+    }
+  });
   monitor.append(preview, inspector);
 
   const transport = element('div', 'otio-transport');
@@ -375,11 +387,20 @@ export async function mountOtioView(
   seek.value = '0';
   seek.setAttribute('aria-label', 'Timeline frame');
   seek.addEventListener('input', () => seekFrame(Number(seek.value)));
-  const inspectToggle = button('Inspector', 'otio-inspector-toggle', () => {
-    const open = monitor.dataset['inspectorOpen'] !== 'true';
+  const inspectToggle = button('Inspector', 'otio-inspector-toggle', () =>
+    setInspectorOpen(monitor.dataset['inspectorOpen'] !== 'true')
+  );
+  function setInspectorOpen(open: boolean, restoreFocus = false): void {
     monitor.dataset['inspectorOpen'] = String(open);
     inspectToggle.setAttribute('aria-expanded', String(open));
-  });
+    if (open) {
+      tabs
+        .querySelector<HTMLElement>(
+          `.otio-inspector-tab[data-tab="${currentTab}"]`
+        )
+        ?.focus({ preventScroll: true });
+    } else if (restoreFocus) inspectToggle.focus({ preventScroll: true });
+  }
   inspectToggle.setAttribute('aria-expanded', 'false');
   transport.append(previous, play, next, clock, seek, inspectToggle);
 
@@ -761,6 +782,8 @@ export async function mountOtioView(
 
   function emitAim(focus: boolean): void {
     if (!selected) return;
+    if (focus && window.matchMedia('(max-width: 44rem)').matches)
+      setInspectorOpen(false);
     alignSelection(focus);
     const detail: OtioAimDetail = {
       anchor: selected,

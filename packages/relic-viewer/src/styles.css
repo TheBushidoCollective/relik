@@ -4854,6 +4854,7 @@ canvas.relic-page {
 .otio-time { font: .7rem var(--mono); font-variant-numeric: tabular-nums; }
 .otio-seek { min-width: 65px; width: 100px; flex: 1; accent-color: var(--patina); cursor: pointer; }
 .otio-transport .otio-inspector-toggle { display: none; }
+.otio-inspector-close { display: none; padding: .3rem .45rem; border: 1px solid var(--rule-strong); background: transparent; color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-timeline-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .65rem; padding: .7rem .75rem; border-bottom: 1px solid var(--rule); }
 .otio-timeline-name { margin: 0; font: 600 .82rem var(--sans); overflow-wrap: anywhere; }
 .otio-selection-tools { display: flex; gap: .25rem; align-items: center; flex-wrap: wrap; }
@@ -4964,11 +4965,11 @@ canvas.relic-page {
   .otio-selection-tools { width: 100%; }
 }
 @media (max-width: 44rem) {
-  .otio-view { --otio-label-width: 148px; }
-  .otio-monitor-row { grid-template-columns: minmax(0, 1fr); }
-  .otio-monitor-row[data-inspector-open="true"] { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
-  .otio-inspector { display: none; border-left: 0; border-top: 1px solid var(--rule); }
+  .otio-view { --otio-label-width: 148px; position: relative; isolation: isolate; }
+  .otio-monitor-row { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .otio-inspector { display: none; position: absolute; inset: 0 0 auto; height: min(22rem, 60%); z-index: 9; border: 1px solid var(--rule-strong); background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 18%); }
   .otio-monitor-row[data-inspector-open="true"] .otio-inspector { display: flex; }
+  .otio-inspector-close { display: block; flex: none; min-height: 44px; margin: .4rem; }
   .otio-transport .otio-inspector-toggle { display: block; }
   .otio-transport { gap: .4rem; padding: .5rem; }
   .otio-seek { flex-basis: 100%; order: 2; }

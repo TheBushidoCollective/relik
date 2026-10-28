@@ -140,6 +140,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .inspector-tabs { display: flex; flex: none; border-bottom: 1px solid var(--rule); }
 .tab { border: 0; border-bottom: 2px solid transparent; background: none; padding: .65rem .55rem; font-size: 11px; flex: 1; }
 .inspector-content { flex: 1 1 auto; min-height: 0; padding: .9rem; overflow-y: auto; overscroll-behavior: contain; }
+#inspector-close { display: none; padding: .3rem .45rem; font: .65rem var(--sans); }
 .inspector h2 { margin: 0 0 .3rem; font-size: 13px; font-weight: 600; }
 .schema { color: var(--ink-soft); font: 10px var(--mono); margin: 0 0 .8rem; }
 .context-path { color: var(--ink-soft); font: 10px/1.7 var(--mono); overflow-wrap: anywhere; margin: .8rem 0; border-left: 2px solid var(--rule-strong); padding-left: .6rem; }
@@ -322,10 +323,11 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 @media (max-width: 44rem) {
   .viewer[data-comments-open="true"] .workbench { overflow: hidden; }
   .thread.is-open { position: absolute; inset: 0; width: 100%; min-width: 0; max-width: 100%; min-height: 0; border-left: 0; border-top: 1px solid var(--rule-strong); z-index: 10; }
-  .monitor-row { grid-template-columns: minmax(0, 1fr); }
-  .monitor-row[data-inspector-open="true"] { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
-  .inspector { display: none; border-top: 1px solid var(--rule-strong); }
+  .workbench { isolation: isolate; }
+  .monitor-row { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .inspector { display: none; position: absolute; inset: 0 0 auto; height: min(22rem, 60%); z-index: 9; border: 1px solid var(--rule-strong); background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 18%); }
   .monitor-row[data-inspector-open="true"] .inspector { display: flex; }
+  #inspector-close { display: block; flex: none; min-height: 44px; margin: .4rem; }
   #inspector-toggle { display: inline-block; font-size: 10px; }
   .selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }
   .selection-readout .selection-text { grid-column: 1 / -1; min-width: 0; }
@@ -429,6 +431,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
           <button class="tab" id="tab-media" type="button" role="tab" aria-selected="false" aria-controls="context-panel" data-tab="media">Media</button>
         </div>
         <div class="inspector-content" id="context-panel" role="tabpanel" aria-labelledby="tab-inspector"></div>
+        <button type="button" id="inspector-close">Close inspector</button>
       </aside>
     </div>
     <div class="transport" aria-label="Playback controls">
@@ -803,7 +806,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
       if (issue === 'missing-media') panel.append(make('h2', '', 'Missing media'), make('p', '', 'media/offline_shot.mov'), make('p', '', 'A valid timing range remains selectable and commentable.'));
       if (issue === 'unsupported-codec') panel.append(make('h2', '', 'Unsupported codec'), make('p', '', 'ProRes 4444 XQ'), make('p', '', 'No automatic transcoding or remote proxy.'));
       if (issue === 'unsupported-effect') panel.append(make('h2', '', 'Unsupported effect'), make('p', '', 'Grade Custom Look · MagicBulletLook'), action('Preview base media without unsupported effects', () => { state.baseMedia = true; state.preview = 'supported'; $('#preview-state').value = 'supported'; paintPreview(); save(); }, 'primary'));
-      panel.append(action('Inspector', () => { tab = 'media'; $('#monitor-row').dataset.inspectorOpen = 'true'; $('#inspector-toggle').setAttribute('aria-expanded', 'true'); renderInspector(); }));
+      panel.append(action('Inspector', () => { tab = 'media'; renderInspector(); setInspectorOpen(true); }));
     }
   }
   function renderInspector() {
@@ -1012,6 +1015,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     $('#compose-target').textContent = target ? 'v' + (comment?.version || state.version) + ' · ' + trackLabel(target.track) + ' · ' + coordinateLabel(target) : 'v' + state.version + ' · Composition · ' + tc(state.frame);
   }
   function beginCompose(kind, id) {
+    if (matchMedia('(max-width: 44rem)').matches) setInspectorOpen(false);
     closePopover(); composeMode = { kind, id }; $('#compose-outcome').textContent = '';
     $('#comment-body').value = kind === 'edit' ? commentById(id).body : ''; paintByteCount();
     if (kind === 'new') revealTimelineTarget($('.otio-selection'));
@@ -1068,7 +1072,19 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   $('#comments-toggle').addEventListener('click', () => setCommentsOpen($('#viewer').dataset.commentsOpen !== 'true'));
   $('#comments-edge').addEventListener('click', () => setCommentsOpen(true));
   $('#close-comments').addEventListener('click', () => setCommentsOpen(false));
-  $('#inspector-toggle').addEventListener('click', () => { const open = $('#monitor-row').dataset.inspectorOpen !== 'true'; $('#monitor-row').dataset.inspectorOpen = String(open); $('#inspector-toggle').setAttribute('aria-expanded', String(open)); });
+  function setInspectorOpen(open, restoreFocus = false) {
+    $('#monitor-row').dataset.inspectorOpen = String(open);
+    $('#inspector-toggle').setAttribute('aria-expanded', String(open));
+    if (open) $('.tab[data-tab="' + tab + '"]').focus({ preventScroll: true });
+    else if (restoreFocus) $('#inspector-toggle').focus({ preventScroll: true });
+  }
+  $('#inspector-toggle').addEventListener('click', () => setInspectorOpen($('#monitor-row').dataset.inspectorOpen !== 'true'));
+  $('#inspector-close').addEventListener('click', () => setInspectorOpen(false, true));
+  $('#inspector').addEventListener('keydown', event => {
+    if (event.key === 'Escape' && matchMedia('(max-width: 44rem)').matches) {
+      event.preventDefault(); setInspectorOpen(false, true);
+    }
+  });
   $('#revision-select').addEventListener('change', e => { state.version = Number(e.target.value); state.active = null; pause(); closePopover(); renderVersion(); renderTracks(); renderThread(); paintSelection(); save(); });
   $('#return-current').addEventListener('click', () => { state.version = 2; state.active = null; state.selection = null; renderVersion(); renderTracks(); renderThread(); paintSelection(); save(); });
   $$('.tab').forEach(button => button.addEventListener('click', () => { tab = button.dataset.tab; renderInspector(); }));
