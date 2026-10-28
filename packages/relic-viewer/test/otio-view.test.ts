@@ -451,10 +451,14 @@ class ViewElement {
   }
 
   matches(selector: string): boolean {
-    return (
-      selector.startsWith('.') &&
-      this.className.split(/\s+/).includes(selector.slice(1))
+    if (selector.startsWith('.'))
+      return this.className.split(/\s+/).includes(selector.slice(1));
+    const attribute = selector.match(/^\[data-([a-z-]+)\]$/);
+    if (!attribute) return false;
+    const key = attribute[1]!.replace(/-([a-z])/g, (_match, letter: string) =>
+      letter.toUpperCase()
     );
+    return Object.hasOwn(this.dataset, key);
   }
 
   closest(selector: string): ViewElement | null {
@@ -1165,6 +1169,8 @@ describe('OTIO archive projection reader', () => {
         const media = root.querySelector(
           '.otio-inspector-tab[data-tab="media"]'
         )!;
+        const focused = (): ViewElement | null =>
+          globalThis.document.activeElement as unknown as ViewElement | null;
         expect(close.parentElement).toBe(inspector);
         expect(inspector.children.indexOf(close)).toBeGreaterThan(
           inspector.children.indexOf(context)
@@ -1172,7 +1178,7 @@ describe('OTIO archive projection reader', () => {
         toggle.dispatchEvent(new Event('click'));
         expect(toggle.getAttribute('aria-expanded')).toBe('true');
         expect(monitor.dataset['inspectorOpen']).toBe('true');
-        expect(globalThis.document.activeElement).toBe(
+        expect(focused()).toBe(
           root.querySelector('.otio-inspector-tab[data-tab="inspector"]')
         );
         media.dispatchEvent(new Event('click'));
@@ -1182,16 +1188,16 @@ describe('OTIO archive projection reader', () => {
         const frame = root.querySelector('.otio-seek')!.value;
         close.dispatchEvent(new Event('click'));
         expect(toggle.getAttribute('aria-expanded')).toBe('false');
-        expect(globalThis.document.activeElement).toBe(toggle);
+        expect(focused()).toBe(toggle);
         toggle.dispatchEvent(new Event('click'));
-        expect(globalThis.document.activeElement).toBe(media);
+        expect(focused()).toBe(media);
         expect(media.getAttribute('aria-selected')).toBe('true');
         expect(context.scrollTop).toBe(37);
         inspector.dispatchEvent(
           Object.assign(new Event('keydown'), { key: 'Escape' })
         );
         expect(monitor.dataset['inspectorOpen']).toBe('false');
-        expect(globalThis.document.activeElement).toBe(toggle);
+        expect(focused()).toBe(toggle);
         expect(scroll.scrollTop).toBe(79);
         expect(scroll.scrollLeft).toBe(43);
         expect(root.querySelector('.otio-seek')!.value).toBe(frame);
