@@ -2832,7 +2832,7 @@ async function layerPacketStarts(mediaFile: string): Promise<number[]> {
   return packets.map((pts) => pts * timeBase);
 }
 
-async function canvasRowCenter(browser: ChromeSession): Promise<number> {
+async function canvasMiddleRow(browser: ChromeSession): Promise<number[]> {
   const row = await browser.evaluate<number[] | null>(`(() => {
     const canvas = document.querySelector('canvas.otio-canvas');
     if (!canvas) return null;
@@ -2845,6 +2845,11 @@ async function canvasRowCenter(browser: ChromeSession): Promise<number> {
     row && row.length > 0 && row.length % 4 === 0,
     'canvas row missing'
   );
+  return row;
+}
+
+async function canvasRowCenter(browser: ChromeSession): Promise<number> {
+  const row = await canvasMiddleRow(browser);
   return rowCenter(Uint8Array.from(row), row.length / 4);
 }
 
@@ -8916,178 +8921,7 @@ try {
       'official reader did not derive a negative authored timewarp file sample'
     );
     await assertTrackVisible(browser, negativeHead.timewarp_track_id);
-    const referenceFrames = [
-      ...new Set(
-        [
-          negativeHead.underlying_file_frame - 5,
-          negativeHead.underlying_file_frame - 4,
-          negativeHead.underlying_file_frame - 3,
-          negativeHead.underlying_file_frame - 1,
-          negativeHead.underlying_file_frame,
-          negativeHead.underlying_file_frame + 1,
-          negativeHead.clamped_file_frame - 1,
-          negativeHead.clamped_file_frame,
-          negativeHead.clamped_file_frame + 1,
-        ].filter((frame) => frame >= 0)
-      ),
-    ];
-    const references = await Promise.all(
-      referenceFrames.map(async (frame) => ({
-        frame,
-        ...(await frameRowCenter(
-          join(mediaDir, negativeHead.underlying_media),
-          frame
-        )),
-      }))
-    );
-    await browser.evaluate(`(() => {
-      const trace = globalThis.__otioSeekEvidence = [];
-      const root = document.querySelector('.otio-view');
-      trace.push({ event: 'probe-start', at: performance.now(), root: root ? {...root.dataset} : null });
-      if (root) {
-        const observer = new MutationObserver(() => trace.push({
-          event: 'root-state', at: performance.now(), root: {...root.dataset}
-        }));
-        observer.observe(root, { attributes: true, attributeFilter: ['data-buffering', 'data-frame', 'data-playing', 'data-preview-blocked'] });
-        globalThis.__otioSeekEvidenceObserver = observer;
-      }
-    })()`);
-    try {
-      await seekTo(browser, negativeHead.timeline_frame);
-    } finally {
-      const capture = await browser.evaluate<{
-        trace: Record<string, unknown>[];
-        root: Record<string, string> | null;
-        canvas: {
-          width: number;
-          height: number;
-          lost: boolean | null;
-          row: number[];
-          alpha: { min: number; max: number; zero: number; opaque: number };
-          png: string;
-        } | null;
-        error?: string;
-      }>(`(() => {
-        const trace = globalThis.__otioSeekEvidence || [];
-        globalThis.__otioSeekEvidenceObserver?.disconnect();
-        delete globalThis.__otioSeekEvidenceObserver;
-        delete globalThis.__otioSeekEvidence;
-        const root = document.querySelector('.otio-view');
-        const canvas = document.querySelector('canvas.otio-canvas');
-        try {
-          if (!canvas) return { trace, root: root ? {...root.dataset} : null, canvas: null };
-          const ctx = canvas.getContext('2d');
-          if (!ctx) throw new Error('canvas 2d context unavailable');
-          const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-          const row = Array.from(ctx.getImageData(0, Math.floor(canvas.height / 2), canvas.width, 1).data);
-          let min = 255, max = 0, zero = 0, opaque = 0;
-          for (let i = 3; i < pixels.length; i += 4) {
-            const a = pixels[i]; min = Math.min(min, a); max = Math.max(max, a);
-            if (a === 0) zero++; if (a === 255) opaque++;
-          }
-          return { trace, root: root ? {...root.dataset} : null, canvas: {
-            width: canvas.width, height: canvas.height,
-            lost: typeof ctx.isContextLost === 'function' ? ctx.isContextLost() : null,
-            row, alpha: { min, max, zero, opaque }, png: canvas.toDataURL('image/png')
-          } };
-        } catch (error) { return { trace, root: root ? {...root.dataset} : null, canvas: null, error: String(error) }; }
-      })()`);
-      const png = capture.canvas?.png;
-      if (png) {
-        await writeFile(
-          join(shotDir, 'negative-head-canvas.png'),
-          Buffer.from(png.slice(png.indexOf(',') + 1), 'base64')
-        );
-        capture.canvas!.png = 'negative-head-canvas.png';
-      }
-      const measureCenter = (row: number[], width: number): number | null => {
-        try {
-          return row.length ? rowCenter(Uint8Array.from(row), width) : null;
-        } catch {
-          return null;
-        }
-      };
-      const canvasCenter = capture.canvas
-        ? measureCenter(capture.canvas.row, capture.canvas.width)
-        : null;
-      const decoderComparisons = capture.trace.flatMap((entry) => {
-        if (
-          entry['event'] !== 'before-paint' ||
-          !Array.isArray(entry['samples'])
-        )
-          return [];
-        return (entry['samples'] as Record<string, unknown>[]).flatMap(
-          (sample) => {
-            if (
-              !Array.isArray(sample['row']) ||
-              typeof sample['width'] !== 'number'
-            )
-              return [];
-            const center = measureCenter(
-              sample['row'] as number[],
-              sample['width']
-            );
-            const offsets = references.map((reference) => ({
-              frame: reference.frame,
-              signedSourcePixels:
-                center === null
-                  ? null
-                  : (center - reference.center) * reference.width,
-            }));
-            const closest =
-              offsets
-                .filter((item) => item.signedSourcePixels !== null)
-                .sort(
-                  (a, b) =>
-                    Math.abs(a.signedSourcePixels!) -
-                    Math.abs(b.signedSourcePixels!)
-                )[0] ?? null;
-            return [
-              {
-                at: entry['at'],
-                index: sample['index'],
-                contribution: sample['contribution'],
-                center,
-                offsets,
-                closest,
-              },
-            ];
-          }
-        );
-      });
-      const comparisons = references.map((reference) => ({
-        ...reference,
-        canvasOffsetSourcePixels:
-          canvasCenter === null
-            ? null
-            : (canvasCenter - reference.center) * reference.width,
-      }));
-      const closest =
-        comparisons
-          .filter((item) => item.canvasOffsetSourcePixels !== null)
-          .sort(
-            (a, b) =>
-              Math.abs(a.canvasOffsetSourcePixels!) -
-              Math.abs(b.canvasOffsetSourcePixels!)
-          )[0] ?? null;
-      await writeFile(
-        join(shotDir, 'negative-head-seek-evidence.json'),
-        `${JSON.stringify(
-          {
-            requestedTimelineFrame: negativeHead.timeline_frame,
-            expectedFileFrame: negativeHead.underlying_file_frame,
-            clampedFileFrame: negativeHead.clamped_file_frame,
-            capture,
-            canvasCenter,
-            references: comparisons,
-            decoderComparisons,
-            closest,
-          },
-          null,
-          2
-        )}\n`
-      );
-    }
+    await seekTo(browser, negativeHead.timeline_frame);
     const negativeExpected = await extractFrame(
       join(mediaDir, negativeHead.underlying_media),
       negativeHead.underlying_file_frame,
@@ -9114,11 +8948,76 @@ try {
       join(mediaDir, negativeHead.underlying_media),
       negativeHead.clamped_file_frame
     );
-    const canvasCenter = await canvasRowCenter(browser);
+    const assertionRow = await canvasMiddleRow(browser);
+    const canvasCenter = rowCenter(
+      Uint8Array.from(assertionRow),
+      assertionRow.length / 4
+    );
     const toExpectedPx =
       Math.abs(canvasCenter - expectedRow.center) * expectedRow.width;
     const toClampedPx =
       Math.abs(canvasCenter - clampedRow.center) * clampedRow.width;
+    if (toExpectedPx > 3 || toClampedPx < 48) {
+      const receipt: Record<string, unknown> = {
+        requestedTimelineFrame: negativeHead.timeline_frame,
+        expectedFileFrame: negativeHead.underlying_file_frame,
+        clampedFileFrame: negativeHead.clamped_file_frame,
+        row: assertionRow,
+        canvasCenter,
+        expectedRow,
+        clampedRow,
+        signedExpectedSourcePixels:
+          (canvasCenter - expectedRow.center) * expectedRow.width,
+        signedClampedSourcePixels:
+          (canvasCenter - clampedRow.center) * clampedRow.width,
+      };
+      const receiptPath = join(shotDir, 'negative-head-seek-failure.json');
+      await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+      try {
+        receipt['stateAfterSample'] = await browser.evaluate(`(() => {
+          const root = document.querySelector('.otio-view');
+          const canvas = document.querySelector('canvas.otio-canvas');
+          const ctx = canvas?.getContext('2d');
+          return {
+            root: root ? {...root.dataset} : null,
+            canvas: canvas ? {width: canvas.width, height: canvas.height,
+              contextLost: typeof ctx?.isContextLost === 'function' ? ctx.isContextLost() : null} : null,
+            videos: Array.from(document.querySelectorAll('.otio-video-decoders video'), video => ({
+              currentSrc: video.currentSrc, currentTime: video.currentTime,
+              seeking: video.seeking, readyState: video.readyState,
+            })),
+          };
+        })()`);
+        const frames = [
+          ...new Set(
+            [
+              negativeHead.underlying_file_frame - 4,
+              negativeHead.underlying_file_frame - 1,
+              negativeHead.underlying_file_frame,
+              negativeHead.underlying_file_frame + 1,
+              negativeHead.clamped_file_frame,
+            ].filter((frame) => frame >= 0)
+          ),
+        ];
+        receipt['references'] = await Promise.all(
+          frames.map(async (frame) => {
+            const reference = await frameRowCenter(
+              join(mediaDir, negativeHead.underlying_media),
+              frame
+            );
+            return {
+              frame,
+              ...reference,
+              signedSourcePixels:
+                (canvasCenter - reference.center) * reference.width,
+            };
+          })
+        );
+      } catch (error) {
+        receipt['additionalCaptureError'] = String(error);
+      }
+      await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+    }
     assert.ok(
       toExpectedPx <= 3,
       `default canvas bar is ${toExpectedPx.toFixed(2)} source px from underlying V1 file frame ${negativeHead.underlying_file_frame}`
@@ -9126,6 +9025,32 @@ try {
     assert.ok(
       toClampedPx >= 48,
       `default canvas bar is ${toClampedPx.toFixed(2)} source px from clamped V2 substitute file frame ${negativeHead.clamped_file_frame}`
+    );
+    // Independently decode the suspected preceding frame and the expected frame.
+    // These controls exercise the same row-center and distance calculation.
+    const controlStale = await frameRowCenter(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.underlying_file_frame - 4
+    );
+    const controlExpected = await frameRowCenter(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.underlying_file_frame
+    );
+    assert.ok(
+      Math.abs(controlStale.center - expectedRow.center) * expectedRow.width >
+        3,
+      'negative-head pixel oracle accepted the preceding frame'
+    );
+    assert.ok(
+      Math.abs(controlExpected.center - expectedRow.center) *
+        expectedRow.width <=
+        3,
+      'negative-head pixel oracle rejected the independently decoded expected frame'
+    );
+    assert.ok(
+      Math.abs(controlExpected.center - clampedRow.center) * clampedRow.width >=
+        48,
+      'negative-head pixel oracle did not exclude the clamped control'
     );
     pass('default-view-negative-head');
 
