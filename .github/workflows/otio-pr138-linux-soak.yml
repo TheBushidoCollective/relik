@@ -1,0 +1,185 @@
+name: otio-pr138-linux-soak
+on:
+  push:
+    branches: [proof/otio-linux-138-soak]
+permissions:
+  contents: read
+env:
+  TF_VERSION: 1.9.8
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          # The versions in mise.toml, not whatever the runner ships.
+          install: true
+          cache: true
+
+      - name: Configure OTIO browser proof path
+        run: echo "OTIO_BROWSER_PROOF_DIR=$RUNNER_TEMP/otio-browser-proof" >> "$GITHUB_ENV"
+
+
+      - name: Require Linux native build prerequisites
+        run: |
+          set -euo pipefail
+          command -v docker
+          docker version --format '{{.Server.Version}}'
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils xvfb xauth
+          command -v readelf
+          command -v xvfb-run
+          command -v xauth
+          echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
+      - name: Linux confinement probe
+        run: |
+          set -euo pipefail; unset CC
+          node packages/relic-mcp/native/build.mjs --probe --target linux-x64-gnu --output-dir "$RUNNER_TEMP/confinement-probe-linux-x64-gnu"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Validate Terraform
+        working-directory: deploy/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+
+      # The anchor resolution tests crop a known colour out of a known
+      # coordinate to prove the region geometry is not transposed, and they
+      # need a real encoder to build that fixture and to perform the crop.
+      # ffmpeg is optional at runtime, and the code path that degrades
+      # without it is covered by a test that deliberately does not use it, so
+      # installing it here buys the pixel-exact coverage rather than hiding
+      # the fallback.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      # Builds the viewer first, because the asset tests serve real files out
+      # of its dist.
+      - name: Test
+        run: bun run test
+
+      - name: Build MCP bundle
+        run: bun run --cwd packages/relic-mcp build
+
+      - name: Cover path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/cover-path.ts
+      - name: Notify path
+        run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/notify-path.ts
+      - name: Comment path
+        run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/comment-path.ts
+      - name: Comment popover path
+        run: RELIC_POPOVER_CHROME_PATH="$(command -v google-chrome)" env -u DISPLAY -u WAYLAND_DISPLAY bun packages/relic-mcp/test/comment-popover-path.ts
+      - name: Upload comment popover shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comment-popover-path-shots-${{ matrix.lane }}
+          path: comment-popover-path-shots/
+      - name: Decision path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/decision-path.ts
+      - name: Passkey sign-in path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/passkey-sign-in-path.ts
+      - name: Email code sign-in path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/email-code-sign-in-path.ts
+
+      # Official OpenTimelineIO 0.18.1 conformance. The generator derives
+      # expected ranges from the pinned library, not from this repo's
+      # evaluator. A mismatch here is a real disagreement with the standard.
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.22"
+
+      - name: Install headless Chrome
+        run: |
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends wget ca-certificates
+            wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y /tmp/chrome.deb
+          fi
+          google-chrome --headless=new --disable-gpu --dump-dom about:blank >/dev/null
+
+      - name: Copy link path
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          RELIC_PROOF_CHROME_PATH="$(command -v google-chrome)" \
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            bun packages/relic-mcp/test/copy-link-path.ts
+
+      - name: OTIO conformance
+        run: |
+          command -v ffmpeg >/dev/null
+          command -v ffprobe >/dev/null
+          command -v uv >/dev/null
+          uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py --check
+          bash scripts/generate-otio-media.sh --check
+
+      # Loopback-only path. The script prints OTIO_PATH_OK only after the
+      # browser, official reader, and fresh MCP readback all pass.
+      - name: Prepare OTIO browser proof receipt
+        run: mkdir -p "$OTIO_BROWSER_PROOF_DIR"
+
+      - name: OTIO browser negative controls
+        run: |
+          set -euo pipefail
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+            xvfb-run -a bun packages/relic-mcp/test/otio-browser-controls.ts --negative-source \
+            2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/negative-source.log"
+
+      - name: OTIO path
+        env:
+          RELIC_OTIO_SHOTS_DIR: ${{ github.workspace }}/otio-path-shots
+        run: |
+          set -euo pipefail
+          command -v ffmpeg >/dev/null
+          command -v ffprobe >/dev/null
+          command -v uv >/dev/null
+          command -v google-chrome >/dev/null
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+            env -u DISPLAY -u WAYLAND_DISPLAY \
+              bun packages/relic-mcp/test/otio-path.ts \
+              2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-path.log"
+
+
+      - name: Load progress path
+        run: |
+          set -euo pipefail
+          RELIC_PROOF_CHROME_PATH="$(command -v google-chrome)" \
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            bun packages/relic-mcp/test/load-progress-path.ts
+      - name: Upload OTIO browser proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otio-browser-proof-linux-${{ matrix.lane }}
+          path: |
+            ${{ env.OTIO_BROWSER_PROOF_DIR }}
+            otio-path-shots
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
+
