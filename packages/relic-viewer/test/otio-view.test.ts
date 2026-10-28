@@ -429,6 +429,10 @@ class ViewElement {
           const m = selector.match(/\[data-comment-id="([^"]+)"\]/);
           if (m && el.dataset['commentId'] !== m[1]) return false;
         }
+        if (selector.includes('[data-tab="')) {
+          const m = selector.match(/\[data-tab="([^"]+)"\]/);
+          if (m && el.dataset['tab'] !== m[1]) return false;
+        }
         return true;
       }) ?? null
     );
@@ -482,6 +486,13 @@ class ViewElement {
   }
 
   scrollIntoView(): void {}
+
+  focus(_options?: FocusOptions): void {
+    Object.defineProperty(globalThis.document, 'activeElement', {
+      configurable: true,
+      value: this,
+    });
+  }
 
   setPointerCapture(): void {}
 
@@ -584,6 +595,7 @@ function installProjectionDom(): () => void {
     value: {
       innerWidth: 1440,
       innerHeight: 900,
+      matchMedia: () => ({ matches: false }),
       addEventListener: (): void => {},
       removeEventListener: (): void => {},
     },
@@ -1128,6 +1140,86 @@ describe('OTIO archive projection reader', () => {
       }
     });
 
+    test('mobile Inspector retains review state and closes before composing', async () => {
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        value: () => ({ matches: true }),
+      });
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: nestedSelectionContent(),
+        revision: 1,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected controller');
+      try {
+        const { scroll } = timelineGeometry(root);
+        const select = root.querySelector('.otio-track-select')!;
+        select.value = 'outer-track';
+        select.dispatchEvent(new Event('change'));
+        const toggle = root.querySelector('.otio-inspector-toggle')!;
+        const close = root.querySelector('.otio-inspector-close')!;
+        const inspector = root.querySelector('.otio-inspector')!;
+        const monitor = root.querySelector('.otio-monitor-row')!;
+        const context = root.querySelector('.otio-context')!;
+        const media = root.querySelector(
+          '.otio-inspector-tab[data-tab="media"]'
+        )!;
+        expect(close.parentElement).toBe(inspector);
+        expect(inspector.children.indexOf(close)).toBeGreaterThan(
+          inspector.children.indexOf(context)
+        );
+        toggle.dispatchEvent(new Event('click'));
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        expect(monitor.dataset['inspectorOpen']).toBe('true');
+        expect(globalThis.document.activeElement).toBe(
+          root.querySelector('.otio-inspector-tab[data-tab="inspector"]')
+        );
+        media.dispatchEvent(new Event('click'));
+        context.scrollTop = 37;
+        scroll.scrollTop = 79;
+        scroll.scrollLeft = 43;
+        const frame = root.querySelector('.otio-seek')!.value;
+        close.dispatchEvent(new Event('click'));
+        expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        expect(globalThis.document.activeElement).toBe(toggle);
+        toggle.dispatchEvent(new Event('click'));
+        expect(globalThis.document.activeElement).toBe(media);
+        expect(media.getAttribute('aria-selected')).toBe('true');
+        expect(context.scrollTop).toBe(37);
+        inspector.dispatchEvent(
+          Object.assign(new Event('keydown'), { key: 'Escape' })
+        );
+        expect(monitor.dataset['inspectorOpen']).toBe('false');
+        expect(globalThis.document.activeElement).toBe(toggle);
+        expect(scroll.scrollTop).toBe(79);
+        expect(scroll.scrollLeft).toBe(43);
+        expect(root.querySelector('.otio-seek')!.value).toBe(frame);
+        const emitted: OtioAnchorV1[] = [];
+        root.addEventListener('relic:otio-aim', (event) => {
+          expect(monitor.dataset['inspectorOpen']).toBe('false');
+          emitted.push(
+            (event as CustomEvent<{ anchor: OtioAnchorV1 }>).detail.anchor
+          );
+        });
+        toggle.dispatchEvent(new Event('click'));
+        root
+          .querySelector('.otio-comment-selection')!
+          .dispatchEvent(new Event('click'));
+        expect(emitted[0]).toEqual(
+          createOtioSelection(
+            controller.document,
+            controller.document.timeline_ids[0]!,
+            'outer-track',
+            1,
+            range(0, 1)
+          )
+        );
+      } finally {
+        controller.dispose();
+      }
+    });
+
     test('clips live selections and posted marks to timeline, stage and viewport', async () => {
       const root = new ViewElement('div');
       await mountOtioView(root as unknown as HTMLElement, {
@@ -1282,6 +1374,9 @@ describe('OTIO archive projection reader', () => {
           new DOMRect(300 - scroll.scrollLeft, 450 - scroll.scrollTop, 5, 14);
         secondMark.getBoundingClientRect = () =>
           new DOMRect(600 - scroll.scrollLeft, 900 - scroll.scrollTop, 5, 14);
+        expect(controller.measure('second')).toMatchObject({ height: 0 });
+        expect(scroll.scrollTop).toBe(0);
+        expect(scroll.scrollLeft).toBe(0);
         controller.reveal(second, 'second');
         expect(scroll.scrollTop).toBe(294);
         expect(controller.measure('second')).toMatchObject({
