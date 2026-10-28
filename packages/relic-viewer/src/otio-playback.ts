@@ -78,38 +78,6 @@ const HAVE_CURRENT_DATA = 2;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
-// Enabled only by the browser proof immediately around its diagnostic seek.
-function seekEvidence(event: string, detail: Record<string, unknown>): void {
-  const trace = (
-    globalThis as typeof globalThis & {
-      __otioSeekEvidence?: Record<string, unknown>[];
-    }
-  ).__otioSeekEvidence;
-  if (trace) trace.push({ event, at: performance.now(), ...detail });
-}
-
-const evidenceMedia = new WeakSet<HTMLMediaElement>();
-function observeEvidenceMedia(media: HTMLMediaElement): void {
-  if (evidenceMedia.has(media)) return;
-  evidenceMedia.add(media);
-  for (const event of [
-    'seeking',
-    'seeked',
-    'loadeddata',
-    'waiting',
-    'canplay',
-  ]) {
-    media.addEventListener(event, () => {
-      seekEvidence(event, {
-        src: media.currentSrc,
-        currentTime: media.currentTime,
-        seeking: media.seeking,
-        readyState: media.readyState,
-      });
-    });
-  }
-}
-
 export interface OtioTrackState {
   readonly id: string;
   readonly name: string;
@@ -1393,28 +1361,10 @@ export function createOtioPlayback(
     gen: number
   ): Promise<boolean> {
     if (stale(gen)) return Promise.resolve(false);
-    observeEvidenceMedia(media);
-    seekEvidence('seek-request', {
-      src: media.currentSrc,
-      target,
-      priorTime: media.currentTime,
-      seeking: media.seeking,
-      readyState: media.readyState,
-      cachedTarget: decodedAt.get(media) ?? null,
-      gen,
-    });
     if (
       decodedAt.get(media) === target &&
       media.readyState >= HAVE_CURRENT_DATA
     ) {
-      seekEvidence('cache-hit', {
-        src: media.currentSrc,
-        target,
-        currentTime: media.currentTime,
-        seeking: media.seeking,
-        readyState: media.readyState,
-        gen,
-      });
       return Promise.resolve(true);
     }
     const { promise, resolve } = Promise.withResolvers<boolean>();
@@ -1425,16 +1375,6 @@ export function createOtioPlayback(
       media.removeEventListener('seeked', onSeeked);
       media.removeEventListener('loadeddata', onReady);
       media.removeEventListener('error', onError);
-      seekEvidence('seek-resolution', {
-        src: media.currentSrc,
-        target,
-        currentTime: media.currentTime,
-        seeking: media.seeking,
-        readyState: media.readyState,
-        ok,
-        stale: stale(gen),
-        gen,
-      });
       if (ok && !stale(gen) && media.readyState >= HAVE_CURRENT_DATA) {
         decodedAt.set(media, target);
         resolve(true);
@@ -1459,14 +1399,6 @@ export function createOtioPlayback(
     media.addEventListener('error', onError);
     try {
       media.currentTime = target;
-      seekEvidence('seek-assigned', {
-        src: media.currentSrc,
-        target,
-        currentTime: media.currentTime,
-        seeking: media.seeking,
-        readyState: media.readyState,
-        gen,
-      });
     } catch {
       finish(false);
       return promise;
@@ -2102,73 +2034,9 @@ export function createOtioPlayback(
       }
       const leaves = await prepareLeaves(evaluation, tree, gen);
       if (stale(gen)) return;
-      const trace = (
-        globalThis as typeof globalThis & {
-          __otioSeekEvidence?: Record<string, unknown>[];
-        }
-      ).__otioSeekEvidence;
-      if (trace) {
-        const samples = leaves.map((leaf, index) => {
-          const contribution = evaluation.video_contributions[index];
-          if (
-            !leaf ||
-            leaf.kind !== 'image' ||
-            !(leaf.source instanceof HTMLVideoElement)
-          ) {
-            return { index, kind: leaf?.kind ?? null, contribution };
-          }
-          const video = leaf.source;
-          try {
-            const sample = document.createElement('canvas');
-            sample.width = video.videoWidth;
-            sample.height = video.videoHeight;
-            const context = sample.getContext('2d');
-            if (!context || !sample.width || !sample.height)
-              throw new Error('decoder pixels unavailable');
-            context.drawImage(video, 0, 0);
-            const row = Array.from(
-              context.getImageData(
-                0,
-                Math.floor(sample.height / 2),
-                sample.width,
-                1
-              ).data
-            );
-            return {
-              index,
-              kind: leaf.kind,
-              alpha: leaf.alpha,
-              contribution,
-              src: video.currentSrc,
-              currentTime: video.currentTime,
-              seeking: video.seeking,
-              readyState: video.readyState,
-              width: sample.width,
-              height: sample.height,
-              row,
-            };
-          } catch (error) {
-            return { index, contribution, error: String(error) };
-          }
-        });
-        seekEvidence('before-paint', {
-          gen,
-          time,
-          tree,
-          samples,
-          tracks: tracks,
-          buffering: isBuffering,
-        });
-      }
       let presented = false;
       try {
         presented = paint(tree, leaves);
-        seekEvidence('paint', {
-          gen,
-          presented,
-          buffering: isBuffering,
-          contextLost: isCanvasContextLost(canvas),
-        });
       } catch {
         // A missing surface must not paint a stale frame.
       }
@@ -2182,7 +2050,6 @@ export function createOtioPlayback(
         graphicsFailed = false;
         mediaFailures.delete('graphics-context-lost');
         isBuffering = false;
-        seekEvidence('buffering-clear', { gen, time, buffering: isBuffering });
       }
       notify();
     } finally {
