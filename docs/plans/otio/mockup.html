@@ -92,6 +92,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .frame-burn { position: absolute; left: 18px; bottom: 14px; color: #fff; padding: .25rem .45rem; background: #080a0bd9; font-size: 11px; border: 1px solid #ffffff38; }
 .preview-scope { position: absolute; top: 12px; left: 14px; color: #f1f2f0; font: 10px var(--mono); background: #080a0bbf; padding: .25rem .4rem; }
 .preview-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #080a0be8; color: #e6e9e7; text-align: center; padding: 1.5rem; gap: .75rem; }
+.preview-state > * { flex: none; }
 .composition:has(> .preview-state:not([hidden])) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -130,7 +131,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 }
 .preview-state h2 { font: 18px var(--sans); font-weight: 500; margin: 0; }
 .preview-state p { margin: 0; max-width: 34rem; font: 11px/1.7 var(--mono); color: #b9c0be; overflow-wrap: anywhere; }
-.preview-state .primary { max-width: 26rem; font-size: 12px; }
+.preview-state .primary { max-width: min(26rem, 100%); font-size: 12px; overflow-wrap: anywhere; }
 .preview-state button:not(.primary) { color: var(--ink); background: var(--surface); }
 .state-icon { width: 32px; height: 32px; color: #c98058; }
 .spinner { width: 24px; height: 24px; border: 2px solid #596060; border-right-color: #a7ded6; border-radius: 50%; }
@@ -329,6 +330,10 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   .monitor-row[data-inspector-open="true"] .inspector { display: flex; }
   #inspector-close { display: block; flex: none; min-height: 44px; margin: .4rem; }
   #inspector-toggle { display: inline-block; font-size: 10px; }
+  .preview-state { padding: 0 .5rem; overscroll-behavior: contain; }
+  .composition:has(> .preview-state:not([hidden])) > .preview-scope { margin-top: .35rem; }
+  .composition:has(> .preview-state:not([hidden])) > .preview-state { margin-top: .5rem; }
+  .preview-state .primary { padding: .3rem .35rem; }
   .selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }
   .selection-readout .selection-text { grid-column: 1 / -1; min-width: 0; }
   .selection-readout label { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
