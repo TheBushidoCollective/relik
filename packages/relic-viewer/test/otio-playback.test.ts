@@ -5099,6 +5099,7 @@ describe('otio native video playback S-C and S-B', () => {
 describe('VideoFrame readout (planner tests 1-6)', () => {
   const created: MockMedia[] = [];
   let raf: FrameRequestCallback | null = null;
+  let rafScheduled = 0;
   let originalGlobals = new Map<
     PlaybackGlobalKey,
     PropertyDescriptor | undefined
@@ -5115,6 +5116,7 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
     createdUrls.length = 0;
     revokedUrls.length = 0;
     raf = null;
+    rafScheduled = 0;
     MockVideoFrame.reset();
     originalGlobals = propertyDescriptors(globalThis, playbackGlobalKeys);
     originalUrlMethods = propertyDescriptors(URL, urlMethodNames);
@@ -5143,6 +5145,7 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
           'requestAnimationFrame',
           (cb: FrameRequestCallback) => {
             raf = cb;
+            rafScheduled++;
             return 1;
           },
         ],
@@ -5568,10 +5571,19 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
 
       // Subsequent ticks run in seek cadence and trigger seeks
       const initialSeeks = videoMedia!.seekTargets.length;
+      const beforeTick = rafScheduled;
       raf?.(100);
-      for (let i = 0; i < 5; i++) await Promise.resolve();
+      // The next RAF is scheduled only after the asynchronous render finishes.
+      for (let i = 0; i < 100 && rafScheduled === beforeTick; i++)
+        await Promise.resolve();
+      expect(rafScheduled).toBeGreaterThan(beforeTick);
       raf?.(200);
-      for (let i = 0; i < 5; i++) await Promise.resolve();
+      for (
+        let i = 0;
+        i < 100 && videoMedia!.seekTargets.length === initialSeeks;
+        i++
+      )
+        await Promise.resolve();
       expect(videoMedia!.seekTargets.length).toBeGreaterThan(initialSeeks);
     } finally {
       MockVideoFrame.timestampOverride = null;
