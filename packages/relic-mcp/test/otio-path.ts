@@ -8916,7 +8916,178 @@ try {
       'official reader did not derive a negative authored timewarp file sample'
     );
     await assertTrackVisible(browser, negativeHead.timewarp_track_id);
-    await seekTo(browser, negativeHead.timeline_frame);
+    const referenceFrames = [
+      ...new Set(
+        [
+          negativeHead.underlying_file_frame - 5,
+          negativeHead.underlying_file_frame - 4,
+          negativeHead.underlying_file_frame - 3,
+          negativeHead.underlying_file_frame - 1,
+          negativeHead.underlying_file_frame,
+          negativeHead.underlying_file_frame + 1,
+          negativeHead.clamped_file_frame - 1,
+          negativeHead.clamped_file_frame,
+          negativeHead.clamped_file_frame + 1,
+        ].filter((frame) => frame >= 0)
+      ),
+    ];
+    const references = await Promise.all(
+      referenceFrames.map(async (frame) => ({
+        frame,
+        ...(await frameRowCenter(
+          join(mediaDir, negativeHead.underlying_media),
+          frame
+        )),
+      }))
+    );
+    await browser.evaluate(`(() => {
+      const trace = globalThis.__otioSeekEvidence = [];
+      const root = document.querySelector('.otio-view');
+      trace.push({ event: 'probe-start', at: performance.now(), root: root ? {...root.dataset} : null });
+      if (root) {
+        const observer = new MutationObserver(() => trace.push({
+          event: 'root-state', at: performance.now(), root: {...root.dataset}
+        }));
+        observer.observe(root, { attributes: true, attributeFilter: ['data-buffering', 'data-frame', 'data-playing', 'data-preview-blocked'] });
+        globalThis.__otioSeekEvidenceObserver = observer;
+      }
+    })()`);
+    try {
+      await seekTo(browser, negativeHead.timeline_frame);
+    } finally {
+      const capture = await browser.evaluate<{
+        trace: Record<string, unknown>[];
+        root: Record<string, string> | null;
+        canvas: {
+          width: number;
+          height: number;
+          lost: boolean | null;
+          row: number[];
+          alpha: { min: number; max: number; zero: number; opaque: number };
+          png: string;
+        } | null;
+        error?: string;
+      }>(`(() => {
+        const trace = globalThis.__otioSeekEvidence || [];
+        globalThis.__otioSeekEvidenceObserver?.disconnect();
+        delete globalThis.__otioSeekEvidenceObserver;
+        delete globalThis.__otioSeekEvidence;
+        const root = document.querySelector('.otio-view');
+        const canvas = document.querySelector('canvas.otio-canvas');
+        try {
+          if (!canvas) return { trace, root: root ? {...root.dataset} : null, canvas: null };
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('canvas 2d context unavailable');
+          const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+          const row = Array.from(ctx.getImageData(0, Math.floor(canvas.height / 2), canvas.width, 1).data);
+          let min = 255, max = 0, zero = 0, opaque = 0;
+          for (let i = 3; i < pixels.length; i += 4) {
+            const a = pixels[i]; min = Math.min(min, a); max = Math.max(max, a);
+            if (a === 0) zero++; if (a === 255) opaque++;
+          }
+          return { trace, root: root ? {...root.dataset} : null, canvas: {
+            width: canvas.width, height: canvas.height,
+            lost: typeof ctx.isContextLost === 'function' ? ctx.isContextLost() : null,
+            row, alpha: { min, max, zero, opaque }, png: canvas.toDataURL('image/png')
+          } };
+        } catch (error) { return { trace, root: root ? {...root.dataset} : null, canvas: null, error: String(error) }; }
+      })()`);
+      const png = capture.canvas?.png;
+      if (png) {
+        await writeFile(
+          join(shotDir, 'negative-head-canvas.png'),
+          Buffer.from(png.slice(png.indexOf(',') + 1), 'base64')
+        );
+        capture.canvas!.png = 'negative-head-canvas.png';
+      }
+      const measureCenter = (row: number[], width: number): number | null => {
+        try {
+          return row.length ? rowCenter(Uint8Array.from(row), width) : null;
+        } catch {
+          return null;
+        }
+      };
+      const canvasCenter = capture.canvas
+        ? measureCenter(capture.canvas.row, capture.canvas.width)
+        : null;
+      const decoderComparisons = capture.trace.flatMap((entry) => {
+        if (
+          entry['event'] !== 'before-paint' ||
+          !Array.isArray(entry['samples'])
+        )
+          return [];
+        return (entry['samples'] as Record<string, unknown>[]).flatMap(
+          (sample) => {
+            if (
+              !Array.isArray(sample['row']) ||
+              typeof sample['width'] !== 'number'
+            )
+              return [];
+            const center = measureCenter(
+              sample['row'] as number[],
+              sample['width']
+            );
+            const offsets = references.map((reference) => ({
+              frame: reference.frame,
+              signedSourcePixels:
+                center === null
+                  ? null
+                  : (center - reference.center) * reference.width,
+            }));
+            const closest =
+              offsets
+                .filter((item) => item.signedSourcePixels !== null)
+                .sort(
+                  (a, b) =>
+                    Math.abs(a.signedSourcePixels!) -
+                    Math.abs(b.signedSourcePixels!)
+                )[0] ?? null;
+            return [
+              {
+                at: entry['at'],
+                index: sample['index'],
+                contribution: sample['contribution'],
+                center,
+                offsets,
+                closest,
+              },
+            ];
+          }
+        );
+      });
+      const comparisons = references.map((reference) => ({
+        ...reference,
+        canvasOffsetSourcePixels:
+          canvasCenter === null
+            ? null
+            : (canvasCenter - reference.center) * reference.width,
+      }));
+      const closest =
+        comparisons
+          .filter((item) => item.canvasOffsetSourcePixels !== null)
+          .sort(
+            (a, b) =>
+              Math.abs(a.canvasOffsetSourcePixels!) -
+              Math.abs(b.canvasOffsetSourcePixels!)
+          )[0] ?? null;
+      await writeFile(
+        join(shotDir, 'negative-head-seek-evidence.json'),
+        `${JSON.stringify(
+          {
+            requestedTimelineFrame: negativeHead.timeline_frame,
+            expectedFileFrame: negativeHead.underlying_file_frame,
+            clampedFileFrame: negativeHead.clamped_file_frame,
+            capture,
+            canvasCenter,
+            references: comparisons,
+            decoderComparisons,
+            closest,
+          },
+          null,
+          2
+        )}\n`
+      );
+    }
     const negativeExpected = await extractFrame(
       join(mediaDir, negativeHead.underlying_media),
       negativeHead.underlying_file_frame,
