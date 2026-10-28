@@ -4778,12 +4778,13 @@ canvas.relic-page {
 }
 
 /* Native OTIO: the same accession surface, with lanes instead of a document. */
-.stage-otio { padding: 0 0 2rem; min-width: 0; }
-.otio-view { --otio-label-width: 174px; min-width: 0; width: 100%; }
+.stage-otio { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0; min-width: 0; }
+.stage-otio > .notice { flex: none; }
+.otio-view { --otio-label-width: 174px; display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; width: 100%; }
 .otio-loading { margin: 1rem; font: .8rem var(--mono); color: var(--ink-soft); }
-.otio-monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 244px; border-bottom: 1px solid var(--rule-strong); }
-.otio-preview { position: relative; background: #080a0b; min-width: 0; display: grid; place-items: center; min-height: 240px; }
-.otio-canvas { display: block; width: 100%; height: auto; max-height: 380px; object-fit: contain; }
+.otio-monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 244px; grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 0; border-bottom: 1px solid var(--rule-strong); }
+.otio-preview { position: relative; background: #080a0b; min-width: 0; min-height: 0; display: grid; place-items: center; overflow: hidden; }
+.otio-canvas { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
 .otio-preview-scope { position: absolute; top: .7rem; left: .7rem; max-width: calc(100% - 1.4rem); padding: .2rem .35rem; color: #e6e9e7; background: #080a0bd9; font: .6rem/1.5 var(--mono); }
 .otio-preview-status { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .65rem; padding: 1.25rem; overflow-y: auto; background: #080a0bf0; color: #e6e9e7; text-align: center; }
 .otio-preview-status p { max-width: 38rem; margin: 0; font: .75rem/1.6 var(--mono); color: #d2b49f; overflow-wrap: anywhere; }
@@ -4795,7 +4796,7 @@ canvas.relic-page {
 /* Blocked previews reserve separate rows for the scope and diagnostics. */
 .otio-preview:has(> .otio-preview-status:not([hidden])) {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(min-content, 1fr);
+  grid-template-rows: fit-content(40%) minmax(0, 1fr);
   place-items: stretch;
 }
 .otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-canvas {
@@ -4813,6 +4814,8 @@ canvas.relic-page {
   max-width: calc(100% - 1.4rem);
   margin: .7rem .7rem 0;
   overflow-wrap: anywhere;
+  max-height: 100%;
+  overflow-y: auto;
 }
 .otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-preview-status {
   position: relative;
@@ -4822,15 +4825,17 @@ canvas.relic-page {
   justify-self: stretch;
   min-width: 0;
   margin-top: .65rem;
-  overflow: visible;
+  min-height: 0;
+  overflow-y: auto;
+  justify-content: safe center;
 }
 .otio-raw { margin-top: .6rem; min-width: 0; }
 .otio-raw summary { color: var(--ink-soft); font: .62rem/1.6 var(--mono); cursor: pointer; }
-.otio-inspector { background: var(--surface); min-width: 0; border-left: 1px solid var(--rule); }
-.otio-inspector-tabs { display: flex; border-bottom: 1px solid var(--rule); }
+.otio-inspector { display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--surface); min-width: 0; border-left: 1px solid var(--rule); }
+.otio-inspector-tabs { display: flex; flex: none; border-bottom: 1px solid var(--rule); }
 .otio-inspector-tab { flex: 1; min-width: 0; padding: .6rem .4rem; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--ink-soft); font: .7rem var(--sans); cursor: pointer; }
 .otio-inspector-tab[aria-selected="true"] { border-bottom-color: var(--patina); color: var(--patina-ink); }
-.otio-context { max-height: 340px; overflow-y: auto; padding: .8rem; font-size: .68rem; }
+.otio-context { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: .8rem; font-size: .68rem; }
 .otio-context h3 { margin: 0 0 .3rem; color: var(--ink); font: 600 .82rem var(--sans); overflow-wrap: anywhere; }
 .otio-context h4 { margin: .8rem 0 .3rem; font: 600 .7rem var(--sans); }
 .otio-context dl { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: .4rem; margin: .7rem 0; font-size: .62rem; }
@@ -4855,7 +4860,7 @@ canvas.relic-page {
 .otio-mode { border: 1px solid var(--rule-strong); border-radius: 0; padding: .3rem .5rem; background: var(--surface); color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-mode[aria-pressed="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
 .otio-track-select, .otio-timeline-select { max-width: 190px; min-width: 0; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .28rem; padding-inline-end: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .62rem var(--sans); }
-.otio-timeline-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scroll-padding-inline-start: var(--otio-label-width); }
+.otio-timeline-scroll { flex: 0 1 auto; min-height: 0; max-height: min(240px, 30%); max-width: 100%; overflow: auto; overscroll-behavior: contain; scroll-padding-inline-start: var(--otio-label-width); }
 .otio-track-grid { position: relative; min-width: 760px; }
 .otio-ruler, .otio-track-row { display: grid; grid-template-columns: var(--otio-label-width) minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
 .otio-ruler-label { position: sticky; z-index: 7; left: 0; padding: .35rem .6rem; border-right: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft); font: .6rem var(--mono); }
@@ -4905,12 +4910,13 @@ canvas.relic-page {
 .otio-comment-mark[data-projection="partial"] { border-style: dashed; }
 .otio-playhead { position: absolute; top: 25px; bottom: 0; z-index: 5; width: 1px; background: var(--ink); box-shadow: 0 0 0 1px var(--surface); pointer-events: none; }
 .otio-selection-readout { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .65rem .75rem; border-bottom: 1px solid var(--rule-strong); background: var(--surface); }
+.otio-transport, .otio-timeline-heading, .otio-selection-readout { flex: none; }
 .otio-selection-label { flex: 1 1 100%; font: .64rem/1.6 var(--mono); overflow-wrap: anywhere; }
 .otio-selection-readout label { font: .62rem var(--sans); }
 .otio-selection-readout input { width: 70px; border: 1px solid var(--rule-strong); background: var(--ground); color: var(--ink); padding: .25rem; font: .65rem var(--mono); }
 .otio-selection-readout button { border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .3rem .6rem; font: .65rem var(--sans); cursor: pointer; }
 .otio-selection-readout .otio-comment-selection { background: var(--patina); color: var(--surface); border-color: var(--patina); }
-.otio-diagnostics { padding: .5rem .75rem; }
+.otio-diagnostics { flex: 0 1 auto; min-height: 0; max-height: 20%; overflow-y: auto; overscroll-behavior: contain; padding: .5rem .75rem; }
 .otio-diagnostics:empty { display: none; }
 .otio-diagnostic { margin: .35rem 0; color: var(--oxide); font: .68rem/1.6 var(--mono); overflow-wrap: anywhere; }
 .otio-feedback-target { margin: .6rem 0; padding: .35rem .55rem; border-left: 2px solid var(--patina); background: var(--diff-added); color: var(--ink); font: .66rem/1.6 var(--mono); overflow-wrap: anywhere; }
@@ -4959,12 +4965,10 @@ canvas.relic-page {
 }
 @media (max-width: 44rem) {
   .otio-view { --otio-label-width: 148px; }
-  .otio-monitor-row { display: block; }
-  .otio-preview { min-height: 180px; }
-  .otio-canvas { max-height: none; }
+  .otio-monitor-row { grid-template-columns: minmax(0, 1fr); }
+  .otio-monitor-row[data-inspector-open="true"] { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .otio-inspector { display: none; border-left: 0; border-top: 1px solid var(--rule); }
-  .otio-monitor-row[data-inspector-open="true"] .otio-inspector { display: block; }
-  .otio-context { max-height: 260px; }
+  .otio-monitor-row[data-inspector-open="true"] .otio-inspector { display: flex; }
   .otio-transport .otio-inspector-toggle { display: block; }
   .otio-transport { gap: .4rem; padding: .5rem; }
   .otio-seek { flex-basis: 100%; order: 2; }
