@@ -9966,35 +9966,71 @@ try {
       [390, 568],
       [1440, 900],
     ] as const) {
+      await browser.evaluate(`(() => {
+        const field = window.__otioResizeField;
+        const unchanged = innerWidth === ${shotWidth} && innerHeight === ${shotHeight};
+        const { promise, resolve } = Promise.withResolvers();
+        let finished = false;
+        const complete = (result) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timeout);
+          removeEventListener('resize', onResize);
+          resolve(result);
+        };
+        const frames = (mode) => requestAnimationFrame(() => requestAnimationFrame(() => {
+          complete({ mode, width: innerWidth, height: innerHeight,
+            same: document.querySelector('.popover-composer textarea') === field,
+            focused: document.activeElement === field, text: field?.value ?? '' });
+        }));
+        const onResize = () => {
+          if (innerWidth !== ${shotWidth} || innerHeight !== ${shotHeight}) return;
+          removeEventListener('resize', onResize);
+          frames('resize');
+        };
+        const timeout = setTimeout(() => complete({ error: 'resize or render frames not observed', width: innerWidth, height: innerHeight }), 10000);
+        window.__otioResizeSettled = promise;
+        if (unchanged) frames('unchanged');
+        else addEventListener('resize', onResize);
+      })()`);
       await browser.send('Emulation.setDeviceMetricsOverride', {
         width: shotWidth,
         height: shotHeight,
         deviceScaleFactor: 1,
         mobile: shotWidth < 600,
       });
-      const settled = await browser.evaluate<{ same: boolean; text: string }>(
-        `(() => {
-          const { promise, resolve } = Promise.withResolvers();
-          let done = false;
-          const finish = () => {
-            if (done) return;
-            done = true;
-            const field = document.querySelector(
-              '.popover-card.popover-composer.is-otio-composer textarea, .popover-composer textarea'
-            );
-            resolve({
-              same: field === window.__otioResizeField,
-              text: field?.value ?? '',
-            });
-          };
-          requestAnimationFrame(() => requestAnimationFrame(finish));
-          setTimeout(finish, 50);
-          return promise;
-        })()`
+      // Force a headless paint so resize and animation-frame callbacks can run.
+      await browser.screenshot(`${shotWidth}x${shotHeight}-resize-paint`);
+      const settled = await browser.evaluate<{
+        mode?: string;
+        width: number;
+        height: number;
+        same?: boolean;
+        focused?: boolean;
+        text?: string;
+        error?: string;
+      }>('window.__otioResizeSettled');
+      assert.equal(
+        settled.error,
+        undefined,
+        `${shotWidth}x${shotHeight}: ${settled.error}`
       );
+      assert.ok(
+        settled.mode === 'resize' || settled.mode === 'unchanged',
+        'resize completion has no event or unchanged-viewport proof'
+      );
+      assert.equal(settled.width, shotWidth);
+      assert.equal(settled.height, shotHeight);
       assert.deepEqual(
         settled,
-        { same: true, text: resizeDraft },
+        {
+          mode: settled.mode,
+          width: shotWidth,
+          height: shotHeight,
+          same: true,
+          focused: true,
+          text: resizeDraft,
+        },
         `${shotWidth}x${shotHeight} resize rebuilt or cleared held editor`
       );
       const probe = await measureComposer(browser);
