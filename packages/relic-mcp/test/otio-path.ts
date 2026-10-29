@@ -9961,6 +9961,26 @@ try {
       field.dispatchEvent(new Event('input', { bubbles: true }));
       window.__otioResizeField = field;
     })()`);
+    await browser.evaluate(`(() => {
+      const card = document.querySelector('.popover-card.popover-composer.is-otio-composer');
+      const selection = document.querySelector('.otio-selection');
+      const stage = document.querySelector('.stage-wrap');
+      const trace = window.__resizeTrace = [];
+      const snapshot = (event) => trace.push({
+        event, at: performance.now(), viewport: [innerWidth, innerHeight],
+        card: card?.getBoundingClientRect().toJSON(), anchor: selection?.getBoundingClientRect().toJSON(),
+        side: card?.dataset.side, cardStyle: card?.getAttribute('style'),
+        stageScroll: stage?.scrollTop, active: document.activeElement?.tagName
+      });
+      snapshot('before-viewport');
+      window.addEventListener('resize', () => {
+        snapshot('resize');
+        requestAnimationFrame(() => { snapshot('resize-raf-1'); requestAnimationFrame(() => snapshot('resize-raf-2')); });
+      });
+      stage?.addEventListener('scroll', () => snapshot('stage-scroll'));
+      new MutationObserver(() => snapshot('card-attributes')).observe(card, { attributes: true, attributeFilter: ['style', 'data-side', 'data-capped'] });
+      window.__resizeSnapshot = snapshot;
+    })()`);
     for (const [shotWidth, shotHeight] of [
       [320, 480],
       [390, 568],
@@ -9972,6 +9992,9 @@ try {
         deviceScaleFactor: 1,
         mobile: shotWidth < 600,
       });
+      await browser.evaluate(
+        `window.__resizeSnapshot('after-viewport-command')`
+      );
       const settled = await browser.evaluate<{ same: boolean; text: string }>(
         `(() => {
           const { promise, resolve } = Promise.withResolvers();
@@ -9992,14 +10015,25 @@ try {
           return promise;
         })()`
       );
+      await browser.evaluate(`window.__resizeSnapshot('after-settle-check')`);
       assert.deepEqual(
         settled,
         { same: true, text: resizeDraft },
         `${shotWidth}x${shotHeight} resize rebuilt or cleared held editor`
       );
       const probe = await measureComposer(browser);
+      await browser.evaluate(
+        `window.__resizeSnapshot('after-first-measurement')`
+      );
       await browser.screenshot(
         `${shotWidth}x${shotHeight}-light-resize-held-draft`
+      );
+      await browser.evaluate(`window.__resizeSnapshot('after-screenshot')`);
+      const afterScreenshotProbe = await measureComposer(browser);
+      const resizeTrace = await browser.evaluate(`window.__resizeTrace`);
+      await writeFile(
+        join(shotDir, `${shotWidth}x${shotHeight}-resize-order.json`),
+        `${JSON.stringify({ probe, afterScreenshotProbe, resizeTrace }, null, 2)}\n`
       );
       assertComposerProbe(
         probe,
