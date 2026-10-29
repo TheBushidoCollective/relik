@@ -19,7 +19,17 @@ checksum = "sha256:76eaf34d8c4cc493ef184ee2ebe21b67d9b8dbb15674c5d7f28f2d6bc2674
 url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-linux-x64"
 url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448277"
 
+[tools.biome."platforms.linux-x64-baseline"]
+checksum = "sha256:76eaf34d8c4cc493ef184ee2ebe21b67d9b8dbb15674c5d7f28f2d6bc2674e00"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-linux-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448277"
+
 [tools.biome."platforms.linux-x64-musl"]
+checksum = "sha256:b802b493081f10c8e7106681b415d9e709649130ea17c65a2be98e1bc757b228"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-linux-x64-musl"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448280"
+
+[tools.biome."platforms.linux-x64-musl-baseline"]
 checksum = "sha256:b802b493081f10c8e7106681b415d9e709649130ea17c65a2be98e1bc757b228"
 url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-linux-x64-musl"
 url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448280"
@@ -34,7 +44,17 @@ checksum = "sha256:ec4d473c4b56795c356b80feff5237157c2eefd0edb40d3b66202ecb60986
 url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-darwin-x64"
 url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448275"
 
+[tools.biome."platforms.macos-x64-baseline"]
+checksum = "sha256:ec4d473c4b56795c356b80feff5237157c2eefd0edb40d3b66202ecb609867e7"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-darwin-x64"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448275"
+
 [tools.biome."platforms.windows-x64"]
+checksum = "sha256:61e0d948020acd78e8f4e311265a98057cd19e0633d942638561acd369f1ea11"
+url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-win32-x64.exe"
+url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448283"
+
+[tools.biome."platforms.windows-x64-baseline"]
 checksum = "sha256:61e0d948020acd78e8f4e311265a98057cd19e0633d942638561acd369f1ea11"
 url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.2.2/biome-win32-x64.exe"
 url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/285448283"
@@ -107,7 +127,15 @@ url = "https://unofficial-builds.nodejs.org/download/release/v24.15.0/node-v24.1
 checksum = "sha256:44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89"
 url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.gz"
 
+[tools.node."platforms.linux-x64-baseline"]
+checksum = "sha256:44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89"
+url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.gz"
+
 [tools.node."platforms.linux-x64-musl"]
+checksum = "sha256:f55af5bd489c5347b113ca6594cae00a54b30ba57ac5875324311bfc6f4762e3"
+url = "https://unofficial-builds.nodejs.org/download/release/v24.15.0/node-v24.15.0-linux-x64-musl.tar.gz"
+
+[tools.node."platforms.linux-x64-musl-baseline"]
 checksum = "sha256:f55af5bd489c5347b113ca6594cae00a54b30ba57ac5875324311bfc6f4762e3"
 url = "https://unofficial-builds.nodejs.org/download/release/v24.15.0/node-v24.15.0-linux-x64-musl.tar.gz"
 
@@ -119,6 +147,14 @@ url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-darwin-arm64.tar.gz"
 checksum = "sha256:ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b"
 url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-darwin-x64.tar.gz"
 
+[tools.node."platforms.macos-x64-baseline"]
+checksum = "sha256:ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b"
+url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-darwin-x64.tar.gz"
+
 [tools.node."platforms.windows-x64"]
+checksum = "sha256:cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62"
+url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip"
+
+[tools.node."platforms.windows-x64-baseline"]
 checksum = "sha256:cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62"
 url = "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip"
