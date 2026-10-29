@@ -2832,7 +2832,7 @@ async function layerPacketStarts(mediaFile: string): Promise<number[]> {
   return packets.map((pts) => pts * timeBase);
 }
 
-async function canvasRowCenter(browser: ChromeSession): Promise<number> {
+async function canvasMiddleRow(browser: ChromeSession): Promise<number[]> {
   const row = await browser.evaluate<number[] | null>(`(() => {
     const canvas = document.querySelector('canvas.otio-canvas');
     if (!canvas) return null;
@@ -2845,6 +2845,11 @@ async function canvasRowCenter(browser: ChromeSession): Promise<number> {
     row && row.length > 0 && row.length % 4 === 0,
     'canvas row missing'
   );
+  return row;
+}
+
+async function canvasRowCenter(browser: ChromeSession): Promise<number> {
+  const row = await canvasMiddleRow(browser);
   return rowCenter(Uint8Array.from(row), row.length / 4);
 }
 
@@ -3507,6 +3512,7 @@ interface AuxiliaryCoincidentMarksProbe {
 interface AuxiliaryStageSnapshot {
   readonly stageScrollTop: number | null;
   readonly timelineScrollLeft: number | null;
+  readonly timelineScrollTop: number | null;
   readonly stageContent: DomRectProbe | null;
   readonly bodyRect: DomRectProbe | null;
   readonly markRect: DomRectProbe | null;
@@ -3532,6 +3538,8 @@ interface AuxiliarySidebarRowProbe {
   readonly stageAfter: number | null;
   readonly timelineBefore: number | null;
   readonly timelineAfter: number | null;
+  readonly timelineTopBefore: number | null;
+  readonly timelineTopAfter: number | null;
 }
 
 interface AuxiliarySidebarClickCapture {
@@ -4986,21 +4994,21 @@ async function exposeCommentMarkForPointer(
       setTimeout(finish, 50);
       return promise;
     };
-    const stageScrollHeight = stage.scrollHeight;
-    const stageClientHeight = stage.clientHeight;
+    const stageScrollHeight = timeline.scrollHeight;
+    const stageClientHeight = timeline.clientHeight;
     const maxScrollTop = Math.max(0, stageScrollHeight - stageClientHeight);
     const attempts = [];
     let blocker = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const current = position();
-      const stageBounds = clientBounds(stage);
+      const stageBounds = clientBounds(timeline);
       if (current.exposedRight - current.exposedLeft <= 0) {
         blocker =
           'sticky label leaves no exposed pointer interval: ' +
           JSON.stringify(current);
         break;
       }
-      const beforeScrollTop = stage.scrollTop;
+      const beforeScrollTop = timeline.scrollTop;
       let requestedScrollTop = beforeScrollTop;
       if (current.rect.top < stageBounds.top)
         requestedScrollTop += Math.floor(
@@ -5019,16 +5027,16 @@ async function exposeCommentMarkForPointer(
         0,
         Math.max(0, timeline.scrollWidth - timeline.clientWidth)
       );
-      stage.scrollTop = nextStage;
+      timeline.scrollTop = nextStage;
       timeline.scrollLeft = nextTimeline;
       await frames();
       attempts.push({
         beforeScrollTop,
         requestedScrollTop,
-        appliedScrollTop: stage.scrollTop,
+        appliedScrollTop: timeline.scrollTop,
       });
       const changed =
-        Math.abs(stage.scrollTop - beforeScrollTop) > 0.01 ||
+        Math.abs(timeline.scrollTop - beforeScrollTop) > 0.01 ||
         Math.abs(timeline.scrollLeft - beforeTimelineLeft) > 0.01;
       if (!changed) break;
     }
@@ -5038,8 +5046,8 @@ async function exposeCommentMarkForPointer(
       blocker === null &&
       (after.center.x < after.exposedLeft ||
         after.center.x > after.exposedRight ||
-        after.rect.top < clientBounds(stage).top ||
-        after.rect.bottom > clientBounds(stage).bottom)
+        after.rect.top < Math.max(clientBounds(stage).top, clientBounds(timeline).top, 0) ||
+        after.rect.bottom > Math.min(clientBounds(stage).bottom, clientBounds(timeline).bottom, window.innerHeight))
     )
       blocker =
         'mark cannot be exposed in the stage and sticky-safe interval: ' +
@@ -5562,7 +5570,7 @@ async function waitForAuxiliaryCoincidentMarks(
       };
     };
     const snapshot = () => {
-      const stage = document.querySelector('.stage-wrap');
+      const stage = document.querySelector('.otio-timeline-scroll');
       const thread = document.querySelector('.thread');
       const list = document.querySelector('.thread-list');
       const missing = [];
@@ -5651,6 +5659,7 @@ async function arrangeAuxiliarySidebarActivation(
     const empty = {
       stageScrollTop: null,
       timelineScrollLeft: null,
+      timelineScrollTop: null,
       stageContent: null,
       bodyRect: null,
       markRect: null,
@@ -5688,16 +5697,16 @@ async function arrangeAuxiliarySidebarActivation(
       };
     };
     const stageContent = () => {
-      const value = stage.getBoundingClientRect();
-      const left = value.left + stage.clientLeft;
-      const top = value.top + stage.clientTop;
+      const value = timeline.getBoundingClientRect();
+      const left = value.left + timeline.clientLeft;
+      const top = value.top + timeline.clientTop;
       return {
         left,
         top,
-        right: left + stage.clientWidth,
-        bottom: top + stage.clientHeight,
-        width: stage.clientWidth,
-        height: stage.clientHeight,
+        right: left + timeline.clientWidth,
+        bottom: top + timeline.clientHeight,
+        width: timeline.clientWidth,
+        height: timeline.clientHeight,
       };
     };
     const snapshot = (direction) => {
@@ -5707,6 +5716,7 @@ async function arrangeAuxiliarySidebarActivation(
       return {
         stageScrollTop: stage.scrollTop,
         timelineScrollLeft: timeline.scrollLeft,
+        timelineScrollTop: timeline.scrollTop,
         stageContent: content,
         bodyRect,
         markRect,
@@ -5718,20 +5728,20 @@ async function arrangeAuxiliarySidebarActivation(
       };
     };
     const before = snapshot(null);
-    const maximum = Math.max(0, stage.scrollHeight - stage.clientHeight);
+    const maximum = Math.max(0, timeline.scrollHeight - timeline.clientHeight);
     const epsilon = 0.5;
     const bodySpanMin = Math.max(
       0,
-      stage.scrollTop + before.bodyRect.top - before.stageContent.top + epsilon
+      timeline.scrollTop + before.bodyRect.top - before.stageContent.top + epsilon
     );
     const bodySpanMax = Math.min(
       maximum,
-      stage.scrollTop + before.bodyRect.bottom - before.stageContent.bottom - epsilon
+      timeline.scrollTop + before.bodyRect.bottom - before.stageContent.bottom - epsilon
     );
     const aboveMin =
-      stage.scrollTop + before.markRect.bottom - before.stageContent.top + epsilon;
+      timeline.scrollTop + before.markRect.bottom - before.stageContent.top + epsilon;
     const belowMax =
-      stage.scrollTop + before.markRect.top - before.stageContent.bottom - epsilon;
+      timeline.scrollTop + before.markRect.top - before.stageContent.bottom - epsilon;
     const candidates = [
       {
         direction: 'above',
@@ -5754,7 +5764,7 @@ async function arrangeAuxiliarySidebarActivation(
         before,
         after: empty,
       };
-    stage.scrollTop = (candidate.min + candidate.max) / 2;
+    timeline.scrollTop = (candidate.min + candidate.max) / 2;
     const { promise, resolve } = Promise.withResolvers();
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
@@ -5802,9 +5812,12 @@ async function scrollAuxiliarySidebarRowIntoView(
         stageAfter: null,
         timelineBefore: null,
         timelineAfter: null,
+        timelineTopBefore: null,
+        timelineTopAfter: null,
       };
     const stageBefore = stage.scrollTop;
     const timelineBefore = timeline.scrollLeft;
+    const timelineTopBefore = timeline.scrollTop;
     row.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
     const { promise, resolve } = Promise.withResolvers();
     let done = false;
@@ -5846,6 +5859,8 @@ async function scrollAuxiliarySidebarRowIntoView(
       stageAfter: stage.scrollTop,
       timelineBefore,
       timelineAfter: timeline.scrollLeft,
+      timelineTopBefore,
+      timelineTopAfter: timeline.scrollTop,
     };
   })()`);
 }
@@ -6053,7 +6068,11 @@ async function waitForAuxiliaryReveal(
       return {
         missing,
         markRect,
-        stageContent: stageBounds,
+        stageContent: {
+          ...stageBounds,
+          top: Math.max(stageBounds.top, timelineBounds.top, 0),
+          bottom: Math.min(stageBounds.bottom, timelineBounds.bottom, window.innerHeight),
+        },
         center,
         usableLeft,
         usableRight,
@@ -6093,6 +6112,9 @@ async function waitForAuxiliaryReveal(
         current.usableRight !== null &&
         current.center.x >= current.usableLeft &&
         current.center.x <= current.usableRight &&
+        current.stageContent !== null &&
+        current.center.y >= current.stageContent.top &&
+        current.center.y <= current.stageContent.bottom &&
         current.activeIds.length === 1 &&
         current.activeIds[0] === expectedId &&
         current.cardId === expectedId &&
@@ -6325,6 +6347,16 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
           row.timelineAfter,
           row.timelineBefore,
           `auxiliary ${position} row.scrollIntoView moved timeline time: ${preEvidence}`
+        );
+        assert.equal(
+          row.timelineTopBefore,
+          precondition.after.timelineScrollTop,
+          `auxiliary ${position} precondition changed before row exposure: ${preEvidence}`
+        );
+        assert.equal(
+          row.timelineTopAfter,
+          row.timelineTopBefore,
+          `auxiliary ${position} row.scrollIntoView moved timeline vertically: ${preEvidence}`
         );
         assert.equal(
           row.visible,
@@ -6572,6 +6604,14 @@ interface BlockedPreviewTextProbe {
   readonly clipping: readonly DomRectProbe[];
   readonly lines: readonly BlockedPreviewLineProbe[];
 }
+interface BlockedPreviewExposure {
+  readonly target: string;
+  readonly line: BlockedPreviewLineProbe;
+  readonly scrollTop: number;
+  readonly scopeStable: boolean;
+  readonly readoutStable: boolean;
+  readonly outerScrollStable: boolean;
+}
 
 interface BlockedPreviewProbe {
   readonly missing: readonly string[];
@@ -6590,6 +6630,9 @@ interface BlockedPreviewProbe {
   readonly scopeStatusGap: number | null;
   readonly diagnosticButtonGap: number | null;
   readonly requiredGap: number;
+  readonly exposures: readonly BlockedPreviewExposure[];
+  readonly buttonCenterOwned: boolean;
+  readonly scrollRange: number;
 }
 
 function assertBlockedPreviewReadable(
@@ -6647,32 +6690,54 @@ function assertBlockedPreviewReadable(
   ]) {
     assert.equal(node.visible, true, `${label} text is hidden: ${node.text}`);
     assert.ok(node.opacity > 0, `${label} text is transparent: ${node.text}`);
-    assert.equal(
-      node.contained,
-      true,
-      `${label} element escapes preview containment: ${node.text}`
-    );
+    if (node === probe.scope || node === probe.scopeText) {
+      assert.equal(
+        node.contained,
+        true,
+        `${label} scope escapes preview: ${node.text}`
+      );
+    }
     assert.ok(
       node.lines.length > 0,
       `${label} has no text lines: ${node.text}`
     );
-    for (const line of node.lines) {
-      assert.equal(
-        line.contained,
-        true,
-        `${label} text line escapes preview, stage, or viewport`
-      );
-      assert.equal(
-        line.clippingContained,
-        true,
-        `${label} text line is clipped by an ancestor`
-      );
-      assert.ok(
-        line.hits.every((hit) => hit.owned),
-        `${label} text line is covered at ${JSON.stringify(line.hits)}`
-      );
-    }
   }
+  const expectedLines = [...probe.diagnostics, probe.button].reduce(
+    (total, node) => total + node.lines.length,
+    0
+  );
+  assert.equal(
+    probe.exposures.length,
+    expectedLines,
+    `${label} did not expose every diagnostic and consent line`
+  );
+  for (const line of [...probe.scope.lines, ...probe.scopeText.lines]) {
+    assert.ok(
+      line.contained &&
+        line.clippingContained &&
+        line.hits.every((hit) => hit.owned),
+      `${label} scope line is clipped or covered: ${JSON.stringify(line)}`
+    );
+  }
+  for (const exposure of probe.exposures) {
+    assert.ok(
+      exposure.scopeStable &&
+        exposure.readoutStable &&
+        exposure.outerScrollStable,
+      `${label} scrolling status moved surrounding controls: ${JSON.stringify(exposure)}`
+    );
+    assert.ok(
+      exposure.line.contained &&
+        exposure.line.clippingContained &&
+        exposure.line.hits.every((hit) => hit.owned),
+      `${label} status line is clipped or covered when exposed: ${JSON.stringify(exposure)}`
+    );
+  }
+  assert.equal(
+    probe.buttonCenterOwned,
+    true,
+    `${label} consent button cannot be hit when exposed`
+  );
   assert.ok(
     probe.scopeStatusGap !== null && probe.scopeStatusGap >= probe.requiredGap,
     `${label} scope-to-status gap is ${probe.scopeStatusGap}px`
@@ -6687,13 +6752,14 @@ function assertBlockedPreviewReadable(
 async function measureBlockedPreview(
   browser: ChromeSession
 ): Promise<BlockedPreviewProbe> {
-  return browser.evaluate<BlockedPreviewProbe>(String.raw`(() => {
+  return browser.evaluate<BlockedPreviewProbe>(String.raw`(async () => {
     const root = document.querySelector('.otio-view');
     const stage = document.querySelector('.stage-wrap');
     const preview = document.querySelector('.otio-preview');
     const scope = document.querySelector('.otio-preview > .otio-preview-scope');
     const scopeText = document.querySelector('.otio-preview > .otio-preview-scope > span');
     const status = document.querySelector('.otio-preview > .otio-preview-status');
+    const readout = document.querySelector('.otio-selection-readout');
     const diagnostics = status ? [...status.querySelectorAll(':scope > p')] : [];
     const button = status?.querySelector(':scope > button.otio-preview-base') ?? null;
     const missing = [];
@@ -6704,6 +6770,7 @@ async function measureBlockedPreview(
     if (!scopeText) missing.push('.otio-preview > .otio-preview-scope > span');
     if (!status) missing.push('.otio-preview > .otio-preview-status');
     if (!button) missing.push('.otio-preview > .otio-preview-status button.otio-preview-base');
+    if (!readout) missing.push('.otio-selection-readout');
     const empty = {
       missing,
       state: {
@@ -6721,8 +6788,13 @@ async function measureBlockedPreview(
       scopeStatusGap: null,
       diagnosticButtonGap: null,
       requiredGap: 0,
+      exposures: [],
+      buttonCenterOwned: false,
+      scrollRange: 0,
     };
     if (missing.length > 0) return empty;
+    const originalStatusTop = status.scrollTop;
+    status.scrollTop = 0;
     const rect = (node) => {
       const value = node.getBoundingClientRect();
       return {
@@ -6840,9 +6912,9 @@ async function measureBlockedPreview(
     const scopeProbe = describe(scope, [scope, scopeText]);
     const scopeTextProbe = describe(scopeText, [scope, scopeText]);
     const diagnosticProbes = diagnostics.map((diagnostic) =>
-      describe(diagnostic, [status, diagnostic])
+      describe(diagnostic, [diagnostic])
     );
-    const buttonProbe = describe(button, [status, button]);
+    const buttonProbe = describe(button, [button]);
     const diagnosticLines = diagnosticProbes.flatMap((diagnostic) => diagnostic.lines);
     const buttonLines = buttonProbe.lines;
     const scopeRect = rect(scope);
@@ -6859,6 +6931,44 @@ async function measureBlockedPreview(
       ? Math.min(...buttonLines.map((line) => line.rect.top))
       : null;
     const requiredGap = parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.65;
+    const readoutRect = rect(readout);
+    const stageTop = stage.scrollTop;
+    const documentX = window.scrollX, documentY = window.scrollY;
+    const scrollRange = Math.max(0, status.scrollHeight - status.clientHeight);
+    const stable = (a, b) => ['left', 'top', 'right', 'bottom'].every(key => Math.abs(a[key] - b[key]) <= 1);
+    const frame = async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      setTimeout(resolve, 50);
+      await promise;
+    };
+    const centerInStatus = async (targetRect) => {
+      const statusRect = status.getBoundingClientRect();
+      const center = statusRect.top + status.clientTop + status.clientHeight / 2;
+      status.scrollTop += (targetRect.top + targetRect.bottom) / 2 - center;
+      await frame();
+    };
+    const exposures = [];
+    for (const [target, node] of [...diagnostics.map((node, index) => ['diagnostic-' + index, node]), ['consent', button]]) {
+      const count = textLines(node).length;
+      for (let index = 0; index < count; index++) {
+        const current = textLines(node)[index];
+        await centerInStatus(current);
+        const line = describe(node, [node]).lines[index];
+        exposures.push({ target, line, scrollTop: status.scrollTop,
+          scopeStable: stable(scopeRect, rect(scope)),
+          readoutStable: stable(readoutRect, rect(readout)),
+          outerScrollStable: stage.scrollTop === stageTop && window.scrollX === documentX && window.scrollY === documentY });
+      }
+    }
+    await centerInStatus(rect(button));
+    const buttonRect = rect(button);
+    const hit = document.elementFromPoint((buttonRect.left + buttonRect.right) / 2, (buttonRect.top + buttonRect.bottom) / 2);
+    const buttonCenterOwned = (hit === button || button.contains(hit)) &&
+      stable(scopeRect, rect(scope)) && stable(readoutRect, rect(readout)) &&
+      stage.scrollTop === stageTop && window.scrollX === documentX && window.scrollY === documentY;
+    status.scrollTop = originalStatusTop;
+    await frame();
     return {
       missing,
       state: {
@@ -6883,6 +6993,9 @@ async function measureBlockedPreview(
           ? firstButtonTop - lastDiagnosticBottom
           : null,
       requiredGap,
+      exposures,
+      buttonCenterOwned,
+      scrollRange,
     };
   })()`);
 }
@@ -7806,6 +7919,370 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   }
 }
 
+class LayoutOnlyComplete extends Error {}
+async function probeMobileInspector(
+  browser: ChromeSession
+): Promise<Record<string, unknown> & { failures: string[] }> {
+  return browser.evaluate(String.raw`(async () => {
+    const failures = [];
+    const root = document.querySelector('.otio-view');
+    const inspector = document.querySelector('.otio-inspector');
+    const tabs = document.querySelector('.otio-inspector-tabs');
+    const context = document.querySelector('.otio-context');
+    const close = document.querySelector('.otio-inspector-close');
+    const toggle = document.querySelector('.otio-inspector-toggle');
+    const readout = document.querySelector('.otio-selection-readout');
+    if (![root, inspector, tabs, context, toggle, readout].every(Boolean))
+      return { failures: ['missing inspector disclosure control'] };
+    if (!close) failures.push('missing inspector close');
+    const rect = node => {
+      const r = node.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+    };
+    const contained = (r, bounds) => r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1;
+    const hits = {};
+    const controls = [...tabs.querySelectorAll('[role=tab]'), ...(close ? [close] : [])];
+    for (const node of controls) {
+      const r = rect(node);
+      const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+      const owned = hit === node || node.contains(hit);
+      hits[node.dataset.tab || 'close'] = { rect: r, owned };
+      if (!owned || !r.width || !r.height) failures.push('obscured inspector ' + (node.dataset.tab || 'close'));
+    }
+    if (controls.length !== 4) failures.push('expected three tabs and close');
+    const inspectorRect = rect(inspector), rootRect = rect(root), readoutBefore = rect(readout);
+    const closeRect = close ? rect(close) : null;
+    if (!contained(inspectorRect, rootRect) || inspectorRect.bottom > readoutBefore.top + 1)
+      failures.push('inspector outside root or over readout');
+    const inspectorTab = tabs.querySelector('[data-tab=inspector]');
+    const markersTab = tabs.querySelector('[data-tab=markers]');
+    const mediaTab = tabs.querySelector('[data-tab=media]');
+    if (!inspectorTab || !markersTab || !mediaTab)
+      return { failures: [...failures, 'missing inspector tabs'], hits };
+    inspectorTab.click();
+    context.scrollTop = 0;
+    const style = getComputedStyle(context);
+    const usableHeight = context.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    if (usableHeight < 128) failures.push('readable context height ' + usableHeight + ' < 128');
+    const contentBounds = rect(context);
+    const heading = context.querySelector('h3');
+    const schema = context.querySelector('.otio-schema');
+    const body = context.querySelector('dl dt, dl dd');
+    const firstLine = (node, last = false) => {
+      if (!node) return null;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const lines = range.getClientRects();
+      const line = lines[last ? lines.length - 1 : 0];
+      return line ? { left: line.left, right: line.right, top: line.top, bottom: line.bottom } : null;
+    };
+    const headingRect = heading ? rect(heading) : null;
+    const schemaRect = schema ? rect(schema) : null;
+    const bodyLine = firstLine(body);
+    if (!headingRect || !schemaRect || !bodyLine || !contained(headingRect, contentBounds) || !contained(schemaRect, contentBounds) || !contained(bodyLine, contentBounds))
+      failures.push('inspector heading, schema, and first body line are not fully visible');
+    markersTab.click();
+    if (markersTab.getAttribute('aria-selected') !== 'true') failures.push('markers tab did not select');
+    mediaTab.click();
+    if (mediaTab.getAttribute('aria-selected') !== 'true') failures.push('media tab did not select');
+    context.scrollTop = 0;
+    const mediaBefore = context.scrollTop;
+    const mediaScrollHeight = context.scrollHeight;
+    const mediaClientHeight = context.clientHeight;
+    context.scrollTop = context.scrollHeight;
+    const { promise, resolve } = Promise.withResolvers();
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+    await promise;
+    const mediaAfter = context.scrollTop;
+    const lastEntry = [...context.querySelectorAll('.otio-media-reference')].at(-1);
+    const trailing = lastEntry?.querySelector('span:last-of-type');
+    const trailingLine = firstLine(trailing, true);
+    if (mediaScrollHeight > mediaClientHeight + 1) {
+      if (mediaAfter <= mediaBefore) failures.push('media context did not scroll');
+      if (!trailingLine || !contained(trailingLine, rect(context))) failures.push('last media entry trailing text not exposed');
+    }
+    const readoutAfter = rect(readout);
+    for (const edge of ['left', 'top', 'right', 'bottom'])
+      if (Math.abs(readoutAfter[edge] - readoutBefore[edge]) > 1) failures.push('readout moved during inspector scroll');
+    const tabsRect = rect(tabs), contextRect = rect(context);
+    close?.click();
+    const collapsed = toggle.getAttribute('aria-expanded') === 'false';
+    const focusRestored = document.activeElement === toggle;
+    if (!collapsed || !focusRestored) failures.push('close did not collapse and restore toggle focus');
+    return { failures, inspectorRect, rootRect, tabs: tabsRect, context: contextRect,
+      close: closeRect, usableHeight, headingRect, schemaRect, bodyLine, hits,
+      media: { before: mediaBefore, after: mediaAfter, scrollHeight: mediaScrollHeight,
+        clientHeight: mediaClientHeight, trailingLine }, readoutBefore, readoutAfter,
+      collapsed, focusRestored };
+  })()`);
+}
+
+async function runLayoutMatrix(
+  browser: ChromeSession,
+  state = 'initial',
+  plan?: Plan
+): Promise<void> {
+  const receipts: Array<Record<string, unknown>> = [];
+  const layoutFailures: string[] = [];
+  const reviewStateExpression = `(() => {
+    const root = document.querySelector('.otio-view');
+    const timeline = document.querySelector('.otio-timeline-scroll');
+    return { frame: root.dataset.frame, playing: root.dataset.playing,
+      track: document.querySelector('.otio-track-select').value,
+      input: document.querySelector('.otio-selection-in').value,
+      output: document.querySelector('.otio-selection-out').value,
+      scrollTop: timeline.scrollTop, scrollLeft: timeline.scrollLeft };
+  })()`;
+  for (const [width, height] of [
+    [1440, 900],
+    [1440, 600],
+    [390, 900],
+    [390, 568],
+    [320, 900],
+    [320, 480],
+  ] as const) {
+    for (const scheme of ['light', 'dark'] as const) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: width < 600,
+      });
+      await browser.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: scheme }],
+      });
+      let closedGeometry: Record<string, DomRectProbe> | undefined;
+      for (const inspectorOpen of width < 600 ? [false, true] : [false]) {
+        const beforeReview = inspectorOpen
+          ? await browser.evaluate<Record<string, unknown>>(
+              reviewStateExpression
+            )
+          : undefined;
+        await browser.evaluate<void>(`(async () => {
+          const toggle = document.querySelector('.otio-inspector-toggle');
+          if (toggle && (toggle.getAttribute('aria-expanded') === 'true') !== ${inspectorOpen}) toggle.click();
+          const { promise, resolve } = Promise.withResolvers();
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+          await promise;
+        })()`);
+        const probe = await browser.evaluate<
+          { failures: string[] } & Record<string, unknown>
+        >(String.raw`(() => {
+          const selectors = {
+            stage: '.stage-wrap', root: '.otio-view', monitor: '.otio-monitor-row',
+            transport: '.otio-transport', heading: '.otio-timeline-heading',
+            timeline: '.otio-timeline-scroll', readout: '.otio-selection-readout',
+            diagnostics: '.otio-diagnostics', preview: '.otio-preview', canvas: '.otio-canvas',
+            inspector: '.otio-inspector', tabs: '.otio-inspector-tabs', context: '.otio-context',
+          };
+          const nodes = Object.fromEntries(Object.entries(selectors).map(([key, selector]) => [key, document.querySelector(selector)]));
+          const failures = [];
+          for (const [key, node] of Object.entries(nodes)) if (!node) failures.push('missing ' + key);
+          if (innerWidth !== ${width} || innerHeight !== ${height}) failures.push('viewport mismatch');
+          const toggle = document.querySelector('.otio-inspector-toggle');
+          if (${width < 600} && (toggle?.getAttribute('aria-expanded') === 'true') !== ${inspectorOpen}) failures.push('inspector state mismatch');
+          if (failures.length) return { failures, viewport: [innerWidth, innerHeight] };
+          const rect = node => {
+            const r = node.getBoundingClientRect();
+            return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+          };
+          const rectangles = Object.fromEntries(Object.entries(nodes).map(([key, node]) => [key, rect(node)]));
+          const { stage, root, monitor, transport, heading, timeline, readout, diagnostics, preview, canvas } = rectangles;
+          const stageBottom = stage.top + nodes.stage.clientTop + nodes.stage.clientHeight;
+          const near = (a, b, name) => { if (Math.abs(a - b) > 2) failures.push(name + ': ' + a + ' vs ' + b); };
+          near(root.bottom, stageBottom, 'bottom fill');
+          const diagnosticsVisible = nodes.diagnostics.children.length > 0 && diagnostics.height > 0;
+          near(diagnosticsVisible ? diagnostics.bottom : readout.bottom, root.bottom, 'bottom stack');
+          near(monitor.bottom, transport.top, 'monitor/transport adjacency');
+          near(transport.bottom, heading.top, 'transport/heading adjacency');
+          if (document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1) failures.push('document overflow');
+          if (nodes.stage.scrollHeight > nodes.stage.clientHeight + 2) failures.push('stage vertical overflow');
+          if (preview.width <= 0 || preview.height <= 0 || canvas.width <= 0 || canvas.height <= 0) failures.push('empty preview');
+          if (canvas.left < preview.left - 2 || canvas.right > preview.right + 2 || canvas.top < preview.top - 2 || canvas.bottom > preview.bottom + 2) failures.push('canvas outside preview');
+          const canvasStyle = getComputedStyle(nodes.canvas);
+          if (canvasStyle.objectFit !== 'contain' && Math.abs(canvas.width / canvas.height - nodes.canvas.width / nodes.canvas.height) > 0.02) failures.push('preview aspect ratio');
+          if (timeline.height > Math.min(240, root.height * 0.3) + 2) failures.push('timeline exceeds compact budget');
+          const controls = {};
+          for (const selector of ['.otio-selection-in', '.otio-selection-out', '.otio-comment-selection', '.otio-clear-selection']) {
+            const node = document.querySelector(selector);
+            if (!node) { failures.push('missing ' + selector); continue; }
+            const r = rect(node), x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+            const hit = document.elementFromPoint(x, y);
+            controls[selector] = { rect: r, hit: hit?.tagName, owned: node === hit || node.contains(hit) };
+            if (r.width <= 0 || r.height <= 0 || r.left < 0 || r.right > innerWidth || r.top < 0 || r.bottom > innerHeight || !(node === hit || node.contains(hit))) failures.push('obscured ' + selector);
+          }
+          const scroll = Object.fromEntries(['stage', 'timeline', 'inspector'].map(key => {
+            const node = nodes[key];
+            return [key, { top: node.scrollTop, left: node.scrollLeft, height: node.scrollHeight, clientHeight: node.clientHeight, width: node.scrollWidth, clientWidth: node.clientWidth }];
+          }));
+          return { failures, viewport: [innerWidth, innerHeight], rectangles, scroll, controls, diagnosticsVisible, canvasStyle: { objectFit: canvasStyle.objectFit, intrinsic: [nodes.canvas.width, nodes.canvas.height] } };
+        })()`);
+        const name = `layout-${state}-${width}x${height}-${scheme}-${inspectorOpen ? 'inspector-open' : 'inspector-closed'}`;
+        await browser.screenshot(name);
+        const geometry = probe.rectangles as
+          | Record<string, DomRectProbe>
+          | undefined;
+        if (!inspectorOpen) closedGeometry = geometry;
+        let inspectorInteraction: Record<string, unknown> | undefined;
+        if (inspectorOpen) {
+          for (const key of ['preview', 'canvas']) {
+            const before = closedGeometry?.[key],
+              after = geometry?.[key];
+            if (!before || !after) {
+              probe.failures.push(`missing ${key} before/after inspector`);
+              continue;
+            }
+            for (const edge of ['left', 'top', 'right', 'bottom'] as const)
+              if (Math.abs(before[edge] - after[edge]) > 2)
+                probe.failures.push(`inspector changed ${key} ${edge}`);
+          }
+          const interaction = await probeMobileInspector(browser);
+          const afterReview = await browser.evaluate<Record<string, unknown>>(
+            reviewStateExpression
+          );
+          inspectorInteraction = { ...interaction, beforeReview, afterReview };
+          if (JSON.stringify(beforeReview) !== JSON.stringify(afterReview))
+            probe.failures.push('inspector open/close changed review state');
+          probe.failures.push(...interaction.failures);
+        }
+        receipts.push({
+          name,
+          requestedViewport: [width, height],
+          scheme,
+          inspectorOpen,
+          inspectorInteraction,
+          ...probe,
+        });
+        await writeFile(
+          join(shotDir, `otio-layout-${state}-measurements.json`),
+          `${JSON.stringify(receipts, null, 2)}\n`
+        );
+        if (probe.failures.length)
+          layoutFailures.push(`${name}: ${probe.failures.join('; ')}`);
+        if (
+          state === 'initial' &&
+          width === 390 &&
+          height === 568 &&
+          scheme === 'light' &&
+          inspectorOpen &&
+          layoutFailures.length === 0
+        ) {
+          assert.ok(
+            plan,
+            'inspector Comment proof requires the published fixture plan'
+          );
+          await selectTrack(
+            browser,
+            plan.duplicate_track_id,
+            'range',
+            plan.duplicate_frame,
+            plan.duplicate_frame + 2
+          );
+          const before = await browser.evaluate<{
+            frame: string | null;
+            scrollTop: number;
+            scrollLeft: number;
+            input: string;
+            output: string;
+            x: number;
+            y: number;
+          }>(`(() => {
+            const root = document.querySelector('.otio-view');
+            const timeline = document.querySelector('.otio-timeline-scroll');
+            const toggle = document.querySelector('.otio-inspector-toggle');
+            toggle.click();
+            const button = document.querySelector('.otio-comment-selection');
+            const r = button.getBoundingClientRect();
+            return { frame: root.dataset.frame ?? null, scrollTop: timeline.scrollTop, scrollLeft: timeline.scrollLeft,
+              input: document.querySelector('.otio-selection-in').value,
+              output: document.querySelector('.otio-selection-out').value,
+              x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
+          })()`);
+          await clickWithRealPointer(browser, before.x, before.y);
+          const result = await browser.evaluate<{
+            open: boolean;
+            collapsed: boolean;
+            frame: string | null;
+            scrollTop: number;
+            scrollLeft: number;
+            input: string;
+            output: string;
+          }>(`(async () => {
+            const started = Date.now();
+            while (!document.querySelector('.popover-card.is-otio-composer textarea.popover-field') && Date.now() - started < 4000) {
+              const { promise, resolve } = Promise.withResolvers();
+              setTimeout(resolve, 50);
+              await promise;
+            }
+            const timeline = document.querySelector('.otio-timeline-scroll');
+            return { open: !!document.querySelector('.popover-card.is-otio-composer textarea.popover-field'),
+              collapsed: document.querySelector('.otio-inspector-toggle').getAttribute('aria-expanded') === 'false',
+              frame: document.querySelector('.otio-view').dataset.frame ?? null,
+              scrollTop: timeline.scrollTop, scrollLeft: timeline.scrollLeft,
+              input: document.querySelector('.otio-selection-in').value,
+              output: document.querySelector('.otio-selection-out').value };
+          })()`);
+          assert.ok(
+            result.open && result.collapsed,
+            `inspector Comment did not open composer and close inspector: ${JSON.stringify(result)}`
+          );
+          assert.equal(
+            result.frame,
+            before.frame,
+            'inspector Comment changed playback position'
+          );
+          assert.equal(
+            result.input,
+            before.input,
+            'inspector Comment changed selection in'
+          );
+          assert.equal(
+            result.output,
+            before.output,
+            'inspector Comment changed selection out'
+          );
+          const composer = await measureComposer(browser);
+          await browser.screenshot('layout-mobile-inspector-comment-composer');
+          assertComposerProbe(
+            composer,
+            'mobile inspector Comment composer',
+            false
+          );
+          receipts.push({
+            state: 'inspector-comment',
+            before,
+            result,
+            composer,
+          });
+          await writeFile(
+            join(shotDir, `otio-layout-${state}-measurements.json`),
+            `${JSON.stringify(receipts, null, 2)}\n`
+          );
+          await dismissComposer(browser);
+        }
+      }
+    }
+  }
+  assert.deepEqual(
+    layoutFailures,
+    [],
+    `OTIO layout failures: ${layoutFailures.join('\n')}`
+  );
+  await browser.evaluate<void>(`(() => {
+    const toggle = document.querySelector('.otio-inspector-toggle');
+    if (toggle?.getAttribute('aria-expanded') === 'true') toggle.click();
+  })()`);
+  await browser.send('Emulation.setDeviceMetricsOverride', {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await browser.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: 'light' }],
+  });
+}
+
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
   const sessionToken = await createSession();
@@ -7893,6 +8370,11 @@ try {
   });
   try {
     await waitReady(browser);
+    await runLayoutMatrix(browser, 'initial', plan);
+    if (process.env.RELIC_OTIO_LAYOUT_ONLY === '1') {
+      console.log('OTIO_LAYOUT_OK');
+      throw new LayoutOnlyComplete();
+    }
     const who = await browser.evaluate<{ email: string | null }>(
       `fetch('/api/auth/session', { credentials: 'same-origin' }).then((response) => response.json())`
     );
@@ -8466,11 +8948,76 @@ try {
       join(mediaDir, negativeHead.underlying_media),
       negativeHead.clamped_file_frame
     );
-    const canvasCenter = await canvasRowCenter(browser);
+    const assertionRow = await canvasMiddleRow(browser);
+    const canvasCenter = rowCenter(
+      Uint8Array.from(assertionRow),
+      assertionRow.length / 4
+    );
     const toExpectedPx =
       Math.abs(canvasCenter - expectedRow.center) * expectedRow.width;
     const toClampedPx =
       Math.abs(canvasCenter - clampedRow.center) * clampedRow.width;
+    if (toExpectedPx > 3 || toClampedPx < 48) {
+      const receipt: Record<string, unknown> = {
+        requestedTimelineFrame: negativeHead.timeline_frame,
+        expectedFileFrame: negativeHead.underlying_file_frame,
+        clampedFileFrame: negativeHead.clamped_file_frame,
+        row: assertionRow,
+        canvasCenter,
+        expectedRow,
+        clampedRow,
+        signedExpectedSourcePixels:
+          (canvasCenter - expectedRow.center) * expectedRow.width,
+        signedClampedSourcePixels:
+          (canvasCenter - clampedRow.center) * clampedRow.width,
+      };
+      const receiptPath = join(shotDir, 'negative-head-seek-failure.json');
+      await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+      try {
+        receipt['stateAfterSample'] = await browser.evaluate(`(() => {
+          const root = document.querySelector('.otio-view');
+          const canvas = document.querySelector('canvas.otio-canvas');
+          const ctx = canvas?.getContext('2d');
+          return {
+            root: root ? {...root.dataset} : null,
+            canvas: canvas ? {width: canvas.width, height: canvas.height,
+              contextLost: typeof ctx?.isContextLost === 'function' ? ctx.isContextLost() : null} : null,
+            videos: Array.from(document.querySelectorAll('.otio-video-decoders video'), video => ({
+              currentSrc: video.currentSrc, currentTime: video.currentTime,
+              seeking: video.seeking, readyState: video.readyState,
+            })),
+          };
+        })()`);
+        const frames = [
+          ...new Set(
+            [
+              negativeHead.underlying_file_frame - 4,
+              negativeHead.underlying_file_frame - 1,
+              negativeHead.underlying_file_frame,
+              negativeHead.underlying_file_frame + 1,
+              negativeHead.clamped_file_frame,
+            ].filter((frame) => frame >= 0)
+          ),
+        ];
+        receipt['references'] = await Promise.all(
+          frames.map(async (frame) => {
+            const reference = await frameRowCenter(
+              join(mediaDir, negativeHead.underlying_media),
+              frame
+            );
+            return {
+              frame,
+              ...reference,
+              signedSourcePixels:
+                (canvasCenter - reference.center) * reference.width,
+            };
+          })
+        );
+      } catch (error) {
+        receipt['additionalCaptureError'] = String(error);
+      }
+      await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+    }
     assert.ok(
       toExpectedPx <= 3,
       `default canvas bar is ${toExpectedPx.toFixed(2)} source px from underlying V1 file frame ${negativeHead.underlying_file_frame}`
@@ -8478,6 +9025,32 @@ try {
     assert.ok(
       toClampedPx >= 48,
       `default canvas bar is ${toClampedPx.toFixed(2)} source px from clamped V2 substitute file frame ${negativeHead.clamped_file_frame}`
+    );
+    // Independently decode the suspected preceding frame and the expected frame.
+    // These controls exercise the same row-center and distance calculation.
+    const controlStale = await frameRowCenter(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.underlying_file_frame - 4
+    );
+    const controlExpected = await frameRowCenter(
+      join(mediaDir, negativeHead.underlying_media),
+      negativeHead.underlying_file_frame
+    );
+    assert.ok(
+      Math.abs(controlStale.center - expectedRow.center) * expectedRow.width >
+        3,
+      'negative-head pixel oracle accepted the preceding frame'
+    );
+    assert.ok(
+      Math.abs(controlExpected.center - expectedRow.center) *
+        expectedRow.width <=
+        3,
+      'negative-head pixel oracle rejected the independently decoded expected frame'
+    );
+    assert.ok(
+      Math.abs(controlExpected.center - clampedRow.center) * clampedRow.width >=
+        48,
+      'negative-head pixel oracle did not exclude the clamped control'
     );
     pass('default-view-negative-head');
 
@@ -8984,6 +9557,14 @@ try {
       }
     }
 
+    const layoutPriorFrame = await prepareBlockedPreview(
+      browser,
+      plan.effect_frame
+    );
+    await runLayoutMatrix(browser, 'blocked');
+    await restorePreviewBase(browser);
+    await seekTo(browser, layoutPriorFrame);
+
     for (const [shotWidth, scheme] of [
       [390, 'light'],
       [1440, 'light'],
@@ -9258,18 +9839,18 @@ try {
     );
     const lowerScroll = await browser.evaluate<{ stage: number; page: number }>(
       `(() => {
-        const stage = document.querySelector('.stage-wrap');
-        stage.scrollTop = stage.scrollHeight;
-        return { stage: stage.scrollTop, page: window.scrollY };
+        const timeline = document.querySelector('.otio-timeline-scroll');
+        timeline.scrollTop = timeline.scrollHeight;
+        return { stage: timeline.scrollTop, page: window.scrollY };
       })()`
     );
     assert.ok(
       lowerScroll.stage > 0,
-      'lower-track proof did not scroll the stage'
+      'lower-track proof did not scroll the timeline'
     );
     await openComposer(browser);
     const revealed = await browser.evaluate<{ stage: number; page: number }>(
-      `(() => ({ stage: document.querySelector('.stage-wrap').scrollTop, page: window.scrollY }))()`
+      `(() => ({ stage: document.querySelector('.otio-timeline-scroll').scrollTop, page: window.scrollY }))()`
     );
     assert.equal(
       revealed.page,
@@ -9385,35 +9966,71 @@ try {
       [390, 568],
       [1440, 900],
     ] as const) {
+      await browser.evaluate(`(() => {
+        const field = window.__otioResizeField;
+        const unchanged = innerWidth === ${shotWidth} && innerHeight === ${shotHeight};
+        const { promise, resolve } = Promise.withResolvers();
+        let finished = false;
+        const complete = (result) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timeout);
+          removeEventListener('resize', onResize);
+          resolve(result);
+        };
+        const frames = (mode) => requestAnimationFrame(() => requestAnimationFrame(() => {
+          complete({ mode, width: innerWidth, height: innerHeight,
+            same: document.querySelector('.popover-composer textarea') === field,
+            focused: document.activeElement === field, text: field?.value ?? '' });
+        }));
+        const onResize = () => {
+          if (innerWidth !== ${shotWidth} || innerHeight !== ${shotHeight}) return;
+          removeEventListener('resize', onResize);
+          frames('resize');
+        };
+        const timeout = setTimeout(() => complete({ error: 'resize or render frames not observed', width: innerWidth, height: innerHeight }), 10000);
+        window.__otioResizeSettled = promise;
+        if (unchanged) frames('unchanged');
+        else addEventListener('resize', onResize);
+      })()`);
       await browser.send('Emulation.setDeviceMetricsOverride', {
         width: shotWidth,
         height: shotHeight,
         deviceScaleFactor: 1,
         mobile: shotWidth < 600,
       });
-      const settled = await browser.evaluate<{ same: boolean; text: string }>(
-        `(() => {
-          const { promise, resolve } = Promise.withResolvers();
-          let done = false;
-          const finish = () => {
-            if (done) return;
-            done = true;
-            const field = document.querySelector(
-              '.popover-card.popover-composer.is-otio-composer textarea, .popover-composer textarea'
-            );
-            resolve({
-              same: field === window.__otioResizeField,
-              text: field?.value ?? '',
-            });
-          };
-          requestAnimationFrame(() => requestAnimationFrame(finish));
-          setTimeout(finish, 50);
-          return promise;
-        })()`
+      // Force a headless paint so resize and animation-frame callbacks can run.
+      await browser.screenshot(`${shotWidth}x${shotHeight}-resize-paint`);
+      const settled = await browser.evaluate<{
+        mode?: string;
+        width: number;
+        height: number;
+        same?: boolean;
+        focused?: boolean;
+        text?: string;
+        error?: string;
+      }>('window.__otioResizeSettled');
+      assert.equal(
+        settled.error,
+        undefined,
+        `${shotWidth}x${shotHeight}: ${settled.error}`
       );
+      assert.ok(
+        settled.mode === 'resize' || settled.mode === 'unchanged',
+        'resize completion has no event or unchanged-viewport proof'
+      );
+      assert.equal(settled.width, shotWidth);
+      assert.equal(settled.height, shotHeight);
       assert.deepEqual(
         settled,
-        { same: true, text: resizeDraft },
+        {
+          mode: settled.mode,
+          width: shotWidth,
+          height: shotHeight,
+          same: true,
+          focused: true,
+          text: resizeDraft,
+        },
         `${shotWidth}x${shotHeight} resize rebuilt or cleared held editor`
       );
       const probe = await measureComposer(browser);
@@ -10311,6 +10928,8 @@ try {
   const missing = REQUIRED.filter((stage) => !passed.has(stage));
   assert.deepEqual(missing, [], `stages not passed: ${missing.join(', ')}`);
   console.log('OTIO_PATH_OK');
+} catch (error) {
+  if (!(error instanceof LayoutOnlyComplete)) throw error;
 } finally {
   for (const child of children) child.kill('SIGKILL');
   const kept =

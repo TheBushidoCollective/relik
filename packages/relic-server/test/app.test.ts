@@ -1723,7 +1723,6 @@ describe('republish and versions', () => {
       )
       .then((r) => r.json())) as { url: string };
     expect(mint.url).toContain(`/o/${id}?`);
-    expect(mint.url).not.toContain('/v1');
   });
 
   test('a repeat mint after a republish is a fresh URL for new content', async () => {

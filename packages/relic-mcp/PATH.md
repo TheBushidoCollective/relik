@@ -370,6 +370,23 @@ RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
 env -u DISPLAY -u WAYLAND_DISPLAY \
   bun packages/relic-mcp/test/otio-path.ts
 ```
+The viewer and MCP bundles must be built first. Set `RELIC_OTIO_SHOTS_DIR` to
+a writable directory to retain the viewport screenshots and
+`otio-layout-*-measurements.json` receipts. The layout matrix measures
+1440x900, 1440x600, 390x900, 390x568, 320x900, and 320x480 in both color
+schemes, including open and closed mobile inspectors and the blocked preview.
+The full path retains its playback, comment, exact-marker reveal, and revision
+checks and ends with `OTIO_PATH_OK`.
+
+To run only the initial layout matrix through the same published loopback
+fixture, add `RELIC_OTIO_LAYOUT_ONLY=1`; success prints `OTIO_LAYOUT_OK`, not
+`OTIO_PATH_OK`. To falsify the bottom-fill check, point `RELIC_VIEWER_DIST`
+at a separately built unmodified baseline viewer bundle and run the same
+layout-only command. It must fail with `bottom fill`; inspect the saved receipt
+and screenshot rather than treating an arbitrary error as a successful
+negative control. This mode still requires the normal fixture and oracle
+prerequisites.
+
 
 At startup, the locally owned browser reports its actual command line through
 `Browser.getBrowserCommandLine`. The proof accepts only one observed approved

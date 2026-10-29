@@ -52,8 +52,8 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { margin: 0; min-height: 100%; }
-body { background: var(--ground); color: var(--ink); font: 14px/1.45 var(--sans); }
+html, body { margin: 0; height: 100%; }
+body { display: flex; flex-direction: column; height: 100dvh; background: var(--ground); color: var(--ink); font: 14px/1.45 var(--sans); }
 button, input, select, textarea { font: inherit; color: inherit; }
 button, select { cursor: pointer; }
 button { border: 1px solid var(--rule-strong); background: var(--surface); padding: .35rem .6rem; border-radius: 0; }
@@ -82,22 +82,22 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .bar-actions { display: flex; gap: .45rem; align-items: center; }
 #comments-toggle { display: flex; gap: .5rem; align-items: center; font-size: 12px; }
 #comments-count { font-family: var(--mono); color: var(--ink-soft); }
-.viewer { position: relative; display: flex; align-items: stretch; min-height: calc(100dvh - 58px); }
-.workbench { position: relative; flex: 1 1 auto; min-width: 0; overflow: auto; }
-.version-banner { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .55rem 1rem; border-bottom: 1px solid var(--oxide); background: var(--diff-removed); font-size: 12px; }
-.monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 238px; border-bottom: 1px solid var(--rule-strong); min-height: 300px; }
-.composition { min-width: 0; min-height: 300px; height: min(36vw, 350px); position: relative; background: #080a0b; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.bar { flex: none; }
+.viewer { position: relative; display: flex; align-items: stretch; flex: 1 1 0; min-height: 0; }
+.workbench { position: relative; display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; }
+.version-banner { display: flex; flex: none; justify-content: space-between; align-items: center; gap: .75rem; padding: .55rem 1rem; border-bottom: 1px solid var(--oxide); background: var(--diff-removed); font-size: 12px; }
+.monitor-row { display: grid; grid-template-columns: minmax(0, 1fr) 238px; grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 20%; border-bottom: 1px solid var(--rule-strong); }
+.composition { min-width: 0; min-height: 0; position: relative; background: #080a0b; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .preview-art { height: 100%; width: 100%; object-fit: contain; }
 .frame-burn { position: absolute; left: 18px; bottom: 14px; color: #fff; padding: .25rem .45rem; background: #080a0bd9; font-size: 11px; border: 1px solid #ffffff38; }
 .preview-scope { position: absolute; top: 12px; left: 14px; color: #f1f2f0; font: 10px var(--mono); background: #080a0bbf; padding: .25rem .4rem; }
 .preview-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #080a0be8; color: #e6e9e7; text-align: center; padding: 1.5rem; gap: .75rem; }
+.preview-state > * { flex: none; }
 .composition:has(> .preview-state:not([hidden])) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(min-content, 1fr);
+  grid-template-rows: fit-content(40%) minmax(0, 1fr);
   place-items: stretch;
-  height: auto;
-  overflow: visible;
 }
 .composition:has(> .preview-state:not([hidden])) > .preview-art {
   grid-area: 1 / 1 / 3 / 2;
@@ -114,6 +114,8 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   max-width: calc(100% - 28px);
   margin: 12px 14px 0;
   overflow-wrap: anywhere;
+  max-height: 100%;
+  overflow-y: auto;
 }
 .composition:has(> .preview-state:not([hidden])) > .preview-state {
   position: relative;
@@ -123,20 +125,23 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   justify-self: stretch;
   min-width: 0;
   margin-top: .75rem;
-  overflow: visible;
+  min-height: 0;
+  overflow-y: auto;
+  justify-content: safe center;
 }
 .preview-state h2 { font: 18px var(--sans); font-weight: 500; margin: 0; }
 .preview-state p { margin: 0; max-width: 34rem; font: 11px/1.7 var(--mono); color: #b9c0be; overflow-wrap: anywhere; }
-.preview-state .primary { max-width: 26rem; font-size: 12px; }
+.preview-state .primary { max-width: min(26rem, 100%); font-size: 12px; overflow-wrap: anywhere; }
 .preview-state button:not(.primary) { color: var(--ink); background: var(--surface); }
 .state-icon { width: 32px; height: 32px; color: #c98058; }
 .spinner { width: 24px; height: 24px; border: 2px solid #596060; border-right-color: #a7ded6; border-radius: 50%; }
 .base-preview-note { position: absolute; top: 12px; right: 12px; max-width: 60%; background: #34231df2; color: #e4c5b5; border: 1px solid #684331; font-size: 10px; padding: .3rem .45rem; }
 .composition:has(> .base-preview-note:not([hidden])) > .base-preview-note { top: auto; bottom: 12px; }
-.inspector { background: var(--surface); min-width: 0; display: flex; flex-direction: column; }
-.inspector-tabs { display: flex; border-bottom: 1px solid var(--rule); }
-.tab { border: 0; border-bottom: 2px solid transparent; background: none; padding: .65rem .55rem; font-size: 11px; flex: 1; }
-.inspector-content { padding: .9rem; max-height: 310px; overflow-y: auto; }
+.inspector { background: var(--surface); min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.inspector-tabs { display: flex; flex: none; border-bottom: 1px solid var(--rule); }
+.tab { border: 0; border-bottom: 2px solid transparent; background: none; padding: .6rem .4rem; font: .7rem var(--sans); flex: 1; }
+.inspector-content { flex: 1 1 auto; min-height: 0; padding: .8rem; overflow-y: auto; overscroll-behavior: contain; }
+#inspector-close { display: none; padding: .3rem .45rem; font: .65rem var(--sans); }
 .inspector h2 { margin: 0 0 .3rem; font-size: 13px; font-weight: 600; }
 .schema { color: var(--ink-soft); font: 10px var(--mono); margin: 0 0 .8rem; }
 .context-path { color: var(--ink-soft); font: 10px/1.7 var(--mono); overflow-wrap: anywhere; margin: .8rem 0; border-left: 2px solid var(--rule-strong); padding-left: .6rem; }
@@ -168,8 +173,10 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .mode-controls button { padding: .3rem .55rem; font-size: 11px; }
 .mode-controls button + button { margin-left: -1px; }
 #anchor-track { font-size: 10px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.timeline-scroll { overflow-x: auto; overscroll-behavior-x: contain; scroll-padding-inline-start: var(--label-width); width: 100%; }
-.track-grid { min-width: 750px; position: relative; }
+.timeline { display: contents; }
+.transport, .timeline-heading, .selection-readout { flex: none; }
+.timeline-scroll { flex: 0 1 auto; min-height: 0; max-height: min(240px, 30%); overflow: auto; overscroll-behavior: contain; scroll-padding-inline-start: var(--label-width); width: 100%; }
+.track-grid { min-width: 760px; position: relative; }
 .ruler-row, .track-row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); }
 .ruler-label { position: sticky; left: 0; background: var(--surface); z-index: 7; color: var(--ink-soft); font: 9px var(--mono); padding: .4rem .8rem; border-right: 1px solid var(--rule-strong); }
 .ruler { height: 27px; position: relative; background: var(--surface); border-bottom: 1px solid var(--rule); overflow: hidden; }
@@ -230,12 +237,14 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .selection-readout button { font: 10px var(--sans); }
 .selection-readout label { display: inline-flex; align-items: center; gap: .25rem; }
 .frame-input { width: 64px; border: 1px solid var(--rule-strong); padding: .25rem .3rem; background: var(--ground); font: 10px var(--mono); }
-.mock-controls { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; padding: .6rem .85rem; font-size: 10px; color: var(--ink-soft); }
+.mock-controls { position: relative; flex: none; min-width: 0; color: var(--ink-soft); font-size: 10px; }
+.mock-controls summary { cursor: pointer; font: .55rem/1.5 var(--mono); }
+.mock-controls-body { position: absolute; right: 0; bottom: calc(100% + .5rem); z-index: 12; display: flex; flex-direction: column; gap: .6rem; width: min(20rem, calc(100vw - 2rem)); max-height: min(14rem, 35dvh); overflow-y: auto; padding: .65rem; border: 1px solid var(--rule-strong); background: var(--surface); box-shadow: 0 6px 18px #0003; }
 .mock-controls label { display: flex; align-items: center; gap: .35rem; }
 .mock-controls select { font-size: 10px; max-width: 170px; }
 .mock-controls .mock-label { font-family: var(--mono); margin-right: auto; }
 .mock-controls button { font-size: 10px; }
-.thread { display: none; position: sticky; top: 0; align-self: start; flex: 0 0 auto; width: 332px; max-width: 100%; min-height: calc(100dvh - 58px); max-height: 100dvh; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--rule-strong); }
+.thread { display: none; align-self: stretch; flex: 0 0 auto; width: 332px; max-width: 100%; min-height: 0; max-height: 100%; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--rule-strong); }
 .thread.is-open { display: block; }
 .thread-tab { position: relative; flex: 0 0 auto; align-self: center; z-index: 5; padding: .85rem .4rem; color: var(--ink); font: 600 .76rem var(--sans); letter-spacing: .06em; text-transform: uppercase; writing-mode: vertical-rl; background: var(--surface); border: 1px solid var(--rule-strong); border-right: 0; }
 .thread.is-open ~ .thread-tab { display: none; }
@@ -300,41 +309,50 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
 .popover-card .popover-action.is-primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
 .popover-card .compose-fine { font-size: 12px; line-height: 1.5; }
 .foreground-popover.popover-card { display: flex; flex-direction: column; overflow: hidden; padding: .25rem .45rem; }
-.foreground-popover .popover-composer { display: flex; flex-direction: column; min-height: 0; margin: 0; }
-.foreground-popover .bounded-body { min-height: 1.35rem; flex: 0 1 auto; overflow-y: auto; overscroll-behavior: contain; }
+.foreground-popover .popover-composer { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin: 0; }
+.foreground-popover .bounded-body { min-height: 1.35rem; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
 .foreground-popover .compose-target { overflow-wrap: anywhere; }
-.foreground-popover .popover-composer label:has(textarea) { min-height: 0; flex: 0 1 72px; }
-.foreground-popover .popover-composer textarea { min-height: calc(1.55em + .8rem + 2px); height: 72px; resize: none; }
+.foreground-popover .popover-composer label:has(textarea) { display: flex; flex-direction: column; min-height: calc(1.55em + .8rem + 2px); flex: 0 1 72px; }
+.foreground-popover .popover-composer textarea { flex: 1 1 auto; min-height: calc(1.55em + .8rem + 2px); height: 72px; resize: none; }
 .foreground-popover .popover-composer .compose-foot { flex: none; background: var(--surface); }
+.foreground-popover .popover-tools { margin-top: .15rem; padding-top: .15rem; }
 .foreground-popover .bounded-body .compose-fine { display: block; margin: .2rem 0; }
 .foreground-popover .bounded-body .compose-outcome { display: block; }
 @media (prefers-reduced-motion: no-preference) { .spinner { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } }
-@media (max-width: 1160px) {
+@media (max-width: 64rem) {
   .thread { width: 305px; }
   .monitor-row { grid-template-columns: minmax(0, 1fr) 210px; }
   .selection-tools { width: 100%; justify-content: space-between; }
-  .composition { height: 300px; }
 }
-@media (max-width: 704px) {
+@media (max-width: 44rem) {
   .viewer[data-comments-open="true"] .workbench { overflow: hidden; }
-  .thread.is-open { position: static; width: 100%; min-width: 0; max-width: 100%; max-height: none; min-height: 0; border-left: 0; border-top: 1px solid var(--rule-strong); }
-  .composition { height: min(49vw, 350px); }
+  .thread.is-open { position: absolute; inset: 0; width: 100%; min-width: 0; max-width: 100%; min-height: 0; border-left: 0; border-top: 1px solid var(--rule-strong); z-index: 10; }
+  .workbench { isolation: isolate; }
+  .monitor-row { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .inspector { display: none; position: absolute; inset: 0 0 auto; height: min(22rem, 60%); z-index: 9; border: 1px solid var(--rule-strong); background: var(--surface); box-shadow: 0 6px 18px rgb(0 0 0 / 18%); }
+  .monitor-row[data-inspector-open="true"] .inspector { display: flex; }
+  #inspector-close { display: block; flex: none; min-height: 44px; margin: .4rem; }
+  #inspector-toggle { display: inline-block; font-size: 10px; }
+  .preview-state { padding: 0 .5rem; overscroll-behavior: contain; }
+  .composition:has(> .preview-state:not([hidden])) > .preview-scope { margin-top: .35rem; }
+  .composition:has(> .preview-state:not([hidden])) > .preview-state { margin-top: .5rem; }
+  .preview-state .primary { padding: .3rem .35rem; }
+  .selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }
+  .selection-readout .selection-text { grid-column: 1 / -1; min-width: 0; }
+  .selection-readout label { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+  .selection-readout input { width: 100%; min-width: 0; }
 }
 @media (max-width: 620px) {
   :root { --label-width: 142px; }
   .bar { padding: .6rem .75rem; gap: .65rem; }
   .wordmark { font-size: 24px; padding-right: .65rem; }
-  .identity-meta .format-label, #comments-toggle .button-label { display: none; }
+  .identity-meta .format-label, .identity-meta .mock-version-label, #comments-toggle .button-label { display: none; }
+  .identity-meta label { min-width: 0; }
+  .identity-meta select { max-width: 100%; }
   .filename { font-size: 11px; }
   #comments-toggle { padding: .35rem .4rem; }
   .bar-actions { gap: .2rem; }
   #theme-select { font-size: 10px; max-width: 65px; padding-left: .25rem; }
-  .monitor-row { display: block; min-height: 0; }
-  .composition { min-height: 210px; height: 56.25vw; }
-  .inspector { display: none; border-top: 1px solid var(--rule-strong); }
-  .monitor-row[data-inspector-open="true"] .inspector { display: flex; }
-  .inspector-content { max-height: 250px; }
-  #inspector-toggle { display: inline-block; font-size: 10px; }
   .transport { gap: .3rem; flex-wrap: wrap; padding: .45rem .6rem; }
   .transport .duration { font-size: 9px; }
   .transport .seek-wrap { order: 2; flex-basis: 100%; }
@@ -352,8 +370,9 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   .track-name small { font-size: 8px; }
   .selection-readout { padding: .6rem; gap: .4rem; }
   .selection-readout .selection-text { flex-basis: 100%; }
-  .mock-controls { gap: .55rem; padding: .65rem .6rem; }
-  .mock-controls .mock-label { flex-basis: 100%; }
+  .timeline-heading .timeline-meta { display: none; }
+  .transport button, .transport .play { display: inline-flex; align-items: center; justify-content: center; padding: .3rem .45rem; font: .65rem var(--sans); }
+  .transport button svg { width: 12px; height: 12px; }
   #thread-list { display: block; }
   .comment { border-right: 0; }
   .compose { margin: .85rem; }
@@ -398,7 +417,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   <div class="wordmark">relic</div>
   <div class="identity">
     <div class="filename">standard-sample.otioz</div>
-    <div class="identity-meta"><span class="format-label">OTIO</span><label><span class="sr-only">Version</span><select id="revision-select"><option value="2">v2 · latest</option><option value="1">v1 · original</option></select></label><span>OTIO mock</span></div>
+    <div class="identity-meta"><span class="format-label">OTIO</span><label><span class="sr-only">Version</span><select id="revision-select"><option value="2">v2 · latest</option><option value="1">v1 · original</option></select></label><span class="mock-version-label">OTIO mock</span></div>
   </div>
   <div class="bar-actions">
     <label><span class="sr-only">Color scheme</span><select id="theme-select"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
@@ -423,6 +442,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
           <button class="tab" id="tab-media" type="button" role="tab" aria-selected="false" aria-controls="context-panel" data-tab="media">Media</button>
         </div>
         <div class="inspector-content" id="context-panel" role="tabpanel" aria-labelledby="tab-inspector"></div>
+        <button type="button" id="inspector-close">Close inspector</button>
       </aside>
     </div>
     <div class="transport" aria-label="Playback controls">
@@ -437,12 +457,20 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     <section class="timeline" aria-label="Multiple-track timeline">
       <div class="timeline-heading">
         <div><h1>Relik Feature Editorial</h1><div class="timeline-meta">24 fps · 240 frames · 01:00:00:00</div></div>
+        <details class="mock-controls" aria-label="Mock state controls">
+          <summary class="mock-label">Mock · local only</summary>
+          <div class="mock-controls-body">
+            <label>Preview state <select id="preview-state"><option value="supported">supported</option><option value="missing-media">missing-media</option><option value="unsupported-codec">unsupported-codec</option><option value="unsupported-effect">unsupported-effect</option><option value="buffering">Buffering</option></select></label>
+            <label>v1 projection <select id="projection-select"><option value="ambiguous">ambiguous</option><option value="mapped">mapped</option><option value="partial">partial</option><option value="changed">changed</option><option value="missing">missing</option><option value="same">same</option></select></label>
+            <button type="button" id="reset-mock">Reset mock</button>
+          </div>
+        </details>
         <div class="selection-tools">
           <div class="mode-controls" aria-label="Selection mode"><button type="button" data-mode="point" aria-pressed="false">Point</button><button type="button" data-mode="range" aria-pressed="true">Range</button><button type="button" data-mode="track" aria-pressed="false">Track</button></div>
           <label><span class="sr-only">Comment track</span><select id="anchor-track"></select></label>
         </div>
       </div>
-      <div class="timeline-scroll" id="timeline-scroll" tabindex="0" aria-label="Scroll timeline tracks horizontally">
+      <div class="timeline-scroll" id="timeline-scroll" tabindex="0" aria-label="Timeline tracks">
         <div class="track-grid" id="track-grid">
           <div class="ruler-row"><div class="ruler-label">Track / timeline</div><div class="ruler" id="ruler"></div></div>
           <div id="track-rows"></div>
@@ -457,12 +485,6 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
         <button type="button" id="clear-selection" class="quiet">Clear</button>
       </div>
     </section>
-    <div class="mock-controls" aria-label="Mock state controls">
-      <span class="mock-label">Mock · local only</span>
-      <label>Preview state <select id="preview-state"><option value="supported">supported</option><option value="missing-media">missing-media</option><option value="unsupported-codec">unsupported-codec</option><option value="unsupported-effect">unsupported-effect</option><option value="buffering">Buffering</option></select></label>
-      <label>v1 projection <select id="projection-select"><option value="ambiguous">ambiguous</option><option value="mapped">mapped</option><option value="partial">partial</option><option value="changed">changed</option><option value="missing">missing</option><option value="same">same</option></select></label>
-      <button type="button" id="reset-mock">Reset mock</button>
-    </div>
   </section>
   <aside class="thread" id="thread" aria-label="Comments">
     <div class="thread-head"><div class="thread-head-line"><h2 id="thread-title">Comments · 3</h2><button type="button" id="close-comments" aria-label="Close comments"><svg aria-hidden="true"><use href="#i-chevron"/></svg></button></div><div class="thread-filters" aria-label="Filter comments"><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="open" aria-pressed="false">Open</button><button type="button" data-filter="resolved" aria-pressed="false">Resolved</button></div></div>
@@ -797,7 +819,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
       if (issue === 'missing-media') panel.append(make('h2', '', 'Missing media'), make('p', '', 'media/offline_shot.mov'), make('p', '', 'A valid timing range remains selectable and commentable.'));
       if (issue === 'unsupported-codec') panel.append(make('h2', '', 'Unsupported codec'), make('p', '', 'ProRes 4444 XQ'), make('p', '', 'No automatic transcoding or remote proxy.'));
       if (issue === 'unsupported-effect') panel.append(make('h2', '', 'Unsupported effect'), make('p', '', 'Grade Custom Look · MagicBulletLook'), action('Preview base media without unsupported effects', () => { state.baseMedia = true; state.preview = 'supported'; $('#preview-state').value = 'supported'; paintPreview(); save(); }, 'primary'));
-      panel.append(action('Inspector', () => { tab = 'media'; $('#monitor-row').dataset.inspectorOpen = 'true'; $('#inspector-toggle').setAttribute('aria-expanded', 'true'); renderInspector(); }));
+      panel.append(action('Inspector', () => { tab = 'media'; renderInspector(); setInspectorOpen(true); }));
     }
   }
   function renderInspector() {
@@ -848,6 +870,25 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   function highlightActive() {
     $$('[data-comment-id]').forEach(node => node.classList.toggle('is-active', node.dataset.commentId === state.active));
   }
+  function revealTimelineTarget(target, center = false) {
+    if (!target) return;
+    const scroll = $('#timeline-scroll'), box = scroll.getBoundingClientRect();
+    const host = $('.workbench').getBoundingClientRect();
+    const label = target.closest('.track-row')?.querySelector('.track-label')?.getBoundingClientRect();
+    const left = Math.max(box.left + scroll.clientLeft, host.left, label?.right || box.left, 0);
+    const right = Math.min(box.left + scroll.clientLeft + scroll.clientWidth, host.right, innerWidth);
+    const top = Math.max(box.top + scroll.clientTop, host.top, 0);
+    const bottom = Math.min(box.top + scroll.clientTop + scroll.clientHeight, host.bottom, innerHeight);
+    const rect = target.getBoundingClientRect(), inset = Math.min(16, (right - left) / 4);
+    if (right <= left || bottom <= top) return;
+    const horizontal = center ? (rect.left + rect.right - left - right) / 2
+      : rect.width > right - left - inset * 2 || rect.left < left + inset ? rect.left - left - inset
+      : rect.right > right - inset ? rect.right - right + inset : 0;
+    const vertical = rect.height > bottom - top || rect.top < top ? rect.top - top
+      : rect.bottom > bottom ? rect.bottom - bottom : 0;
+    scroll.scrollLeft = Math.max(0, scroll.scrollLeft + horizontal);
+    scroll.scrollTop = Math.max(0, scroll.scrollTop + vertical);
+  }
   function revealComment(id) {
     const comment = commentById(id); if (!comment) return;
     state.active = id; setCommentsOpen(true);
@@ -856,9 +897,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
       if (trackById(projection.track).child) { state.nested = true; renderTracks(); }
       setSelection(projection.track, projection.start, projection.end, { newComment: false });
       packMockComments();
-      $('.comment-band .otio-comment-mark[data-comment-id="' + id + '"]')?.scrollIntoView({
-        block: 'nearest', inline: 'center', behavior: 'instant'
-      });
+      revealTimelineTarget($('.comment-band .otio-comment-mark[data-comment-id="' + id + '"]'), true);
     } else {
       state.selection = null; paintSelection();
       announce('v' + comment.version + ' · ' + projection.status + ' · View original');
@@ -916,50 +955,39 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   }
   function positionForegroundComposer() {
     if (!foregroundComposer) return;
-    const host = $('.workbench');
-    const hostRect = host.getBoundingClientRect();
-    const preview = $('#composition-preview').getBoundingClientRect();
-    const scope = $('#preview-scope');
-    const controls = [scope, ...$$('#composition-preview button')].filter(node => {
-      const rect = node.getBoundingClientRect();
-      return !node.hidden && rect.width > 0 && rect.height > 0;
-    }).map(node => node.getBoundingClientRect());
-    const edges = [preview.top, preview.bottom, ...controls.flatMap(rect =>
-      [Math.max(preview.top, rect.top), Math.min(preview.bottom, rect.bottom)]
-    )].sort((a, b) => a - b);
-    const track = state.selection?.track;
-    const rail = track && $('.track-rail[data-track-id="' + track + '"]');
-    const railRect = rail?.getBoundingClientRect();
-    const useRail = railRect && railRect.top >= 0 && railRect.top < innerHeight;
-    const anchor = useRail ? rail : $('#comment-selection');
-    const rect = anchor.getBoundingClientRect();
-    const frame = state.selection ? (state.selection.start + state.selection.end) / 2 : state.frame;
-    const point = useRail ? rect.width * frame / TOTAL : rect.width / 2;
-    const aimY = rect.top + rect.height / 2;
-    const bands = edges.slice(0, -1).map((top, index) => ({ top, bottom: edges[index + 1] }))
-      .filter(band => band.bottom > band.top && !controls.some(box =>
-        box.top < band.bottom && box.bottom > band.top
-      )).sort((a, b) => b.bottom - b.top - (a.bottom - a.top) ||
-        Math.abs((a.top + a.bottom) / 2 - aimY) - Math.abs((b.top + b.bottom) / 2 - aimY));
-    const band = bands[0];
-    if (!band) { foregroundComposer.style.visibility = 'hidden'; return; }
-    const leftLimit = Math.max(preview.left, hostRect.left) + 8;
-    const rightLimit = Math.min(preview.right, hostRect.right) - 8;
-    const topLimit = Math.max(band.top, hostRect.top) + 8;
-    const bottomLimit = Math.min(band.bottom, hostRect.bottom) - 8;
-    if (foregroundComposer.dataset.initialOpen === 'true' && host.scrollTop > 0 &&
-        bottomLimit - topLimit < Math.min(band.bottom - band.top, host.clientHeight) - 16) {
-      const prior = host.scrollTop;
-      host.scrollTop = Math.max(0, host.scrollTop + band.top - hostRect.top - 8);
-      if (host.scrollTop !== prior) { positionForegroundComposer(); return; }
+    const host = $('.workbench'), hostRect = host.getBoundingClientRect();
+    const timeline = $('#timeline-scroll'), timelineRect = timeline.getBoundingClientRect();
+    const readout = $('.selection-readout').getBoundingClientRect();
+    const selection = $('.otio-selection');
+    if (!selection) { foregroundComposer.style.visibility = 'hidden'; return; }
+    const selected = selection.getBoundingClientRect();
+    const label = selection.closest('.track-row')?.querySelector('.track-label')?.getBoundingClientRect();
+    const anchor = {
+      left: Math.max(selected.left, timelineRect.left + timeline.clientLeft, label?.right || 0, hostRect.left, 0),
+      right: Math.min(selected.right, timelineRect.left + timeline.clientLeft + timeline.clientWidth, hostRect.right, innerWidth),
+      top: Math.max(selected.top, timelineRect.top + timeline.clientTop, hostRect.top, 0),
+      bottom: Math.min(selected.bottom, timelineRect.top + timeline.clientTop + timeline.clientHeight, hostRect.bottom, innerHeight)
+    };
+    if (anchor.right <= anchor.left || anchor.bottom <= anchor.top) {
+      foregroundComposer.style.visibility = 'hidden'; return;
     }
+    const leftLimit = Math.max(hostRect.left + host.clientLeft, 0) + 8;
+    const rightLimit = Math.min(hostRect.left + host.clientLeft + host.clientWidth, innerWidth) - 8;
+    const topLimit = Math.max(hostRect.top + host.clientTop, 0) + 8;
+    const bottomLimit = Math.min(readout.top, hostRect.top + host.clientTop + host.clientHeight, innerHeight) - 8;
     foregroundComposer.style.maxWidth = Math.max(0, rightLimit - leftLimit) + 'px';
-    foregroundComposer.style.maxHeight = Math.max(0, bottomLimit - topLimit) + 'px';
-    foregroundComposer.style.visibility = bottomLimit > topLimit ? '' : 'hidden';
-    const left = rect.left + point - foregroundComposer.offsetWidth / 2;
-    const top = rect.top - foregroundComposer.offsetHeight - 8;
+    foregroundComposer.style.maxHeight = '';
+    const desired = foregroundComposer.offsetHeight;
+    const above = anchor.top - topLimit - 8, below = bottomLimit - anchor.bottom - 8;
+    const side = above >= desired || above >= below ? 'above' : 'below';
+    const available = Math.max(0, side === 'above' ? above : below);
+    foregroundComposer.style.maxHeight = available + 'px';
+    foregroundComposer.style.visibility = available > 0 ? '' : 'hidden';
+    foregroundComposer.dataset.side = side;
+    const left = (anchor.left + anchor.right - foregroundComposer.offsetWidth) / 2;
+    const top = side === 'above' ? anchor.top - foregroundComposer.offsetHeight - 8 : anchor.bottom + 8;
     foregroundComposer.style.left = clamp(left, leftLimit, Math.max(leftLimit, rightLimit - foregroundComposer.offsetWidth)) - hostRect.left + host.scrollLeft + 'px';
-    foregroundComposer.style.top = clamp(top, topLimit, Math.max(topLimit, bottomLimit - foregroundComposer.offsetHeight)) - hostRect.top + host.scrollTop + 'px';
+    foregroundComposer.style.top = top - hostRect.top + host.scrollTop + 'px';
   }
   function openForegroundComposer() {
     closeForegroundComposer();
@@ -974,10 +1002,8 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     box.append(form);
     $('.workbench').append(box);
     foregroundComposer = box;
-    box.dataset.initialOpen = 'true';
     paintComposer();
     positionForegroundComposer();
-    box.dataset.initialOpen = 'false';
     $('#comment-body').focus({ preventScroll: true });
   }
   function paintComposer() {
@@ -989,8 +1015,12 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
     $('#compose-target').textContent = target ? 'v' + (comment?.version || state.version) + ' · ' + trackLabel(target.track) + ' · ' + coordinateLabel(target) : 'v' + state.version + ' · Composition · ' + tc(state.frame);
   }
   function beginCompose(kind, id) {
+    if (matchMedia('(max-width: 44rem)').matches) setInspectorOpen(false);
     closePopover(); composeMode = { kind, id }; $('#compose-outcome').textContent = '';
     $('#comment-body').value = kind === 'edit' ? commentById(id).body : ''; paintByteCount();
+    if (kind === 'new' && !state.selection)
+      setSelection('composition', state.frame, state.mode === 'point' ? state.frame : state.frame + 1, { newComment: false });
+    if (kind === 'new') revealTimelineTarget($('.otio-selection'));
     if (kind === 'new' && $('#viewer').dataset.commentsOpen === 'false') {
       openForegroundComposer();
     } else {
@@ -1044,7 +1074,19 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   $('#comments-toggle').addEventListener('click', () => setCommentsOpen($('#viewer').dataset.commentsOpen !== 'true'));
   $('#comments-edge').addEventListener('click', () => setCommentsOpen(true));
   $('#close-comments').addEventListener('click', () => setCommentsOpen(false));
-  $('#inspector-toggle').addEventListener('click', () => { const open = $('#monitor-row').dataset.inspectorOpen !== 'true'; $('#monitor-row').dataset.inspectorOpen = String(open); $('#inspector-toggle').setAttribute('aria-expanded', String(open)); });
+  function setInspectorOpen(open, restoreFocus = false) {
+    $('#monitor-row').dataset.inspectorOpen = String(open);
+    $('#inspector-toggle').setAttribute('aria-expanded', String(open));
+    if (open) $('.tab[data-tab="' + tab + '"]').focus({ preventScroll: true });
+    else if (restoreFocus) $('#inspector-toggle').focus({ preventScroll: true });
+  }
+  $('#inspector-toggle').addEventListener('click', () => setInspectorOpen($('#monitor-row').dataset.inspectorOpen !== 'true'));
+  $('#inspector-close').addEventListener('click', () => setInspectorOpen(false, true));
+  $('#inspector').addEventListener('keydown', event => {
+    if (event.key === 'Escape' && matchMedia('(max-width: 44rem)').matches) {
+      event.preventDefault(); setInspectorOpen(false, true);
+    }
+  });
   $('#revision-select').addEventListener('change', e => { state.version = Number(e.target.value); state.active = null; pause(); closePopover(); renderVersion(); renderTracks(); renderThread(); paintSelection(); save(); });
   $('#return-current').addEventListener('click', () => { state.version = 2; state.active = null; state.selection = null; renderVersion(); renderTracks(); renderThread(); paintSelection(); save(); });
   $$('.tab').forEach(button => button.addEventListener('click', () => { tab = button.dataset.tab; renderInspector(); }));
@@ -1067,6 +1109,7 @@ button[aria-pressed="true"], .tab[aria-selected="true"] { border-color: var(--pa
   document.addEventListener('pointerdown', e => { if (popover && !e.target.closest('.popover, .otio-comment-mark')) closePopover(); if (foregroundComposer && !e.target.closest('.foreground-popover, #comment-selection')) closeForegroundComposer(); });
   window.addEventListener('resize', () => { closePopover(); packMockComments(); positionForegroundComposer(); }); window.addEventListener('pagehide', pause);
   $('.workbench').addEventListener('scroll', positionForegroundComposer);
+  $('#timeline-scroll').addEventListener('scroll', positionForegroundComposer);
   function render() {
     setCommentsOpen($('#viewer').dataset.commentsOpen === 'true');
     setTheme(state.theme); renderVersion(); renderTracks(); renderThread(); renderInspector(); paintSelection(); paintByteCount(); setFrame(state.frame);

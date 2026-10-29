@@ -1565,6 +1565,309 @@ describe('otio playback controller', () => {
     playback.dispose();
   });
 
+  test('paused seek does not publish stale pixels while the decoder is seeking', async () => {
+    const output = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 24, duration: 48 }),
+      timelineId: 'timeline_1',
+      canvas: output as unknown as HTMLCanvasElement,
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      await playback.seek({ value: 0, rate: 24 });
+      const decoder = created.find((element) => element.muted);
+      if (!decoder) throw new Error('video decoder did not load');
+      const oldPixel = { ...decoder.pixel };
+      const newPixel = { r: 0, g: 0, b: 1, a: 1 };
+      let currentTime = decoder.currentTime;
+      let seeking = false;
+      Object.defineProperty(decoder, 'seeking', { get: () => seeking });
+      Object.defineProperty(decoder, 'currentTime', {
+        get: () => currentTime,
+        set: (value: number) => {
+          decoder.seekTargets.push(value);
+          currentTime = value;
+          seeking = true;
+          // The getter moves immediately; decoded pixels and seeked lag behind.
+        },
+      });
+      const tick = async (): Promise<void> => {
+        // Drain the controller's promise chain without advancing a media event.
+        for (let i = 0; i < 100; i++) await Promise.resolve();
+      };
+      let firstSettled = false;
+      const first = playback.seek({ value: 4, rate: 24 }).then(() => {
+        firstSettled = true;
+      });
+      await tick();
+      const beforeEvent = {
+        seeking,
+        buffering: playback.getState().buffering,
+        settled: firstSettled,
+        pixel: { ...output.pixel },
+      };
+      let sameTargetSettled = false;
+      const repeated = playback.seek({ value: 4, rate: 24 }).then(() => {
+        sameTargetSettled = true;
+      });
+      await tick();
+      const sameTarget = {
+        seeking,
+        buffering: playback.getState().buffering,
+        settled: sameTargetSettled,
+        pixel: { ...output.pixel },
+      };
+      decoder.dispatch('seeked'); // Delayed event from an earlier seek, still seeking.
+      await tick();
+      const staleEvent = {
+        seeking,
+        buffering: playback.getState().buffering,
+        settled: sameTargetSettled,
+        pixel: { ...output.pixel },
+      };
+      seeking = false;
+      decoder.pixel = newPixel;
+      decoder.dispatch('seeked');
+      await tick();
+      if (seeking) {
+        seeking = false;
+        decoder.dispatch('seeked');
+      }
+      await Promise.all([first, repeated]);
+      const completed = {
+        buffering: playback.getState().buffering,
+        pixel: { ...output.pixel },
+      };
+      console.log(
+        'SEEK_EVENT_CONTROL',
+        JSON.stringify({
+          oldPixel,
+          newPixel,
+          beforeEvent,
+          sameTarget,
+          staleEvent,
+          completed,
+        })
+      );
+      expect(beforeEvent).toEqual({
+        seeking: true,
+        buffering: true,
+        settled: false,
+        pixel: oldPixel,
+      });
+      expect(sameTarget).toEqual({
+        seeking: true,
+        buffering: true,
+        settled: false,
+        pixel: oldPixel,
+      });
+      expect(staleEvent).toEqual({
+        seeking: true,
+        buffering: true,
+        settled: false,
+        pixel: oldPixel,
+      });
+      expect(completed).toEqual({ buffering: false, pixel: newPixel });
+      const seekCount = decoder.seekTargets.length;
+      let cachedSettled = false;
+      const cached = playback.seek({ value: 4, rate: 24 }).then(() => {
+        cachedSettled = true;
+      });
+      await tick();
+      expect(cachedSettled).toBe(true);
+      expect(decoder.seekTargets.length).toBe(seekCount);
+      expect(output.pixel).toEqual(newPixel);
+      await cached;
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('paused seek ignores an earlier seeked event while still seeking', async () => {
+    const output = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 24, duration: 48 }),
+      timelineId: 'timeline_1',
+      canvas: output as unknown as HTMLCanvasElement,
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      await playback.seek({ value: 0, rate: 24 });
+      const decoder = created.find((element) => element.muted);
+      if (!decoder) throw new Error('video decoder did not load');
+      const oldPixel = { ...decoder.pixel };
+      const newPixel = { r: 0, g: 0, b: 1, a: 1 };
+      let currentTime = decoder.currentTime;
+      let seeking = false;
+      Object.defineProperty(decoder, 'seeking', { get: () => seeking });
+      Object.defineProperty(decoder, 'currentTime', {
+        get: () => currentTime,
+        set: (value: number) => {
+          currentTime = value;
+          seeking = true;
+          decoder.readyState = 1;
+        },
+      });
+      let settled = false;
+      const pending = playback.seek({ value: 4, rate: 24 }).then(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(seeking).toBe(true);
+      expect(settled).toBe(false);
+      // A delayed event belongs to an older seek; current data is still old.
+      decoder.readyState = 2;
+      decoder.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      const afterStaleEvent = {
+        seeking,
+        settled,
+        buffering: playback.getState().buffering,
+        pixel: { ...output.pixel },
+      };
+      const target = currentTime;
+      seeking = false;
+      currentTime = target - 1 / 24;
+      decoder.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      const afterMismatchedEvent = {
+        settled,
+        buffering: playback.getState().buffering,
+        pixel: { ...output.pixel },
+      };
+      currentTime = target;
+      seeking = false;
+      decoder.pixel = newPixel;
+      decoder.dispatch('seeked');
+      await pending;
+      const completed = {
+        buffering: playback.getState().buffering,
+        pixel: { ...output.pixel },
+      };
+      console.log(
+        'SEEK_STALE_EVENT_CONTROL',
+        JSON.stringify({
+          oldPixel,
+          newPixel,
+          afterStaleEvent,
+          afterMismatchedEvent,
+          completed,
+        })
+      );
+      expect(afterStaleEvent).toEqual({
+        seeking: true,
+        settled: false,
+        buffering: true,
+        pixel: oldPixel,
+      });
+      expect(afterMismatchedEvent).toEqual({
+        settled: false,
+        buffering: true,
+        pixel: oldPixel,
+      });
+      expect(completed).toEqual({ buffering: false, pixel: newPixel });
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('paused seek accepts the native microsecond-rounded midpoint only after seeked', async () => {
+    const blob = new Blob(['rounded seek video'], { type: 'video/mp4' });
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', blob]]),
+      timings: new Map([
+        [
+          blob,
+          {
+            kind: 'windows',
+            starts: Float64Array.from(
+              { length: 144 },
+              (_, frame) => frame / 24
+            ),
+            ends: Float64Array.from(
+              { length: 144 },
+              (_, frame) => (frame + 1) / 24
+            ),
+          },
+        ],
+      ]),
+    });
+    const output = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({
+        kind: 'Video',
+        rate: 24,
+        duration: 144,
+      }),
+      timelineId: 'timeline_1',
+      canvas: output as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+    try {
+      await playback.seek({ value: 0, rate: 24 });
+      const decoder = created.find((element) => element.muted);
+      if (!decoder) throw new Error('video decoder did not load');
+      let currentTime = decoder.currentTime;
+      let seeking = false;
+      let requested = 0;
+      let assignments = 0;
+      Object.defineProperty(decoder, 'seeking', { get: () => seeking });
+      Object.defineProperty(decoder, 'currentTime', {
+        get: () => currentTime,
+        set: (value: number) => {
+          assignments++;
+          requested = value;
+          currentTime = Math.trunc(value * 1_000_000) / 1_000_000;
+          seeking = true;
+        },
+      });
+      let settled = false;
+      const pending = playback.seek({ value: 24, rate: 24 }).then(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(requested).toBeCloseTo(1.0208333333333335, 14);
+      expect(currentTime).toBe(1.020833);
+      expect(seeking).toBe(true);
+      expect(settled).toBe(false);
+      expect(playback.getState().buffering).toBe(true);
+      decoder.pixel = { r: 0, g: 0, b: 1, a: 1 };
+      seeking = false;
+      decoder.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(settled).toBe(true);
+      await pending;
+      expect(output.pixel).toEqual(decoder.pixel);
+      expect(playback.getState().buffering).toBe(false);
+      const before = assignments;
+      let cachedSettled = false;
+      const cached = playback.seek({ value: 24, rate: 24 }).then(() => {
+        cachedSettled = true;
+      });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(cachedSettled).toBe(true);
+      expect(assignments).toBe(before);
+      await cached;
+      let twiceRoundedSettled = false;
+      const twiceRounded = playback.seek({ value: 96, rate: 24 }).then(() => {
+        twiceRoundedSettled = true;
+      });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(requested).toBeCloseTo(4.020833333333334, 14);
+      expect(currentTime).toBe(4.020833);
+      expect(twiceRoundedSettled).toBe(false);
+      currentTime = 4.020832;
+      seeking = false;
+      decoder.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(twiceRoundedSettled).toBe(true);
+      await twiceRounded;
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('seek wait is not added to the transport clock', async () => {
     const pending: Array<(value: string | null) => void> = [];
     const clipStarted = Promise.withResolvers<void>();
@@ -4893,6 +5196,7 @@ describe('otio native video playback S-C and S-B', () => {
 describe('VideoFrame readout (planner tests 1-6)', () => {
   const created: MockMedia[] = [];
   let raf: FrameRequestCallback | null = null;
+  let rafScheduled = 0;
   let originalGlobals = new Map<
     PlaybackGlobalKey,
     PropertyDescriptor | undefined
@@ -4909,6 +5213,7 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
     createdUrls.length = 0;
     revokedUrls.length = 0;
     raf = null;
+    rafScheduled = 0;
     MockVideoFrame.reset();
     originalGlobals = propertyDescriptors(globalThis, playbackGlobalKeys);
     originalUrlMethods = propertyDescriptors(URL, urlMethodNames);
@@ -4937,6 +5242,7 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
           'requestAnimationFrame',
           (cb: FrameRequestCallback) => {
             raf = cb;
+            rafScheduled++;
             return 1;
           },
         ],
@@ -5362,10 +5668,19 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
 
       // Subsequent ticks run in seek cadence and trigger seeks
       const initialSeeks = videoMedia!.seekTargets.length;
+      const beforeTick = rafScheduled;
       raf?.(100);
-      for (let i = 0; i < 5; i++) await Promise.resolve();
+      // The next RAF is scheduled only after the asynchronous render finishes.
+      for (let i = 0; i < 100 && rafScheduled === beforeTick; i++)
+        await Promise.resolve();
+      expect(rafScheduled).toBeGreaterThan(beforeTick);
       raf?.(200);
-      for (let i = 0; i < 5; i++) await Promise.resolve();
+      for (
+        let i = 0;
+        i < 100 && videoMedia!.seekTargets.length === initialSeeks;
+        i++
+      )
+        await Promise.resolve();
       expect(videoMedia!.seekTargets.length).toBeGreaterThan(initialSeeks);
     } finally {
       MockVideoFrame.timestampOverride = null;

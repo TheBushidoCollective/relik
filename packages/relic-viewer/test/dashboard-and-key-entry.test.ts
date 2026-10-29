@@ -28,33 +28,29 @@ import {
 // ---------------------------------------------------------------------------
 
 function matchesSelector(node: ElementStub, selector: string): boolean {
-  if (selector === '*' || selector.length === 0) return true;
-  if (selector.startsWith('.')) {
-    const cls = selector.slice(1);
-    return node.className.split(/\s+/).includes(cls);
-  }
-  if (selector.startsWith('#')) {
-    return node.id === selector.slice(1);
-  }
-  if (selector.includes('[') && selector.endsWith(']')) {
-    const bracketIndex = selector.indexOf('[');
-    const tagPart = selector.slice(0, bracketIndex);
-    if (
-      tagPart.length > 0 &&
-      node.tagName.toLowerCase() !== tagPart.toLowerCase()
-    ) {
-      return false;
+  return selector.split(',').some((part) => {
+    const trimmed = part.trim();
+    if (trimmed === '*') return true;
+    const match =
+      /^([a-zA-Z][\w-]*)?((?:[.#][\w-]+)*)(?:\[([\w-]+)(?:=["']?([^"'\]]+)["']?)?\])?$/.exec(
+        trimmed
+      );
+    if (!match) return false;
+    const [, tag, qualifiers = '', attribute, value] = match;
+    if (tag && node.tagName.toLowerCase() !== tag.toLowerCase()) return false;
+    for (const qualifier of qualifiers.match(/[.#][\w-]+/g) ?? []) {
+      if (qualifier.startsWith('#') && node.id !== qualifier.slice(1))
+        return false;
+      if (
+        qualifier.startsWith('.') &&
+        !node.classList.contains(qualifier.slice(1))
+      )
+        return false;
     }
-    const inner = selector.slice(bracketIndex + 1, -1);
-    if (inner.includes('=')) {
-      const [rawAttr, rawVal] = inner.split('=');
-      const attr = rawAttr ? rawAttr.trim() : '';
-      const val = rawVal ? rawVal.trim().replace(/^["']|["']$/g, '') : '';
-      return node.getAttribute(attr) === val;
-    }
-    return node.attributes.has(inner);
-  }
-  return node.tagName.toLowerCase() === selector.toLowerCase();
+    if (attribute === undefined) return true;
+    const actual = node.getAttribute(attribute);
+    return value === undefined ? actual !== null : actual === value;
+  });
 }
 async function waitUntil(
   predicate: () => boolean,
@@ -88,6 +84,7 @@ class ElementStub {
   rows = 0;
   readonly dataset: Record<string, string> = {};
   readonly children: ElementStub[] = [];
+  parent: ElementStub | null = null;
   readonly attributes = new Map<string, string>();
   readonly classList = {
     add: (...names: string[]): void => {
@@ -139,11 +136,19 @@ class ElementStub {
     if (name === 'id') return this.id || this.attributes.get('id') || null;
     if (name === 'target')
       return this.target || this.attributes.get('target') || null;
+    if (name === 'class') return this.className || null;
+    if (name.startsWith('data-')) {
+      const key = name
+        .slice(5)
+        .replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase());
+      return this.dataset[key] ?? this.attributes.get(name) ?? null;
+    }
     if (name === 'rel') return this.rel || this.attributes.get('rel') || null;
     return this.attributes.get(name) ?? null;
   }
 
   appendChild(child: ElementStub): ElementStub {
+    child.parent = this;
     this.children.push(child);
     return child;
   }
@@ -155,15 +160,35 @@ class ElementStub {
         textNode.textContent = k;
         this.children.push(textNode);
       } else {
+        k.parent = this;
         this.children.push(k);
       }
     }
   }
 
   replaceChildren(...kids: Array<ElementStub | string>): void {
+    for (const child of this.children) child.parent = null;
     this.children.length = 0;
     this.textContent = '';
     this.append(...kids);
+  }
+
+  replaceWith(replacement: ElementStub): void {
+    if (this.parent === null) return;
+    const siblings = this.parent.children;
+    const index = siblings.indexOf(this);
+    if (index < 0) return;
+    replacement.parent = this.parent;
+    siblings[index] = replacement;
+    this.parent = null;
+  }
+
+  remove(): void {
+    if (this.parent === null) return;
+    const siblings = this.parent.children;
+    const index = siblings.indexOf(this);
+    if (index >= 0) siblings.splice(index, 1);
+    this.parent = null;
   }
 
   addEventListener(
@@ -457,8 +482,43 @@ describe('resolveEnteredKey', () => {
 
 describe('renderDead and Key Entry Form (DOM)', () => {
   let rootBody: ElementStub;
+  let createdElements: ElementStub[];
+
+  const threadFetch = (ciphertext: Uint8Array): typeof globalThis.fetch =>
+    (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === 'https://storage.example/blob') {
+        return new Response(ciphertext as unknown as BodyInit);
+      }
+      if (url.endsWith('/api/auth/session')) {
+        return Response.json({ email: null });
+      }
+      if (url.endsWith('/api/relics/relic123/comments')) {
+        return Response.json([]);
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof globalThis.fetch;
+
+  const expectInitialThreadReady = async (): Promise<void> => {
+    await waitUntil(() => {
+      const thread = rootBody.querySelector('#comment-thread');
+      return thread?.dataset['threadReady'] === 'true';
+    });
+    const thread = rootBody.querySelector('#comment-thread');
+    expect(thread?.dataset['session']).toBe('anonymous');
+    expect(thread?.querySelector('.thread-refusal')).toBeNull();
+    expect(thread?.querySelectorAll('.thread-list')[0]?.children).toHaveLength(
+      0
+    );
+    expect(rootBody.querySelectorAll('#comment-thread')).toHaveLength(1);
+    expect(
+      createdElements.filter((element) => element.id === 'comment-thread')
+    ).toHaveLength(1);
+    expect(rootBody.querySelector('.action-comments')).not.toBeNull();
+  };
 
   beforeEach(() => {
+    createdElements = [];
     rootBody = new ElementStub('body');
     (globalThis as unknown as { document: unknown }).document = {
       body: rootBody,
@@ -468,7 +528,11 @@ describe('renderDead and Key Entry Form (DOM)', () => {
           getPropertyValue: () => '',
         },
       },
-      createElement: (tag: string) => new ElementStub(tag),
+      createElement: (tag: string) => {
+        const element = new ElementStub(tag);
+        createdElements.push(element);
+        return element;
+      },
       createElementNS: (_ns: string, tag: string) => new ElementStub(tag),
       createTextNode: (text: string) => {
         const n = new ElementStub('#text');
@@ -730,12 +794,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: (async (input: RequestInfo | URL) => {
-        if (String(input).includes('/blob')) {
-          return new Response(ciphertext as unknown as BodyInit);
-        }
-        return globalThis.fetch(input);
-      }) as unknown as typeof globalThis.fetch,
+      fetch: threadFetch(ciphertext),
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
@@ -770,6 +829,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     form.submit();
 
     await waitUntil(() => rootBody.querySelector('.stage-dead') === null);
+    expect(rootBody.querySelector('.action-comments')).not.toBeNull();
+    await expectInitialThreadReady();
 
     // Decryption succeeded in place: dead card is gone and document is rendered
     expect(rootBody.querySelector('.stage-dead')).toBeNull();
@@ -800,12 +861,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: (async (input: RequestInfo | URL) => {
-        if (String(input).includes('/blob')) {
-          return new Response(ciphertext as unknown as BodyInit);
-        }
-        return globalThis.fetch(input);
-      }) as unknown as typeof globalThis.fetch,
+      fetch: threadFetch(ciphertext),
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
@@ -840,6 +896,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     form.submit();
 
     await waitUntil(() => rootBody.querySelector('.stage-dead') === null);
+    expect(rootBody.querySelector('.action-comments')).not.toBeNull();
+    await expectInitialThreadReady();
 
     expect(rootBody.querySelector('.stage-dead')).toBeNull();
     expect(rootBody.querySelector('.doc')).not.toBeNull();
