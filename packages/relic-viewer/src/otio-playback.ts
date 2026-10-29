@@ -75,9 +75,10 @@ export const OTIO_MAX_IMAGE_EDGE = 4096;
 export const OTIO_MAX_IMAGE_PIXELS = 4096 * 4096;
 export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
 const HAVE_CURRENT_DATA = 2;
-// Chromium reports media times at microsecond precision, even for a more
-// precise midpoint assignment. This is a time-match tolerance, not a frame.
-const MEDIA_SEEK_TIME_PRECISION_SECONDS = 1e-6;
+// Chromium can quantize an assigned midpoint twice: the loopback proof saw
+// 4.020833333333334 report 4.020832 on seeked. Two microseconds cover that
+// measured granularity without accepting a neighboring ordinary video frame.
+const MEDIA_SEEK_TIME_PRECISION_SECONDS = 2e-6;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 

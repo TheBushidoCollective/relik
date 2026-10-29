@@ -1780,9 +1780,12 @@ describe('otio playback controller', () => {
           blob,
           {
             kind: 'windows',
-            starts: Float64Array.from({ length: 48 }, (_, frame) => frame / 24),
+            starts: Float64Array.from(
+              { length: 144 },
+              (_, frame) => frame / 24
+            ),
             ends: Float64Array.from(
-              { length: 48 },
+              { length: 144 },
               (_, frame) => (frame + 1) / 24
             ),
           },
@@ -1791,7 +1794,11 @@ describe('otio playback controller', () => {
     });
     const output = new SoftCanvas();
     const playback = createOtioPlayback({
-      document: sampledMediaDocument({ kind: 'Video', rate: 24, duration: 48 }),
+      document: sampledMediaDocument({
+        kind: 'Video',
+        rate: 24,
+        duration: 144,
+      }),
       timelineId: 'timeline_1',
       canvas: output as unknown as HTMLCanvasElement,
       resolveMedia: fixture.resolver,
@@ -1842,6 +1849,20 @@ describe('otio playback controller', () => {
       expect(cachedSettled).toBe(true);
       expect(assignments).toBe(before);
       await cached;
+      let twiceRoundedSettled = false;
+      const twiceRounded = playback.seek({ value: 96, rate: 24 }).then(() => {
+        twiceRoundedSettled = true;
+      });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(requested).toBeCloseTo(4.020833333333334, 14);
+      expect(currentTime).toBe(4.020833);
+      expect(twiceRoundedSettled).toBe(false);
+      currentTime = 4.020832;
+      seeking = false;
+      decoder.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(twiceRoundedSettled).toBe(true);
+      await twiceRounded;
     } finally {
       playback.dispose();
     }
