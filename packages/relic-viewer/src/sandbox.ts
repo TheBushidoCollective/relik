@@ -49,6 +49,7 @@ import {
   isArmPointingMessage,
   isClearMarkMessage,
   isClearMarksMessage,
+  isFrameVisibilityMessage,
   isPaintMarkMessage,
   isPaintMarksMessage,
   isQuietMarksMessage,
@@ -60,6 +61,14 @@ import {
   takeTailUtf8,
 } from './annotate-frame.ts';
 import { isSetScrollMessage } from './frame-scroll.ts';
+import {
+  CONCEALMENT_CSS,
+  type ConcealableMark,
+  type Concealment,
+  concealMarks,
+  createScrollportWatch,
+  isRendered,
+} from './mark-visibility.ts';
 import {
   type Anchor,
   applyAnchors,
@@ -117,6 +126,7 @@ export interface FrameInteractionHandler {
   onRevealMark(msg: RevealMarkMessage): void;
   onPairMark(id: string, active: boolean): void;
   onTrackMark?(id: string | null): void;
+  onFrameVisibility?(visible: boolean): void;
   onActiveMark?(id: string | null): void;
   onQuietMarks?(ids: readonly string[]): void;
   onRevealChange?(changeId: string, top: number): void;
@@ -126,6 +136,7 @@ export interface FrameInteractionHandler {
 export interface FrameInteraction extends FrameInteractionHandler {
   isArmed(): boolean;
   onTrackMark(id: string | null): void;
+  onFrameVisibility(visible: boolean): void;
   onActiveMark(id: string | null): void;
   onQuietMarks(ids: readonly string[]): void;
   onRevealChange(changeId: string, top: number): void;
@@ -265,7 +276,7 @@ export function ensureFrameStyles(doc: Document): void {
   if (doc.getElementById('relic-frame-styles')) return;
   const style = doc.createElement('style');
   style.id = 'relic-frame-styles';
-  style.textContent = FRAME_MARK_CSS;
+  style.textContent = FRAME_MARK_CSS + CONCEALMENT_CSS;
   doc.head?.appendChild(style);
 }
 
@@ -529,6 +540,51 @@ function documentSize(
 const frameOwnedNodes = new WeakSet<Node>();
 const frameRegionOverlays = new WeakMap<Document, HTMLElement>();
 
+/** The element a mark is about, recorded at paint so the mark can follow it. */
+const markSubjects = new WeakMap<Element, Element>();
+
+function isFrameOwned(node: Node | null): boolean {
+  for (let current = node; current; current = current.parentNode) {
+    if (frameOwnedNodes.has(current)) return true;
+  }
+  return false;
+}
+
+/**
+ * The smallest element under a point of the scrolling document, or undefined
+ * when none is. Measured from boxes rather than by hit testing, because a
+ * point scrolled out of the viewport has no hit test but still has a box.
+ * Overlay nodes are skipped, so a mark never becomes its own subject.
+ */
+function subjectAt(doc: Document, x: number, y: number): Element | undefined {
+  const body = doc.body;
+  if (!body || typeof body.getElementsByTagName !== 'function')
+    return undefined;
+  const scrollX = doc.defaultView?.scrollX ?? 0;
+  const scrollY = doc.defaultView?.scrollY ?? 0;
+  let best: Element | undefined;
+  let bestArea = Number.POSITIVE_INFINITY;
+  for (const el of Array.from(body.getElementsByTagName('*'))) {
+    if (isFrameOwned(el) || typeof el.getBoundingClientRect !== 'function') {
+      continue;
+    }
+    const box = el.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) continue;
+    const left = box.left + scrollX;
+    const top = box.top + scrollY;
+    if (x < left || x > left + box.width || y < top || y > top + box.height) {
+      continue;
+    }
+    const area = box.width * box.height;
+    // Ties go to the later element, which is the deeper one in document order.
+    if (area <= bestArea) {
+      best = el;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
 /**
  * The layer every box and pin is drawn on, sized to the scrolling document,
  * together with that size. Undefined before the document has a body or a
@@ -581,6 +637,12 @@ export function paintFrameRegion(
   div.style.height = `${rect.h * docHeight}px`;
 
   wireFrameMark(div, id, doc);
+  const subject = subjectAt(
+    doc,
+    (rect.x + rect.w / 2) * docWidth,
+    (rect.y + rect.h / 2) * docHeight
+  );
+  if (subject) markSubjects.set(div, subject);
 
   overlay.appendChild(div);
   return div;
@@ -610,6 +672,12 @@ export function paintFramePin(
   pin.dataset.commentId = id;
   pin.style.left = `${point.x * layer.docWidth}px`;
   pin.style.top = `${point.y * layer.docHeight}px`;
+  const subject = subjectAt(
+    doc,
+    point.x * layer.docWidth,
+    point.y * layer.docHeight
+  );
+  if (subject) markSubjects.set(pin, subject);
   // A point nobody has commented on yet has no comment to open.
   if (!pending) wireFrameMark(pin, id, doc);
 
@@ -824,7 +892,8 @@ function setupImageMarks(
   win: Window,
   post: (msg: object) => void,
   tracked: () => string | null,
-  enabled: boolean
+  enabled: boolean,
+  inParent: () => boolean
 ) {
   type Entry = {
     mark: ImageFrameMark;
@@ -833,6 +902,7 @@ function setupImageMarks(
     image?: HTMLImageElement;
     declaration?: string;
     serial: number;
+    reported?: string;
   };
   const entries = new Map<string, Entry>();
   const controls = new Map<HTMLImageElement, HTMLButtonElement>();
@@ -948,6 +1018,9 @@ function setupImageMarks(
       : undefined;
   };
   const visible = (img: HTMLImageElement): FrameRect | undefined => {
+    if (!inParent()) return undefined;
+    // A closed details keeps its image's box, so the box alone says nothing.
+    if (!isRendered(img)) return undefined;
     if (
       !img.isConnected ||
       !img.complete ||
@@ -1028,6 +1101,29 @@ function setupImageMarks(
     delete entry.outline;
     delete entry.image;
     delete entry.declaration;
+  };
+
+  /**
+   * Not drawn is not the same as not placeable. The image is still in the
+   * document and its mark returns when it is shown again, so the parent is
+   * told why, once, rather than told the image is unavailable.
+   */
+  const reportConcealed = (
+    entry: Entry,
+    mark: ImageFrameMark,
+    img: HTMLImageElement
+  ): void => {
+    const concealment: Concealment = isRendered(img) ? 'offscreen' : 'hidden';
+    const key = `concealed:${concealment}`;
+    if (entry.reported === key) return;
+    entry.reported = key;
+    post({
+      type: 'relic:frame-image-placement',
+      id: mark.id,
+      requestId: mark.requestId,
+      status: 'concealed',
+      concealment,
+    });
   };
   const position = (el: HTMLElement, rect: FrameRect, offset = 0): void => {
     const width = Math.min(32, rect.width);
@@ -1116,7 +1212,6 @@ function setupImageMarks(
       const declaration = img && source(img);
       if (
         !img ||
-        !rect ||
         !declaration ||
         !/^[0-9a-f]{64}$/.test(mark.source_sha256) ||
         new TextEncoder().encode(
@@ -1136,6 +1231,13 @@ function setupImageMarks(
         });
         continue;
       }
+      if (!rect) {
+        // Not drawn is not the same as not placeable: the image is still in the
+        // document, so the parent is told why rather than told it is gone.
+        remove(entry);
+        reportConcealed(entry, mark, img);
+        continue;
+      }
       if (
         entry.badge &&
         (entry.image !== img || entry.declaration !== declaration)
@@ -1151,8 +1253,7 @@ function setupImageMarks(
           if (
             digest !== mark.source_sha256 ||
             source(img) !== declaration ||
-            resolve(mark.path) !== img ||
-            !currentRect
+            resolve(mark.path) !== img
           ) {
             remove(entry);
             post({
@@ -1161,6 +1262,11 @@ function setupImageMarks(
               requestId: mark.requestId,
               status: 'unavailable',
             });
+            return;
+          }
+          if (!currentRect) {
+            remove(entry);
+            reportConcealed(entry, mark, img);
             return;
           }
           if (!entry.badge) {
@@ -1182,6 +1288,7 @@ function setupImageMarks(
           }
           entry.image = img;
           entry.declaration = declaration;
+          entry.reported = 'placed';
           position(entry.badge, currentRect, offset);
           Object.assign(entry.outline!.style, {
             left: `${currentRect.left}px`,
@@ -1272,6 +1379,10 @@ function setupImageMarks(
     active(id: string | null): void {
       activeId = id;
     },
+    repaint(): void {
+      if (!enabled || disposed) return;
+      refresh();
+    },
     quiet(ids: readonly string[]): void {
       quietIds = new Set(ids);
     },
@@ -1358,18 +1469,65 @@ export function setupFrameInteraction(
   let selectionLive = false;
   let trackedId: string | null = null;
   let trackRaf: number | undefined;
+  // A mark is drawn only while its thing is rendered and inside the frame's
+  // viewport, and only while the parent has the frame in view. The rule lives
+  // in mark-visibility.ts. Recomputed once per frame, because a scroll can
+  // fire many times in one frame and each change would otherwise repaint.
+  let parentVisible = true;
+  let concealScheduled = false;
+  let concealedIds: ReadonlyMap<string, Concealment> = new Map();
+  let trackedConcealment: Concealment | undefined;
+  const conceal = (): void => {
+    concealScheduled = false;
+    if (!doc.body || typeof doc.body.querySelectorAll !== 'function') return;
+    const marks: ConcealableMark[] = [];
+    const overlay = frameRegionOverlays.get(doc);
+    if (overlay) {
+      for (const node of Array.from(
+        overlay.querySelectorAll('[data-comment-id]')
+      )) {
+        marks.push({ node, subject: markSubjects.get(node) ?? node });
+      }
+    }
+    for (const node of Array.from(
+      doc.body.querySelectorAll('mark.relic-text-mark[data-comment-id]')
+    )) {
+      marks.push({ node, subject: node });
+    }
+    concealedIds = concealMarks(marks, watch, parentVisible);
+    const next = trackedId === null ? undefined : concealedIds.get(trackedId);
+    if (next !== trackedConcealment) {
+      trackedConcealment = next;
+      reportTracked();
+    }
+  };
+  const scheduleConceal = (): void => {
+    if (concealScheduled) return;
+    concealScheduled = true;
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(conceal);
+    } else {
+      setTimeout(conceal, 0);
+    }
+  };
+  const watch = createScrollportWatch(scheduleConceal);
   const imageMarks = setupImageMarks(
     doc,
     win,
     postOutward,
     () => trackedId,
-    imageControlsEnabled
+    imageControlsEnabled,
+    () => parentVisible
   );
 
   const reportMarkRect = (
     document: Document,
     id: string
   ): FrameMarkRectMessage => {
+    const concealed = concealedIds.get(id);
+    if (concealed !== undefined) {
+      return { type: 'relic:frame-mark-rect', id, concealed };
+    }
     if (!document.body) {
       return { type: 'relic:frame-mark-rect', id };
     }
@@ -1466,6 +1624,7 @@ export function setupFrameInteraction(
   };
 
   const scheduleTrackReport = (): void => {
+    scheduleConceal();
     if (trackedId === null) return;
     if (typeof requestAnimationFrame === 'function') {
       if (trackRaf !== undefined) cancelAnimationFrame(trackRaf);
@@ -1518,6 +1677,23 @@ export function setupFrameInteraction(
     });
     win.addEventListener('resize', () => scheduleTrackReport());
   }
+  if (typeof doc.addEventListener === 'function') {
+    // Element scrolls and details toggles never reach the window, so they are
+    // caught on the way down, at the document.
+    doc.addEventListener('scroll', scheduleConceal, true);
+    doc.addEventListener('toggle', scheduleConceal, true);
+  }
+  const markObserver =
+    typeof MutationObserver === 'function' && doc.nodeType === 9
+      ? new MutationObserver(scheduleConceal)
+      : undefined;
+  markObserver?.observe(doc, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'hidden', 'open', 'style'],
+  });
+  scheduleConceal();
   doc.addEventListener('click', (event: MouseEvent) => {
     let node = event.target as Element | null;
     if (node?.nodeType !== 1) node = node?.parentElement ?? null;
@@ -1953,8 +2129,19 @@ export function setupFrameInteraction(
         suppressScroll = false;
       }, 50) as unknown as number;
     },
+    onFrameVisibility(visible: boolean) {
+      parentVisible = visible;
+      imageMarks.repaint();
+      conceal();
+    },
     dispose() {
       imageMarks.dispose();
+      if (typeof doc.removeEventListener === 'function') {
+        doc.removeEventListener('scroll', scheduleConceal, true);
+        doc.removeEventListener('toggle', scheduleConceal, true);
+      }
+      watch.disconnect();
+      markObserver?.disconnect();
     },
   };
 }
@@ -2034,6 +2221,10 @@ export function createSandboxHandler(
     }
     if (isTrackMarkMessage(data)) {
       interaction?.onTrackMark?.(data.id);
+      return true;
+    }
+    if (isFrameVisibilityMessage(data)) {
+      interaction?.onFrameVisibility?.(data.visible);
       return true;
     }
 
@@ -2636,6 +2827,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       onRevealMark: (msg) => interaction?.onRevealMark(msg),
       onPairMark: (id, active) => interaction?.onPairMark(id, active),
       onTrackMark: (id) => interaction?.onTrackMark?.(id),
+      onFrameVisibility: (visible) => interaction?.onFrameVisibility?.(visible),
       onActiveMark: (id) => interaction?.onActiveMark?.(id),
       onRevealChange: (changeId, top) =>
         interaction?.onRevealChange?.(changeId, top),

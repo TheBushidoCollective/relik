@@ -41,6 +41,7 @@ import {
   parseImageCommentAnchor,
 } from '@relic/format';
 import type { AnchorAdapter, AnchorSurface } from './anchoring.ts';
+import type { Concealment } from './mark-visibility.ts';
 
 /**
  * Take code points from the start of text up to maxBytes in UTF-8.
@@ -233,8 +234,10 @@ export interface FrameImagePlacementMessage {
   readonly type: 'relic:frame-image-placement';
   readonly id: string;
   readonly requestId: number;
-  readonly status: 'placed' | 'unavailable';
+  readonly status: 'placed' | 'unavailable' | 'concealed';
   readonly rect?: FrameRect;
+  /** Set with status "concealed": why the image is not drawn. */
+  readonly concealment?: Concealment;
 }
 
 export function isFrameImagePlacementMessage(
@@ -252,6 +255,9 @@ export function isFrameImagePlacementMessage(
   )
     return false;
   if (msg.status === 'unavailable') return msg.rect === undefined;
+  if (msg.status === 'concealed') {
+    return msg.rect === undefined && isConcealment(msg.concealment);
+  }
   return (
     msg.status === 'placed' &&
     isFrameRect(msg.rect) &&
@@ -417,12 +423,35 @@ export function isTrackMarkMessage(data: unknown): data is TrackMarkMessage {
   );
 }
 
+/** Page to frame: whether the frame's element is inside the page's scrollport. */
+export interface FrameVisibilityMessage {
+  readonly type: 'relic:frame-visibility';
+  readonly visible: boolean;
+}
+
+export function isFrameVisibilityMessage(
+  data: unknown
+): data is FrameVisibilityMessage {
+  if (typeof data !== 'object' || data === null) return false;
+  const msg = data as Record<string, unknown>;
+  return (
+    msg.type === 'relic:frame-visibility' && typeof msg.visible === 'boolean'
+  );
+}
+
+/** Why a mark is not drawn, as the frame reports it. */
+export function isConcealment(value: unknown): value is Concealment {
+  return value === 'hidden' || value === 'offscreen';
+}
+
 /** Frame to page: one mark's geometry in frame viewport coordinates. No rect when it is not laid out. */
 export interface FrameMarkRectMessage {
   readonly type: 'relic:frame-mark-rect';
   readonly id: string;
   readonly rect?: FrameRect;
   readonly first?: FrameRect;
+  /** Set when the mark is not drawn, so no rect comes with it. */
+  readonly concealed?: Concealment;
 }
 
 export function isFrameMarkRectMessage(
@@ -440,6 +469,8 @@ export function isFrameMarkRectMessage(
   }
   if (msg.rect !== undefined && !isFrameRect(msg.rect)) return false;
   if (msg.first !== undefined && !isFrameRect(msg.first)) return false;
+  if (msg.concealed !== undefined && !isConcealment(msg.concealed))
+    return false;
   return true;
 }
 export interface FrameMarkClickMessage {
