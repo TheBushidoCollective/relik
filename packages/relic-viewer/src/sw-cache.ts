@@ -25,10 +25,14 @@ export function shellCacheName(buildId?: string): string {
   return 'relic-shell-dev';
 }
 
-export function isCacheable(url: URL, sameOrigin: boolean): boolean {
+export function isCacheable(
+  url: URL,
+  sameOrigin: boolean,
+  shell: readonly string[] = SHELL_ASSETS
+): boolean {
   if (!sameOrigin) return false; // storage lives elsewhere; never cache it
   if (url.pathname.startsWith('/api/')) return false;
-  return (SHELL_ASSETS as readonly string[]).includes(url.pathname);
+  return shell.includes(url.pathname);
 }
 
 export interface MinimalCache {

@@ -221,4 +221,41 @@ describe('classic service worker script guards', () => {
     // Asserts clean parsing via the guard
     expect(() => assertClassicWorkerScript(swText)).not.toThrow();
   });
+
+  test('every chunk viewer.js can import is precached with it', async () => {
+    // viewer.js names its code-split chunks by content hash. A generation
+    // that cached viewer.js without them served a script whose imports were
+    // gone after the next deploy, and the page never left its loading plate.
+    const pkgDir = new URL('..', import.meta.url).pathname;
+    const swText = await Bun.file(`${pkgDir}dist/sw.js`).text();
+
+    const reachable = new Set<string>();
+    const queue = ['viewer.js'];
+    while (queue.length > 0) {
+      const name = queue.pop() as string;
+      const text = await Bun.file(`${pkgDir}dist/${name}`).text();
+      for (const match of text.matchAll(/\.\/(chunk-[a-z0-9]+\.js)/g)) {
+        const chunk = match[1] as string;
+        if (!reachable.has(chunk)) {
+          reachable.add(chunk);
+          queue.push(chunk);
+        }
+      }
+    }
+
+    expect(reachable.size).toBeGreaterThan(0);
+    for (const chunk of reachable) {
+      expect(swText).toContain(`/assets/${chunk}`);
+    }
+  });
+
+  test('isCacheable follows the shell list the build injects', () => {
+    const shell = ['/assets/viewer.js', '/assets/chunk-abc123.js'];
+    const at = (path: string) => new URL(`https://relic.example${path}`);
+
+    expect(isCacheable(at('/assets/chunk-abc123.js'), true, shell)).toBe(true);
+    expect(isCacheable(at('/assets/chunk-abc123.js'), true)).toBe(false);
+    expect(isCacheable(at('/assets/chunk-other.js'), true, shell)).toBe(false);
+    expect(isCacheable(at('/api/chunk'), true, ['/api/chunk'])).toBe(false);
+  });
 });

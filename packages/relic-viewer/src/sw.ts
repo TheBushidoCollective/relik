@@ -32,8 +32,8 @@
  * statements and zero top-level imports.
  *
  * The cache name is derived at build time from a content hash of the emitted
- * shell assets (viewer.js, styles.css, manifest.webmanifest). When any shell
- * asset changes, the build injects a new build hash, altering SHELL_CACHE
+ * shell assets (viewer.js, its code-split chunks, styles.css,
+ * manifest.webmanifest). When any shell asset changes, the build injects a new build hash, altering SHELL_CACHE
  * and producing byte-different sw.js output. The browser sees the changed
  * sw.js on navigation or update check, runs install to fetch the new asset set
  * into the new cache generation, calls skipWaiting, and on activate purges
@@ -61,6 +61,7 @@ import {
 declare const self: ServiceWorkerGlobalScope;
 declare const __BUILD_HASH__: string | undefined;
 declare const __SHELL_CACHE__: string | undefined;
+declare const __SHELL_ASSETS__: readonly string[] | undefined;
 
 const SHELL_CACHE =
   typeof __SHELL_CACHE__ !== 'undefined'
@@ -68,6 +69,13 @@ const SHELL_CACHE =
     : typeof __BUILD_HASH__ !== 'undefined'
       ? shellCacheName(__BUILD_HASH__)
       : shellCacheName();
+
+// The build lists viewer.js together with every code-split chunk it imports.
+// viewer.js names those chunks by content hash, so a generation that cached
+// viewer.js alone served a script whose imports no longer existed after the
+// next deploy.
+const SHELL: readonly string[] =
+  typeof __SHELL_ASSETS__ !== 'undefined' ? __SHELL_ASSETS__ : SHELL_ASSETS;
 
 const inServiceWorker =
   typeof self !== 'undefined' &&
@@ -77,7 +85,7 @@ const inServiceWorker =
 if (inServiceWorker) {
   self.addEventListener('install', (event) => {
     event.waitUntil(
-      installShell(caches, SHELL_CACHE, SHELL_ASSETS, () => self.skipWaiting())
+      installShell(caches, SHELL_CACHE, SHELL, () => self.skipWaiting())
     );
   });
 
@@ -94,7 +102,7 @@ if (inServiceWorker) {
     const url = new URL(request.url);
     const sameOrigin = url.origin === self.location.origin;
 
-    if (!isCacheable(url, sameOrigin)) {
+    if (!isCacheable(url, sameOrigin, SHELL)) {
       // Explicitly not handled, so it goes straight to the network and never
       // touches a cache.
       return;
