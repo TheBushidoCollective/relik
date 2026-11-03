@@ -5982,6 +5982,8 @@ export function buildThread(
   // depend on how completely the harness imitates a browser.
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let cardGeneration = 0;
+  let restoringCardFocus = false;
   /**
    * The new comment being written in the open panel, while there is one.
    *
@@ -6058,6 +6060,7 @@ export function buildThread(
   };
 
   const closeCard = (): void => {
+    cardGeneration++;
     clearTimeout(hoverTimer);
     clearTimeout(leaveTimer);
     popover?.hide();
@@ -6070,7 +6073,12 @@ export function buildThread(
       const active =
         typeof document === 'undefined' ? null : document.activeElement;
       if (!active || active === document.body) {
-        returnFocusTarget.focus({ preventScroll: true });
+        restoringCardFocus = true;
+        try {
+          returnFocusTarget.focus({ preventScroll: true });
+        } finally {
+          restoringCardFocus = false;
+        }
       }
     }
   };
@@ -6214,6 +6222,7 @@ export function buildThread(
     if (host === undefined || entry.id === null) return;
     const layer = popover;
     if (layer === undefined) return;
+    cardGeneration++;
     clearTimeout(leaveTimer);
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
@@ -6237,7 +6246,9 @@ export function buildThread(
 
     const id = entry.id;
     const actions: PopoverAction[] = [];
+    let activePanel: HTMLElement;
     const reopen = (): void => {
+      if (layer.current() !== activePanel) return;
       const fresh = entryById(id);
       const at = anchorBoxFor(id) ?? box;
       if (fresh !== undefined) openCard(fresh, at, true);
@@ -6262,6 +6273,10 @@ export function buildThread(
           layer.reposition();
           return;
         }
+        cardGeneration++;
+        activePanel
+          .querySelector<HTMLElement>('.popover-dismiss')
+          ?.setAttribute('hidden', '');
         const composer = inlineComposer({
           placeholder: `Reply to ${plainLabel(entry.author ?? 'this comment')}`,
           submitLabel: 'Post reply',
@@ -6269,6 +6284,7 @@ export function buildThread(
           onSubmit: (body) => {
             const opener = cipher;
             if (opener === undefined) return;
+            const replyPanel = activePanel;
             composer.setBusy(true);
             void (async () => {
               const result = await postComment(
@@ -6292,7 +6308,7 @@ export function buildThread(
                 return;
               }
               await refresh();
-              reopen();
+              if (layer.current() === replyPanel) reopen();
             })();
           },
         });
@@ -6307,6 +6323,7 @@ export function buildThread(
         label: 'Edit',
         className: 'popover-edit',
         onSelect: () => {
+          cardGeneration++;
           stickyId = id;
           const target = document.createElement('p');
           target.className = 'popover-target';
@@ -6343,19 +6360,24 @@ export function buildThread(
                   deps,
                   opener
                 );
+                if (layer.current() !== panel) {
+                  if (result.kind !== 'refused') await refresh();
+                  return;
+                }
                 if (result.kind === 'refused') {
                   composer.setBusy(false);
                   composer.setNote(result.refusal.headline);
                   return;
                 }
                 await refresh();
-                reopen();
+                if (layer.current() === panel) reopen();
               })();
             },
           });
           const editKind = entry.anchor ? entry.anchor.kind : 'text';
           panel.dataset['anchorKind'] = editKind;
           panel.appendChild(composer.element);
+          activePanel = panel;
           layer.show(panel, box, {
             follow: () => anchorBoxFor(id),
             reveal: sticky,
@@ -6372,6 +6394,8 @@ export function buildThread(
         label: settled ? 'Reopen' : 'Resolve',
         className: 'popover-resolve',
         onSelect: () => {
+          const resolvePanel = activePanel;
+          const resolveGeneration = cardGeneration;
           stickyId = id;
           void (async () => {
             const result = await setCommentResolved(
@@ -6380,6 +6404,13 @@ export function buildThread(
               !settled,
               deps
             );
+            if (
+              layer.current() !== resolvePanel ||
+              cardGeneration !== resolveGeneration
+            ) {
+              if (result.kind !== 'refused') await refresh();
+              return;
+            }
             if (result.kind === 'refused') {
               const note = document.createElement('p');
               note.className = 'popover-note';
@@ -6389,7 +6420,11 @@ export function buildThread(
               return;
             }
             await refresh();
-            reopen();
+            if (
+              layer.current() === resolvePanel &&
+              cardGeneration === resolveGeneration
+            )
+              reopen();
           })();
         },
       });
@@ -6415,10 +6450,18 @@ export function buildThread(
         else leaveStageFullscreen(surface, show);
       },
     });
+    actions.push({
+      label: 'Dismiss',
+      ariaLabel: 'Dismiss comment overlay',
+      className: 'popover-dismiss',
+      kind: 'quiet',
+      onSelect: closeCard,
+    });
 
     const cardKind =
       entry.kind === 'open' && entry.anchor ? entry.anchor.kind : 'text';
     const card = popoverCard({ content: rows, actions, commentId: id });
+    activePanel = card;
     card.dataset['anchorKind'] = cardKind;
     holdOnHover(card);
     layer.show(card, box, {
@@ -6468,6 +6511,7 @@ export function buildThread(
     if (first === undefined || firstId === null || firstId === undefined) {
       return;
     }
+    cardGeneration++;
     clearTimeout(leaveTimer);
     dropComposing();
 
@@ -6534,7 +6578,18 @@ export function buildThread(
 
     const wrapper = document.createElement('div');
     wrapper.append(heading, list);
-    const card = popoverCard({ content: wrapper, actions: [] });
+    const card = popoverCard({
+      content: wrapper,
+      actions: [
+        {
+          label: 'Dismiss',
+          ariaLabel: 'Dismiss comment overlay',
+          className: 'popover-dismiss',
+          kind: 'quiet',
+          onSelect: closeCard,
+        },
+      ],
+    });
     card.setAttribute('aria-label', label);
     card.dataset['anchorKind'] = firstAnchor?.kind ?? 'time';
     holdOnHover(card);
@@ -6669,6 +6724,7 @@ export function buildThread(
               );
               if (frame) {
                 atBox = await awaitFrameRect(commentId);
+                if (layer.current() !== state.panel) return;
               }
               if (!atBox) {
                 atBox = anchorBoxFor(commentId);
@@ -6685,7 +6741,7 @@ export function buildThread(
               return;
             }
           }
-          closeCard();
+          if (layer.current() === state.panel) closeCard();
         })();
       },
     });
@@ -6794,6 +6850,7 @@ export function buildThread(
     // A pin and a timeline marker are buttons, so they are in the tab order.
     // A keyboard reader gets the card the same way a pointer does.
     root.addEventListener('focusin', (event: Event) => {
+      if (restoringCardFocus) return;
       if (!(event.target instanceof Element)) return;
       // Focus moving inside an open card is the reader using it: the field
       // a Reply just put up, or the next button along. The card carries its
@@ -6969,8 +7026,11 @@ export function buildThread(
       'iframe.usercontent-frame'
     );
     if (frame !== null) {
+      const generation = ++cardGeneration;
       void awaitFrameRect(commentId).then((box) => {
-        if (box !== undefined) openCard(entry, box, true);
+        if (generation === cardGeneration && box !== undefined) {
+          openCard(entry, box, true);
+        }
       });
     } else {
       const box = anchorBoxFor(commentId);

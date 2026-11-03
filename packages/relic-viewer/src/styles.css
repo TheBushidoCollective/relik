@@ -318,6 +318,10 @@ body {
   font-size: 0.8rem;
 }
 
+.popover-card .popover-dismiss {
+  margin-left: auto;
+}
+
 .popover-card .popover-action.is-primary {
   background: var(--patina);
   border-color: var(--patina);
