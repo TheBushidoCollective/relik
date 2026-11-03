@@ -76,6 +76,12 @@ import {
   tallyFromList,
 } from './decisions.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
+import {
+  type Concealment,
+  concealMarks,
+  createScrollportWatch,
+  type ScrollportWatch,
+} from './mark-visibility.ts';
 import { createMediaPlayer, type TimeAimDetail } from './media-player.ts';
 import {
   disposeOtioViews,
@@ -1140,6 +1146,26 @@ function sandboxFrame(
     frame.contentWindow?.postMessage(message, '*');
   };
 
+  // The frame cannot see where it sits in the page, so the page says whether
+  // the frame is in view. A mark inside a frame scrolled out of view is not
+  // drawn, the same as a mark scrolled out of view in the page.
+  let frameInView = true;
+  const reportVisibility = (): void => {
+    post({ type: 'relic:frame-visibility', visible: frameInView });
+  };
+  const visibility =
+    typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            if (entry.target !== frame) continue;
+            if (entry.isIntersecting === frameInView) continue;
+            frameInView = entry.isIntersecting;
+            reportVisibility();
+          }
+        })
+      : undefined;
+  visibility?.observe(frame);
+
   // Both paths, because the race runs in either direction: `load` can fire
   // before the frame's own script attaches its listener, and the frame's
   // ready message can arrive before `load`. The frame renders at most once,
@@ -1149,6 +1175,7 @@ function sandboxFrame(
     const type = (event.data as { type?: unknown } | null)?.type;
     if (type === 'relic:sandbox-ready') {
       post(payload);
+      reportVisibility();
       // Announced on this origin too, because marks are posted into the
       // frame and a post that arrives before the frame is listening is
       // simply lost. The thread paints once when the conversation loads,
@@ -5839,6 +5866,100 @@ export function buildThread(
     writeThreadWidth(applyWidth(section.getBoundingClientRect().width + step));
   });
 
+  // The overlays the stage draws itself: pins, boxes and text highlights that
+  // sit in the page rather than inside the sandboxed frame. The frame reports
+  // its own. Both feed one rule, in mark-visibility.ts, so a mark is drawn by
+  // the same test wherever it is.
+  const frameConcealed = new Map<string, Concealment>();
+  let hostConcealed: ReadonlyMap<string, Concealment> = new Map();
+  let hostWatch: ScrollportWatch | undefined;
+  let hostObserver: MutationObserver | undefined;
+  let hostConcealScheduled = false;
+
+  // A pin or a box is drawn on the surface it sits over, so the surface being
+  // hidden hides it. A text highlight is its own subject: it is the thing.
+  const hostSubject = (node: HTMLElement): Element => {
+    if (host === undefined || node.closest('.comment-pins') === null) {
+      return node;
+    }
+    return anchorSurfaceFor(host)?.content ?? host;
+  };
+
+  const reconcileHostMarks = (): void => {
+    if (host === undefined || hostWatch === undefined) return;
+    const nodes = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-comment-id]')
+    ).filter((node) => node.closest('.popover') === null);
+    hostConcealed = concealMarks(
+      nodes.map((node) => ({ node, subject: hostSubject(node) })),
+      hostWatch,
+      true
+    );
+    applyCardConcealment();
+  };
+
+  const scheduleHostConceal = (): void => {
+    if (hostConcealScheduled) return;
+    hostConcealScheduled = true;
+    const run = (): void => {
+      hostConcealScheduled = false;
+      reconcileHostMarks();
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  };
+
+  /**
+   * Watches the stage for whatever moves an overlay: layout that resizes it,
+   * scroll at any depth, and the attributes that open or hide a region.
+   */
+  const bindHostConcealment = (stage: HTMLElement): void => {
+    // The DOM-less test stages bind here too. A stub window with no event
+    // listeners has no scroll or resize to watch, so there is nothing to bind.
+    if (
+      typeof window === 'undefined' ||
+      typeof window.addEventListener !== 'function'
+    )
+      return;
+    hostWatch = createScrollportWatch(scheduleHostConceal);
+    hostObserver =
+      typeof MutationObserver === 'function'
+        ? new MutationObserver(scheduleHostConceal)
+        : undefined;
+    hostObserver?.observe(stage, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'hidden', 'open', 'style'],
+    });
+    window.addEventListener('scroll', scheduleHostConceal, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('resize', scheduleHostConceal);
+    scheduleHostConceal();
+  };
+
+  const disposeHostConcealment = (): void => {
+    hostWatch?.disconnect();
+    hostWatch = undefined;
+    hostObserver?.disconnect();
+    hostObserver = undefined;
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.removeEventListener === 'function'
+    ) {
+      window.removeEventListener('scroll', scheduleHostConceal, {
+        capture: true,
+      });
+      window.removeEventListener('resize', scheduleHostConceal);
+    }
+    hostConcealed = new Map();
+  };
+
   const paintMarks = (entries: readonly CommentEntry[]): void => {
     lastEntries = entries;
     if (host === undefined) return;
@@ -5846,6 +5967,7 @@ export function buildThread(
     if (currentSurface !== undefined)
       invalidateImageMarkRequests(currentSurface);
     frameRects.clear();
+    frameConcealed.clear();
     pendingImagePlaced = false;
     unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
@@ -5949,6 +6071,7 @@ export function buildThread(
         { type: 'relic:quiet-marks', ids: settled },
         '*'
       );
+    reconcileHostMarks();
     void projectEarlierOtioFeedback(entries);
   };
 
@@ -6004,6 +6127,8 @@ export function buildThread(
   /** The comment whose card is pinned open, as opposed to merely hovered. */
   let stickyId: string | undefined;
   let activeId: string | undefined;
+  /** The comment whose card is open, if one is. Follows the card, not hover. */
+  let cardId: string | undefined;
   let returnFocusTarget: HTMLElement | undefined;
 
   function preferFor(kind: string): 'above' | 'below' {
@@ -6156,6 +6281,7 @@ export function buildThread(
 
   const closeCard = (): void => {
     cardGeneration++;
+    cardId = undefined;
     clearTimeout(hoverTimer);
     clearTimeout(leaveTimer);
     popover?.hide();
@@ -6176,6 +6302,31 @@ export function buildThread(
         }
       }
     }
+  };
+
+  /**
+   * Keeps the open card in step with the mark it is about.
+   *
+   * A hidden mark takes its card with it. The card closes, unless the reader
+   * has typed into it, in which case it is hidden in place so the words
+   * survive. A mark that is only scrolled away keeps its card waiting in
+   * place, and a mark that is drawn again brings the card back.
+   */
+  const applyCardConcealment = (): void => {
+    const layer = popover;
+    const id = cardId;
+    if (layer === undefined || id === undefined) return;
+    if (layer.current() === undefined) return;
+    const reason = hostConcealed.get(id) ?? frameConcealed.get(id);
+    if (reason === undefined) {
+      layer.conceal(undefined);
+      return;
+    }
+    if (reason === 'hidden' && !holdsUnsavedText()) {
+      closeCard();
+      return;
+    }
+    layer.conceal(reason);
   };
 
   /**
@@ -6318,6 +6469,7 @@ export function buildThread(
     const layer = popover;
     if (layer === undefined) return;
     cardGeneration++;
+    cardId = entry.id ?? undefined;
     clearTimeout(leaveTimer);
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
@@ -6607,6 +6759,7 @@ export function buildThread(
       return;
     }
     cardGeneration++;
+    cardId = firstId;
     clearTimeout(leaveTimer);
     dropComposing();
 
@@ -6718,6 +6871,7 @@ export function buildThread(
     const layer = popover;
     const opener = cipher;
     if (layer === undefined || opener === undefined) return;
+    cardId = PENDING_MARK_ID;
     const focus = options.focus ?? true;
 
     if (!returnFocusTarget) {
@@ -7063,6 +7217,18 @@ export function buildThread(
         ? (composing?.anchor ?? marks.target())
         : savedAnchor(msg.id);
       if (target?.kind !== 'image') return;
+      if (msg.status === 'concealed') {
+        frameRects.delete(msg.id);
+        frameConcealed.set(msg.id, msg.concealment ?? 'hidden');
+        if (pending) {
+          pendingImagePlaced = false;
+          pendingImageStatus = 'unavailable';
+          notifyImageWaiters();
+        }
+        applyCardConcealment();
+        return;
+      }
+      frameConcealed.delete(msg.id);
       if (msg.status === 'placed' && msg.rect) {
         frameRects.set(msg.id, { rect: msg.rect });
         if (pending) {
@@ -7087,6 +7253,13 @@ export function buildThread(
     ) => {
       const msg = event.detail;
       if (!msg?.id) return;
+      if (msg.concealed !== undefined) {
+        frameRects.delete(msg.id);
+        frameConcealed.set(msg.id, msg.concealed);
+        applyCardConcealment();
+        return;
+      }
+      frameConcealed.delete(msg.id);
       const target =
         msg.id === PENDING_MARK_ID
           ? (composing?.anchor ?? marks.target())
@@ -7112,6 +7285,7 @@ export function buildThread(
       if (msg.id === followedId) {
         popover?.track();
       }
+      applyCardConcealment();
     }) as EventListener);
   };
   // Escape closes the conversation the same way it closes the offer, because
@@ -7665,6 +7839,7 @@ export function buildThread(
         if (previous !== undefined) invalidateImageMarkRequests(previous);
         frameRects.clear();
         pendingImagePlaced = false;
+        disposeHostConcealment();
       }
       host = next;
       popover = popoverLayer(next);
@@ -7672,6 +7847,7 @@ export function buildThread(
       // pointer crossing, which reads as the pairing not working at all.
       if (next.dataset.pairBind !== '1') {
         next.dataset.pairBind = '1';
+        bindHostConcealment(next);
         bindPairing(next);
         bindMarkPointing(next);
         next.addEventListener('relic:frame-navigation', () => {

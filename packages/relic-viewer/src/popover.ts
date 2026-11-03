@@ -18,6 +18,12 @@
  * drift.
  */
 
+import {
+  CONCEALED_ATTRIBUTE,
+  type Concealment,
+  setConcealed,
+} from './mark-visibility.ts';
+
 /** A box in the host's own content coordinates. */
 export interface AnchorBox {
   readonly left: number;
@@ -289,6 +295,13 @@ export interface PopoverLayer {
   contains(node: Node | null): boolean;
   reposition(): void;
   track(): void;
+  /**
+   * Hides the open panel in place, keeping its text and focus, or shows it
+   * again and places it on its anchor. Used when the thing it is about is
+   * not drawn: hiding keeps a reader's unsaved words, where closing would
+   * throw them away.
+   */
+  conceal(reason: Concealment | undefined): void;
 }
 
 export function popoverLayer(host: HTMLElement): PopoverLayer {
@@ -500,6 +513,7 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
       }
 
       content.classList.add('popover');
+      if (isNewContent) setConcealed(content, undefined);
       const into = mount();
 
       if (isNewContent || mounted !== into) {
@@ -544,6 +558,19 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
     },
     track() {
       scheduleTrack();
+    },
+    conceal(reason) {
+      if (!open) return;
+      if (reason === undefined) {
+        if (open.getAttribute(CONCEALED_ATTRIBUTE) === null) return;
+        setConcealed(open, undefined);
+        startWatching();
+        performFullPlace(false);
+        return;
+      }
+      if (open.getAttribute(CONCEALED_ATTRIBUTE) === reason) return;
+      setConcealed(open, reason);
+      stopWatching();
     },
   };
 }
