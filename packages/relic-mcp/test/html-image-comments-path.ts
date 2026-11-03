@@ -311,6 +311,13 @@ try {
     const frame = await evaluate<{ x: number; y: number }>(
       `(() => { const r=document.querySelector('iframe.usercontent-frame').getBoundingClientRect(); return {x:r.left,y:r.top}; })()`
     );
+    // The control only shows while the pointer is over its image.
+    await send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: frame.x + box.x,
+      y: frame.y + box.y,
+    });
+    await Bun.sleep(60);
     if (touch) {
       await send('Emulation.setTouchEmulationEnabled', {
         enabled: true,
@@ -385,9 +392,14 @@ try {
     const clip = document.querySelector('.scroll').getBoundingClientRect();
     const image = document.querySelector('#first').getBoundingClientRect();
     const rect = control.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    // A fixed circle anchored to the visible corner, never squeezed into
+    // the clipped sliver and never an oval.
     return !control.hidden && image.top < clip.top && image.bottom > clip.top &&
-      rect.top >= clip.top && rect.bottom <= image.bottom + 0.5 &&
-      rect.left >= image.left && rect.right <= image.right + 0.5;
+      Math.abs(rect.width - rect.height) < 0.5 &&
+      cx >= image.left && cx <= image.right + 0.5 &&
+      cy >= clip.top - 0.5 && cy <= image.bottom + 0.5;
   })()`,
     frame
   );
@@ -416,6 +428,52 @@ try {
   await wait(
     "!document.querySelectorAll('.relic-image-control')[0].hidden",
     frame
+  );
+  // The control is hover-only: invisible and inert at rest, shown for the
+  // hovered image alone, and always a circle.
+  const controlStates = `[...document.querySelectorAll('.relic-image-control')].map(c => { const s = getComputedStyle(c); const r = c.getBoundingClientRect(); return { shown: c.classList.contains('is-shown'), opacity: s.opacity, events: s.pointerEvents, round: Math.abs(r.width - r.height) < 0.5 }; })`;
+  await evaluate(
+    "document.querySelector('#first').scrollIntoView({block:'center'})",
+    frame
+  );
+  await Bun.sleep(150);
+  const resting = await evaluate<
+    { shown: boolean; opacity: string; events: string; round: boolean }[]
+  >(controlStates, frame);
+  assert.ok(
+    resting.every(
+      (state) =>
+        !state.shown &&
+        state.opacity === '0' &&
+        state.events === 'none' &&
+        state.round
+    ),
+    `controls must be hidden and inert at rest: ${JSON.stringify(resting)}`
+  );
+  const firstCenter = await evaluate<{ x: number; y: number }>(
+    `(() => { const r = document.querySelector('#first').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+    frame
+  );
+  const frameOrigin = await evaluate<{ x: number; y: number }>(
+    `(() => { const r = document.querySelector('iframe.usercontent-frame').getBoundingClientRect(); return { x: r.left, y: r.top }; })()`
+  );
+  await send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: frameOrigin.x + firstCenter.x,
+    y: frameOrigin.y + firstCenter.y,
+  });
+  await Bun.sleep(300);
+  const hovered = await evaluate<
+    { shown: boolean; opacity: string; events: string; round: boolean }[]
+  >(controlStates, frame);
+  assert.deepEqual(
+    hovered.map((state) => state.shown),
+    [true, false, false],
+    `only the hovered image shows its control: ${JSON.stringify(hovered)}`
+  );
+  assert.ok(
+    hovered[0]?.opacity === '1' && hovered[0]?.events === 'auto',
+    'the hovered control must be visible and interactive'
   );
   await evaluate(
     `(() => {

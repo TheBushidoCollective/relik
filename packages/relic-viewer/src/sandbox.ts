@@ -243,13 +243,26 @@ export const FRAME_MARK_CSS = `
   cursor: default !important;
 }
 .relic-image-layer { position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; pointer-events: none !important; }
-.relic-image-control, .relic-image-mark {
+.relic-image-mark {
   position: absolute !important; box-sizing: border-box !important;
   width: 32px !important; height: 32px !important; padding: 0 !important;
   border: 2px solid white !important; border-radius: 50% !important;
   background: #806026 !important; color: white !important; font: bold 18px sans-serif !important;
   cursor: pointer !important; pointer-events: auto !important;
 }
+.relic-image-control {
+  position: absolute !important; box-sizing: border-box !important;
+  display: flex !important; align-items: center !important; justify-content: center !important;
+  width: 28px !important; height: 28px !important; padding: 0 !important; margin: 0 !important;
+  border: 2px solid white !important; border-radius: 50% !important;
+  background: #806026 !important; color: white !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45) !important;
+  cursor: pointer !important;
+  opacity: 0 !important; pointer-events: none !important;
+  transition: opacity 0.12s ease !important;
+}
+.relic-image-control svg { display: block !important; width: 14px !important; height: 14px !important; fill: currentColor !important; pointer-events: none !important; }
+.relic-image-control.is-shown, .relic-image-control:focus-visible { opacity: 1 !important; pointer-events: auto !important; }
 .relic-image-control:focus-visible, .relic-image-mark:focus-visible { outline: 3px solid #222 !important; outline-offset: 2px !important; }
 .relic-image-mark.is-active, .relic-image-mark.is-paired { outline: 3px solid #806026 !important; }
 .relic-image-mark.is-resolved { background: #777 !important; }
@@ -819,6 +832,27 @@ type ImageFrameMark = {
   readonly requestId: number;
 };
 
+/**
+ * Font Awesome Pro 7.3.1 "comment-plus" (solid), the add-comment glyph.
+ * Built as inline SVG because this frame has no network and a closed CSP, so
+ * the kit script cannot load here. https://fontawesome.com License
+ * (Commercial License) Copyright 2026 Fonticons, Inc.
+ */
+const COMMENT_PLUS_PATH =
+  'M256 480c141.4 0 256-107.5 256-240S397.4 0 256 0 0 107.5 0 240c0 54.3 19.2 104.3 51.6 144.5L2.8 476.8c-4.8 9-3.3 20 3.6 27.5s17.8 9.8 27.1 5.8l118.4-50.7C183.7 472.6 218.9 480 256 480zm0-336c13.3 0 24 10.7 24 24l0 48 48 0c13.3 0 24 10.7 24 24s-10.7 24-24 24l-48 0 0 48c0 13.3-10.7 24-24 24s-24-10.7-24-24l0-48-48 0c-13.3 0-24-10.7-24-24s10.7-24 24-24l48 0 0-48c0-13.3 10.7-24 24-24z';
+
+function commentPlusIcon(doc: Document): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = doc.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 512 512');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const path = doc.createElementNS(ns, 'path');
+  path.setAttribute('d', COMMENT_PLUS_PATH);
+  svg.appendChild(path);
+  return svg;
+}
+
 function setupImageMarks(
   doc: Document,
   win: Window,
@@ -1037,6 +1071,73 @@ function setupImageMarks(
     el.style.left = `${Math.max(rect.left, rect.left + rect.width - width - (offset % 6) * 36)}px`;
     el.style.top = `${Math.min(rect.top + rect.height - height, rect.top + Math.floor(offset / 6) * 36)}px`;
   };
+  const CONTROL_SIZE = 28;
+  // A fixed circle at the image's top-right corner. Inset when the image has
+  // room, otherwise centered on the corner so a short image (a wordmark, an
+  // icon) is not covered by it and the control never stretches into an oval.
+  const positionControl = (el: HTMLElement, rect: FrameRect): void => {
+    const roomy =
+      rect.width >= CONTROL_SIZE * 2 && rect.height >= CONTROL_SIZE * 2;
+    const inset = 8;
+    const wanted = roomy
+      ? {
+          left: rect.left + rect.width - CONTROL_SIZE - inset,
+          top: rect.top + inset,
+        }
+      : {
+          left: rect.left + rect.width - CONTROL_SIZE / 2,
+          top: rect.top - CONTROL_SIZE / 2,
+        };
+    const maxLeft = Math.max(0, (win.innerWidth || 0) - CONTROL_SIZE);
+    el.style.left = `${Math.min(Math.max(0, wanted.left), maxLeft)}px`;
+    el.style.top = `${Math.max(0, wanted.top)}px`;
+  };
+  // The control only appears while the pointer is over its image (or the
+  // control itself). Without a hover-capable pointer there is nothing to
+  // reveal it with, so it stays visible there.
+  let pointer: { x: number; y: number } | undefined;
+  const updateHover = (): void => {
+    const always = win.matchMedia?.('(hover: none)').matches ?? false;
+    let target: HTMLImageElement | undefined;
+    let targetArea = Number.POSITIVE_INFINITY;
+    if (pointer && !always) {
+      const { x, y } = pointer;
+      const inside = (r: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+      }): boolean =>
+        x >= r.left &&
+        x <= r.left + r.width &&
+        y >= r.top &&
+        y <= r.top + r.height;
+      for (const [img, button] of controls) {
+        if (button.hidden) continue;
+        const rect = visible(img);
+        const box = button.getBoundingClientRect();
+        if (!(rect && inside(rect)) && !inside(box)) continue;
+        const area = rect ? rect.width * rect.height : 0;
+        if (area <= targetArea) {
+          target = img;
+          targetArea = area;
+        }
+      }
+    }
+    for (const [img, button] of controls)
+      button.classList.toggle('is-shown', always || img === target);
+  };
+  const onPointerMove = (event: Event): void => {
+    const { clientX, clientY } = event as PointerEvent;
+    pointer = { x: clientX, y: clientY };
+    updateHover();
+  };
+  // `mouseout` with no related target is the pointer leaving the frame.
+  const onPointerLeave = (event: Event): void => {
+    if ((event as MouseEvent).relatedTarget !== null) return;
+    pointer = undefined;
+    updateHover();
+  };
   const schedule = (): void => {
     if (!enabled) return;
     if (disposed) return;
@@ -1071,7 +1172,7 @@ function setupImageMarks(
         button.type = 'button';
         button.className = 'relic-image-control';
         button.setAttribute('aria-label', 'Comment on image');
-        button.textContent = '+';
+        button.appendChild(commentPlusIcon(doc));
         host.appendChild(button);
         controls.set(img, button);
         resizeObserver?.observe(img);
@@ -1105,8 +1206,9 @@ function setupImageMarks(
       }
       const rect = visible(img);
       button.hidden = !rect;
-      if (rect) position(button, rect);
+      if (rect) positionControl(button, rect);
     }
+    updateHover();
     const positions = new Map<HTMLImageElement, number>();
     for (const entry of entries.values()) {
       const mark = entry.mark;
@@ -1249,6 +1351,8 @@ function setupImageMarks(
       characterData: true,
     });
   }
+  doc.addEventListener('pointermove', onPointerMove, true);
+  doc.addEventListener('mouseout', onPointerLeave);
   doc.addEventListener('load', schedule, true);
   doc.addEventListener('scroll', schedule, true);
   doc.addEventListener('DOMContentLoaded', schedule);
@@ -1260,6 +1364,8 @@ function setupImageMarks(
       disposed = true;
       mutationObserver?.disconnect();
       resizeObserver?.disconnect();
+      doc.removeEventListener('pointermove', onPointerMove, true);
+      doc.removeEventListener('mouseout', onPointerLeave);
       doc.removeEventListener('load', schedule, true);
       doc.removeEventListener('scroll', schedule, true);
       doc.removeEventListener('DOMContentLoaded', schedule);
