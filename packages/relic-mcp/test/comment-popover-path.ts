@@ -1137,6 +1137,13 @@ console.log('Testing Class 1: Markdown...');
     await session.waitFor(
       "document.querySelector('.popover-card.popover-composer') !== null"
     );
+    assert.equal(
+      await session.evaluate(
+        "document.querySelector('.popover-composer .popover-dismiss')"
+      ),
+      null,
+      'new comment composer must not offer dismissal'
+    );
     console.log(
       'Pending target:',
       await session.evaluate(
@@ -1204,6 +1211,123 @@ console.log('Testing Class 1: Markdown...');
       cardSelector: '.popover-card[data-comment-id]',
       anchorSelector: 'mark.relic-text-mark[data-comment-id]',
     });
+
+    // A keyboard dismissal closes only the saved overlay. The comment stays
+    // on the document and can be opened again from its mark.
+    const saved = await session.evaluate<{ id: string; text: string }>(`(() => {
+      const card = document.querySelector('.popover-card[data-comment-id]');
+      const button = card.querySelector('.popover-dismiss');
+      if (!(button instanceof HTMLButtonElement)) throw new Error('dismiss is not a button');
+      if (button.textContent.trim() !== 'Dismiss') throw new Error('dismiss text missing');
+      if (button.getAttribute('aria-label') !== 'Dismiss comment overlay') throw new Error('dismiss accessible name missing');
+      const trace = [];
+      window.__dismissProofTrace = trace;
+      const describe = node => node instanceof Element
+        ? { tag: node.tagName, classes: node.className, id: node.id }
+        : null;
+      for (const type of ['focusin', 'keydown', 'click']) {
+        document.addEventListener(type, event => {
+          trace.push({ type, key: event.key, target: describe(event.target),
+            cardPresent: !!document.querySelector('.popover-card') });
+        }, true);
+      }
+      new MutationObserver(records => {
+        for (const record of records) {
+          for (const node of record.removedNodes) {
+            if (node instanceof Element && (node.matches('.popover-card') || node.querySelector('.popover-card')))
+              trace.push({ type: 'card-removed', node: describe(node) });
+          }
+          for (const node of record.addedNodes) {
+            if (node instanceof Element && (node.matches('.popover-card') || node.querySelector('.popover-card')))
+              trace.push({ type: 'card-added', node: describe(node) });
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+      button.focus();
+      return { id: card.dataset.commentId, text: card.textContent };
+    })()`);
+    await session.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+      text: '\r',
+      unmodifiedText: '\r',
+    });
+    await session.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+    });
+    try {
+      await session.waitFor("document.querySelector('.popover-card') === null");
+    } catch (error) {
+      console.error(
+        'Dismiss keyboard trace:',
+        await session.evaluate('window.__dismissProofTrace')
+      );
+      throw error;
+    }
+    await Bun.sleep(250);
+    const dismissedState = await session.evaluate<{
+      closed: boolean;
+      trace: unknown[];
+    }>(`({
+      closed: document.querySelector('.popover-card') === null,
+      trace: window.__dismissProofTrace,
+    })`);
+    assert.equal(
+      dismissedState.closed,
+      true,
+      `focus restoration or a late continuation reopened the dismissed card: ${JSON.stringify(dismissedState.trace)}`
+    );
+    assert.equal(
+      await session.evaluate<boolean>(
+        `!!document.querySelector('mark.relic-text-mark[data-comment-id="${saved.id}"]')`
+      ),
+      true,
+      'dismiss removed the comment mark'
+    );
+    await session.evaluate(
+      `document.querySelector('mark.relic-text-mark[data-comment-id="${saved.id}"]').click()`
+    );
+    await session.waitFor(
+      `document.querySelector('.popover-card[data-comment-id="${saved.id}"]') !== null`
+    );
+    assert.equal(
+      await session.evaluate<string>(
+        `document.querySelector('.popover-card[data-comment-id="${saved.id}"]').textContent`
+      ),
+      saved.text,
+      'reopened comment changed after dismissal'
+    );
+
+    await session.evaluate("document.querySelector('.popover-reply').click()");
+    assert.equal(
+      await session.evaluate(
+        "document.querySelector('.popover-dismiss')?.hidden"
+      ),
+      true,
+      'dismiss must be hidden while a reply draft is open'
+    );
+    await session.evaluate(`(() => {
+      const field = document.querySelector('.popover-field');
+      field.value = 'Draft reply retained';
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    })()`);
+    assert.equal(
+      await session.evaluate("document.querySelector('.popover-field')?.value"),
+      'Draft reply retained',
+      'outside press discarded reply draft'
+    );
+    // Cancel the draft before continuing the existing hover proof.
+    await session.evaluate(
+      "Array.from(document.querySelectorAll('.popover-action')).find(button => button.textContent === 'Cancel').click()"
+    );
 
     // Escape closes card
     await session.evaluate(

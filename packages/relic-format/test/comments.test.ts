@@ -2,6 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import {
   COMMENT_ADDRESSES_LIMIT_BYTES,
   COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES,
+  COMMENT_ANCHOR_IMAGE_LIMIT_BYTES,
+  COMMENT_ANCHOR_IMAGE_MAX_DEPTH,
+  COMMENT_ANCHOR_IMAGE_MAX_INDEX,
+  COMMENT_ANCHOR_IMAGE_MAX_TAG_LENGTH,
   COMMENT_ANCHOR_MAX_PAGE,
   COMMENT_ANCHOR_MAX_SECONDS,
   COMMENT_ANCHOR_QUOTE_LIMIT_BYTES,
@@ -11,6 +15,7 @@ import {
   decryptComment,
   deriveCommentKey,
   encryptComment,
+  parseImageCommentAnchor,
 } from '../src/comments.ts';
 import {
   CommentDecryptFailedError,
@@ -670,6 +675,271 @@ describe('the precise anchor kinds', () => {
     const pin = { kind: 'pin' as const, x: 0.25, y: 0.8 };
     expect(await roundTrip(text)).toEqual(text);
     expect(await roundTrip(pin)).toEqual(pin);
+  });
+});
+
+describe('HTML image anchors', () => {
+  async function sealRaw(key: CryptoKey, anchor: unknown): Promise<string> {
+    const nonce = crypto.getRandomValues(new Uint8Array(COMMENT_NONCE_BYTES));
+    const json = JSON.stringify({
+      body: 'image comment',
+      display_name: null,
+      anchor,
+    });
+    const sealed = new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce.slice().buffer as ArrayBuffer },
+        key,
+        new TextEncoder().encode(json).slice().buffer as ArrayBuffer
+      )
+    );
+    const framed = new Uint8Array(nonce.length + sealed.length);
+    framed.set(nonce);
+    framed.set(sealed, nonce.length);
+    return Buffer.from(framed).toString('base64url');
+  }
+
+  function imageAnchor() {
+    return {
+      kind: 'image' as const,
+      path: [
+        { tag: 'main', index: 0 },
+        { tag: 'picture', index: 2 },
+        { tag: 'img', index: COMMENT_ANCHOR_IMAGE_MAX_INDEX },
+      ],
+      source_sha256: 'ab'.repeat(32),
+    };
+  }
+
+  test('encrypts and decrypts the complete locator with the body', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const comment = {
+      body: 'Change this photograph',
+      display_name: 'Reviewer',
+      anchor: imageAnchor(),
+    };
+    const sealed = await encryptComment(key, comment);
+    expect(sealed).not.toContain(comment.body);
+    expect(sealed).not.toContain(comment.anchor.source_sha256);
+    expect(await decryptComment(key, sealed)).toEqual({
+      ...comment,
+      addresses: null,
+    });
+    await expect(decryptComment(key, corrupt(sealed))).rejects.toBeInstanceOf(
+      CommentDecryptFailedError
+    );
+  });
+
+  test('the forward-tolerant legacy reader branch preserves an image comment body', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const sealed = await encryptComment(key, {
+      body: 'Review the image',
+      display_name: null,
+      anchor: imageAnchor(),
+    });
+    const bytes = new Uint8Array(Buffer.from(sealed, 'base64url'));
+    const opened = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: bytes.slice(0, COMMENT_NONCE_BYTES).buffer as ArrayBuffer,
+      },
+      key,
+      bytes.slice(COMMENT_NONCE_BYTES).buffer as ArrayBuffer
+    );
+    const legacyPlaintext = JSON.parse(new TextDecoder().decode(opened)) as {
+      body: string;
+      anchor: { kind: string };
+    };
+    // The previous reader's unknown-kind branch returns this value without
+    // inspecting the newer kind's fields.
+    const legacyAnchor = {
+      kind: 'unsupported',
+      declared: legacyPlaintext.anchor.kind,
+    };
+    expect(legacyPlaintext.body).toBe('Review the image');
+    expect(legacyAnchor).toEqual({ kind: 'unsupported', declared: 'image' });
+  });
+
+  test('rejects malformed known image anchors on write and read', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const anchor = imageAnchor();
+    const invalid: unknown[] = [
+      { ...anchor, extra: true },
+      { ...anchor, path: null },
+      { ...anchor, path: [] },
+      {
+        ...anchor,
+        path: Array.from(
+          { length: COMMENT_ANCHOR_IMAGE_MAX_DEPTH + 1 },
+          () => ({ tag: 'img', index: 0 })
+        ),
+      },
+      { ...anchor, path: ['img'] },
+      { ...anchor, path: [{ tag: 'img', index: 0, extra: true }] },
+      { ...anchor, path: [{ tag: 'IMG', index: 0 }] },
+      { ...anchor, path: [{ tag: '', index: 0 }] },
+      {
+        ...anchor,
+        path: [
+          { tag: 'x-É', index: 0 },
+          { tag: 'img', index: 0 },
+        ],
+      },
+      {
+        ...anchor,
+        path: [
+          { tag: 'x y', index: 0 },
+          { tag: 'img', index: 0 },
+        ],
+      },
+      {
+        ...anchor,
+        path: [
+          { tag: 'x/y', index: 0 },
+          { tag: 'img', index: 0 },
+        ],
+      },
+      {
+        ...anchor,
+        path: [
+          {
+            tag: 'a'.repeat(COMMENT_ANCHOR_IMAGE_MAX_TAG_LENGTH + 1),
+            index: 0,
+          },
+          { tag: 'img', index: 0 },
+        ],
+      },
+      { ...anchor, path: [{ tag: 'img', index: -1 }] },
+      { ...anchor, path: [{ tag: 'img', index: 0.5 }] },
+      {
+        ...anchor,
+        path: [{ tag: 'img', index: COMMENT_ANCHOR_IMAGE_MAX_INDEX + 1 }],
+      },
+      { ...anchor, path: [{ tag: 'img', index: '0' }] },
+      { ...anchor, path: [{ tag: 'div', index: 0 }] },
+      { ...anchor, source_sha256: 'AB'.repeat(32) },
+      { ...anchor, source_sha256: 'a'.repeat(63) },
+      { ...anchor, source_sha256: 'g'.repeat(64) },
+      { ...anchor, source_sha256: null },
+    ];
+    for (const candidate of invalid) {
+      await expect(
+        encryptComment(key, {
+          body: 'image comment',
+          display_name: null,
+          anchor: candidate as typeof anchor,
+        })
+      ).rejects.toBeInstanceOf(MalformedCommentError);
+      await expect(
+        decryptComment(key, await sealRaw(key, candidate))
+      ).rejects.toBeInstanceOf(MalformedCommentError);
+    }
+  });
+
+  test('enforces the encoded anchor byte limit on read and write', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const anchor = imageAnchor();
+    anchor.path = [
+      ...Array.from({ length: 49 }, () => ({ tag: 'a', index: 0 })),
+      { tag: 'img', index: 0 },
+    ];
+    const size = () => new TextEncoder().encode(JSON.stringify(anchor)).length;
+    for (const step of anchor.path.slice(0, -1)) {
+      while (
+        step.tag.length < COMMENT_ANCHOR_IMAGE_MAX_TAG_LENGTH &&
+        size() < COMMENT_ANCHOR_IMAGE_LIMIT_BYTES
+      ) {
+        step.tag += 'a';
+      }
+    }
+    expect(size()).toBe(COMMENT_ANCHOR_IMAGE_LIMIT_BYTES);
+    expect(
+      (
+        await decryptComment(
+          key,
+          await encryptComment(key, {
+            body: 'image comment',
+            display_name: null,
+            anchor,
+          })
+        )
+      ).anchor
+    ).toEqual(anchor);
+    // Replacing one ASCII character with a two-byte character crosses the
+    // byte cap without changing the path's character count.
+    anchor.path[0]!.tag = `é${anchor.path[0]!.tag.slice(1)}`;
+    expect(size()).toBe(COMMENT_ANCHOR_IMAGE_LIMIT_BYTES + 1);
+    await expect(
+      encryptComment(key, {
+        body: 'image comment',
+        display_name: null,
+        anchor,
+      })
+    ).rejects.toBeInstanceOf(MalformedCommentError);
+    await expect(
+      decryptComment(key, await sealRaw(key, anchor))
+    ).rejects.toBeInstanceOf(MalformedCommentError);
+  });
+
+  test('accepts the maximum depth and Unicode element names', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const anchor = imageAnchor();
+    anchor.path = [
+      ...Array.from({ length: COMMENT_ANCHOR_IMAGE_MAX_DEPTH - 1 }, () => ({
+        tag: 'x-café',
+        index: 0,
+      })),
+      { tag: 'img', index: 0 },
+    ];
+    // Keep the depth boundary separate from the encoded-size boundary.
+    anchor.path = anchor.path.map((step, index) =>
+      index === 0 ? step : { ...step, tag: step.tag === 'img' ? 'img' : 'a' }
+    );
+    expect(parseImageCommentAnchor(anchor)).toEqual(anchor);
+    expect(
+      (
+        await decryptComment(
+          key,
+          await encryptComment(key, {
+            body: 'image comment',
+            display_name: null,
+            anchor,
+          })
+        )
+      ).anchor
+    ).toEqual(anchor);
+    expect(() => parseImageCommentAnchor({ kind: 'pin', x: 0, y: 0 })).toThrow(
+      MalformedCommentError
+    );
+  });
+
+  test('keeps legacy kinds and future unknown kinds readable', async () => {
+    const key = await deriveCommentKey(generateKey());
+    for (const anchor of [
+      { kind: 'text' as const, quote: 'the claim' },
+      { kind: 'pin' as const, x: 0.25, y: 0.75 },
+      { kind: 'region' as const, rect: { x: 0, y: 0, w: 0.5, h: 0.5 } },
+    ]) {
+      const comment = { body: 'legacy', display_name: null, anchor };
+      expect(
+        await decryptComment(key, await encryptComment(key, comment))
+      ).toEqual({
+        ...comment,
+        addresses: null,
+      });
+    }
+    const opened = await decryptComment(
+      key,
+      await sealRaw(key, {
+        kind: 'future-image',
+        path: [{ tag: 'img', index: 0 }],
+      })
+    );
+    expect(opened.body).toBe('image comment');
+    expect(opened.anchor).toEqual({
+      kind: 'unsupported',
+      declared: 'future-image',
+    });
   });
 });
 

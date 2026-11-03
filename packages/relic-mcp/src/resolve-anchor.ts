@@ -18,6 +18,7 @@
  *   PDF rendering is omitted to avoid heavy client dependencies.
  * - Stage-relative pins: an honest notice that stage-relative pins cannot be
  *   resolved against artifact content with fidelity.
+ * - HTML image anchors: a browser-rendering requirement, without a crop.
  * - Unsupported anchors: the declared kind preserved without dropping.
  */
 
@@ -143,6 +144,11 @@ export type ResolvedAnchor =
     }
   | {
       readonly kind: 'quote' | 'text';
+      readonly status: 'unresolvable';
+      readonly explanation: string;
+    }
+  | {
+      readonly kind: 'image';
       readonly status: 'unresolvable';
       readonly explanation: string;
     }
@@ -1381,6 +1387,18 @@ export async function resolveAnchors(
       updatedComments.push(
         await resolveOtioComment(comment, anchor, loadRevision, documents)
       );
+      continue;
+    }
+    if (anchor.kind === 'image') {
+      updatedComments.push({
+        ...comment,
+        resolved: {
+          kind: 'image',
+          status: 'unresolvable',
+          explanation:
+            'HTML image anchors require browser rendering to locate the image. No image crop or visual resolution is available through MCP.',
+        },
+      });
       continue;
     }
     if (anchor.kind === 'unsupported') {

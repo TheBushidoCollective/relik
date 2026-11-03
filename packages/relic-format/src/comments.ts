@@ -84,6 +84,16 @@ export interface AnchorRect {
   readonly h: number;
 }
 
+/** Revision-local path to an authored HTML image and its source declarations. */
+export interface ImageCommentAnchor {
+  readonly kind: 'image';
+  readonly path: readonly {
+    readonly tag: string;
+    readonly index: number;
+  }[];
+  readonly source_sha256: string;
+}
+
 /**
  * Where a comment sits on the relic, encrypted with the body so the
  * operator cannot read the mark either.
@@ -113,6 +123,8 @@ export interface AnchorRect {
  *   inside that frame.
  * - `page` is one page of a paged document, with an optional box or quote on
  *   it.
+ * - `image` identifies an HTML image by its body-relative element path and
+ *   the digest of its authored source declarations.
  * - `unsupported` is never written. It is what this parser returns for a
  *   `kind` it does not know, so a reader can say a mark exists and it cannot
  *   show it, which is true, instead of reporting the comment as unreadable,
@@ -140,11 +152,18 @@ export type CommentAnchor =
       readonly rect?: AnchorRect;
       readonly exact?: string;
     }
+  | ImageCommentAnchor
   | OtioAnchorV1
   | { readonly kind: 'unsupported'; readonly declared: string };
 
 /** Cap on encoded OTIO anchor bytes (1,536 bytes). */
 export const COMMENT_ANCHOR_OTIO_LIMIT_BYTES = 1536;
+
+/** Bounds for the encoded HTML image anchor and its element path. */
+export const COMMENT_ANCHOR_IMAGE_LIMIT_BYTES = 1536;
+export const COMMENT_ANCHOR_IMAGE_MAX_DEPTH = 64;
+export const COMMENT_ANCHOR_IMAGE_MAX_TAG_LENGTH = 64;
+export const COMMENT_ANCHOR_IMAGE_MAX_INDEX = 0xffff_ffff;
 
 /** Cap on final encrypted base64url comment ciphertext (8,192 characters). */
 export const COMMENT_CIPHERTEXT_LIMIT_CHARS = 8192;
@@ -535,6 +554,79 @@ function parseAnchor(value: unknown): CommentAnchor | null {
     };
   }
 
+  if (kind === 'image') {
+    refuseExtra(anchor, ['kind', 'path', 'source_sha256'], 'image');
+    const rawPath = anchor['path'];
+    if (
+      !Array.isArray(rawPath) ||
+      rawPath.length === 0 ||
+      rawPath.length > COMMENT_ANCHOR_IMAGE_MAX_DEPTH
+    ) {
+      throw new MalformedCommentError(
+        `image anchor path must have 1 to ${COMMENT_ANCHOR_IMAGE_MAX_DEPTH} steps`
+      );
+    }
+    const hasInvalidTagCharacter = (tag: string): boolean => {
+      for (const character of tag) {
+        const code = character.charCodeAt(0);
+        if (code <= 31 || code === 127 || /[\s<>/]/u.test(character))
+          return true;
+      }
+      return false;
+    };
+    const path = rawPath.map((rawStep: unknown) => {
+      if (
+        typeof rawStep !== 'object' ||
+        rawStep === null ||
+        Array.isArray(rawStep)
+      ) {
+        throw new MalformedCommentError(
+          'image anchor path step is not an object'
+        );
+      }
+      const step = rawStep as Record<string, unknown>;
+      refuseExtra(step, ['tag', 'index'], 'image path step');
+      const tag = step['tag'];
+      const index = step['index'];
+      if (
+        typeof tag !== 'string' ||
+        tag.length === 0 ||
+        tag.length > COMMENT_ANCHOR_IMAGE_MAX_TAG_LENGTH ||
+        tag !== tag.toLowerCase() ||
+        hasInvalidTagCharacter(tag)
+      ) {
+        throw new MalformedCommentError('image anchor path tag is invalid');
+      }
+      if (
+        typeof index !== 'number' ||
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index > COMMENT_ANCHOR_IMAGE_MAX_INDEX
+      ) {
+        throw new MalformedCommentError('image anchor path index is invalid');
+      }
+      return { tag, index };
+    });
+    if (path[path.length - 1]?.tag !== 'img') {
+      throw new MalformedCommentError('image anchor path must end at an img');
+    }
+    const sourceSha256 = anchor['source_sha256'];
+    if (
+      typeof sourceSha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(sourceSha256)
+    ) {
+      throw new MalformedCommentError('image anchor source_sha256 is invalid');
+    }
+    const encoded = new TextEncoder().encode(JSON.stringify(anchor)).length;
+    if (encoded > COMMENT_ANCHOR_IMAGE_LIMIT_BYTES) {
+      throw new MalformedCommentError(
+        `image anchor encoded size ${encoded} bytes exceeds cap of ` +
+          `${COMMENT_ANCHOR_IMAGE_LIMIT_BYTES}`
+      );
+    }
+    return { kind: 'image', path, source_sha256: sourceSha256 };
+  }
+
   if (kind === 'otio') {
     const v = anchor['v'];
     if (v !== 1) {
@@ -627,6 +719,15 @@ function parseAnchor(value: unknown): CommentAnchor | null {
   // the comment, so it keeps its body and loses only the ability to be shown
   // in place.
   return { kind: 'unsupported', declared: kind };
+}
+
+/** Parse and validate a complete HTML image anchor. */
+export function parseImageCommentAnchor(value: unknown): ImageCommentAnchor {
+  const anchor = parseAnchor(value);
+  if (anchor?.kind !== 'image') {
+    throw new MalformedCommentError('expected an image anchor');
+  }
+  return anchor;
 }
 
 /**

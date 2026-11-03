@@ -1026,6 +1026,64 @@ describe('a relic that renders in a sandboxed frame', () => {
     content: new TextEncoder().encode('<p>hello</p>'),
   };
 
+  test('frame image requests cannot redirect a populated image draft', async () => {
+    // The bridge has already validated and forwarded the frame's message.
+    // The author can send the same valid message as the annotation shim.
+    (globalThis as { HTMLIFrameElement?: unknown }).HTMLIFrameElement = Node;
+    try {
+      const mounted = await mount(framed);
+      const frame = mounted.stage.querySelector('iframe.usercontent-frame');
+      expect(frame).not.toBeNull();
+      const paints: unknown[] = [];
+      Object.assign(frame!, {
+        contentWindow: {
+          postMessage: (message: unknown) => {
+            if (
+              typeof message === 'object' &&
+              message !== null &&
+              'type' in message &&
+              message.type === 'relic:paint-mark' &&
+              'mark' in message
+            ) {
+              paints.push(message.mark);
+            }
+          },
+        },
+      });
+      const first = {
+        kind: 'image' as const,
+        path: [{ tag: 'img', index: 0 }],
+        source_sha256: 'a'.repeat(64),
+      };
+      const second = {
+        ...first,
+        path: [{ tag: 'img', index: 1 }],
+        source_sha256: 'b'.repeat(64),
+      };
+      const request = (anchor: typeof first): void => {
+        frame?.dispatch('relic:frame-image', {
+          detail: {
+            type: 'relic:frame-image',
+            anchor,
+            box: { left: 12, top: 20, width: 32, height: 32 },
+          },
+        });
+      };
+
+      request(second);
+      expect(withClass(mounted.stage, 'popover-field')).toHaveLength(1);
+      request(first); // An empty composer may still be re-aimed.
+      const field = only(mounted.stage, 'popover-field');
+      field.value = 'Keep this on the first image';
+      request(second); // An authored script can send this while we type.
+      expect(only(mounted.stage, 'popover-field')).toBe(field);
+      expect(field.value).toBe('Keep this on the first image');
+      expect(paints.at(-1)).toMatchObject(first);
+    } finally {
+      delete (globalThis as { HTMLIFrameElement?: unknown }).HTMLIFrameElement;
+    }
+  });
+
   test('offers controls it can honour on a framed stage', async () => {
     // The frame is a different origin with allow-same-origin withheld. Text selection
     // on the parent window over the frame cannot read into the frame, so no parent

@@ -119,6 +119,67 @@ describe('putting the conversation down', () => {
   beforeEach(installDom);
   afterEach(clearDom);
 
+  test('dismiss closes only the overlay and the mark reopens the same comment', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'c1', body: 'mine', anchor: PINNED },
+    ]);
+    const mark = only(mounted.stage, 'comment-pin');
+    mark.dispatch('click');
+    const dismiss = only(mounted.stage, 'popover-dismiss');
+    expect(dismiss.tagName.toLowerCase()).toBe('button');
+    expect(dismiss.textContent).toBe('Dismiss');
+    expect(dismiss.getAttribute('aria-label')).toBe('Dismiss comment overlay');
+    const requests = mounted.calls.length;
+
+    dismiss.dispatch('click');
+    expect(withClass(mounted.stage, 'popover-card')).toHaveLength(0);
+    expect(mounted.calls).toHaveLength(requests);
+    expect(withClass(mounted.stage, 'comment-pin')).toHaveLength(1);
+    mark.dispatch('click');
+    expect(only(mounted.stage, 'popover-card').dataset.commentId).toBe('c1');
+  });
+
+  test('dismiss is unavailable while a reply draft is open', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'c1', body: 'mine', anchor: PINNED },
+    ]);
+    only(mounted.stage, 'comment-pin').dispatch('click');
+    only(mounted.stage, 'popover-reply').dispatch('click');
+    const field = only(mounted.stage, 'popover-field');
+    field.value = 'half a sentence';
+    expect(only(mounted.stage, 'popover-dismiss').hidden).toBe(true);
+    expect(only(mounted.stage, 'popover-field').value).toBe('half a sentence');
+  });
+
+  test('a cluster can be dismissed and reopened without losing members', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'c1', body: 'first', anchor: { kind: 'time', t: 15 } },
+      { id: 'c2', body: 'second', anchor: { kind: 'time', t: 15.2 } },
+    ]);
+    const marker = new Node('button');
+    marker.className = 'time-marker time-marker-cluster';
+    marker.dataset.commentId = 'c1';
+    marker.dataset.clusterMembers = 'c1 c2';
+    for (const id of ['c1', 'c2']) {
+      const child = new Node('span');
+      child.dataset.commentId = id;
+      marker.appendChild(child);
+    }
+    mounted.stage.appendChild(marker);
+    marker.dispatch('click');
+    expect(withClass(mounted.stage, 'popover-member')).toHaveLength(2);
+    const requests = mounted.calls.length;
+    only(mounted.stage, 'popover-dismiss').dispatch('click');
+    expect(withClass(mounted.stage, 'popover-card')).toHaveLength(0);
+    expect(mounted.calls).toHaveLength(requests);
+    marker.dispatch('click');
+    expect(
+      withClass(mounted.stage, 'popover-member').map(
+        (member) => member.dataset.memberId
+      )
+    ).toEqual(['c1', 'c2']);
+  });
+
   test('a press away from the card closes it', async () => {
     const mounted = await mount({}, 'verified', [
       { id: 'c1', body: 'mine', anchor: PINNED },
@@ -265,6 +326,7 @@ describe('editing a comment', () => {
     ]);
     only(mounted.stage, 'comment-pin').dispatch('click');
     only(mounted.stage, 'popover-edit').dispatch('click');
+    expect(withClass(mounted.stage, 'popover-dismiss')).toHaveLength(0);
 
     const field = only(mounted.stage, 'popover-field');
     expect(field.value).toBe('first thoughts');

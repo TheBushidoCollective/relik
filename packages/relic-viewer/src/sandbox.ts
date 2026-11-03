@@ -129,6 +129,7 @@ export interface FrameInteraction extends FrameInteractionHandler {
   onActiveMark(id: string | null): void;
   onQuietMarks(ids: readonly string[]): void;
   onRevealChange(changeId: string, top: number): void;
+  dispose(): void;
 }
 
 /**
@@ -241,6 +242,20 @@ export const FRAME_MARK_CSS = `
   pointer-events: none !important;
   cursor: default !important;
 }
+.relic-image-layer { position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; pointer-events: none !important; }
+.relic-image-control, .relic-image-mark {
+  position: absolute !important; box-sizing: border-box !important;
+  width: 32px !important; height: 32px !important; padding: 0 !important;
+  border: 2px solid white !important; border-radius: 50% !important;
+  background: #806026 !important; color: white !important; font: bold 18px sans-serif !important;
+  cursor: pointer !important; pointer-events: auto !important;
+}
+.relic-image-control:focus-visible, .relic-image-mark:focus-visible { outline: 3px solid #222 !important; outline-offset: 2px !important; }
+.relic-image-mark.is-active, .relic-image-mark.is-paired { outline: 3px solid #806026 !important; }
+.relic-image-mark.is-resolved { background: #777 !important; }
+.relic-image-mark.is-pending { pointer-events: none !important; opacity: .6 !important; }
+.relic-image-outline { position: absolute !important; box-sizing: border-box !important; border: 2px solid #b48c3c !important; pointer-events: none !important; }
+.relic-image-control[hidden] { display: none !important; }
 .relic-pointing-active, .relic-pointing-active * {
   cursor: crosshair !important;
 }
@@ -510,6 +525,10 @@ function documentSize(
   return { width, height };
 }
 
+// Authored elements cannot claim ownership by copying a class or attribute.
+const frameOwnedNodes = new WeakSet<Node>();
+const frameRegionOverlays = new WeakMap<Document, HTMLElement>();
+
 /**
  * The layer every box and pin is drawn on, sized to the scrolling document,
  * together with that size. Undefined before the document has a body or a
@@ -527,9 +546,11 @@ function frameOverlay(doc: Document):
   const size = documentSize(doc);
   if (size === undefined) return undefined;
 
-  let overlay = doc.getElementById('relic-frame-overlay');
-  if (!overlay) {
+  let overlay = frameRegionOverlays.get(doc);
+  if (!overlay || !overlay.isConnected) {
     overlay = doc.createElement('div');
+    frameOwnedNodes.add(overlay);
+    frameRegionOverlays.set(doc, overlay);
     overlay.id = 'relic-frame-overlay';
     overlay.style.cssText =
       'position: absolute; left: 0; top: 0; pointer-events: none; z-index: 99999;';
@@ -663,7 +684,7 @@ export function frameGestureTarget(
 }
 
 export function clearFrameRegions(root: HTMLElement, id?: string): void {
-  const overlay = root.querySelector('#relic-frame-overlay');
+  const overlay = frameRegionOverlays.get(root.ownerDocument);
   if (!overlay) return;
   if (id !== undefined) {
     for (const el of Array.from(
@@ -789,10 +810,531 @@ export function applyDocumentScrollFraction(
   applyDocumentScrollTop(doc, win, bounded * travel);
 }
 
+type ImagePath = readonly { readonly tag: string; readonly index: number }[];
+type ImageFrameMark = {
+  readonly id: string;
+  readonly kind: 'image';
+  readonly path: ImagePath;
+  readonly source_sha256: string;
+  readonly requestId: number;
+};
+
+function setupImageMarks(
+  doc: Document,
+  win: Window,
+  post: (msg: object) => void,
+  tracked: () => string | null,
+  enabled: boolean
+) {
+  type Entry = {
+    mark: ImageFrameMark;
+    badge?: HTMLButtonElement;
+    outline?: HTMLElement;
+    image?: HTMLImageElement;
+    declaration?: string;
+    serial: number;
+  };
+  const entries = new Map<string, Entry>();
+  const controls = new Map<HTMLImageElement, HTMLButtonElement>();
+  const hashes = new WeakMap<
+    HTMLImageElement,
+    { source: string; hash: Promise<string> }
+  >();
+  let layer: HTMLElement | undefined;
+  let scheduled = false;
+  let serial = 0;
+  let resizeObserver: ResizeObserver | undefined;
+  let disposed = false;
+  let activeId: string | null = null;
+  let quietIds = new Set<string>();
+  let mutationObserver: MutationObserver | undefined;
+
+  const isOwned = (node: Node | null): boolean => {
+    while (node) {
+      if (frameOwnedNodes.has(node)) return true;
+      node = node.parentNode;
+    }
+    return false;
+  };
+  const source = (img: HTMLImageElement): string =>
+    JSON.stringify([
+      img.getAttribute('src'),
+      img.getAttribute('srcset'),
+      img.getAttribute('sizes'),
+      img.parentElement?.tagName.toLowerCase() === 'picture'
+        ? Array.from(img.parentElement.children)
+            .filter((el) => el.tagName.toLowerCase() === 'source')
+            .map((el) => [
+              el.getAttribute('srcset'),
+              el.getAttribute('sizes'),
+              el.getAttribute('media'),
+              el.getAttribute('type'),
+            ])
+        : [],
+    ]);
+  const fingerprint = (img: HTMLImageElement): Promise<string> => {
+    const value = source(img);
+    const cached = hashes.get(img);
+    if (cached?.source === value) return cached.hash;
+    const hash = Promise.resolve()
+      .then(() =>
+        win.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+      )
+      .then((bytes) =>
+        Array.from(new Uint8Array(bytes), (byte) =>
+          byte.toString(16).padStart(2, '0')
+        ).join('')
+      );
+    hashes.set(img, { source: value, hash });
+    return hash;
+  };
+  const hasInvalidTagCharacter = (tag: string): boolean => {
+    for (const character of tag) {
+      const code = character.charCodeAt(0);
+      if (code <= 31 || code === 127 || /[\s<>/]/u.test(character)) return true;
+    }
+    return false;
+  };
+  const pathFor = (img: HTMLImageElement): ImagePath | undefined => {
+    const path: { tag: string; index: number }[] = [];
+    let node: Element | null = img;
+    while (node && node !== doc.body) {
+      const parent: Element | null = node.parentElement;
+      const tag = node.tagName.toLowerCase();
+      if (
+        !parent ||
+        isOwned(node) ||
+        tag.length === 0 ||
+        tag.length > 64 ||
+        hasInvalidTagCharacter(tag)
+      )
+        return undefined;
+      let index = 0;
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling === node) break;
+        if (!isOwned(sibling) && sibling.tagName.toLowerCase() === tag) index++;
+      }
+      path.unshift({ tag, index });
+      if (path.length > 64 || index > 0xffffffff) return undefined;
+      node = parent;
+    }
+    return node === doc.body ? path : undefined;
+  };
+  const resolve = (path: ImagePath): HTMLImageElement | undefined => {
+    let node: Element | null = doc.body;
+    if (!node || !Array.isArray(path) || path.length === 0 || path.length > 64)
+      return undefined;
+    for (const step of path) {
+      if (
+        !step ||
+        typeof step.tag !== 'string' ||
+        step.tag.length === 0 ||
+        step.tag.length > 64 ||
+        step.tag !== step.tag.toLowerCase() ||
+        hasInvalidTagCharacter(step.tag) ||
+        !Number.isInteger(step.index) ||
+        step.index < 0 ||
+        step.index > 0xffffffff
+      )
+        return undefined;
+      const matches: Element[] = Array.from(node.children).filter(
+        (el) => !isOwned(el) && el.tagName.toLowerCase() === step.tag
+      );
+      node = matches[step.index] ?? null;
+      if (!node) return undefined;
+    }
+    return node.tagName.toLowerCase() === 'img'
+      ? (node as HTMLImageElement)
+      : undefined;
+  };
+  const visible = (img: HTMLImageElement): FrameRect | undefined => {
+    if (
+      !img.isConnected ||
+      !img.complete ||
+      img.naturalWidth === 0 ||
+      isOwned(img)
+    )
+      return undefined;
+    const rect = markFrameRect(img);
+    if (!rect || rect.width <= 0 || rect.height <= 0) return undefined;
+    let left = Math.max(rect.left, 0);
+    let top = Math.max(rect.top, 0);
+    let right = Math.min(rect.left + rect.width, win.innerWidth);
+    let bottom = Math.min(rect.top + rect.height, win.innerHeight);
+    for (let node: Element | null = img; node; node = node.parentElement) {
+      const style = win.getComputedStyle(node);
+      if (
+        style.display === 'none' ||
+        style.visibility !== 'visible' ||
+        Number(style.opacity) === 0
+      )
+        return undefined;
+      // Root overflow, and body overflow propagated to a visible root, clip
+      // to the viewport already intersected above.
+      if (node === img || node === doc.documentElement) continue;
+      if (node === doc.body) {
+        const rootStyle = win.getComputedStyle(doc.documentElement);
+        if (
+          rootStyle.overflowX === 'visible' &&
+          rootStyle.overflowY === 'visible'
+        )
+          continue;
+      }
+      const clipX = /^(hidden|clip|scroll|auto)$/.test(style.overflowX);
+      const clipY = /^(hidden|clip|scroll|auto)$/.test(style.overflowY);
+      if (!clipX && !clipY) continue;
+      const box = markFrameRect(node);
+      if (!box) return undefined;
+      const element = node as HTMLElement;
+      const scaleX = element.offsetWidth ? box.width / element.offsetWidth : 1;
+      const scaleY = element.offsetHeight
+        ? box.height / element.offsetHeight
+        : 1;
+      if (clipX) {
+        const edge = box.left + element.clientLeft * scaleX;
+        left = Math.max(left, edge);
+        right = Math.min(right, edge + element.clientWidth * scaleX);
+      }
+      if (clipY) {
+        const edge = box.top + element.clientTop * scaleY;
+        top = Math.max(top, edge);
+        bottom = Math.min(bottom, edge + element.clientHeight * scaleY);
+      }
+    }
+    return right > left && bottom > top
+      ? { left, top, width: right - left, height: bottom - top }
+      : undefined;
+  };
+  const getLayer = (): HTMLElement | undefined => {
+    if (!doc.body) return undefined;
+    if (layer?.isConnected) return layer;
+    if (layer) {
+      for (const image of controls.keys()) resizeObserver?.unobserve(image);
+      controls.clear();
+      for (const entry of entries.values()) remove(entry);
+    }
+    ensureFrameStyles(doc);
+    layer = doc.createElement('div');
+    frameOwnedNodes.add(layer);
+    layer.className = 'relic-image-layer';
+    // The comparison snapshot walks body; keep shim UI outside authored content.
+    doc.documentElement.appendChild(layer);
+    return layer;
+  };
+  const remove = (entry: Entry): void => {
+    entry.badge?.remove();
+    entry.outline?.remove();
+    delete entry.badge;
+    delete entry.outline;
+    delete entry.image;
+    delete entry.declaration;
+  };
+  const position = (el: HTMLElement, rect: FrameRect, offset = 0): void => {
+    const width = Math.min(32, rect.width);
+    const height = Math.min(32, rect.height);
+    el.style.setProperty('width', `${width}px`, 'important');
+    el.style.setProperty('height', `${height}px`, 'important');
+    el.style.left = `${Math.max(rect.left, rect.left + rect.width - width - (offset % 6) * 36)}px`;
+    el.style.top = `${Math.min(rect.top + rect.height - height, rect.top + Math.floor(offset / 6) * 36)}px`;
+  };
+  const schedule = (): void => {
+    if (!enabled) return;
+    if (disposed) return;
+    if (scheduled) return;
+    scheduled = true;
+    const run = (): void => {
+      scheduled = false;
+      if (!disposed) refresh();
+    };
+    if (typeof win.requestAnimationFrame === 'function')
+      win.requestAnimationFrame(run);
+    else setTimeout(run, 0);
+  };
+  const refresh = (): void => {
+    const host = getLayer();
+    if (!host || !doc.body) return;
+    const images = Array.from(doc.body.querySelectorAll('img')).filter(
+      (img) => !isOwned(img)
+    );
+    const live = new Set(images);
+    for (const [img, button] of controls) {
+      if (!live.has(img)) {
+        button.remove();
+        controls.delete(img);
+        resizeObserver?.unobserve(img);
+      }
+    }
+    for (const img of images) {
+      let button = controls.get(img);
+      if (!button) {
+        button = doc.createElement('button');
+        button.type = 'button';
+        button.className = 'relic-image-control';
+        button.setAttribute('aria-label', 'Comment on image');
+        button.textContent = '+';
+        host.appendChild(button);
+        controls.set(img, button);
+        resizeObserver?.observe(img);
+        const control = button;
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (!event.isTrusted) return;
+          const path = pathFor(img);
+          const before = source(img);
+          if (!path || !visible(img)) return;
+          void fingerprint(img)
+            .then((digest) => {
+              const anchor = {
+                kind: 'image' as const,
+                path,
+                source_sha256: digest,
+              };
+              const box = markFrameRect(control);
+              if (
+                !box ||
+                !visible(img) ||
+                source(img) !== before ||
+                resolve(path) !== img ||
+                new TextEncoder().encode(JSON.stringify(anchor)).length > 1536
+              )
+                return;
+              post({ type: 'relic:frame-image', anchor, box });
+            })
+            .catch(() => {});
+        });
+      }
+      const rect = visible(img);
+      button.hidden = !rect;
+      if (rect) position(button, rect);
+    }
+    const positions = new Map<HTMLImageElement, number>();
+    for (const entry of entries.values()) {
+      const mark = entry.mark;
+      const generation = ++entry.serial;
+      const img = resolve(mark.path);
+      const rect = img && visible(img);
+      const declaration = img && source(img);
+      if (
+        !img ||
+        !rect ||
+        !declaration ||
+        !/^[0-9a-f]{64}$/.test(mark.source_sha256) ||
+        new TextEncoder().encode(
+          JSON.stringify({
+            kind: 'image',
+            path: mark.path,
+            source_sha256: mark.source_sha256,
+          })
+        ).length > 1536
+      ) {
+        remove(entry);
+        post({
+          type: 'relic:frame-image-placement',
+          id: mark.id,
+          requestId: mark.requestId,
+          status: 'unavailable',
+        });
+        continue;
+      }
+      if (
+        entry.badge &&
+        (entry.image !== img || entry.declaration !== declaration)
+      )
+        remove(entry);
+      const offset = (positions.get(img) ?? 0) + 1;
+      positions.set(img, offset);
+      void fingerprint(img)
+        .then((digest) => {
+          if (entries.get(mark.id) !== entry || entry.serial !== generation)
+            return;
+          const currentRect = visible(img);
+          if (
+            digest !== mark.source_sha256 ||
+            source(img) !== declaration ||
+            resolve(mark.path) !== img ||
+            !currentRect
+          ) {
+            remove(entry);
+            post({
+              type: 'relic:frame-image-placement',
+              id: mark.id,
+              requestId: mark.requestId,
+              status: 'unavailable',
+            });
+            return;
+          }
+          if (!entry.badge) {
+            entry.outline = doc.createElement('div');
+            entry.outline.className = 'relic-image-outline';
+            host.appendChild(entry.outline);
+            entry.badge = doc.createElement('button');
+            entry.badge.type = 'button';
+            entry.badge.className = 'relic-image-mark';
+            entry.badge.dataset.commentId = mark.id;
+            entry.badge.setAttribute('aria-label', 'Open image comment');
+            entry.badge.textContent = '•';
+            if (mark.id === 'pending:target')
+              entry.badge.classList.add('is-pending');
+            entry.badge.classList.toggle('is-active', mark.id === activeId);
+            entry.badge.classList.toggle('is-resolved', quietIds.has(mark.id));
+            host.appendChild(entry.badge);
+            wireFrameMark(entry.badge, mark.id, doc);
+          }
+          entry.image = img;
+          entry.declaration = declaration;
+          position(entry.badge, currentRect, offset);
+          Object.assign(entry.outline!.style, {
+            left: `${currentRect.left}px`,
+            top: `${currentRect.top}px`,
+            width: `${currentRect.width}px`,
+            height: `${currentRect.height}px`,
+          });
+          const box = markFrameRect(entry.badge);
+          if (box) {
+            post({
+              type: 'relic:frame-image-placement',
+              id: mark.id,
+              requestId: mark.requestId,
+              status: 'placed',
+              rect: box,
+            });
+            if (tracked() === mark.id)
+              post({ type: 'relic:frame-mark-rect', id: mark.id, rect: box });
+          } else {
+            remove(entry);
+            post({
+              type: 'relic:frame-image-placement',
+              id: mark.id,
+              requestId: mark.requestId,
+              status: 'unavailable',
+            });
+          }
+        })
+        .catch(() => {
+          if (entries.get(mark.id) !== entry || entry.serial !== generation)
+            return;
+          remove(entry);
+          post({
+            type: 'relic:frame-image-placement',
+            id: mark.id,
+            requestId: mark.requestId,
+            status: 'unavailable',
+          });
+        });
+    }
+  };
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(schedule);
+    if (doc.documentElement) resizeObserver.observe(doc.documentElement);
+  }
+  if (typeof MutationObserver !== 'undefined' && doc.nodeType === 9) {
+    mutationObserver = new MutationObserver((records) => {
+      if (
+        records.some(
+          (record) =>
+            !isOwned(record.target) &&
+            (record.type !== 'childList' ||
+              Array.from(record.addedNodes).some((node) => !isOwned(node)) ||
+              Array.from(record.removedNodes).some(
+                (node) => node === layer || !isOwned(node)
+              ))
+        )
+      )
+        schedule();
+    });
+    mutationObserver.observe(doc, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+  }
+  doc.addEventListener('load', schedule, true);
+  doc.addEventListener('scroll', schedule, true);
+  doc.addEventListener('DOMContentLoaded', schedule);
+  win.addEventListener?.('resize', schedule);
+  win.addEventListener?.('scroll', schedule, { passive: true });
+  schedule();
+  return {
+    dispose(): void {
+      disposed = true;
+      mutationObserver?.disconnect();
+      resizeObserver?.disconnect();
+      doc.removeEventListener('load', schedule, true);
+      doc.removeEventListener('scroll', schedule, true);
+      doc.removeEventListener('DOMContentLoaded', schedule);
+      win.removeEventListener?.('resize', schedule);
+      win.removeEventListener?.('scroll', schedule);
+      entries.clear();
+      controls.clear();
+      layer?.remove();
+    },
+    active(id: string | null): void {
+      activeId = id;
+    },
+    quiet(ids: readonly string[]): void {
+      quietIds = new Set(ids);
+    },
+    paint(mark: ImageFrameMark): void {
+      if (!enabled) {
+        post({
+          type: 'relic:frame-image-placement',
+          id: mark.id,
+          requestId: mark.requestId,
+          status: 'unavailable',
+        });
+        return;
+      }
+      const old = entries.get(mark.id);
+      if (old) remove(old);
+      entries.set(mark.id, { mark, serial: ++serial });
+      schedule();
+    },
+    clear(id: string): void {
+      const entry = entries.get(id);
+      if (entry) {
+        remove(entry);
+        entries.delete(id);
+      }
+      schedule();
+    },
+    clearAll(): void {
+      for (const entry of entries.values()) remove(entry);
+      entries.clear();
+      schedule();
+    },
+    reveal(id: string): boolean {
+      const entry = entries.get(id);
+      if (!entry) return false;
+      const img = resolve(entry.mark.path);
+      if (img?.isConnected) {
+        const declaration = source(img);
+        void fingerprint(img)
+          .then((digest) => {
+            if (
+              entries.get(id) !== entry ||
+              digest !== entry.mark.source_sha256 ||
+              source(img) !== declaration ||
+              resolve(entry.mark.path) !== img ||
+              !img.isConnected
+            )
+              return;
+            img.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            schedule();
+          })
+          .catch(() => {});
+      }
+      schedule();
+      return true;
+    },
+  };
+}
+
 export function setupFrameInteraction(
   doc: Document,
   win: Window,
-  postOutward: (msg: object) => void
+  postOutward: (msg: object) => void,
+  imageControlsEnabled = true
 ): FrameInteraction {
   let armed = false;
   let startX = 0;
@@ -816,6 +1358,13 @@ export function setupFrameInteraction(
   let selectionLive = false;
   let trackedId: string | null = null;
   let trackRaf: number | undefined;
+  const imageMarks = setupImageMarks(
+    doc,
+    win,
+    postOutward,
+    () => trackedId,
+    imageControlsEnabled
+  );
 
   const reportMarkRect = (
     document: Document,
@@ -1003,7 +1552,9 @@ export function setupFrameInteraction(
     const target = event.target as Element | null;
     if (
       typeof target?.closest === 'function' &&
-      target.closest('.relic-region-mark, .relic-pin-mark') !== null
+      target.closest(
+        '.relic-region-mark, .relic-pin-mark, .relic-image-control, .relic-image-mark'
+      ) !== null
     ) {
       return;
     }
@@ -1232,6 +1783,10 @@ export function setupFrameInteraction(
     },
 
     onPaintMark(mark: FrameMarkPayload): boolean {
+      if (mark.kind === 'image') {
+        imageMarks.paint(mark);
+        return true;
+      }
       if (!doc.body) return false;
       let placed = false;
       if (mark.kind === 'quote') {
@@ -1263,6 +1818,7 @@ export function setupFrameInteraction(
     },
 
     onClearMark(id: string) {
+      imageMarks.clear(id);
       if (!doc.body) return;
       unwrapFrameQuotes(doc.body, id);
       clearFrameRegions(doc.body, id);
@@ -1270,6 +1826,7 @@ export function setupFrameInteraction(
     },
 
     onClearMarks() {
+      imageMarks.clearAll();
       if (!doc.body) return;
       unwrapFrameQuotes(doc.body);
       clearFrameRegions(doc.body);
@@ -1278,6 +1835,7 @@ export function setupFrameInteraction(
 
     onRevealMark(msg: RevealMarkMessage) {
       if (!doc.body) return;
+      if (msg.id && imageMarks.reveal(msg.id)) return;
       if (msg.id) {
         const target = doc.body.querySelector(`[data-comment-id="${msg.id}"]`);
         if (target instanceof HTMLElement) {
@@ -1346,6 +1904,7 @@ export function setupFrameInteraction(
     },
 
     onQuietMarks(ids: readonly string[]) {
+      imageMarks.quiet(ids);
       if (!doc.body) return;
       const settled = new Set(ids);
       for (const mark of doc.body.querySelectorAll('[data-comment-id]')) {
@@ -1371,6 +1930,7 @@ export function setupFrameInteraction(
     },
 
     onActiveMark(id: string | null) {
+      imageMarks.active(id);
       if (!doc.body) return;
       if (id !== null) {
         const report = reportMarkRect(doc, id);
@@ -1392,6 +1952,9 @@ export function setupFrameInteraction(
       scrollResetTimer = win.setTimeout(() => {
         suppressScroll = false;
       }, 50) as unknown as number;
+    },
+    dispose() {
+      imageMarks.dispose();
     },
   };
 }
@@ -2024,10 +2587,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   installSandboxContainment(window, document);
   let interaction: FrameInteraction | undefined;
 
-  function initInteraction(): void {
-    interaction = setupFrameInteraction(document, window, (msg) => {
-      window.parent.postMessage(msg, '*');
-    });
+  function initInteraction(imageControlsEnabled: boolean): void {
+    interaction?.dispose();
+    interaction = setupFrameInteraction(
+      document,
+      window,
+      (msg) => {
+        window.parent.postMessage(msg, '*');
+      },
+      imageControlsEnabled
+    );
   }
 
   const handle = createSandboxHandler(
@@ -2037,7 +2606,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // Install the capture listener before authored inline scripts execute
       // during document.write. A script-triggered anchor click must never win
       // the race and replace the rendered relic before interaction is wired.
-      initInteraction();
+      initInteraction(true);
       document.write(sanitizeFrameHtml(html));
       document.close();
       listen();
@@ -2045,7 +2614,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     },
     (code) => {
       // React render and effects may run before the mount promise settles.
-      initInteraction();
+      initInteraction(false);
       void mountComponent(code).then(scheduleReport, scheduleReport);
     },
     (marks, anchors) => {

@@ -1160,8 +1160,11 @@ describe('frame scroll message contract', () => {
       addEventListener: () => {},
     } as unknown as Document;
 
-    const interaction = setupFrameInteraction(doc, win, (msg) =>
-      posted.push(msg)
+    const interaction = setupFrameInteraction(
+      doc,
+      win,
+      (msg) => posted.push(msg),
+      false
     );
 
     // User scroll triggers outward message

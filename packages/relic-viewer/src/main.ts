@@ -96,6 +96,8 @@ import { localStorageKeyVault } from './vault.ts';
 registerBuiltInAnchorAdapters();
 
 import {
+  type FrameImageMessage,
+  type FrameImagePlacementMessage,
   type FrameMarkClickMessage,
   type FrameMarkHoverMessage,
   type FrameMarkRectMessage,
@@ -104,6 +106,10 @@ import {
   type FrameRect,
   type FrameRegionMessage,
   type FrameSelectionMessage,
+  invalidateImageMarkRequests,
+  isCurrentImageMarkRequest,
+  isFrameImageMessage,
+  isFrameImagePlacementMessage,
   isFrameMarkClickMessage,
   isFrameMarkHoverMessage,
   isFrameMarkRectMessage,
@@ -1175,6 +1181,24 @@ function sandboxFrame(
       );
       return;
     }
+    if (isFrameImageMessage(event.data)) {
+      frame.dispatchEvent(
+        new CustomEvent('relic:frame-image', {
+          detail: event.data,
+          bubbles: true,
+        })
+      );
+      return;
+    }
+    if (isFrameImagePlacementMessage(event.data)) {
+      frame.dispatchEvent(
+        new CustomEvent('relic:frame-image-placement', {
+          detail: event.data,
+          bubbles: true,
+        })
+      );
+      return;
+    }
     if (isFrameMarkHoverMessage(event.data)) {
       frame.dispatchEvent(
         new CustomEvent('relic:frame-mark-hover', {
@@ -1237,7 +1261,12 @@ function sandboxFrame(
   if (typeof window !== 'undefined') {
     window.addEventListener('message', onMessage);
   }
-  frame.addEventListener('load', () => post(payload));
+  frame.addEventListener('load', () => {
+    post(payload);
+    frame.dispatchEvent(
+      new CustomEvent('relic:frame-navigation', { bubbles: true })
+    );
+  });
 
   return {
     frame,
@@ -3894,7 +3923,10 @@ export function paintPendingMark(
   host: HTMLElement,
   pins: HTMLElement,
   anchor: CommentAnchor | null
-): void {
+): boolean {
+  const surface = anchorSurfaceFor(host);
+  if (surface !== undefined)
+    invalidateImageMarkRequests(surface, PENDING_MARK_ID);
   if (anchor === null) {
     host
       .querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
@@ -3902,7 +3934,7 @@ export function paintPendingMark(
         { type: 'relic:clear-mark', id: PENDING_MARK_ID },
         '*'
       );
-    return;
+    return false;
   }
   if (anchor.kind === 'text') {
     wrapTextQuote(host, anchor.quote, PENDING_MARK_ID);
@@ -3910,17 +3942,16 @@ export function paintPendingMark(
       `mark[data-comment-id="${PENDING_MARK_ID}"]`
     );
     painted?.classList.add('is-pending');
-    return;
+    return false;
   }
   if (anchor.kind === 'pin') {
     // A framed relic scrolls inside its frame, so a pin over it is drawn
     // there by its adapter, which marks the provisional one itself.
-    const surface = anchorSurfaceFor(host);
     const framed =
       surface === undefined ? undefined : adapterFor(anchor, surface);
     if (surface !== undefined && framed !== undefined) {
       framed.paint(surface, pins, anchor, PENDING_MARK_ID);
-      return;
+      return false;
     }
     const pin = document.createElement('div');
     // Not a button: there is no comment to scroll to yet, and a control that
@@ -3931,16 +3962,15 @@ export function paintPendingMark(
     pin.style.left = `${offsets.left}px`;
     pin.style.top = `${offsets.top}px`;
     pins.appendChild(pin);
-    return;
+    return false;
   }
   // A precise kind paints its provisional mark through the same adapter that
   // paints the posted one, so the reader sees the thing they aimed at rather
   // than a preview that differs from the result.
-  const surface = anchorSurfaceFor(host);
-  if (surface === undefined) return;
+  if (surface === undefined) return false;
   const adapter = adapterFor(anchor, surface);
-  if (adapter === undefined) return;
-  adapter.paint(surface, pins, anchor, PENDING_MARK_ID);
+  if (adapter === undefined) return false;
+  const requested = adapter.paint(surface, pins, anchor, PENDING_MARK_ID);
   for (const root of [pins, host]) {
     for (const painted of root.querySelectorAll(
       `[data-comment-id="${PENDING_MARK_ID}"]`
@@ -3948,6 +3978,7 @@ export function paintPendingMark(
       painted.classList.add('is-pending');
     }
   }
+  return requested;
 }
 
 /**
@@ -3970,10 +4001,7 @@ export function anchorSurfaceFor(host: HTMLElement): AnchorSurface | undefined {
   const only = candidates.item?.(0) ?? candidates[0];
   return {
     host,
-    content:
-      only instanceof HTMLElement || (only && typeof only === 'object')
-        ? (only as HTMLElement)
-        : host,
+    content: only ? (only as HTMLElement) : host,
   };
 }
 
@@ -3988,6 +4016,7 @@ export function anchorSurfaceFor(host: HTMLElement): AnchorSurface | undefined {
 export function markTargetLabel(anchor: CommentAnchor | null): string {
   if (anchor === null) return 'Commenting on the whole document';
   if (anchor.kind === 'pin') return 'Commenting on a point';
+  if (anchor.kind === 'image') return 'Commenting on an image.';
   if (anchor.kind === 'text') return quotedTargetLabel(anchor.quote);
   return anchorLabel(anchor) ?? UNSUPPORTED_ANCHOR_LABEL;
 }
@@ -5273,6 +5302,16 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       next.addEventListener('relic:frame-selection-cleared', () => {
         dismiss();
       });
+      next.addEventListener('relic:frame-image', ((
+        event: CustomEvent<FrameImageMessage>
+      ) => {
+        const frame = event.target;
+        if (!(frame instanceof HTMLIFrameElement) || !event.detail) return;
+        aimOnStage(
+          event.detail.anchor,
+          frameAnchorBox(frame, event.detail.box, next)
+        );
+      }) as EventListener);
       next.addEventListener('relic:frame-point', ((
         event: CustomEvent<FramePointMessage>
       ) => {
@@ -5569,9 +5608,20 @@ export function buildThread(
       paintMarks(lastEntries);
     },
     compose: (anchor, box, options) => {
+      // A framed document can send image requests itself. Never let one
+      // redirect text that is already being written, even in this composer.
+      if (
+        anchor.kind === 'image' &&
+        (holdsUnsavedText() ||
+          !!composer
+            .querySelector<HTMLTextAreaElement>('.compose-textarea')
+            ?.value.trim())
+      )
+        return true;
       if (host === undefined || popover === undefined) return false;
       if (session.kind !== 'verified' || cipher === undefined) return false;
-      const targetBox = anchorBoxFor(PENDING_MARK_ID) ?? box;
+      const targetBox =
+        anchor.kind === 'image' ? box : (anchorBoxFor(PENDING_MARK_ID) ?? box);
       if (targetBox === undefined) return false;
       openComposer(anchor, targetBox, options);
       return true;
@@ -5707,6 +5757,32 @@ export function buildThread(
    * to point at nothing is worse than one that says where it pointed.
    */
   const unplaceable = new Set<string>();
+  let pendingImagePlaced = false;
+  let pendingImageStatus: 'pending' | 'placed' | 'unavailable' = 'unavailable';
+  let pendingImageAnchor: CommentAnchor | null = null;
+  const imageWaiters = new Set<() => void>();
+  const notifyImageWaiters = (): void => {
+    for (const notify of imageWaiters) notify();
+  };
+  const awaitPendingImage = (
+    anchor: CommentAnchor
+  ): Promise<'placed' | 'unavailable' | 'changed' | 'timeout'> =>
+    new Promise((resolve) => {
+      const finish = (
+        result: 'placed' | 'unavailable' | 'changed' | 'timeout'
+      ): void => {
+        clearTimeout(timer);
+        imageWaiters.delete(check);
+        resolve(result);
+      };
+      const check = (): void => {
+        if (pendingImageAnchor !== anchor) finish('changed');
+        else if (pendingImageStatus !== 'pending') finish(pendingImageStatus);
+      };
+      const timer = setTimeout(() => finish('timeout'), 5000);
+      imageWaiters.add(check);
+      check();
+    });
   /** Puts the width where the sidebar and the divider both read it. */
   const applyWidth = (width: number): number => {
     const clamped = Math.round(clampThreadWidth(width, window.innerWidth));
@@ -5766,6 +5842,11 @@ export function buildThread(
   const paintMarks = (entries: readonly CommentEntry[]): void => {
     lastEntries = entries;
     if (host === undefined) return;
+    const currentSurface = anchorSurfaceFor(host);
+    if (currentSurface !== undefined)
+      invalidateImageMarkRequests(currentSurface);
+    frameRects.clear();
+    pendingImagePlaced = false;
     unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
     otioControllerFor(host)?.clearMarks();
@@ -5830,13 +5911,17 @@ export function buildThread(
         adapter !== undefined &&
         surface !== undefined &&
         adapter.paint(surface, pins, entry.anchor, entry.id);
-      if (!placed) unplaceable.add(entry.id);
+      if (!placed || entry.anchor.kind === 'image') unplaceable.add(entry.id);
     }
     const pendingTarget =
       composing !== undefined && isDocKind(composing.anchor.kind)
         ? composing.anchor
         : marks.target();
-    paintPendingMark(host, pins, pendingTarget);
+    const requested = paintPendingMark(host, pins, pendingTarget);
+    pendingImageAnchor = pendingTarget?.kind === 'image' ? pendingTarget : null;
+    pendingImageStatus =
+      pendingImageAnchor && requested ? 'pending' : 'unavailable';
+    notifyImageWaiters();
     host.appendChild(pins);
 
     // After every mark is painted rather than during, because a text mark is
@@ -5936,14 +6021,21 @@ export function buildThread(
   }
 
   const frameRects = new Map<string, { rect?: FrameRect; first?: FrameRect }>();
+  function savedAnchor(id: string): CommentAnchor | null | undefined {
+    const entry = lastEntries.find((item) => item.id === id);
+    return entry?.kind === 'open' ? entry.anchor : undefined;
+  }
 
-  const awaitFrameRect = (id: string): Promise<AnchorBox | undefined> => {
+  const awaitFrameRect = (
+    id: string,
+    fresh = false
+  ): Promise<AnchorBox | undefined> => {
     return new Promise((resolve) => {
       const frame = host?.querySelector<HTMLIFrameElement>(
         'iframe.usercontent-frame'
       );
       const existing = frameRects.get(id);
-      if (existing?.rect && frame && host) {
+      if (!fresh && existing?.rect && frame && host) {
         const frameBox = frameAnchorBox(frame, existing.rect, host);
         const firstBox = existing.first
           ? frameAnchorBox(frame, existing.first, host)
@@ -5955,10 +6047,13 @@ export function buildThread(
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
+        frame?.removeEventListener('relic:frame-mark-rect', onRect);
         resolve(undefined);
       }, 1000);
       const onRect = (e: Event) => {
         const detail = (e as CustomEvent<FrameMarkRectMessage>).detail;
+        if (savedAnchor(id)?.kind === 'image' && unplaceable.has(id)) return;
+        if (frame !== host?.querySelector('iframe.usercontent-frame')) return;
         if (detail?.id === id && detail.rect && frame && host) {
           if (settled) return;
           settled = true;
@@ -5982,6 +6077,8 @@ export function buildThread(
   // depend on how completely the harness imitates a browser.
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let cardGeneration = 0;
+  let restoringCardFocus = false;
   /**
    * The new comment being written in the open panel, while there is one.
    *
@@ -6058,6 +6155,7 @@ export function buildThread(
   };
 
   const closeCard = (): void => {
+    cardGeneration++;
     clearTimeout(hoverTimer);
     clearTimeout(leaveTimer);
     popover?.hide();
@@ -6070,7 +6168,12 @@ export function buildThread(
       const active =
         typeof document === 'undefined' ? null : document.activeElement;
       if (!active || active === document.body) {
-        returnFocusTarget.focus({ preventScroll: true });
+        restoringCardFocus = true;
+        try {
+          returnFocusTarget.focus({ preventScroll: true });
+        } finally {
+          restoringCardFocus = false;
+        }
       }
     }
   };
@@ -6214,6 +6317,7 @@ export function buildThread(
     if (host === undefined || entry.id === null) return;
     const layer = popover;
     if (layer === undefined) return;
+    cardGeneration++;
     clearTimeout(leaveTimer);
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
@@ -6237,7 +6341,9 @@ export function buildThread(
 
     const id = entry.id;
     const actions: PopoverAction[] = [];
+    let activePanel: HTMLElement;
     const reopen = (): void => {
+      if (layer.current() !== activePanel) return;
       const fresh = entryById(id);
       const at = anchorBoxFor(id) ?? box;
       if (fresh !== undefined) openCard(fresh, at, true);
@@ -6262,6 +6368,10 @@ export function buildThread(
           layer.reposition();
           return;
         }
+        cardGeneration++;
+        const dismiss =
+          activePanel.querySelector<HTMLElement>('.popover-dismiss');
+        if (dismiss) dismiss.hidden = true;
         const composer = inlineComposer({
           placeholder: `Reply to ${plainLabel(entry.author ?? 'this comment')}`,
           submitLabel: 'Post reply',
@@ -6269,6 +6379,7 @@ export function buildThread(
           onSubmit: (body) => {
             const opener = cipher;
             if (opener === undefined) return;
+            const replyPanel = activePanel;
             composer.setBusy(true);
             void (async () => {
               const result = await postComment(
@@ -6292,7 +6403,7 @@ export function buildThread(
                 return;
               }
               await refresh();
-              reopen();
+              if (layer.current() === replyPanel) reopen();
             })();
           },
         });
@@ -6307,6 +6418,7 @@ export function buildThread(
         label: 'Edit',
         className: 'popover-edit',
         onSelect: () => {
+          cardGeneration++;
           stickyId = id;
           const target = document.createElement('p');
           target.className = 'popover-target';
@@ -6343,19 +6455,24 @@ export function buildThread(
                   deps,
                   opener
                 );
+                if (layer.current() !== panel) {
+                  if (result.kind !== 'refused') await refresh();
+                  return;
+                }
                 if (result.kind === 'refused') {
                   composer.setBusy(false);
                   composer.setNote(result.refusal.headline);
                   return;
                 }
                 await refresh();
-                reopen();
+                if (layer.current() === panel) reopen();
               })();
             },
           });
           const editKind = entry.anchor ? entry.anchor.kind : 'text';
           panel.dataset['anchorKind'] = editKind;
           panel.appendChild(composer.element);
+          activePanel = panel;
           layer.show(panel, box, {
             follow: () => anchorBoxFor(id),
             reveal: sticky,
@@ -6372,6 +6489,8 @@ export function buildThread(
         label: settled ? 'Reopen' : 'Resolve',
         className: 'popover-resolve',
         onSelect: () => {
+          const resolvePanel = activePanel;
+          const resolveGeneration = cardGeneration;
           stickyId = id;
           void (async () => {
             const result = await setCommentResolved(
@@ -6380,6 +6499,13 @@ export function buildThread(
               !settled,
               deps
             );
+            if (
+              layer.current() !== resolvePanel ||
+              cardGeneration !== resolveGeneration
+            ) {
+              if (result.kind !== 'refused') await refresh();
+              return;
+            }
             if (result.kind === 'refused') {
               const note = document.createElement('p');
               note.className = 'popover-note';
@@ -6389,7 +6515,11 @@ export function buildThread(
               return;
             }
             await refresh();
-            reopen();
+            if (
+              layer.current() === resolvePanel &&
+              cardGeneration === resolveGeneration
+            )
+              reopen();
           })();
         },
       });
@@ -6415,10 +6545,18 @@ export function buildThread(
         else leaveStageFullscreen(surface, show);
       },
     });
+    actions.push({
+      label: 'Dismiss',
+      ariaLabel: 'Dismiss comment overlay',
+      className: 'popover-dismiss',
+      kind: 'quiet',
+      onSelect: closeCard,
+    });
 
     const cardKind =
       entry.kind === 'open' && entry.anchor ? entry.anchor.kind : 'text';
     const card = popoverCard({ content: rows, actions, commentId: id });
+    activePanel = card;
     card.dataset['anchorKind'] = cardKind;
     holdOnHover(card);
     layer.show(card, box, {
@@ -6468,6 +6606,7 @@ export function buildThread(
     if (first === undefined || firstId === null || firstId === undefined) {
       return;
     }
+    cardGeneration++;
     clearTimeout(leaveTimer);
     dropComposing();
 
@@ -6534,7 +6673,18 @@ export function buildThread(
 
     const wrapper = document.createElement('div');
     wrapper.append(heading, list);
-    const card = popoverCard({ content: wrapper, actions: [] });
+    const card = popoverCard({
+      content: wrapper,
+      actions: [
+        {
+          label: 'Dismiss',
+          ariaLabel: 'Dismiss comment overlay',
+          className: 'popover-dismiss',
+          kind: 'quiet',
+          onSelect: closeCard,
+        },
+      ],
+    });
     card.setAttribute('aria-label', label);
     card.dataset['anchorKind'] = firstAnchor?.kind ?? 'time';
     holdOnHover(card);
@@ -6627,9 +6777,25 @@ export function buildThread(
         window.getSelection()?.removeAllRanges();
       },
       onSubmit: (body) => {
+        if (composer.field.disabled) return;
         composer.setBusy(true);
         const aimed = state.anchor;
         void (async () => {
+          if (aimed.kind === 'image') {
+            const placement = await awaitPendingImage(aimed);
+            if (layer.current() !== state.panel) return;
+            if (placement !== 'placed' || state.anchor !== aimed) {
+              composer.setBusy(false);
+              composer.setNote(
+                placement === 'unavailable'
+                  ? 'This image is unavailable. Choose it again or clear the target.'
+                  : placement === 'timeout'
+                    ? 'Could not verify this image. Try posting again.'
+                    : 'The target changed. Review it and post again.'
+              );
+              return;
+            }
+          }
           const result = await postComment(
             relicId,
             {
@@ -6669,6 +6835,14 @@ export function buildThread(
               );
               if (frame) {
                 atBox = await awaitFrameRect(commentId);
+                if (layer.current() !== state.panel) return;
+              }
+              if (
+                aimed.kind === 'image' &&
+                (!atBox || unplaceable.has(commentId))
+              ) {
+                closeCard();
+                return;
               }
               if (!atBox) {
                 atBox = anchorBoxFor(commentId);
@@ -6685,7 +6859,7 @@ export function buildThread(
               return;
             }
           }
-          closeCard();
+          if (layer.current() === state.panel) closeCard();
         })();
       },
     });
@@ -6744,6 +6918,12 @@ export function buildThread(
     if (holdsUnsavedText()) return;
     const entry = entryById(id);
     if (entry === undefined) return;
+    if (
+      entry.kind === 'open' &&
+      entry.anchor?.kind === 'image' &&
+      unplaceable.has(id)
+    )
+      return;
     const at = box ?? anchorBoxFor(id);
     if (at === undefined) return;
     openCard(entry, at, sticky);
@@ -6794,6 +6974,7 @@ export function buildThread(
     // A pin and a timeline marker are buttons, so they are in the tab order.
     // A keyboard reader gets the card the same way a pointer does.
     root.addEventListener('focusin', (event: Event) => {
+      if (restoringCardFocus) return;
       if (!(event.target instanceof Element)) return;
       // Focus moving inside an open card is the reader using it: the field
       // a Reply just put up, or the next button along. The card carries its
@@ -6862,11 +7043,62 @@ export function buildThread(
           : undefined;
       cardForId(msg.id, box, true);
     }) as EventListener);
+    root.addEventListener('relic:frame-image-placement', ((
+      event: CustomEvent<FrameImagePlacementMessage>
+    ) => {
+      const msg = event.detail;
+      const frame = host?.querySelector<HTMLIFrameElement>(
+        'iframe.usercontent-frame'
+      );
+      const surface = host === undefined ? undefined : anchorSurfaceFor(host);
+      if (
+        !msg ||
+        event.target !== frame ||
+        surface === undefined ||
+        !isCurrentImageMarkRequest(surface, msg.id, msg.requestId)
+      )
+        return;
+      const pending = msg.id === PENDING_MARK_ID;
+      const target = pending
+        ? (composing?.anchor ?? marks.target())
+        : savedAnchor(msg.id);
+      if (target?.kind !== 'image') return;
+      if (msg.status === 'placed' && msg.rect) {
+        frameRects.set(msg.id, { rect: msg.rect });
+        if (pending) {
+          pendingImagePlaced = true;
+          pendingImageStatus = 'placed';
+          notifyImageWaiters();
+        } else unplaceable.delete(msg.id);
+      } else {
+        frameRects.delete(msg.id);
+        if (pending) {
+          pendingImagePlaced = false;
+          pendingImageStatus = 'unavailable';
+          notifyImageWaiters();
+        } else unplaceable.add(msg.id);
+      }
+      if (!pending) rerenderRows?.();
+      if (stickyId === msg.id || (pending && composing !== undefined))
+        popover?.track();
+    }) as EventListener);
     root.addEventListener('relic:frame-mark-rect', ((
       event: CustomEvent<FrameMarkRectMessage>
     ) => {
       const msg = event.detail;
       if (!msg?.id) return;
+      const target =
+        msg.id === PENDING_MARK_ID
+          ? (composing?.anchor ?? marks.target())
+          : savedAnchor(msg.id);
+      if (
+        target?.kind === 'image' &&
+        (msg.id === PENDING_MARK_ID
+          ? !pendingImagePlaced
+          : unplaceable.has(msg.id))
+      ) {
+        return;
+      }
       const frameRect: FrameRect | undefined = msg.rect;
       const firstRect: FrameRect | undefined = msg.first;
       frameRects.set(msg.id, {
@@ -6885,7 +7117,9 @@ export function buildThread(
   // Escape closes the conversation the same way it closes the offer, because
   // a reader who has learned one has learned the other.
   document.addEventListener('keydown', (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && popover?.current() !== undefined) closeCard();
+    if (event.key !== 'Escape') return;
+    if (popover?.current() !== undefined) closeCard();
+    else cardGeneration++;
   });
 
   // A stage going into fullscreen or coming out of it moves whatever the
@@ -6930,7 +7164,14 @@ export function buildThread(
    * throw the sentences away, and nothing here could give them back.
    */
   document.addEventListener('pointerdown', (event: Event) => {
-    if (popover?.current() === undefined) return;
+    if (popover?.current() === undefined) {
+      if (
+        !(event.target instanceof Element) ||
+        event.target.closest('[data-comment-id]') === null
+      )
+        cardGeneration++;
+      return;
+    }
     if (!(event.target instanceof Element)) return;
     if (event.target.closest('.popover') !== null) return;
     // A press on another mark is that mark's business: it opens its own
@@ -6957,6 +7198,7 @@ export function buildThread(
     ) {
       return;
     }
+    if (entry.anchor.kind === 'image' && unplaceable.has(commentId)) return;
     const surface = anchorSurfaceFor(host);
     if (surface === undefined) return;
     const adapter = adapterFor(entry.anchor, surface);
@@ -6968,10 +7210,58 @@ export function buildThread(
     const frame = host.querySelector<HTMLIFrameElement>(
       'iframe.usercontent-frame'
     );
+    if (frame !== null && entry.anchor.kind === 'image') {
+      const pins = host.querySelector<HTMLElement>('.comment-pins');
+      if (!pins || !adapter) return;
+      const generation = ++cardGeneration;
+      const stage = host;
+      const onPlacement = (event: Event): void => {
+        const msg = (event as CustomEvent<FrameImagePlacementMessage>).detail;
+        if (
+          !msg ||
+          msg.id !== commentId ||
+          !isCurrentImageMarkRequest(surface, msg.id, msg.requestId)
+        )
+          return;
+        clearTimeout(timer);
+        frame.removeEventListener('relic:frame-image-placement', onPlacement);
+        if (
+          generation === cardGeneration &&
+          msg.status === 'placed' &&
+          msg.rect &&
+          stage === host &&
+          frame === host.querySelector('iframe.usercontent-frame')
+        ) {
+          const at = frameAnchorBox(frame, msg.rect, stage);
+          queueMicrotask(() => {
+            if (generation === cardGeneration && !unplaceable.has(commentId)) {
+              openCard(entry, at, true);
+            }
+          });
+        }
+      };
+      const timer = setTimeout(() => {
+        frame.removeEventListener('relic:frame-image-placement', onPlacement);
+      }, 1000);
+      frame.addEventListener('relic:frame-image-placement', onPlacement);
+      frameRects.delete(commentId);
+      unplaceable.add(commentId);
+      if (!adapter.paint(surface, pins, entry.anchor, commentId)) {
+        clearTimeout(timer);
+        frame.removeEventListener('relic:frame-image-placement', onPlacement);
+        rerenderRows?.();
+      }
+      return;
+    }
     if (frame !== null) {
-      void awaitFrameRect(commentId).then((box) => {
-        if (box !== undefined) openCard(entry, box, true);
-      });
+      const generation = ++cardGeneration;
+      void awaitFrameRect(commentId, entry.anchor.kind === 'image').then(
+        (box) => {
+          if (generation === cardGeneration && box !== undefined) {
+            openCard(entry, box, true);
+          }
+        }
+      );
     } else {
       const box = anchorBoxFor(commentId);
       if (box !== undefined) openCard(entry, box, true);
@@ -7164,10 +7454,32 @@ export function buildThread(
     foot.append(count, post);
     form.appendChild(foot);
 
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const sealer = cipher;
-      if (sealer === undefined) return;
+      if (sealer === undefined || post.disabled) return;
+      const target = marks.target();
+      if (target?.kind === 'image') {
+        post.disabled = true;
+        body.disabled = true;
+        const placement = await awaitPendingImage(target);
+        body.disabled = false;
+        post.disabled = false;
+        if (!form.isConnected) return;
+        if (placement !== 'placed' || marks.target() !== target) {
+          outcome.replaceChildren(
+            line(
+              'thread-note',
+              placement === 'unavailable'
+                ? 'This image is unavailable. Choose it again or clear the target.'
+                : placement === 'timeout'
+                  ? 'Could not verify this image. Try posting again.'
+                  : 'The target changed. Review it and post again.'
+            )
+          );
+          return;
+        }
+      }
       const draft = {
         body: body.value,
         display_name: name.value.trim().length > 0 ? name.value.trim() : null,
@@ -7348,6 +7660,12 @@ export function buildThread(
     ready,
     toggle: toggleOpen,
     attach: (next) => {
+      if (host !== undefined && host !== next) {
+        const previous = anchorSurfaceFor(host);
+        if (previous !== undefined) invalidateImageMarkRequests(previous);
+        frameRects.clear();
+        pendingImagePlaced = false;
+      }
       host = next;
       popover = popoverLayer(next);
       // Once per stage. A second binding would toggle the class twice on one
@@ -7356,6 +7674,14 @@ export function buildThread(
         next.dataset.pairBind = '1';
         bindPairing(next);
         bindMarkPointing(next);
+        next.addEventListener('relic:frame-navigation', () => {
+          const surface = anchorSurfaceFor(next);
+          if (surface !== undefined) invalidateImageMarkRequests(surface);
+          frameRects.clear();
+          pendingImagePlaced = false;
+          paintMarks(lastEntries);
+          rerenderRows?.();
+        });
         next.addEventListener('relic:page-changed', () => {
           paintMarks(lastEntries);
         });

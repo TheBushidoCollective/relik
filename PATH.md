@@ -82,3 +82,19 @@ mise exec -- bun packages/relic-mcp/test/comment-popover-path.ts
 ```
 
 Success requires `COMMENT_POPOVER_PATH_OK classes=9`, attached composers and posted comment cards on every class, verified §5.8 assertions (adjacency, horizontal alignment, no overlap, anchor exposure, usability, preference, capped scrolling, follow tracking), and negative control verification against origin/main 76269ed5.
+
+Saved comment cards and timeline cluster cards expose **Dismiss** (`.popover-dismiss`, accessible name `Dismiss comment overlay`). Exercise pointer and keyboard dismissal after Post and on an existing mark, then reopen from the mark and thread. Closing the overlay must preserve the stored comment, counts, sidebar, playback and fullscreen without a mutation request. New/edit composers have no Dismiss, and replying hides it to protect the draft. Keyboard focus restoration must not immediately reopen the card; asynchronous work from a dismissed card must not reopen it or replace a newer panel. The clickable interaction reference is `docs/plans/anchored-popover/mockup.html`.
+
+# Comments on images inside HTML
+
+A reader activates **Comment on image**, posts in the attached composer, dismisses the saved overlay and reopens the same comment from its image badge or thread after reload. Ordinary linked-image activation remains navigation, not commenting.
+
+## Acceptance command
+
+```sh
+mise exec -- bun packages/relic-mcp/test/html-image-comments-path.ts
+```
+
+Success requires `HTML_IMAGE_COMMENTS_PATH_OK`.
+
+The proof uses loopback services only. It must exercise encrypted persistence and agent readback, reload, multiple comments on one image, linked-image navigation, pointer and keyboard dismissal, narrow-layout geometry, responsive source declarations, stale placement replies, and unavailable targets without a coordinate fallback. The clickable reference includes HTML states F6 through F9 in `docs/plans/anchored-popover/mockup.html`.

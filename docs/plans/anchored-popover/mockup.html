@@ -273,6 +273,12 @@ body {
 .frame-doc.is-svg { background: #101314; }
 .frame-doc.is-svg svg { display: block; width: 400px; max-width: 100%; height: auto; }
 .frame-doc.is-pinning { cursor: crosshair; }
+.frame-image { position: relative; margin: 0 0 2rem; padding-bottom: 3rem; }
+.frame-image img { display: block; width: 100%; height: auto; }
+.frame-image > button { position: absolute; bottom: 0; min-height: 36px; font: .75rem var(--sans); color: var(--ink); background: var(--surface); border: 1px solid var(--patina); cursor: pointer; }
+.frame-image-create { right: 0; }
+.frame-image-mark { left: 0; }
+.frame-image:has(.frame-image-mark) img { outline: 2px solid var(--patina); outline-offset: 2px; }
 .frame-overlay { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 99; }
 /* Marks the frame paints in its own document (sandbox.ts). */
 .frame-doc .relic-text-mark { background: rgba(180, 140, 60, .28); border-bottom: 2px solid rgba(180, 140, 60, .85); outline: 0; color: inherit; cursor: pointer; }
@@ -1023,6 +1029,7 @@ function targetLabel(a) {
     case 'text': case 'frame-text': return quoteLabel(a.quote || '');
     case 'pin': case 'frame-pin': return 'Commenting on a point';
     case 'region': return 'Commenting on a region of the image';
+    case 'image': return 'Commenting on an image.';
     case 'page': return `Commenting on page ${a.page}`;
     case 'time':
       if (a.t_end === undefined) return `Commenting at ${tcMedia(a.t)}`;
@@ -1282,6 +1289,10 @@ class Viewer {
     clearTimeout(this.openTimer);
     this.scheduleLeave();
   }
+  hasDraft() {
+    const panel = this.layer.current() || this.fullscreenLayer?.current();
+    return !!panel?.querySelector('textarea')?.value.trim();
+  }
   scheduleLeave() {
     if (this.sticky) return;
     clearTimeout(this.leaveTimer);
@@ -1293,7 +1304,7 @@ class Viewer {
   onMarkClick(e) {
     const m = this.markFrom(e.target);
     if (!m) return;
-    if (this.composing && this.composing.field.value.trim()) return;
+    if (this.hasDraft()) return;
     e.preventDefault();
     e.stopPropagation();
     this.adapter.markPressed?.(m);
@@ -1308,7 +1319,7 @@ class Viewer {
     const panel = this.layer.current() || this.fullscreenLayer?.current();
     if (!panel || panel.contains(t)) return;
     if (this.markFrom(t)) return;
-    if (this.composing && this.composing.field.value.trim()) return;
+    if (this.hasDraft()) return;
     if (this.composing && this.adapter.gestureTarget?.(t)) return;
     this.closePanel({});
   }
@@ -1474,10 +1485,14 @@ class Viewer {
       h('button', { type: 'button', class: 'popover-action popover-edit', onclick: () => this.edit(c.id) }, 'Edit'),
       h('button', { type: 'button', class: 'popover-action popover-resolve', onclick: () => this.resolve(c.id) }, c.resolved ? 'Reopen' : 'Resolve'),
       h('button', { type: 'button', class: 'popover-action is-quiet popover-open-thread', onclick: () => this.openInThread(c.id) }, 'Open in thread'));
+    tools.append(this.dismissButton());
     const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': 'Comment', 'data-comment-id': c.id, 'data-anchor-kind': kindAttr(c.anchor.kind) }, h('ol', { class: 'popover-thread' }, this.commentRow(c, true)), tools);
     panel.addEventListener('pointerleave', () => this.scheduleLeave());
     panel.addEventListener('pointerenter', () => clearTimeout(this.leaveTimer));
     return panel;
+  }
+  dismissButton() {
+    return h('button', { type: 'button', class: 'popover-action is-quiet popover-dismiss', 'aria-label': 'Dismiss comment overlay', onclick: () => this.closePanel({ restore: true }) }, 'Dismiss');
   }
   openCluster(ids, sticky, o = {}) {
     const members = ids.map((id) => this.byId(id)).filter(Boolean);
@@ -1487,7 +1502,7 @@ class Viewer {
     const list = h('ol', { class: 'popover-members' }, members.map((m) => h('li', null, h('button', { type: 'button', class: 'popover-member', 'data-member-id': m.id, onclick: (e) => { e.preventDefault(); this.openCard(m.id, true, { focus: 'first' }); } },
       h('span', { class: 'popover-member-time' }, m.anchor.t_end === undefined ? tcTenths(m.anchor.t) : `${tcTenths(m.anchor.t)} to ${tcTenths(m.anchor.t_end)}`),
       h('span', { class: 'popover-member-author' }, m.author), h('span', { class: 'popover-member-body' }, m.body)))));
-    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': label, 'data-anchor-kind': 'time', 'data-cluster': ids.join(' ') }, h('div', null, h('p', { class: 'popover-target' }, label), list));
+    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': label, 'data-anchor-kind': 'time', 'data-cluster': ids.join(' ') }, h('div', null, h('p', { class: 'popover-target' }, label), list), h('div', { class: 'popover-tools' }, this.dismissButton()));
     panel.addEventListener('pointerleave', () => this.scheduleLeave());
     panel.addEventListener('pointerenter', () => clearTimeout(this.leaveTimer));
     this.activeId = null;
@@ -1549,6 +1564,7 @@ class Viewer {
     this.layer.hide();
     this.fullscreenLayer?.hide();
     clearTimeout(this.leaveTimer);
+    clearTimeout(this.openTimer);
     this.cardId = null;
     this.sticky = false;
     this.activeId = null;
@@ -2035,6 +2051,22 @@ function mediaAdapter(v, o, isAudio) {
 /* ---------- html and svg in the sandboxed frame (simulated by an inner scroller) ---------- */
 function frameAdapter(v, o, isSvg) {
   const fdoc = h('div', { class: `frame-doc${isSvg ? ' is-svg' : ''}`, 'data-block': 'root', html: isSvg ? ICON_SVG : HOME_HTML });
+  // Representative locator only: this interaction mock does not implement the production frame fingerprint protocol.
+  const imageAnchor = { kind: 'image', path: [{ tag: 'main', index: 0 }, { tag: 'figure', index: 0 }, { tag: 'a', index: 0 }, { tag: 'img', index: 0 }], source_sha256: '0'.repeat(64) };
+  const imageLink = h('a', { href: '#f-cred' }, h('img', { src: BARS, alt: 'smpte-bars.png', width: '1600', height: '1000' }));
+  const imageFigure = h('figure', { class: 'frame-image' }, imageLink);
+  const imageControl = h('button', { type: 'button', class: 'frame-image-create', onclick: () => commentImage() }, 'Comment on image');
+  function commentImage() {
+    v.aimOnStage({ ...imageAnchor }, toContent(rectOf(imageControl.getBoundingClientRect()), v.host), { focus: true });
+  }
+  if (!isSvg) {
+    imageFigure.append(imageControl);
+    fdoc.querySelector('main').prepend(imageFigure);
+    imageLink.addEventListener('click', (event) => {
+      event.preventDefault();
+      fdoc.querySelector('[data-block="f-cred"]').scrollIntoView({ block: 'center' });
+    });
+  }
   const overlay = h('div', { class: 'frame-overlay' });
   fdoc.append(overlay);
   const frame = h('div', { class: 'usercontent-frame', title: v.spec.filename, role: 'document', 'aria-label': `${v.spec.filename}, in the sandboxed frame` }, fdoc);
@@ -2048,6 +2080,14 @@ function frameAdapter(v, o, isSvg) {
   const paint = () => {
     unwrap(fdoc, 'mark.relic-text-mark');
     overlay.replaceChildren();
+    imageFigure.querySelectorAll('.frame-image-mark').forEach((mark) => mark.remove());
+    const imageComments = [...v.comments.filter((comment) => comment.anchor.kind === 'image')];
+    if (v.pendingAnchor()?.kind === 'image') imageComments.push({ id: PENDING, body: 'Commenting on an image.' });
+    imageComments.forEach((comment, index) => imageFigure.append(h('button', {
+      type: 'button', class: `frame-image-mark${comment.id === v.activeId ? ' is-active' : ''}`,
+      'data-comment-id': comment.id, 'aria-label': comment.body,
+      style: `left:${index * 40}px`,
+    }, String(index + 1))));
     for (const c of v.comments) {
       if (c.anchor.kind === 'frame-text') { const b = resolve(c.anchor); if (b) wrapOffsets(b, c.anchor.start, c.anchor.end, () => h('mark', { class: textMarkClass(v, c), 'data-comment-id': c.id })); }
       else if (c.anchor.kind === 'frame-pin') overlay.append(h('button', { type: 'button', class: `relic-pin-mark${c.id === v.activeId ? ' is-active' : ''}`, 'data-comment-id': c.id, 'aria-label': c.body, style: `left:${c.anchor.x}px;top:${c.anchor.y}px` }));
@@ -2086,6 +2126,7 @@ function frameAdapter(v, o, isSvg) {
   });
   return {
     stage, frame, fdoc, paint,
+    commentImage,
     measure: (id) => measureMarks(v, id),
     tools(el) { el.append(pinToolButton(v, 'Point at something', null, () => fdoc), h('span', { class: 'thread-hint' }, 'Select text inside document to quote')); },
     reveal(id) { const m = fdoc.querySelector(`[data-comment-id="${id}"]`); if (m) revealInScroller(m, frame); },
@@ -2422,6 +2463,10 @@ const STATES = [
   S('HTML', 'html-4', 'F4', 'html', 'Click a mark inside the frame: the card is pinned and the sidebar stays closed', async (v) => { v.adapter.reveal('c1'); await settle(1); v.openCard('c1', true, { focus: 'first' }); }),
   S('HTML', 'html-5', 'F5', 'html', 'Point at something, then a press inside the frame: the composer opens at the provisional pin', async (v) => { v.adapter.point(Math.min(220, Math.round(v.adapter.frame.clientWidth * 0.55)), Math.round(v.adapter.frame.clientHeight * 0.62)); }),
 
+  S('HTML', 'html-image-1', 'F6', 'html', 'Comment on image opens the attached composer without selecting text.', async (v) => { v.adapter.commentImage(); }),
+  S('HTML', 'html-image-2', 'F7', 'html', 'Post: the image mark opens the saved card with Dismiss.', async (v) => { v.adapter.commentImage(); v.type('Bars jump.'); await v.post({ instant: true }); }),
+  S('HTML', 'html-image-3', 'F8', 'html', 'Dismiss preserves the image comment; its mark and thread reopen it.', async (v) => { v.adapter.commentImage(); v.type('Bars jump.'); await v.post({ instant: true }); v.closePanel({ restore: true }); }),
+  S('HTML', 'html-image-4', 'F9', 'html', '390 wide: the image composer stays inside the stage.', async (v) => { v.adapter.commentImage(); }, { frame: '390' }),
   /* ---------- SVG frame ---------- */
   S('SVG', 'svg-1', 'S1', 'svg', 'Point at something, then a press at 200, 150 in the frame: the composer opens at the provisional pin', async (v) => { v.adapter.point(200, 150); }),
   S('SVG', 'svg-2', 'S2', 'svg', 'Posted: the card sits on the new pin inside the frame', async (v) => { v.adapter.point(200, 150); v.type('And this bit of the diagram.'); v.post({ instant: true }); }),
