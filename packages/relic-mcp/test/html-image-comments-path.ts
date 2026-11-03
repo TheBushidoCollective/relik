@@ -305,7 +305,18 @@ try {
     touch = false
   ) => {
     const box = await evaluate<{ x: number; y: number }>(
-      `(() => { const e = document.querySelectorAll(${JSON.stringify(selector)})[${index}]; if (!e) throw Error('missing frame control'); e.scrollIntoView({block:'nearest',inline:'nearest'}); const r=e.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}; })()`,
+      `(async () => {
+        const e = document.querySelectorAll(${JSON.stringify(selector)})[${index}];
+        if (!e) throw Error('missing frame control');
+        e.scrollIntoView({block:'nearest',inline:'nearest'});
+        // A scroll schedules image-row placement on the next animation frame.
+        // Measure after that work paints, never synchronously against the old row.
+        const { promise, resolve } = Promise.withResolvers();
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        await promise;
+        const r = e.getBoundingClientRect();
+        return {x:r.left+r.width/2,y:r.top+r.height/2};
+      })()`,
       context
     );
     const frame = await evaluate<{ x: number; y: number }>(
@@ -318,6 +329,36 @@ try {
       y: frame.y + box.y,
     });
     await Bun.sleep(60);
+    const target = await evaluate<{ x: number; y: number; hit: boolean }>(
+      `(() => {
+        const e = document.querySelectorAll(${JSON.stringify(selector)})[${index}];
+        const r = e.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {x, y, hit: hit === e || e.contains(hit)};
+      })()`,
+      context
+    );
+    assert.equal(
+      target.hit,
+      true,
+      `frame click target is not hit-testable inside the frame: ${selector}`
+    );
+    // The frame's own hit test cannot see parent UI drawn over the iframe, such
+    // as a composer. The same viewport point must reach the iframe in the parent.
+    const parentX = frame.x + target.x;
+    const parentY = frame.y + target.y;
+    const parentHit = await evaluate<{ hit: boolean; top: string | null }>(
+      `(() => {
+        const frame = document.querySelector('iframe.usercontent-frame');
+        const top = document.elementFromPoint(${parentX}, ${parentY});
+        return { hit: top === frame, top: top?.outerHTML.slice(0, 240) ?? null };
+      })()`
+    );
+    assert.equal(
+      parentHit.hit,
+      true,
+      `frame click target is covered in the parent: ${selector} ${parentHit.top}`
+    );
     if (touch) {
       await send('Emulation.setTouchEmulationEnabled', {
         enabled: true,
@@ -325,7 +366,7 @@ try {
       });
       await send('Input.dispatchTouchEvent', {
         type: 'touchStart',
-        touchPoints: [{ x: frame.x + box.x, y: frame.y + box.y }],
+        touchPoints: [{ x: frame.x + target.x, y: frame.y + target.y }],
       });
       await send('Input.dispatchTouchEvent', {
         type: 'touchEnd',
@@ -333,8 +374,51 @@ try {
       });
       await send('Emulation.setTouchEmulationEnabled', { enabled: false });
     } else {
-      await click(frame.x + box.x, frame.y + box.y);
+      await click(frame.x + target.x, frame.y + target.y);
     }
+  };
+  const assertImageRows = async (label: string) => {
+    const measured = await evaluate<{
+      issues: string[];
+      rows: unknown[];
+    }>(
+      `(() => {
+      const issues = [], rows = [];
+      for (const row of document.querySelectorAll('.relic-image-row:not([hidden])')) {
+        const r = row.getBoundingClientRect();
+        const buttons = [...row.querySelectorAll('button')].map(button => {
+          const b = button.getBoundingClientRect(), s = getComputedStyle(button);
+          if (Math.abs(b.width - 28) > .5 || Math.abs(b.height - 28) > .5)
+            issues.push('not a 28px circle');
+          if (s.borderRadius !== '50%') issues.push('not circular');
+          const svg = button.querySelector('svg');
+          if (!svg?.querySelector('path') || svg.getAttribute('viewBox') !== '0 0 512 512')
+            issues.push('missing inline Font Awesome glyph');
+          if (button.classList.contains('relic-image-mark') && button.textContent.includes('•'))
+            issues.push('old dot marker remains');
+          return { id: button.dataset.commentId ?? 'add', left: b.left, right: b.right,
+            top: b.top, width: b.width, height: b.height };
+        });
+        for (let i = 1; i < buttons.length; i++) {
+          if (Math.abs(buttons[i].top - buttons[0].top) > .5) issues.push('wrapped row');
+          if (buttons[i].left - buttons[i-1].right < 9.5) issues.push('overlapping buttons');
+        }
+        if (r.left < -.5 || r.right > innerWidth + .5 ||
+            r.top < -.5 || r.bottom > innerHeight + .5) issues.push('row outside viewport');
+        rows.push({ left: r.left, top: r.top, width: r.width, height: r.height,
+          scrollWidth: row.scrollWidth, clientWidth: row.clientWidth, buttons });
+      }
+      return { issues, rows };
+    })()`,
+      frame
+    );
+    assert.deepEqual(
+      measured.issues,
+      [],
+      `${label}: ${JSON.stringify(measured)}`
+    );
+    assert.ok(measured.rows.length > 0, `${label}: no visible image rows`);
+    geometry.push({ label, ...measured });
   };
   const navigate = async () => {
     await send('Page.navigate', { url });
@@ -622,6 +706,11 @@ try {
       ),
       /Commenting on an image/
     );
+    await wait(
+      "document.querySelector('.relic-image-mark.is-pending')?.disabled === true",
+      frame
+    );
+    await assertImageRows(`pending-${index}-${mode}`);
     await evaluate("document.querySelector('textarea.popover-field').focus()");
     await send('Input.insertText', { text: body });
     await evaluate(
@@ -707,6 +796,19 @@ try {
     "document.querySelector('#first').style.display = 'none'",
     frame
   );
+  // Hidden is recoverable concealment, not an invalid anchor. Preserve the
+  // current visibility contract before exercising genuine target removal.
+  await wait(
+    "window.__heldImagePlacements.some(e => e.detail.status === 'concealed' && e.detail.concealment === 'hidden')"
+  );
+  assert.equal(mutations, beforeUnavailable);
+  await evaluate(
+    `(() => {
+    window.__proofRemovedScroll = document.querySelector('.scroll');
+    window.__proofRemovedScroll.remove();
+  })()`,
+    frame
+  );
   await wait(
     "window.__heldImagePlacements.some(e => e.detail.status === 'unavailable')"
   );
@@ -725,12 +827,106 @@ try {
     ),
     false
   );
-  await evaluate("document.querySelector('#first').style.display = ''", frame);
+  await evaluate(
+    `(() => {
+    document.body.appendChild(window.__proofRemovedScroll);
+    delete window.__proofRemovedScroll;
+    document.querySelector('#first').style.display = '';
+  })()`,
+    frame
+  );
+  await wait(
+    "document.querySelectorAll('.relic-image-control').length === 3",
+    frame
+  );
   await evaluate(
     "document.querySelector('#second').scrollIntoView({block:'center'})",
     frame
   );
-  await frameClick('.relic-image-control', frame, 1);
+  // The restored composer can cover the second image's control in the parent,
+  // so a pointer would land on the composer. Activate it with the keyboard and
+  // prove the frame reported the second image while the draft guard held.
+  const beforeRetarget = await evaluate<number>(
+    'window.__proofMessages.length'
+  );
+  // Reattaching `.scroll` resets it to the top, where #second is clipped and
+  // its control is correctly `hidden` (display:none, so unfocusable). The
+  // scrollIntoView above only schedules the frame's next placement refresh;
+  // focus must wait until that refresh has shown the control.
+  await wait(
+    `(() => {
+      const control = document.querySelectorAll('.relic-image-control')[1];
+      const image = document.querySelector('#second').getBoundingClientRect();
+      const row = control?.parentElement;
+      return !!control && !control.hidden && !row.hidden &&
+        control.getClientRects().length > 0 &&
+        Math.abs(control.getBoundingClientRect().top - (image.top + 8)) < .5;
+    })()`,
+    frame
+  );
+  await evaluate(
+    "document.querySelectorAll('.relic-image-control')[1].focus()",
+    frame
+  );
+  await wait(
+    "document.activeElement === document.querySelectorAll('.relic-image-control')[1]",
+    frame
+  );
+  await evaluate(
+    "window.__retargetComposer = document.querySelector('.popover-composer')"
+  );
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Enter',
+    code: 'Enter',
+    windowsVirtualKeyCode: 13,
+    text: '\r',
+    unmodifiedText: '\r',
+    nativeVirtualKeyCode: 13,
+  });
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Enter',
+    code: 'Enter',
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  });
+  await wait(
+    `window.__proofMessages.slice(${beforeRetarget}).some(m =>
+      m.type === 'relic:frame-image' &&
+      m.anchor?.path?.at(-1)?.tag === 'img' &&
+      m.anchor.path.at(-1).index === 1)`
+  );
+  // Product rule (main.ts compose guard): a framed image request never
+  // redirects a composer holding unsaved text. The frame request above proves
+  // the second image was activated; the guard must then leave the same
+  // composer, its draft and the pending target untouched, with no second-row
+  // pending mark. Let the parent and frame settle before checking absence.
+  await evaluate(`(async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    await promise;
+  })()`);
+  await Bun.sleep(150);
+  assert.equal(
+    await evaluate<boolean>(
+      "document.querySelector('.popover-composer') === window.__retargetComposer"
+    ),
+    true,
+    'an image request must not replace a composer holding unsaved text'
+  );
+  assert.equal(
+    await evaluate<boolean>(
+      `(() => {
+        const second = document.querySelectorAll('.relic-image-control')[1];
+        return [...document.querySelectorAll('.relic-image-mark.is-pending')]
+          .some(mark => mark.parentElement === second.parentElement);
+      })()`,
+      frame
+    ),
+    false,
+    'an image request must not move the pending target under unsaved text'
+  );
   assert.equal(
     await evaluate<string>("document.querySelector('.popover-field').value"),
     'Keep this unavailable draft'
@@ -766,7 +962,10 @@ try {
         const image = document.querySelectorAll('img')[${index === 1 ? 1 : 0}];
         if (!mark || !image) return false;
         const mr = mark.getBoundingClientRect(), ir = image.getBoundingClientRect();
-        return Math.abs(mr.top - ir.top) < 1 && mr.left >= ir.left && mr.right <= ir.right;
+        const control = mark.parentElement.querySelector('.relic-image-control').getBoundingClientRect();
+        return Math.abs(mr.top - control.top) < .5 && Math.abs(mr.width - 28) < .5 &&
+          Math.abs(mr.top - (ir.top + 8)) < .5 &&
+          mr.left >= ir.left && mr.right <= ir.right;
       })()`,
       frame
     );
@@ -951,6 +1150,213 @@ try {
     anchors[1]?.source_sha256,
     'identical authored sources must have identical fingerprints'
   );
+  // Stress the real sandbox protocol without creating extra stored comments.
+  // The circles must not shrink, wrap, overlap or leave the viewport when the
+  // image is tiny, clipped to a sliver, or has more comments than fit.
+  // The thread is open from the row-reopen step. Below 44rem an open thread
+  // owns the whole row by design, which leaves the stage, and so the frame,
+  // 0px wide. Measure the frame with the thread closed, then restore it.
+  assert.equal(
+    await evaluate<boolean>(
+      "document.querySelector('.thread').classList.contains('is-open')"
+    ),
+    true,
+    'stress setup expects the thread opened by the row-reopen step'
+  );
+  await evaluate("document.querySelector('.thread-toggle').click()");
+  await wait(
+    "!document.querySelector('.thread').classList.contains('is-open')"
+  );
+  for (const width of [1440, 320]) {
+    await send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await wait(`innerWidth === ${width}`);
+    await wait(
+      `(() => {
+        const frame = document.querySelector('iframe.usercontent-frame').getBoundingClientRect();
+        return frame.width > 0 && frame.height > 0;
+      })()`
+    );
+    for (const scenario of ['small', 'clipped']) {
+      await evaluate(
+        `(() => {
+        const image = document.querySelector('#first');
+        image.style.width = ${JSON.stringify('18px')};
+        image.style.height = ${JSON.stringify('10px')};
+        if (${JSON.stringify(scenario)} === 'clipped') {
+          image.style.width = '220px'; image.style.height = '120px';
+        }
+        image.scrollIntoView({block:'center'});
+      })()`,
+        frame
+      );
+      if (scenario === 'clipped')
+        await evaluate(
+          `(() => {
+          const scroll = document.querySelector('.scroll');
+          const image = document.querySelector('#first').getBoundingClientRect();
+          scroll.scrollTop += image.bottom - scroll.getBoundingClientRect().top - 15;
+        })()`,
+          frame
+        );
+      // A parent repaint (window resize, or the stage's ResizeObserver after
+      // the frame's content height changes) clears every frame mark and
+      // repaints only stored comments, with fresh request ids. Injected
+      // protocol marks posted before that repaint lands are rightly wiped, so
+      // wait until the parent's repaint stream is quiet before injecting.
+      const realRequestIds = `Math.max(0, ...window.__proofMessages
+        .filter(m => m?.type === 'relic:frame-image-placement' &&
+          ${JSON.stringify(ids)}.includes(m.id))
+        .map(m => m.requestId))`;
+      let settledRequestId = -1;
+      for (let stable = 0, n = 0; stable < 4; n++) {
+        assert.ok(n < 100, 'parent mark repaints never settled');
+        await evaluate(`(async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          await promise;
+        })()`);
+        await Bun.sleep(150);
+        const current = await evaluate<number>(realRequestIds);
+        stable = current === settledRequestId ? stable + 1 : 0;
+        settledRequestId = current;
+      }
+      const beforeStress = await evaluate<number>(
+        'window.__proofMessages.length'
+      );
+      await evaluate(`(() => {
+        const frame = document.querySelector('iframe.usercontent-frame');
+        for (let i = 0; i < 12; i++) frame.contentWindow.postMessage({
+          type: 'relic:paint-mark',
+          mark: { ...${JSON.stringify(anchors[0])}, id: 'image-stress-' + i, requestId: 9000 + i }
+        }, '*');
+        frame.contentWindow.postMessage({ type: 'relic:paint-mark',
+          mark: { ...${JSON.stringify(anchors[0])}, id: 'pending:target', requestId: 9100 } }, '*');
+      })()`);
+      try {
+        await wait(
+          'document.querySelectorAll(\'.relic-image-mark[data-comment-id^="image-stress-"]\').length === 12',
+          frame
+        );
+      } catch (error) {
+        const frameState = await evaluate<unknown>(
+          `(() => {
+          const rect = e => { if (!e) return null; const r = e.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height}; };
+          return {
+            size: {innerWidth, innerHeight},
+            first: rect(document.querySelector('#first')),
+            firstStyle: document.querySelector('#first')?.getAttribute('style'),
+            scroll: rect(document.querySelector('.scroll')),
+            marks: [...document.querySelectorAll('.relic-image-mark')].map(e => ({id:e.dataset.commentId, rect:rect(e), row:rect(e.parentElement)})),
+            rows: [...document.querySelectorAll('.relic-image-row')].map(r => ({hidden:r.hidden, rect:rect(r), children:r.children.length})),
+            layer: !!document.querySelector('.relic-image-layer')?.isConnected,
+          };
+        })()`,
+          frame
+        );
+        const messages = await evaluate<unknown>(
+          `window.__proofMessages.slice(${beforeStress}).map(m => ({type:m?.type,id:m?.id,status:m?.status,concealment:m?.concealment,requestId:m?.requestId})).slice(-80)`
+        );
+        throw new Error(
+          `Stress marks missing: ${JSON.stringify({ width, scenario, anchor: anchors[0], settledRequestId, latestRequestId: await evaluate<number>(realRequestIds), frameState, messages })}`,
+          { cause: error }
+        );
+      }
+      await wait(
+        "document.querySelector('.relic-image-mark.is-pending')?.disabled",
+        frame
+      );
+      await assertImageRows(`${width}-${scenario}-many`);
+      const overflow = await evaluate<boolean>(
+        `(() => {
+        const row = document.querySelector('.relic-image-mark[data-comment-id="image-stress-0"]').parentElement;
+        return row.scrollWidth > row.clientWidth;
+      })()`,
+        frame
+      );
+      assert.equal(
+        overflow,
+        true,
+        'many comments must overflow into a scrollable row'
+      );
+      await evaluate(
+        'document.querySelector(\'.relic-image-mark[data-comment-id="image-stress-0"]\').focus()',
+        frame
+      );
+      await send('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Tab',
+        code: 'Tab',
+        windowsVirtualKeyCode: 9,
+      });
+      await send('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: 'Tab',
+        code: 'Tab',
+        windowsVirtualKeyCode: 9,
+      });
+      await evaluate(
+        'document.querySelector(\'.relic-image-mark[data-comment-id="image-stress-0"]\').focus()',
+        frame
+      );
+      await wait(
+        `(() => {
+        const button = document.querySelector('.relic-image-mark[data-comment-id="image-stress-0"]');
+        const b = button.getBoundingClientRect(), r = button.parentElement.getBoundingClientRect();
+        return document.activeElement === button && button.matches(':focus-visible') &&
+          b.left >= r.left + 5.5 && b.right <= r.right - 5.5;
+      })()`,
+        frame
+      );
+      await evaluate(`(() => {
+        const frame = document.querySelector('iframe.usercontent-frame');
+        frame.contentWindow.postMessage({type:'relic:active-mark', id:'image-stress-0'}, '*');
+        frame.contentWindow.postMessage({type:'relic:quiet-marks', ids:['image-stress-1']}, '*');
+      })()`);
+      await wait(
+        "document.querySelector('.relic-image-mark[data-comment-id=\"image-stress-0\"]').classList.contains('is-active') && document.querySelector('.relic-image-mark[data-comment-id=\"image-stress-1\"]').classList.contains('is-resolved')",
+        frame
+      );
+      await assertImageRows(`${width}-${scenario}-focused`);
+      assert.equal(
+        await evaluate<number>(realRequestIds),
+        settledRequestId,
+        'parent repainted marks during the stress measurement'
+      );
+      const shot = await send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(
+        join(receipts, `markers-${width}-${scenario}.png`),
+        Buffer.from(String(shot['data']), 'base64')
+      );
+      await evaluate(`(() => {
+        const frame = document.querySelector('iframe.usercontent-frame');
+        for (const id of [...Array.from({length:12}, (_, i) => 'image-stress-' + i), 'pending:target'])
+          frame.contentWindow.postMessage({type:'relic:clear-mark', id}, '*');
+        frame.contentWindow.postMessage({type:'relic:active-mark', id:null}, '*');
+        frame.contentWindow.postMessage({type:'relic:quiet-marks', ids:[]}, '*');
+      })()`);
+      await wait(
+        "!document.querySelector('.relic-image-mark[data-comment-id^=\"image-stress-\"]') && !document.querySelector('.relic-image-mark.is-pending')",
+        frame
+      );
+    }
+  }
+  await evaluate(
+    "document.querySelector('#first').removeAttribute('style')",
+    frame
+  );
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await evaluate("document.querySelector('.thread-toggle').click()");
+  await wait("document.querySelector('.thread').classList.contains('is-open')");
   await evaluate(
     "document.querySelector('#first').scrollIntoView({block:'center'})",
     frame
@@ -1130,6 +1536,7 @@ try {
         );
       }
       geometry.push({ width, scheme, data, card });
+      await assertImageRows(`${width}-${scheme}-posted`);
       const shot = await send('Page.captureScreenshot', { format: 'png' });
       await writeFile(
         join(receipts, `${width}-${scheme}.png`),

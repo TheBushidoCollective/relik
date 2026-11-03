@@ -98,3 +98,19 @@ mise exec -- bun packages/relic-mcp/test/html-image-comments-path.ts
 Success requires `HTML_IMAGE_COMMENTS_PATH_OK`.
 
 The proof uses loopback services only. It must exercise encrypted persistence and agent readback, reload, multiple comments on one image, linked-image navigation, pointer and keyboard dismissal, narrow-layout geometry, responsive source declarations, stale placement replies, and unavailable targets without a coordinate fallback. The clickable reference includes HTML states F6 through F9 in `docs/plans/anchored-popover/mockup.html`.
+
+Image comment markers and the hover-revealed add control share 28px circular
+buttons and inline Font Awesome Pro 7.3.1 `comment` / `comment-plus` glyphs.
+Each image has one row with 10px gaps; excess comments scroll horizontally
+instead of wrapping or shrinking. The row stays within the frame viewport
+even when its image is tiny or clipped. Keyboard focus reveals a button inside
+the row, pending markers are disabled and dashed, active markers are outlined,
+and resolved markers are gray. The opaque sandbox and its network policy stay
+unchanged; Font Awesome's commercial attribution is retained in the inline SVG.
+
+The image path proof must measure pending and posted circles, gaps and viewport
+bounds, then exercise 12 additional markers on an 18x10 image and a clipped image
+at 1440px and 320px widths. It must check horizontal overflow, visible keyboard
+focus, and active/resolved state updates. `RELIC_IMAGE_SHOTS_DIR` retains the
+`markers-<width>-<scenario>.png` screenshots and `rectangles.json` measurements
+alongside the existing light/dark receipts.
