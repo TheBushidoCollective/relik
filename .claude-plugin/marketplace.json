@@ -10,7 +10,7 @@
     {
       "name": "relic",
       "description": "Publish a file from your machine as an encrypted, shareable link. The agent encrypts locally, uploads only ciphertext, and hands back a URL whose fragment holds the key, so the service stores something it cannot read.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./packages/relic-mcp",
       "author": {
         "name": "The Bushido Collective",
@@ -29,6 +29,6 @@
     }
   ],
   "metadata": {
-    "version": "0.2.0"
+    "version": "0.2.1"
   }
 }
