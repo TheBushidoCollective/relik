@@ -27,12 +27,16 @@ export const CONCEALED_ATTRIBUTE = 'data-concealed';
 export type Concealment = 'hidden' | 'offscreen';
 
 /**
- * Overlays are removed from layout. A text mark keeps its text, because
- * removing it would delete the sentence from the page. It loses only the
- * decoration that makes it look like a comment.
+ * A hidden overlay is removed from layout, since its thing has no box to point
+ * at. An offscreen overlay is made transparent instead, and keeps its box and
+ * its hit testing. Reveal measures the box and hit-tests it after a scroll, and
+ * an IntersectionObserver reports a scroll only after the next frame, so an
+ * overlay made invisible to hit testing would fail that measurement. A text
+ * mark keeps its words in every case and loses only its decoration.
  */
 export const CONCEALMENT_CSS = `
-[${CONCEALED_ATTRIBUTE}]:not(mark) { display: none !important; }
+[${CONCEALED_ATTRIBUTE}='hidden']:not(mark) { display: none !important; }
+[${CONCEALED_ATTRIBUTE}='offscreen']:not(mark) { opacity: 0 !important; }
 mark[${CONCEALED_ATTRIBUTE}] {
   background: none !important;
   border-bottom-color: transparent !important;

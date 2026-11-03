@@ -6206,13 +6206,18 @@ canvas.relic-page {
   border-left: 2px solid var(--patina);
 }
 
-/* A mark the viewer does not draw: its thing is hidden, or scrolled out of the
-   reader's view. Overlays leave layout. A text mark keeps its words and loses
-   the decoration that makes it look like a comment. The frame carries the same
-   rules in CONCEALMENT_CSS (mark-visibility.ts), because it cannot read this
-   sheet. */
-[data-concealed]:not(mark) {
+/* A mark the viewer does not draw. A hidden overlay leaves layout, because its
+   thing has no box. An offscreen overlay is made transparent and keeps its box
+   and hit testing: reveal measures both after a scroll, before the observer
+   has caught up. A text mark keeps its words and loses only its decoration.
+   The frame carries the same rules in CONCEALMENT_CSS (mark-visibility.ts),
+   because it cannot read this sheet. */
+[data-concealed='hidden']:not(mark) {
   display: none !important;
+}
+
+[data-concealed='offscreen']:not(mark) {
+  opacity: 0 !important;
 }
 
 mark[data-concealed] {

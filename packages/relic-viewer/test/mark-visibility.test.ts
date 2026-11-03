@@ -211,11 +211,17 @@ describe('createScrollportWatch', () => {
 });
 
 describe('concealment CSS', () => {
-  test('matches the attribute whatever its reason, not one value', () => {
-    // Concealment writes "hidden" or "offscreen". A rule keyed to one value
-    // leaves the other reason drawn, which is exactly the overlay that should
-    // not be on screen.
-    expect(CONCEALMENT_CSS).toContain(`[${CONCEALED_ATTRIBUTE}]:not(mark)`);
+  test('gives each reason its own rule, and only hidden leaves layout', () => {
+    // A hidden subject has no box, so display:none costs nothing. An offscreen
+    // overlay keeps its box and its hit testing, because reveal measures and
+    // hit-tests it right after a scroll, before the observer has caught up.
+    // Removing it from layout, or from hit testing, fails that measurement.
+    expect(CONCEALMENT_CSS).toContain(
+      `[${CONCEALED_ATTRIBUTE}='hidden']:not(mark) { display: none`
+    );
+    expect(CONCEALMENT_CSS).toContain(
+      `[${CONCEALED_ATTRIBUTE}='offscreen']:not(mark) { opacity: 0`
+    );
     expect(CONCEALMENT_CSS).toContain(`mark[${CONCEALED_ATTRIBUTE}]`);
     expect(CONCEALMENT_CSS).not.toContain("='true'");
   });
@@ -226,7 +232,8 @@ describe('concealment CSS', () => {
     const sheet = await Bun.file(
       new URL('../src/styles.css', import.meta.url)
     ).text();
-    expect(sheet).toContain(`[${CONCEALED_ATTRIBUTE}]:not(mark)`);
+    expect(sheet).toContain(`[${CONCEALED_ATTRIBUTE}='hidden']:not(mark)`);
+    expect(sheet).toContain(`[${CONCEALED_ATTRIBUTE}='offscreen']:not(mark)`);
     expect(sheet).toContain(`mark[${CONCEALED_ATTRIBUTE}]`);
     expect(sheet).not.toContain("[data-concealed='true']");
   });
