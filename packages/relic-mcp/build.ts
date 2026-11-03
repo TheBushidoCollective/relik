@@ -107,7 +107,10 @@ const PLUGIN_DESCRIPTION =
   'whose fragment holds the key, so the service stores something it cannot ' +
   'read.';
 
-const author = { name: 'The Bushido Collective', url: 'https://thebushido.co' };
+const author = {
+  name: 'The Bushido Collective',
+  url: 'https://withbushido.ai',
+};
 const homepage = 'https://github.com/TheBushidoCollective/relic';
 
 const pluginMcpServers = {

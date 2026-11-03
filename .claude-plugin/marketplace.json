@@ -4,7 +4,7 @@
   "description": "Relic: zero-knowledge publishing for agent output. Install the plugin to give your agent a tool that turns a local file into a shareable link without handing the file to anybody.",
   "owner": {
     "name": "The Bushido Collective",
-    "url": "https://thebushido.co"
+    "url": "https://withbushido.ai"
   },
   "plugins": [
     {
@@ -14,7 +14,7 @@
       "source": "./packages/relic-mcp",
       "author": {
         "name": "The Bushido Collective",
-        "url": "https://thebushido.co"
+        "url": "https://withbushido.ai"
       },
       "homepage": "https://github.com/TheBushidoCollective/relic",
       "category": "productivity",
