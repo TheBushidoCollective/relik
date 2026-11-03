@@ -254,32 +254,35 @@ export const FRAME_MARK_CSS = `
   cursor: default !important;
 }
 .relic-image-layer { position: fixed !important; inset: 0 !important; z-index: 2147483646 !important; pointer-events: none !important; }
-.relic-image-mark {
+.relic-image-row {
   position: absolute !important; box-sizing: border-box !important;
-  width: 32px !important; height: 32px !important; padding: 0 !important;
-  border: 2px solid white !important; border-radius: 50% !important;
-  background: #806026 !important; color: white !important; font: bold 18px sans-serif !important;
-  cursor: pointer !important; pointer-events: auto !important;
+  display: flex !important; align-items: flex-start !important; gap: 10px !important;
+  padding: 6px !important; margin: 0 !important; max-height: 56px !important;
+  overflow-x: auto !important; overflow-y: hidden !important; scrollbar-width: thin !important;
+  pointer-events: none !important; overscroll-behavior: contain !important;
 }
-.relic-image-control {
-  position: absolute !important; box-sizing: border-box !important;
+.relic-image-row.has-marks { pointer-events: auto !important; }
+.relic-image-mark, .relic-image-control {
+  position: relative !important; box-sizing: border-box !important; flex: 0 0 28px !important;
   display: flex !important; align-items: center !important; justify-content: center !important;
   width: 28px !important; height: 28px !important; padding: 0 !important; margin: 0 !important;
   border: 2px solid white !important; border-radius: 50% !important;
   background: #806026 !important; color: white !important;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45) !important;
-  cursor: pointer !important;
+  cursor: pointer !important; pointer-events: auto !important;
+}
+.relic-image-control {
   opacity: 0 !important; pointer-events: none !important;
   transition: opacity 0.12s ease !important;
 }
-.relic-image-control svg { display: block !important; width: 14px !important; height: 14px !important; fill: currentColor !important; pointer-events: none !important; }
+.relic-image-control svg, .relic-image-mark svg { display: block !important; width: 14px !important; height: 14px !important; fill: currentColor !important; pointer-events: none !important; }
 .relic-image-control.is-shown, .relic-image-control:focus-visible { opacity: 1 !important; pointer-events: auto !important; }
+.relic-image-mark.is-active, .relic-image-mark.is-paired { outline: 3px solid #806026 !important; outline-offset: 2px !important; }
 .relic-image-control:focus-visible, .relic-image-mark:focus-visible { outline: 3px solid #222 !important; outline-offset: 2px !important; }
-.relic-image-mark.is-active, .relic-image-mark.is-paired { outline: 3px solid #806026 !important; }
 .relic-image-mark.is-resolved { background: #777 !important; }
-.relic-image-mark.is-pending { pointer-events: none !important; opacity: .6 !important; }
+.relic-image-mark.is-pending { pointer-events: none !important; opacity: .6 !important; border-style: dashed !important; }
 .relic-image-outline { position: absolute !important; box-sizing: border-box !important; border: 2px solid #b48c3c !important; pointer-events: none !important; }
-.relic-image-control[hidden] { display: none !important; }
+.relic-image-control[hidden], .relic-image-row[hidden] { display: none !important; }
 .relic-pointing-active, .relic-pointing-active * {
   cursor: crosshair !important;
 }
@@ -901,22 +904,30 @@ type ImageFrameMark = {
 };
 
 /**
- * Font Awesome Pro 7.3.1 "comment-plus" (solid), the add-comment glyph.
- * Built as inline SVG because this frame has no network and a closed CSP, so
- * the kit script cannot load here. https://fontawesome.com License
+ * Font Awesome Pro 7.3.1 "comment" and "comment-plus" (solid).
+ * Obtained from the configured bcb2ad36f1 Pro kit's v7.3.1/svgs/solid assets.
+ * Inline because this frame has no network and a closed CSP.
+ * https://fontawesome.com License https://fontawesome.com/license
  * (Commercial License) Copyright 2026 Fonticons, Inc.
  */
 const COMMENT_PLUS_PATH =
   'M256 480c141.4 0 256-107.5 256-240S397.4 0 256 0 0 107.5 0 240c0 54.3 19.2 104.3 51.6 144.5L2.8 476.8c-4.8 9-3.3 20 3.6 27.5s17.8 9.8 27.1 5.8l118.4-50.7C183.7 472.6 218.9 480 256 480zm0-336c13.3 0 24 10.7 24 24l0 48 48 0c13.3 0 24 10.7 24 24s-10.7 24-24 24l-48 0 0 48c0 13.3-10.7 24-24 24s-24-10.7-24-24l0-48-48 0c-13.3 0-24-10.7-24-24s10.7-24 24-24l48 0 0-48c0-13.3 10.7-24 24-24z';
+const COMMENT_PATH =
+  'M512 240c0 132.5-114.6 240-256 240-37.1 0-72.3-7.4-104.1-20.7L33.5 510.1c-9.4 4-20.2 1.7-27.1-5.8S-2 485.8 2.8 476.8l48.8-92.2C19.2 344.3 0 294.3 0 240 0 107.5 114.6 0 256 0S512 107.5 512 240z';
 
-function commentPlusIcon(doc: Document): SVGElement {
+function imageCommentIcon(doc: Document, add = false): SVGElement {
   const ns = 'http://www.w3.org/2000/svg';
   const svg = doc.createElementNS(ns, 'svg');
   svg.setAttribute('viewBox', '0 0 512 512');
   svg.setAttribute('aria-hidden', 'true');
   svg.setAttribute('focusable', 'false');
+  svg.appendChild(
+    doc.createComment(
+      '! Font Awesome Pro 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2026 Fonticons, Inc.'
+    )
+  );
   const path = doc.createElementNS(ns, 'path');
-  path.setAttribute('d', COMMENT_PLUS_PATH);
+  path.setAttribute('d', add ? COMMENT_PLUS_PATH : COMMENT_PATH);
   svg.appendChild(path);
   return svg;
 }
@@ -940,6 +951,7 @@ function setupImageMarks(
   };
   const entries = new Map<string, Entry>();
   const controls = new Map<HTMLImageElement, HTMLButtonElement>();
+  const rows = new Map<HTMLImageElement, HTMLElement>();
   const hashes = new WeakMap<
     HTMLImageElement,
     { source: string; hash: Promise<string> }
@@ -947,6 +959,7 @@ function setupImageMarks(
   let layer: HTMLElement | undefined;
   let scheduled = false;
   let serial = 0;
+  const pairedIds = new Set<string>();
   let resizeObserver: ResizeObserver | undefined;
   let disposed = false;
   let activeId: string | null = null;
@@ -1118,6 +1131,7 @@ function setupImageMarks(
     if (layer) {
       for (const image of controls.keys()) resizeObserver?.unobserve(image);
       controls.clear();
+      rows.clear();
       for (const entry of entries.values()) remove(entry);
     }
     ensureFrameStyles(doc);
@@ -1129,12 +1143,14 @@ function setupImageMarks(
     return layer;
   };
   const remove = (entry: Entry): void => {
+    const image = entry.image;
     entry.badge?.remove();
     entry.outline?.remove();
     delete entry.badge;
     delete entry.outline;
     delete entry.image;
     delete entry.declaration;
+    if (image) layoutRow(image);
   };
 
   /**
@@ -1159,34 +1175,93 @@ function setupImageMarks(
       concealment,
     });
   };
-  const position = (el: HTMLElement, rect: FrameRect, offset = 0): void => {
-    const width = Math.min(32, rect.width);
-    const height = Math.min(32, rect.height);
-    el.style.setProperty('width', `${width}px`, 'important');
-    el.style.setProperty('height', `${height}px`, 'important');
-    el.style.left = `${Math.max(rect.left, rect.left + rect.width - width - (offset % 6) * 36)}px`;
-    el.style.top = `${Math.min(rect.top + rect.height - height, rect.top + Math.floor(offset / 6) * 36)}px`;
-  };
   const CONTROL_SIZE = 28;
-  // A fixed circle at the image's top-right corner. Inset when the image has
-  // room, otherwise centered on the corner so a short image (a wordmark, an
-  // icon) is not covered by it and the control never stretches into an oval.
-  const positionControl = (el: HTMLElement, rect: FrameRect): void => {
-    const roomy =
-      rect.width >= CONTROL_SIZE * 2 && rect.height >= CONTROL_SIZE * 2;
-    const inset = 8;
-    const wanted = roomy
-      ? {
-          left: rect.left + rect.width - CONTROL_SIZE - inset,
-          top: rect.top + inset,
+  const ROW_GAP = 10;
+  const ROW_PADDING = 6;
+  // One row, never a wrapped stack of dots. Overflow remains scrollable and
+  // keyboard focus scrolls each full-size button into view. Small/clipped
+  // images borrow viewport space rather than squeezing circles into ovals.
+  const layoutRow = (img: HTMLImageElement): void => {
+    const row = rows.get(img);
+    const rect = visible(img);
+    if (!row) return;
+    row.hidden = !rect;
+    if (!rect) return;
+    const count = row.children.length;
+    const fullWidth =
+      count * CONTROL_SIZE + (count - 1) * ROW_GAP + ROW_PADDING * 2;
+    const width = Math.min(fullWidth, Math.max(rect.width, 78), win.innerWidth);
+    const roomy = rect.width >= 56 && rect.height >= 56;
+    const right =
+      rect.left + rect.width + (roomy ? -8 : CONTROL_SIZE / 2) + ROW_PADDING;
+    const top = rect.top + (roomy ? 8 : -CONTROL_SIZE / 2) - ROW_PADDING;
+    row.style.width = `${width}px`;
+    row.style.left = `${Math.max(0, Math.min(right - width, win.innerWidth - width))}px`;
+    row.style.top = `${Math.max(0, Math.min(top, win.innerHeight - 56))}px`;
+    row.classList.toggle('has-marks', count > 1);
+    row.style.setProperty('scroll-padding-inline', `${ROW_PADDING}px`);
+  };
+  const revealButton = (row: HTMLElement, button: HTMLElement): void => {
+    const box = button.getBoundingClientRect();
+    const viewport = row.getBoundingClientRect();
+    if (box.left < viewport.left + ROW_PADDING)
+      row.scrollLeft -= viewport.left + ROW_PADDING - box.left;
+    else if (box.right > viewport.right - ROW_PADDING)
+      row.scrollLeft += box.right - viewport.right + ROW_PADDING;
+  };
+  const revealBadge = (entry: Entry): void => {
+    const row = entry.image && rows.get(entry.image);
+    if (row && entry.badge) revealButton(row, entry.badge);
+  };
+  const reportRows = (): void => {
+    for (const entry of entries.values()) {
+      if (
+        !entry.badge ||
+        !entry.image ||
+        entry.declaration !== source(entry.image)
+      )
+        continue;
+      const row = rows.get(entry.image);
+      const box = markFrameRect(entry.badge);
+      const clip = row && markFrameRect(row);
+      if (!box || !clip || row?.hidden) continue;
+      const id = entry.mark.id;
+      if (
+        box.left < clip.left + ROW_PADDING - 0.5 ||
+        box.left + box.width > clip.left + clip.width - ROW_PADDING + 0.5
+      ) {
+        if (entry.reported !== 'concealed:offscreen') {
+          entry.reported = 'concealed:offscreen';
+          post({
+            type: 'relic:frame-image-placement',
+            id,
+            requestId: entry.mark.requestId,
+            status: 'concealed',
+            concealment: 'offscreen',
+          });
         }
-      : {
-          left: rect.left + rect.width - CONTROL_SIZE / 2,
-          top: rect.top - CONTROL_SIZE / 2,
-        };
-    const maxLeft = Math.max(0, (win.innerWidth || 0) - CONTROL_SIZE);
-    el.style.left = `${Math.min(Math.max(0, wanted.left), maxLeft)}px`;
-    el.style.top = `${Math.max(0, wanted.top)}px`;
+        continue;
+      }
+      entry.reported = 'placed';
+      post({
+        type: 'relic:frame-image-placement',
+        id,
+        requestId: entry.mark.requestId,
+        status: 'placed',
+        rect: box,
+      });
+      if (tracked() === id)
+        post({ type: 'relic:frame-mark-rect', id, rect: box });
+    }
+  };
+  let rowReportScheduled = false;
+  const scheduleRowReport = (): void => {
+    if (rowReportScheduled) return;
+    rowReportScheduled = true;
+    queueMicrotask(() => {
+      rowReportScheduled = false;
+      if (!disposed) reportRows();
+    });
   };
   // The control only appears while the pointer is over its image (or the
   // control itself). Without a hover-capable pointer there is nothing to
@@ -1211,7 +1286,7 @@ function setupImageMarks(
       for (const [img, button] of controls) {
         if (button.hidden) continue;
         const rect = visible(img);
-        const box = button.getBoundingClientRect();
+        const box = (rows.get(img) ?? button).getBoundingClientRect();
         if (!(rect && inside(rect)) && !inside(box)) continue;
         const area = rect ? rect.width * rect.height : 0;
         if (area <= targetArea) {
@@ -1254,9 +1329,10 @@ function setupImageMarks(
       (img) => !isOwned(img)
     );
     const live = new Set(images);
-    for (const [img, button] of controls) {
+    for (const img of controls.keys()) {
       if (!live.has(img)) {
-        button.remove();
+        rows.get(img)?.remove();
+        rows.delete(img);
         controls.delete(img);
         resizeObserver?.unobserve(img);
       }
@@ -1268,8 +1344,17 @@ function setupImageMarks(
         button.type = 'button';
         button.className = 'relic-image-control';
         button.setAttribute('aria-label', 'Comment on image');
-        button.appendChild(commentPlusIcon(doc));
-        host.appendChild(button);
+        button.appendChild(imageCommentIcon(doc, true));
+        const row = doc.createElement('div');
+        row.className = 'relic-image-row';
+        row.appendChild(button);
+        row.addEventListener('scroll', reportRows);
+        button.addEventListener('focus', () => {
+          revealButton(row, button!);
+          reportRows();
+        });
+        rows.set(img, row);
+        host.appendChild(row);
         controls.set(img, button);
         resizeObserver?.observe(img);
         const control = button;
@@ -1302,10 +1387,9 @@ function setupImageMarks(
       }
       const rect = visible(img);
       button.hidden = !rect;
-      if (rect) positionControl(button, rect);
+      layoutRow(img);
     }
     updateHover();
-    const positions = new Map<HTMLImageElement, number>();
     for (const entry of entries.values()) {
       const mark = entry.mark;
       const generation = ++entry.serial;
@@ -1345,8 +1429,6 @@ function setupImageMarks(
         (entry.image !== img || entry.declaration !== declaration)
       )
         remove(entry);
-      const offset = (positions.get(img) ?? 0) + 1;
-      positions.set(img, offset);
       void fingerprint(img)
         .then((digest) => {
           if (entries.get(mark.id) !== entry || entry.serial !== generation)
@@ -1371,6 +1453,7 @@ function setupImageMarks(
             reportConcealed(entry, mark, img);
             return;
           }
+          const created = !entry.badge;
           if (!entry.badge) {
             entry.outline = doc.createElement('div');
             entry.outline.className = 'relic-image-outline';
@@ -1380,44 +1463,38 @@ function setupImageMarks(
             entry.badge.className = 'relic-image-mark';
             entry.badge.dataset.commentId = mark.id;
             entry.badge.setAttribute('aria-label', 'Open image comment');
-            entry.badge.textContent = '•';
-            if (mark.id === 'pending:target')
+            entry.badge.appendChild(imageCommentIcon(doc));
+            if (mark.id === 'pending:target') {
               entry.badge.classList.add('is-pending');
+              entry.badge.disabled = true;
+            }
             entry.badge.classList.toggle('is-active', mark.id === activeId);
+            entry.badge.classList.toggle('is-paired', pairedIds.has(mark.id));
             entry.badge.classList.toggle('is-resolved', quietIds.has(mark.id));
-            host.appendChild(entry.badge);
+            rows.get(img)?.insertBefore(entry.badge, controls.get(img) ?? null);
             wireFrameMark(entry.badge, mark.id, doc);
+            entry.badge.addEventListener('focus', () => {
+              revealBadge(entry);
+              reportRows();
+            });
           }
           entry.image = img;
           entry.declaration = declaration;
-          entry.reported = 'placed';
-          position(entry.badge, currentRect, offset);
           Object.assign(entry.outline!.style, {
             left: `${currentRect.left}px`,
             top: `${currentRect.top}px`,
             width: `${currentRect.width}px`,
             height: `${currentRect.height}px`,
           });
-          const box = markFrameRect(entry.badge);
-          if (box) {
-            post({
-              type: 'relic:frame-image-placement',
-              id: mark.id,
-              requestId: mark.requestId,
-              status: 'placed',
-              rect: box,
-            });
-            if (tracked() === mark.id)
-              post({ type: 'relic:frame-mark-rect', id: mark.id, rect: box });
-          } else {
-            remove(entry);
-            post({
-              type: 'relic:frame-image-placement',
-              id: mark.id,
-              requestId: mark.requestId,
-              status: 'unavailable',
-            });
+          layoutRow(img);
+          if (created) {
+            // Keep the add control and newly created/pending comment visible.
+            const row = rows.get(img);
+            if (row) row.scrollLeft = row.scrollWidth;
           }
+          if (created && (mark.id === activeId || mark.id === tracked()))
+            revealBadge(entry);
+          scheduleRowReport();
         })
         .catch(() => {
           if (entries.get(mark.id) !== entry || entry.serial !== generation)
@@ -1480,10 +1557,41 @@ function setupImageMarks(
       win.removeEventListener?.('scroll', schedule);
       entries.clear();
       controls.clear();
+      rows.clear();
       layer?.remove();
     },
     active(id: string | null): void {
       activeId = id;
+      for (const entry of entries.values())
+        entry.badge?.classList.toggle('is-active', entry.mark.id === id);
+      const entry = id && entries.get(id);
+      if (entry) revealBadge(entry);
+      reportRows();
+    },
+    rect(id: string): FrameMarkRectMessage | undefined {
+      const entry = entries.get(id);
+      if (!entry) return undefined;
+      const message = { type: 'relic:frame-mark-rect' as const, id };
+      if (
+        !entry.badge ||
+        !entry.image ||
+        entry.declaration !== source(entry.image)
+      )
+        return message;
+      const row = rows.get(entry.image);
+      const box = markFrameRect(entry.badge);
+      const clip = row && markFrameRect(row);
+      if (!visible(entry.image) || !box || !clip || row?.hidden)
+        return {
+          ...message,
+          concealed: isRendered(entry.image) ? 'offscreen' : 'hidden',
+        };
+      if (
+        box.left < clip.left + ROW_PADDING - 0.5 ||
+        box.left + box.width > clip.left + clip.width - ROW_PADDING + 0.5
+      )
+        return { ...message, concealed: 'offscreen' };
+      return { ...message, rect: box };
     },
     repaint(): void {
       if (!enabled || disposed) return;
@@ -1491,6 +1599,16 @@ function setupImageMarks(
     },
     quiet(ids: readonly string[]): void {
       quietIds = new Set(ids);
+      for (const entry of entries.values())
+        entry.badge?.classList.toggle(
+          'is-resolved',
+          quietIds.has(entry.mark.id)
+        );
+    },
+    pair(id: string, active: boolean): void {
+      if (active) pairedIds.add(id);
+      else pairedIds.delete(id);
+      entries.get(id)?.badge?.classList.toggle('is-paired', active);
     },
     paint(mark: ImageFrameMark): void {
       if (!enabled) {
@@ -1537,6 +1655,7 @@ function setupImageMarks(
             )
               return;
             img.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            revealBadge(entry);
             schedule();
           })
           .catch(() => {});
@@ -1630,6 +1749,8 @@ export function setupFrameInteraction(
     document: Document,
     id: string
   ): FrameMarkRectMessage => {
+    const image = imageMarks.rect(id);
+    if (image) return image;
     const concealed = concealedIds.get(id);
     if (concealed !== undefined) {
       return { type: 'relic:frame-mark-rect', id, concealed };
@@ -1835,7 +1956,7 @@ export function setupFrameInteraction(
     if (
       typeof target?.closest === 'function' &&
       target.closest(
-        '.relic-region-mark, .relic-pin-mark, .relic-image-control, .relic-image-mark'
+        '.relic-region-mark, .relic-pin-mark, .relic-image-row'
       ) !== null
     ) {
       return;
@@ -2158,6 +2279,7 @@ export function setupFrameInteraction(
     },
 
     onPairMark(id: string, active: boolean) {
+      imageMarks.pair(id, active);
       if (!doc.body) return;
       const targets = doc.body.querySelectorAll(`[data-comment-id="${id}"]`);
       for (const target of Array.from(targets)) {
@@ -2935,6 +3057,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       onTrackMark: (id) => interaction?.onTrackMark?.(id),
       onFrameVisibility: (visible) => interaction?.onFrameVisibility?.(visible),
       onActiveMark: (id) => interaction?.onActiveMark?.(id),
+      onQuietMarks: (ids) => interaction?.onQuietMarks?.(ids),
       onRevealChange: (changeId, top) =>
         interaction?.onRevealChange?.(changeId, top),
       onSetScroll: (fraction) => interaction?.onSetScroll?.(fraction),
