@@ -105,5 +105,37 @@ export const REGISTER_SW_JS = `if ('serviceWorker' in navigator) {
     // viewers continue to function online even if caching cannot be established.
     console.warn('Service worker registration failed:', error);
   });
+
+  // Recovery for a shell the worker cached before its code-split chunks were
+  // part of the cache: viewer.js then imports a chunk the server no longer
+  // has, the module graph fails, and the page never leaves its static plate.
+  // The viewer marks the document once it has run, so a loaded page without
+  // the mark is that failure. Drop the worker and its caches and reload once;
+  // the fragment is still in the URL because the viewer never reached it.
+  window.addEventListener('load', () => {
+    if (document.documentElement.dataset.viewerBooted === '1') {
+      try {
+        sessionStorage.removeItem('relic:shell-heal');
+      } catch {}
+      return;
+    }
+    if (!document.querySelector('script[src="/assets/viewer.js"]')) return;
+    try {
+      if (sessionStorage.getItem('relic:shell-heal') !== null) return;
+      sessionStorage.setItem('relic:shell-heal', '1');
+    } catch {
+      return;
+    }
+    void (async () => {
+      try {
+        for (const reg of await navigator.serviceWorker.getRegistrations()) {
+          await reg.unregister();
+        }
+        for (const name of await caches.keys()) await caches.delete(name);
+      } finally {
+        location.reload();
+      }
+    })();
+  });
 }
 `;

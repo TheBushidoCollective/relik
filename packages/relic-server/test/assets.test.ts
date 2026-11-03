@@ -56,6 +56,16 @@ describe('asset serving', () => {
     expect(await response.text()).toContain("register('/sw.js')");
   });
 
+  test('register-sw recovers a page whose viewer module never booted', async () => {
+    const response = await app().fetch(get('/assets/register-sw.js'));
+    const script = await response.text();
+    // The viewer marks the document when it runs; the recovery keys on that
+    // mark and retries once per tab, so a still-broken page cannot loop.
+    expect(script).toContain('viewerBooted');
+    expect(script).toContain('relic:shell-heal');
+    expect(script).toContain('location.reload()');
+  });
+
   test('sets nosniff and no-referrer', async () => {
     const response = await app().fetch(get('/assets/viewer.js'));
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');

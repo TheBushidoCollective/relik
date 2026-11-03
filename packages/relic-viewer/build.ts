@@ -250,11 +250,23 @@ export async function buildViewer(options?: {
     )
   );
 
-  // Compute the shell asset hash across viewer.js, styles.css, and manifest.webmanifest.
-  // This build identity is injected into sw.ts so SHELL_CACHE changes on every deploy
-  // that modifies shell assets, making sw.js byte-different and forcing an update.
+  // Compute the shell asset hash across viewer.js, every code-split chunk it
+  // can import, styles.css, and manifest.webmanifest. The chunks are part of
+  // the shell: viewer.js imports them by content-hashed name, so a cached
+  // viewer.js without its chunks 404s on the first load after a deploy and
+  // the page never leaves its static plate. This build identity is injected
+  // into sw.ts so SHELL_CACHE changes on every deploy that modifies shell
+  // assets, making sw.js byte-different and forcing an update.
+  const chunkPaths = built.outputs
+    .filter((output) => output.kind === 'chunk')
+    .map((output) => `/assets/${output.path.split('/').pop()}`)
+    .sort();
   const shellAssetFiles = [
     { path: '/assets/viewer.js', file: `${out}viewer.js` },
+    ...chunkPaths.map((path) => ({
+      path,
+      file: `${out}${path.slice('/assets/'.length)}`,
+    })),
     { path: '/assets/styles.css', file: `${out}styles.css` },
     { path: '/manifest.webmanifest', file: `${out}manifest.webmanifest` },
   ];
@@ -283,6 +295,7 @@ export async function buildViewer(options?: {
       'process.env.NODE_ENV': '"production"',
       __BUILD_HASH__: JSON.stringify(buildHash),
       __SHELL_CACHE__: JSON.stringify(`relic-shell-${buildHash}`),
+      __SHELL_ASSETS__: JSON.stringify(shellAssetFiles.map((a) => a.path)),
     },
   });
 
