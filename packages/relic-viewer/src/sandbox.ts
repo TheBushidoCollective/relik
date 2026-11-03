@@ -888,6 +888,13 @@ function setupImageMarks(
     hashes.set(img, { source: value, hash });
     return hash;
   };
+  const hasInvalidTagCharacter = (tag: string): boolean => {
+    for (const character of tag) {
+      const code = character.charCodeAt(0);
+      if (code <= 31 || code === 127 || /[\s<>/]/u.test(character)) return true;
+    }
+    return false;
+  };
   const pathFor = (img: HTMLImageElement): ImagePath | undefined => {
     const path: { tag: string; index: number }[] = [];
     let node: Element | null = img;
@@ -899,7 +906,7 @@ function setupImageMarks(
         isOwned(node) ||
         tag.length === 0 ||
         tag.length > 64 ||
-        /[\s\u0000-\u001f\u007f<>\/]/u.test(tag)
+        hasInvalidTagCharacter(tag)
       )
         return undefined;
       let index = 0;
@@ -924,7 +931,7 @@ function setupImageMarks(
         step.tag.length === 0 ||
         step.tag.length > 64 ||
         step.tag !== step.tag.toLowerCase() ||
-        /[\s\u0000-\u001f\u007f<>\/]/u.test(step.tag) ||
+        hasInvalidTagCharacter(step.tag) ||
         !Number.isInteger(step.index) ||
         step.index < 0 ||
         step.index > 0xffffffff
@@ -978,10 +985,10 @@ function setupImageMarks(
   const remove = (entry: Entry): void => {
     entry.badge?.remove();
     entry.outline?.remove();
-    entry.badge = undefined;
-    entry.outline = undefined;
-    entry.image = undefined;
-    entry.declaration = undefined;
+    delete entry.badge;
+    delete entry.outline;
+    delete entry.image;
+    delete entry.declaration;
   };
   const position = (el: HTMLElement, rect: FrameRect, offset = 0): void => {
     const right = Math.min(

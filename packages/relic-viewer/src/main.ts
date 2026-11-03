@@ -4000,10 +4000,7 @@ export function anchorSurfaceFor(host: HTMLElement): AnchorSurface | undefined {
   const only = candidates.item?.(0) ?? candidates[0];
   return {
     host,
-    content:
-      only instanceof HTMLElement || (only && typeof only === 'object')
-        ? (only as HTMLElement)
-        : host,
+    content: only ? (only as HTMLElement) : host,
   };
 }
 
@@ -6332,9 +6329,9 @@ export function buildThread(
           return;
         }
         cardGeneration++;
-        activePanel
-          .querySelector<HTMLElement>('.popover-dismiss')
-          ?.setAttribute('hidden', '');
+        const dismiss =
+          activePanel.querySelector<HTMLElement>('.popover-dismiss');
+        if (dismiss) dismiss.hidden = true;
         const composer = inlineComposer({
           placeholder: `Reply to ${plainLabel(entry.author ?? 'this comment')}`,
           submitLabel: 'Post reply',

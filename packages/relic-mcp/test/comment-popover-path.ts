@@ -1220,6 +1220,29 @@ console.log('Testing Class 1: Markdown...');
       if (!(button instanceof HTMLButtonElement)) throw new Error('dismiss is not a button');
       if (button.textContent.trim() !== 'Dismiss') throw new Error('dismiss text missing');
       if (button.getAttribute('aria-label') !== 'Dismiss comment overlay') throw new Error('dismiss accessible name missing');
+      const trace = [];
+      window.__dismissProofTrace = trace;
+      const describe = node => node instanceof Element
+        ? { tag: node.tagName, classes: node.className, id: node.id }
+        : null;
+      for (const type of ['focusin', 'keydown', 'click']) {
+        document.addEventListener(type, event => {
+          trace.push({ type, key: event.key, target: describe(event.target),
+            cardPresent: !!document.querySelector('.popover-card') });
+        }, true);
+      }
+      new MutationObserver(records => {
+        for (const record of records) {
+          for (const node of record.removedNodes) {
+            if (node instanceof Element && (node.matches('.popover-card') || node.querySelector('.popover-card')))
+              trace.push({ type: 'card-removed', node: describe(node) });
+          }
+          for (const node of record.addedNodes) {
+            if (node instanceof Element && (node.matches('.popover-card') || node.querySelector('.popover-card')))
+              trace.push({ type: 'card-added', node: describe(node) });
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
       button.focus();
       return { id: card.dataset.commentId, text: card.textContent };
     })()`);
@@ -1228,21 +1251,38 @@ console.log('Testing Class 1: Markdown...');
       key: 'Enter',
       code: 'Enter',
       windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+      text: '\r',
+      unmodifiedText: '\r',
     });
     await session.send('Input.dispatchKeyEvent', {
       type: 'keyUp',
       key: 'Enter',
       code: 'Enter',
       windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
     });
-    await session.waitFor("document.querySelector('.popover-card') === null");
+    try {
+      await session.waitFor("document.querySelector('.popover-card') === null");
+    } catch (error) {
+      console.error(
+        'Dismiss keyboard trace:',
+        await session.evaluate('window.__dismissProofTrace')
+      );
+      throw error;
+    }
     await Bun.sleep(250);
+    const dismissedState = await session.evaluate<{
+      closed: boolean;
+      trace: unknown[];
+    }>(`({
+      closed: document.querySelector('.popover-card') === null,
+      trace: window.__dismissProofTrace,
+    })`);
     assert.equal(
-      await session.evaluate(
-        "document.querySelector('.popover-card') === null"
-      ),
+      dismissedState.closed,
       true,
-      'focus restoration or a late continuation reopened the dismissed card'
+      `focus restoration or a late continuation reopened the dismissed card: ${JSON.stringify(dismissedState.trace)}`
     );
     assert.equal(
       await session.evaluate<boolean>(

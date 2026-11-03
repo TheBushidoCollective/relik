@@ -338,6 +338,22 @@ try {
     "document.querySelectorAll('.relic-image-control').length === 3",
     frame
   );
+  await evaluate(
+    `(() => {
+    window.__proofInputEvents = [];
+    for (const type of ['keydown', 'keyup', 'pointerdown', 'pointerup', 'click', 'focusin']) {
+      document.addEventListener(type, event => {
+        const target = event.target;
+        window.__proofInputEvents.push({
+          type, trusted: event.isTrusted, key: event.key ?? null,
+          target: target instanceof Element ? target.outerHTML.slice(0, 240) : null,
+          active: document.activeElement?.outerHTML.slice(0, 240) ?? null
+        });
+      }, true);
+    }
+  })()`,
+    frame
+  );
   const sandbox = await evaluate<string>(
     "document.querySelector('iframe.usercontent-frame').getAttribute('sandbox')"
   );
@@ -363,6 +379,23 @@ try {
       frame
     );
     await Bun.sleep(150);
+    const mode =
+      body === 'Another first image comment'
+        ? 'keyboard'
+        : index === 1
+          ? 'touch'
+          : 'pointer';
+    const before = await evaluate<unknown>(
+      `(() => {
+      const control=document.querySelectorAll('.relic-image-control')[${index}];
+      const image=document.querySelectorAll('img')[${index}];
+      const rect=control.getBoundingClientRect();
+      const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+      return {control:control.outerHTML, image:image.outerHTML, rect:rect.toJSON(), hit:hit?.outerHTML.slice(0,240), active:document.activeElement?.outerHTML.slice(0,240)};
+    })()`,
+      frame
+    );
+    console.log('IMAGE_ACTIVATION', JSON.stringify({ index, mode, before }));
     if (body === 'Another first image comment') {
       await evaluate(
         `document.querySelectorAll('.relic-image-control')[${index}].focus()`,
@@ -373,6 +406,8 @@ try {
         key: 'Enter',
         code: 'Enter',
         windowsVirtualKeyCode: 13,
+        text: '\r',
+        unmodifiedText: '\r',
         nativeVirtualKeyCode: 13,
       });
       await send('Input.dispatchKeyEvent', {
@@ -385,9 +420,45 @@ try {
     } else {
       await frameClick('.relic-image-control', frame, index, index === 1);
     }
-    await wait(
-      "document.querySelector('.popover-card.popover-composer textarea.popover-field')"
-    );
+    try {
+      await wait(
+        "document.querySelector('.popover-card.popover-composer textarea.popover-field')"
+      );
+    } catch (error) {
+      const frameState = await evaluate<{
+        rect?: { left: number; top: number; width: number; height: number };
+        hit?: string;
+        active?: string;
+        events?: unknown[];
+      }>(
+        `(() => {
+        const control=document.querySelectorAll('.relic-image-control')[${index}];
+        const rect=control?.getBoundingClientRect();
+        const hit=rect && document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+        return {rect:rect?.toJSON(), hit:hit?.outerHTML.slice(0,240), active:document.activeElement?.outerHTML.slice(0,240), events:window.__proofInputEvents};
+      })()`,
+        frame
+      );
+      const parentState = await evaluate<unknown>(`(() => {
+        const frame=document.querySelector('iframe.usercontent-frame');
+        const rect=frame?.getBoundingClientRect();
+        const thread=document.querySelector('.thread');
+        const childRect=${JSON.stringify(frameState.rect ?? null)};
+        const x=rect && childRect ? rect.left+childRect.left+childRect.width/2 : null;
+        const y=rect && childRect ? rect.top+childRect.top+childRect.height/2 : null;
+        const hit=x !== null && y !== null ? document.elementFromPoint(x,y) : null;
+        return {frame:rect?.toJSON(), point:{x,y}, hit:hit?.outerHTML.slice(0,240),
+          active:document.activeElement?.outerHTML.slice(0,240),
+          popover:document.querySelector('.popover')?.outerHTML.slice(0,1200),
+          sidebar:thread?.outerHTML.slice(0,1200),
+          messages:(window.__proofMessages ?? []).map(m => ({type:m?.type, status:m?.status}))};
+      })()`);
+      throw new Error(
+        'Image activation failed: ' +
+          JSON.stringify({ index, mode, before, frameState, parentState }),
+        { cause: error }
+      );
+    }
     assert.match(
       await evaluate<string>(
         "document.querySelector('.popover-composer .popover-target').textContent"
@@ -562,11 +633,11 @@ try {
   );
   await Bun.sleep(150);
   await frameClick(`.relic-image-mark[data-comment-id="${ids[0]}"]`, frame);
-  await wait('.popover-card .popover-edit');
+  await wait("document.querySelector('.popover-card .popover-edit')");
   await evaluate(
     "document.querySelector('.popover-card .popover-edit').click()"
   );
-  await wait('.popover-card textarea.popover-field');
+  await wait("document.querySelector('.popover-card textarea.popover-field')");
   await evaluate(
     `(() => { const field=document.querySelector('.popover-card textarea.popover-field'); field.value='Edited first image comment'; field.dispatchEvent(new Event('input',{bubbles:true})); })()`
   );

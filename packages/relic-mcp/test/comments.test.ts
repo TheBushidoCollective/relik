@@ -988,7 +988,7 @@ describe('anchor round-trip through write and read tools', () => {
   test('image anchors round-trip sealed and resolve only in a browser', async () => {
     const relicId = await publishFixture();
     const anchor = {
-      kind: 'image',
+      kind: 'image' as const,
       path: [
         { tag: 'main', index: 0 },
         { tag: 'x-café', index: 0 },

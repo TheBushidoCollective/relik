@@ -566,6 +566,14 @@ function parseAnchor(value: unknown): CommentAnchor | null {
         `image anchor path must have 1 to ${COMMENT_ANCHOR_IMAGE_MAX_DEPTH} steps`
       );
     }
+    const hasInvalidTagCharacter = (tag: string): boolean => {
+      for (const character of tag) {
+        const code = character.charCodeAt(0);
+        if (code <= 31 || code === 127 || /[\s<>/]/u.test(character))
+          return true;
+      }
+      return false;
+    };
     const path = rawPath.map((rawStep: unknown) => {
       if (
         typeof rawStep !== 'object' ||
@@ -585,7 +593,7 @@ function parseAnchor(value: unknown): CommentAnchor | null {
         tag.length === 0 ||
         tag.length > COMMENT_ANCHOR_IMAGE_MAX_TAG_LENGTH ||
         tag !== tag.toLowerCase() ||
-        /[\s\u0000-\u001f\u007f<>\/]/u.test(tag)
+        hasInvalidTagCharacter(tag)
       ) {
         throw new MalformedCommentError('image anchor path tag is invalid');
       }
