@@ -224,6 +224,8 @@ class MockMedia {
   >();
   private nextRvfcHandle = 1;
   hasRvfc = false;
+  presentationLag = false;
+  presentedTime: number | null = null;
 
   requestVideoFrameCallback?(
     cb: (
@@ -277,6 +279,21 @@ class MockMedia {
     }
   }
 
+  // Presents the frame at mediaTime (default: the element's currentTime) and
+  // wakes rVFC. In presentationLag mode a seek moves currentTime only, so the
+  // decoder keeps showing its previous frame until this is called.
+  present(mediaTime: number = this.time): void {
+    this.presentedTime = mediaTime;
+    if (this.pixelAt) {
+      this.pixel = this.pixelAt(mediaTime);
+    }
+    const cbs = Array.from(this.rvfcCallbacks.values());
+    this.rvfcCallbacks.clear();
+    for (const cb of cbs) {
+      cb(0, { mediaTime });
+    }
+  }
+
   private time = 0;
   private source = '';
   readonly attrs = new Map<string, string>();
@@ -305,7 +322,7 @@ class MockMedia {
   set currentTime(value: number) {
     this.seekTargets.push(value);
     this.time = value;
-    if (this.pixelAt) {
+    if (this.pixelAt && !this.presentationLag) {
       this.pixel = this.pixelAt(value);
     }
     queueMicrotask(() => {
@@ -370,6 +387,43 @@ async function waitForRvfc(media: MockMedia, maxYields = 50): Promise<void> {
     await promise;
   }
   throw new Error('waitForRvfc timed out: no callback registered');
+}
+
+// Stubs the presentation clock for bounded waits: setTimeout callbacks run on
+// the next microtask and advance a fake performance.now() by their delay, so a
+// 1000 ms deadline completes without real sleeps.
+function installFakePresentClock(): { now(): number; restore(): void } {
+  let fakeNow = 0;
+  let nextId = 1;
+  const cancelled = new Set<unknown>();
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const originalNow = Object.getOwnPropertyDescriptor(performance, 'now');
+  globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number) => {
+    const id = nextId++;
+    queueMicrotask(() => {
+      if (cancelled.has(id)) return;
+      fakeNow += ms ?? 0;
+      fn();
+    });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id: unknown) => {
+    cancelled.add(id);
+  }) as typeof clearTimeout;
+  Object.defineProperty(performance, 'now', {
+    configurable: true,
+    value: () => fakeNow,
+  });
+  return {
+    now: () => fakeNow,
+    restore() {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+      if (originalNow) Object.defineProperty(performance, 'now', originalNow);
+      else delete (performance as unknown as { now?: unknown }).now;
+    },
+  };
 }
 
 async function startNative(
@@ -453,8 +507,12 @@ class MockVideoFrame {
     if (MockVideoFrame.throwInConstructor) {
       throw new Error('VideoFrame constructor failed');
     }
-    const media = source as { currentTime?: number; pixel?: Pixel };
-    const timeSeconds = media.currentTime ?? 0;
+    const media = source as {
+      currentTime?: number;
+      pixel?: Pixel;
+      presentedTime?: number | null;
+    };
+    const timeSeconds = media.presentedTime ?? media.currentTime ?? 0;
     let effectiveSeconds = timeSeconds;
     for (const r of [30, 24]) {
       const k = Math.floor(timeSeconds * r + 1e-4);
@@ -5646,6 +5704,7 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
       readVideoTiming: fixture.readVideoTiming,
     });
 
+    const clock = installFakePresentClock();
     try {
       await playback.seek({ value: 0, rate: 30 });
       const videoMedia = created.find((m) => m.src.includes('media/clip.mp4'));
@@ -5659,31 +5718,210 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
       await playback.play();
       expect(playback.getState().playing).toBe(true);
 
-      // Attempt 0 failed and attempt 1 retried: exactly 2 VideoFrame constructions occurred
-      expect(MockVideoFrame.constructions).toBe(2);
+      // Decision (S3/S4): a paused leaf paints only a frame the decoder presents
+      // for its certified window, so every VideoFrame read during a wait is
+      // counted, and each read is closed. The count is no longer exactly two.
+      expect(MockVideoFrame.constructions).toBeGreaterThanOrEqual(2);
 
       // Both attempts failed: falls back to seek cadence, decoders paused, 0 callbacks
       expect(videoMedia!.paused).toBe(true);
       expect(videoMedia!.rvfcCallbacks.size).toBe(0);
+      // The mismatched frame is never painted: each wait ends at the deadline,
+      // the leaf is withheld, and invalid-timing names frame 5 against frame 0.
+      expect(
+        playback.getState().diagnostics.some((d) => d.code === 'invalid-timing')
+      ).toBe(true);
 
       // Subsequent ticks run in seek cadence and trigger seeks
       const initialSeeks = videoMedia!.seekTargets.length;
       const beforeTick = rafScheduled;
       raf?.(100);
       // The next RAF is scheduled only after the asynchronous render finishes.
-      for (let i = 0; i < 100 && rafScheduled === beforeTick; i++)
+      for (let i = 0; i < 5000 && rafScheduled === beforeTick; i++)
         await Promise.resolve();
       expect(rafScheduled).toBeGreaterThan(beforeTick);
       raf?.(200);
       for (
         let i = 0;
-        i < 100 && videoMedia!.seekTargets.length === initialSeeks;
+        i < 5000 && videoMedia!.seekTargets.length === initialSeeks;
         i++
       )
         await Promise.resolve();
       expect(videoMedia!.seekTargets.length).toBeGreaterThan(initialSeeks);
     } finally {
       MockVideoFrame.timestampOverride = null;
+      playback.dispose();
+      clock.restore();
+    }
+  });
+
+  test('T1 (S4): a stale decoder frame at seeked keeps buffering and the old pixel until the verified frame is presented', async () => {
+    const mediaBlob = new Blob(['presentation lag video'], {
+      type: 'video/mp4',
+    });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+    const doc = sampledMediaDocument({ kind: 'Video', rate: 30, duration: 60 });
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(media).toBeDefined();
+      media!.enableRvfc();
+      media!.pixelAt = (s) => ({
+        r: 100 + Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      media!.presentationLag = true;
+      media!.present(); // the decoder shows frame 0 before the seek
+      const before = outCanvas.pixel.r;
+      MockVideoFrame.reset();
+
+      const pending = playback.seek({ value: 5, rate: 30 });
+      await waitForRvfc(media!);
+      expect(playback.getState().buffering).toBe(true);
+      expect(outCanvas.pixel.r).toBe(before);
+
+      media!.present(); // frame 5 is presented; rVFC wakes the render
+      await pending;
+      expect(playback.getState().buffering).toBe(false);
+      expect(outCanvas.pixel.r).toBe(105);
+      expect(MockVideoFrame.constructions).toBeGreaterThan(0);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('T2 (S4): the wrong window is never painted; at the deadline the leaf is withheld with invalid-timing', async () => {
+    const mediaBlob = new Blob(['wrong window video'], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+    const doc = sampledMediaDocument({ kind: 'Video', rate: 30, duration: 60 });
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    const clock = installFakePresentClock();
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(media).toBeDefined();
+      media!.enableRvfc();
+      media!.pixelAt = (s) => ({
+        r: 100 + Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      media!.presentationLag = true;
+      media!.present(3.5 / 30); // the decoder settles on frame 3; frame 5 is required
+      MockVideoFrame.reset();
+
+      await playback.seek({ value: 5, rate: 30 });
+
+      const state = playback.getState();
+      expect(state.buffering).toBe(false);
+      // The leaf is withheld: the output is black, never the frame-3 pixel (103).
+      expect(outCanvas.pixel.r).toBe(0);
+      const issue = state.diagnostics.find((d) => d.code === 'invalid-timing');
+      expect(issue?.message).toContain(
+        'Decoder presented window 3 instead of certified window 5'
+      );
+      expect(media!.rvfcCallbacks.size).toBe(0);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      clock.restore();
+      playback.dispose();
+    }
+  });
+
+  test('T3 (S4): identity unavailable (timestamp at the midpoint) paints the element at once with no rVFC and no diagnostic', async () => {
+    const mediaBlob = new Blob(['identity unavailable video'], {
+      type: 'video/mp4',
+    });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+    const doc = sampledMediaDocument({ kind: 'Video', rate: 30, duration: 60 });
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = created.find((m) => m.src.includes('media/clip.mp4'));
+      expect(media).toBeDefined();
+      media!.enableRvfc();
+      media!.pixelAt = (s) => ({
+        r: 100 + Math.floor(s * 30 + 1e-4),
+        g: 0,
+        b: 0,
+        a: 1,
+      });
+      // A decoder whose timestamp is the midpoint cannot identify its frame.
+      MockVideoFrame.timestampOverride = Math.round(((5 + 0.5) / 30) * 1e6);
+      try {
+        await playback.seek({ value: 5, rate: 30 });
+      } finally {
+        MockVideoFrame.timestampOverride = null;
+      }
+
+      expect(outCanvas.pixel.r).toBe(105);
+      expect(media!.rvfcCallbacks.size).toBe(0);
+      const state = playback.getState();
+      expect(state.buffering).toBe(false);
+      expect(state.diagnostics.some((d) => d.code === 'invalid-timing')).toBe(
+        false
+      );
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
       playback.dispose();
     }
   });
