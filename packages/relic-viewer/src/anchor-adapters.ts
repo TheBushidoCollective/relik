@@ -33,6 +33,7 @@
 
 import { registerAnchorAdapter, resetAnchorAdapters } from './anchoring.ts';
 import {
+  frameImageAdapter,
   framePinAdapter,
   frameQuoteAdapter,
   frameRegionAdapter,
@@ -50,6 +51,7 @@ export function registerBuiltInAnchorAdapters(): void {
   // is the narrower test; asking the page-DOM adapters first would let them
   // answer for a document they cannot reach into.
   registerAnchorAdapter(frameQuoteAdapter);
+  registerAnchorAdapter(frameImageAdapter);
   registerAnchorAdapter(frameRegionAdapter);
   // The only adapter for a point. A point on the page's own DOM is drawn by
   // the stage over its own scroll and never asks the table.

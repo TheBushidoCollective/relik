@@ -37,6 +37,8 @@ import {
   COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES,
   COMMENT_ANCHOR_QUOTE_LIMIT_BYTES,
   type CommentAnchor,
+  type ImageCommentAnchor,
+  parseImageCommentAnchor,
 } from '@relic/format';
 import type { AnchorAdapter, AnchorSurface } from './anchoring.ts';
 
@@ -197,6 +199,65 @@ export function isFrameRect(data: unknown): data is FrameRect {
   const width = rect.width as number;
   const height = rect.height as number;
   return width >= 0 && height >= 0;
+}
+
+/** A reader explicitly chose an image in the isolated frame. */
+export interface FrameImageMessage {
+  readonly type: 'relic:frame-image';
+  readonly anchor: ImageCommentAnchor;
+  readonly box: FrameRect;
+}
+
+function isImageAnchor(value: unknown): value is ImageCommentAnchor {
+  try {
+    parseImageCommentAnchor(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isFrameImageMessage(data: unknown): data is FrameImageMessage {
+  if (typeof data !== 'object' || data === null) return false;
+  const msg = data as Record<string, unknown>;
+  return (
+    msg.type === 'relic:frame-image' &&
+    isImageAnchor(msg.anchor) &&
+    isFrameRect(msg.box) &&
+    msg.box.width > 0 &&
+    msg.box.height > 0
+  );
+}
+
+export interface FrameImagePlacementMessage {
+  readonly type: 'relic:frame-image-placement';
+  readonly id: string;
+  readonly requestId: number;
+  readonly status: 'placed' | 'unavailable';
+  readonly rect?: FrameRect;
+}
+
+export function isFrameImagePlacementMessage(
+  data: unknown
+): data is FrameImagePlacementMessage {
+  if (typeof data !== 'object' || data === null) return false;
+  const msg = data as Record<string, unknown>;
+  if (
+    msg.type !== 'relic:frame-image-placement' ||
+    typeof msg.id !== 'string' ||
+    msg.id.length === 0 ||
+    msg.id.length > 256 ||
+    !Number.isSafeInteger(msg.requestId) ||
+    (msg.requestId as number) <= 0
+  )
+    return false;
+  if (msg.status === 'unavailable') return msg.rect === undefined;
+  return (
+    msg.status === 'placed' &&
+    isFrameRect(msg.rect) &&
+    msg.rect.width > 0 &&
+    msg.rect.height > 0
+  );
 }
 
 /**
@@ -518,6 +579,13 @@ export type FrameMarkPayload =
       readonly kind: 'pin';
       readonly x: number;
       readonly y: number;
+    }
+  | {
+      readonly id: string;
+      readonly kind: 'image';
+      readonly path: ImageCommentAnchor['path'];
+      readonly source_sha256: string;
+      readonly requestId: number;
     };
 
 export function isValidFrameMarkPayload(
@@ -557,6 +625,17 @@ export function isValidFrameMarkPayload(
       return false;
     }
     return true;
+  }
+  if (mark.kind === 'image') {
+    return (
+      Number.isSafeInteger(mark.requestId) &&
+      (mark.requestId as number) > 0 &&
+      isImageAnchor({
+        kind: 'image',
+        path: mark.path,
+        source_sha256: mark.source_sha256,
+      })
+    );
   }
   if (mark.kind === 'region') {
     return isValidAnchorRect(mark.rect);
@@ -687,6 +766,73 @@ function frameWindow(surface: AnchorSurface): Window | undefined {
   }
   return undefined;
 }
+
+interface ImageRequestState {
+  next: number;
+  readonly current: Map<string, number>;
+}
+
+// Surface objects are reconstructed during painting. The iframe itself is
+// the stable identity, and a removed iframe must not keep its requests alive.
+const imageRequests = new WeakMap<object, ImageRequestState>();
+
+function imageRequestState(surface: AnchorSurface): ImageRequestState {
+  const frame = surface.content;
+  let state = imageRequests.get(frame);
+  if (!state) {
+    state = { next: 0, current: new Map() };
+    imageRequests.set(frame, state);
+  }
+  return state;
+}
+
+export function invalidateImageMarkRequests(
+  surface: AnchorSurface,
+  id?: string
+): void {
+  const state = imageRequests.get(surface.content);
+  if (!state) return;
+  if (id === undefined) state.current.clear();
+  else state.current.delete(id);
+}
+
+export function isCurrentImageMarkRequest(
+  surface: AnchorSurface,
+  id: string,
+  requestId: number
+): boolean {
+  return imageRequests.get(surface.content)?.current.get(id) === requestId;
+}
+
+export const frameImageAdapter: AnchorAdapter<'image'> = {
+  kind: 'image',
+  label: () => 'Commenting on an image',
+  supports: isFrameSurface,
+  paint(surface, _overlay, anchor, id): boolean {
+    if (!isFrameSurface(surface)) return false;
+    const win = frameWindow(surface);
+    if (!win) return false;
+    const state = imageRequestState(surface);
+    if (state.next >= Number.MAX_SAFE_INTEGER) return false;
+    const requestId = ++state.next;
+    state.current.set(id, requestId);
+    win.postMessage(
+      {
+        type: 'relic:paint-mark',
+        mark: { id, ...anchor, requestId },
+      } satisfies PaintMarkMessage,
+      '*'
+    );
+    return true;
+  },
+  reveal(surface, _anchor, id): void {
+    if (!id || !isFrameSurface(surface)) return;
+    frameWindow(surface)?.postMessage(
+      { type: 'relic:reveal-mark', id } satisfies RevealMarkMessage,
+      '*'
+    );
+  },
+};
 
 /**
  * Adapter for quote anchors targeting text rendered inside a sandboxed iframe.

@@ -3,9 +3,14 @@ import type { AnchorRect } from '@relic/format';
 import type { AnchorSurface } from '../src/anchoring.ts';
 import {
   type FrameMarkPayload,
+  frameImageAdapter,
   framePinAdapter,
   frameQuoteAdapter,
   frameRegionAdapter,
+  invalidateImageMarkRequests,
+  isCurrentImageMarkRequest,
+  isFrameImageMessage,
+  isFrameImagePlacementMessage,
   isArmPointingMessage,
   isClearMarkMessage,
   isClearMarksMessage,
@@ -1969,5 +1974,106 @@ describe('frame mark geometry and selection reporting', () => {
         expect(line).toContain('!important');
       }
     }
+  });
+});
+
+describe('image frame protocol', () => {
+  const anchor = {
+    kind: 'image' as const,
+    path: [
+      { tag: 'div', index: 0 },
+      { tag: 'img', index: 1 },
+    ],
+    source_sha256: 'a'.repeat(64),
+  };
+  const box = { left: 12, top: 20, width: 32, height: 32 };
+
+  test('validates image targets and correlated placement responses', () => {
+    expect(
+      isFrameImageMessage({ type: 'relic:frame-image', anchor, box })
+    ).toBe(true);
+    expect(
+      isFrameImageMessage({
+        type: 'relic:frame-image',
+        anchor: { ...anchor, source_sha256: 'A'.repeat(64) },
+        box,
+      })
+    ).toBe(false);
+    expect(
+      isFrameImageMessage({
+        type: 'relic:frame-image',
+        anchor: { ...anchor, path: [{ tag: 'img', index: -1 }] },
+        box,
+      })
+    ).toBe(false);
+    expect(
+      isFrameImageMessage({
+        type: 'relic:frame-image',
+        anchor,
+        box: { ...box, width: 0 },
+      })
+    ).toBe(false);
+    expect(
+      isPaintMarkMessage({
+        type: 'relic:paint-mark',
+        mark: { ...anchor, id: 'one', requestId: 1 },
+      })
+    ).toBe(true);
+    expect(
+      isPaintMarkMessage({
+        type: 'relic:paint-mark',
+        mark: { ...anchor, id: 'one', requestId: 0 },
+      })
+    ).toBe(false);
+    expect(
+      isFrameImagePlacementMessage({
+        type: 'relic:frame-image-placement',
+        id: 'one',
+        requestId: 1,
+        status: 'placed',
+        rect: box,
+      })
+    ).toBe(true);
+    expect(
+      isFrameImagePlacementMessage({
+        type: 'relic:frame-image-placement',
+        id: 'one',
+        requestId: 1,
+        status: 'placed',
+      })
+    ).toBe(false);
+    expect(
+      isFrameImagePlacementMessage({
+        type: 'relic:frame-image-placement',
+        id: 'one',
+        requestId: 1,
+        status: 'unavailable',
+        rect: box,
+      })
+    ).toBe(false);
+  });
+
+  test('repaint and invalidation reject old acknowledgments for the same iframe', () => {
+    const messages: Array<{ mark: { requestId: number } }> = [];
+    const iframe = makeElement('iframe', { class: 'usercontent-frame' });
+    (iframe as unknown as { contentWindow: object }).contentWindow = {
+      postMessage: (message: { mark: { requestId: number } }) =>
+        messages.push(message),
+    };
+    const surface = {
+      host: makeElement('div'),
+      content: iframe,
+    } as unknown as AnchorSurface;
+    const overlay = makeElement('div') as unknown as HTMLElement;
+    expect(frameImageAdapter.paint(surface, overlay, anchor, 'one')).toBe(true);
+    const first = messages[0]!.mark.requestId;
+    expect(isCurrentImageMarkRequest({ ...surface }, 'one', first)).toBe(true);
+    expect(frameImageAdapter.paint(surface, overlay, anchor, 'one')).toBe(true);
+    const second = messages[1]!.mark.requestId;
+    expect(second).toBeGreaterThan(first);
+    expect(isCurrentImageMarkRequest(surface, 'one', first)).toBe(false);
+    expect(isCurrentImageMarkRequest(surface, 'one', second)).toBe(true);
+    invalidateImageMarkRequests(surface, 'one');
+    expect(isCurrentImageMarkRequest(surface, 'one', second)).toBe(false);
   });
 });
