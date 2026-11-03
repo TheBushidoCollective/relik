@@ -9961,5 +9961,8 @@ export async function boot(
 }
 
 if (typeof document !== 'undefined') {
+  // register-sw.js reads this once the page has loaded: a viewer module whose
+  // graph failed to fetch never reaches this line.
+  document.documentElement.dataset['viewerBooted'] = '1';
   void boot();
 }
