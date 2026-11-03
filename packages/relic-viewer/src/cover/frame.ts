@@ -89,12 +89,12 @@ export async function renderFrameCover(
     if (data.type === 'relic:sandbox-ready') {
       if (kind === 'html') {
         iframe.contentWindow?.postMessage(
-          { type: 'relic:render', html: codeToSend },
+          { type: 'relic:render', html: codeToSend, cover: true },
           '*'
         );
       } else {
         iframe.contentWindow?.postMessage(
-          { type: 'relic:render-jsx', code: codeToSend },
+          { type: 'relic:render-jsx', code: codeToSend, cover: true },
           '*'
         );
       }

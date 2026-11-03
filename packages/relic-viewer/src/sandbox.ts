@@ -88,6 +88,7 @@ import {
 export interface RenderMessage {
   readonly type: 'relic:render';
   readonly html: string;
+  readonly cover?: boolean;
 }
 
 export function isRenderMessage(data: unknown): data is RenderMessage {
@@ -104,6 +105,7 @@ export function isRenderMessage(data: unknown): data is RenderMessage {
 export interface RenderJsxMessage {
   readonly type: 'relic:render-jsx';
   readonly code: string;
+  readonly cover?: boolean;
 }
 
 export function isRenderJsxMessage(data: unknown): data is RenderJsxMessage {
@@ -2266,7 +2268,7 @@ export function setupFrameInteraction(
  * requests once the frame has rendered.
  */
 export function createSandboxHandler(
-  write: (html: string) => void,
+  write: (html: string, imageControlsEnabled: boolean) => void,
   writeJsx: (code: string) => void,
   annotate: (
     marks: readonly Mark[],
@@ -2276,21 +2278,26 @@ export function createSandboxHandler(
 ): (data: unknown) => boolean {
   let rendered = false;
   let annotated = false;
+  let cover = false;
 
   return (data: unknown): boolean => {
     if (!rendered) {
       if (isRenderMessage(data)) {
         rendered = true;
-        write(data.html);
+        cover = data.cover === true;
+        write(data.html, !cover);
         return true;
       }
       if (isRenderJsxMessage(data)) {
         rendered = true;
+        cover = data.cover === true;
         writeJsx(data.code);
         return true;
       }
       return false;
     }
+
+    if (cover) return false;
 
     if (!annotated && isAnnotateMessage(data)) {
       annotated = true;
@@ -2897,13 +2904,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   }
 
   const handle = createSandboxHandler(
-    (html) => {
+    (html, imageControlsEnabled) => {
       document.open();
       installSandboxContainment(window, document);
       // Install the capture listener before authored inline scripts execute
       // during document.write. A script-triggered anchor click must never win
       // the race and replace the rendered relic before interaction is wired.
-      initInteraction(true);
+      initInteraction(imageControlsEnabled);
       document.write(sanitizeFrameHtml(html));
       document.close();
       listen();
