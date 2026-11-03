@@ -1008,7 +1008,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'to `relic_republish`, which requires every open comment to be addressed or ' +
     'resolved before a new version can land. ' +
     'Each comment can be a remark on the relic as a whole or an exact mark: ' +
-    'a text quote with surrounding context, a stage pin, an artifact region, ' +
+    'a text quote with surrounding context, an HTML image, a stage pin, an artifact region, ' +
     'a timestamp or span in audio or video, a page in a document, or an OTIO ' +
     'timeline point or range. ' +
     'Pass `version` to scope the thread: a version number returns the comments ' +
@@ -1023,7 +1023,8 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'resolve anchors against the actual content (source context runs for quotes, ' +
     'crops and annotated views for image regions, extracted video frames, and ' +
     'for OTIO the original revision\u2019s source intervals plus a separate ' +
-    'current-revision projection). An OTIO source location must identify an ' +
+    'current-revision projection). HTML image anchors require browser rendering ' +
+    'and do not return a crop. An OTIO source location must identify an ' +
     'actual Timeline.1 and, when selected, Track.1 within its original exposed ' +
     'range; ' +
     'that source validation happens before any current-revision request. An ' +
@@ -1151,6 +1152,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
                 'Can be a quote ({kind: "quote", exact, prefix?, suffix?}), ' +
                 'legacy text ({kind: "text", quote}), ' +
                 'stage pin ({kind: "pin", x, y}), ' +
+                'HTML image ({kind: "image", path: [{tag, index}], source_sha256}), ' +
                 'artifact region ({kind: "region", rect: {x, y, w, h}}), ' +
                 'media timestamp or span ({kind: "time", t, t_end?, rect?}), ' +
                 'paged document page ({kind: "page", page, rect?, exact?}), ' +
@@ -1163,6 +1165,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
                     'quote',
                     'text',
                     'pin',
+                    'image',
                     'region',
                     'time',
                     'page',
@@ -1176,6 +1179,25 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
                 suffix: { type: 'string' },
                 x: { type: 'number' },
                 y: { type: 'number' },
+                path: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 64,
+                  items: {
+                    type: 'object',
+                    properties: {
+                      tag: { type: 'string', minLength: 1, maxLength: 64 },
+                      index: {
+                        type: 'integer',
+                        minimum: 0,
+                        maximum: 4294967295,
+                      },
+                    },
+                    required: ['tag', 'index'],
+                    additionalProperties: false,
+                  },
+                },
+                source_sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
                 rect: {
                   type: 'object',
                   properties: {
@@ -1286,8 +1308,8 @@ export const COMMENT_TOOL_DEFINITION = {
     'one email per person per relic per 10 minutes, and one stop link stops ' +
     'every email about that relic. That is attribution and not ' +
     'authorization. ' +
-    'Comments can be anchored to an exact location: a text quote, a stage ' +
-    'pin, an artifact region, a moment or span in audio or video, a page ' +
+    'Comments can be anchored to an exact location: a text quote, an HTML image, ' +
+    'a stage pin, an artifact region, a moment or span in audio or video, a page ' +
     'in a document, or an OTIO timeline point or range. Passing an anchor attaches your reply at that location, ' +
     'so the reader sees what you are answering; omitting it leaves a remark ' +
     'about the whole relic. ' +
@@ -1327,6 +1349,7 @@ export const COMMENT_TOOL_DEFINITION = {
           'exactly what the comment is about. Can be a text selection ' +
           '({kind: "quote", exact, prefix?, suffix?} or {kind: "text", quote}), ' +
           'a point on the stage ({kind: "pin", x, y}), ' +
+          'an HTML image ({kind: "image", path: [{tag, index}], source_sha256}), ' +
           'a box on the artifact ({kind: "region", rect: {x, y, w, h}}), ' +
           'a moment or span in audio/video ({kind: "time", t, t_end?, rect?}, with t ' +
           'given as seconds or as a timecode like "1:23"), ' +
@@ -1337,7 +1360,16 @@ export const COMMENT_TOOL_DEFINITION = {
         properties: {
           kind: {
             type: 'string',
-            enum: ['quote', 'text', 'pin', 'region', 'time', 'page', 'otio'],
+            enum: [
+              'quote',
+              'text',
+              'pin',
+              'region',
+              'image',
+              'time',
+              'page',
+              'otio',
+            ],
             description: 'The kind of anchor mark.',
           },
           exact: {
@@ -1359,6 +1391,28 @@ export const COMMENT_TOOL_DEFINITION = {
             type: 'string',
             description:
               'For quote anchors: text immediately after the selection to disambiguate it, up to 128 bytes.',
+          },
+          path: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 64,
+            description:
+              'For HTML image anchors: lowercase element path from document.body, each index the zero-based ordinal among same-tag siblings. The last tag must be img; the encoded anchor is limited to 1536 UTF-8 bytes.',
+            items: {
+              type: 'object',
+              properties: {
+                tag: { type: 'string', minLength: 1, maxLength: 64 },
+                index: { type: 'integer', minimum: 0, maximum: 4294967295 },
+              },
+              required: ['tag', 'index'],
+              additionalProperties: false,
+            },
+          },
+          source_sha256: {
+            type: 'string',
+            pattern: '^[0-9a-f]{64}$',
+            description:
+              'For HTML image anchors: SHA-256 of authored image and picture source declarations, not image bytes.',
           },
           x: {
             type: 'number',
@@ -3043,6 +3097,8 @@ function resolutionLine(resolved: CommentRecord['resolved']): string {
       return `[Resolution note: ${resolved.explanation}]\n`;
 
     case 'pin':
+      return `[Resolution note: ${resolved.explanation}]\n`;
+    case 'image':
       return `[Resolution note: ${resolved.explanation}]\n`;
 
     case 'unsupported':

@@ -44,6 +44,7 @@ import {
   deriveCommentKey,
   encryptComment,
   isValidRelicId,
+  parseImageCommentAnchor,
 } from '@relic/format';
 import { mintRelic } from './inventory.ts';
 import {
@@ -1149,6 +1150,8 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
         `${Math.round(r.h * 100)}% high)`
       );
     }
+    case 'image':
+      return 'on an HTML image (browser rendering required to locate it)';
 
     case 'time': {
       const timeStr =
@@ -1454,6 +1457,15 @@ export function validateAndNormalizeAnchor(raw: unknown): CommentAnchor | null {
         'local_comment_anchor_unsupported',
         'unsupported is a parser output kind and cannot be written as a comment anchor.'
       );
+    case 'image':
+      try {
+        return parseImageCommentAnchor(obj);
+      } catch (error) {
+        throw new PublishError(
+          'local_comment_anchor_invalid',
+          `invalid image anchor: ${(error as Error).message}`
+        );
+      }
 
     case 'text': {
       const quoteVal = obj['quote'] ?? obj['exact'];

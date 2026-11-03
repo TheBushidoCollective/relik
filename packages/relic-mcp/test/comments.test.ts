@@ -925,6 +925,43 @@ describe('the machine boundary', () => {
 });
 
 describe('what an agent is told before it calls anything', () => {
+  test('image anchor schemas expose the locator on write and read', async () => {
+    const response = await handleMessage(
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      deps
+    );
+    const { tools } = response?.result as {
+      tools: Array<{
+        name: string;
+        inputSchema: { properties: Record<string, unknown> };
+        outputSchema: { properties: Record<string, unknown> };
+      }>;
+    };
+    const writeSchema = tools.find(
+      (tool) => tool.name === COMMENT_TOOL_NAME
+    )?.inputSchema;
+    const readSchema = tools.find(
+      (tool) => tool.name === READ_COMMENTS_TOOL_NAME
+    )?.outputSchema;
+    const inputAnchor = writeSchema?.properties['anchor'] as {
+      properties: Record<string, unknown>;
+    };
+    const outputComments = readSchema?.properties['comments'] as {
+      items: {
+        properties: { anchor: { properties: Record<string, unknown> } };
+      };
+    };
+    for (const anchor of [
+      inputAnchor,
+      outputComments.items.properties.anchor,
+    ]) {
+      const kind = anchor.properties['kind'] as { enum: string[] };
+      expect(kind.enum).toContain('image');
+      expect(anchor.properties['path']).toBeDefined();
+      expect(anchor.properties['source_sha256']).toBeDefined();
+    }
+  });
+
   test('both tools are listed with their machine boundary', async () => {
     const response = await handleMessage(
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
@@ -948,6 +985,107 @@ describe('what an agent is told before it calls anything', () => {
 });
 
 describe('anchor round-trip through write and read tools', () => {
+  test('image anchors round-trip sealed and resolve only in a browser', async () => {
+    const relicId = await publishFixture();
+    const anchor = {
+      kind: 'image',
+      path: [
+        { tag: 'main', index: 0 },
+        { tag: 'x-café', index: 0 },
+        { tag: 'picture', index: 1 },
+        { tag: 'img', index: 0 },
+      ],
+      source_sha256: 'a'.repeat(64),
+    };
+    const postedResult = await callTool(COMMENT_TOOL_NAME, {
+      relic_id: relicId,
+      body: 'Adjust this image.',
+      anchor,
+    });
+    expect(postedResult['isError']).toBe(false);
+    expect(JSON.stringify(posted[0])).not.toContain(anchor.source_sha256);
+    const key = await deriveCommentKey(decodeKey(await storedKey(relicId)));
+    const decrypted = await decryptComment(
+      key,
+      String(posted[0]?.['ciphertext'])
+    );
+    expect(decrypted.anchor).toEqual(anchor);
+
+    const read = await callTool(READ_COMMENTS_TOOL_NAME, {
+      relic_id: relicId,
+      version: '*',
+      resolve_anchors: true,
+    });
+    expect(read['isError']).toBe(false);
+    const structured = read['structuredContent'] as Record<string, unknown>;
+    const comments = structured['comments'] as Array<Record<string, unknown>>;
+    expect(comments[0]?.['body']).toBe('Adjust this image.');
+    expect(comments[0]?.['anchor']).toEqual(anchor);
+    expect(comments[0]?.['resolved']).toEqual({
+      kind: 'image',
+      status: 'unresolvable',
+      explanation:
+        'HTML image anchors require browser rendering to locate the image. No image crop or visual resolution is available through MCP.',
+    });
+    expect(containerDownloadCount).toBe(0);
+    const blocks = read['content'] as Array<Record<string, unknown>>;
+    expect(blocks.some((block) => block['type'] === 'image')).toBe(false);
+    expect(JSON.stringify(blocks)).toContain('browser rendering');
+  });
+
+  test('rejects malformed or oversized image anchors at the tool boundary', async () => {
+    const relicId = await publishFixture();
+    const good = {
+      kind: 'image',
+      path: [{ tag: 'img', index: 0 }],
+      source_sha256: 'a'.repeat(64),
+    };
+    const invalid = [
+      { ...good, unexpected: true },
+      { ...good, path: [] },
+      { ...good, path: [{ tag: 'IMG', index: 0 }] },
+      { ...good, path: [{ tag: 'img', index: -1 }] },
+      { ...good, path: [{ tag: 'img', index: 4294967296 }] },
+      { ...good, path: [{ tag: 'img', index: 0.5 }] },
+      { ...good, path: [{ tag: 'img', index: 0, extra: true }] },
+      { ...good, path: [{ tag: 'div', index: 0 }] },
+      {
+        ...good,
+        path: Array.from({ length: 65 }, () => ({ tag: 'img', index: 0 })),
+      },
+      {
+        ...good,
+        path: [
+          { tag: 'a'.repeat(65), index: 0 },
+          { tag: 'img', index: 0 },
+        ],
+      },
+      {
+        ...good,
+        path: [
+          ...Array.from({ length: 30 }, () => ({
+            tag: 'a'.repeat(50),
+            index: 0,
+          })),
+          { tag: 'img', index: 0 },
+        ],
+      },
+      { ...good, source_sha256: 'A'.repeat(64) },
+      { ...good, source_sha256: 'a'.repeat(63) },
+    ];
+    for (const anchor of invalid) {
+      const result = await callTool(COMMENT_TOOL_NAME, {
+        relic_id: relicId,
+        body: 'Invalid anchor',
+        anchor,
+      });
+      expect(result['isError']).toBe(true);
+      const details = result['structuredContent'] as Record<string, unknown>;
+      expect(details['code']).toBe('local_comment_anchor_invalid');
+    }
+    expect(posted).toHaveLength(0);
+  });
+
   test('writes each anchor kind and reads it back naming the same place', async () => {
     const relicId = await publishFixture();
 

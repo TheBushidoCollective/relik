@@ -593,6 +593,43 @@ describe('editing and resolving comments', () => {
     expect(data['edited_at']).toBe('2026-09-20T10:00:00Z');
   });
 
+  test('editing an HTML image comment preserves its encrypted locator', async () => {
+    const relicId = await publishFixture();
+    const anchor: CommentAnchor = {
+      kind: 'image',
+      path: [
+        { tag: 'main', index: 0 },
+        { tag: 'img', index: 1 },
+      ],
+      source_sha256: 'a'.repeat(64),
+    };
+    await seedComment(relicId, {
+      comment_id: 'c1',
+      author: 'publisher',
+      created_at: '2026-08-20T00:00:00Z',
+      version: 1,
+      body: 'Original image comment',
+      anchor,
+      addresses: 'c0',
+    });
+    const result = await callTool(EDIT_COMMENT_TOOL_NAME, {
+      relic_id: relicId,
+      comment_id: 'c1',
+      body: 'Revised image comment',
+    });
+    expect(result['isError']).toBe(false);
+    expect(patched).toHaveLength(1);
+    const body = patched[0]?.body ?? {};
+    expect(JSON.stringify(body)).not.toContain(anchor.source_sha256);
+    const opened = await decryptComment(
+      await deriveCommentKey(decodeKey(await storedKey(relicId))),
+      String(body['ciphertext'])
+    );
+    expect(opened.body).toBe('Revised image comment');
+    expect(opened.anchor).toEqual(anchor);
+    expect(opened.addresses).toBe('c0');
+  });
+
   test('relic_edit_comment refuses a comment this machine cannot read', async () => {
     const relicId = await publishFixture();
     stored.push({
