@@ -5608,14 +5608,11 @@ export function buildThread(
       paintMarks(lastEntries);
     },
     compose: (anchor, box, options) => {
+      // A framed document can send image requests itself. Never let one
+      // redirect text that is already being written, even in this composer.
       if (
         anchor.kind === 'image' &&
-        ((holdsUnsavedText() &&
-          !(
-            composing &&
-            popover?.current() === composing.panel &&
-            !composing.field.disabled
-          )) ||
+        (holdsUnsavedText() ||
           !!composer
             .querySelector<HTMLTextAreaElement>('.compose-textarea')
             ?.value.trim())
