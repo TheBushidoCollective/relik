@@ -1282,6 +1282,10 @@ class Viewer {
     clearTimeout(this.openTimer);
     this.scheduleLeave();
   }
+  hasDraft() {
+    const panel = this.layer.current() || this.fullscreenLayer?.current();
+    return !!panel?.querySelector('textarea')?.value.trim();
+  }
   scheduleLeave() {
     if (this.sticky) return;
     clearTimeout(this.leaveTimer);
@@ -1293,7 +1297,7 @@ class Viewer {
   onMarkClick(e) {
     const m = this.markFrom(e.target);
     if (!m) return;
-    if (this.composing && this.composing.field.value.trim()) return;
+    if (this.hasDraft()) return;
     e.preventDefault();
     e.stopPropagation();
     this.adapter.markPressed?.(m);
@@ -1308,7 +1312,7 @@ class Viewer {
     const panel = this.layer.current() || this.fullscreenLayer?.current();
     if (!panel || panel.contains(t)) return;
     if (this.markFrom(t)) return;
-    if (this.composing && this.composing.field.value.trim()) return;
+    if (this.hasDraft()) return;
     if (this.composing && this.adapter.gestureTarget?.(t)) return;
     this.closePanel({});
   }
@@ -1474,10 +1478,14 @@ class Viewer {
       h('button', { type: 'button', class: 'popover-action popover-edit', onclick: () => this.edit(c.id) }, 'Edit'),
       h('button', { type: 'button', class: 'popover-action popover-resolve', onclick: () => this.resolve(c.id) }, c.resolved ? 'Reopen' : 'Resolve'),
       h('button', { type: 'button', class: 'popover-action is-quiet popover-open-thread', onclick: () => this.openInThread(c.id) }, 'Open in thread'));
+    tools.append(this.dismissButton());
     const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': 'Comment', 'data-comment-id': c.id, 'data-anchor-kind': kindAttr(c.anchor.kind) }, h('ol', { class: 'popover-thread' }, this.commentRow(c, true)), tools);
     panel.addEventListener('pointerleave', () => this.scheduleLeave());
     panel.addEventListener('pointerenter', () => clearTimeout(this.leaveTimer));
     return panel;
+  }
+  dismissButton() {
+    return h('button', { type: 'button', class: 'popover-action is-quiet popover-dismiss', 'aria-label': 'Dismiss comment overlay', onclick: () => this.closePanel({ restore: true }) }, 'Dismiss');
   }
   openCluster(ids, sticky, o = {}) {
     const members = ids.map((id) => this.byId(id)).filter(Boolean);
@@ -1487,7 +1495,7 @@ class Viewer {
     const list = h('ol', { class: 'popover-members' }, members.map((m) => h('li', null, h('button', { type: 'button', class: 'popover-member', 'data-member-id': m.id, onclick: (e) => { e.preventDefault(); this.openCard(m.id, true, { focus: 'first' }); } },
       h('span', { class: 'popover-member-time' }, m.anchor.t_end === undefined ? tcTenths(m.anchor.t) : `${tcTenths(m.anchor.t)} to ${tcTenths(m.anchor.t_end)}`),
       h('span', { class: 'popover-member-author' }, m.author), h('span', { class: 'popover-member-body' }, m.body)))));
-    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': label, 'data-anchor-kind': 'time', 'data-cluster': ids.join(' ') }, h('div', null, h('p', { class: 'popover-target' }, label), list));
+    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': label, 'data-anchor-kind': 'time', 'data-cluster': ids.join(' ') }, h('div', null, h('p', { class: 'popover-target' }, label), list), h('div', { class: 'popover-tools' }, this.dismissButton()));
     panel.addEventListener('pointerleave', () => this.scheduleLeave());
     panel.addEventListener('pointerenter', () => clearTimeout(this.leaveTimer));
     this.activeId = null;
@@ -1549,6 +1557,7 @@ class Viewer {
     this.layer.hide();
     this.fullscreenLayer?.hide();
     clearTimeout(this.leaveTimer);
+    clearTimeout(this.openTimer);
     this.cardId = null;
     this.sticky = false;
     this.activeId = null;

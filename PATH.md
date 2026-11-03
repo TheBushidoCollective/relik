@@ -82,3 +82,5 @@ mise exec -- bun packages/relic-mcp/test/comment-popover-path.ts
 ```
 
 Success requires `COMMENT_POPOVER_PATH_OK classes=9`, attached composers and posted comment cards on every class, verified §5.8 assertions (adjacency, horizontal alignment, no overlap, anchor exposure, usability, preference, capped scrolling, follow tracking), and negative control verification against origin/main 76269ed5.
+
+Saved comment cards and timeline cluster cards expose **Dismiss** (`.popover-dismiss`, accessible name `Dismiss comment overlay`). Exercise pointer and keyboard dismissal after Post and on an existing mark, then reopen from the mark and thread. Closing the overlay must preserve the stored comment, counts, sidebar, playback and fullscreen without a mutation request. New/edit composers have no Dismiss, and replying hides it to protect the draft. Keyboard focus restoration must not immediately reopen the card; asynchronous work from a dismissed card must not reopen it or replace a newer panel. The clickable interaction reference is `docs/plans/anchored-popover/mockup.html`.
