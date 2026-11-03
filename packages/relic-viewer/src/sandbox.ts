@@ -974,7 +974,10 @@ function setupImageMarks(
       if (node === img || node === doc.documentElement) continue;
       if (node === doc.body) {
         const rootStyle = win.getComputedStyle(doc.documentElement);
-        if (rootStyle.overflowX === 'visible' && rootStyle.overflowY === 'visible')
+        if (
+          rootStyle.overflowX === 'visible' &&
+          rootStyle.overflowY === 'visible'
+        )
           continue;
       }
       const clipX = /^(hidden|clip|scroll|auto)$/.test(style.overflowX);
@@ -984,7 +987,9 @@ function setupImageMarks(
       if (!box) return undefined;
       const element = node as HTMLElement;
       const scaleX = element.offsetWidth ? box.width / element.offsetWidth : 1;
-      const scaleY = element.offsetHeight ? box.height / element.offsetHeight : 1;
+      const scaleY = element.offsetHeight
+        ? box.height / element.offsetHeight
+        : 1;
       if (clipX) {
         const edge = box.left + element.clientLeft * scaleX;
         left = Math.max(left, edge);

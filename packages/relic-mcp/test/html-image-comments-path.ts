@@ -346,7 +346,9 @@ try {
   );
   // The controls must track the visible intersection, not the image's
   // unclipped box, and shim UI must not become comparison content.
-  await wait("window.__proofMessages.some(message => message.type === 'relic:tree')");
+  await wait(
+    "window.__proofMessages.some(message => message.type === 'relic:tree')"
+  );
   const tree = await evaluate<{ tag: string; children: unknown[] }>(
     "window.__proofMessages.find(message => message.type === 'relic:tree').tree"
   );
@@ -355,20 +357,30 @@ try {
     return [value.tag, ...value.children.flatMap(treeTags)];
   };
   assert.equal(treeTags(tree).filter((tag) => tag === 'img').length, 3);
-  assert.ok(!treeTags(tree).includes('button'), 'shim buttons entered comparison');
+  assert.ok(
+    !treeTags(tree).includes('button'),
+    'shim buttons entered comparison'
+  );
   assert.equal(
-    await evaluate("document.body.contains(document.querySelector('.relic-image-layer'))", frame),
+    await evaluate(
+      "document.body.contains(document.querySelector('.relic-image-layer'))",
+      frame
+    ),
     false,
     'shim layer must not enter later body snapshots'
   );
-  await evaluate(`(() => {
+  await evaluate(
+    `(() => {
     const scroll = document.querySelector('.scroll');
     const image = document.querySelector('#first');
     const clip = scroll.getBoundingClientRect();
     const rect = image.getBoundingClientRect();
     scroll.scrollTop += rect.bottom - clip.top - 15;
-  })()`, frame);
-  await wait(`(() => {
+  })()`,
+    frame
+  );
+  await wait(
+    `(() => {
     const control = document.querySelectorAll('.relic-image-control')[0];
     const clip = document.querySelector('.scroll').getBoundingClientRect();
     const image = document.querySelector('#first').getBoundingClientRect();
@@ -376,18 +388,35 @@ try {
     return !control.hidden && image.top < clip.top && image.bottom > clip.top &&
       rect.top >= clip.top && rect.bottom <= image.bottom + 0.5 &&
       rect.left >= image.left && rect.right <= image.right + 0.5;
-  })()`, frame);
+  })()`,
+    frame
+  );
   await evaluate("document.querySelector('.scroll').scrollTop += 50", frame);
-  await wait("document.querySelectorAll('.relic-image-control')[0].hidden", frame);
+  await wait(
+    "document.querySelectorAll('.relic-image-control')[0].hidden",
+    frame
+  );
   await evaluate("document.querySelector('.scroll').scrollTop = 0", frame);
-  await wait("!document.querySelectorAll('.relic-image-control')[0].hidden", frame);
+  await wait(
+    "!document.querySelectorAll('.relic-image-control')[0].hidden",
+    frame
+  );
   await evaluate(
     "document.querySelector('#first').style.transform = 'translateX(-5000px)'",
     frame
   );
-  await wait("document.querySelectorAll('.relic-image-control')[0].hidden", frame);
-  await evaluate("document.querySelector('#first').style.transform = ''", frame);
-  await wait("!document.querySelectorAll('.relic-image-control')[0].hidden", frame);
+  await wait(
+    "document.querySelectorAll('.relic-image-control')[0].hidden",
+    frame
+  );
+  await evaluate(
+    "document.querySelector('#first').style.transform = ''",
+    frame
+  );
+  await wait(
+    "!document.querySelectorAll('.relic-image-control')[0].hidden",
+    frame
+  );
   await evaluate(
     `(() => {
     window.__proofInputEvents = [];
@@ -543,8 +572,18 @@ try {
     if (body === 'First image comment') {
       await wait('window.__heldImagePlacements.length > 0');
       assert.equal(mutations, 0, 'must not post before image validation');
-      assert.equal(await evaluate<boolean>("document.querySelector('.popover-field').disabled"), true);
-      assert.doesNotMatch(await evaluate<string>("document.querySelector('.popover-note').textContent"), /unavailable/i);
+      assert.equal(
+        await evaluate<boolean>(
+          "document.querySelector('.popover-field').disabled"
+        ),
+        true
+      );
+      assert.doesNotMatch(
+        await evaluate<string>(
+          "document.querySelector('.popover-note').textContent"
+        ),
+        /unavailable/i
+      );
       await evaluate('window.__releaseImagePlacement()');
       console.log('IMAGE_EARLY_SUBMIT_WAITED_FOR_PLACEMENT');
     }
@@ -606,19 +645,42 @@ try {
     field.dispatchEvent(new Event('input', {bubbles:true}));
     document.querySelector('.popover-composer .popover-action.is-primary').click();
   })()`);
-  await evaluate("document.querySelector('#first').style.display = 'none'", frame);
-  await wait("window.__heldImagePlacements.some(e => e.detail.status === 'unavailable')");
+  await evaluate(
+    "document.querySelector('#first').style.display = 'none'",
+    frame
+  );
+  await wait(
+    "window.__heldImagePlacements.some(e => e.detail.status === 'unavailable')"
+  );
   await evaluate('window.__releaseUnavailable()');
-  await wait("document.querySelector('.popover-note')?.textContent.includes('This image is unavailable')");
+  await wait(
+    "document.querySelector('.popover-note')?.textContent.includes('This image is unavailable')"
+  );
   assert.equal(mutations, beforeUnavailable);
-  assert.equal(await evaluate<string>("document.querySelector('.popover-field').value"), 'Keep this unavailable draft');
-  assert.equal(await evaluate<boolean>("document.querySelector('.popover-field').disabled"), false);
+  assert.equal(
+    await evaluate<string>("document.querySelector('.popover-field').value"),
+    'Keep this unavailable draft'
+  );
+  assert.equal(
+    await evaluate<boolean>(
+      "document.querySelector('.popover-field').disabled"
+    ),
+    false
+  );
   await evaluate("document.querySelector('#first').style.display = ''", frame);
-  await evaluate("document.querySelector('#second').scrollIntoView({block:'center'})", frame);
+  await evaluate(
+    "document.querySelector('#second').scrollIntoView({block:'center'})",
+    frame
+  );
   await frameClick('.relic-image-control', frame, 1);
-  assert.equal(await evaluate<string>("document.querySelector('.popover-field').value"), 'Keep this unavailable draft');
+  assert.equal(
+    await evaluate<string>("document.querySelector('.popover-field').value"),
+    'Keep this unavailable draft'
+  );
   assert.equal(mutations, beforeUnavailable);
-  await evaluate("document.querySelector('.popover-composer .popover-action.is-quiet').click()");
+  await evaluate(
+    "document.querySelector('.popover-composer .popover-action.is-quiet').click()"
+  );
   await wait("!document.querySelector('.popover-composer')");
   console.log('IMAGE_UNAVAILABLE_DRAFT_PRESERVED');
   const rows = await store.listComments(relicId);
@@ -656,9 +718,17 @@ try {
         `document.querySelector('.popover-card[data-comment-id="${id}"]')`
       );
     } catch (error) {
-      const state = await evaluate<unknown>(`(() => ({popover:document.querySelector('.popover')?.outerHTML, messages:window.__proofMessages.slice(-20), thread:document.querySelector('.thread')?.outerHTML.slice(0,2000)}))()`);
-      const mark = await evaluate<unknown>(`(() => {const e=document.querySelector('.relic-image-mark[data-comment-id="${id}"]');const r=e?.getBoundingClientRect();return {html:e?.outerHTML,rect:r?.toJSON(),hit:r && document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.outerHTML};})()`, frame);
-      throw new Error(`Mark reopen failed: ${JSON.stringify({index,id,state,mark})}`, {cause:error});
+      const state = await evaluate<unknown>(
+        `(() => ({popover:document.querySelector('.popover')?.outerHTML, messages:window.__proofMessages.slice(-20), thread:document.querySelector('.thread')?.outerHTML.slice(0,2000)}))()`
+      );
+      const mark = await evaluate<unknown>(
+        `(() => {const e=document.querySelector('.relic-image-mark[data-comment-id="${id}"]');const r=e?.getBoundingClientRect();return {html:e?.outerHTML,rect:r?.toJSON(),hit:r && document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.outerHTML};})()`,
+        frame
+      );
+      throw new Error(
+        `Mark reopen failed: ${JSON.stringify({ index, id, state, mark })}`,
+        { cause: error }
+      );
     }
     assert.ok(
       (
@@ -678,12 +748,30 @@ try {
     assert.equal(mutations, before, 'dismissal must not mutate comments');
   }
   console.log('IMAGE_MARK_REOPEN_COMPLETE');
-  await evaluate("document.querySelector('#first').scrollIntoView({block:'center'})", frame);
-  await wait(`!!document.querySelector('.relic-image-mark[data-comment-id="${ids[0]}"]')`, frame);
-  await evaluate("document.querySelector('.scroll').scrollTop = document.querySelector('.scroll').scrollHeight", frame);
-  await wait(`!document.querySelector('.relic-image-mark[data-comment-id="${ids[0]}"]')`, frame);
-  await evaluate("document.querySelector('#first').scrollIntoView({block:'center'})", frame);
-  await wait(`!!document.querySelector('.relic-image-mark[data-comment-id="${ids[0]}"]')`, frame);
+  await evaluate(
+    "document.querySelector('#first').scrollIntoView({block:'center'})",
+    frame
+  );
+  await wait(
+    `!!document.querySelector('.relic-image-mark[data-comment-id="${ids[0]}"]')`,
+    frame
+  );
+  await evaluate(
+    "document.querySelector('.scroll').scrollTop = document.querySelector('.scroll').scrollHeight",
+    frame
+  );
+  await wait(
+    `!document.querySelector('.relic-image-mark[data-comment-id="${ids[0]}"]')`,
+    frame
+  );
+  await evaluate(
+    "document.querySelector('#first').scrollIntoView({block:'center'})",
+    frame
+  );
+  await wait(
+    `!!document.querySelector('.relic-image-mark[data-comment-id="${ids[0]}"]')`,
+    frame
+  );
   const beforeRow = mutations;
   await evaluate("document.querySelector('.thread-toggle').click()");
   await wait(`document.querySelector('.comment[data-comment-id="${ids[0]}"]')`);
@@ -692,7 +780,10 @@ try {
       `document.querySelector('${id === ids[1] ? '#second' : '#first'}').scrollIntoView({block:'center'})`,
       frame
     );
-    await wait(`!!document.querySelector('.relic-image-mark[data-comment-id="${id}"]')`, frame);
+    await wait(
+      `!!document.querySelector('.relic-image-mark[data-comment-id="${id}"]')`,
+      frame
+    );
   }
   await Bun.sleep(300);
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
@@ -704,8 +795,12 @@ try {
       `document.querySelector('.popover-card[data-comment-id="${ids[0]}"]')`
     );
   } catch (error) {
-    const state = await evaluate<unknown>(`(() => ({messages:window.__proofMessages.slice(-30), thread:document.querySelector('.thread')?.outerHTML, popover:document.querySelector('.popover')?.outerHTML}))()`);
-    throw new Error(`Row reopen failed: ${JSON.stringify(state)}`, {cause:error});
+    const state = await evaluate<unknown>(
+      `(() => ({messages:window.__proofMessages.slice(-30), thread:document.querySelector('.thread')?.outerHTML, popover:document.querySelector('.popover')?.outerHTML}))()`
+    );
+    throw new Error(`Row reopen failed: ${JSON.stringify(state)}`, {
+      cause: error,
+    });
   }
   await dismissCard();
   await wait("!document.querySelector('.popover-card[data-comment-id]')");
@@ -812,11 +907,17 @@ try {
   await evaluate(
     `(() => { const field=document.querySelector('.popover-card textarea.popover-field'); field.value='Edited first image comment'; field.dispatchEvent(new Event('input',{bubbles:true})); })()`
   );
-  const beforeDraftActivation = await evaluate<number>('window.__proofMessages.length');
+  const beforeDraftActivation = await evaluate<number>(
+    'window.__proofMessages.length'
+  );
   await frameClick('.relic-image-control', frame, 0);
-  await wait(`window.__proofMessages.slice(${beforeDraftActivation}).some(m => m.type === 'relic:frame-image')`);
+  await wait(
+    `window.__proofMessages.slice(${beforeDraftActivation}).some(m => m.type === 'relic:frame-image')`
+  );
   assert.equal(
-    await evaluate<string>("document.querySelector('.popover-card textarea.popover-field')?.value"),
+    await evaluate<string>(
+      "document.querySelector('.popover-card textarea.popover-field')?.value"
+    ),
     'Edited first image comment',
     'image activation must not replace an edit draft'
   );
@@ -844,7 +945,9 @@ try {
   await dismissCard();
   await wait("!document.querySelector('.popover-card[data-comment-id]')");
   await evaluate("document.querySelector('.thread-toggle').click()");
-  await wait("!document.querySelector('.thread').classList.contains('is-open')");
+  await wait(
+    "!document.querySelector('.thread').classList.contains('is-open')"
+  );
   for (const width of [1440, 390, 320])
     for (const scheme of ['light', 'dark']) {
       console.log('IMAGE_GEOMETRY', width, scheme);
@@ -869,9 +972,17 @@ try {
           frame
         );
       } catch (error) {
-        const state = await evaluate<unknown>(`(() => ({messages:window.__proofMessages.slice(-30), thread:document.querySelector('.thread')?.outerHTML}))()`);
-        const frameState = await evaluate<unknown>(`(() => ({marks:[...document.querySelectorAll('.relic-image-mark')].map(e=>e.outerHTML), images:[...document.querySelectorAll('img')].map(e=>e.outerHTML)}))()`, frame);
-        throw new Error(`Resize marks missing: ${JSON.stringify({width,scheme,state,frameState})}`, {cause:error});
+        const state = await evaluate<unknown>(
+          `(() => ({messages:window.__proofMessages.slice(-30), thread:document.querySelector('.thread')?.outerHTML}))()`
+        );
+        const frameState = await evaluate<unknown>(
+          `(() => ({marks:[...document.querySelectorAll('.relic-image-mark')].map(e=>e.outerHTML), images:[...document.querySelectorAll('img')].map(e=>e.outerHTML)}))()`,
+          frame
+        );
+        throw new Error(
+          `Resize marks missing: ${JSON.stringify({ width, scheme, state, frameState })}`,
+          { cause: error }
+        );
       }
       await frameClick(`.relic-image-mark[data-comment-id="${ids[0]}"]`, frame);
       await wait(
