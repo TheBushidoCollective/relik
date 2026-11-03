@@ -4,10 +4,10 @@
     "command": "npx",
     "args": [
       "-y",
-      "relic-mcp@0.3.0"
+      "relic-mcp@0.14.2"
     ],
     "env": {
-      "RELIC_CLIENT_NAME": "relic-plugin/0.3.0"
+      "RELIC_CLIENT_NAME": "relic-plugin/0.14.2"
     }
   }
 }
