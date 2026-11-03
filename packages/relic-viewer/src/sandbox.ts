@@ -955,17 +955,50 @@ function setupImageMarks(
       isOwned(img)
     )
       return undefined;
+    const rect = markFrameRect(img);
+    if (!rect || rect.width <= 0 || rect.height <= 0) return undefined;
+    let left = Math.max(rect.left, 0);
+    let top = Math.max(rect.top, 0);
+    let right = Math.min(rect.left + rect.width, win.innerWidth);
+    let bottom = Math.min(rect.top + rect.height, win.innerHeight);
     for (let node: Element | null = img; node; node = node.parentElement) {
       const style = win.getComputedStyle(node);
       if (
         style.display === 'none' ||
         style.visibility !== 'visible' ||
-        style.opacity === '0'
+        Number(style.opacity) === 0
       )
         return undefined;
+      // Root overflow, and body overflow propagated to a visible root, clip
+      // to the viewport already intersected above.
+      if (node === img || node === doc.documentElement) continue;
+      if (node === doc.body) {
+        const rootStyle = win.getComputedStyle(doc.documentElement);
+        if (rootStyle.overflowX === 'visible' && rootStyle.overflowY === 'visible')
+          continue;
+      }
+      const clipX = /^(hidden|clip|scroll|auto)$/.test(style.overflowX);
+      const clipY = /^(hidden|clip|scroll|auto)$/.test(style.overflowY);
+      if (!clipX && !clipY) continue;
+      const box = markFrameRect(node);
+      if (!box) return undefined;
+      const element = node as HTMLElement;
+      const scaleX = element.offsetWidth ? box.width / element.offsetWidth : 1;
+      const scaleY = element.offsetHeight ? box.height / element.offsetHeight : 1;
+      if (clipX) {
+        const edge = box.left + element.clientLeft * scaleX;
+        left = Math.max(left, edge);
+        right = Math.min(right, edge + element.clientWidth * scaleX);
+      }
+      if (clipY) {
+        const edge = box.top + element.clientTop * scaleY;
+        top = Math.max(top, edge);
+        bottom = Math.min(bottom, edge + element.clientHeight * scaleY);
+      }
     }
-    const rect = markFrameRect(img);
-    return rect && rect.width > 0 && rect.height > 0 ? rect : undefined;
+    return right > left && bottom > top
+      ? { left, top, width: right - left, height: bottom - top }
+      : undefined;
   };
   const getLayer = (): HTMLElement | undefined => {
     if (!doc.body) return undefined;
@@ -979,7 +1012,8 @@ function setupImageMarks(
     layer = doc.createElement('div');
     frameOwnedNodes.add(layer);
     layer.className = 'relic-image-layer';
-    doc.body.appendChild(layer);
+    // The comparison snapshot walks body; keep shim UI outside authored content.
+    doc.documentElement.appendChild(layer);
     return layer;
   };
   const remove = (entry: Entry): void => {
@@ -991,12 +1025,12 @@ function setupImageMarks(
     delete entry.declaration;
   };
   const position = (el: HTMLElement, rect: FrameRect, offset = 0): void => {
-    const right = Math.min(
-      rect.left + rect.width,
-      win.innerWidth || rect.left + rect.width
-    );
-    el.style.left = `${right - 32 - (offset % 6) * 36}px`;
-    el.style.top = `${Math.max(rect.top, 0) + Math.floor(offset / 6) * 36}px`;
+    const width = Math.min(32, rect.width);
+    const height = Math.min(32, rect.height);
+    el.style.setProperty('width', `${width}px`, 'important');
+    el.style.setProperty('height', `${height}px`, 'important');
+    el.style.left = `${Math.max(rect.left, rect.left + rect.width - width - (offset % 6) * 36)}px`;
+    el.style.top = `${Math.min(rect.top + rect.height - height, rect.top + Math.floor(offset / 6) * 36)}px`;
   };
   const schedule = (): void => {
     if (!enabled) return;

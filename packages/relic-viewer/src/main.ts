@@ -3923,7 +3923,7 @@ export function paintPendingMark(
   host: HTMLElement,
   pins: HTMLElement,
   anchor: CommentAnchor | null
-): void {
+): boolean {
   const surface = anchorSurfaceFor(host);
   if (surface !== undefined)
     invalidateImageMarkRequests(surface, PENDING_MARK_ID);
@@ -3934,7 +3934,7 @@ export function paintPendingMark(
         { type: 'relic:clear-mark', id: PENDING_MARK_ID },
         '*'
       );
-    return;
+    return false;
   }
   if (anchor.kind === 'text') {
     wrapTextQuote(host, anchor.quote, PENDING_MARK_ID);
@@ -3942,7 +3942,7 @@ export function paintPendingMark(
       `mark[data-comment-id="${PENDING_MARK_ID}"]`
     );
     painted?.classList.add('is-pending');
-    return;
+    return false;
   }
   if (anchor.kind === 'pin') {
     // A framed relic scrolls inside its frame, so a pin over it is drawn
@@ -3951,7 +3951,7 @@ export function paintPendingMark(
       surface === undefined ? undefined : adapterFor(anchor, surface);
     if (surface !== undefined && framed !== undefined) {
       framed.paint(surface, pins, anchor, PENDING_MARK_ID);
-      return;
+      return false;
     }
     const pin = document.createElement('div');
     // Not a button: there is no comment to scroll to yet, and a control that
@@ -3962,15 +3962,15 @@ export function paintPendingMark(
     pin.style.left = `${offsets.left}px`;
     pin.style.top = `${offsets.top}px`;
     pins.appendChild(pin);
-    return;
+    return false;
   }
   // A precise kind paints its provisional mark through the same adapter that
   // paints the posted one, so the reader sees the thing they aimed at rather
   // than a preview that differs from the result.
-  if (surface === undefined) return;
+  if (surface === undefined) return false;
   const adapter = adapterFor(anchor, surface);
-  if (adapter === undefined) return;
-  adapter.paint(surface, pins, anchor, PENDING_MARK_ID);
+  if (adapter === undefined) return false;
+  const requested = adapter.paint(surface, pins, anchor, PENDING_MARK_ID);
   for (const root of [pins, host]) {
     for (const painted of root.querySelectorAll(
       `[data-comment-id="${PENDING_MARK_ID}"]`
@@ -3978,6 +3978,7 @@ export function paintPendingMark(
       painted.classList.add('is-pending');
     }
   }
+  return requested;
 }
 
 /**
@@ -5607,6 +5608,19 @@ export function buildThread(
       paintMarks(lastEntries);
     },
     compose: (anchor, box, options) => {
+      if (
+        anchor.kind === 'image' &&
+        ((holdsUnsavedText() &&
+          !(
+            composing &&
+            popover?.current() === composing.panel &&
+            !composing.field.disabled
+          )) ||
+          !!composer
+            .querySelector<HTMLTextAreaElement>('.compose-textarea')
+            ?.value.trim())
+      )
+        return true;
       if (host === undefined || popover === undefined) return false;
       if (session.kind !== 'verified' || cipher === undefined) return false;
       const targetBox =
@@ -5747,6 +5761,31 @@ export function buildThread(
    */
   const unplaceable = new Set<string>();
   let pendingImagePlaced = false;
+  let pendingImageStatus: 'pending' | 'placed' | 'unavailable' = 'unavailable';
+  let pendingImageAnchor: CommentAnchor | null = null;
+  const imageWaiters = new Set<() => void>();
+  const notifyImageWaiters = (): void => {
+    for (const notify of imageWaiters) notify();
+  };
+  const awaitPendingImage = (
+    anchor: CommentAnchor
+  ): Promise<'placed' | 'unavailable' | 'changed' | 'timeout'> =>
+    new Promise((resolve) => {
+      const finish = (
+        result: 'placed' | 'unavailable' | 'changed' | 'timeout'
+      ): void => {
+        clearTimeout(timer);
+        imageWaiters.delete(check);
+        resolve(result);
+      };
+      const check = (): void => {
+        if (pendingImageAnchor !== anchor) finish('changed');
+        else if (pendingImageStatus !== 'pending') finish(pendingImageStatus);
+      };
+      const timer = setTimeout(() => finish('timeout'), 5000);
+      imageWaiters.add(check);
+      check();
+    });
   /** Puts the width where the sidebar and the divider both read it. */
   const applyWidth = (width: number): number => {
     const clamped = Math.round(clampThreadWidth(width, window.innerWidth));
@@ -5881,7 +5920,11 @@ export function buildThread(
       composing !== undefined && isDocKind(composing.anchor.kind)
         ? composing.anchor
         : marks.target();
-    paintPendingMark(host, pins, pendingTarget);
+    const requested = paintPendingMark(host, pins, pendingTarget);
+    pendingImageAnchor = pendingTarget?.kind === 'image' ? pendingTarget : null;
+    pendingImageStatus =
+      pendingImageAnchor && requested ? 'pending' : 'unavailable';
+    notifyImageWaiters();
     host.appendChild(pins);
 
     // After every mark is painted rather than during, because a text mark is
@@ -6737,15 +6780,25 @@ export function buildThread(
         window.getSelection()?.removeAllRanges();
       },
       onSubmit: (body) => {
-        if (state.anchor.kind === 'image' && !pendingImagePlaced) {
-          composer.setNote(
-            'This image is unavailable. Choose it again or clear the target.'
-          );
-          return;
-        }
+        if (composer.field.disabled) return;
         composer.setBusy(true);
         const aimed = state.anchor;
         void (async () => {
+          if (aimed.kind === 'image') {
+            const placement = await awaitPendingImage(aimed);
+            if (layer.current() !== state.panel) return;
+            if (placement !== 'placed' || state.anchor !== aimed) {
+              composer.setBusy(false);
+              composer.setNote(
+                placement === 'unavailable'
+                  ? 'This image is unavailable. Choose it again or clear the target.'
+                  : placement === 'timeout'
+                    ? 'Could not verify this image. Try posting again.'
+                    : 'The target changed. Review it and post again.'
+              );
+              return;
+            }
+          }
           const result = await postComment(
             relicId,
             {
@@ -7015,12 +7068,18 @@ export function buildThread(
       if (target?.kind !== 'image') return;
       if (msg.status === 'placed' && msg.rect) {
         frameRects.set(msg.id, { rect: msg.rect });
-        if (pending) pendingImagePlaced = true;
-        else unplaceable.delete(msg.id);
+        if (pending) {
+          pendingImagePlaced = true;
+          pendingImageStatus = 'placed';
+          notifyImageWaiters();
+        } else unplaceable.delete(msg.id);
       } else {
         frameRects.delete(msg.id);
-        if (pending) pendingImagePlaced = false;
-        else unplaceable.add(msg.id);
+        if (pending) {
+          pendingImagePlaced = false;
+          pendingImageStatus = 'unavailable';
+          notifyImageWaiters();
+        } else unplaceable.add(msg.id);
       }
       if (!pending) rerenderRows?.();
       if (stickyId === msg.id || (pending && composing !== undefined))
@@ -7398,18 +7457,31 @@ export function buildThread(
     foot.append(count, post);
     form.appendChild(foot);
 
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const sealer = cipher;
-      if (sealer === undefined) return;
-      if (marks.target()?.kind === 'image' && !pendingImagePlaced) {
-        outcome.replaceChildren(
-          line(
-            'thread-note',
-            'This image is unavailable. Choose it again or clear the target.'
-          )
-        );
-        return;
+      if (sealer === undefined || post.disabled) return;
+      const target = marks.target();
+      if (target?.kind === 'image') {
+        post.disabled = true;
+        body.disabled = true;
+        const placement = await awaitPendingImage(target);
+        body.disabled = false;
+        post.disabled = false;
+        if (!form.isConnected) return;
+        if (placement !== 'placed' || marks.target() !== target) {
+          outcome.replaceChildren(
+            line(
+              'thread-note',
+              placement === 'unavailable'
+                ? 'This image is unavailable. Choose it again or clear the target.'
+                : placement === 'timeout'
+                  ? 'Could not verify this image. Try posting again.'
+                  : 'The target changed. Review it and post again.'
+            )
+          );
+          return;
+        }
       }
       const draft = {
         body: body.value,
