@@ -43,6 +43,7 @@ import {
   OTIO_PACKET_START_TOLERANCE_SECONDS,
   OTIO_RETAINED_SNAPSHOT_PIXELS,
   presentedWindowOutcome,
+  readPresentedFrame,
   SNAPSHOT_SLOTS_PER_DECODER,
   SnapshotPixelBudget,
   videoDecoderTime,
@@ -79,6 +80,10 @@ const HAVE_CURRENT_DATA = 2;
 // 4.020833333333334 report 4.020832 on seeked. Two microseconds cover that
 // measured granularity without accepting a neighboring ordinary video frame.
 const MEDIA_SEEK_TIME_PRECISION_SECONDS = 2e-6;
+// Chromium presents a seeked frame within about 250 ms. A paused leaf waits
+// four times that for its certified window before it is withheld.
+export const OTIO_PAUSED_PRESENT_TIMEOUT_MS = 1000;
+const OTIO_PAUSED_PRESENT_POLL_MS = 16;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
@@ -291,6 +296,42 @@ export function renderOtioVideoTree(
   output.globalCompositeOperation = 'source-over';
   output.globalAlpha = 1;
   output.drawImage(root, 0, 0, width, height);
+}
+
+function closeFrames(frames: VideoFrame[]): void {
+  for (const frame of frames.splice(0)) frame.close();
+}
+
+function presentClockMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+// Resolves at the next presented frame or after pollMs, whichever comes first.
+// The loser is cancelled so no callback outlives the wait.
+function nextPresentation(
+  media: HTMLVideoElement,
+  pollMs: number
+): Promise<void> {
+  const rvfcMedia = media as HTMLVideoElementWithRvfc;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  let settled = false;
+  let handle: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const finish = (): void => {
+    if (settled) return;
+    settled = true;
+    if (timer !== null) clearTimeout(timer);
+    if (handle !== null) rvfcMedia.cancelVideoFrameCallback?.(handle);
+    resolve();
+  };
+  if (typeof rvfcMedia.requestVideoFrameCallback === 'function') {
+    handle = rvfcMedia.requestVideoFrameCallback(() => {
+      handle = null;
+      finish();
+    });
+  }
+  timer = setTimeout(finish, pollMs);
+  return promise;
 }
 
 function paintNode(
@@ -1713,7 +1754,8 @@ export function createOtioPlayback(
   async function prepareLeaves(
     result: OtioEvaluationResult,
     tree: OtioVideoCompositionTree | null,
-    gen: number
+    gen: number,
+    frames: VideoFrame[]
   ): Promise<(OtioPreparedLeaf | null)[]> {
     const leaves: (OtioPreparedLeaf | null)[] = result.video_contributions.map(
       () => null
@@ -1730,7 +1772,8 @@ export function createOtioPlayback(
         leaves[node.contribution_index] = await prepareLeaf(
           contrib,
           occurrenceKeys[node.contribution_index] ?? '',
-          gen
+          gen,
+          frames
         );
         return;
       }
@@ -1746,10 +1789,54 @@ export function createOtioPlayback(
     return leaves;
   }
 
+  // Waits until the decoder presents the certified window for req. Returns the
+  // verified frame, which the caller owns, 'element' when the browser cannot
+  // report frame identity, or 'empty' when no media may paint this leaf.
+  async function awaitPresentedFrame(
+    media: HTMLVideoElement,
+    timing: OtioVideoTiming | null,
+    req: number,
+    gen: number,
+    contrib: OtioVideoContribution,
+    key: string
+  ): Promise<{ readonly frame: VideoFrame } | 'element' | 'empty'> {
+    let deadline: number | null = null;
+    for (;;) {
+      const { outcome, frame } = readPresentedFrame(media, timing);
+      if (outcome.kind === 'match' && frame !== null) {
+        if (outcome.index === req) return { frame };
+        frame.close();
+      }
+      if (outcome.kind === 'uncovered' || outcome.kind === 'readout-failed') {
+        return 'element';
+      }
+      if (stale(gen)) return 'empty';
+      const now = presentClockMs();
+      deadline ??= now + OTIO_PAUSED_PRESENT_TIMEOUT_MS;
+      if (now >= deadline) {
+        const shown =
+          outcome.kind === 'match' ? String(outcome.index) : 'outside';
+        videoTimingFailures.set(
+          key,
+          diagnostic(
+            'error',
+            'invalid-timing',
+            `Decoder presented window ${shown} instead of certified window ${req}: ${contrib.bundle_path}`,
+            contrib.node_id
+          )
+        );
+        return 'empty';
+      }
+      await nextPresentation(media, OTIO_PAUSED_PRESENT_POLL_MS);
+      if (stale(gen)) return 'empty';
+    }
+  }
+
   async function prepareLeaf(
     contrib: OtioVideoContribution,
     key: string,
-    gen: number
+    gen: number,
+    frames: VideoFrame[]
   ): Promise<OtioPreparedLeaf> {
     if (sampleKind(contrib) === 'black') return { kind: 'black' };
     const fidelity = effectFidelity(contrib.active_effects, contrib.node_id);
@@ -1839,6 +1926,28 @@ export function createOtioPlayback(
         )
       );
       return { kind: 'empty' };
+    }
+    if (midpoint !== null && typeof VideoFrame === 'function') {
+      const req = certifiedWindowIndex(contrib.source_time, timing);
+      if (req !== null) {
+        const verified = await awaitPresentedFrame(
+          video.element,
+          timing,
+          req,
+          gen,
+          contrib,
+          key
+        );
+        if (verified === 'empty') return { kind: 'empty' };
+        if (verified !== 'element') {
+          frames.push(verified.frame);
+          return {
+            kind: 'image',
+            source: verified.frame,
+            alpha: contrib.alpha,
+          };
+        }
+      }
     }
     return {
       kind: 'image',
@@ -2032,6 +2141,7 @@ export function createOtioPlayback(
   async function renderAt(time: OtioRationalTime, gen: number): Promise<void> {
     if (stale(gen)) return;
     renderInFlight = true;
+    const frames: VideoFrame[] = [];
     try {
       const evaluation = evaluateOtioAt(doc, timelineId, time);
       if (stale(gen)) return;
@@ -2050,7 +2160,7 @@ export function createOtioPlayback(
           )
         );
       }
-      const leaves = await prepareLeaves(evaluation, tree, gen);
+      const leaves = await prepareLeaves(evaluation, tree, gen, frames);
       if (stale(gen)) return;
       let presented = false;
       try {
@@ -2058,6 +2168,7 @@ export function createOtioPlayback(
       } catch {
         // A missing surface must not paint a stale frame.
       }
+      closeFrames(frames);
       images.evict();
       await reconcileAudio(evaluation, gen);
       if (stale(gen)) return;
@@ -2071,6 +2182,7 @@ export function createOtioPlayback(
       }
       notify();
     } finally {
+      closeFrames(frames);
       if (gen === renderGeneration) renderInFlight = false;
     }
   }
@@ -2561,7 +2673,10 @@ export function createOtioPlayback(
           !knownVideoKeys.has(key)
         ) {
           knownVideoKeys.add(key);
-          void prepareLeaf(contrib, key, renderGeneration);
+          const warmFrames: VideoFrame[] = [];
+          void prepareLeaf(contrib, key, renderGeneration, warmFrames).finally(
+            () => closeFrames(warmFrames)
+          );
         }
       }
 

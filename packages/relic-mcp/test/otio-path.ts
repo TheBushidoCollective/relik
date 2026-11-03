@@ -26,6 +26,7 @@
  *
  * RELIC_OTIO_PATH_CLIENT selects the MCP client: `source` (the built bundle)
  * or `npx:<version>` for a published package. Both run the full path.
+ * RELIC_OTIO_DECODER_ONLY=1 runs the startup gate check and the decoder timing proof, then prints OTIO_DECODER_OK.
  */
 
 import assert from 'node:assert/strict';
@@ -43,6 +44,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 import {
   compareRationalTimes,
   decodeKey,
@@ -151,6 +153,7 @@ const REQUIRED = [
   'state-sequence-black',
   'network-block',
   'no-mail',
+  'packet-gate-negative-controls',
   'decoder-timing-windows',
   'decoder-webm-quantization',
   'decoder-near-zero',
@@ -1677,6 +1680,7 @@ interface OpenBrowserOptions {
   readonly blockWebCodecs?: boolean;
   readonly blockRequestVideoFrameCallback?: boolean;
   readonly rvfcBusyWaitMs?: number;
+  readonly recordDecoderPresentation?: boolean;
 }
 
 function loopbackUrl(value: string): boolean {
@@ -1848,6 +1852,60 @@ const contextEventLogPrelude = `(() => {
       setupObserver();
     }
   } catch {}
+})();`;
+
+const decoderPresentationPrelude = String.raw`(() => {
+        const key = '__relicOtioPresentation';
+        const entries = () => {
+                let log = Reflect.get(globalThis, key);
+                if (!Array.isArray(log)) {
+                        log = [];
+                        Reflect.set(globalThis, key, log);
+                }
+                return log;
+        };
+        const now = () => performance.timeOrigin + performance.now();
+        const frameUsOf = (video) => {
+                try {
+                        const frame = new VideoFrame(video);
+                        const timestamp = frame.timestamp;
+                        frame.close();
+                        return timestamp;
+                } catch {
+                        return null;
+                }
+        };
+        const stateOf = (video) => ({
+                currentTime: video.currentTime,
+                seeking: video.seeking,
+                readyState: video.readyState,
+                frameUs: frameUsOf(video),
+        });
+        const watchPresentations = (video, remaining) => {
+                video.requestVideoFrameCallback((_now, metadata) => {
+                        entries().push({
+                                kind: 'rvfc',
+                                at: now(),
+                                ...stateOf(video),
+                                mediaTime: metadata.mediaTime,
+                                presentedFrames: metadata.presentedFrames,
+                        });
+                        if (remaining > 1) watchPresentations(video, remaining - 1);
+                });
+        };
+        document.addEventListener(
+                'seeked',
+                (event) => {
+                        const video = event.target;
+                        if (!(video instanceof HTMLVideoElement)) return;
+                        if (!video.closest('.otio-video-decoders')) return;
+                        entries().push({ kind: 'seeked', at: now(), ...stateOf(video) });
+                        if (typeof video.requestVideoFrameCallback === 'function') {
+                                watchPresentations(video, 3);
+                        }
+                },
+                true
+        );
 })();`;
 
 async function openBrowser(
@@ -2110,6 +2168,7 @@ async function openBrowser(
       blockRVFC ? rvfcTrap : '',
       rvfcLateTrap,
       contextEventLogPrelude,
+      options.recordDecoderPresentation ? decoderPresentationPrelude : '',
       options.blockWebCodecs ? webCodecsTrap : '',
     ]
       .filter(Boolean)
@@ -7385,6 +7444,272 @@ async function recordPacketCanvasMeasurement(
   );
 }
 
+interface PacketCanvasCase {
+  readonly label: string;
+  readonly file: string;
+  readonly seconds: number;
+  readonly includeFinal: boolean;
+}
+
+interface NearFrame {
+  readonly frame: number;
+  readonly rmse: number;
+}
+
+interface PacketCanvasVerdict {
+  readonly failure: string | undefined;
+  readonly toCorrect: number;
+  readonly toWrong: number | null;
+  readonly toBlack: number;
+  readonly canvasBlack: boolean;
+  readonly referenceBlack: boolean;
+  readonly nearest: readonly NearFrame[];
+  readonly nearestWrong: number | null;
+}
+
+interface DecoderSnapshot {
+  readonly index: number;
+  readonly currentTime: number;
+  readonly seeking: boolean;
+  readonly readyState: number;
+  readonly paused: boolean;
+  readonly frameUs: number | null;
+}
+
+interface DecoderPresentationEntry {
+  readonly kind: 'seeked' | 'rvfc';
+  readonly at: number;
+  readonly currentTime: number;
+  readonly seeking: boolean;
+  readonly readyState: number;
+  readonly frameUs: number | null;
+  readonly mediaTime?: number;
+  readonly presentedFrames?: number;
+}
+
+// The seven decoder items seeked and measured in the known-file browser.
+const KNOWN_PACKET_ITEMS: ReadonlyArray<{
+  readonly label: string;
+  readonly frame: number;
+  readonly file: string;
+  readonly seconds: number;
+}> = [
+  { label: '24fps MP4', frame: 4, file: 'fr24.mp4', seconds: 4 / 24 },
+  {
+    label: '60fps MP4 with 24-rate source',
+    frame: 52,
+    file: 'fr60.mp4',
+    seconds: 4 / 24,
+  },
+  { label: 'rate-one source', frame: 100, file: 'fr24.mp4', seconds: 1 / 6 },
+  { label: '29.97-rate source', frame: 148, file: 'fr24.mp4', seconds: 1 / 6 },
+  { label: 'B-frame MP4', frame: 196, file: 'fr24b.mp4', seconds: 4 / 24 },
+  { label: 'B-frame MOV', frame: 244, file: 'fr24b.mov', seconds: 4 / 24 },
+  { label: 'VFR MP4', frame: 291, file: 'vfr.mp4', seconds: 3 / 24 },
+];
+
+// Every packet-canvas assertion in the decoder proof, replayed by the startup gate check.
+const PACKET_GATE_CASES: readonly PacketCanvasCase[] = [
+  ...KNOWN_PACKET_ITEMS.map(({ label, file, seconds }) => ({
+    label,
+    file,
+    seconds,
+    includeFinal: true,
+  })),
+  {
+    label: 'quantized WebM 2/30',
+    file: 'fr30.webm',
+    seconds: 2 / 30,
+    includeFinal: false,
+  },
+  {
+    label: 'representational zero first frame',
+    file: 'fr24.mp4',
+    seconds: 0,
+    includeFinal: true,
+  },
+  {
+    label: 'available-origin/cut witness first frame',
+    file: 'fr30.webm',
+    seconds: 0,
+    includeFinal: false,
+  },
+  {
+    label: 'available-origin/cut witness second frame',
+    file: 'fr30.webm',
+    seconds: 1 / 30,
+    includeFinal: false,
+  },
+  {
+    label: 'no-DefaultDuration earlier window',
+    file: 'no-duration.webm',
+    seconds: 65 / 1000,
+    includeFinal: false,
+  },
+];
+
+const PACKET_DISTINCT_RMSE = 4;
+const PACKET_RIVAL_MARGIN = 2;
+
+const DECODER_SNAPSHOT_EXPRESSION = String.raw`Array.from(document.querySelectorAll('.otio-video-decoders video'), (video, index) => {
+        let frameUs = null;
+        try {
+                const frame = new VideoFrame(video);
+                frameUs = frame.timestamp;
+                frame.close();
+        } catch {}
+        return {
+                index,
+                currentTime: video.currentTime,
+                seeking: video.seeking,
+                readyState: video.readyState,
+                paused: video.paused,
+                frameUs,
+        };
+})`;
+
+const decodedFixtureCache = new Map<string, Promise<readonly Uint8Array[]>>();
+
+// Each fixture is decoded once; the result is one RGBA frame per decoded picture, in presentation order.
+function cachedFixtureFrames(fileName: string): Promise<readonly Uint8Array[]> {
+  let frames = decodedFixtureCache.get(fileName);
+  if (!frames) {
+    frames = decodeFixtureFrames(fileName);
+    decodedFixtureCache.set(fileName, frames);
+  }
+  return frames;
+}
+
+async function decodeFixtureFrames(
+  fileName: string
+): Promise<readonly Uint8Array[]> {
+  const oracle = await readDecoderTimingOracle();
+  const expectedCount = oracle.files?.[fileName]?.frames?.length ?? 0;
+  assert.ok(expectedCount > 0, `ffprobe oracle has no frames for ${fileName}`);
+  const result = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(decoderMediaDir, fileName),
+      '-vf',
+      `scale=${width}:${height}:flags=neighbor`,
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    { timeoutMs: 60000 }
+  );
+  assert.equal(
+    result.exit,
+    0,
+    `ffmpeg could not decode ${fileName}: ${result.stderr}`
+  );
+  const frameBytes = width * height * 4;
+  assert.equal(
+    result.stdout.length % frameBytes,
+    0,
+    `${fileName} decoded to ${result.stdout.length} bytes, not whole frames`
+  );
+  const count = result.stdout.length / frameBytes;
+  assert.equal(
+    count,
+    expectedCount,
+    `${fileName} decoded ${count} frames; ffprobe oracle has ${expectedCount}`
+  );
+  const frames: Uint8Array[] = [];
+  for (let index = 0; index < count; index++) {
+    frames.push(
+      new Uint8Array(
+        result.stdout.buffer,
+        result.stdout.byteOffset + index * frameBytes,
+        frameBytes
+      )
+    );
+  }
+  return frames;
+}
+
+/**
+ * Scores a canvas against every decoded frame. Each existing assertion keeps
+ * its message and order; the first violated rule is returned as `failure`.
+ * Rule b: for every frame f whose distance to the expected frame exceeds
+ * PACKET_DISTINCT_RMSE, the canvas must sit at least PACKET_RIVAL_MARGIN
+ * closer to the expected frame than to f.
+ */
+function scorePacketCanvas(input: {
+  readonly label: string;
+  readonly canvas: Uint8Array;
+  readonly decoded: readonly Uint8Array[];
+  readonly expectedFrame: number;
+  readonly neighborFrame: number | undefined;
+}): PacketCanvasVerdict {
+  const { label, canvas, decoded, expectedFrame, neighborFrame } = input;
+  const correct = decoded[expectedFrame];
+  assert.ok(
+    correct,
+    `${label} expected frame ${expectedFrame} was never decoded`
+  );
+  const scores = decoded.map((pixels) => rmse(canvas, pixels));
+  const toCorrect = scores[expectedFrame] as number;
+  const wrong =
+    neighborFrame === undefined ? undefined : decoded[neighborFrame];
+  const toWrong =
+    neighborFrame === undefined ? null : (scores[neighborFrame] as number);
+  const blackFrame = new Uint8Array(correct.length);
+  for (let i = 0; i < blackFrame.length; i += 4) {
+    blackFrame[i + 3] = 255;
+  }
+  const toBlack = rmse(canvas, blackFrame);
+  const canvasBlack = isOpaqueBlack(canvas);
+  const referenceBlack = isOpaqueBlack(correct);
+  const nearest = scores
+    .map((score, frame) => ({ frame, rmse: score }))
+    .sort((a, b) => a.rmse - b.rmse)
+    .slice(0, 3);
+  let rival: NearFrame | undefined;
+  for (let frame = 0; frame < decoded.length; frame++) {
+    const pixels = decoded[frame];
+    if (!pixels || !(rmse(pixels, correct) > PACKET_DISTINCT_RMSE)) continue;
+    const score = scores[frame] as number;
+    if (rival === undefined || score < rival.rmse) {
+      rival = { frame, rmse: score };
+    }
+  }
+  let failure: string | undefined;
+  if (referenceBlack) {
+    failure = `${label} reference frame cannot distinguish decoded media from withheld black`;
+  } else if (canvasBlack) {
+    failure = `${label} painted opaque black instead of decoded media`;
+  } else if (neighborFrame === undefined || wrong === undefined) {
+    failure = `${label} needs an adjacent ffprobe presentation frame`;
+  } else if (!(rmse(correct, wrong) > PACKET_DISTINCT_RMSE)) {
+    failure = `${label} fixture frames ${expectedFrame} and ${neighborFrame} are not distinct`;
+  } else if (!(toCorrect + PACKET_RIVAL_MARGIN < (toWrong as number))) {
+    failure = `${label} canvas is not ffprobe frame ${expectedFrame} (correct ${toCorrect}, adjacent ${toWrong})`;
+  } else if (
+    rival !== undefined &&
+    !(toCorrect + PACKET_RIVAL_MARGIN < rival.rmse)
+  ) {
+    failure = `${label} canvas is closer to ffprobe frame ${rival.frame} (${rival.rmse.toFixed(2)}) than to expected frame ${expectedFrame} (${toCorrect.toFixed(2)})`;
+  }
+  return {
+    failure,
+    toCorrect,
+    toWrong,
+    toBlack,
+    canvasBlack,
+    referenceBlack,
+    nearest,
+    nearestWrong: rival?.frame ?? neighborFrame ?? null,
+  };
+}
+
 async function assertPacketCanvas(
   browser: ChromeSession,
   label: string,
@@ -7394,70 +7719,240 @@ async function assertPacketCanvas(
 ): Promise<PacketWindow> {
   const windows = await packetWindows(fileName, includeFinal);
   const expected = windowForSeconds(windows, sourceSeconds, label);
-  const canvas = await sampleCanvas(browser, width, height);
-  const correct = await extractFrame(
-    join(decoderMediaDir, fileName),
-    expected.frame,
-    width,
-    height
-  );
   const neighbor =
     windows.find((window) => window.frame === expected.frame + 1) ??
     windows.find((window) => window.frame === expected.frame - 1);
-  assert.ok(neighbor, `${label} needs an adjacent ffprobe presentation frame`);
-  const wrong = await extractFrame(
-    join(decoderMediaDir, fileName),
-    neighbor.frame,
-    width,
-    height
+  const canvas = await sampleCanvas(browser, width, height);
+  const decodersAtSample = await browser.evaluate<DecoderSnapshot[]>(
+    DECODER_SNAPSHOT_EXPRESSION
   );
-  const toCorrect = rmse(canvas, correct);
-  const toWrong = rmse(canvas, wrong);
-  const blackFrame = new Uint8Array(correct.length);
-  for (let i = 0; i < blackFrame.length; i += 4) {
-    blackFrame[i + 3] = 255;
-  }
-  const toBlack = rmse(canvas, blackFrame);
-  const decoderCount = await browser.evaluate<number>(
-    `document.querySelectorAll('.otio-video-decoders video').length`
-  );
+  const decoded = await cachedFixtureFrames(fileName);
+  const verdict = scorePacketCanvas({
+    label,
+    canvas,
+    decoded,
+    expectedFrame: expected.frame,
+    neighborFrame: neighbor?.frame,
+  });
+  // Chromium may repaint after `seeked`; a second sample one frame later records that as data.
+  const resampled = await resampleCanvas(browser, width, height);
+  const presentationLog = await readDecoderPresentation(browser);
   await recordPacketCanvasMeasurement({
     label,
     file_name: fileName,
     source_seconds: sourceSeconds,
     expected_frame: expected.frame,
-    neighbor_frame: neighbor.frame,
-    decoder_count: decoderCount,
-    canvas_black: isOpaqueBlack(canvas),
-    reference_black: isOpaqueBlack(correct),
-    rmse_correct: toCorrect,
-    rmse_wrong: toWrong,
-    rmse_black: toBlack,
+    expected_start_us: expected.start * 1e6,
+    neighbor_frame: neighbor?.frame ?? null,
+    nearest_frames: verdict.nearest,
+    decoder_count: decodersAtSample.length,
+    decoders_at_sample: decodersAtSample,
+    presentation_log: presentationLog,
+    resample_rmse: rmse(canvas, resampled),
+    canvas_black: verdict.canvasBlack,
+    reference_black: verdict.referenceBlack,
+    rmse_correct: verdict.toCorrect,
+    rmse_wrong: verdict.toWrong,
+    rmse_black: verdict.toBlack,
   });
-  assert.equal(
-    isOpaqueBlack(correct),
-    false,
-    `${label} reference frame cannot distinguish decoded media from withheld black`
-  );
-  assert.equal(
-    isOpaqueBlack(canvas),
-    false,
-    `${label} painted opaque black instead of decoded media`
-  );
-  assert.ok(
-    rmse(correct, wrong) > 4,
-    `${label} fixture frames ${expected.frame} and ${neighbor.frame} are not distinct`
-  );
-  assert.ok(
-    toCorrect + 2 < toWrong,
-    `${label} canvas is not ffprobe frame ${expected.frame} (correct ${toCorrect}, adjacent ${toWrong})`
-  );
+  try {
+    assert.equal(
+      verdict.failure,
+      undefined,
+      verdict.failure ?? 'packet canvas mismatch'
+    );
+    await assertNoTimingFallback(browser, label);
+  } catch (error) {
+    await writePacketGateFailure({
+      label,
+      canvas,
+      decoded,
+      expectedFrame: expected.frame,
+      nearestWrongFrame: verdict.nearestWrong,
+    });
+    throw error;
+  }
+  return expected;
+}
+
+async function assertNoTimingFallback(
+  browser: ChromeSession,
+  label: string
+): Promise<void> {
   assert.equal(
     (await timingDiagnostics(browser)).includes('invalid-timing'),
     false,
     `${label} used a diagnostic fallback instead of a certified packet window`
   );
-  return expected;
+}
+
+/**
+ * Startup check with no browser: the gate must accept the true frame and reject
+ * frame 0 and frames N-1 and N+1 for every packet-canvas assertion.
+ */
+async function assertPacketGateRejectsPlantedFrames(): Promise<void> {
+  let rejected = 0;
+  for (const item of PACKET_GATE_CASES) {
+    const windows = await packetWindows(item.file, item.includeFinal);
+    const expected = windowForSeconds(windows, item.seconds, item.label);
+    const decoded = await cachedFixtureFrames(item.file);
+    const neighbor =
+      windows.find((window) => window.frame === expected.frame + 1) ??
+      windows.find((window) => window.frame === expected.frame - 1);
+    const correct = decoded[expected.frame];
+    assert.ok(correct, `${item.label} expected frame was never decoded`);
+    const control = scorePacketCanvas({
+      label: `${item.label} control`,
+      canvas: correct,
+      decoded,
+      expectedFrame: expected.frame,
+      neighborFrame: neighbor?.frame,
+    });
+    assert.equal(
+      control.failure,
+      undefined,
+      `startup gate rejected the correct frame: ${control.failure}`
+    );
+    const planted = new Set([0, expected.frame - 1, expected.frame + 1]);
+    planted.delete(expected.frame);
+    for (const frame of planted) {
+      const pixels = decoded[frame];
+      if (pixels === undefined) continue;
+      const verdict = scorePacketCanvas({
+        label: `${item.label} planted frame ${frame}`,
+        canvas: pixels,
+        decoded,
+        expectedFrame: expected.frame,
+        neighborFrame: neighbor?.frame,
+      });
+      assert.match(
+        verdict.failure ?? '',
+        /is not ffprobe frame|is closer to ffprobe frame/,
+        `startup gate accepted planted frame ${frame} for ${item.label}`
+      );
+      rejected++;
+    }
+  }
+  console.log(
+    `PACKET_GATE_NEGATIVE_CONTROLS cases=${PACKET_GATE_CASES.length} rejected=${rejected}`
+  );
+}
+
+async function clearDecoderPresentation(browser: ChromeSession): Promise<void> {
+  await browser.evaluate<void>(`(() => {
+                globalThis.__relicOtioPresentation = [];
+        })()`);
+}
+
+async function readDecoderPresentation(
+  browser: ChromeSession
+): Promise<readonly DecoderPresentationEntry[]> {
+  return browser.evaluate<DecoderPresentationEntry[]>(
+    `(globalThis.__relicOtioPresentation ?? []).slice()`
+  );
+}
+
+async function resampleCanvas(
+  browser: ChromeSession,
+  width: number,
+  height: number
+): Promise<SampledCanvas> {
+  await browser.evaluate<boolean>(`new Promise((resolve) => {
+                const timer = setTimeout(() => resolve(false), 1000);
+                requestAnimationFrame(() => {
+                        clearTimeout(timer);
+                        resolve(true);
+                });
+        })`);
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, 200);
+  await promise;
+  return sampleCanvas(browser, width, height);
+}
+
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const CRC32_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const byte of bytes) {
+    c = (CRC32_TABLE[(c ^ byte) & 0xff] as number) ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Uint8Array): Buffer {
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  chunk.write(type, 4, 'latin1');
+  chunk.set(data, 8);
+  chunk.writeUInt32BE(
+    crc32(chunk.subarray(4, 8 + data.length)),
+    8 + data.length
+  );
+  return chunk;
+}
+
+function encodePng(width: number, height: number, rgba: Uint8Array): Buffer {
+  assert.equal(rgba.length, width * height * 4, 'PNG pixels are not RGBA');
+  const stride = width * 4;
+  const raw = Buffer.alloc((stride + 1) * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * (stride + 1)] = 0;
+    raw.set(rgba.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1);
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+  return Buffer.concat([
+    PNG_SIGNATURE,
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', new Uint8Array(0)),
+  ]);
+}
+
+async function writePacketGateFailure(input: {
+  readonly label: string;
+  readonly canvas: Uint8Array;
+  readonly decoded: readonly Uint8Array[];
+  readonly expectedFrame: number;
+  readonly nearestWrongFrame: number | null;
+}): Promise<void> {
+  try {
+    await mkdir(shotDir, { recursive: true });
+    const slug = input.label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const wrong =
+      input.nearestWrongFrame === null
+        ? undefined
+        : input.decoded[input.nearestWrongFrame];
+    const shots: Array<[string, Uint8Array | undefined]> = [
+      [`${slug}-canvas.png`, input.canvas],
+      [
+        `${slug}-expected-f${input.expectedFrame}.png`,
+        input.decoded[input.expectedFrame],
+      ],
+      [`${slug}-nearest-wrong-f${input.nearestWrongFrame}.png`, wrong],
+    ];
+    for (const [name, pixels] of shots) {
+      if (pixels) {
+        await writeFile(join(shotDir, name), encodePng(width, height, pixels));
+      }
+    }
+  } catch (error) {
+    console.error(
+      `could not write packet-canvas failure PNGs for ${input.label}: ${String(error)}`
+    );
+  }
 }
 
 async function assertInvalidTiming(
@@ -7495,6 +7990,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   const knownBrowser = await openBrowser(knownUrl, sessionToken, {
     blockWebCodecs: true,
     label: 'decoder-known',
+    recordDecoderPresentation: true,
   });
   try {
     assert.equal(
@@ -7528,50 +8024,8 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     );
     pass('decoder-worker-csp');
 
-    for (const item of [
-      {
-        label: '24fps MP4',
-        frame: 4,
-        file: 'fr24.mp4',
-        seconds: 4 / 24,
-      },
-      {
-        label: '60fps MP4 with 24-rate source',
-        frame: 52,
-        file: 'fr60.mp4',
-        seconds: 4 / 24,
-      },
-      {
-        label: 'rate-one source',
-        frame: 100,
-        file: 'fr24.mp4',
-        seconds: 1 / 6,
-      },
-      {
-        label: '29.97-rate source',
-        frame: 148,
-        file: 'fr24.mp4',
-        seconds: 1 / 6,
-      },
-      {
-        label: 'B-frame MP4',
-        frame: 196,
-        file: 'fr24b.mp4',
-        seconds: 4 / 24,
-      },
-      {
-        label: 'B-frame MOV',
-        frame: 244,
-        file: 'fr24b.mov',
-        seconds: 4 / 24,
-      },
-      {
-        label: 'VFR MP4',
-        frame: 291,
-        file: 'vfr.mp4',
-        seconds: 3 / 24,
-      },
-    ] as const) {
+    for (const item of KNOWN_PACKET_ITEMS) {
+      await clearDecoderPresentation(knownBrowser);
       await seekTo(knownBrowser, item.frame);
       await assertPacketCanvas(
         knownBrowser,
@@ -7595,6 +8049,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const webmBrowser = await openBrowser(webmUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    recordDecoderPresentation: true,
     label: 'decoder-webm',
   });
   try {
@@ -7606,6 +8061,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       'quantized WebM ffprobe PTS changed'
     );
     await clearMediaSeekTargets(webmBrowser);
+    await clearDecoderPresentation(webmBrowser);
     await seekTo(webmBrowser, 2);
     const selected = await assertPacketCanvas(
       webmBrowser,
@@ -7651,6 +8107,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   );
   const nearZeroBrowser = await openBrowser(nearZeroUrl, sessionToken, {
     label: 'near-zero-control',
+    recordDecoderPresentation: true,
   });
   try {
     const nearZeroReady = await waitReady(nearZeroBrowser);
@@ -7678,6 +8135,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
             })()`)
           )
     );
+    await clearDecoderPresentation(nearZeroBrowser);
     await seekTo(nearZeroBrowser, 0);
     const first = await assertPacketCanvas(
       nearZeroBrowser,
@@ -7723,7 +8181,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   const strictNegativeBrowser = await openBrowser(
     strictNegativeUrl,
     sessionToken,
-    { label: 'strict-negative' }
+    { label: 'strict-negative', recordDecoderPresentation: true }
   );
   try {
     assert.equal(await waitReady(strictNegativeBrowser), 'diagnostic');
@@ -7776,7 +8234,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   const availableOriginCutBrowser = await openBrowser(
     availableOriginCutUrl,
     sessionToken,
-    { label: 'available-origin-cut' }
+    { label: 'available-origin-cut', recordDecoderPresentation: true }
   );
   try {
     assert.equal(await waitReady(availableOriginCutBrowser), 'true');
@@ -7788,6 +8246,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       true,
       `available-origin/cut witness has media before cut-c (${formatAlphaCensus()})`
     );
+    await clearDecoderPresentation(availableOriginCutBrowser);
     await seekTo(availableOriginCutBrowser, 56);
     assert.equal(
       (
@@ -7801,6 +8260,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       ).frame,
       0
     );
+    await clearDecoderPresentation(availableOriginCutBrowser);
     await seekTo(availableOriginCutBrowser, 57);
     assert.equal(
       (
@@ -7841,6 +8301,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const editBrowser = await openBrowser(editUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    recordDecoderPresentation: true,
     label: 'decoder-edit',
   });
   try {
@@ -7879,10 +8340,12 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   ]);
   const noDurationBrowser = await openBrowser(noDurationUrl, sessionToken, {
     recordMediaSeekTargets: true,
+    recordDecoderPresentation: true,
     label: 'decoder-no-duration',
   });
   try {
     assert.equal(await waitReady(noDurationBrowser), 'true');
+    await clearDecoderPresentation(noDurationBrowser);
     await seekTo(noDurationBrowser, 65);
     assert.equal(
       (
@@ -7920,6 +8383,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
 }
 
 class LayoutOnlyComplete extends Error {}
+class DecoderOnlyComplete extends Error {}
 async function probeMobileInspector(
   browser: ChromeSession
 ): Promise<Record<string, unknown> & { failures: string[] }> {
@@ -8285,7 +8749,14 @@ async function runLayoutMatrix(
 
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
+  await assertPacketGateRejectsPlantedFrames();
+  pass('packet-gate-negative-controls');
   const sessionToken = await createSession();
+  if (process.env['RELIC_OTIO_DECODER_ONLY'] === '1') {
+    await runDecoderTimingProof(sessionToken);
+    console.log('OTIO_DECODER_OK');
+    throw new DecoderOnlyComplete();
+  }
 
   const published = await callMcp('relic_publish', {
     path: fixtureDir,
@@ -10929,7 +11400,13 @@ try {
   assert.deepEqual(missing, [], `stages not passed: ${missing.join(', ')}`);
   console.log('OTIO_PATH_OK');
 } catch (error) {
-  if (!(error instanceof LayoutOnlyComplete)) throw error;
+  if (
+    !(
+      error instanceof LayoutOnlyComplete ||
+      error instanceof DecoderOnlyComplete
+    )
+  )
+    throw error;
 } finally {
   for (const child of children) child.kill('SIGKILL');
   const kept =

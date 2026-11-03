@@ -231,6 +231,34 @@ export function presentedWindowOutcome(
 }
 
 /**
+ * Reads the frame the decoder presents now and classifies it against the
+ * certified windows. A frame comes back only on a match; the caller owns it
+ * and must close it. Every other outcome closes the frame here.
+ */
+export function readPresentedFrame(
+  video: HTMLVideoElement,
+  timing: OtioVideoTiming | null
+): { outcome: PresentedWindowOutcome; frame: VideoFrame | null } {
+  let vf: VideoFrame | null = null;
+  try {
+    vf = new VideoFrame(video);
+    const outcome = presentedWindowOutcome(vf.timestamp / 1e6, timing);
+    if (outcome.kind === 'match') {
+      const frame = vf;
+      vf = null;
+      return { outcome, frame };
+    }
+    const rejected = vf;
+    vf = null;
+    rejected.close();
+    return { outcome, frame: null };
+  } catch {
+    vf?.close();
+    return { outcome: { kind: 'readout-failed' }, frame: null };
+  }
+}
+
+/**
  * Checks native eligibility of timing and rate:
  * - certified windows
  * - every window duration and every gap between starts > 2Q
@@ -566,11 +594,14 @@ export class NativeDecoderRing {
       return { kind: 'readout-failed' };
     }
     this.nextSlotIndex = (this.nextSlotIndex + 1) % this.slots.length;
-    let vf: VideoFrame | null = null;
+    const { outcome, frame } = readPresentedFrame(this.videoElement, timing);
+    if (outcome.kind === 'readout-failed') {
+      slot.tag = null;
+      slot.epoch = -1;
+      return outcome;
+    }
+    if (outcome.kind !== 'match' || frame === null) return outcome;
     try {
-      vf = new VideoFrame(this.videoElement);
-      const outcome = presentedWindowOutcome(vf.timestamp / 1e6, timing);
-      if (outcome.kind !== 'match') return outcome;
       const ctx = slot.ctx;
       const w = slot.canvas.width;
       const h = slot.canvas.height;
@@ -578,7 +609,7 @@ export class NativeDecoderRing {
         throw new Error('canvas context missing');
       }
       ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(vf, 0, 0, w, h);
+      ctx.drawImage(frame, 0, 0, w, h);
       slot.tag = outcome.index;
       slot.epoch = epoch;
       slot.lead = 0;
@@ -589,7 +620,7 @@ export class NativeDecoderRing {
       slot.epoch = -1;
       return { kind: 'readout-failed' };
     } finally {
-      vf?.close();
+      frame.close();
     }
   }
 
