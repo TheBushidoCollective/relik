@@ -1140,3 +1140,13 @@ The runs end with `OTIO_PATH_OK` and `COMMENT_POPOVER_PATH_OK classes=9`, with e
 - **ResizeObserver loop errors.** They appear in either harness log.
 - **A negative control passes.** The new checks pass on origin/main, so they don't measure attachment.
 - **An existing proof breaks.** Removing the sidebar opening from mark presses breaks a proof that relied on a mark press to reach the sidebar. The OTIO sidebar reveals use rows, but check.
+
+## 9. HTML image comments
+
+The image-specific contract extends stage targeting, not standalone-image regions. A shim-owned **Comment on image** button opens the existing attached composer directly, reading **Commenting on an image.** Keep ordinary image activation and linked-image navigation intact. Saved badges open individual comments, and Dismiss leaves badges, counts and records intact. The clickable mock's HTML states F6 to F9 cover compose, saved card, dismissed card and narrow compose. Its linked SMPTE fixture uses the existing inlined raster fixture; no new art direction or invented marketing copy is introduced.
+
+Persist `{kind:'image',path:[{tag,index}],source_sha256}` inside the existing encrypted comment, stamped with the viewed revision. Paths start at the body and use same-tag sibling ordinals, excluding shim-owned controls. Bound depth to 64, tags to 64 characters, indices to unsigned 32-bit integers, and encoded anchors to 1,536 UTF-8 bytes. Hash deterministic authored image source declarations and immediate-picture sources, distinguishing absent and empty attributes. Never hash image bytes or use responsive `currentSrc` as identity. Require exact path plus digest; no search or coordinate fallback.
+
+Frame placement replies carry the comment ID and latest request ID. Invalidate requests before clear, repaint and navigation; accept only the current source and live request. Unavailable targets lose their old badge geometry but keep a readable unplaceable thread. Pending drafts cannot submit against unavailable images. Replies never reopen overlays. Attach panels to real edge controls or badges, and keep full-image outlines non-intercepting. Recompute on load, resize, nested scroll and content reflow; thread activation requires fresh placement. No comment body or key crosses into the frame.
+
+Run `mise exec -- bun packages/relic-mcp/test/html-image-comments-path.ts` against loopback services for persistence, reload, image badge and thread reopening, linked images, geometry, unavailable sources and stale-reply refusal. This supplements rather than replaces the nine-class popover proof.
