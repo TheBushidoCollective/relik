@@ -5896,31 +5896,208 @@ npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${orig
 
 function abuseForm(config: RelicConfig): Response {
   // Works without JavaScript, as a plain form POST.
+  const host = escapeHtml(new URL(config.serviceOrigin).host);
   const body = `<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f6b64">
 <title>Report a relic</title>
-<h1>Report a relic</h1>
-<p>Paste the relic ID. Do not include the part after <code>#</code>: that is
+<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground: #f1f2f0;
+    --surface: #fbfbfa;
+    --ink: #16191a;
+    --ink-soft: #5a6163;
+    --rule: #d2d5d2;
+    --rule-strong: #b3b8b4;
+    --field-rule: #7b8380; /* 3.46:1 against ground, 3.76:1 against surface. */
+    --patina: #1f6b64;
+    --button-ink: #fbfbfa;
+    --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #101314;
+      --surface: #171b1c;
+      --ink: #e6e9e7;
+      --ink-soft: #969e9d;
+      --rule: #2a3032;
+      --rule-strong: #3b4345;
+      --field-rule: #65716f; /* 3.68:1 against ground, 3.43:1 against surface. */
+      --patina: #4fb3a6;
+      --button-ink: #101314;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 1rem/1.55 var(--sans);
+  }
+  a { color: var(--patina); text-underline-offset: 0.2em; }
+  a:hover { text-decoration-thickness: 2px; }
+  :focus-visible { outline: 2px solid var(--patina); outline-offset: 4px; }
+  .bar {
+    display: flex;
+    align-items: stretch;
+    min-height: 3.25rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  .mark {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-right: 1px solid var(--rule);
+    color: var(--ink);
+    font: 600 0.78rem/1.5 var(--mono);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.5rem; }
+  main.wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+    gap: clamp(2.5rem, 6vw, 6rem);
+    align-items: start;
+    padding-top: 4rem;
+    padding-bottom: 4rem;
+  }
+  h1 {
+    margin: 0 0 1.5rem;
+    font: 600 clamp(2.3rem, 4.8vw, 3.2rem)/1.08 var(--serif);
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  p { margin: 0; }
+  .guidance { color: var(--ink-soft); max-width: 30rem; }
+  .guidance strong { color: var(--ink); font-weight: 600; }
+  code { font: 0.95em var(--mono); }
+  .response {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule-strong);
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+  }
+  form {
+    min-width: 0;
+    padding: 1.75rem 2rem 2rem;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+  }
+  .field { margin-bottom: 1.4rem; min-width: 0; }
+  label { display: block; margin-bottom: 0.4rem; font-size: 0.9rem; font-weight: 600; }
+  .optional { color: var(--ink-soft); font-weight: 400; }
+  input, select, textarea {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    min-height: 2.875rem;
+    border: 1px solid var(--field-rule);
+    border-radius: 2px;
+    padding: 0.65rem 0.75rem;
+    background: var(--ground);
+    color: var(--ink);
+    font: inherit;
+    line-height: 1.4;
+  }
+  select { padding-right: 2rem; }
+  textarea { min-height: 9rem; resize: vertical; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    border-color: var(--patina);
+    outline-offset: 2px;
+  }
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.25rem; }
+  button {
+    min-height: 2.875rem;
+    padding: 0.65rem 1.25rem;
+    border: 1px solid var(--patina);
+    border-radius: 2px;
+    background: var(--patina);
+    color: var(--button-ink);
+    font: 600 0.95rem/1.4 var(--sans);
+    cursor: pointer;
+  }
+  button:hover { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+  footer {
+    border-top: 1px solid var(--rule-strong);
+    padding: 1.5rem 0 2rem;
+    font-size: 0.85rem;
+  }
+  @media (max-width: 52rem) {
+    main.wrap { grid-template-columns: minmax(0, 1fr); gap: 2rem; padding-top: 2.5rem; padding-bottom: 2.5rem; }
+    .guidance { max-width: 38rem; }
+    .response { margin-top: 1.25rem; }
+  }
+  @media (max-width: 40rem) {
+    .wrap { padding-left: 1.25rem; padding-right: 1.25rem; }
+    form { padding: 1.25rem; }
+    .pair { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    button { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <a class="mark" href="/">${host}</a>
+</header>
+<main class="wrap">
+  <div>
+    <h1>Report a relic</h1>
+    <p class="guidance" id="key-guidance">Paste the relic ID. <strong>Do not include the part after <code>#</code>:</strong> that is
 the decryption key, and we do not want it. We strip it either way.</p>
-<form method="post" action="/abuse">
-  <label>Relic ID <input name="relic_id" required></label>
-  <label>Category
-    <select name="category" required>
-      <option value="malware">Malware</option>
-      <option value="phishing">Phishing</option>
-      <option value="csam">CSAM</option>
-      <option value="copyright">Copyright</option>
-      <option value="legal_process">Legal process</option>
-      <option value="other">Other</option>
-    </select>
-  </label>
-  <label>What is wrong <textarea name="description" required></textarea></label>
-  <label>Your contact <input name="contact" type="email"></label>
-  <label>Issuing authority <input name="authority"></label>
-  <label>Reference <input name="reference"></label>
-  <button type="submit">Send report</button>
-</form>
-<p>We respond within ${config.abuseSlaHours} hours of arrival.</p>
+    <p class="response">We respond within ${config.abuseSlaHours} hours of arrival.</p>
+  </div>
+  <form method="post" action="/abuse">
+    <div class="field">
+      <label for="relic-id">Relic ID</label>
+      <input id="relic-id" name="relic_id" required aria-describedby="key-guidance" autocapitalize="none" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="category">Category</label>
+      <select id="category" name="category" required>
+        <option value="malware">Malware</option>
+        <option value="phishing">Phishing</option>
+        <option value="csam">CSAM</option>
+        <option value="copyright">Copyright</option>
+        <option value="legal_process">Legal process</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="description">What is wrong</label>
+      <textarea id="description" name="description" required></textarea>
+    </div>
+    <div class="field">
+      <label for="contact">Your contact <span class="optional">(optional)</span></label>
+      <input id="contact" name="contact" type="email" autocomplete="email">
+    </div>
+    <div class="pair">
+      <div class="field">
+        <label for="authority">Issuing authority <span class="optional">(optional)</span></label>
+        <input id="authority" name="authority">
+      </div>
+      <div class="field">
+        <label for="reference">Reference <span class="optional">(optional)</span></label>
+        <input id="reference" name="reference">
+      </div>
+    </div>
+    <button type="submit">Send report</button>
+  </form>
+</main>
+<footer>
+  <div class="wrap"><a href="/policy">What we store and what we can see</a></div>
+</footer>
+</body>
+</html>
 `;
   return new Response(body, {
     headers: {
