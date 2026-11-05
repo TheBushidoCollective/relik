@@ -999,11 +999,10 @@ export function buildBar(
   return bar;
 }
 
-function renderMarkdownView(view: ReadyView): HTMLElement {
+/** The markdown player: rendered prose with a toggle to the source. */
+function renderMarkdownSource(source: string): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc';
-
-  const source = decodeText(view.content);
 
   const prose = buildProse(source);
 
@@ -1576,7 +1575,7 @@ export function buildCurrentStage(
 
   switch (view.route) {
     case 'markdown':
-      main.appendChild(renderMarkdownView(view));
+      main.appendChild(renderMarkdownSource(decodeText(view.content)));
       break;
     case 'code':
       main.appendChild(renderCodeView(view));
@@ -10042,6 +10041,75 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
   document.body.appendChild(main);
 }
 
+/**
+ * Service documents the viewer renders in the markdown player, by path.
+ *
+ * A fixed list rather than whatever the page names, so the view can only ever
+ * fetch a document this service publishes. The server answers each path with
+ * markdown when asked for it, and with the shell when a browser navigates.
+ */
+const SERVICE_DOCUMENTS: readonly string[] = ['/policy'];
+
+/**
+ * A document the service publishes, in the same player a markdown relic uses
+ * and with none of a relic's chrome: no comments, decisions, share, copy link,
+ * download or report. It is not a relic, so it has no key, no fragment and no
+ * thread.
+ */
+export async function renderDocument(
+  deps: ViewerDeps,
+  path: string
+): Promise<void> {
+  const bar = document.createElement('header');
+  bar.className = 'bar';
+  const mark = document.createElement('div');
+  mark.className = 'mark';
+  mark.textContent = WORDMARK;
+  bar.appendChild(mark);
+
+  const identity = document.createElement('div');
+  identity.className = 'identity';
+  const title = document.createElement('div');
+  title.className = 'filename';
+  title.textContent = 'Document';
+  const meta = document.createElement('div');
+  meta.className = 'identity-meta';
+  const accession = document.createElement('div');
+  accession.className = 'accession';
+  accession.textContent = 'SERVICE DOCUMENT';
+  meta.appendChild(accession);
+  identity.append(title, meta);
+  bar.appendChild(identity);
+
+  const main = document.createElement('main');
+  main.className = 'stage stage-markdown';
+  document.body.replaceChildren(bar, main);
+
+  if (!SERVICE_DOCUMENTS.includes(path)) {
+    main.appendChild(notice('This document does not exist.'));
+    return;
+  }
+
+  let source: string;
+  try {
+    const response = await deps.fetch(`${deps.serviceOrigin}${path}`, {
+      headers: { accept: 'text/markdown' },
+    });
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    source = await response.text();
+  } catch {
+    main.appendChild(notice('This document could not be loaded.'));
+    return;
+  }
+
+  const heading = /^#\s+(.+)$/m.exec(source)?.[1]?.trim();
+  if (heading !== undefined && heading.length > 0) {
+    title.textContent = heading;
+    document.title = `${heading} · Relic`;
+  }
+  main.appendChild(renderMarkdownSource(source));
+}
+
 export { localStorageKeyVault };
 
 export function makeBrowserDeps(): ViewerDeps {
@@ -10073,6 +10141,11 @@ export async function boot(
 
   if (viewMarker === 'dashboard') {
     await renderDashboard(deps);
+    return;
+  }
+
+  if (viewMarker === 'document') {
+    await renderDocument(deps, root?.dataset['document'] ?? '');
     return;
   }
 

@@ -226,6 +226,13 @@ jobs:
           curl -fsS -o/tmp/policy "$SERVICE/policy"
           grep -q 'Your browser never sends the' /tmp/policy
           grep -q 'A cover image, unencrypted' /tmp/policy
+          echo "a browser navigating to the policy gets the markdown player, not a relic"
+          curl -fsS -H 'accept: text/html' -o/tmp/policy-page "$SERVICE/policy"
+          grep -q 'data-view="document" data-document="/policy"' /tmp/policy-page
+          if grep -q 'data-relic-id' /tmp/policy-page; then
+            echo "/policy page is carrying a relic id"
+            exit 1
+          fi
           echo "the abuse intake answers, because it is a go/no-go obligation"
           curl -fsS -o/tmp/abuse "$SERVICE/abuse"
           grep -q '<form method="post"' /tmp/abuse

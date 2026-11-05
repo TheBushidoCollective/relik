@@ -701,6 +701,47 @@ describe('reserved segments beat ids at the router', () => {
       'A link whose key does not open a relic stops downloading after the first block'
     );
   });
+
+  test("/policy opens in the markdown player for a browser, with none of a relic's chrome", async () => {
+    const response = await app.fetch(
+      req('/policy', { headers: { accept: 'text/html,application/xhtml+xml' } })
+    );
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(response.headers.get('vary')).toBeNull();
+    const body = await response.text();
+    expect(body).toContain(
+      '<div id="relic-root" data-view="document" data-document="/policy"'
+    );
+    // The page is the viewer shell, but it is not a relic: no loading plate
+    // for a relic id, no relic chrome in the markup.
+    expect(body).not.toContain('data-load-plate');
+    expect(body).not.toContain('data-relic-id');
+    expect(body).toContain(
+      '<title>What Relic knows about your relic · Relic</title>'
+    );
+    expect(body).toContain('href="/policy?raw=1"');
+  });
+
+  test('/policy stays markdown for anything that does not ask for a page', async () => {
+    const cases: ReadonlyArray<readonly [string, Record<string, string>]> = [
+      ['/policy', {}],
+      ['/policy', { accept: '*/*' }],
+      ['/policy', { accept: 'text/markdown' }],
+      // The way to the source from a browser that cannot run the player.
+      ['/policy?raw=1', { accept: 'text/html' }],
+    ];
+    for (const [path, headers] of cases) {
+      const response = await app.fetch(req(path, { headers }));
+      expect(response.headers.get('content-type')).toBe(
+        'text/markdown; charset=utf-8'
+      );
+      expect(response.headers.get('vary')).toBe('accept');
+      expect(await response.text()).toContain(
+        '# What Relic knows about your relic'
+      );
+    }
+  });
+
   test('/install on a self-hosted deployment names the origin to point at', async () => {
     // A self-hoster needs it: without the variable their client resolves the
     // hosted default and publishes to somebody else's service.

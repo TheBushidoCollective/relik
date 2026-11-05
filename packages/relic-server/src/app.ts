@@ -231,8 +231,27 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     if (head === 'policy') {
+      // A browser navigating here gets the markdown player. Everything else,
+      // including the player's own fetch, gets the markdown itself, and `?raw`
+      // is the way to the source for a browser that cannot run the player.
+      const wantsPage =
+        segments.length === 1 &&
+        !url.searchParams.has('raw') &&
+        (request.headers.get('accept') ?? '').includes('text/html');
+      if (wantsPage) {
+        return shell(config, {
+          view: 'document',
+          path: '/policy',
+          title: DISCLOSURE_TITLE,
+          description:
+            'What Relic stores, what it can see, and what it never receives.',
+        });
+      }
       return new Response(disclosureStatement(config), {
-        headers: { 'content-type': 'text/markdown; charset=utf-8' },
+        headers: {
+          'content-type': 'text/markdown; charset=utf-8',
+          vary: 'accept',
+        },
       });
     }
 
@@ -5191,7 +5210,15 @@ const CARD_IMAGE_ALT =
 
 async function shell(
   config: RelicConfig,
-  target: string | { readonly view: 'dashboard' },
+  target:
+    | string
+    | { readonly view: 'dashboard' }
+    | {
+        readonly view: 'document';
+        readonly path: string;
+        readonly title: string;
+        readonly description: string;
+      },
   store?: RelicStore,
   now = Date.now()
 ): Promise<Response> {
@@ -5241,12 +5268,18 @@ async function shell(
   }
 
   const serviceOrigin = config.serviceOrigin.replace(/\/+$/, '');
+  const doc =
+    typeof target === 'string' || target.view !== 'document'
+      ? undefined
+      : target;
   const ogUrl =
     typeof target === 'string'
       ? canonicalId !== undefined
         ? `${serviceOrigin}/${canonicalId}`
         : `${serviceOrigin}/`
-      : `${serviceOrigin}/dashboard`;
+      : doc !== undefined
+        ? `${serviceOrigin}${doc.path}`
+        : `${serviceOrigin}/dashboard`;
   const ogImage =
     storedCover !== undefined && canonicalId !== undefined
       ? `${serviceOrigin}/${canonicalId}/cover/${storedCover.sha256}.${coverExtension(storedCover.type)}`
@@ -5256,13 +5289,16 @@ async function shell(
   const ogImageAlt =
     storedCover !== undefined ? COVER_ALT[storedCover.kind] : CARD_IMAGE_ALT;
   const card = cardCopy(storedRendererClass);
-  const cardTitle = storedTitle ?? card.title;
+  const cardTitle = doc?.title ?? storedTitle ?? card.title;
+  const cardDescription = doc?.description ?? card.description;
   const documentTitle =
-    storedTitle !== undefined
-      ? `${storedTitle} · Relic`
-      : storedRendererClass !== undefined
-        ? card.title
-        : 'Relic';
+    doc !== undefined
+      ? `${doc.title} · Relic`
+      : storedTitle !== undefined
+        ? `${storedTitle} · Relic`
+        : storedRendererClass !== undefined
+          ? card.title
+          : 'Relic';
 
   const rootAttributes =
     typeof target === 'string'
@@ -5273,16 +5309,20 @@ async function shell(
         : `data-usercontent-origin="${escapeHtml(
             new URL(config.usercontentOrigin).origin
           )}"`
-      : `data-view="dashboard" data-usercontent-origin="${escapeHtml(
-          new URL(config.usercontentOrigin).origin
-        )}"`;
+      : doc !== undefined
+        ? `data-view="document" data-document="${escapeHtml(doc.path)}" data-usercontent-origin="${escapeHtml(
+            new URL(config.usercontentOrigin).origin
+          )}"`
+        : `data-view="dashboard" data-usercontent-origin="${escapeHtml(
+            new URL(config.usercontentOrigin).origin
+          )}"`;
 
   const body = `<!doctype html>
 <meta charset="utf-8">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Relic">
 <meta property="og:title" content="${escapeHtml(cardTitle)}">
-<meta property="og:description" content="${escapeHtml(card.description)}">
+<meta property="og:description" content="${escapeHtml(cardDescription)}">
 <meta property="og:url" content="${escapeHtml(ogUrl)}">
 <meta property="og:image" content="${escapeHtml(ogImage)}">
 <meta property="og:image:type" content="${escapeHtml(ogImageType)}">
@@ -5291,7 +5331,7 @@ async function shell(
 <meta property="og:image:alt" content="${escapeHtml(ogImageAlt)}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${escapeHtml(cardTitle)}">
-<meta name="twitter:description" content="${escapeHtml(card.description)}">
+<meta name="twitter:description" content="${escapeHtml(cardDescription)}">
 <meta name="twitter:image" content="${escapeHtml(ogImage)}">
 <title>${escapeHtml(documentTitle)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -5338,7 +5378,11 @@ async function shell(
 </noscript>`
       : ''
   }
-<div id="relic-root" ${rootAttributes}></div>
+${
+  doc !== undefined
+    ? `<noscript><main class="stage"><div class="card"><p class="card-note">This page needs JavaScript to render. <a href="${escapeHtml(doc.path)}?raw=1">Read it as plain markdown</a>.</p></div></main></noscript>\n`
+    : ''
+}<div id="relic-root" ${rootAttributes}></div>
 <script type="module" src="/assets/viewer.js"></script>
 <script type="module" src="/assets/register-sw.js"></script>
 `;
@@ -5902,9 +5946,11 @@ function escapeHtml(value: string): string {
   );
 }
 
+const DISCLOSURE_TITLE = 'What Relic knows about your relic';
+
 function disclosureStatement(config: RelicConfig): string {
   const retention = Math.round(config.retentionSeconds / 86_400);
-  return `# What Relic knows about your relic
+  return `# ${DISCLOSURE_TITLE}
 
 Read this before you publish. The frame conditions the whole telemetry trade
 on it being readable first.
