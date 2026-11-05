@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>relic-mcp 0.14.3 release notes</title>
+<style>
+  :root {
+    --paper: #fbfaf6;
+    --ink: #1d2422;
+    --muted: #5d6764;
+    --rule: #d9d6cc;
+    --patina: #1f6b64;
+    --patina-wash: #e7f0ee;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-size: 19px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 72px 32px 96px;
+  }
+  .kicker {
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--patina);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: 40px;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 18px;
+  }
+  .lede {
+    font-size: 21px;
+    color: var(--muted);
+    margin: 0 0 40px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--rule);
+  }
+  h2 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--patina);
+    margin: 44px 0 12px;
+  }
+  p { margin: 0 0 16px; }
+  ul { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  dl {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 14px 24px;
+    margin: 28px 0 0;
+    padding: 22px 26px;
+    background: #fff;
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--patina);
+    border-radius: 4px;
+  }
+  dt {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 14px;
+    color: var(--patina);
+    padding-top: 3px;
+  }
+  dd { margin: 0; font-size: 18px; background: var(--patina-wash); padding: 0 6px; border-radius: 3px; }
+  footer {
+    margin-top: 56px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-size: 15px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker">Release 0.14.3</p>
+  <h1>relic-mcp 0.14.3 release notes</h1>
+  <p class="lede">Fixes to the plugin, the viewer and cover images. Each item below shipped in this release.</p>
+
+  <h2>Plugin</h2>
+  <ul>
+    <li>The plugin manifest is now generated to follow the release version.</li>
+    <li>The plugin is updated to the fixed cover client.</li>
+  </ul>
+
+  <h2>Viewer</h2>
+  <ul>
+    <li>Image comment markers now match the add control.</li>
+    <li>The OpenTimelineIO player verifies the presented decoder frame before paint when playback is paused, and the behaviour is documented.</li>
+  </ul>
+
+  <h2>Cover images</h2>
+  <ul>
+    <li>Annotations are kept out of cover frames.</li>
+  </ul>
+
+  <dl>
+    <dt>Owner URL</dt>
+    <dd>withbushido.ai</dd>
+    <dt>Author URL</dt>
+    <dd>withbushido.ai</dd>
+  </dl>
+
+  <footer>Release notes for relic-mcp 0.14.3.</footer>
+</main>
+</body>
+</html>

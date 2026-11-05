@@ -757,15 +757,10 @@ describe('reserved segments beat ids at the router', () => {
     );
     const body = await response.text();
     expect(body).not.toContain('<script');
-    expect(body).not.toContain('id="home-relics"');
   });
 });
 
 describe('the landing page', () => {
-  const mount =
-    '<section id="home-relics" class="home-relics" aria-labelledby="home-relics-title" hidden></section>';
-  const script = '<script type="module" src="/assets/home.js"></script>';
-
   test('/ is a real page, not the shell with a bogus relic id', async () => {
     const response = await app.fetch(req('/'));
     expect(response.status).toBe(200);
@@ -779,45 +774,74 @@ describe('the landing page', () => {
     expect(body).not.toContain('/assets/viewer.js');
   });
 
-  test('/ contains the home relics mount between the lede and how it goes', async () => {
-    const body = await app.fetch(req('/')).then((r) => r.text());
-    expect(body).toContain(mount);
-    const ledeIndex = body.indexOf('class="lede"');
-    const mountIndex = body.indexOf(mount);
-    const headingIndex = body.indexOf('<h2>How it goes</h2>');
-    expect(ledeIndex).toBeGreaterThan(-1);
-    expect(mountIndex).toBeGreaterThan(ledeIndex);
-    expect(headingIndex).toBeGreaterThan(mountIndex);
+  test('/ and /install serve the same bytes, so install copy cannot drift', async () => {
+    const root = await app.fetch(req('/')).then((r) => r.text());
+    const install = await app.fetch(req('/install')).then((r) => r.text());
+    expect(root).toBe(install);
   });
 
-  test('/ contains exactly one script tag and no inline script', async () => {
-    const body = await app.fetch(req('/')).then((r) => r.text());
-    const scripts = body.match(/<script\b[^>]*>/g) ?? [];
-    expect(scripts).toEqual(['<script type="module" src="/assets/home.js">']);
-    expect(body).toContain(script);
-    expect(body).not.toMatch(/<script(?:\s+type="module")?\s*>/i);
-  });
-
-  test('/ sends exactly the contract headers with script-src and no connect-src', async () => {
+  test('/ carries no script and its CSP denies scripts', async () => {
     const response = await app.fetch(req('/'));
     const csp = response.headers.get('content-security-policy') ?? '';
     expect(csp).toBe(
-      "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'"
+      "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'"
     );
-    expect(csp).not.toContain('connect-src');
     expect(response.headers.get('x-robots-tag')).toBe('noindex');
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    const body = await response.text();
+    expect(body).not.toContain('<script');
+    expect(body).not.toContain('home-relics');
   });
 
-  test('/ with the mount and script removed equals /install byte-for-byte', async () => {
-    const root = await app.fetch(req('/')).then((r) => r.text());
-    const install = await app.fetch(req('/install')).then((r) => r.text());
-    expect(root).toContain(mount);
-    expect(root).toContain(script);
-    expect(root.replace(mount, '').replace(script, '')).toBe(install);
+  test('the header links the reader to their relics', async () => {
+    const body = await app.fetch(req('/')).then((r) => r.text());
+    const header = body.slice(
+      body.indexOf('<header'),
+      body.indexOf('</header>')
+    );
+    expect(header).toContain(
+      '<a class="mine" href="/dashboard">Your relics</a>'
+    );
   });
 
-  test('carries the three install forms, each naming the configured origin', async () => {
+  test('every screenshot the page shows exists in the viewer public directory', async () => {
+    const body = await app.fetch(req('/')).then((r) => r.text());
+    const sources = [
+      ...body.matchAll(/<img\b[^>]*\bsrc="\/assets\/([^"]+)"/g),
+    ].map((match) => match[1] as string);
+    expect(sources.length).toBeGreaterThan(0);
+    for (const name of sources) {
+      const file = Bun.file(
+        new URL(`../../relic-viewer/public/${name}`, import.meta.url)
+      );
+      expect(await file.exists()).toBe(true);
+    }
+  });
+
+  test('installs as a plugin from the marketplace on the hosted service without configuring a host', async () => {
+    const hostedApp = build({
+      config: {
+        serviceOrigin: 'https://relik.link',
+        usercontentOrigin: 'https://relic-usercontent.example',
+      },
+    });
+    const body = await hostedApp
+      .fetch(new Request('https://relik.link/'))
+      .then((r) => r.text());
+    expect(body).toContain(
+      'claude plugin marketplace add TheBushidoCollective/relik\nclaude plugin install relic@relic'
+    );
+    expect(body).not.toContain('RELIC_SERVICE_ORIGIN');
+  });
+
+  test('a self-hosted plugin install says which service to publish to', async () => {
+    const body = await app.fetch(req('/')).then((r) => r.text());
+    expect(body).toContain(
+      'export RELIC_SERVICE_ORIGIN=https://relic.example\nclaude plugin marketplace add TheBushidoCollective/relik'
+    );
+  });
+
+  test('carries every install form, each naming the configured origin', async () => {
     // build() leaves serviceOrigin at its default, which is the origin the
     // forms must interpolate; relik.link must not appear by accident.
     const body = await app.fetch(req('/')).then((r) => r.text());

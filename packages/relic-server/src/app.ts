@@ -180,8 +180,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // The homepage is a landing page, not the viewer. It used to be the shell
     // fed the literal string "Relic" as an id, so the first thing a visitor
     // saw was a relic that does not exist.
-    if (segments.length === 0)
-      return landingPage(config, { listsRelics: true });
+    if (segments.length === 0) return landingPage(config);
 
     // Reserved segments win at the router, before anything is read as an ID.
     if (head !== undefined && RESERVED.has(head)) {
@@ -237,9 +236,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     }
 
-    // Shares the landing template with the homepage so install copy cannot
-    // drift, but serves it without client script or the relics mount.
-    if (head === 'install') return landingPage(config, { listsRelics: false });
+    // The same page as the homepage, so install copy cannot drift.
+    if (head === 'install') return landingPage(config);
     if (head === 'dashboard' || head === 'dashb0ard') {
       if (segments.length === 1 && request.method === 'GET') {
         return shell(config, { view: 'dashboard' }, store, now);
@@ -5379,21 +5377,19 @@ async function shell(
  * because `relic-mcp` has no default origin on purpose: a wrong one turns
  * "you did not configure me" into a DNS error on the first publish.
  *
- * Both routes share this template so install instructions cannot drift.
- * `/install` carries no script at all and keeps a CSP that denies scripts
- * outright. `/` loads a client script to list relics held in this browser's
- * local vault, using `script-src 'self'`. That script makes no request; it
- * reads storage and writes DOM. `connect-src` is left out so the request
- * APIs fall back to `default-src 'none'` as a backstop. It is not a wall: the
- * CSP does not govern navigation, and `img-src 'self'` still loads images
- * from this origin, so what keeps the list here is the script we serve.
+ * `/` and `/install` serve the same bytes, so install instructions cannot
+ * drift. The page carries no script and a CSP that denies scripts outright.
+ * It used to load a client script that listed the relics held in this
+ * browser's local vault; that list now lives only at `/dashboard`, and the
+ * header links there, so the landing page never touches the key vault.
+ *
+ * The screenshots are real renders of the viewer, produced by
+ * `scripts/landing-shots.ts` and served from `/assets/`. `img-src 'self'`
+ * covers them.
  */
-export function landingPage(
-  config: RelicConfig,
-  options?: { listsRelics?: boolean }
-): Response {
-  const listsRelics = options?.listsRelics ?? false;
+export function landingPage(config: RelicConfig): Response {
   const origin = escapeHtml(new URL(config.serviceOrigin).origin);
+  const host = escapeHtml(new URL(config.serviceOrigin).host);
   // The hosted service does not ask a reader to configure which host they are
   // already using. A self-hosted deployment has to, because its client would
   // otherwise resolve the hosted default and publish to the wrong place, so
@@ -5403,7 +5399,7 @@ export function landingPage(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1f6b64">
-<title>Relic: publish a file as an encrypted link</title>
+<title>Relic: share a file the server cannot read</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <style>
@@ -5440,6 +5436,9 @@ export function landingPage(
     font-size: 16px;
     line-height: 1.55;
   }
+  a { color: var(--patina); }
+  p { margin: 0 0 1rem; }
+  code { font-family: var(--mono); font-size: 0.85rem; }
   .bar {
     display: flex;
     align-items: stretch;
@@ -5454,183 +5453,310 @@ export function landingPage(
     font-family: var(--mono);
     font-size: 0.78rem;
     font-weight: 600;
+    color: var(--ink);
+    text-decoration: none;
     border-right: 1px solid var(--rule);
     white-space: nowrap;
   }
-  .bar-note {
+  .bar nav { display: flex; flex: 1; min-width: 0; }
+  .bar nav a {
     display: flex;
     align-items: center;
     padding: 0 1rem;
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     color: var(--ink-soft);
+    text-decoration: none;
   }
-  main { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+  .bar nav a:hover,
+  .bar nav a:focus-visible { color: var(--ink); text-decoration: underline; }
+  .mine {
+    display: flex;
+    align-items: center;
+    padding: 0 1.25rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--ink);
+    text-decoration: none;
+    border-left: 1px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+  .mine:hover,
+  .mine:focus-visible { background: var(--ground); color: var(--patina); }
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.5rem; }
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: 4rem;
+    align-items: start;
+    padding-top: 4.5rem;
+    padding-bottom: 4.5rem;
+  }
   h1 {
     font-family: var(--serif);
-    font-size: 2rem;
-    line-height: 1.15;
+    font-size: clamp(2.3rem, 4.8vw, 3.6rem);
+    text-wrap: balance;
+    line-height: 1.04;
+    letter-spacing: -0.015em;
     font-weight: 600;
-    margin: 0 0 0.5rem;
+    margin: 0 0 1.25rem;
   }
-  .lede { font-size: 1.05rem; color: var(--ink-soft); margin: 0 0 2.5rem; }
   h2 {
-    font-family: var(--mono);
-    font-size: 0.72rem;
+    font-family: var(--serif);
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
     font-weight: 600;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--patina);
-    margin: 2.5rem 0 0.75rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid var(--rule);
+    margin: 0 0 1rem;
   }
-  p { margin: 0 0 1rem; }
+  h3 { font-family: var(--serif); font-size: 1.15rem; margin: 0 0 0.5rem; }
+  .lede { font-size: 1.15rem; color: var(--ink-soft); max-width: 34rem; margin-bottom: 2rem; }
+  .say { font-weight: 600; margin-bottom: 0.5rem; }
   pre {
     margin: 0 0 1rem;
-    padding: 0.9rem 1rem;
+    padding: 1rem 1.1rem;
     overflow-x: auto;
     background: var(--surface);
     border: 1px solid var(--rule);
-    border-left: 2px solid var(--patina);
+    border-left: 3px solid var(--patina);
   }
-  code { font-family: var(--mono); font-size: 0.85rem; }
-  .note {
-    padding: 1rem 1.15rem;
+  pre code { font-size: 0.88rem; line-height: 1.7; }
+  .after { color: var(--ink-soft); font-size: 0.95rem; max-width: 34rem; }
+  .tag { margin: 0; }
+  .tag-part { padding: 0.25rem 0 0.25rem 1.25rem; border-left: 3px solid var(--ink-soft); }
+  .tag-part + .tag-part { margin-top: 1.5rem; border-left-color: var(--patina); }
+  .tag-url {
+    display: block;
+    font-size: 1.3rem;
+    line-height: 1.55;
+    word-break: break-all;
+  }
+  .u-host { display: block; color: var(--ink-soft); }
+  .u-hash { color: var(--patina); font-weight: 700; }
+  .u-key { color: var(--patina); }
+  .tag-part p { margin: 0.5rem 0 0; font-size: 0.92rem; color: var(--ink-soft); max-width: 24rem; }
+  .tag figcaption { margin-top: 1.5rem; font-size: 0.8rem; color: var(--ink-soft); }
+  .band { border-top: 1px solid var(--rule-strong); padding: 4.5rem 0; }
+  .band.alt { background: var(--surface); }
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+    gap: 3.5rem;
+    align-items: start;
+  }
+  .split p { color: var(--ink-soft); }
+  .shot { margin: 0; }
+  .shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--rule-strong);
     background: var(--surface);
-    border: 1px solid var(--rule);
   }
-  .note p:last-child { margin: 0; }
-  .home-relics {
-    margin-bottom: 2.5rem;
+  .shot figcaption { margin-top: 0.6rem; font-size: 0.85rem; color: var(--ink-soft); max-width: 38rem; }
+  .transcript { font-size: 0.85rem; }
+  .transcript code { display: block; white-space: pre-wrap; word-break: break-all; }
+  .transcript .who { color: var(--ink-soft); }
+  .pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 2.5rem;
+    align-items: start;
+    margin-top: 2.5rem;
   }
-  .home-relics[hidden] {
-    display: none;
+  .pair .shot:last-child { margin-top: 4.5rem; }
+  .notes {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 3.5rem;
+    margin-top: 3.5rem;
   }
-  .home-relics h2 {
-    margin-top: 0;
-  }
-  .home-relics-note {
-    font-size: 0.85rem;
-    color: var(--ink-soft);
-  }
-  .home-relic-list {
-    list-style: none;
-    margin: 0 0 1rem;
-    padding: 0;
-    background: var(--surface);
-    border: 1px solid var(--rule);
-  }
-  .home-relic {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    padding: 0.6rem 1rem;
-  }
-  .home-relic + .home-relic {
+  dl.types { margin: 0; }
+  dl.types div {
+    display: grid;
+    grid-template-columns: 9.5rem minmax(0, 1fr);
+    gap: 1rem;
+    padding: 0.55rem 0;
     border-top: 1px solid var(--rule);
   }
-  .home-relic-kind {
-    font-family: var(--mono);
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--ink-soft);
-    width: 6rem;
-    flex: none;
-  }
-  .home-relic-link {
+  dl.types div:last-child { border-bottom: 1px solid var(--rule); }
+  dl.types dt { font-family: var(--serif); font-weight: 600; }
+  dl.types dd { margin: 0; color: var(--ink-soft); font-size: 0.95rem; }
+  details { border-top: 1px solid var(--rule); padding: 0.9rem 0; }
+  details:last-of-type { border-bottom: 1px solid var(--rule); }
+  summary {
+    cursor: pointer;
     font-family: var(--serif);
-    font-size: 1.02rem;
-    color: var(--ink);
-    text-decoration: none;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 1.12rem;
+    font-weight: 600;
   }
-  .home-relic-link:hover,
-  .home-relic-link:focus-visible {
-    text-decoration: underline;
-    text-decoration-color: var(--patina);
+  details > :not(summary) { margin-top: 0.9rem; }
+  .elsewhere > * { max-width: 46rem; }
+  .elsewhere p { color: var(--ink-soft); }
+  .ledger {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 3.5rem;
+    max-width: 62rem;
+    margin: 0 0 3rem;
   }
-  .home-relics-more {
-    font-size: 0.85rem;
-    color: var(--ink-soft);
-  }
-  @media (max-width: 30rem) {
-    .home-relic {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 0.25rem;
-    }
-    .home-relic-kind {
-      width: auto;
-    }
-    .home-relic-link {
-      max-width: 100%;
-    }
-  }
-  footer {
-    margin-top: 3rem;
-    padding-top: 1rem;
+  .ledger > div + div h3 { color: var(--patina); }
+  .ledger ul { list-style: none; margin: 0; padding: 0; }
+  .ledger li {
+    padding: 0.7rem 0;
     border-top: 1px solid var(--rule);
-    font-size: 0.85rem;
     color: var(--ink-soft);
+    font-size: 0.96rem;
   }
-  a { color: var(--patina); }
+  .ledger li:last-child { border-bottom: 1px solid var(--rule); }
+  .ledger li strong { color: var(--ink); font-weight: 600; }
+  .limits { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 3.5rem; max-width: 62rem; }
+  .limits p { color: var(--ink-soft); }
+  .limits p strong { color: var(--ink); }
+  footer { border-top: 1px solid var(--rule-strong); padding: 1.5rem 0 3rem; font-size: 0.85rem; color: var(--ink-soft); }
+  @media (max-width: 52rem) {
+    .hero, .split, .pair, .notes, .limits, .ledger { grid-template-columns: minmax(0, 1fr); gap: 2.5rem; }
+    .hero { padding-top: 3rem; padding-bottom: 3rem; }
+    .band { padding: 3rem 0; }
+    .pair .shot:last-child { margin-top: 0; }
+  }
+  @media (max-width: 40rem) {
+    .bar nav { display: none; }
+    .mine { margin-left: auto; }
+    dl.types div { grid-template-columns: minmax(0, 1fr); gap: 0.1rem; }
+  }
 </style>
 <header class="bar">
-  <div class="mark">relik.link</div>
-  <div class="bar-note">Install, then tell your agent to publish</div>
+  <a class="mark" href="/">${host}</a>
+  <nav aria-label="Page sections">
+    <a href="#install">Install</a>
+    <a href="#recipient">What they see</a>
+    <a href="#limits">What we hold</a>
+  </nav>
+  <a class="mine" href="/dashboard">Your relics</a>
 </header>
 <main>
-  <h1>Publish a file as an encrypted link</h1>
-  <p class="lede">Relic turns a file on your machine into one URL you can hand
-  to a person. The file is encrypted before it is uploaded, and the key lives
-  in the link rather than on our servers.</p>${
-    listsRelics
-      ? '<section id="home-relics" class="home-relics" aria-labelledby="home-relics-title" hidden></section>'
-      : ''
-  }
-
-  <h2>How it goes</h2>
-  <p>Install the MCP server below, then tell your agent:
-  <em>publish ./report.md as a relic</em>. It hands back a link. Send the link.
-  Whoever opens it sees the file rendered in their browser, decrypted there.</p>
-  <p>Markdown, code, images and plain text render inline. HTML and JSX render
-  in a sandboxed frame on a separate origin, so a published page cannot reach
-  the key or this service. Anything else offers a download.</p>
-
-  <h2>The link is the credential</h2>
-  <div class="note">
-    <p>Everything after the <code>#</code> is the decryption key. Anyone
-    holding the whole link can read the file, and there are no per-recipient
-    permissions to revoke. Treat it like a password, and know that a chat
-    client or ticket system that truncates the fragment hands over a link that
-    cannot decrypt anything.</p>
+  <div class="wrap hero" id="install">
+    <div>
+      <h1>Share a file we can&rsquo;t read.</h1>
+      <p class="lede">Your agent encrypts the file on your machine and hands you
+      one link. Whoever you give the link to opens it in a browser. We keep the
+      ciphertext. The key lives in the link, and browsers never send that part
+      to a server.</p>
+      <p class="say">Add it to Claude Code:</p>
+      <pre><code>${
+        hosted
+          ? ''
+          : `export RELIC_SERVICE_ORIGIN=${origin}
+`
+      }claude plugin marketplace add TheBushidoCollective/relik
+claude plugin install relic@relic</code></pre>
+      <p class="after">Then tell your agent <em>publish ./report.md as a relic</em>.
+      The plugin includes a skill that teaches it when sharing a file is the
+      right move and what to tell you about the link. Using another client?
+      <a href="#elsewhere">It installs there too</a>.</p>
+    </div>
+    <figure class="tag" aria-label="The two halves of a relic link">
+      <div class="tag-part">
+        <code class="tag-url"><span class="u-host">${host}/</span>01JC9M4T7KQZ2V8XH5RN3PWEYD</code>
+        <p>This much reaches our servers. It says where the ciphertext is stored.</p>
+      </div>
+      <div class="tag-part">
+        <code class="tag-url"><span class="u-hash">#</span><span class="u-key">q7Tn-V2x_kLw9Zr4HbYc1sUe8GdPj3MoA6iFtXnQ0aE</span></code>
+        <p>This much never does. It is the key, and the browser keeps it.</p>
+      </div>
+      <figcaption>An example link, not a live one.</figcaption>
+    </figure>
   </div>
 
-  <h2>Claude Code</h2>
-  <p>One command. <code>npx</code> fetches the server on first use and caches it.</p>
-  <pre><code>claude mcp add relic ${
-    hosted
-      ? ''
-      : `\\
+  <section class="band alt">
+    <div class="wrap split">
+      <div>
+        <h2>One sentence to publish</h2>
+        <p>The agent passes a path, never the file&rsquo;s contents, so the
+        plaintext does not enter your conversation. It encrypts here, uploads
+        the ciphertext, and gives the link back.</p>
+        <pre class="transcript"><code><span class="who">you</span>    publish ./release-notes.html as a relic
+<span class="who">agent</span>  Published. ${host}/01JC9M4T7KQZ2V8XH5RN3PWEYD#q7Tn-&hellip;</code></pre>
+        <p>Send the link anywhere. Opening it takes a browser and the whole
+        link, including the part after the <code>#</code>. Reading needs no
+        account and no install.</p>
+      </div>
+      <figure class="shot">
+        <img src="/assets/landing-html.png" width="1440" height="900" loading="lazy"
+          alt="A published HTML page open in the Relic viewer, rendered in a sandboxed frame.">
+        <figcaption>What the other person sees for an HTML file: the page,
+        rendered in their browser in a frame with no network access.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="recipient">
+    <div class="wrap">
+      <h2>It opens as the thing it is</h2>
+      <p class="after">The viewer decrypts in the reader&rsquo;s browser and renders by
+      type, in the reader&rsquo;s light or dark setting.</p>
+      <div class="pair">
+        <figure class="shot">
+          <img src="/assets/landing-markdown.png" width="1440" height="900" loading="lazy"
+            alt="A Markdown README open in the Relic viewer, rendered as a formatted document.">
+          <figcaption>Markdown, as published. This is this project&rsquo;s own README.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="/assets/landing-code-dark.png" width="1440" height="900" loading="lazy"
+            alt="A source file open in the Relic viewer in its dark theme, with syntax highlighting.">
+          <figcaption>Code, in the dark theme, with highlighting.</figcaption>
+        </figure>
+      </div>
+      <div class="notes">
+        <dl class="types">
+          <div><dt>Markdown, code, text, images</dt><dd>Rendered inline.</dd></div>
+          <div><dt>PDF</dt><dd>An in-browser document viewer.</dd></div>
+          <div><dt>Audio, video</dt><dd>An in-browser player.</dd></div>
+          <div><dt>OpenTimelineIO</dt><dd>A timeline player with tracks, trims and dissolves.</dd></div>
+          <div><dt>HTML, JSX</dt><dd>A sandboxed frame on a separate origin, with no network. Inline what the page needs.</dd></div>
+          <div><dt>Anything else</dt><dd>A download.</dd></div>
+        </dl>
+        <div>
+          <h3>They can answer, and you can update</h3>
+          <p>A reader can comment on the file. The comment text is encrypted the
+          same way the file is, and commenting asks for a verified email address.
+          Your agent reads the comments back.</p>
+          <p>Publish a new version and the link stays the same, so everyone who
+          has it sees the update. Earlier versions stay readable to anyone
+          holding the link. A relic is kept until it is deleted, unless you give
+          it a lifetime when you publish.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt" id="elsewhere">
+    <div class="wrap elsewhere">
+      <h2>Other ways to install</h2>
+      <p>The same server runs in any client that speaks MCP.</p>
+      <details open>
+        <summary>Claude Code, server only</summary>
+        <pre><code>claude mcp add relic ${
+          hosted
+            ? ''
+            : `\\
   --env RELIC_SERVICE_ORIGIN=${origin} \\
   `
-  }-- npx -y relic-mcp@latest</code></pre>
-
-  <h2>Claude Code, as a plugin</h2>
-  <p>The npm package is the plugin, so the version can never disagree with
-  itself. This also installs the publishing skill.</p>
-  <pre><code>npm i -g relic-mcp
-claude plugin marketplace add "$(npm root -g)/relic-mcp"
-claude plugin install relic@relic</code></pre>
-
-  <h2>Any client that takes JSON</h2>
-  <p>Claude Desktop, Cursor, Windsurf, Cline, and most others read a variant of
-  this. The key names differ. The shape does not.</p>
-  <pre><code>{
+        }-- npx -y relic-mcp@latest</code></pre>
+        <p><code>npx</code> fetches the server on first use and caches it. You
+        get the tools without the skill.</p>
+      </details>
+      <details>
+        <summary>Cursor, Windsurf, Codex, VS Code, Gemini CLI, Claude Desktop</summary>
+        <pre><code>npx -y relic-mcp@latest install${hosted ? '' : ` --origin ${origin}`}                 # what is installed on this machine
+npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${origin}`}  # add it there</code></pre>
+        <p>It knows where each client keeps its config, merges into what is
+        already there, and backs the file up first. Client names: claude-desktop,
+        cursor, windsurf, gemini, vscode, codex.</p>
+      </details>
+      <details>
+        <summary>Any client that takes JSON</summary>
+        <pre><code>{
   "mcpServers": {
     "relic": {
       "command": "npx",
@@ -5645,33 +5771,62 @@ claude plugin install relic@relic</code></pre>
     }
   }
 }</code></pre>
+        <p>The key names differ between clients. The shape does not.</p>
+      </details>
+    </div>
+  </section>
 
-  <h2>What leaves your machine</h2>
-  <div class="note">
-    <p>The server generates the key on your machine and encrypts in-process.
-    Only ciphertext is uploaded. The key lives in the link fragment, and
-    browsers never send a fragment to a server.</p>
-    <p>Being straight about the limit: the page that decrypts is served by us,
-    so that half rests on our intent rather than on something you can verify.
-    The half that is structural is that we never receive the key.</p>
-  </div>
-
-  <h2>What the recipient needs</h2>
-  <p>A browser, and the whole link including the part after the
-  <code>#</code>. No account, no install, nothing to sign up for. They can copy
-  the link, download the file, compare it against earlier versions if the
-  publisher republished, and leave a comment whose text is encrypted the same
-  way the file is.</p>
-
-  <h2>Links stay until deleted</h2>
-  <p>A relic is kept until it is deleted. The publisher can ask for a
-  lifetime when creating it; without one, the link does not age out.</p>
-
-  <footer>
+  <section class="band" id="limits">
+    <div class="wrap">
+      <h2>What we hold, and what we never receive</h2>
+      <div class="ledger">
+        <div>
+          <h3>We hold</h3>
+          <ul>
+            <li><strong>The file, as ciphertext.</strong></li>
+            <li><strong>A title, in the clear.</strong> It defaults to your filename and shows in link previews.</li>
+            <li><strong>A cover image of the first screen,</strong> unless you decline it when you publish.</li>
+            <li><strong>A coarse file type,</strong> the publishing tool&rsquo;s name, and the upload time and IP address, kept for abuse response.</li>
+            <li><strong>Addresses you share to,</strong> and the addresses of people who comment.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>We never receive</h3>
+          <ul>
+            <li><strong>The key.</strong> It sits after the <code>#</code>, and browsers never send a fragment to a server.</li>
+            <li><strong>The file&rsquo;s contents</strong> in any form we could read.</li>
+            <li><strong>The text of a comment.</strong> It is encrypted the way the file is.</li>
+            <li><strong>The keys a browser remembers</strong> for relics it opened. They stay in that browser&rsquo;s local storage.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="limits">
+        <div>
+          <h3>The link is the credential</h3>
+          <p>Anyone holding the whole link can read the file, and there are no
+          per-recipient permissions to revoke. Treat it like a password. A chat
+          client or ticket system that cuts off the fragment hands over a link
+          that cannot decrypt anything.</p>
+        </div>
+        <div>
+          <h3>The limit, stated plainly</h3>
+          <p>The page that decrypts is served by us, so that half
+          rests on our intent rather than on something you can verify. The half that is
+          structural is that we never receive the key. The link also passes
+          through your agent, so it is in your transcript, and whoever can read
+          that can open the file.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<footer>
+  <div class="wrap">
     <a href="/policy">What we store and what we can see</a> &middot;
-    <a href="/abuse">Report a relic</a>
-  </footer>
-</main>${listsRelics ? '<script type="module" src="/assets/home.js"></script>' : ''}
+    <a href="/abuse">Report a relic</a> &middot;
+    <a href="https://github.com/TheBushidoCollective/relik">Source</a>
+  </div>
+</footer>
 `;
   return new Response(body, {
     headers: {
@@ -5682,7 +5837,6 @@ claude plugin install relic@relic</code></pre>
       'x-robots-tag': 'noindex',
       'content-security-policy': [
         "default-src 'none'",
-        ...(listsRelics ? ["script-src 'self'"] : []),
         "style-src 'unsafe-inline'",
         "img-src 'self'",
         // The page links the manifest so a browser can offer to install it,

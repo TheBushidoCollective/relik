@@ -215,11 +215,11 @@ The plugin is the packaged version: it wires the server, points at the hosted
 service, and adds a skill telling the agent when publishing is the right move
 and what to disclose when it hands over a link.
 
-`npx -y relic-mcp@latest install --client claude-code` does this for you. By hand, from
-the repo:
+`npx -y relic-mcp@latest install --client claude-code` does this for you. By hand,
+from the marketplace in this repository:
 
 ```bash
-claude plugin marketplace add TheBushidoCollective/relic
+claude plugin marketplace add TheBushidoCollective/relik
 claude plugin install relic@relic
 ```
 
@@ -231,9 +231,13 @@ claude plugin marketplace add "$(npm root -g)/relic-mcp"
 claude plugin install relic@relic
 ```
 
-Both install the same directory. The npm package **is** the plugin: the
+Both install the published npm package. The repository's marketplace entry
+sources the plugin from npm rather than from this checkout, because the plugin
+manifest is generated at build time and is not committed: a checkout has the
+skill but no manifest wiring the server. The npm package **is** the plugin: the
 manifests are generated from `package.json` at build time and ship in the
-tarball, so the version can never disagree with itself.
+tarball, so the version can never disagree with itself. The marketplace entry
+carries no version, so it always resolves the latest published package.
 
 ### Claude Code, server only
 
