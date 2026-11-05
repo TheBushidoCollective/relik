@@ -1,6 +1,6 @@
 {
   "name": "relic-mcp",
-  "version": "0.14.2",
+  "version": "0.14.3",
   "description": "Publish a file as an encrypted relic. The key is generated on your machine and never sent to the service.",
   "license": "MIT",
   "type": "module",
