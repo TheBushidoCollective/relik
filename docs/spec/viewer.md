@@ -516,6 +516,10 @@ The page carries what Relic is, the Claude Code plugin install first (`claude pl
 
 **`/{id}` is unchanged and still serves the shell.** The landing page occupies `/` and `/install` and nothing else, so a real relic id routes into the viewer exactly as §6.1 through §6.6 describe.
 
+**`/policy` opens in the markdown player, and is not a relic.** Requested by Jason Waldrip on 2026-11-05. The disclosure statement was served as bare `text/markdown`, which a browser shows as plain text or downloads. A navigation that asks for HTML (`Accept` includes `text/html`) now gets the viewer shell with `data-view="document" data-document="/policy"`, and the viewer fetches the same path asking for `text/markdown` and renders it in the same markdown player a markdown relic uses, including the rendered and source toggle. Everything else gets the markdown itself, with `Vary: Accept`: `curl`, the deploy check, and the player's own fetch. `/policy?raw=1` returns the markdown to a browser that cannot run the player, and the shell carries a `<noscript>` link to it. The view shows the wordmark, the document's own heading and `SERVICE DOCUMENT` where a relic shows its id, and none of a relic's chrome: no comments, decisions, share, copy link, download or report, because the document has no key, no fragment and no thread. The viewer fetches only a fixed list of paths (`SERVICE_DOCUMENTS`), so the attribute on the page cannot point it at another endpoint. The shell's CSP and `no-store` are unchanged. `/abuse` is a form, not a document, and is unchanged.
+
+The player also changed for every markdown source: a list item wrapped onto an indented line now stays one item, where the continuation used to become a stray paragraph after the list.
+
 ### 6.8 The share action and point-of-sharing disclosure
 
 A reader holding the link and decryption key can share a relic from the viewer.

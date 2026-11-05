@@ -157,13 +157,16 @@ export function renderMarkdown(source: string): string {
       flushParagraph();
       const ordered = /^\s*\d+\./.test(line);
       const items: string[] = [];
-      while (
-        index < lines.length &&
-        /^\s*([-*+]|\d+\.)\s+/.test(lines[index] as string)
-      ) {
-        items.push(
-          (lines[index] as string).replace(/^\s*([-*+]|\d+\.)\s+/, '')
-        );
+      while (index < lines.length) {
+        const current = lines[index] as string;
+        if (/^\s*([-*+]|\d+\.)\s+/.test(current)) {
+          items.push(current.replace(/^\s*([-*+]|\d+\.)\s+/, ''));
+        } else if (/^\s+\S/.test(current) && !/^\s*(>|```)/.test(current)) {
+          // A wrapped item: the line is indented under the one before it.
+          items[items.length - 1] += ` ${current.trim()}`;
+        } else {
+          break;
+        }
         index++;
       }
       const tag = ordered ? 'ol' : 'ul';

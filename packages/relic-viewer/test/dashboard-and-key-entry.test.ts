@@ -1365,6 +1365,81 @@ describe('Dashboard rendering (DOM)', () => {
     expect(rootBody.querySelector('.stage-dashboard')).not.toBeNull();
   });
 
+  test("boot renders a service document in the markdown player with none of a relic's chrome", async () => {
+    const root = new ElementStub('div');
+    root.id = 'relic-root';
+    root.setAttribute('data-view', 'document');
+    root.setAttribute('data-document', '/policy');
+    rootBody.appendChild(root);
+
+    const requested: Array<{ url: string; accept: string | undefined }> = [];
+    const deps: ViewerDeps = {
+      serviceOrigin: 'https://relic.example',
+      fetch: (async (url: string, init?: RequestInit) => {
+        requested.push({
+          url,
+          accept: (init?.headers as Record<string, string> | undefined)?.[
+            'accept'
+          ],
+        });
+        return new Response('# What Relic knows\n\nRead this **first**.', {
+          status: 200,
+        });
+      }) as unknown as typeof globalThis.fetch,
+      keyVault: makeMockVault(),
+      takeFragment: () => '',
+      stripFragment: () => {},
+      locationHref: 'https://relic.example/policy',
+    };
+
+    await boot(root as unknown as HTMLElement, deps);
+
+    expect(requested).toEqual([
+      { url: 'https://relic.example/policy', accept: 'text/markdown' },
+    ]);
+    expect(rootBody.querySelector('.stage-markdown')).not.toBeNull();
+    expect(rootBody.querySelector('.doc')).not.toBeNull();
+    expect(rootBody.querySelector('.prose')).not.toBeNull();
+    expect(rootBody.querySelector('.filename')?.textContent).toBe(
+      'What Relic knows'
+    );
+    // It is not a relic: no actions (comments, decisions, share, copy link,
+    // download, report) and no comment thread.
+    expect(rootBody.querySelector('.actions')).toBeNull();
+    expect(rootBody.querySelector('.thread')).toBeNull();
+  });
+
+  test('a document path the service does not publish is refused without a request', async () => {
+    const root = new ElementStub('div');
+    root.id = 'relic-root';
+    root.setAttribute('data-view', 'document');
+    root.setAttribute('data-document', '/api/auth/session');
+    rootBody.appendChild(root);
+
+    let calls = 0;
+    const deps: ViewerDeps = {
+      serviceOrigin: 'https://relic.example',
+      fetch: (async () => {
+        calls += 1;
+        return new Response('', { status: 200 });
+      }) as unknown as typeof globalThis.fetch,
+      keyVault: makeMockVault(),
+      takeFragment: () => '',
+      stripFragment: () => {},
+      locationHref: 'https://relic.example/policy',
+    };
+
+    await boot(root as unknown as HTMLElement, deps);
+
+    expect(calls).toBe(0);
+    expect(rootBody.querySelector('.prose')).toBeNull();
+    const refusal = rootBody.querySelector('.notice') as ElementStub;
+    expect(refusal).not.toBeNull();
+    expect((refusal.children.at(-1) as ElementStub).textContent).toBe(
+      'This document does not exist.'
+    );
+  });
+
   test('dashboard renders all key management controls (export, import, forget)', async () => {
     const key1 = generateKey();
     const frag1 = encodeFragment(key1);
