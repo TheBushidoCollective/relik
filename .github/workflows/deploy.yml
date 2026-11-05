@@ -205,13 +205,17 @@ jobs:
           grep -qi '^referrer-policy: no-referrer' /tmp/h
 
           echo "every asset the shell names resolves"
-          for P in /assets/viewer.js /assets/home.js /assets/styles.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do
+          for P in /assets/viewer.js /assets/landing-html.png /assets/landing-markdown.png /assets/landing-code-dark.png /assets/styles.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do
             curl -fsS -o/dev/null "$SERVICE$P" || { echo "MISSING $P"; exit 1; }
           done
 
-          echo "the homepage references the home script, but /install carries no script"
+          echo "the homepage links the reader's relics and, like /install, carries no script"
           curl -fsS -o/tmp/root "$SERVICE/"
-          grep -q '/assets/home.js' /tmp/root
+          grep -q 'href="/dashboard"' /tmp/root
+          if grep -q '<script' /tmp/root; then
+            echo "/ carries a script tag"
+            exit 1
+          fi
           curl -fsS -o/tmp/install "$SERVICE/install"
           if grep -q '<script' /tmp/install; then
             echo "/install carries a script tag"

@@ -160,7 +160,6 @@ describe('service worker shell cache generation', () => {
     expect(isCacheable(origin('/assets/card.v1.png'), true)).toBe(false);
     expect(isCacheable(origin('/card.v1.png'), true)).toBe(false);
     expect(isCacheable(origin('/assets/chunk-12345678.js'), true)).toBe(false);
-    expect(isCacheable(origin('/assets/home.js'), true)).toBe(false);
 
     // Allows exact shell assets on same origin
     expect(isCacheable(origin('/assets/viewer.js'), true)).toBe(true);

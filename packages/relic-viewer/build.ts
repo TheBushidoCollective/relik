@@ -1,11 +1,10 @@
 /**
  * Bundles the viewer into `dist/`, which the app server serves as `/assets/`.
  *
- * Five entry points, deliberately separate bundles. `viewer.js` runs on the
- * service origin and holds the key. `home.js` runs on the service origin on the
- * landing page to render the local vault relic list without key handling or
- * network requests. `sandbox.js` runs on the usercontent origin and must never
- * contain a line of key-handling code, which staying a separate entry point
+ * Four entry points, deliberately separate bundles. `viewer.js` runs on the
+ * service origin and holds the key. `sandbox.js` runs on the usercontent origin
+ * and must never contain a line of key-handling code, which staying a separate
+ * entry point
  * makes true by construction rather than by review. `sw.js` is the service
  * worker and has to sit at the root scope. `otio-video-timing-worker.js` alone
  * carries the metadata demuxer.
@@ -105,10 +104,9 @@ export async function buildViewer(options?: {
   await mkdir(out, { recursive: true });
   const mediabunny = await readMediabunnyDistribution();
 
-  // Three builds, because exactly one entrypoint wants code splitting and the
+  // Two builds here, because exactly one entrypoint wants code splitting and the
   // others must not have it. `main.ts` dynamically imports the PDF renderer,
-  // and splitting is what keeps that 429 KB out of the app shell. `home.ts`
-  // runs on the landing page and must not share code chunks with `main.ts`.
+  // and splitting is what keeps that 429 KB out of the app shell.
   // `sandbox.ts` is inlined into an HTML document served from the opaque
   // usercontent origin, so a chunk import in it would be a request that document
   // cannot make; `sw.ts` is a service worker, which cannot import a sibling
@@ -146,21 +144,6 @@ export async function buildViewer(options?: {
 
   if (!builtSandbox.success) {
     for (const log of builtSandbox.logs) console.error(log);
-    process.exit(1);
-  }
-  const builtHome = await Bun.build({
-    entrypoints: [`${pkgDir}src/home.ts`],
-    outdir: out,
-    target: 'browser',
-    format: 'esm',
-    minify: true,
-    splitting: false,
-    naming: '[name].js',
-    define: { 'process.env.NODE_ENV': '"production"' },
-  });
-
-  if (!builtHome.success) {
-    for (const log of builtHome.logs) console.error(log);
     process.exit(1);
   }
 

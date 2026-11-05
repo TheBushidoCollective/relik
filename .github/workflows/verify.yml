@@ -325,7 +325,9 @@ jobs:
 
           for P in \
             /assets/viewer.js \
-            /assets/home.js \
+            /assets/landing-html.png \
+            /assets/landing-markdown.png \
+            /assets/landing-code-dark.png \
             /assets/styles.css \
             /assets/register-sw.js \
             /manifest.webmanifest \
