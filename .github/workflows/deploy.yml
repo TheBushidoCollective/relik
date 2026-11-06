@@ -1,145 +1,89 @@
-name: MAINTENANCE ONLY - ephemeral operator (never deploy)
-run-name: 'MAINTENANCE ONLY - reviewed exact-five operator handler'
+name: PROOF ONLY - fake operator build (no production access)
+run-name: 'PROOF ONLY - fake operator build'
 
 on:
   workflow_dispatch:
     inputs:
-      action:
-        description: 'Must be delete-five'
-        type: string
-        required: true
       reviewed_sha:
-        description: 'Independently reviewed full maintenance branch commit'
-        type: string
-        required: true
-      manifest_secret_name:
-        description: 'Unique production environment secret name holding the private manifest'
+        description: 'Independently reviewed full proof-workflow commit'
         type: string
         required: true
 
-permissions: {}
-concurrency:
-  group: deploy
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: Build and test with fake storage only
+    name: Fake-only candidate build and evidence
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-    outputs:
-      binary_sha256: ${{ steps.bundle.outputs.sha256 }}
     env:
-      REVIEWED_SHA: ${{ inputs.reviewed_sha }}
-      RUN_SHA: ${{ github.sha }}
+      REVIEWED_PROOF_SHA: ${{ inputs.reviewed_sha }}
       WORKFLOW_SHA: ${{ github.workflow_sha }}
       WORKFLOW_REF: ${{ github.workflow_ref }}
       REPOSITORY_ID: ${{ github.repository_id }}
       EVENT_NAME: ${{ github.event_name }}
-      ACTION: ${{ inputs.action }}
-      MANIFEST_SECRET_NAME: ${{ inputs.manifest_secret_name }}
       RUN_ATTEMPT: ${{ github.run_attempt }}
     steps:
-      - name: Check dispatch identity before checkout
+      - name: Validate proof dispatch
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REVIEWED_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$REVIEWED_SHA" == "$RUN_SHA" && "$REVIEWED_SHA" == "$WORKFLOW_SHA" ]]
-          [[ "$REPOSITORY_ID" == 1316636189 && "$EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/archie/ephemeral-operator-maintenance ]]
-          [[ "$WORKFLOW_REF" == TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance ]]
-          [[ "$RUN_ATTEMPT" == 1 && "$ACTION" == delete-five && "$MANIFEST_SECRET_NAME" =~ ^RELIC_MAINTENANCE_[A-F0-9]{32}$ ]]
+          [[ "$REVIEWED_PROOF_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$REVIEWED_PROOF_SHA" == "$GITHUB_SHA" && "$REVIEWED_PROOF_SHA" == "$WORKFLOW_SHA" ]]
+          [[ "$REPOSITORY_ID" == 1316636189 && "$EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/archie/ephemeral-operator-proof-3 ]]
+          [[ "$WORKFLOW_REF" == TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-proof-3 && "$RUN_ATTEMPT" == 1 ]]
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: c3bb32621a42662095d00ddd97e95967c908769d
           fetch-depth: 0
           persist-credentials: false
-      - name: Check immutable application sources
+      - name: Check exact candidate and immutable application sources
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          test "$(git rev-parse HEAD)" = c3bb32621a42662095d00ddd97e95967c908769d
           git cat-file -e af0d7e2410076afaa356276f28f48e685be36418^{commit}
           git diff --exit-code af0d7e2410076afaa356276f28f48e685be36418 HEAD -- packages/relic-server packages/relic-format package.json bun.lock
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.3
-      - name: Install without dependency lifecycle scripts
+      - name: Install without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
-      - name: Run fake-only negative controls
+      - name: Run fake-only controls
         run: bun test scripts/ephemeral-operator.test.ts scripts/check-maintenance-metafile.test.ts
-      - name: Compile and inspect complete executable closure
-        id: bundle
+      - name: Compile candidate and verify import closure
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/maintenance-artifact"
-          bun build --compile --target=bun-linux-x64 scripts/ephemeral-operator.ts --outfile "$RUNNER_TEMP/maintenance-artifact/operator" --metafile="$RUNNER_TEMP/maintenance-artifact/metafile.json"
-          node scripts/check-maintenance-metafile.mjs "$RUNNER_TEMP/maintenance-artifact/metafile.json" "$RUNNER_TEMP/maintenance-artifact/closure.txt"
-          SHA="$(sha256sum "$RUNNER_TEMP/maintenance-artifact/operator" | cut -d ' ' -f1)"
-          [[ "$SHA" =~ ^[a-f0-9]{64}$ ]]
-          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-      - name: Check compiled executable refuses a canary without output
+          mkdir -p "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/proof-evidence"
+          bun build --compile --target=bun-linux-x64 scripts/ephemeral-operator.ts --outfile "$RUNNER_TEMP/candidate/operator" --metafile="$RUNNER_TEMP/proof-evidence/metafile.json"
+          node scripts/check-maintenance-metafile.mjs "$RUNNER_TEMP/proof-evidence/metafile.json" "$RUNNER_TEMP/proof-evidence/closure.txt"
+          DIGEST="$(sha256sum "$RUNNER_TEMP/candidate/operator" | cut -d ' ' -f1)"
+          [[ "$DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/proof-evidence/binary-sha256.txt"
+          printf '%s\n' c3bb32621a42662095d00ddd97e95967c908769d > "$RUNNER_TEMP/proof-evidence/source-sha.txt"
+      - name: Check compiled candidate refuses a fake secret without output
         shell: bash
-        env:
-          REVIEWED_SHA: ${{ github.sha }}
-          RUN_SHA: ${{ github.sha }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-          RUN_ID: ${{ github.run_id }}
-          MAINTENANCE_MANIFEST: 'FAKE_PRIVATE_CANARY_DO_NOT_PRINT'
         run: |
           set -euo pipefail
-          export GITHUB_SHA="$RUN_SHA"
-          if "$RUNNER_TEMP/maintenance-artifact/operator" validate >"$RUNNER_TEMP/canary-output" 2>&1; then exit 1; fi
+          if env -i PATH="$PATH" \
+            REVIEWED_SHA=c3bb32621a42662095d00ddd97e95967c908769d \
+            GITHUB_SHA=c3bb32621a42662095d00ddd97e95967c908769d \
+            WORKFLOW_SHA=c3bb32621a42662095d00ddd97e95967c908769d \
+            WORKFLOW_REF=TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance \
+            REPOSITORY_ID=1316636189 EVENT_NAME=workflow_dispatch \
+            GITHUB_REF=refs/heads/archie/ephemeral-operator-maintenance \
+            RUN_ATTEMPT=1 ACTION=delete-five RUN_ID=123 \
+            MANIFEST_SECRET_NAME=RELIC_MAINTENANCE_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+            MAINTENANCE_MANIFEST=FAKE_PRIVATE_CANARY_DO_NOT_PRINT \
+            "$RUNNER_TEMP/candidate/operator" validate >"$RUNNER_TEMP/canary-output" 2>&1; then exit 1; fi
           if grep -Fq 'FAKE_PRIVATE_CANARY_DO_NOT_PRINT' "$RUNNER_TEMP/canary-output"; then exit 1; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() }}
         with:
-          name: maintenance-bundle-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/maintenance-artifact/
-          if-no-files-found: error
+          name: maintenance-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/proof-evidence/
+          if-no-files-found: ignore
           retention-days: 1
-
-  operate:
-    name: Exact-five maintenance handler (no deploy)
-    needs: build
-    runs-on: ubuntu-24.04
-    environment: production
-    permissions:
-      id-token: write
-    env:
-      REVIEWED_SHA: ${{ inputs.reviewed_sha }}
-      WORKFLOW_SHA: ${{ github.workflow_sha }}
-      WORKFLOW_REF: ${{ github.workflow_ref }}
-      REPOSITORY_ID: ${{ github.repository_id }}
-      EVENT_NAME: ${{ github.event_name }}
-      ACTION: ${{ inputs.action }}
-      MANIFEST_SECRET_NAME: ${{ inputs.manifest_secret_name }}
-      RUN_ATTEMPT: ${{ github.run_attempt }}
-      RUN_ID: ${{ github.run_id }}
-      WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
-      DEPLOYER_SA: ${{ vars.DEPLOYER_SA }}
-      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: maintenance-bundle-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/maintenance-artifact
-      - name: Verify same-run executable digest
-        shell: bash
-        env:
-          EXPECTED_DIGEST: ${{ needs.build.outputs.binary_sha256 }}
-        run: |
-          set -euo pipefail
-          [[ "$EXPECTED_DIGEST" =~ ^[a-f0-9]{64}$ ]]
-          ACTUAL_DIGEST="$(sha256sum "$RUNNER_TEMP/maintenance-artifact/operator" | cut -d ' ' -f1)"
-          [[ "$ACTUAL_DIGEST" == "$EXPECTED_DIGEST" ]]
-          chmod 700 "$RUNNER_TEMP/maintenance-artifact/operator"
-      - name: Validate full private manifest before cloud authentication
-        env:
-          MAINTENANCE_MANIFEST: ${{ secrets[inputs.manifest_secret_name] }}
-        run: '"$RUNNER_TEMP/maintenance-artifact/operator" validate'
-      - name: Authenticate in process and execute reviewed handler
-        env:
-          MAINTENANCE_MANIFEST: ${{ secrets[inputs.manifest_secret_name] }}
-        run: '"$RUNNER_TEMP/maintenance-artifact/operator" execute'
