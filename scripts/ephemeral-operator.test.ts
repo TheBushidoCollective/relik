@@ -7,7 +7,7 @@ const sha = (v: string | Uint8Array) => createHash('sha256').update(v).digest('h
 const enc = new TextEncoder();
 type Item = { data: Uint8Array; generation: string };
 class FakeGcs {
-  data = new Map<string, Item>(); next = 1000; writes = 0; forcedStatus = 0; failDelete = false; malformedList = false;
+  data = new Map<string, Item>(); next = 1000; writes = 0; forcedStatus = 0; failDelete = false; malformedList = false; failSecondRow = false; rowWrites = 0;
   add(name: string, data: string) { const generation = String(++this.next); this.data.set(name, { data: enc.encode(data), generation }); return generation; }
   fetch: typeof fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
@@ -23,6 +23,7 @@ class FakeGcs {
     }
     if (method === 'POST' && url.pathname === upload) {
       const name = url.searchParams.get('name') ?? ''; const before = this.data.get(name); const expected = url.searchParams.get('ifGenerationMatch');
+      if (name.startsWith('m/relic/') && ++this.rowWrites === 2 && this.failSecondRow) return new Response('', { status: 412 });
       if (expected !== (before?.generation ?? '0')) return new Response('', { status: 412 });
       this.writes++; const generation = this.add(name, String(init.body)); return Response.json({ generation });
     }
@@ -130,6 +131,14 @@ describe('ephemeral operator controls', () => {
     expect(output.join('\n')).not.toContain('fake-cloud-token');
     expect(output.join('\n')).not.toContain('X'.repeat(43));
     for (const target of f.targets) { expect(f.fake.data.has('m/tomb/' + target.id + '.json')).toBe(true); expect(f.fake.data.has('r/' + target.id)).toBe(false); expect(output.join('\n')).not.toContain(target.id); }
+  });
+  test('a caught row CAS failure latches the boundary before later sweeps', async () => {
+    const f = fixture(); const target = f.targets[0]!; const optout = 'm/optout/' + target.id + '/entry.json';
+    f.fake.add(optout, '{}'); f.fake.failSecondRow = true; process.env.RUN_ID = '123';
+    try { await expect(execute(f.client, { targets: f.targets }, f.hashes)).rejects.toThrow(); }
+    finally { delete process.env.RUN_ID; }
+    expect(f.fake.data.has(optout)).toBe(true);
+    expect(f.fake.data.has('m/tomb/' + f.targets[1]!.id + '.json')).toBe(false);
   });
   test('precondition failure stops after tombstone, without touching another target', async () => {
     const f = fixture(); f.fake.failDelete = true; process.env.RUN_ID = '123';
