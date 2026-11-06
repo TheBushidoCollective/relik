@@ -14,11 +14,13 @@ function fixture(imports: unknown[] = []) {
 
 describe('maintenance bundle closure', () => {
   test('accepts the reviewed built-ins', () => {
-    const meta = fixture([{ path: 'node:crypto', external: true }, { path: 'node:zlib', external: true }]);
+    const meta = fixture([{ path: 'node:crypto', external: true }, { path: 'node:zlib', external: true }, { path: 'crypto', external: true }, { path: 'zlib', external: true }]);
     expect(validateMetafile(meta)).toContain('packages/relic-server/src/app.ts');
   });
   test('rejects and names unknown runtime imports from inputs and outputs', () => {
     expect(() => validateMetafile(fixture([{ path: 'node:child_process', external: true }]))).toThrow('unreviewed runtime import: node:child_process');
+    expect(() => validateMetafile(fixture([{ path: 'crypto-extra', external: true }]))).toThrow('unreviewed runtime import: crypto-extra');
+    expect(() => validateMetafile(fixture([{ path: 'zlib/other', external: true }]))).toThrow('unreviewed runtime import: zlib/other');
     const meta = fixture(); meta.outputs.operator.imports.push({ path: 'unreviewed-package', external: true } as never);
     expect(() => validateMetafile(meta)).toThrow('unreviewed runtime import: unreviewed-package');
   });
