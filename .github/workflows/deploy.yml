@@ -40,6 +40,9 @@ jobs:
       ACTION: ${{ inputs.action }}
       MANIFEST_SECRET_NAME: ${{ inputs.manifest_secret_name }}
       RUN_ATTEMPT: ${{ github.run_attempt }}
+      ACTOR: ${{ github.actor }}
+      ACTOR_ID: ${{ github.actor_id }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
     steps:
       - name: Check dispatch identity before checkout
         shell: bash
@@ -49,7 +52,7 @@ jobs:
           [[ "$REVIEWED_SHA" == "$RUN_SHA" && "$REVIEWED_SHA" == "$WORKFLOW_SHA" ]]
           [[ "$REPOSITORY_ID" == 1316636189 && "$EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/archie/ephemeral-operator-maintenance ]]
           [[ "$WORKFLOW_REF" == TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance ]]
-          [[ "$RUN_ATTEMPT" == 1 && "$ACTION" == delete-five && "$MANIFEST_SECRET_NAME" =~ ^RELIC_MAINTENANCE_[A-F0-9]{32}$ ]]
+          [[ "$RUN_ATTEMPT" == 1 && "$ACTOR" == jwaldrip && "$ACTOR_ID" == 43164 && "$TRIGGERING_ACTOR" == jwaldrip && "$ACTION" == delete-five && "$MANIFEST_SECRET_NAME" =~ ^RELIC_MAINTENANCE_[A-F0-9]{32}$ ]]
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
@@ -116,6 +119,9 @@ jobs:
       ACTION: ${{ inputs.action }}
       MANIFEST_SECRET_NAME: ${{ inputs.manifest_secret_name }}
       RUN_ATTEMPT: ${{ github.run_attempt }}
+      ACTOR: ${{ github.actor }}
+      ACTOR_ID: ${{ github.actor_id }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
       RUN_ID: ${{ github.run_id }}
       WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
       DEPLOYER_SA: ${{ vars.DEPLOYER_SA }}
