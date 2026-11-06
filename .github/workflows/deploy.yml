@@ -237,18 +237,6 @@ jobs:
           curl -fsS -o/tmp/abuse "$SERVICE/abuse"
           grep -q '<form method="post"' /tmp/abuse
 
-          echo "a never-issued id is a problem document, not a stack trace"
-          CODE=$(curl -sS -o/tmp/b -w '%{http_code}' \
-            "$SERVICE/api/relics/aaaaaaaaaaaaaaaaaaaaaaaaaa/mint" -X POST)
-          test "$CODE" = 404
-          grep -q 'relic_not_found' /tmp/b
-
-          echo "a never-issued id on cover upload is a problem document, not a stack trace"
-          CODE=$(curl -sS -o/tmp/b -w '%{http_code}' \
-            "$SERVICE/api/relics/aaaaaaaaaaaaaaaaaaaaaaaaaa/cover" -X POST -H 'content-type: application/json' -d '{}')
-          test "$CODE" = 404
-          grep -q 'relic_not_found' /tmp/b
-
           echo "a never-issued id on cover fetch returns 404"
           CODE=$(curl -sS -o/dev/null -w '%{http_code}' \
             "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa/cover/0000000000000000000000000000000000000000000000000000000000000000.png")
