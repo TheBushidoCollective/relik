@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from '../packages/relic-server/src/app.ts';
 import { gcsStore } from '../packages/relic-server/src/gcsstore.ts';
 import type { ObjectStorage } from '../packages/relic-server/src/storage.ts';
+import type { RelicStore } from '../packages/relic-server/src/store.ts';
 
 const AUTHORIZED = [
   '086b6758b80cf43ee521d761ae3769914539a61424d4ebbf6947610f0dae0ebd',
@@ -284,15 +285,22 @@ export async function invokeDelete(app: ReturnType<typeof createApp>, allowed: R
   return app.fetch(new Request('https://maintenance.invalid/api/relics/' + id + '?reason=operator_error&blocklist=false', { method: 'DELETE', headers: { authorization: 'Bearer ' + secret } }));
 }
 
-export async function execute(client: StorageClient, manifest: Manifest): Promise<void> {
+export function operatorApp(store: RelicStore | undefined, storage: ObjectStorage | undefined, operators: ReadonlyMap<string, string>) {
+  if (!store || !storage) fail('adapters required');
+  return createApp({ store, storage, operatorTokens: operators });
+}
+
+export async function execute(client: StorageClient, input: Manifest, hashes: readonly string[] = AUTHORIZED, makeSecret: () => string = () => randomBytes(32).toString('base64url')): Promise<void> {
+  const manifest = validateManifest(input, hashes);
   const snapshot = await inventory(client, manifest);
   const operator = 'ci-maintenance-' + required('RUN_ID');
-  const operators = new Map<string, string>(); const secret = randomBytes(32).toString('base64url'); operators.set(operator, secret);
+  const operators = new Map<string, string>(); const secret = makeSecret();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(secret)) fail('operator token');
+  operators.set(operator, secret);
   let active = ''; const boundary = metadataBoundary(client, snapshot, () => active, operator);
   const store = gcsStore({ bucket: client.bucket, prefix: 'm', getAccessToken: async () => client.token, fetch: boundary.fetch });
   const storage = ciphertextStorage(client, snapshot);
-  if (!store || !storage) fail('adapters required');
-  const app = createApp({ store, storage, operatorTokens: operators });
+  const app = operatorApp(store, storage, operators);
   const allowed = new Set(manifest.targets.map(t => t.id));
   try {
     for (const [index, target] of manifest.targets.entries()) {
