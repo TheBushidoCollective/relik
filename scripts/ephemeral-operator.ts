@@ -174,6 +174,7 @@ export function metadataBoundary(client: StorageClient, snapshot: Snapshot, curr
   const pages = new Map<string, { expected: Set<string>; seen: Set<string>; tokens: Set<string> }>();
   const call: typeof fetch = async (input, init = {}) => {
     try {
+      if (faulted) fail('metadata boundary already failed');
       const id = current(); if (!snapshot.rows.has(id)) fail('inactive target');
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
       const method = (init.method ?? 'GET').toUpperCase();
