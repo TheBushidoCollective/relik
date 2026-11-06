@@ -10,7 +10,7 @@ export function validateMetafile(meta) {
     if (path.startsWith('/') || path.includes('..') || path.includes('node_modules/') || path === 'packages/relic-server/src/index.ts' || !(path === 'scripts/ephemeral-operator.ts' || roots.some(root => path.startsWith(root)))) throw Error('unreviewed bundle input');
   }
   if (!paths.includes('scripts/ephemeral-operator.ts') || !paths.includes('packages/relic-server/src/app.ts') || !paths.includes('packages/relic-server/src/gcsstore.ts')) throw Error('missing required bundle input');
-  const allowed = new Set(['node:crypto', 'node:zlib']);
+  const allowed = new Set(['node:crypto', 'crypto', 'node:zlib', 'zlib']);
   for (const entry of [...Object.values(meta.inputs), ...Object.values(meta.outputs)]) {
     for (const item of entry.imports ?? []) {
       if (item.external && !allowed.has(item.path)) {
