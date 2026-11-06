@@ -83,3 +83,239 @@ export class StorageClient {
     if (!r.ok) fail('storage delete');
   }
 }
+
+
+type Snapshot = { objects: Map<string, string>; rows: Map<string, Record<string, unknown>>; bodies: Map<string, Uint8Array> };
+const metadataPrefixes = ['cover', 'comment', 'commenter', 'share', 'optout', 'decision'];
+const rowKey = (id: string) => 'm/relic/' + id + '.json';
+const tombKey = (id: string) => 'm/tomb/' + id + '.json';
+const cipherKey = (id: string, version: number) => 'r/' + id + (version === 1 ? '' : '/v' + version);
+const decodeJson = (data: Uint8Array): unknown => JSON.parse(new TextDecoder().decode(data));
+
+export async function inventory(client: StorageClient, manifest: Manifest): Promise<Snapshot> {
+  const objects = new Map<string, string>(); const bodies = new Map<string, Uint8Array>(); const rows = new Map<string, Record<string, unknown>>();
+  const expectedAuthors = new Set<string>(); const ids = new Set(manifest.targets.map(t => t.id));
+  for (const target of manifest.targets) {
+    const row = await client.read(rowKey(target.id));
+    if (!row || row.generation !== target.rowGeneration) fail('row changed');
+    const parsed = decodeJson(row.data);
+    if (!object(parsed) || parsed.id !== target.id || parsed.version !== target.versions.length) fail('row invalid');
+    if (await client.read(tombKey(target.id))) fail('tombstone already exists');
+    objects.set(rowKey(target.id), row.generation); bodies.set(rowKey(target.id), row.data); rows.set(target.id, parsed);
+    const nested = await client.list('r/' + target.id + '/');
+    const expectedNested = new Set(target.versions.slice(1).map(v => cipherKey(target.id, v.version)));
+    if (nested.size !== expectedNested.size || [...nested.keys()].some(k => !expectedNested.has(k))) fail('ciphertext inventory');
+    for (const version of target.versions) {
+      const name = cipherKey(target.id, version.version);
+      if (version.version > 1 && nested.get(name) !== version.generation) fail('ciphertext generation');
+      const data = await client.read(name);
+      if (!data || data.generation !== version.generation || digest(data.data) !== version.sha256) fail('ciphertext mismatch');
+      objects.set(name, data.generation);
+    }
+    for (const kind of metadataPrefixes) {
+      const entries = await client.list('m/' + kind + '/' + target.id + '/');
+      for (const [name, g] of entries) {
+        const value = await client.read(name);
+        if (!value || value.generation !== g) fail('metadata changed');
+        objects.set(name, g); bodies.set(name, value.data);
+        if (kind === 'comment') {
+          const comment = decodeJson(value.data);
+          const leaf = name.slice(('m/comment/' + target.id + '/').length);
+          if (!object(comment) || typeof comment.id !== 'string' || leaf !== comment.id + '.json' || comment.relicId !== target.id || typeof comment.author !== 'string') fail('comment metadata');
+          expectedAuthors.add('m/author_relic/' + digest(comment.author) + '/' + target.id + '.json');
+        }
+      }
+    }
+  }
+  const authorEntries = await client.list('m/author_relic/');
+  const actualAuthors = new Set<string>();
+  for (const [name, g] of authorEntries) {
+    const parts = name.split('/');
+    const leaf = parts.at(-1) ?? '';
+    const matched = leaf.endsWith('.json') && ids.has(leaf.slice(0, -5));
+    if (!matched) continue;
+    if (parts.length !== 4 || !hex(parts[2])) fail('author index name');
+    const id = leaf.slice(0, -5); if (!ids.has(id)) fail('author index target');
+    const value = await client.read(name);
+    if (!value || value.generation !== g) fail('author index changed');
+    actualAuthors.add(name); objects.set(name, g); bodies.set(name, value.data);
+  }
+  if (actualAuthors.size !== expectedAuthors.size || [...actualAuthors].some(k => !expectedAuthors.has(k))) fail('author index mismatch');
+  return { objects, rows, bodies };
+}
+
+export function ciphertextStorage(client: StorageClient, snapshot: Snapshot): ObjectStorage {
+  function resolve(key: string): [string, string] {
+    const name = 'r/' + key; const expected = snapshot.objects.get(name);
+    if (!expected) fail('unauthorized ciphertext');
+    return [name, expected];
+  }
+  return {
+    async read(key) {
+      const [name, expected] = resolve(key); const item = await client.read(name);
+      if (!item || item.generation !== expected) fail('ciphertext changed');
+      return item.data;
+    },
+    async delete(key) {
+      const [name, expected] = resolve(key); await client.remove(name, expected); snapshot.objects.delete(name);
+    },
+    async stat() { return fail('unsupported storage method'); },
+    async digest() { return fail('unsupported storage method'); },
+    async signUpload() { return fail('unsupported storage method'); },
+    async signDownload() { return fail('unsupported storage method'); },
+  };
+}
+
+
+export function metadataBoundary(client: StorageClient, snapshot: Snapshot, current: () => string, operator: string) {
+  let faulted = false;
+  const pages = new Map<string, { expected: Set<string>; seen: Set<string>; tokens: Set<string> }>();
+  const call: typeof fetch = async (input, init = {}) => {
+    try {
+      const id = current(); if (!snapshot.rows.has(id)) fail('inactive target');
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      const method = (init.method ?? 'GET').toUpperCase();
+      const base = '/storage/v1/b/' + encodeURIComponent(client.bucket) + '/o';
+      const upload = '/upload/storage/v1/b/' + encodeURIComponent(client.bucket) + '/o';
+      if (url.origin !== 'https://storage.googleapis.com' || url.hash || url.username || url.password || new Headers(init.headers).get('authorization') !== 'Bearer ' + client.token) fail('metadata origin');
+      for (const key of url.searchParams.keys()) if (url.searchParams.getAll(key).length !== 1) fail('metadata parameters');
+      const allowed = new Set(['m/relic/' + id + '.json', 'm/tomb/' + id + '.json']);
+      for (const key of snapshot.objects.keys()) {
+        if (metadataPrefixes.some(kind => key.startsWith('m/' + kind + '/' + id + '/')) || /^m\/author_relic\/[a-f0-9]{64}\//.test(key) && key.endsWith('/' + id + '.json')) allowed.add(key);
+      }
+      if (method === 'GET' && url.pathname === base) {
+        if ([...url.searchParams.keys()].some(k => !['prefix', 'pageToken'].includes(k))) fail('list parameters');
+        const prefix = url.searchParams.get('prefix');
+        if (!prefix || !metadataPrefixes.some(kind => prefix === 'm/' + kind + '/' + id + '/')) fail('list scope');
+        const pageToken = url.searchParams.get('pageToken');
+        if (!pageToken) pages.set(prefix, { expected: new Set([...snapshot.objects.keys()].filter(k => k.startsWith(prefix))), seen: new Set(), tokens: new Set() });
+        const state = pages.get(prefix); if (!state || (pageToken && state.tokens.has(pageToken))) fail('pagination state');
+        if (pageToken) state.tokens.add(pageToken);
+        const response = await client.transport(url, { ...init, redirect: 'error' });
+        if (!response.ok) fail('metadata list');
+        const body: unknown = await response.clone().json();
+        if (!object(body) || (body.items !== undefined && !Array.isArray(body.items)) || (body.nextPageToken !== undefined && (typeof body.nextPageToken !== 'string' || !body.nextPageToken))) fail('metadata page');
+        for (const item of (body.items ?? []) as unknown[]) {
+          if (!object(item) || typeof item.name !== 'string' || !state.expected.has(item.name) || state.seen.has(item.name) || item.generation !== snapshot.objects.get(item.name)) fail('metadata inventory mismatch');
+          state.seen.add(item.name);
+        }
+        if (body.nextPageToken === undefined && state.seen.size !== state.expected.size) fail('metadata missing');
+        return response;
+      }
+      if (url.pathname.startsWith(base + '/')) {
+        const name = decodeURIComponent(url.pathname.slice(base.length + 1));
+        if (!allowed.has(name)) fail('metadata scope');
+        if (method === 'GET') {
+          if (url.search !== '?alt=media') fail('metadata read parameters');
+          const response = await client.transport(url, { ...init, redirect: 'error' });
+          const expected = snapshot.objects.get(name);
+          if (!expected) { if (name === tombKey(id) && response.status === 404) return response; fail('metadata absence'); }
+          if (!response.ok || response.headers.get('x-goog-generation') !== expected) fail('metadata read changed');
+          return response;
+        }
+        if (method === 'DELETE') {
+          if (url.search) fail('metadata delete parameters');
+          const expected = snapshot.objects.get(name); if (!expected || name === rowKey(id) || name === tombKey(id)) fail('metadata delete scope');
+          url.searchParams.set('ifGenerationMatch', expected);
+          const response = await client.transport(url, { ...init, redirect: 'error' });
+          if (!response.ok) fail('metadata delete');
+          snapshot.objects.delete(name); snapshot.bodies.delete(name); return response;
+        }
+      }
+      if (method === 'POST' && url.pathname === upload) {
+        if ([...url.searchParams.keys()].some(k => !['uploadType', 'name', 'ifGenerationMatch'].includes(k)) || url.searchParams.get('uploadType') !== 'media' || typeof init.body !== 'string') fail('metadata upload parameters');
+        const name = url.searchParams.get('name'); if (name !== rowKey(id) && name !== tombKey(id)) fail('metadata upload scope');
+        const next: unknown = JSON.parse(init.body); if (!object(next)) fail('metadata upload body');
+        if (name === tombKey(id)) {
+          if (snapshot.objects.has(name) || url.searchParams.has('ifGenerationMatch') || next.id !== id || next.operator !== operator || next.reasonClass !== 'operator_error' || next.reportReference !== undefined || !hex(next.ciphertextHash)) fail('tombstone scope');
+          url.searchParams.set('ifGenerationMatch', '0');
+        } else {
+          const expected = snapshot.objects.get(name); const previousBytes = snapshot.bodies.get(name);
+          if (!expected || !previousBytes || url.searchParams.get('ifGenerationMatch') !== expected) fail('metadata CAS');
+          const previous = decodeJson(previousBytes); if (!object(previous)) fail('row shape');
+          const a = { ...previous }, b = { ...next }; delete a.cover; delete b.cover; delete a.sharesCount; delete b.sharesCount;
+          if (!same(a, b) || (next.cover !== undefined && !same(next.cover, previous.cover)) || (next.sharesCount !== previous.sharesCount && next.sharesCount !== 0)) fail('row update scope');
+        }
+        const response = await client.transport(url, { ...init, redirect: 'error' });
+        if (!response.ok) fail('metadata write');
+        const result: unknown = await response.clone().json();
+        if (!object(result) || !generation(result.generation)) fail('metadata generation');
+        snapshot.objects.set(name, result.generation); snapshot.bodies.set(name, new TextEncoder().encode(init.body));
+        return response;
+      }
+      return fail('metadata method');
+    } catch { faulted = true; return fail('metadata boundary refused'); }
+  };
+  return { fetch: call, faulted: () => faulted };
+}
+
+
+function required(name: string): string { const value = process.env[name]; if (!value) fail('missing environment'); return value; }
+export function validateRun(env: Record<string, string | undefined>): void {
+  const sha = env.REVIEWED_SHA;
+  if (!sha || !/^[a-f0-9]{40}$/.test(sha) || env.GITHUB_SHA !== sha || env.WORKFLOW_SHA !== sha || env.REPOSITORY_ID !== '1316636189' || env.EVENT_NAME !== 'workflow_dispatch' || env.GITHUB_REF !== 'refs/heads/archie/ephemeral-operator-maintenance' || env.WORKFLOW_REF !== 'TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance' || env.RUN_ATTEMPT !== '1' || env.ACTION !== 'delete-five' || !/^RELIC_MAINTENANCE_[A-F0-9]{32}$/.test(env.MANIFEST_SECRET_NAME ?? '') || !/^[0-9]+$/.test(env.RUN_ID ?? '')) fail('run identity');
+}
+
+async function jsonResponse(response: Response): Promise<Record<string, unknown>> {
+  if (!response.ok) fail('identity exchange'); const body: unknown = await response.json(); if (!object(body)) fail('identity response'); return body;
+}
+async function accessToken(): Promise<string> {
+  const provider = required('WIF_PROVIDER'); const service = required('DEPLOYER_SA');
+  if (provider !== 'projects/911514101920/locations/global/workloadIdentityPools/github/providers/artifacts' || service !== 'relic-deployer@thebushido-co.iam.gserviceaccount.com' || required('GCP_PROJECT_ID') !== 'thebushido-co') fail('identity target');
+  const requestUrl = new URL(required('ACTIONS_ID_TOKEN_REQUEST_URL'));
+  if (requestUrl.protocol !== 'https:' || requestUrl.username || requestUrl.password || requestUrl.hash) fail('identity URL');
+  requestUrl.searchParams.set('audience', 'https://iam.googleapis.com/' + provider);
+  const oidc = await jsonResponse(await fetch(requestUrl, { headers: { authorization: 'Bearer ' + required('ACTIONS_ID_TOKEN_REQUEST_TOKEN') }, redirect: 'error' }));
+  if (typeof oidc.value !== 'string' || !oidc.value) fail('identity token');
+  const federated = await jsonResponse(await fetch('https://sts.googleapis.com/v1/token', {
+    method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ audience: '//iam.googleapis.com/' + provider, grantType: 'urn:ietf:params:oauth:grant-type:token-exchange', requestedTokenType: 'urn:ietf:params:oauth:token-type:access_token', subjectTokenType: 'urn:ietf:params:oauth:token-type:jwt', subjectToken: oidc.value, scope: 'https://www.googleapis.com/auth/cloud-platform' }),
+  }));
+  if (typeof federated.access_token !== 'string' || !federated.access_token) fail('federated token');
+  const impersonated = await jsonResponse(await fetch('https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/' + encodeURIComponent(service) + ':generateAccessToken', {
+    method: 'POST', redirect: 'error', headers: { authorization: 'Bearer ' + federated.access_token, 'content-type': 'application/json' }, body: JSON.stringify({ scope: ['https://www.googleapis.com/auth/cloud-platform'] }),
+  }));
+  if (typeof impersonated.accessToken !== 'string' || !impersonated.accessToken) fail('impersonated token');
+  return impersonated.accessToken;
+}
+
+export async function invokeDelete(app: ReturnType<typeof createApp>, allowed: ReadonlySet<string>, id: string, secret: string): Promise<Response> {
+  if (!allowed.has(id) || !/^[0-9abcdefghjkmnpqrstvwxyz]{26}$/.test(id)) fail('target authorization');
+  return app.fetch(new Request('https://maintenance.invalid/api/relics/' + id + '?reason=operator_error&blocklist=false', { method: 'DELETE', headers: { authorization: 'Bearer ' + secret } }));
+}
+
+export async function execute(client: StorageClient, manifest: Manifest): Promise<void> {
+  const snapshot = await inventory(client, manifest);
+  const operator = 'ci-maintenance-' + required('RUN_ID');
+  const operators = new Map<string, string>(); const secret = randomBytes(32).toString('base64url'); operators.set(operator, secret);
+  let active = ''; const boundary = metadataBoundary(client, snapshot, () => active, operator);
+  const store = gcsStore({ bucket: client.bucket, prefix: 'm', getAccessToken: async () => client.token, fetch: boundary.fetch });
+  const storage = ciphertextStorage(client, snapshot);
+  if (!store || !storage) fail('adapters required');
+  const app = createApp({ store, storage, operatorTokens: operators });
+  const allowed = new Set(manifest.targets.map(t => t.id));
+  try {
+    for (const [index, target] of manifest.targets.entries()) {
+      active = target.id;
+      try {
+        const response = await invokeDelete(app, allowed, active, secret);
+        if (!response.ok || boundary.faulted()) fail('delete failed');
+        const data: unknown = await response.json();
+        if (!object(data) || data.relic_id !== active || data.deleted !== true || data.blocklisted !== false) fail('delete response');
+        console.log('slot ' + (index + 1) + ': handler completed');
+      } catch { console.error('slot ' + (index + 1) + ': failed or partial'); throw Error('maintenance stopped'); }
+    }
+  } finally { active = ''; operators.clear(); }
+}
+
+async function main(): Promise<void> {
+  validateRun(process.env);
+  const manifest = validateManifest(JSON.parse(required('MAINTENANCE_MANIFEST')));
+  delete process.env.MAINTENANCE_MANIFEST;
+  if (process.argv[2] === 'validate') return;
+  if (process.argv[2] !== 'execute') fail('action');
+  const token = await accessToken();
+  const client = new StorageClient('thebushido-co-relics', token);
+  await execute(client, manifest);
+}
+if (import.meta.main) main().catch(() => { console.error('maintenance refused; inspect private state before any retry'); process.exitCode = 1; });
