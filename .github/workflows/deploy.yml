@@ -1,344 +1,145 @@
-name: deploy
+name: MAINTENANCE ONLY - ephemeral operator (never deploy)
+run-name: 'MAINTENANCE ONLY - reviewed exact-five operator handler'
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-  # Manual runs exist for rollback and for toggling the kill switch, which are
-  # the two things you need at 3am and cannot wait for a commit.
   workflow_dispatch:
     inputs:
-      kill_switch:
-        description: 'Engage the egress kill switch (refuses every mint and publish)'
-        type: boolean
-        default: false
-      unlock_lock_id:
-        description: 'Stale Terraform lock ID to force-unlock before this deploy continues'
+      action:
+        description: 'Must be delete-five'
         type: string
-        default: ''
+        required: true
+      reviewed_sha:
+        description: 'Independently reviewed full maintenance branch commit'
+        type: string
+        required: true
+      manifest_secret_name:
+        description: 'Unique production environment secret name holding the private manifest'
+        type: string
+        required: true
 
-# One deploy at a time, and never cancel one in flight: a half-applied
-# Terraform run is worse than a queued one.
+permissions: {}
 concurrency:
   group: deploy
   cancel-in-progress: false
 
-permissions:
-  contents: read
-  id-token: write
-
-env:
-  TF_VERSION: 1.9.8
-
 jobs:
-  verify:
-    uses: ./.github/workflows/verify.yml
-
-  deploy:
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment: production
-
+  build:
+    name: Build and test with fake storage only
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      binary_sha256: ${{ steps.bundle.outputs.sha256 }}
+    env:
+      REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+      RUN_SHA: ${{ github.sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      REPOSITORY_ID: ${{ github.repository_id }}
+      EVENT_NAME: ${{ github.event_name }}
+      ACTION: ${{ inputs.action }}
+      MANIFEST_SECRET_NAME: ${{ inputs.manifest_secret_name }}
+      RUN_ATTEMPT: ${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@v4
-
-      # No service account key anywhere. The token is minted per run and
-      # scoped to this repository by the provider's attribute condition.
-      - uses: google-github-actions/auth@v2
-        id: auth
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.DEPLOYER_SA }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
-
-      - name: Build and push
-        id: image
+      - name: Check dispatch identity before checkout
+        shell: bash
         run: |
           set -euo pipefail
-          REPO="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/relic/server"
-          docker build -f deploy/docker/server/Dockerfile -t "$REPO:${{ github.sha }}" .
-          docker push "$REPO:${{ github.sha }}"
-
-          # Deploy by digest, never by tag. A tag can be moved, which makes
-          # "what is running" unanswerable during an incident.
-          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$REPO:${{ github.sha }}")"
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-          echo "Deploying $DIGEST"
-
-      - uses: hashicorp/setup-terraform@v3
+          [[ "$REVIEWED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$REVIEWED_SHA" == "$RUN_SHA" && "$REVIEWED_SHA" == "$WORKFLOW_SHA" ]]
+          [[ "$REPOSITORY_ID" == 1316636189 && "$EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/archie/ephemeral-operator-maintenance ]]
+          [[ "$WORKFLOW_REF" == TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance ]]
+          [[ "$RUN_ATTEMPT" == 1 && "$ACTION" == delete-five && "$MANIFEST_SECRET_NAME" =~ ^RELIC_MAINTENANCE_[A-F0-9]{32}$ ]]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Terraform init
-        working-directory: deploy/terraform
-        run: terraform init -input=false
-
-      - name: Force-unlock a leftover lock
-        if: ${{ inputs.unlock_lock_id != '' }}
-        working-directory: deploy/terraform
-        run: terraform force-unlock -force "${{ inputs.unlock_lock_id }}"
-
-
-      - name: Terraform format check
-        working-directory: deploy/terraform
-        run: terraform fmt -check -recursive
-
-      - name: Terraform plan
-        working-directory: deploy/terraform
-        run: terraform plan -input=false -out=tfplan
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check immutable application sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          git cat-file -e af0d7e2410076afaa356276f28f48e685be36418^{commit}
+          git diff --exit-code af0d7e2410076afaa356276f28f48e685be36418 HEAD -- packages/relic-server packages/relic-format package.json bun.lock
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+      - name: Install without dependency lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Run fake-only negative controls
+        run: bun test scripts/ephemeral-operator.test.ts
+      - name: Compile and inspect complete executable closure
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/maintenance-artifact"
+          bun build --compile --target=bun-linux-x64 scripts/ephemeral-operator.ts --outfile "$RUNNER_TEMP/maintenance-artifact/operator" --metafile="$RUNNER_TEMP/maintenance-artifact/metafile.json"
+          node scripts/check-maintenance-metafile.mjs "$RUNNER_TEMP/maintenance-artifact/metafile.json" "$RUNNER_TEMP/maintenance-artifact/closure.txt"
+          SHA="$(sha256sum "$RUNNER_TEMP/maintenance-artifact/operator" | cut -d ' ' -f1)"
+          [[ "$SHA" =~ ^[a-f0-9]{64}$ ]]
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+      - name: Check compiled executable refuses a canary without output
+        shell: bash
         env:
-          TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
-          TF_VAR_region: ${{ vars.GCP_REGION }}
-          TF_VAR_run_url_infix: ${{ vars.RUN_URL_INFIX }}
-          TF_VAR_image: ${{ steps.image.outputs.digest }}
-          TF_VAR_kill_switch_engaged: ${{ inputs.kill_switch || false }}
-          TF_VAR_operator_tokens: ${{ secrets.RELIC_OPERATOR_TOKENS }}
-          # Empty until the Resend key has a secret version. Empty is also
-          # what keeps the key unmounted, so setting this is the one action
-          # that turns mail on.
-          TF_VAR_mail_from: ${{ vars.RELIC_MAIL_FROM }}
-
-      - name: Terraform apply
-        working-directory: deploy/terraform
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: Drop the lock if this run is cancelled mid-apply
-        if: cancelled()
-        working-directory: deploy/terraform
-        run: |
-          # A cancelled runner cannot run terraform's own unlock: the process
-          # that held the lock is already dead. The lock is a GCS object.
-          # Deleting it is what force-unlock does, and leaving it is what
-          # turned a 20-minute timeout into every later deploy failing.
-          gsutil rm -f gs://thebushido-co-tfstate/relic/default.tflock || true
-
-      - name: Report the deployed origins and DNS delegation
-        id: urls
-        working-directory: deploy/terraform
+          REVIEWED_SHA: ${{ github.sha }}
+          RUN_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RUN_ID: ${{ github.run_id }}
+          MAINTENANCE_MANIFEST: 'FAKE_PRIVATE_CANARY_DO_NOT_PRINT'
         run: |
           set -euo pipefail
-          SERVICE="$(terraform output -raw service_url)"
-          FETCH="$(terraform output -raw service_run_url)"
-          USERCONTENT="$(terraform output -raw usercontent_url)"
-          DOMAIN="$(terraform output -raw service_domain)"
-          NAMESERVERS="$(terraform output -json service_name_servers | jq -r '.[]')"
-          DS_RECORD="$(terraform output -raw service_ds_record)"
-          CERT="$(terraform output -raw service_certificate)"
-          IPV4="$(terraform output -raw service_lb_ipv4)"
-          IPV6="$(terraform output -raw service_lb_ipv6)"
+          export GITHUB_SHA="$RUN_SHA"
+          if "$RUNNER_TEMP/maintenance-artifact/operator" validate >"$RUNNER_TEMP/canary-output" 2>&1; then exit 1; fi
+          if grep -Fq 'FAKE_PRIVATE_CANARY_DO_NOT_PRINT' "$RUNNER_TEMP/canary-output"; then exit 1; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: maintenance-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/maintenance-artifact/
+          if-no-files-found: error
+          retention-days: 1
 
-          # One origin, and the smoke tests use it. The Cloud Run host no
-          # longer accepts internet traffic, so there is nothing to fall back
-          # to and nothing that should want to: if the domain does not serve,
-          # the deployment is broken and this must say so.
-          echo "service=$SERVICE" >> "$GITHUB_OUTPUT"
-          echo "run_host=$FETCH" >> "$GITHUB_OUTPUT"
-          echo "usercontent=$USERCONTENT" >> "$GITHUB_OUTPUT"
-
-          CERT_STATE="$(gcloud compute ssl-certificates describe "$CERT" --global \
-            --format='value(managed.status)' 2>/dev/null || echo UNKNOWN)"
-
-          {
-            echo "### Relik infrastructure is deployed"
-            echo ""
-            echo "| Resource | Value |"
-            echo "|---|---|"
-            echo "| Service origin | $SERVICE |"
-            echo "| Cloud Run host | $FETCH |"
-            echo "| Usercontent origin | $USERCONTENT |"
-            echo "| Service domain | $DOMAIN |"
-            echo "| Load balancer | $IPV4, $IPV6 |"
-            echo "| Certificate | \`$CERT\` ($CERT_STATE) |"
-            echo "| Bucket | \`$(terraform output -raw bucket_name)\` |"
-            echo ""
-            if [ "$CERT_STATE" != "ACTIVE" ]; then
-              echo "The certificate is not ACTIVE yet, so $SERVICE does not serve HTTPS."
-              echo "Google provisions it once the A and AAAA records resolve. Until then the"
-              echo "app is only reachable on the Cloud Run host above."
-              echo ""
-            fi
-            echo "Authoritative nameservers for registrar delegation:"
-            echo '```text'
-            echo "$NAMESERVERS"
-            echo '```'
-            echo ""
-            echo "DNSSEC DS record (add only after nameserver delegation removes the registrar's old DS):"
-            echo '```text'
-            echo "$DS_RECORD"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # A green apply says Terraform is satisfied. It does not say the service
-      # answers. These do.
-      - name: Smoke test the deployment
+  operate:
+    name: Exact-five maintenance handler (no deploy)
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      id-token: write
+    env:
+      REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      REPOSITORY_ID: ${{ github.repository_id }}
+      EVENT_NAME: ${{ github.event_name }}
+      ACTION: ${{ inputs.action }}
+      MANIFEST_SECRET_NAME: ${{ inputs.manifest_secret_name }}
+      RUN_ATTEMPT: ${{ github.run_attempt }}
+      RUN_ID: ${{ github.run_id }}
+      WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
+      DEPLOYER_SA: ${{ vars.DEPLOYER_SA }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: maintenance-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/maintenance-artifact
+      - name: Verify same-run executable digest
+        shell: bash
+        env:
+          EXPECTED_DIGEST: ${{ needs.build.outputs.binary_sha256 }}
         run: |
           set -euo pipefail
-          # The owned domain, through the load balancer. The run.app host is no
-          # longer reachable from here, which is the point.
-          SERVICE="${{ steps.urls.outputs.service }}"
-
-          # Every body is fetched to a file and then grepped, never piped into
-          # `grep -q`. Under `pipefail` that pipeline fails when the assertion
-          # SUCCEEDS: `grep -q` exits the moment it matches, curl loses the
-          # pipe and returns 23, and 23 becomes the pipeline's status. It is a
-          # race against response size, so it passed for months and then broke
-          # the first deploy where a page grew: `/policy` matched, curl was
-          # still writing, and the step failed with exit 23 on a service that
-          # was serving correctly. A gate that fails because the thing it
-          # checks is true is worse than no gate.
-          echo "health"
-          curl -fsS --retry 10 --retry-all-errors --retry-delay 3 \
-            -o/tmp/health "$SERVICE/health"
-          cat /tmp/health
-          grep -q '"ok"' /tmp/health
-
-          echo "the shell serves and does not leak a referrer"
-          curl -fsS -D/tmp/h -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
-          grep -qi '^referrer-policy: no-referrer' /tmp/h
-
-          echo "every asset the shell names resolves"
-          for P in /assets/viewer.js /assets/landing-html.png /assets/landing-markdown.png /assets/landing-code-dark.png /assets/styles.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do
-            curl -fsS -o/dev/null "$SERVICE$P" || { echo "MISSING $P"; exit 1; }
-          done
-
-          echo "the homepage links the reader's relics and, like /install, carries no script"
-          curl -fsS -o/tmp/root "$SERVICE/"
-          grep -q 'href="/dashboard"' /tmp/root
-          if grep -q '<script' /tmp/root; then
-            echo "/ carries a script tag"
-            exit 1
-          fi
-          curl -fsS -o/tmp/install "$SERVICE/install"
-          if grep -q '<script' /tmp/install; then
-            echo "/install carries a script tag"
-            exit 1
-          fi
-
-          echo "the published disclosure is readable before anybody publishes"
-          curl -fsS -o/tmp/policy "$SERVICE/policy"
-          grep -q 'Your browser never sends the' /tmp/policy
-          grep -q 'A cover image, unencrypted' /tmp/policy
-          echo "a browser navigating to the policy gets the markdown player, not a relic"
-          curl -fsS -H 'accept: text/html' -o/tmp/policy-page "$SERVICE/policy"
-          grep -q 'data-view="document" data-document="/policy"' /tmp/policy-page
-          if grep -q 'data-relic-id' /tmp/policy-page; then
-            echo "/policy page is carrying a relic id"
-            exit 1
-          fi
-          echo "the abuse intake answers, because it is a go/no-go obligation"
-          curl -fsS -o/tmp/abuse "$SERVICE/abuse"
-          grep -q '<form method="post"' /tmp/abuse
-
-          echo "a never-issued id is a problem document, not a stack trace"
-          CODE=$(curl -sS -o/tmp/b -w '%{http_code}' \
-            "$SERVICE/api/relics/aaaaaaaaaaaaaaaaaaaaaaaaaa/mint" -X POST)
-          test "$CODE" = 404
-          grep -q 'relic_not_found' /tmp/b
-
-          echo "a never-issued id on cover upload is a problem document, not a stack trace"
-          CODE=$(curl -sS -o/tmp/b -w '%{http_code}' \
-            "$SERVICE/api/relics/aaaaaaaaaaaaaaaaaaaaaaaaaa/cover" -X POST -H 'content-type: application/json' -d '{}')
-          test "$CODE" = 404
-          grep -q 'relic_not_found' /tmp/b
-
-          echo "a never-issued id on cover fetch returns 404"
-          CODE=$(curl -sS -o/dev/null -w '%{http_code}' \
-            "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa/cover/0000000000000000000000000000000000000000000000000000000000000000.png")
-          test "$CODE" = 404
-
-          echo "the shell does not carry the pdf renderer"
-          # The lazy split is the reason a markdown reader does not download a
-          # 430 KB renderer, and it is a bundler choice rather than a
-          # guarantee, so it is checked against what is actually served rather
-          # than against what was built.
-          curl -fsS -o/tmp/shell "$SERVICE/assets/viewer.js"
-          # 475 KiB: the same ceiling as SHELL_CEILING_BYTES in
-          # packages/relic-viewer/test/shell-budget.test.ts. Change both together.
-          test "$(wc -c < /tmp/shell)" -lt 486400
-          if grep -q 'GlobalWorkerOptions' /tmp/shell; then
-            echo "the pdf renderer is inlined in the app shell"
-            exit 1
-          fi
-
-      # The two origins have to agree about each other or HTML never renders,
-      # and neither side fails loudly on its own: the usercontent origin
-      # returns a healthy 200 to curl while every browser refuses the frame.
-      # Assert the pair.
-      - name: Smoke test the origin boundary
-        run: |
-          set -euo pipefail
-          ORIGIN="${{ steps.urls.outputs.service }}"
-          SERVICE="${{ steps.urls.outputs.service }}"
-          USERCONTENT="${{ steps.urls.outputs.usercontent }}"
-          RUN_HOST="${{ steps.urls.outputs.run_host }}"
-
-          # The retired host must actually be retired. A reachable second
-          # origin is a name somebody can be handed that will not render, and
-          # nothing else in this pipeline would notice it came back.
-          echo "the run.app host no longer answers the internet"
-          CODE="$(curl -sS -o/dev/null -m 20 -w '%{http_code}' "$RUN_HOST/health" || echo 000)"
-          case "$CODE" in
-            200)
-              echo "$RUN_HOST still serves; ingress is not restricted"
-              exit 1
-              ;;
-            *)
-              echo "  refused with $CODE"
-              ;;
-          esac
-
-          echo "the usercontent origin serves its page"
-          curl -fsS --retry 10 --retry-all-errors --retry-delay 3 \
-            -D/tmp/sh -o/dev/null "$USERCONTENT/sandbox.html"
-
-          echo "and names the service origin as the only page allowed to frame it"
-          grep -qi "^content-security-policy:.*frame-ancestors $ORIGIN\(;\|\$\)" /tmp/sh || {
-            echo "usercontent frame-ancestors does not name $ORIGIN:"
-            grep -i '^content-security-policy:' /tmp/sh
-            exit 1
-          }
-
-          echo "and the service allows exactly that usercontent origin as a frame source"
-          curl -fsS -D/tmp/vh -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
-          grep -qi "^content-security-policy:.*frame-src $USERCONTENT\(;\|\$\)" /tmp/vh || {
-            echo "service frame-src does not name $USERCONTENT:"
-            grep -i '^content-security-policy:' /tmp/vh
-            exit 1
-          }
-
-          echo "and the two are different registrable domains, or there is no boundary"
-          test "$(echo "$ORIGIN" | sed 's#https\?://##')" != "$(echo "$USERCONTENT" | sed 's#https\?://##')"
-
-          echo "and the usercontent origin does not sit under the service domain"
-          case "$(echo "$USERCONTENT" | sed 's#https\?://##')" in
-            *".$(echo "$ORIGIN" | sed 's#https\?://##')")
-              echo "usercontent shares the service registrable domain; the boundary is gone"
-              exit 1
-              ;;
-          esac
-
-          # The frame has no allow-same-origin, so its document is an opaque
-          # origin and every request it makes is cross-origin with Origin:
-          # null. A linked module script is fetched with CORS and silently
-          # refused, which renders as a blank frame and an empty console. The
-          # script has to be inline, and this is the only place that can tell.
-          echo "and the usercontent page carries its script inline, fetching nothing"
-          curl -fsS "$USERCONTENT/sandbox.html" -o /tmp/sandbox.html
-
-          if ! grep -q 'relic:sandbox-ready' /tmp/sandbox.html; then
-            echo "sandbox.html does not carry its handler inline; the frame will never render"
-            exit 1
-          fi
-
-          if grep -qE '<script[^>]+src=' /tmp/sandbox.html; then
-            echo "sandbox.html links a script; an opaque-origin document cannot fetch it"
-            exit 1
-          fi
+          [[ "$EXPECTED_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          ACTUAL_DIGEST="$(sha256sum "$RUNNER_TEMP/maintenance-artifact/operator" | cut -d ' ' -f1)"
+          [[ "$ACTUAL_DIGEST" == "$EXPECTED_DIGEST" ]]
+          chmod 700 "$RUNNER_TEMP/maintenance-artifact/operator"
+      - name: Validate full private manifest before cloud authentication
+        env:
+          MAINTENANCE_MANIFEST: ${{ secrets[inputs.manifest_secret_name] }}
+        run: '"$RUNNER_TEMP/maintenance-artifact/operator" validate'
+      - name: Authenticate in process and execute reviewed handler
+        env:
+          MAINTENANCE_MANIFEST: ${{ secrets[inputs.manifest_secret_name] }}
+        run: '"$RUNNER_TEMP/maintenance-artifact/operator" execute'
