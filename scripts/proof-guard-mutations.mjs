@@ -66,7 +66,8 @@ try {
     let verdict = 'inconclusive';
     if (result.status === 0) verdict = 'masked_or_undetected';
     else if (result.status !== null && !result.signal && result.text.includes(mutant.title) && /\b1 fail\b/.test(result.text) && /expect\(/.test(result.text)) verdict = 'detected';
-    outcomes.push({ name: mutant.name, anchorMatches: matches, originalSha256: sourceSha, mutantSha256: sha(changed), baseline: 'passed', restored: 'passed', verdict });
+    const limitation = verdict === 'masked_or_undetected' ? 'The named test passed after the verified mutation; overlapping protection and missing coverage cannot be distinguished here.' : verdict === 'inconclusive' ? 'The runner did not produce the expected named assertion failure; inspect the failing test before drawing a conclusion.' : null;
+    outcomes.push({ name: mutant.name, test: mutant.title, removed: mutant.before, replacement: mutant.after, anchorMatches: matches, originalSha256: sourceSha, mutantSha256: sha(changed), baseline: 'passed', restored: 'passed', exitStatus: result.status, signal: result.signal, verdict, limitation });
     console.log(mutant.name + ': ' + verdict);
   }
 } finally {
