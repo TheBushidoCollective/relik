@@ -82,6 +82,16 @@ describe('ephemeral operator controls', () => {
     f.fake.data.set(key, old); f.fake.add('r/' + f.targets[0]!.id + '/v999', 'extra');
     await expect(inventory(f.client, manifest)).rejects.toThrow(); expect(f.fake.writes).toBe(0);
   });
+  test('preexisting tombstone or wrong digest aborts every write', async () => {
+    const f = fixture(); const manifest = validateManifest({ targets: f.targets }, f.hashes);
+    const id = f.targets[0]!.id; f.fake.add('m/tomb/' + id + '.json', '{}');
+    await expect(inventory(f.client, manifest)).rejects.toThrow();
+    f.fake.data.delete('m/tomb/' + id + '.json');
+    const key = 'r/' + id; const previous = f.fake.data.get(key)!;
+    f.fake.data.set(key, { ...previous, data: enc.encode('changed bytes') });
+    await expect(inventory(f.client, manifest)).rejects.toThrow();
+    expect(f.fake.writes).toBe(0);
+  });
   test('validates run and refuses wrong SHA, ref, repository and secret name', () => {
     const sha = 'a'.repeat(40);
     const env = { REVIEWED_SHA: sha, GITHUB_SHA: sha, WORKFLOW_SHA: sha, REPOSITORY_ID: '1316636189', EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/archie/ephemeral-operator-maintenance', WORKFLOW_REF: 'TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance', RUN_ATTEMPT: '1', ACTION: 'delete-five', MANIFEST_SECRET_NAME: 'RELIC_MAINTENANCE_' + 'A'.repeat(32), RUN_ID: '123' };
