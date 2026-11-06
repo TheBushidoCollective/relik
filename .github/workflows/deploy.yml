@@ -68,7 +68,7 @@ jobs:
       - name: Install without dependency lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Run fake-only negative controls
-        run: bun test scripts/ephemeral-operator.test.ts
+        run: bun test scripts/ephemeral-operator.test.ts scripts/check-maintenance-metafile.test.ts
       - name: Compile and inspect complete executable closure
         id: bundle
         shell: bash
