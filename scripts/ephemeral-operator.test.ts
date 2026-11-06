@@ -7,13 +7,15 @@ const sha = (v: string | Uint8Array) => createHash('sha256').update(v).digest('h
 const enc = new TextEncoder();
 type Item = { data: Uint8Array; generation: string };
 class FakeGcs {
-  data = new Map<string, Item>(); next = 1000; writes = 0; forcedStatus = 0; failDelete = false; malformedList = false; failSecondRow = false; rowWrites = 0;
+  data = new Map<string, Item>(); next = 1000; writes = 0; forcedStatus = 0; failDelete = false; malformedList = false; failSecondRow = false; rowWrites = 0; rowReads = 0; streamFailureOnRowRead = 0; streamFailureName = ''; calls: Array<{ method: string; name: string }> = [];
   add(name: string, data: string) { const generation = String(++this.next); this.data.set(name, { data: enc.encode(data), generation }); return generation; }
   fetch: typeof fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
     if (url.origin !== 'https://storage.googleapis.com' || new Headers(init.headers).get('authorization') !== 'Bearer fake-cloud-token') return new Response('', { status: 403 });
     if (this.forcedStatus) return new Response('', { status: this.forcedStatus });
-    const method = init.method ?? 'GET'; const root = '/storage/v1/b/fake-bucket/o'; const upload = '/upload/storage/v1/b/fake-bucket/o';
+    const method = init.method ?? 'GET';
+    this.calls.push({ method, name: url.searchParams.get('name') ?? decodeURIComponent(url.pathname.split('/o/')[1] ?? '') });
+    const root = '/storage/v1/b/fake-bucket/o'; const upload = '/upload/storage/v1/b/fake-bucket/o';
     if (method === 'GET' && url.pathname === root) {
       if (this.malformedList) return Response.json({});
       const prefix = url.searchParams.get('prefix') ?? ''; const offset = Number(url.searchParams.get('pageToken') ?? '0');
@@ -30,7 +32,12 @@ class FakeGcs {
     if (url.pathname.startsWith(root + '/')) {
       const name = decodeURIComponent(url.pathname.slice(root.length + 1)); const item = this.data.get(name);
       if (!item) return new Response('', { status: 404 });
-      if (method === 'GET') return new Response(item.data, { headers: { 'x-goog-generation': item.generation } });
+      if (method === 'GET') {
+        if (name === this.streamFailureName && ++this.rowReads === this.streamFailureOnRowRead) {
+          return new Response(new ReadableStream({ start(controller) { controller.error(new Error('fake stream failure')); } }), { status: 200, headers: { 'x-goog-generation': item.generation } });
+        }
+        return new Response(item.data, { headers: { 'x-goog-generation': item.generation } });
+      }
       if (method === 'DELETE') {
         if (this.failDelete || url.searchParams.get('ifGenerationMatch') !== item.generation) return new Response('', { status: 412 });
         this.writes++; this.data.delete(name); return new Response(null, { status: 204 });
@@ -95,9 +102,9 @@ describe('ephemeral operator controls', () => {
   });
   test('validates run and refuses wrong SHA, ref, repository and secret name', () => {
     const sha = 'a'.repeat(40);
-    const env = { REVIEWED_SHA: sha, GITHUB_SHA: sha, WORKFLOW_SHA: sha, REPOSITORY_ID: '1316636189', EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/archie/ephemeral-operator-maintenance', WORKFLOW_REF: 'TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance', RUN_ATTEMPT: '1', ACTION: 'delete-five', MANIFEST_SECRET_NAME: 'RELIC_MAINTENANCE_' + 'A'.repeat(32), RUN_ID: '123' };
+    const env = { REVIEWED_SHA: sha, GITHUB_SHA: sha, WORKFLOW_SHA: sha, REPOSITORY_ID: '1316636189', EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/archie/ephemeral-operator-maintenance', WORKFLOW_REF: 'TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance', RUN_ATTEMPT: '1', ACTOR: 'jwaldrip', ACTOR_ID: '43164', TRIGGERING_ACTOR: 'jwaldrip', ACTION: 'delete-five', MANIFEST_SECRET_NAME: 'RELIC_MAINTENANCE_' + 'A'.repeat(32), RUN_ID: '123' };
     expect(() => validateRun(env)).not.toThrow();
-    for (const patch of [{ GITHUB_SHA: 'b'.repeat(40) }, { GITHUB_REF: 'refs/heads/main' }, { REPOSITORY_ID: '1' }, { MANIFEST_SECRET_NAME: 'RELIC_OPERATOR_TOKENS' }, { RUN_ATTEMPT: '2' }, { ACTION: 'other' }]) expect(() => validateRun({ ...env, ...patch })).toThrow();
+    for (const patch of [{ GITHUB_SHA: 'b'.repeat(40) }, { GITHUB_REF: 'refs/heads/main' }, { REPOSITORY_ID: '1' }, { MANIFEST_SECRET_NAME: 'RELIC_OPERATOR_TOKENS' }, { RUN_ATTEMPT: '2' }, { ACTOR: 'other' }, { ACTOR_ID: '999' }, { TRIGGERING_ACTOR: 'other' }, { ACTION: 'other' }]) expect(() => validateRun({ ...env, ...patch })).toThrow();
   });
   test('ciphertext adapter refuses changed current generations', async () => {
     const f = fixture(); const snap = await inventory(f.client, validateManifest({ targets: f.targets }, f.hashes));
@@ -107,11 +114,37 @@ describe('ephemeral operator controls', () => {
     await expect(ciphertextStorage(f.client, snap).delete(target.id)).rejects.toThrow();
     expect(f.fake.writes).toBe(0);
   });
-  test('metadata transport refuses a sixth target before writes', async () => {
+  test('authorized active target cannot read or delete an existing non-target row', async () => {
     const f = fixture(); const snap = await inventory(f.client, validateManifest({ targets: f.targets }, f.hashes));
-    const guarded = metadataBoundary(f.client, snap, () => '9'.repeat(26), 'fake');
-    await expect(guarded.fetch('https://storage.googleapis.com/storage/v1/b/fake-bucket/o/m%2Frelic%2F' + '9'.repeat(26) + '.json?alt=media', { headers: { authorization: 'Bearer fake-cloud-token' } })).rejects.toThrow();
-    expect(f.fake.writes).toBe(0);
+    const active = f.targets[0]!.id; const other = f.targets[1]!.id;
+    const name = 'm/relic/' + other + '.json'; const original = f.fake.data.get(name)!; const calls = f.fake.calls.length;
+    const url = 'https://storage.googleapis.com/storage/v1/b/fake-bucket/o/' + encodeURIComponent(name);
+    const headers = { authorization: 'Bearer fake-cloud-token' };
+    await expect(metadataBoundary(f.client, snap, () => active, 'fake').fetch(url + '?alt=media', { headers })).rejects.toThrow();
+    await expect(metadataBoundary(f.client, snap, () => active, 'fake').fetch(url, { method: 'DELETE', headers })).rejects.toThrow();
+    expect(f.fake.calls.length).toBe(calls); expect(f.fake.writes).toBe(0); expect(f.fake.data.get(name)).toEqual(original);
+  });
+  test('duplicate upload names and deletion of the active row never reach storage', async () => {
+    const f = fixture(); const snap = await inventory(f.client, validateManifest({ targets: f.targets }, f.hashes));
+    const id = f.targets[0]!.id; const tomb = 'm/tomb/' + id + '.json'; const row = 'm/relic/' + id + '.json'; const calls = f.fake.calls.length;
+    const base = 'https://storage.googleapis.com'; const headers = { authorization: 'Bearer fake-cloud-token' };
+    const query = '?uploadType=media&name=' + encodeURIComponent(tomb) + '&name=' + encodeURIComponent(tomb);
+    const body = JSON.stringify({ id, operator: 'fake', reasonClass: 'operator_error', ciphertextHash: 'a'.repeat(64) });
+    await expect(metadataBoundary(f.client, snap, () => id, 'fake').fetch(base + '/upload/storage/v1/b/fake-bucket/o' + query, { method: 'POST', headers, body })).rejects.toThrow();
+    await expect(metadataBoundary(f.client, snap, () => id, 'fake').fetch(base + '/storage/v1/b/fake-bucket/o/' + encodeURIComponent(row), { method: 'DELETE', headers })).rejects.toThrow();
+    expect(f.fake.calls.length).toBe(calls); expect(f.fake.writes).toBe(0); expect(f.fake.data.has(row)).toBe(true); expect(f.fake.data.has(tomb)).toBe(false);
+  });
+  test('a corrupt fifth target stops execute after all five row reads but before every write', async () => {
+    const f = fixture(); const last = f.targets[4]!; const key = 'r/' + last.id; const original = f.fake.data.get(key)!;
+    f.fake.data.set(key, { ...original, data: enc.encode('mismatched bytes') }); process.env.RUN_ID = '123';
+    try { await expect(execute(f.client, { targets: f.targets }, f.hashes)).rejects.toThrow(); }
+    finally { delete process.env.RUN_ID; }
+    const reads = f.fake.calls.filter(call => call.method === 'GET').map(call => call.name);
+    const rowPositions = f.targets.map(target => reads.indexOf('m/relic/' + target.id + '.json'));
+    expect(rowPositions.every(position => position >= 0)).toBe(true);
+    expect(rowPositions).toEqual([...rowPositions].sort((a, b) => a - b));
+    expect(f.fake.calls.every(call => call.method === 'GET')).toBe(true); expect(f.fake.writes).toBe(0);
+    for (const target of f.targets) expect(f.fake.data.has('m/tomb/' + target.id + '.json')).toBe(false);
   });
   test('requires adapters, rejects sixth target and wrong bearer without writes', async () => {
     expect(() => operatorApp(undefined, undefined, new Map())).toThrow();
@@ -131,6 +164,27 @@ describe('ephemeral operator controls', () => {
     expect(output.join('\n')).not.toContain('fake-cloud-token');
     expect(output.join('\n')).not.toContain('X'.repeat(43));
     for (const target of f.targets) { expect(f.fake.data.has('m/tomb/' + target.id + '.json')).toBe(true); expect(f.fake.data.has('r/' + target.id)).toBe(false); expect(output.join('\n')).not.toContain(target.id); }
+  });
+  test('metadata read rejects same-generation bytes that differ from inventory', async () => {
+    const f = fixture(); const snap = await inventory(f.client, validateManifest({ targets: f.targets }, f.hashes));
+    const id = f.targets[0]!.id; const name = 'm/relic/' + id + '.json'; const item = f.fake.data.get(name)!;
+    f.fake.data.set(name, { ...item, data: enc.encode('{}') });
+    const guarded = metadataBoundary(f.client, snap, () => id, 'fake');
+    await expect(guarded.fetch('https://storage.googleapis.com/storage/v1/b/fake-bucket/o/' + encodeURIComponent(name) + '?alt=media', { headers: { authorization: 'Bearer fake-cloud-token' } })).rejects.toThrow();
+    expect(guarded.faulted()).toBe(true); expect(f.fake.writes).toBe(0);
+  });
+  test('share-row stream failure latches before opt-out and decision sweeps', async () => {
+    const f = fixture(); const target = f.targets[0]!; const row = 'm/relic/' + target.id + '.json'; const item = f.fake.data.get(row)!;
+    f.fake.data.set(row, { ...item, data: enc.encode(JSON.stringify({ ...JSON.parse(new TextDecoder().decode(item.data)), sharesCount: 0 })) });
+    const optout = 'm/optout/' + target.id + '/entry.json'; const decision = 'm/decision/' + target.id + '/entry.json';
+    f.fake.add(optout, '{}'); f.fake.add(decision, '{}'); f.fake.streamFailureName = row; f.fake.streamFailureOnRowRead = 4;
+    const output: string[] = []; const log = console.log; const error = console.error;
+    console.log = (...v) => { output.push(v.join(' ')); }; console.error = (...v) => { output.push(v.join(' ')); }; process.env.RUN_ID = '123';
+    try { await expect(execute(f.client, { targets: f.targets }, f.hashes)).rejects.toThrow(); }
+    finally { console.log = log; console.error = error; delete process.env.RUN_ID; }
+    expect(f.fake.rowReads).toBe(4); expect(f.fake.data.has(optout)).toBe(true); expect(f.fake.data.has(decision)).toBe(true);
+    expect(output.join('\n')).not.toContain('handler and immediate readback completed');
+    expect(f.fake.data.has('m/tomb/' + f.targets[1]!.id + '.json')).toBe(false);
   });
   test('a caught row CAS failure latches the boundary before later sweeps', async () => {
     const f = fixture(); const target = f.targets[0]!; const optout = 'm/optout/' + target.id + '/entry.json';
