@@ -68,7 +68,7 @@ export class StorageClient {
       const r = await this.request('/storage/v1/b/' + encodeURIComponent(this.bucket) + '/o?' + p);
       if (!r.ok) fail('storage list');
       const page: unknown = await r.json();
-      if (!object(page) || (page.items !== undefined && !Array.isArray(page.items)) || (page.nextPageToken !== undefined && (typeof page.nextPageToken !== 'string' || !page.nextPageToken))) fail('list shape');
+      if (!object(page) || page.kind !== 'storage#objects' || (page.items !== undefined && !Array.isArray(page.items)) || (page.nextPageToken !== undefined && (typeof page.nextPageToken !== 'string' || !page.nextPageToken))) fail('list shape');
       for (const item of (page.items ?? []) as unknown[]) {
         if (!object(item) || typeof item.name !== 'string' || !item.name.startsWith(prefix) || !generation(item.generation) || result.has(item.name)) fail('list item');
         result.set(item.name, item.generation);
@@ -86,7 +86,7 @@ export class StorageClient {
 }
 
 
-type Snapshot = { objects: Map<string, string>; rows: Map<string, Record<string, unknown>>; bodies: Map<string, Uint8Array> };
+type Snapshot = { objects: Map<string, string>; rows: Map<string, Record<string, unknown>>; bodies: Map<string, Uint8Array>; blocks: Map<string, string | null> };
 const metadataPrefixes = ['cover', 'comment', 'commenter', 'share', 'optout', 'decision'];
 const rowKey = (id: string) => 'm/relic/' + id + '.json';
 const tombKey = (id: string) => 'm/tomb/' + id + '.json';
@@ -95,7 +95,7 @@ const decodeJson = (data: Uint8Array): unknown => JSON.parse(new TextDecoder().d
 
 export async function inventory(client: StorageClient, manifest: Manifest): Promise<Snapshot> {
   const objects = new Map<string, string>(); const bodies = new Map<string, Uint8Array>(); const rows = new Map<string, Record<string, unknown>>();
-  const expectedAuthors = new Set<string>(); const ids = new Set(manifest.targets.map(t => t.id));
+  const expectedAuthors = new Set<string>(); const ids = new Set(manifest.targets.map(t => t.id)); const blocks = new Map<string, string | null>();
   for (const target of manifest.targets) {
     const row = await client.read(rowKey(target.id));
     if (!row || row.generation !== target.rowGeneration) fail('row changed');
@@ -112,6 +112,7 @@ export async function inventory(client: StorageClient, manifest: Manifest): Prom
       const data = await client.read(name);
       if (!data || data.generation !== version.generation || digest(data.data) !== version.sha256) fail('ciphertext mismatch');
       objects.set(name, data.generation);
+      if (!blocks.has(version.sha256)) { const block = await client.read('m/block/' + version.sha256 + '.json'); blocks.set(version.sha256, block ? block.generation + ':' + digest(block.data) : null); }
     }
     for (const kind of metadataPrefixes) {
       const entries = await client.list('m/' + kind + '/' + target.id + '/');
@@ -142,7 +143,7 @@ export async function inventory(client: StorageClient, manifest: Manifest): Prom
     actualAuthors.add(name); objects.set(name, g); bodies.set(name, value.data);
   }
   if (actualAuthors.size !== expectedAuthors.size || [...actualAuthors].some(k => !expectedAuthors.has(k))) fail('author index mismatch');
-  return { objects, rows, bodies };
+  return { objects, rows, bodies, blocks };
 }
 
 export function ciphertextStorage(client: StorageClient, snapshot: Snapshot): ObjectStorage {
@@ -195,7 +196,7 @@ export function metadataBoundary(client: StorageClient, snapshot: Snapshot, curr
         const response = await client.transport(url, { ...init, redirect: 'error' });
         if (!response.ok) fail('metadata list');
         const body: unknown = await response.clone().json();
-        if (!object(body) || (body.items !== undefined && !Array.isArray(body.items)) || (body.nextPageToken !== undefined && (typeof body.nextPageToken !== 'string' || !body.nextPageToken))) fail('metadata page');
+        if (!object(body) || body.kind !== 'storage#objects' || (body.items !== undefined && !Array.isArray(body.items)) || (body.nextPageToken !== undefined && (typeof body.nextPageToken !== 'string' || !body.nextPageToken))) fail('metadata page');
         for (const item of (body.items ?? []) as unknown[]) {
           if (!object(item) || typeof item.name !== 'string' || !state.expected.has(item.name) || state.seen.has(item.name) || item.generation !== snapshot.objects.get(item.name)) fail('metadata inventory mismatch');
           state.seen.add(item.name);
@@ -290,6 +291,29 @@ export function operatorApp(store: RelicStore | undefined, storage: ObjectStorag
   return createApp({ store, storage, operatorTokens: operators });
 }
 
+
+async function auditTarget(client: StorageClient, target: Target, snapshot: Snapshot, operator: string): Promise<void> {
+  const tomb = await client.read(tombKey(target.id));
+  if (!tomb || tomb.generation !== snapshot.objects.get(tombKey(target.id))) fail('missing or changed tombstone');
+  const record = decodeJson(tomb.data);
+  const latest = target.versions.at(-1);
+  if (!object(record) || record.id !== target.id || record.operator !== operator || record.reasonClass !== 'operator_error' || record.reportReference !== undefined || record.ciphertextHash !== latest?.sha256) fail('tombstone mismatch');
+  const row = await client.read(rowKey(target.id));
+  if (!row || row.generation !== snapshot.objects.get(rowKey(target.id))) fail('missing or changed retained row');
+  const value = decodeJson(row.data);
+  if (!object(value) || value.id !== target.id || value.version !== target.versions.length || value.cover !== undefined || value.sharesCount !== 0) fail('retained row mismatch');
+  for (const version of target.versions) if (await client.read(cipherKey(target.id, version.version))) fail('ciphertext remains');
+  if ((await client.list('r/' + target.id + '/')).size !== 0) fail('ciphertext remains');
+  for (const kind of metadataPrefixes) if ((await client.list('m/' + kind + '/' + target.id + '/')).size !== 0) fail('metadata remains');
+  const authors = await client.list('m/author_relic/');
+  for (const key of authors.keys()) if (key.endsWith('/' + target.id + '.json')) fail('author index remains');
+  for (const version of target.versions) {
+    const block = await client.read('m/block/' + version.sha256 + '.json');
+    const state = block ? block.generation + ':' + digest(block.data) : null;
+    if (!snapshot.blocks.has(version.sha256) || snapshot.blocks.get(version.sha256) !== state) fail('blocklist changed');
+  }
+}
+
 export async function execute(client: StorageClient, input: Manifest, hashes: readonly string[] = AUTHORIZED, makeSecret: () => string = () => randomBytes(32).toString('base64url')): Promise<void> {
   const manifest = validateManifest(input, hashes);
   const snapshot = await inventory(client, manifest);
@@ -310,7 +334,8 @@ export async function execute(client: StorageClient, input: Manifest, hashes: re
         if (!response.ok || boundary.faulted()) fail('delete failed');
         const data: unknown = await response.json();
         if (!object(data) || data.relic_id !== active || data.deleted !== true || data.blocklisted !== false) fail('delete response');
-        console.log('slot ' + (index + 1) + ': handler completed');
+        await auditTarget(client, target, snapshot, operator);
+        console.log('slot ' + (index + 1) + ': handler and immediate readback completed');
       } catch { console.error('slot ' + (index + 1) + ': failed or partial'); throw Error('maintenance stopped'); }
     }
   } finally { active = ''; operators.clear(); }
