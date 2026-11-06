@@ -211,10 +211,16 @@ export function metadataBoundary(client: StorageClient, snapshot: Snapshot, curr
         if (method === 'GET') {
           if (url.search !== '?alt=media') fail('metadata read parameters');
           const response = await client.transport(url, { ...init, redirect: 'error' });
+          const body = new Uint8Array(await response.arrayBuffer());
           const expected = snapshot.objects.get(name);
-          if (!expected) { if (name === tombKey(id) && response.status === 404) return response; fail('metadata absence'); }
-          if (!response.ok || response.headers.get('x-goog-generation') !== expected) fail('metadata read changed');
-          return response;
+          if (!expected) {
+            if (name === tombKey(id) && response.status === 404) return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+            fail('metadata absence');
+          }
+          const expectedBody = snapshot.bodies.get(name);
+          if (!response.ok || response.headers.get('x-goog-generation') !== expected || !expectedBody || !Buffer.from(body).equals(Buffer.from(expectedBody))) fail('metadata read changed');
+          JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
+          return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
         }
         if (method === 'DELETE') {
           if (url.search) fail('metadata delete parameters');
@@ -256,7 +262,7 @@ export function metadataBoundary(client: StorageClient, snapshot: Snapshot, curr
 function required(name: string): string { const value = process.env[name]; if (!value) fail('missing environment'); return value; }
 export function validateRun(env: Record<string, string | undefined>): void {
   const sha = env.REVIEWED_SHA;
-  if (!sha || !/^[a-f0-9]{40}$/.test(sha) || env.GITHUB_SHA !== sha || env.WORKFLOW_SHA !== sha || env.REPOSITORY_ID !== '1316636189' || env.EVENT_NAME !== 'workflow_dispatch' || env.GITHUB_REF !== 'refs/heads/archie/ephemeral-operator-maintenance' || env.WORKFLOW_REF !== 'TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance' || env.RUN_ATTEMPT !== '1' || env.ACTION !== 'delete-five' || !/^RELIC_MAINTENANCE_[A-F0-9]{32}$/.test(env.MANIFEST_SECRET_NAME ?? '') || !/^[0-9]+$/.test(env.RUN_ID ?? '')) fail('run identity');
+  if (!sha || !/^[a-f0-9]{40}$/.test(sha) || env.GITHUB_SHA !== sha || env.WORKFLOW_SHA !== sha || env.REPOSITORY_ID !== '1316636189' || env.EVENT_NAME !== 'workflow_dispatch' || env.GITHUB_REF !== 'refs/heads/archie/ephemeral-operator-maintenance' || env.WORKFLOW_REF !== 'TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance' || env.RUN_ATTEMPT !== '1' || env.ACTOR !== 'jwaldrip' || env.ACTOR_ID !== '43164' || env.TRIGGERING_ACTOR !== 'jwaldrip' || env.ACTION !== 'delete-five' || !/^RELIC_MAINTENANCE_[A-F0-9]{32}$/.test(env.MANIFEST_SECRET_NAME ?? '') || !/^[0-9]+$/.test(env.RUN_ID ?? '')) fail('run identity');
 }
 
 async function jsonResponse(response: Response): Promise<Record<string, unknown>> {
