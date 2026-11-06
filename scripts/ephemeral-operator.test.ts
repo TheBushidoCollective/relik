@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { createApp } from '../packages/relic-server/src/app.ts';
-import { execute, inventory, invokeDelete, metadataBoundary, operatorApp, StorageClient, validateManifest } from './ephemeral-operator.ts';
+import { ciphertextStorage, execute, inventory, invokeDelete, metadataBoundary, operatorApp, StorageClient, validateManifest, validateRun } from './ephemeral-operator.ts';
 
 const sha = (v: string | Uint8Array) => createHash('sha256').update(v).digest('hex');
 const enc = new TextEncoder();
 type Item = { data: Uint8Array; generation: string };
 class FakeGcs {
-  data = new Map<string, Item>(); next = 1000; writes = 0; forcedStatus = 0; failDelete = false;
+  data = new Map<string, Item>(); next = 1000; writes = 0; forcedStatus = 0; failDelete = false; malformedList = false;
   add(name: string, data: string) { const generation = String(++this.next); this.data.set(name, { data: enc.encode(data), generation }); return generation; }
   fetch: typeof fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
@@ -15,10 +15,11 @@ class FakeGcs {
     if (this.forcedStatus) return new Response('', { status: this.forcedStatus });
     const method = init.method ?? 'GET'; const root = '/storage/v1/b/fake-bucket/o'; const upload = '/upload/storage/v1/b/fake-bucket/o';
     if (method === 'GET' && url.pathname === root) {
+      if (this.malformedList) return Response.json({});
       const prefix = url.searchParams.get('prefix') ?? ''; const offset = Number(url.searchParams.get('pageToken') ?? '0');
       const matches = [...this.data].filter(([name]) => name.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b));
       const items = matches.slice(offset, offset + 2).map(([name, item]) => ({ name, generation: item.generation }));
-      return Response.json({ items, ...(offset + 2 < matches.length ? { nextPageToken: String(offset + 2) } : {}) });
+      return Response.json({ kind: 'storage#objects', items, ...(offset + 2 < matches.length ? { nextPageToken: String(offset + 2) } : {}) });
     }
     if (method === 'POST' && url.pathname === upload) {
       const name = url.searchParams.get('name') ?? ''; const before = this.data.get(name); const expected = url.searchParams.get('ifGenerationMatch');
@@ -74,11 +75,26 @@ describe('ephemeral operator controls', () => {
     const f = fixture(); const manifest = validateManifest({ targets: f.targets }, f.hashes);
     await inventory(f.client, manifest);
     f.fake.forcedStatus = 403; await expect(inventory(f.client, manifest)).rejects.toThrow(); f.fake.forcedStatus = 0;
+    f.fake.malformedList = true; await expect(inventory(f.client, manifest)).rejects.toThrow(); f.fake.malformedList = false;
     const key = 'r/' + f.targets[0]!.id + '/v2'; const old = f.fake.data.get(key)!;
     f.fake.data.delete(key); await expect(inventory(f.client, manifest)).rejects.toThrow();
     f.fake.data.set(key, { ...old, generation: '999999' }); await expect(inventory(f.client, manifest)).rejects.toThrow();
     f.fake.data.set(key, old); f.fake.add('r/' + f.targets[0]!.id + '/v999', 'extra');
     await expect(inventory(f.client, manifest)).rejects.toThrow(); expect(f.fake.writes).toBe(0);
+  });
+  test('validates run and refuses wrong SHA, ref, repository and secret name', () => {
+    const sha = 'a'.repeat(40);
+    const env = { REVIEWED_SHA: sha, GITHUB_SHA: sha, WORKFLOW_SHA: sha, REPOSITORY_ID: '1316636189', EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/archie/ephemeral-operator-maintenance', WORKFLOW_REF: 'TheBushidoCollective/relik/.github/workflows/deploy.yml@refs/heads/archie/ephemeral-operator-maintenance', RUN_ATTEMPT: '1', ACTION: 'delete-five', MANIFEST_SECRET_NAME: 'RELIC_MAINTENANCE_' + 'A'.repeat(32), RUN_ID: '123' };
+    expect(() => validateRun(env)).not.toThrow();
+    for (const patch of [{ GITHUB_SHA: 'b'.repeat(40) }, { GITHUB_REF: 'refs/heads/main' }, { REPOSITORY_ID: '1' }, { MANIFEST_SECRET_NAME: 'RELIC_OPERATOR_TOKENS' }, { RUN_ATTEMPT: '2' }, { ACTION: 'other' }]) expect(() => validateRun({ ...env, ...patch })).toThrow();
+  });
+  test('ciphertext adapter refuses changed current generations', async () => {
+    const f = fixture(); const snap = await inventory(f.client, validateManifest({ targets: f.targets }, f.hashes));
+    const target = f.targets[0]!; const name = 'r/' + target.id;
+    f.fake.data.set(name, { ...f.fake.data.get(name)!, generation: '999999' });
+    await expect(ciphertextStorage(f.client, snap).read(target.id)).rejects.toThrow();
+    await expect(ciphertextStorage(f.client, snap).delete(target.id)).rejects.toThrow();
+    expect(f.fake.writes).toBe(0);
   });
   test('metadata transport refuses a sixth target before writes', async () => {
     const f = fixture(); const snap = await inventory(f.client, validateManifest({ targets: f.targets }, f.hashes));
