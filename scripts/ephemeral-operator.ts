@@ -318,15 +318,18 @@ export async function execute(client: StorageClient, input: Manifest, hashes: re
   const manifest = validateManifest(input, hashes);
   const snapshot = await inventory(client, manifest);
   const operator = 'ci-maintenance-' + required('RUN_ID');
-  const operators = new Map<string, string>(); const secret = makeSecret();
+  const operators = new Map<string, string>(); let secret = makeSecret();
   if (!/^[A-Za-z0-9_-]{43}$/.test(secret)) fail('operator token');
-  operators.set(operator, secret);
-  let active = ''; const boundary = metadataBoundary(client, snapshot, () => active, operator);
-  const store = gcsStore({ bucket: client.bucket, prefix: 'm', getAccessToken: async () => client.token, fetch: boundary.fetch });
-  const storage = ciphertextStorage(client, snapshot);
-  const app = operatorApp(store, storage, operators);
-  const allowed = new Set(manifest.targets.map(t => t.id));
+  operators.set(operator, secret); let active = '';
+  const cleanup = () => { active = ''; operators.clear(); secret = ''; };
+  const interrupted = () => { cleanup(); console.error('maintenance interrupted; inspect private state before any retry'); process.exit(1); };
+  process.once('SIGINT', interrupted); process.once('SIGTERM', interrupted);
   try {
+    const boundary = metadataBoundary(client, snapshot, () => active, operator);
+    const store = gcsStore({ bucket: client.bucket, prefix: 'm', getAccessToken: async () => client.token, fetch: boundary.fetch });
+    const storage = ciphertextStorage(client, snapshot);
+    const app = operatorApp(store, storage, operators);
+    const allowed = new Set(manifest.targets.map(t => t.id));
     for (const [index, target] of manifest.targets.entries()) {
       active = target.id;
       try {
@@ -338,7 +341,7 @@ export async function execute(client: StorageClient, input: Manifest, hashes: re
         console.log('slot ' + (index + 1) + ': handler and immediate readback completed');
       } catch { console.error('slot ' + (index + 1) + ': failed or partial'); throw Error('maintenance stopped'); }
     }
-  } finally { active = ''; operators.clear(); }
+  } finally { cleanup(); process.removeListener('SIGINT', interrupted); process.removeListener('SIGTERM', interrupted); }
 }
 
 async function main(): Promise<void> {
