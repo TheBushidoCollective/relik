@@ -497,6 +497,10 @@ export interface Mounted {
     handler: (() => Response | Promise<Response>) | undefined
   ): void;
   commentResponse(): Response;
+  /** Control only the local fake's historical-version mint response. */
+  setHistoricalResponse(
+    handler: (() => Response | Promise<Response>) | undefined
+  ): void;
   forgetComment(id: string): void;
   /** Change only the fake server's cookie state, without a visibility signal. */
   setReader(reader: 'verified' | 'anonymous'): void;
@@ -550,6 +554,7 @@ export async function mount(
   let deleteResponse: (id: string) => Response | Promise<Response> = () =>
     new Response(null, { status: 204 });
   let commentRead: (() => Response | Promise<Response>) | undefined;
+  let historicalResponse: (() => Response | Promise<Response>) | undefined;
   let postResponse: (ciphertext: string) => Response | Promise<Response> = () =>
     Response.json({ comment_id: 'c1', author: 'ada@example.com' });
   let records = await Promise.all(
@@ -599,6 +604,8 @@ export async function mount(
         body: typeof init?.body === 'string' ? init.body : undefined,
       });
       notifyDom();
+      if (url.endsWith('/mint') && historicalResponse !== undefined)
+        return historicalResponse();
       if (url.endsWith('/api/auth/passkeys/options')) {
         return Response.json(
           { code: 'passkey_fresh_link_required' },
@@ -732,6 +739,9 @@ export async function mount(
       commentRead = handler;
     },
     commentResponse,
+    setHistoricalResponse: (handler) => {
+      historicalResponse = handler;
+    },
     forgetComment: (id) => {
       records = records.filter((record) => record.comment_id !== id);
     },

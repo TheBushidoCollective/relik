@@ -87,6 +87,7 @@ import {
   disposeOtioViews,
   type OtioAimDetail,
   otioControllerFor,
+  type OtioUiController,
 } from './otio-bridge.ts';
 import {
   landmarkScrollDelta,
@@ -5710,7 +5711,9 @@ export function buildThread(
     | undefined;
   let sessionGeneration = 0;
   const originalViews = new Map<number, Promise<ReadyView | undefined>>();
-  const projectionAttempts = new Set<string>();
+  const projectionAttempts = new WeakMap<OtioUiController, Set<string>>();
+  const otioProjectionWork = new WeakMap<OtioUiController, Promise<void>>();
+  let otioMarkPaintGeneration = 0;
   const projectionFailures = new Set<string>();
 
   const addOtioFeedbackContext = (
@@ -5771,20 +5774,22 @@ export function buildThread(
   ): Promise<void> => {
     if (host === undefined) return;
     const controller = otioControllerFor(host);
-    if (controller === undefined) return;
+    if (controller === undefined || controller.disposed) return;
+    const attempts = projectionAttempts.get(controller) ?? new Set<string>();
+    projectionAttempts.set(controller, attempts);
     let changed = false;
-    await Promise.all(
+    const started = Promise.all(
       entries.map(async (entry) => {
         if (
           entry.kind !== 'open' ||
           entry.anchor?.kind !== 'otio' ||
           !sealedOtioAnchorMatchesEntryVersion(entry) ||
           entry.anchor.relic_version === view.version ||
-          projectionAttempts.has(entry.id)
+          attempts.has(entry.id)
         ) {
           return;
         }
-        projectionAttempts.add(entry.id);
+        attempts.add(entry.id);
         const anchor = entry.anchor;
         try {
           let original = originalViews.get(anchor.relic_version);
@@ -5800,17 +5805,44 @@ export function buildThread(
             originalViews.set(anchor.relic_version, original);
           }
           const originalView = await original;
+          if (
+            typeof document === 'undefined' ||
+            controller.disposed ||
+            host === undefined ||
+            otioControllerFor(host) !== controller
+          ) {
+            attempts.delete(entry.id);
+            return;
+          }
           if (originalView === undefined)
             throw new Error('Original context unavailable');
           await controller.project(anchor, originalView.content);
         } catch {
+          if (
+            controller.disposed ||
+            host === undefined ||
+            otioControllerFor(host) !== controller
+          ) {
+            attempts.delete(entry.id);
+            return;
+          }
           projectionFailures.add(entry.id);
         }
         changed = true;
       })
     );
+    // A repaint may skip an already-started projection. Join the previous
+    // controller-local work too, rather than declaring that empty pass done.
+    const joined = Promise.all([
+      otioProjectionWork.get(controller),
+      started,
+    ]).then(() => {});
+    otioProjectionWork.set(controller, joined);
+    await joined;
     if (
       changed &&
+      typeof document !== 'undefined' &&
+      !controller.disposed &&
       host !== undefined &&
       otioControllerFor(host) === controller
     ) {
@@ -6006,6 +6038,11 @@ export function buildThread(
   const paintMarks = (entries: readonly CommentEntry[]): void => {
     lastEntries = entries;
     if (host === undefined) return;
+    const markHost = host;
+    const markController = otioControllerFor(markHost);
+    if (markController?.disposed) return;
+    const markPass = ++otioMarkPaintGeneration;
+    const markBatch = markController?.beginMarkBatch();
     const currentSurface = anchorSurfaceFor(host);
     if (currentSurface !== undefined)
       invalidateImageMarkRequests(currentSurface);
@@ -6014,7 +6051,7 @@ export function buildThread(
     pendingImagePlaced = false;
     unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
-    otioControllerFor(host)?.clearMarks();
+    markController?.clearMarks();
     host
       .querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
       ?.contentWindow?.postMessage({ type: 'relic:clear-marks' }, '*');
@@ -6115,7 +6152,29 @@ export function buildThread(
         '*'
       );
     reconcileHostMarks();
-    void projectEarlierOtioFeedback(entries);
+    const projected = projectEarlierOtioFeedback(entries);
+    if (markController !== undefined && markBatch !== undefined) {
+      const work = Promise.withResolvers<void>();
+      threadWork.add(work.promise);
+      void projected
+        .then(() => {
+          if (
+            typeof document === 'undefined' ||
+            markController.disposed ||
+            !hasThreadSnapshot ||
+            markPass !== otioMarkPaintGeneration ||
+            host !== markHost ||
+            otioControllerFor(markHost) !== markController ||
+            markHost.isConnected === false
+          )
+            return;
+          markController.completeMarkBatch(markBatch);
+        })
+        .finally(() => {
+          threadWork.delete(work.promise);
+          work.resolve();
+        });
+    }
   };
 
   /**

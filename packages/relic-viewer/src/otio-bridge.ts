@@ -8,6 +8,10 @@ import type {
 export interface OtioUiController {
   readonly document: OtioDocumentV1;
   readonly revision: number;
+  readonly disposed: boolean;
+  /** Completion covers the latest shell paint and its async projections. */
+  beginMarkBatch(): number;
+  completeMarkBatch(batch: number): void;
   paint(anchor: OtioAnchorV1, commentId: string): boolean;
   reveal(anchor: OtioAnchorV1, commentId?: string): void;
   clearMarks(): void;

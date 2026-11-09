@@ -360,6 +360,9 @@ export async function mountOtioView(
   let paintedStatusSettled = false;
   let viewportKey = '';
   let pendingTimelineScroll: { key: string; top: number } | undefined;
+  let pendingCommentReveal: { key: string; id: string } | undefined;
+  let markBatchGeneration = 0;
+  let markBatchComplete = true;
   const viewports = new Map<
     string,
     { scale: number; left: number; top: number; mode: 'fit' | 'manual' }
@@ -901,14 +904,45 @@ export async function mountOtioView(
     });
   }
 
+  function cancelPendingTimelineNavigation(): void {
+    pendingTimelineScroll = undefined;
+    pendingCommentReveal = undefined;
+  }
+
+  function revealPendingComment(): boolean {
+    const pending = pendingCommentReveal;
+    if (!pending || disposed || pending.key !== viewportKey) return false;
+    const mark = marks
+      .get(pending.id)
+      ?.find(
+        (piece) =>
+          piece.isConnected &&
+          !piece.hidden &&
+          !piece.closest<HTMLElement>('.otio-track-row')?.hidden
+      );
+    if (!mark) {
+      if (markBatchComplete) pendingCommentReveal = undefined;
+      return false;
+    }
+    revealTimelineTarget(mark, true);
+    // Keep following a partially painted batch until its final packed layout.
+    if (!markBatchComplete) pendingCommentReveal = pending;
+    return true;
+  }
+
   function applyPendingTimelineScroll(afterRepack = false): void {
     const pending = pendingTimelineScroll;
     if (!pending || pending.key !== viewportKey || disposed) return;
     scroll.scrollTop = pending.top;
-    // A row rebuild can precede the shell's async comment paint. Only retire
-    // the request after packed bands actually support the saved position.
-    if (afterRepack && scroll.scrollTop === pending.top)
+    // The shell explicitly completes projection-backed mark batches. Before
+    // completion a clamp may be temporary; after it, an unreachable top settles.
+    if (
+      afterRepack &&
+      (scroll.scrollTop === pending.top || markBatchComplete)
+    ) {
       pendingTimelineScroll = undefined;
+      rememberTimelineViewport();
+    }
   }
 
   function paintRuler(): void {
@@ -1064,6 +1098,7 @@ export async function mountOtioView(
   }
 
   function updateTimelineDomain(): void {
+    pendingCommentReveal = undefined;
     rememberTimelineViewport();
     const composition = timeline?.timeline_range ?? {
       start_time: { value: 0, rate },
@@ -1087,7 +1122,7 @@ export async function mountOtioView(
 
   function zoomTimeline(factor: number, pointerX?: number): void {
     if (disposed || cancelRailGesture || cancelResizeGesture) return;
-    pendingTimelineScroll = undefined;
+    cancelPendingTimelineNavigation();
     const dimensions = viewportDimensions();
     const { width } = dimensions;
     const next = otioZoomAt(
@@ -1112,7 +1147,7 @@ export async function mountOtioView(
 
   function fitTimeline(): void {
     if (disposed || cancelRailGesture || cancelResizeGesture) return;
-    pendingTimelineScroll = undefined;
+    cancelPendingTimelineNavigation();
     zoomMode = 'fit';
     const dimensions = viewportDimensions();
     pixelsPerFrame = otioZoomLimits(domain, dimensions.width).fit;
@@ -1138,7 +1173,7 @@ export async function mountOtioView(
   }
 
   scroll.addEventListener('pointerdown', () => {
-    pendingTimelineScroll = undefined;
+    cancelPendingTimelineNavigation();
   });
   scroll.addEventListener('scroll', () => {
     rememberTimelineViewport();
@@ -1149,7 +1184,7 @@ export async function mountOtioView(
     (event) => {
       if (event.ctrlKey || event.metaKey || !(event.target instanceof Element))
         return;
-      pendingTimelineScroll = undefined;
+      cancelPendingTimelineNavigation();
       if (
         !event.target.closest(
           '.otio-ruler-ticks, .otio-track-rail, .otio-comment-band'
@@ -1199,13 +1234,14 @@ export async function mountOtioView(
         'PageDown',
         'Home',
         'End',
+        ' ',
         '-',
         '+',
         '=',
         '0',
       ].includes(event.key)
     )
-      pendingTimelineScroll = undefined;
+      cancelPendingTimelineNavigation();
     if (
       event.ctrlKey ||
       event.metaKey ||
@@ -1584,7 +1620,7 @@ export async function mountOtioView(
   }
 
   function revealTimelineTarget(target: HTMLElement, center = false): void {
-    pendingTimelineScroll = undefined;
+    cancelPendingTimelineNavigation();
     const box = target.getBoundingClientRect();
     const viewport = timelineViewport(target);
     if (viewport.width <= 0 || viewport.height <= 0) return;
@@ -1773,7 +1809,8 @@ export async function mountOtioView(
     }
     const previousTop = scroll.scrollTop;
     applyPendingTimelineScroll(true);
-    if (geometryChanged || previousTop !== scroll.scrollTop)
+    const revealed = revealPendingComment();
+    if (geometryChanged || previousTop !== scroll.scrollTop || revealed)
       scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
@@ -2733,6 +2770,9 @@ export async function mountOtioView(
     paintedStatusSettled = timelineSettled;
   }
   function initializeTimeline(): void {
+    const initialMarkBatch = ++markBatchGeneration;
+    markBatchComplete = false;
+    pendingCommentReveal = undefined;
     paintedStatus = undefined;
     paintedTracks = undefined;
     rememberTimelineViewport();
@@ -2831,6 +2871,10 @@ export async function mountOtioView(
         root.dispatchEvent(
           new CustomEvent('relic:otio-ready', { bubbles: true })
         );
+        if (markBatchGeneration === initialMarkBatch) {
+          markBatchComplete = true;
+          queueCommentRepack();
+        }
       })
       .catch((error) => {
         if (disposed || playback !== current) return;
@@ -2839,12 +2883,33 @@ export async function mountOtioView(
         root.dispatchEvent(
           new CustomEvent('relic:otio-ready', { bubbles: true })
         );
+        if (markBatchGeneration === initialMarkBatch) {
+          markBatchComplete = true;
+          queueCommentRepack();
+        }
       });
   }
   const controller: OtioUiController = {
     document: doc,
     revision: options.revision,
+    get disposed() {
+      return disposed;
+    },
+    beginMarkBatch() {
+      if (!disposed) {
+        markBatchComplete = false;
+        ++markBatchGeneration;
+      }
+      return markBatchGeneration;
+    },
+    completeMarkBatch(batch) {
+      if (disposed || batch !== markBatchGeneration) return;
+      markBatchComplete = true;
+      queueCommentRepack();
+      flushCommentRepack();
+    },
     paint(anchor, id) {
+      if (disposed) return false;
       const target = projectionOf(anchor);
       if (!target || !rails.has(target.track)) return false;
       for (const mark of marks.get(id) ?? []) mark.remove();
@@ -2878,6 +2943,7 @@ export async function mountOtioView(
       return painted.length > 0;
     },
     reveal(anchor, commentId) {
+      if (disposed) return;
       let target = projectionOf(anchor);
       const mappedTimeline = projections.get(
         projectionsKey(anchor)
@@ -2924,20 +2990,22 @@ export async function mountOtioView(
         first.start_time,
         first
       );
+      cancelPendingTimelineNavigation();
+      if (commentId !== undefined)
+        pendingCommentReveal = { key: viewportKey, id: commentId };
       paintSelection();
       paintInspector();
       flushCommentRepack();
-      const mark =
-        commentId === undefined
-          ? rails
-              .get(target.track)
-              ?.querySelector<HTMLElement>('.otio-selection')
-          : marks
-              .get(commentId)
-              ?.find((piece) => piece.isConnected && !piece.hidden);
-      if (mark) revealTimelineTarget(mark, true);
+      if (commentId !== undefined) revealPendingComment();
+      else {
+        const selection = rails
+          .get(target.track)
+          ?.querySelector<HTMLElement>('.otio-selection');
+        if (selection) revealTimelineTarget(selection, true);
+      }
     },
     clearMarks() {
+      if (disposed) return;
       for (const pieces of marks.values())
         for (const mark of pieces) mark.remove();
       marks.clear();
@@ -2993,6 +3061,8 @@ export async function mountOtioView(
     dispose() {
       if (disposed) return;
       disposed = true;
+      ++markBatchGeneration;
+      cancelPendingTimelineNavigation();
       ++scopeGeneration;
       cancelRailGesture?.();
       root.dataset['disposed'] = 'true';

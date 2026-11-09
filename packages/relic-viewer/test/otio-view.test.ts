@@ -2820,11 +2820,20 @@ describe('OTIO focused scope review regressions', () => {
       )
     );
     const originals = anchors.map((anchor) => JSON.stringify(anchor));
+    let visibleComments = 40;
+    let autoComplete = true;
+    let latestBatch = 0;
     root.addEventListener('relic:otio-ready', () => {
-      if (root.dataset['timelineId'] === 'comment-timeline')
-        anchors.forEach((anchor, index) =>
-          current.paint(anchor, `coincident-${index}`)
-        );
+      if (root.dataset['timelineId'] === 'comment-timeline') {
+        latestBatch = current.beginMarkBatch();
+        current.clearMarks();
+        anchors
+          .slice(0, visibleComments)
+          .forEach((anchor, index) =>
+            current.paint(anchor, `coincident-${index}`)
+          );
+        if (autoComplete) current.completeMarkBatch(latestBatch);
+      }
     });
     const choose = (id: string) => {
       select.value = id;
@@ -2886,6 +2895,216 @@ describe('OTIO focused scope review regressions', () => {
       );
     await settle();
     expect(scroll.scrollTop).toBe(0);
+    expect(anchors.map((anchor) => JSON.stringify(anchor))).toEqual(originals);
+    for (const shiftKey of [false, true]) {
+      scroll.scrollTop = 600;
+      scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+      choose('other-timeline');
+      await settle();
+      choose('comment-timeline');
+      const space = Object.assign(
+        new Event('keydown', { bubbles: true, cancelable: true }),
+        {
+          key: ' ',
+          code: 'Space',
+          shiftKey,
+          ctrlKey: false,
+          metaKey: false,
+          altKey: false,
+        }
+      );
+      scroll.dispatchEvent(space);
+      expect(space.defaultPrevented).toBe(false);
+      await settle();
+      expect(scroll.scrollTop).toBe(0);
+    }
+    // An older completion cannot settle a newer, partially painted layout.
+    scroll.scrollTop = 600;
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    choose('other-timeline');
+    await settle();
+    const staleBatch = current.beginMarkBatch();
+    visibleComments = 5;
+    autoComplete = false;
+    choose('comment-timeline');
+    await settle();
+    expect(scroll.scrollTop).toBe(110);
+    current.completeMarkBatch(staleBatch);
+    scroll.scrollTop = 45;
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    current.paint(anchors[0]!, 'coincident-0');
+    await settle();
+    expect(scroll.scrollTop).toBe(110);
+    // Once the actual destination batch completes, an unreachable 600px
+    // settles to 110px and cannot override a later scroll/repack.
+    current.completeMarkBatch(latestBatch);
+    scroll.scrollTop = 45;
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    current.paint(anchors[0]!, 'coincident-0');
+    await settle();
+    expect(scroll.scrollTop).toBe(45);
+    expect(anchors.map((anchor) => JSON.stringify(anchor))).toEqual(originals);
+    const disposedBatch = current.beginMarkBatch();
+    current.dispose();
+    current.completeMarkBatch(disposedBatch);
+    expect(current.paint(anchors[0]!, 'disposed-comment')).toBe(false);
+    current.reveal(anchors[0]!, 'disposed-comment');
+    await settle();
+    expect(current.disposed).toBe(true);
+    expect(scroll.scrollTop).toBe(45);
+  });
+  test('explicit cross-timeline reveal completes after its comment mark is painted', async () => {
+    const focused = JSON.parse(
+      new TextDecoder().decode(focusedSelectionContent())
+    );
+    const content = new TextEncoder().encode(
+      JSON.stringify({
+        OTIO_SCHEMA: 'SerializableCollection.1',
+        children: [
+          focused,
+          {
+            OTIO_SCHEMA: 'Timeline.1',
+            metadata: { relic: { id: 'other-timeline' } },
+            tracks: {
+              OTIO_SCHEMA: 'Stack.1',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Track.1',
+                  kind: 'Video',
+                  metadata: { relic: { id: 'other-track' } },
+                  children: [clip('other-clip', 'Nested clip')],
+                },
+              ],
+            },
+          },
+        ],
+      })
+    );
+    const current = await mount(content);
+    const select = root.querySelector('.otio-timeline-select')!;
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    const tracks = root.querySelector('.otio-track-rows')!;
+    scroll.clientWidth = 640;
+    scroll.clientHeight = 120;
+    scroll.layout = new DOMRect(10, 400, 640, 120);
+    let top = 0;
+    Object.defineProperty(scroll, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (requested: number) => {
+        const height = tracks.children
+          .filter((node) => !node.hidden)
+          .reduce(
+            (sum, node) =>
+              sum +
+              60 +
+              Number.parseFloat(
+                node.querySelector('.otio-comment-band')?.style.height || '0'
+              ),
+            0
+          );
+        top = Math.max(
+          0,
+          Math.min(Math.max(0, height - scroll.clientHeight), requested)
+        );
+      },
+    });
+    const anchors = Array.from({ length: 40 }, () =>
+      createOtioSelection(
+        current.document,
+        'focused-timeline',
+        'focused-video',
+        1,
+        range(30, 0),
+        'focused-b'
+      )
+    );
+    const originals = anchors.map((anchor) => JSON.stringify(anchor));
+    const paint = () => {
+      const batch = current.beginMarkBatch();
+      current.clearMarks();
+      const owner = row('focused-video');
+      owner.querySelector('.otio-track-label')!.layout = new DOMRect(
+        10,
+        400,
+        174,
+        54
+      );
+      const band = owner.querySelector('.otio-comment-band')!;
+      anchors.forEach((anchor, index) => {
+        current.paint(anchor, `reveal-${index}`);
+        const mark = findViewElement(
+          band,
+          (node) => node.dataset['commentId'] === `reveal-${index}`
+        )!;
+        mark.getBoundingClientRect = () =>
+          new DOMRect(
+            200,
+            400 +
+              60 +
+              Number.parseFloat(band.style.height || '0') -
+              18 -
+              index * 22 -
+              scroll.scrollTop,
+            5,
+            14
+          );
+      });
+      current.completeMarkBatch(batch);
+    };
+    const choose = (id: string) => {
+      select.value = id;
+      select.dispatchEvent(new Event('change'));
+    };
+    const settle = () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      return promise;
+    };
+    choose('focused-timeline');
+    await settle();
+    findViewElement(
+      root,
+      (node) => node.dataset['itemId'] === 'focused-b'
+    )!.dispatchEvent(new Event('click'));
+    await settle();
+    paint();
+    await settle();
+    scroll.scrollTop = 600;
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    choose('other-timeline');
+    await settle();
+    root.addEventListener('relic:otio-ready', () => {
+      if (root.dataset['timelineId'] === 'focused-timeline') paint();
+    });
+    current.reveal(anchors[39]!, 'reveal-39');
+    expect(root.dataset['scopeNodeId']).toBe('focused-b');
+    expect(root.querySelector('.otio-selection-in')!.value).toBe('6');
+    await settle();
+    expect(root.dataset['frame']).toBe('30');
+    expect(scroll.scrollTop).toBe(0);
+    expect(current.measure('reveal-39')).toMatchObject({
+      top: 464,
+      height: 14,
+    });
+    expect(anchors.map((anchor) => JSON.stringify(anchor))).toEqual(originals);
+    choose('other-timeline');
+    await settle();
+    current.reveal(anchors[0]!, 'reveal-0');
+    row('focused-video')
+      .querySelector('.otio-track-label')!
+      .dispatchEvent(
+        Object.assign(new Event('wheel', { bubbles: true, cancelable: true }), {
+          deltaX: 0,
+          deltaY: 30,
+          deltaMode: 0,
+          ctrlKey: false,
+          metaKey: false,
+        })
+      );
+    await settle();
+    expect(scroll.scrollTop).toBe(0);
+    expect(current.measure('reveal-0')).toMatchObject({ height: 0 });
     expect(anchors.map((anchor) => JSON.stringify(anchor))).toEqual(originals);
   });
 });
