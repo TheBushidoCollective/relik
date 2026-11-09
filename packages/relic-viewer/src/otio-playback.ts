@@ -15,6 +15,7 @@ import type {
   OtioEvaluationResult,
   OtioNode,
   OtioRationalTime,
+  OtioTimeRange,
   OtioVideoContribution,
 } from '@relic/format';
 import {
@@ -96,8 +97,14 @@ export interface OtioTrackState {
   readonly solo: boolean;
 }
 
+export interface OtioPlaybackScope {
+  readonly nodeId: string;
+  readonly range: OtioTimeRange;
+}
+
 export interface OtioPlaybackState {
   readonly time: OtioRationalTime;
+  readonly scope: OtioPlaybackScope | null;
   readonly playing: boolean;
   readonly buffering: boolean;
   readonly duration: OtioRationalTime;
@@ -129,6 +136,7 @@ export interface OtioPlaybackController {
   play(): Promise<void>;
   pause(): void;
   seek(time: OtioRationalTime): Promise<void>;
+  setScope(scope: OtioPlaybackScope | null): Promise<void>;
   subscribe(listener: OtioPlaybackListener): () => void;
   setTrackVisibility(trackId: string, visible: boolean): void;
   setTrackMute(trackId: string, muted: boolean): void;
@@ -761,6 +769,85 @@ export function createOtioPlayback(
   const tracks: Record<string, OtioTrackState> = collectTracks(doc, timelineId);
 
   let currentTime: OtioRationalTime = { value: 0, rate: clock.rate };
+  let scope: OtioPlaybackScope | null = null;
+  let scopeRootId: string | null = null;
+  let scopeNodes = new Set<string>();
+  let scopeContext = new Set<string>();
+  let scopeEpoch = 0;
+  let scopeAbort = new AbortController();
+
+  function scopedEvaluation(time: OtioRationalTime): OtioEvaluationResult {
+    const result = evaluateOtioAt(doc, timelineId, time);
+    if (!scope || !scopeRootId) return result;
+    const selected = (item: { node_id: string; ancestry: readonly string[] }) =>
+      doc.nodes[scope!.nodeId]?.enabled !== false &&
+      (scopeNodes.has(item.node_id) || item.ancestry.includes(scopeRootId!)) &&
+      item.ancestry.every((id) => doc.nodes[id]?.enabled !== false);
+    const video: OtioVideoContribution[] = [];
+    const indices = new Map<number, number>();
+    result.video_contributions.forEach((item, index) => {
+      if (selected(item)) {
+        indices.set(index, video.length);
+        video.push(item);
+      }
+    });
+    function prune(
+      tree: OtioVideoCompositionTree | null
+    ): OtioVideoCompositionTree | null {
+      if (!tree) return null;
+      if (tree.kind === 'leaf') {
+        const index = indices.get(tree.contribution_index);
+        return index === undefined
+          ? null
+          : { ...tree, contribution_index: index };
+      }
+      if (tree.kind === 'stack') {
+        const children = tree.children
+          .map(prune)
+          .filter((child): child is OtioVideoCompositionTree => child !== null);
+        return children.length ? { ...tree, children } : null;
+      }
+      const branches = tree.branches.map((branch) => ({
+        ...branch,
+        child: prune(branch.child),
+      }));
+      return branches.some((branch) => branch.child !== null)
+        ? { ...tree, branches }
+        : null;
+    }
+    return {
+      ...result,
+      video_contributions: video,
+      audio_contributions: result.audio_contributions.filter(selected),
+      video_composition: prune(result.video_composition),
+      active_markers: result.active_markers.filter((marker) =>
+        scopeNodes.has(marker.owner_node_id)
+      ),
+      diagnostics: result.diagnostics.filter(
+        (issue) =>
+          !issue.target?.node_id || scopeContext.has(issue.target.node_id)
+      ),
+    };
+  }
+
+  function scopeEnd(): OtioRationalTime {
+    return scope
+      ? addRationalTimes(scope.range.start_time, scope.range.duration)
+      : clock.duration;
+  }
+
+  function scopeLastSample(): OtioRationalTime {
+    if (!scope) return clock.duration;
+    const start = rescaleTime(scope.range.start_time, clock.rate);
+    const end = rescaleTime(scopeEnd(), clock.rate);
+    return {
+      value: Math.max(
+        start.value,
+        end.value - Math.min(1, (end.value - start.value) / 2)
+      ),
+      rate: clock.rate,
+    };
+  }
   let isPlaying = false;
   let isBuffering = false;
   let isDisposed = false;
@@ -1249,7 +1336,7 @@ export function createOtioPlayback(
 
   function previewBlocked(result?: OtioEvaluationResult): boolean {
     if (baseMediaPreviewAllowed) return false;
-    const evaluation = result ?? evaluateOtioAt(doc, timelineId, currentTime);
+    const evaluation = result ?? scopedEvaluation(currentTime);
     return contributionIssues(evaluation).length > 0;
   }
 
@@ -1418,6 +1505,7 @@ export function createOtioPlayback(
       return Promise.resolve(true);
     }
     const { promise, resolve } = Promise.withResolvers<boolean>();
+    const signal = scopeAbort.signal;
     let settled = false;
     const finish = (ok: boolean): void => {
       if (settled) return;
@@ -1425,6 +1513,7 @@ export function createOtioPlayback(
       media.removeEventListener('seeked', onSeeked);
       media.removeEventListener('loadeddata', onReady);
       media.removeEventListener('error', onError);
+      signal.removeEventListener('abort', onAbort);
       if (
         ok &&
         !stale(gen) &&
@@ -1456,6 +1545,8 @@ export function createOtioPlayback(
       }
     };
     const onError = (): void => finish(false);
+    const onAbort = (): void => finish(false);
+    signal.addEventListener('abort', onAbort, { once: true });
     media.addEventListener('seeked', onSeeked);
     media.addEventListener('loadeddata', onReady);
     media.addEventListener('error', onError);
@@ -2078,6 +2169,7 @@ export function createOtioPlayback(
         }
       }
     }
+    if (stale(gen)) return;
     for (const [key, entry] of audios) {
       if (active.has(key)) continue;
       entry.element.pause();
@@ -2143,7 +2235,7 @@ export function createOtioPlayback(
     renderInFlight = true;
     const frames: VideoFrame[] = [];
     try {
-      const evaluation = evaluateOtioAt(doc, timelineId, time);
+      const evaluation = scopedEvaluation(time);
       if (stale(gen)) return;
       videoTimingFailures.clear();
       images.clearPins();
@@ -2204,6 +2296,7 @@ export function createOtioPlayback(
     audible: boolean
   ): void {
     if (audioSeeking.has(audio)) return;
+    const epoch = scopeEpoch;
     audioSeeking.add(audio);
     if (audio.gainNode) {
       audio.gainNode.gain.value = 0;
@@ -2213,7 +2306,8 @@ export function createOtioPlayback(
     const onSeeked = (): void => {
       audio.element.removeEventListener('seeked', onSeeked);
       audioSeeking.delete(audio);
-      applyAudioGain(audio, volume, audible);
+      if (epoch === scopeEpoch && !isDisposed)
+        applyAudioGain(audio, volume, audible);
     };
     audio.element.addEventListener('seeked', onSeeked);
     try {
@@ -2275,7 +2369,7 @@ export function createOtioPlayback(
       return;
     }
 
-    const evaluation = evaluateOtioAt(doc, timelineId, T0);
+    const evaluation = scopedEvaluation(T0);
     const tree = videoTree(evaluation);
     const blocked = blockedTracks(tree);
     const isHidden = (nodeId: string, ancestry: readonly string[]) =>
@@ -2639,8 +2733,8 @@ export function createOtioPlayback(
         });
       }
 
-      if (compareRationalTimes(T, clock.duration) >= 0) {
-        currentTime = clock.duration;
+      if (compareRationalTimes(T, scopeEnd()) >= 0) {
+        currentTime = scopeLastSample();
         isPlaying = false;
         nativeAnchor = null;
         nativeLastPresentMs = null;
@@ -2650,7 +2744,7 @@ export function createOtioPlayback(
         return;
       }
 
-      const evaluation = evaluateOtioAt(doc, timelineId, T);
+      const evaluation = scopedEvaluation(T);
       const tree = videoTree(evaluation);
       const blocked = blockedTracks(tree);
       const isHidden = (nodeId: string, ancestry: readonly string[]) =>
@@ -2968,8 +3062,8 @@ export function createOtioPlayback(
           value: elapsed * clock.rate,
           rate: clock.rate,
         });
-        if (compareRationalTimes(advanced, clock.duration) >= 0) {
-          currentTime = clock.duration;
+        if (compareRationalTimes(advanced, scopeEnd()) >= 0) {
+          currentTime = scopeLastSample();
           isPlaying = false;
           clockAnchor = null;
           pauseAllMedia();
@@ -2988,7 +3082,7 @@ export function createOtioPlayback(
   }
 
   function getState(): OtioPlaybackState {
-    const evaluation = evaluateOtioAt(doc, timelineId, currentTime);
+    const evaluation = scopedEvaluation(currentTime);
     const suppressedPresentationDiagnostics = new Set<OtioDiagnostic>();
     const retainedPresentationDiagnostics = new Set<OtioDiagnostic>();
     for (const contribution of evaluation.video_contributions) {
@@ -3010,15 +3104,60 @@ export function createOtioPlayback(
     for (const issue of retainedPresentationDiagnostics) {
       suppressedPresentationDiagnostics.delete(issue);
     }
+    const relevantFailure = (
+      issue: OtioDiagnostic,
+      sourcePath?: string
+    ): boolean => {
+      if (!scope) return true;
+      const target = issue.target?.node_id;
+      if (target && scopeContext.has(target)) return true;
+      const path = issue.target?.media_key ?? sourcePath ?? target;
+      if (!path) return true;
+      return [
+        ...evaluation.video_contributions,
+        ...evaluation.audio_contributions,
+      ].some((item) => item.bundle_path === path || item.media_key === path);
+    };
     const issues = [
-      ...videoTimingFailures.values(),
+      ...Array.from(videoTimingFailures.values()).filter((issue) =>
+        relevantFailure(issue)
+      ),
       ...evaluation.diagnostics.filter(
         (issue) => !suppressedPresentationDiagnostics.has(issue)
       ),
       ...contributionIssues(evaluation),
       ...withheldAudioSampleIssues(evaluation),
-      ...mediaFailures.values(),
+      ...Array.from(mediaFailures.entries())
+        .filter(([path, issue]) => relevantFailure(issue, path))
+        .map(([, issue]) => issue),
     ];
+    if (scope) {
+      const target = doc.nodes[scope.nodeId];
+      let disabled = false;
+      let ancestor = target;
+      const visited = new Set<string>();
+      while (ancestor && !visited.has(ancestor.id)) {
+        visited.add(ancestor.id);
+        disabled ||= !ancestor.enabled;
+        ancestor = ancestor.parent_id
+          ? doc.nodes[ancestor.parent_id]
+          : undefined;
+      }
+      if (disabled) {
+        issues.push(
+          diagnostic(
+            'info',
+            'supported',
+            'This item is disabled and has no playback',
+            scope.nodeId
+          )
+        );
+      } else if (target && schemaBase(target.schema) === 'Gap') {
+        issues.push(
+          diagnostic('info', 'supported', 'Gap contains no media', scope.nodeId)
+        );
+      }
+    }
     if (!clock.known) {
       issues.unshift(
         diagnostic(
@@ -3039,6 +3178,7 @@ export function createOtioPlayback(
     }
     return {
       time: currentTime,
+      scope,
       playing: isPlaying,
       buffering:
         isBuffering ||
@@ -3058,9 +3198,16 @@ export function createOtioPlayback(
   }
 
   function clampTime(time: OtioRationalTime): OtioRationalTime {
-    if (!Number.isFinite(time.value) || time.value < 0) {
-      return { value: 0, rate: clock.rate };
-    }
+    const start = scope?.range.start_time ?? { value: 0, rate: clock.rate };
+    if (
+      !Number.isFinite(time.value) ||
+      !Number.isFinite(time.rate) ||
+      time.rate <= 0 ||
+      compareRationalTimes(time, start) < 0
+    )
+      return start;
+    if (scope && compareRationalTimes(time, scopeEnd()) >= 0)
+      return scopeLastSample();
     if (compareRationalTimes(time, clock.duration) > 0) return clock.duration;
     return rescaleTime(time, clock.rate);
   }
@@ -3074,17 +3221,20 @@ export function createOtioPlayback(
         notify();
         return;
       }
-      const lastFrameTime: OtioRationalTime = {
-        value: Math.max(0, clock.duration.value - 1),
-        rate: clock.rate,
-      };
+      const lastFrameTime: OtioRationalTime = scope
+        ? scopeLastSample()
+        : {
+            value: Math.max(0, clock.duration.value - 1),
+            rate: clock.rate,
+          };
       if (
         clock.known &&
         (compareRationalTimes(currentTime, lastFrameTime) >= 0 ||
-          compareRationalTimes(currentTime, clock.duration) >= 0)
+          compareRationalTimes(currentTime, scopeEnd()) >= 0)
       ) {
-        currentTime = { value: 0, rate: clock.rate };
+        currentTime = scope?.range.start_time ?? { value: 0, rate: clock.rate };
       }
+      const playGeneration = renderGeneration;
       const ctx = getAudioContext();
       if (ctx && ctx.state === 'suspended') {
         try {
@@ -3093,7 +3243,7 @@ export function createOtioPlayback(
           // Ignore resume failure; fallback volume still applies.
         }
       }
-      if (isDisposed) return;
+      if (stale(playGeneration)) return;
       isPlaying = true;
       failureSeekCadence = false;
       await startSequence(currentTime);
@@ -3132,6 +3282,106 @@ export function createOtioPlayback(
         clockAnchor = null;
         notify();
       }
+    },
+
+    async setScope(next: OtioPlaybackScope | null): Promise<void> {
+      if (isDisposed) return;
+      let root: OtioNode | undefined;
+      const nodes = new Set<string>();
+      const context = new Set<string>();
+      if (next) {
+        const target = doc.nodes[next.nodeId];
+        const start = next.range.start_time;
+        const duration = next.range.duration;
+        if (
+          !target ||
+          !clock.known ||
+          !Number.isFinite(start.value) ||
+          !Number.isFinite(start.rate) ||
+          start.rate <= 0 ||
+          !Number.isFinite(duration.value) ||
+          !Number.isFinite(duration.rate) ||
+          duration.rate <= 0 ||
+          duration.value <= 0 ||
+          start.value < 0 ||
+          compareRationalTimes(
+            addRationalTimes(start, duration),
+            clock.duration
+          ) > 0
+        ) {
+          throw new RangeError('Invalid OTIO playback scope');
+        }
+        root =
+          schemaBase(target.schema) === 'Transition'
+            ? doc.nodes[target.parent_id ?? '']
+            : target;
+        if (!root)
+          throw new RangeError('OTIO playback scope has no owning track');
+        let ancestor: OtioNode | undefined = root;
+        while (ancestor && !context.has(ancestor.id)) {
+          context.add(ancestor.id);
+          ancestor = ancestor.parent_id
+            ? doc.nodes[ancestor.parent_id]
+            : undefined;
+        }
+        if (!context.has(timelineId))
+          throw new RangeError('OTIO scope is outside the timeline');
+        const pending = [root.id];
+        while (pending.length) {
+          const id = pending.pop()!;
+          if (nodes.has(id)) continue;
+          nodes.add(id);
+          context.add(id);
+          const node = doc.nodes[id];
+          if (node) pending.push(...node.children_ids);
+        }
+        context.add(target.id);
+      }
+      scope = next
+        ? {
+            nodeId: next.nodeId,
+            range: {
+              start_time: { ...next.range.start_time },
+              duration: { ...next.range.duration },
+            },
+          }
+        : null;
+      scopeRootId = root?.id ?? null;
+      scopeNodes = nodes;
+      scopeContext = context;
+      isPlaying = false;
+      isStarting = false;
+      isBuffering = true;
+      nativeMode = false;
+      nativeEpoch++;
+      clockAnchor = null;
+      nativeAnchor = null;
+      nativeLastPresentMs = null;
+      if (frameHandle !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(frameHandle);
+        frameHandle = null;
+      }
+      pauseAllMedia();
+      for (const ring of nativeRings.values()) ring.release();
+      nativeRings.clear();
+      lastDrawnOccurrenceKeys.clear();
+      lastRenderDrawnOccurrenceKeys.clear();
+      lastRenderVideoContributions.clear();
+      knownVideoKeys.clear();
+      hideVisibleCanvas();
+      scopeEpoch++;
+      failureSeekCadence = false;
+      currentTime = next ? scope!.range.start_time : clampTime(currentTime);
+      scopeAbort.abort();
+      scopeAbort = new AbortController();
+      // Stale renders check their generation before painting or reconciling.
+      // Do not let an unrelated unresolved media request hold the new scope.
+      renderTail = Promise.resolve();
+      const gen = ++renderGeneration;
+      notify();
+      await enqueueRender(currentTime, gen);
+      if (stale(gen)) return;
+      notify();
     },
 
     subscribe(listener: OtioPlaybackListener): () => void {
@@ -3207,6 +3457,7 @@ export function createOtioPlayback(
         canvas.removeEventListener('contextrestored', onVisibleContextRestored);
       }
       videoTimingAbort.abort();
+      scopeAbort.abort();
       isPlaying = false;
       isStarting = false;
       for (const ring of nativeRings.values()) ring.release();

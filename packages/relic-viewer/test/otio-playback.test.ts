@@ -1590,6 +1590,266 @@ describe('otio playback controller', () => {
     playback.dispose();
   });
 
+  test('focus remaps a later video contribution and excludes the other layer', async () => {
+    const doc = buildDocument();
+    const lower = doc.nodes.clip_v!;
+    const requested: string[] = [];
+    const playback = createOtioPlayback({
+      document: {
+        ...doc,
+        nodes: {
+          ...doc.nodes,
+          stack_1: {
+            ...doc.nodes.stack_1!,
+            children_ids: ['track_v', 'track_v2', 'track_a'],
+          },
+          track_v2: node({
+            id: 'track_v2',
+            schema: 'Track.1',
+            parent_id: 'stack_1',
+            children_ids: ['clip_v2'],
+            track_kind: 'Video',
+          }),
+          clip_v2: {
+            ...lower,
+            id: 'clip_v2',
+            parent_id: 'track_v2',
+            media_references: {
+              DEFAULT_MEDIA: {
+                schema: 'ExternalReference.1',
+                target_url: 'media/other.png',
+              },
+            },
+          },
+        },
+      },
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async (path) => {
+        requested.push(path);
+        return 'blob:other';
+      },
+    });
+    try {
+      await playback.setScope({ nodeId: 'clip_v2', range: range(0, 24, 24) });
+      expect(requested).toContain('media/other.png');
+      expect(requested).not.toContain('media/clip.mp4');
+      expect(requested).not.toContain('media/dialogue.wav');
+      expect(
+        playback
+          .getState()
+          .diagnostics.some(
+            (issue) =>
+              issue.message === 'Video evaluation has no composition tree'
+          )
+      ).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('scoped audio excludes unrelated effects, bounds seeks, and restores composition', async () => {
+    const requested: string[] = [];
+    const playback = createOtioPlayback({
+      document: buildDocument({ effect: true }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async (path) => {
+        requested.push(path);
+        return 'blob:media';
+      },
+    });
+    try {
+      const focus = { nodeId: 'audio_a', range: range(12, 24, 24) };
+      await playback.setScope(focus);
+      expect(playback.getState().scope).toEqual(focus);
+      expect(playback.getState().time).toEqual({ value: 12, rate: 24 });
+      expect(playback.getState().previewBlocked).toBe(false);
+      expect(requested).toContain('media/dialogue.wav');
+      expect(requested).not.toContain('media/clip.mp4');
+      await playback.seek({ value: 48, rate: 24 });
+      expect(playback.getState().time).toEqual({ value: 35, rate: 24 });
+      await playback.seek({ value: 0, rate: 24 });
+      expect(playback.getState().time).toEqual({ value: 12, rate: 24 });
+      await playback.setScope(null);
+      expect(playback.getState().scope).toBeNull();
+      expect(playback.getState().time).toEqual({ value: 12, rate: 24 });
+      expect(playback.getState().previewBlocked).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('scoped fallback playback stops before the end and replays from the start', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument(),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:audio',
+    });
+    try {
+      await playback.setScope({ nodeId: 'audio_a', range: range(12, 24, 24) });
+      await playback.play();
+      raf?.(0);
+      raf?.(1200);
+      expect(playback.getState().playing).toBe(false);
+      expect(playback.getState().time).toEqual({ value: 35, rate: 24 });
+      await playback.play();
+      expect(playback.getState().time).toEqual({ value: 12, rate: 24 });
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('a later focus invalidates an in-flight media load', async () => {
+    const pending = Promise.withResolvers<string | null>();
+    const started = Promise.withResolvers<void>();
+    const playback = createOtioPlayback({
+      document: buildDocument(),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: (path) => {
+        if (path === 'media/clip.mp4') {
+          started.resolve();
+          return pending.promise;
+        }
+        return 'blob:audio';
+      },
+    });
+    try {
+      const first = playback.setScope({
+        nodeId: 'clip_v',
+        range: range(0, 24, 24),
+      });
+      await started.promise;
+      const second = playback.setScope({
+        nodeId: 'audio_a',
+        range: range(12, 24, 24),
+      });
+      await second;
+      expect(playback.getState().scope?.nodeId).toBe('audio_a');
+      expect(playback.getState().buffering).toBe(false);
+      pending.resolve('blob:video');
+      await first;
+      expect(playback.getState().scope?.nodeId).toBe('audio_a');
+      expect(playback.getState().time).toEqual({ value: 12, rate: 24 });
+      expect(playback.getState().playing).toBe(false);
+      expect(playback.getState().buffering).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('scope changes cancel a pending decoder seek without its seeked event', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument(),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:media',
+    });
+    try {
+      await playback.setScope({ nodeId: 'clip_v', range: range(0, 48, 24) });
+      const decoder = created.find((element) => element.muted);
+      if (!decoder) throw new Error('video decoder was not created');
+      let position = decoder.currentTime + 1;
+      const seekStarted = Promise.withResolvers<void>();
+      Object.defineProperty(decoder, 'currentTime', {
+        get: () => position,
+        set: (value: number) => {
+          position = value;
+          seekStarted.resolve();
+        },
+      });
+      Object.defineProperty(decoder, 'seeking', { get: () => true });
+      const oldSeek = playback.seek({ value: 12, rate: 24 });
+      await seekStarted.promise;
+      await playback.setScope({ nodeId: 'audio_a', range: range(12, 24, 24) });
+      await oldSeek;
+      expect(playback.getState().scope?.nodeId).toBe('audio_a');
+      expect(playback.getState().buffering).toBe(false);
+      expect(decoder.listeners.get('seeked')?.length ?? 0).toBe(0);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('scoped codec diagnostics follow the selected media, not occurrence keys', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument(),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:media',
+    });
+    try {
+      await playback.setScope({ nodeId: 'audio_a', range: range(0, 24, 24) });
+      const audio = created.find(
+        (element) =>
+          element.attrs.get('data-bundle-path') === 'media/dialogue.wav'
+      );
+      if (!audio) throw new Error('audio decoder was not created');
+      audio.dispatch('error');
+      expect(
+        playback
+          .getState()
+          .diagnostics.some(
+            (issue) =>
+              issue.code === 'unsupported-codec' &&
+              issue.message.includes('dialogue.wav')
+          )
+      ).toBe(true);
+      await playback.setScope({ nodeId: 'clip_v', range: range(0, 24, 24) });
+      expect(
+        playback
+          .getState()
+          .diagnostics.some(
+            (issue) =>
+              issue.code === 'unsupported-codec' &&
+              issue.message.includes('dialogue.wav')
+          )
+      ).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('gap focus explains silence and rejects invalid scopes', async () => {
+    const doc = buildDocument();
+    const gap = node({
+      id: 'gap',
+      schema: 'Gap.1',
+      parent_id: 'track_v',
+      timeline_range: range(0, 24, 24),
+      visible_timeline_range: range(0, 24, 24),
+    });
+    const playback = createOtioPlayback({
+      document: {
+        ...doc,
+        nodes: {
+          ...doc.nodes,
+          gap,
+          track_v: { ...doc.nodes.track_v!, children_ids: ['gap'] },
+        },
+      },
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:media',
+    });
+    try {
+      await playback.setScope({ nodeId: 'gap', range: range(0, 24, 24) });
+      expect(
+        playback
+          .getState()
+          .diagnostics.some((item) => item.message === 'Gap contains no media')
+      ).toBe(true);
+      await expect(
+        playback.setScope({ nodeId: 'missing', range: range(0, 24, 24) })
+      ).rejects.toThrow();
+      expect(playback.getState().scope?.nodeId).toBe('gap');
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('a later seek wins and clears buffering only when it finishes', async () => {
     const pending: Array<(value: string | null) => void> = [];
     const clipStarted = Promise.withResolvers<void>();
