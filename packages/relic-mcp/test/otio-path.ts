@@ -8520,7 +8520,7 @@ async function runLayoutMatrix(
         >(String.raw`(() => {
           const selectors = {
             stage: '.stage-wrap', root: '.otio-view', monitor: '.otio-monitor-row',
-            transport: '.otio-transport', heading: '.otio-timeline-heading',
+            divider: '.otio-resize-handle', transport: '.otio-transport', heading: '.otio-timeline-heading',
             timeline: '.otio-timeline-scroll', readout: '.otio-selection-readout',
             diagnostics: '.otio-diagnostics', preview: '.otio-preview', canvas: '.otio-canvas',
             inspector: '.otio-inspector', tabs: '.otio-inspector-tabs', context: '.otio-context',
@@ -8537,13 +8537,15 @@ async function runLayoutMatrix(
             return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
           };
           const rectangles = Object.fromEntries(Object.entries(nodes).map(([key, node]) => [key, rect(node)]));
-          const { stage, root, monitor, transport, heading, timeline, readout, diagnostics, preview, canvas } = rectangles;
+          const { stage, root, monitor, divider, transport, heading, timeline, readout, diagnostics, preview, canvas } = rectangles;
           const stageBottom = stage.top + nodes.stage.clientTop + nodes.stage.clientHeight;
           const near = (a, b, name) => { if (Math.abs(a - b) > 2) failures.push(name + ': ' + a + ' vs ' + b); };
           near(root.bottom, stageBottom, 'bottom fill');
           const diagnosticsVisible = nodes.diagnostics.children.length > 0 && diagnostics.height > 0;
           near(diagnosticsVisible ? diagnostics.bottom : readout.bottom, root.bottom, 'bottom stack');
-          near(monitor.bottom, transport.top, 'monitor/transport adjacency');
+          near(monitor.bottom, divider.top, 'monitor/divider adjacency');
+          near(divider.bottom, transport.top, 'divider/transport adjacency');
+          if (divider.height < 12) failures.push('divider hit target too small');
           near(transport.bottom, heading.top, 'transport/heading adjacency');
           if (document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1) failures.push('document overflow');
           if (nodes.stage.scrollHeight > nodes.stage.clientHeight + 2) failures.push('stage vertical overflow');
@@ -8768,6 +8770,19 @@ async function exerciseViewerResize(browser: ChromeSession): Promise<void> {
       deviceScaleFactor: 1,
       mobile: width < 600,
     });
+    await browser.evaluate<void>(`(async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      await promise;
+      document.querySelector('.otio-resize-handle')?.focus();
+    })()`);
+    for (const type of ['rawKeyDown', 'keyUp'])
+      await browser.send('Input.dispatchKeyEvent', {
+        type,
+        key: 'End',
+        code: 'End',
+        windowsVirtualKeyCode: 35,
+      });
     const before = await measure();
     assert.equal(
       before.role,
@@ -8822,11 +8837,11 @@ async function exerciseViewerResize(browser: ChromeSession): Promise<void> {
     const after = await measure();
     assert.ok(
       after.preview < before.preview - 5,
-      `${width}px drag did not shrink preview`
+      `${width}px drag did not shrink preview: ${JSON.stringify({ before, after })}`
     );
     assert.ok(
       after.tracks > before.tracks + 5,
-      `${width}px drag did not reveal more tracks`
+      `${width}px drag did not reveal more tracks: ${JSON.stringify({ before, after })}`
     );
     assert.equal(
       after.overflow,
