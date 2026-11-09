@@ -1,6 +1,19 @@
 // Installed only in the loopback proof browser before viewer scripts execute.
 // This is instrumentation, not a performance oracle: controls and source-pixel
 // comparisons must qualify it before a trace can support a playback claim.
+export const otioProofWorkletSource = `
+class RelicProofTap extends AudioWorkletProcessor {
+ constructor() { super(); this.active = false; this.used = 0; this.first = 0; this.left = new Float32Array(1024); this.right = new Float32Array(1024);
+  this.port.onmessage = ({data}) => { if (data === 'start') { this.active = true; this.used = 0; this.port.postMessage({kind:'started', frame:currentFrame}); }
+   if (data === 'stop') { this.flush(); this.active = false; this.port.postMessage({kind:'stopped', frame:currentFrame}); } }; }
+ flush() { if (!this.used) return; this.port.postMessage({kind:'pcm', frame:this.first, channels:[this.left.slice(0,this.used),this.right.slice(0,this.used)]}); this.used = 0; }
+ process(inputs, outputs) { const output=outputs[0]; for (const channel of output) channel.fill(0); if (!this.active) return true;
+  const channels=inputs[0] || []; const count=output[0].length; if (!this.used) this.first=currentFrame;
+  for (let i=0; i<count; i++) { this.left[this.used+i]=channels[0]?.[i] || 0; this.right[this.used+i]=channels[1]?.[i] ?? channels[0]?.[i] ?? 0; }
+  this.used += count; if (this.used === 1024) this.flush(); return true; }
+}
+registerProcessor('relic-proof-pcm', RelicProofTap);`;
+
 export const otioProofTracePrelude = String.raw`(() => {
   const MAX_AUDIO_SAMPLES = 48000 * 20 * 2;
   const MAX_VISUAL_SAMPLES = 3000;
@@ -16,33 +29,127 @@ export const otioProofTracePrelude = String.raw`(() => {
     };
   }
   const graphs = [];
+  const violations = [];
+  document.addEventListener('securitypolicyviolation', event => {
+    violations.push({directive:event.effectiveDirective, blockedURI:event.blockedURI});
+  });
+  const events = [];
+  let eventsOverflow = false;
+  const elementIds = new WeakMap();
+  let nextElementId = 0;
+  const sourceIds = new Map();
+  function recordEvent(kind, element, value) {
+    if (!visual.active) return;
+    if (events.length >= 10000) { eventsOverflow = true; return; }
+    let elementId = null;
+    if (element) {
+      if (!elementIds.has(element)) elementIds.set(element, nextElementId++);
+      elementId = elementIds.get(element);
+    }
+    const source = element?.currentSrc || element?.src || '';
+    if (source && !sourceIds.has(source)) sourceIds.set(source, sourceIds.size);
+    events.push({kind, value, elementId, sourceId:source ? sourceIds.get(source) : null, mediaType:element?.tagName ?? null,
+      timestamp: performance.now(),
+      frame: document.querySelector('.otio-view')?.getAttribute('data-frame') ?? null,
+      source: element?.dataset?.bundlePath ?? null,
+      currentTime: element?.currentTime ?? null});
+  }
+  const originalConsoleLog = console.log;
+  console.log = function(...args) {
+    if (args[0] === 'OTIO_PROOF_MISSING_TAG') recordEvent('missing-tag', null, args[1]);
+    if (args[0] === 'OTIO_PROOF_PILOT') recordEvent('pilot', null, args[1]);
+    return originalConsoleLog.apply(this, args);
+  };
+  const NativeVideoFrame = globalThis.VideoFrame;
+  if (typeof NativeVideoFrame === 'function') {
+    globalThis.VideoFrame = class extends NativeVideoFrame {
+      constructor(source, ...args) {
+        super(source, ...args);
+        if (source instanceof HTMLVideoElement)
+          recordEvent('video-frame-readout', source, {timestamp:this.timestamp});
+      }
+    };
+  }
+  for (const name of ['play', 'pause']) {
+    const original = HTMLMediaElement.prototype[name];
+    HTMLMediaElement.prototype[name] = function(...args) {
+      const result = original.apply(this, args);
+      recordEvent(name, this, null);
+      return result;
+    };
+  }
+  const currentTime = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+  if (currentTime?.configurable && currentTime.get && currentTime.set) {
+    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+      configurable: true, enumerable: currentTime.enumerable,
+      get() { return currentTime.get.call(this); },
+      set(value) {
+        currentTime.set.call(this, value);
+        recordEvent('seek', this, value);
+      },
+    });
+  }
+  for (const kind of ['seeking', 'seeked', 'waiting', 'playing', 'pause'])
+    document.addEventListener(kind, event => {
+      if (event.target instanceof HTMLMediaElement) recordEvent(kind, event.target, null);
+    }, true);
+  const originalRvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
+  if (typeof originalRvfc === 'function') {
+    HTMLVideoElement.prototype.requestVideoFrameCallback = function(callback) {
+      const element = this;
+      return originalRvfc.call(this, (now, metadata) => {
+        recordEvent('rvfc', element, {callbackTime:now, mediaTime:metadata.mediaTime,
+          presentedFrames:metadata.presentedFrames, expectedDisplayTime:metadata.expectedDisplayTime});
+        return callback(now, metadata);
+      });
+    };
+  }
+  let bufferingObserver = null;
   const originalConnect = AudioNode.prototype.connect;
+  function command(graph, name) {
+    const {promise, resolve, reject} = Promise.withResolvers();
+    const timer = setTimeout(() => { graph.pending = null; reject(new Error('audio worklet ' + name + ' timed out')); }, 5000);
+    graph.pending = {kind: name === 'start' ? 'started' : 'stopped',
+      resolve: frame => { clearTimeout(timer); graph.pending = null; resolve(frame); }};
+    graph.node.port.postMessage(name);
+    return promise;
+  }
   AudioNode.prototype.connect = function(destination, ...rest) {
     const result = originalConnect.call(this, destination, ...rest);
     if (this instanceof GainNode && destination === this.context.destination &&
         !graphs.some(graph => graph.master === this)) {
-      const context = this.context;
-      const processor = context.createScriptProcessor(1024, 2, 1);
-      const graph = {master: this, context, processor, chunks: [], samples: 0,
-        overflow: false, active: false};
-      processor.onaudioprocess = event => {
-        event.outputBuffer.getChannelData(0).fill(0);
-        if (!graph.active) return;
-        const input = event.inputBuffer;
-        const size = input.length;
-        if (graph.samples + size * input.numberOfChannels > MAX_AUDIO_SAMPLES) {
-          graph.overflow = true;
-          return;
-        }
-        const channels = [];
-        for (let channel = 0; channel < input.numberOfChannels; channel++)
-          channels.push(Array.from(input.getChannelData(channel)));
-        graph.chunks.push({sampleFrame: Math.round(event.playbackTime * context.sampleRate), channels});
-        graph.samples += size * input.numberOfChannels;
-      };
-      originalConnect.call(this, processor);
-      originalConnect.call(processor, destination);
+      const master = this, context = this.context;
+      const graph = {master, context, node: null, chunks: [], samples: 0,
+        overflow: false, pending: null, ready: null};
       graphs.push(graph);
+      graph.ready = (async () => {
+        if (!context.audioWorklet || typeof AudioWorkletNode !== 'function')
+          throw new Error('AudioWorklet unavailable in viewer sandbox');
+        const url = '/__proof/otio-audio-worklet.js';
+        try { await context.audioWorklet.addModule(url); }
+        catch (error) {
+          const {promise, resolve} = Promise.withResolvers();
+          setTimeout(resolve, 50); await promise;
+          throw new Error('AudioWorklet addModule failed: ' + String(error) + '; CSP=' + JSON.stringify(violations));
+        }
+        const node = new AudioWorkletNode(context, 'relic-proof-pcm',
+          {numberOfInputs:1, numberOfOutputs:1, channelCount:2,
+            channelCountMode:'explicit', outputChannelCount:[1]});
+        graph.node = node;
+        node.port.onmessage = ({data}) => {
+          if (data.kind === 'pcm') {
+            const channels = data.channels.map(channel => Array.from(channel));
+            const size = channels.reduce((sum, channel) => sum + channel.length, 0);
+            if (graph.samples + size > MAX_AUDIO_SAMPLES) graph.overflow = true;
+            else { graph.chunks.push({sampleFrame:data.frame, channels}); graph.samples += size; }
+          } else if (graph.pending?.kind === data.kind) graph.pending.resolve(data.frame);
+        };
+        originalConnect.call(master, node);
+        originalConnect.call(node, destination);
+      })();
+      // The viewer's connection is already established. Retain the error for
+      // start() to report without changing the controller's own audio graph.
+      graph.ready.catch(() => {});
     }
     return result;
   };
@@ -73,8 +180,8 @@ export const otioProofTracePrelude = String.raw`(() => {
             hash = Math.imul(hash ^ pixels[i + 2], 16777619);
           }
           const pixels16 = [];
-          for (let y = 0; y < 9; y++) for (let x = 0; x < 16; x++) {
-            const i = (Math.floor(y * canvas.height / 9) * canvas.width + Math.floor(x * canvas.width / 16)) * 4;
+          for (let y = 0; y < 36; y++) for (let x = 0; x < 64; x++) {
+            const i = (Math.min(canvas.height - 1, Math.floor((y + .5) * canvas.height / 36)) * canvas.width + Math.min(canvas.width - 1, Math.floor((x + .5) * canvas.width / 64))) * 4;
             pixels16.push(pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]);
           }
           visual.samples.push({timestamp: performance.now(), hash: hash >>> 0, pixels16,
@@ -92,14 +199,26 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (!['none', 'freeze', 'stall', 'skip-still'].includes(value)) throw new Error('unknown proof fault');
       fault = value; lastStall = performance.now();
     },
-    start() {
+    async start() {
       if (graphs.length !== 1) throw new Error('expected exactly one controller destination gain, got ' + graphs.length);
       const graph = graphs[0];
-      graph.chunks = []; graph.samples = 0; graph.overflow = false; graph.active = true;
+      await graph.ready;
+      graph.chunks = []; graph.samples = 0; graph.overflow = false;
+      const sampleFrame = await command(graph, 'start');
       visual.samples = []; visual.overflow = false; visual.active = true;
+      events.length = 0; eventsOverflow = false;
+      const root = document.querySelector('.otio-view');
+      if (!(root instanceof HTMLElement)) throw new Error('proof view missing');
+      recordEvent('buffering-initial', null, root.dataset.buffering ?? null);
+      bufferingObserver?.disconnect();
+      bufferingObserver = new MutationObserver(records => {
+        for (const record of records)
+          recordEvent('buffering-change', null, {old:record.oldValue, current:root.dataset.buffering});
+      });
+      bufferingObserver.observe(root, {attributes:true, attributeOldValue:true, attributeFilter:['data-buffering']});
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
-        sampleFrame: Math.round(graph.context.currentTime * graph.context.sampleRate),
-        timestamp: performance.now(), frame: Number(document.querySelector('.otio-view')?.dataset.frame)};
+        sampleFrame, timestamp: performance.now(),
+        frame: Number(document.querySelector('.otio-view')?.dataset.frame)};
     },
     mute() {
       if (graphs.length !== 1) throw new Error('controller destination gain ambiguous');
@@ -114,13 +233,17 @@ export const otioProofTracePrelude = String.raw`(() => {
       graph.master.gain.setValueAtTime(value, graph.context.currentTime);
       return Math.round(graph.context.currentTime * graph.context.sampleRate);
     },
-    stop() {
+    async stop() {
       if (graphs.length !== 1) throw new Error('controller destination gain ambiguous');
-      const graph = graphs[0]; graph.active = false; visual.active = false;
+      const graph = graphs[0]; visual.active = false;
+      bufferingObserver?.disconnect();
+      const timestamp = performance.now();
+      const frame = Number(document.querySelector('.otio-view')?.dataset.frame);
+      const sampleFrame = await command(graph, 'stop');
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
-        timestamp: performance.now(), frame: Number(document.querySelector('.otio-view')?.dataset.frame),
+        timestamp, frame, sampleFrame,
         audio: graph.chunks, audioOverflow: graph.overflow,
-        visual: visual.samples, visualOverflow: visual.overflow};
+        visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow};
     },
   };
 })();`;

@@ -68,7 +68,10 @@ import {
   createBrowserHeadlessLaunch,
 } from './browser-headless.ts';
 import { isOpaqueBlack } from './otio-path-pixels.ts';
-import { otioProofTracePrelude } from './otio-proof-trace.ts';
+import {
+  otioProofTracePrelude,
+  otioProofWorkletSource,
+} from './otio-proof-trace.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
@@ -249,6 +252,7 @@ async function persistMcpLoopbackReceipts(
   return { requestHash, receipts };
 }
 
+let proofWorkletRequests = 0;
 let handler: ((request: Request) => Promise<Response>) | undefined;
 const service = Bun.serve({
   port: 0,
@@ -283,6 +287,19 @@ handler = async (request: Request): Promise<Response> => {
     `non-loopback request reached the proof server: ${url.hostname}`
   );
   recordMcpLoopbackReceipt(request.method, url.pathname, 'entry', null);
+  if (
+    url.pathname === '/__proof/otio-audio-worklet.js' &&
+    request.method === 'GET'
+  ) {
+    proofWorkletRequests++;
+    console.log('OTIO_PROOF_WORKLET_REQUEST');
+    return new Response(otioProofWorkletSource, {
+      headers: {
+        'content-type': 'application/javascript; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    });
+  }
 
   if (
     url.pathname.startsWith('/__storage/upload/') &&
@@ -1227,6 +1244,22 @@ def mutate(op, src, dest, extra):
             shutil.rmtree(dest)
         shutil.copytree(src, dest)
     timeline = load_dir(dest)
+    if op in ("boundary-insert", "boundary-trim", "boundary-ambiguous"):
+        track = next(item for item in timeline.tracks if relic_id(item) == "boundary-lower")
+        clip = next(item for item in track if relic_id(item) == "moving-b")
+        if op == "boundary-insert":
+            gap = otio.schema.Gap(name="Insert", source_range=otio.opentime.TimeRange(
+                otio.opentime.RationalTime(0, 30), otio.opentime.RationalTime(30, 30)))
+            track.insert(0, gap)
+        elif op == "boundary-trim":
+            clip.source_range = otio.opentime.TimeRange(
+                otio.opentime.RationalTime(6, 30), otio.opentime.RationalTime(4, 30))
+        else:
+            copy = otio.adapters.read_from_string(otio.adapters.write_to_string(clip))
+            track.insert(list(track).index(clip) + 1, copy)
+        write_dir(timeline, dest)
+        print(json.dumps(project(dest, "moving-b", json.loads(extra))))
+        return
     if op == "insert":
         track = next(item for item in timeline.tracks if relic_id(item) == "track-v1-main")
         gap = otio.schema.Gap(name="Insert", source_range=otio.opentime.TimeRange(
@@ -2365,7 +2398,7 @@ async function openBrowser(
           | undefined;
         assert.ok(
           !exception,
-          `page evaluation failed: ${exception?.text ?? exception?.exception?.description ?? JSON.stringify(res)}`
+          `page evaluation failed: ${exception?.exception?.description ?? exception?.text ?? JSON.stringify(res)}`
         );
         const inner = res['result'] as { value?: T } | undefined;
         return inner?.value as T;
@@ -2524,6 +2557,17 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
     tick();
     return promise;
   })()`);
+  if (!landed) {
+    const state = await browser.evaluate<Record<string, unknown>>(`(() => {
+      const root = document.querySelector('.otio-view');
+      const seek = document.querySelector('input.otio-seek');
+      return {dataset: root ? {...root.dataset} : null,
+        seek: seek instanceof HTMLInputElement ? {value:seek.value, min:seek.min, max:seek.max} : null,
+        status: document.querySelector('.otio-preview-status')?.textContent ?? null};
+    })()`);
+    await browser.screenshot('seek-failed');
+    console.error('OTIO_SEEK_FAILURE', JSON.stringify({ frame, state }));
+  }
   assert.equal(
     landed,
     true,
@@ -9136,12 +9180,14 @@ async function assertFocusedPlaybackBound(
 }
 
 interface MovingTrace {
-  start: { timestamp: number; frame: number };
+  start: { timestamp: number; frame: number; sampleFrame: number };
   trace: {
     timestamp: number;
     frame: number;
+    sampleFrame: number;
     audioOverflow: boolean;
     visualOverflow: boolean;
+    eventsOverflow: boolean;
     visual: Array<{
       timestamp: number;
       frame: string | null;
@@ -9152,8 +9198,39 @@ interface MovingTrace {
     sampleRate: number;
   };
 }
+function assertPcmCoverage(
+  start: number,
+  end: number,
+  chunks: Array<{ sampleFrame: number; channels: number[][] }>
+): void {
+  assert.ok(
+    chunks.length > 0 && end > start,
+    'post-gain PCM capture has no coverage'
+  );
+  assert.equal(
+    chunks[0]!.sampleFrame,
+    start,
+    'post-gain PCM is missing its leading samples'
+  );
+  for (let i = 1; i < chunks.length; i++) {
+    const prior = chunks[i - 1]!;
+    assert.ok(prior.channels[0], 'post-gain PCM channel missing');
+    assert.equal(
+      chunks[i]!.sampleFrame,
+      prior.sampleFrame + prior.channels[0].length,
+      'post-gain PCM has a missing or overlapping chunk'
+    );
+  }
+  const last = chunks[chunks.length - 1]!;
+  assert.ok(last.channels[0], 'post-gain PCM final channel missing');
+  assert.equal(
+    last.sampleFrame + last.channels[0].length,
+    end,
+    'post-gain PCM is missing its trailing samples'
+  );
+}
 async function comparePostGainPcm(
-  trace: MovingTrace['trace'],
+  capture: MovingTrace,
   referenceCache: Map<number, Float32Array>,
   healthyRms: number,
   mutedRms: number
@@ -9162,7 +9239,12 @@ async function comparePostGainPcm(
   correlation: number;
   gain: number;
   longestDropoutMs: number;
+  agreement: Array<{ start: number; observed: number; repeated: number }>;
+  agreementFloor: number;
+  repeatedCeiling: number;
 }> {
+  const trace = capture.trace;
+  assertPcmCoverage(capture.start.sampleFrame, trace.sampleFrame, trace.audio);
   const rate = trace.sampleRate;
   assert.ok(Number.isFinite(rate) && rate > 0, 'invalid PCM sample rate');
   let reference = referenceCache.get(rate);
@@ -9260,7 +9342,11 @@ async function comparePostGainPcm(
   const threshold = Math.max(mutedRms * 2, healthyRms * 0.01);
   let run = 0,
     longest = 0;
-  const length = Math.min(captured.length, reference.length - offset);
+  assert.ok(
+    reference.length - offset >= captured.length,
+    'source PCM does not cover the full capture'
+  );
+  const length = captured.length;
   let sourceEnergy = 0,
     actualEnergy = 0;
   for (let i = 0; i < Math.min(window, length); i++) {
@@ -9282,10 +9368,48 @@ async function comparePostGainPcm(
       longest = Math.max(longest, run);
     } else run = 0;
   }
+  const agreement: Array<{
+    start: number;
+    observed: number;
+    repeated: number;
+  }> = [];
+  const segment = Math.floor(rate * 0.25);
+  const replayLength = Math.floor(rate * 0.5);
+  for (let start = replayLength; start + segment <= length; start += segment) {
+    let cross = 0,
+      replayCross = 0,
+      sourcePower = 0,
+      power = 0,
+      replayPower = 0;
+    for (let i = 0; i < segment; i += stride) {
+      const expected = reference[offset + start + i]!;
+      const actual = captured[start + i]!;
+      const replay = captured[(start + i) % replayLength]!;
+      cross += expected * actual;
+      replayCross += expected * replay;
+      sourcePower += expected * expected;
+      power += actual * actual;
+      replayPower += replay * replay;
+    }
+    if (Math.sqrt(power / Math.ceil(segment / stride)) <= threshold) continue;
+    const observed = cross / Math.sqrt(sourcePower * power);
+    const repeated = replayCross / Math.sqrt(sourcePower * replayPower);
+    assert.ok(
+      Number.isFinite(observed) && Number.isFinite(repeated),
+      'audio agreement window is undefined'
+    );
+    agreement.push({ start, observed, repeated });
+  }
+  assert.ok(agreement.length > 0, 'no sustained audio agreement windows');
+  const agreementFloor = Math.min(...agreement.map((entry) => entry.observed));
+  const repeatedCeiling = Math.max(...agreement.map((entry) => entry.repeated));
   return {
     offset,
     correlation: aligned.correlation,
     gain: aligned.gain,
+    agreement,
+    agreementFloor,
+    repeatedCeiling,
     longestDropoutMs: (longest * 1000) / rate,
   };
 }
@@ -9334,7 +9458,7 @@ async function decodeScreencastFrames(
       '-i',
       'pipe:0',
       '-vf',
-      `crop=${width}:${height}:${x}:${y},scale=16:9:flags=neighbor`,
+      `crop=${width}:${height}:${x}:${y},scale=64:36:flags=neighbor`,
       '-fps_mode',
       'passthrough',
       '-f',
@@ -9353,7 +9477,7 @@ async function decodeScreencastFrames(
     0,
     `screencast JPEG decode failed: ${output.stderr}`
   );
-  const frameBytes = 16 * 9 * 4;
+  const frameBytes = 64 * 36 * 4;
   assert.equal(
     output.stdout.length,
     frames.length * frameBytes,
@@ -9379,7 +9503,7 @@ async function assessMovingWindowControls(
       '-i',
       join(decoderMediaDir, 'fr30.webm'),
       '-vf',
-      'scale=16:9:flags=neighbor',
+      'scale=64:36:flags=neighbor',
       '-frames:v',
       '36',
       '-f',
@@ -9391,7 +9515,7 @@ async function assessMovingWindowControls(
     { timeoutMs: 20000 }
   );
   assert.equal(decoded.exit, 0, `reference decoding failed: ${decoded.stderr}`);
-  const frameBytes = 16 * 9 * 4;
+  const frameBytes = 64 * 36 * 4;
   assert.equal(
     decoded.stdout.length,
     36 * frameBytes,
@@ -9407,8 +9531,8 @@ async function assessMovingWindowControls(
   const wrongSourcePixels = await extractFrame(
     join(fixtureDir, 'media', 'secondary_b.mp4'),
     5,
-    16,
-    9
+    64,
+    36
   );
   const classifyPixels = (pixels: Uint8Array, composition: number) => {
     const matches = references
@@ -9449,7 +9573,9 @@ async function assessMovingWindowControls(
       const r = canvas.getBoundingClientRect();
       if (r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
         throw new Error('canvas is clipped in screencast viewport');
-      return {x:r.left, y:r.top, width:r.width, height:r.height,
+      const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+      const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+      return {x:r.left + (r.width - width) / 2, y:r.top + (r.height - height) / 2, width, height,
         scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
     })()`);
     const stopCast = await browser.startScreencast();
@@ -9464,9 +9590,9 @@ async function assessMovingWindowControls(
       if (root.dataset.playing !== 'true') throw new Error('playback did not start');
       await sleep(40);
       globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
-      const start = globalThis.__otioProofTrace.start();
+      const start = await globalThis.__otioProofTrace.start();
       await sleep(500);
-      const trace = globalThis.__otioProofTrace.stop();
+      const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
       if (root.dataset.playing === 'true') button.click();
       return {start, trace};
@@ -9477,6 +9603,7 @@ async function assessMovingWindowControls(
     if (
       capture.trace.visualOverflow ||
       capture.trace.audioOverflow ||
+      capture.trace.eventsOverflow ||
       cast.overflow
     )
       issues.push('trace overflow');
@@ -9693,6 +9820,7 @@ async function assessMovingWindowControls(
       staleControl,
       wrongSourceControl,
       capture,
+      geometry,
       cast,
     };
     await writeFile(
@@ -9708,19 +9836,99 @@ async function assessMovingWindowControls(
     const stillA = await extractFrame(
       join(fixtureDir, 'media', 'plate_1001.png'),
       0,
-      16,
-      9
+      64,
+      36
     );
     const stillB = await extractFrame(
       join(fixtureDir, 'media', 'plate_1002.png'),
       0,
-      16,
-      9
+      64,
+      36
     );
     assert.ok(
       rmse(stillA, stillB) > 0,
       'still reference pixels cannot distinguish the fixture images'
     );
+    const oraclePath = fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries-oracle.json',
+        import.meta.url
+      )
+    );
+    const timingOracle = JSON.parse(await readFile(oraclePath, 'utf8')) as {
+      fixture: {
+        evaluations_at_time: Array<{
+          time: { value: number };
+          contributions: Array<{ node_id: string; transition_weight: number }>;
+        }>;
+      };
+    };
+    for (const [frame, ids] of [
+      [30, ['upper-video-a', 'upper-video-b']],
+      [60, ['moving-a', 'moving-b', 'upper-video-b', 'boundary-gap-a']],
+      [150, ['upper-video-c', 'upper-video-d']],
+    ] as const) {
+      const sample = timingOracle.fixture.evaluations_at_time.find(
+        (item) => item.time.value === frame
+      );
+      assert.ok(sample, `official transition sample ${frame} missing`);
+      for (const id of ids)
+        assert.ok(
+          sample.contributions.some(
+            (part) => part.node_id === id && part.transition_weight === 0.5
+          ),
+          `official transition weight missing for ${id} at ${frame}`
+        );
+    }
+    const readVideo = (frame: number) =>
+      extractFrame(join(decoderMediaDir, 'fr30.webm'), frame, 64, 36);
+    const readSecondary = (frame: number) =>
+      extractFrame(join(fixtureDir, 'media', 'secondary_b.mp4'), frame, 64, 36);
+    const [a30, b30, b31, lowerA, lowerB, upper60, upper61, a150] =
+      await Promise.all([
+        readVideo(36),
+        readSecondary(4),
+        readSecondary(5),
+        readVideo(60),
+        readVideo(6),
+        readSecondary(28),
+        readSecondary(29),
+        readVideo(21),
+      ]);
+    const transitions = [30, 60, 150];
+    function transitionComparison(
+      frame: number,
+      time: number,
+      pixels: Uint8Array
+    ) {
+      const u = (time - (frame - 3)) / 6;
+      const secondaryIndex = Math.floor(
+        ((time - (frame === 60 ? 24 : frame - 6)) * 24) / 30
+      );
+      const incoming = secondaryIndex === 4 ? b30 : b31;
+      let expected: Uint8Array;
+      let hardCuts: Uint8Array[];
+      if (frame === 60) {
+        const upper = secondaryIndex === 28 ? upper60 : upper61;
+        const lower = blend(lowerA, lowerB, 1 - u, u);
+        expected = blend(lower, upper, u, 1 - u);
+        hardCuts = [
+          upper,
+          lower,
+          blend(lowerA, upper, u, 1 - u),
+          blend(lowerB, upper, u, 1 - u),
+        ];
+      } else {
+        const outgoing = frame === 30 ? a30 : a150;
+        expected = blend(outgoing, incoming, 1 - u, u);
+        hardCuts = [outgoing, incoming];
+      }
+      return {
+        time,
+        expected: rmse(pixels, expected),
+        hardCuts: hardCuts.map((alternative) => rmse(pixels, alternative)),
+      };
+    }
     const referenceAudio = new Map<number, Float32Array>();
     for (let repetition = 1; repetition <= 5; repetition++) {
       await seekTo(browser, 0);
@@ -9737,7 +9945,9 @@ async function assessMovingWindowControls(
         const r = canvas.getBoundingClientRect();
         if (r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
           throw new Error('canvas is clipped in screencast viewport');
-        return {x:r.left, y:r.top, width:r.width, height:r.height,
+        const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+        const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+        return {x:r.left + (r.width - width) / 2, y:r.top + (r.height - height) / 2, width, height,
           scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
       })()`);
       const stopCast = await browser.startScreencast();
@@ -9752,15 +9962,15 @@ async function assessMovingWindowControls(
       if (root.dataset.playing !== 'true') throw new Error('playback did not start');
       await sleep(40);
       globalThis.__otioProofTrace.setFault(${JSON.stringify(repetition === 4 ? 'skip-still' : 'none')});
-      const start = globalThis.__otioProofTrace.start();
+      const start = await globalThis.__otioProofTrace.start();
       if (${repetition === 5}) {
         await sleep(2200);
         const muted = globalThis.__otioProofTrace.mute();
         await sleep(300);
         globalThis.__otioProofTrace.restore(muted.value);
-        await sleep(2300);
-      } else await sleep(4800);
-      const trace = globalThis.__otioProofTrace.stop();
+        await sleep(3100);
+      } else await sleep(5600);
+      const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
       if (root.dataset.playing === 'true') button.click();
       return {start, trace};
@@ -9770,9 +9980,9 @@ async function assessMovingWindowControls(
       const progress =
         (capture.trace.frame - capture.start.frame) / ((elapsedMs * 30) / 1000);
       const stills = [
-        { from: 77, to: 88, reference: stillA, other: stillB },
-        { from: 92, to: 103, reference: stillB, other: stillA },
-        { from: 107, to: 118, reference: stillA, other: stillB },
+        { from: 75, to: 90, reference: stillA, other: stillB },
+        { from: 90, to: 105, reference: stillB, other: stillA },
+        { from: 105, to: 120, reference: stillA, other: stillB },
       ].map(({ from, to, reference, other }) => {
         const matches = capture.trace.visual.filter((sample) => {
           const frame = Number(sample.frame);
@@ -9792,28 +10002,46 @@ async function assessMovingWindowControls(
         return { from, to, errors };
       });
       const screen = await decodeScreencastFrames(cast, geometry);
+      const matchPresentedCanvas = (timestamp: number, pixels: Uint8Array) => {
+        let best: (typeof capture.trace.visual)[number] | null = null;
+        let error = Infinity;
+        for (const sample of capture.trace.visual) {
+          if (
+            Math.abs(sample.timestamp - timestamp) > 50 ||
+            sample.pixels16?.length !== frameBytes
+          )
+            continue;
+          const candidate = rmse(pixels, Uint8Array.from(sample.pixels16));
+          if (
+            candidate < error ||
+            (candidate === error &&
+              (!best || sample.timestamp > best.timestamp))
+          ) {
+            best = sample;
+            error = candidate;
+          }
+        }
+        return error < 12 ? best : null;
+      };
+      const unmatchedScreenFrames = screen.filter((sample) => {
+        const timestamp = sample.timestamp - geometry.timeOrigin;
+        return (
+          timestamp >= capture.start.timestamp + 50 &&
+          timestamp <= capture.trace.timestamp &&
+          !matchPresentedCanvas(timestamp, sample.pixels)
+        );
+      }).length;
       const screenStills = [
-        { from: 77, to: 88, reference: stillA, other: stillB },
-        { from: 92, to: 103, reference: stillB, other: stillA },
-        { from: 107, to: 118, reference: stillA, other: stillB },
+        { from: 75, to: 90, reference: stillA, other: stillB },
+        { from: 90, to: 105, reference: stillB, other: stillA },
+        { from: 105, to: 120, reference: stillA, other: stillB },
       ].map(({ from, to, reference, other }) => {
         const errors: Array<{ expected: number; other: number; skew: number }> =
           [];
         for (const frame of screen) {
           const timestamp = frame.timestamp - geometry.timeOrigin;
-          const closest = capture.trace.visual.reduce<
-            (typeof capture.trace.visual)[number] | null
-          >(
-            (prior, sample) =>
-              !prior ||
-              Math.abs(sample.timestamp - timestamp) <
-                Math.abs(prior.timestamp - timestamp)
-                ? sample
-                : prior,
-            null
-          );
-          if (!closest || Math.abs(closest.timestamp - timestamp) > 50)
-            continue;
+          const closest = matchPresentedCanvas(timestamp, frame.pixels);
+          if (!closest) continue;
           const composition = Number(closest.frame);
           if (composition >= from && composition < to)
             errors.push({
@@ -9824,8 +10052,38 @@ async function assessMovingWindowControls(
         }
         return { from, to, errors };
       });
+      const transitionChecks = transitions.map((frame) => {
+        const canvas = capture.trace.visual
+          .filter(
+            (sample) =>
+              Number(sample.frame) >= frame &&
+              Number(sample.frame) < frame + 1 &&
+              sample.pixels16?.length === frameBytes
+          )
+          .map((sample) =>
+            transitionComparison(
+              frame,
+              Number(sample.frame),
+              Uint8Array.from(sample.pixels16!)
+            )
+          );
+        const compositor = screen.flatMap((sample) => {
+          const timestamp = sample.timestamp - geometry.timeOrigin;
+          const closest = matchPresentedCanvas(timestamp, sample.pixels);
+          if (
+            !closest ||
+            Number(closest.frame) < frame ||
+            Number(closest.frame) >= frame + 1
+          )
+            return [];
+          return [
+            transitionComparison(frame, Number(closest.frame), sample.pixels),
+          ];
+        });
+        return { frame, canvas, compositor };
+      });
       const audio = await comparePostGainPcm(
-        capture.trace,
+        capture,
         referenceAudio,
         healthyRms,
         mutedRms
@@ -9835,12 +10093,20 @@ async function assessMovingWindowControls(
         JSON.stringify({
           capture,
           cast,
+          geometry,
           elapsedMs,
           progress,
           stills,
           screenStills,
+          transitionChecks,
+          unmatchedScreenFrames,
           audio,
         })
+      );
+      assert.ok(
+        audio.agreementFloor > audio.repeatedCeiling &&
+          audio.agreementFloor > 0,
+        `audio source agreement is not separated from repeated-audio control: ${audio.agreementFloor} vs ${audio.repeatedCeiling}`
       );
       if (repetition === 5)
         assert.ok(
@@ -9855,8 +10121,14 @@ async function assessMovingWindowControls(
       assert.ok(
         !capture.trace.visualOverflow &&
           !capture.trace.audioOverflow &&
+          !capture.trace.eventsOverflow &&
           !cast.overflow,
         'boundary trace overflow'
+      );
+      assert.equal(
+        unmatchedScreenFrames,
+        0,
+        'screencast frames lack a matching recent canvas presentation'
       );
       assert.ok(
         progress >= 0.95 && progress <= 1.05,
@@ -9867,10 +10139,10 @@ async function assessMovingWindowControls(
           still.errors.length > 0,
           `skipped still interval [${still.from}, ${still.to})`
         );
-        const matched = still.errors.some(
+        const matched = still.errors.every(
           (error) => error.expected < 12 && error.expected < error.other
         );
-        if (repetition === 4 && still.from === 92)
+        if (repetition === 4 && still.from === 90)
           assert.equal(
             matched,
             false,
@@ -9887,10 +10159,10 @@ async function assessMovingWindowControls(
           still.errors.length > 0,
           `missing screencast still interval [${still.from}, ${still.to})`
         );
-        const matched = still.errors.some(
+        const matched = still.errors.every(
           (error) => error.expected < 12 && error.expected < error.other
         );
-        if (repetition === 4 && still.from === 92)
+        if (repetition === 4 && still.from === 90)
           assert.equal(
             matched,
             false,
@@ -9901,6 +10173,25 @@ async function assessMovingWindowControls(
             matched,
             `wrong screencast still pixels in [${still.from}, ${still.to})`
           );
+      }
+      for (const transition of transitionChecks) {
+        for (const [surface, values] of [
+          ['canvas', transition.canvas],
+          ['compositor', transition.compositor],
+        ] as const) {
+          assert.ok(
+            values.length > 0,
+            `${surface} missing dissolve midpoint ${transition.frame}`
+          );
+          assert.ok(
+            values.every(
+              (value) =>
+                value.expected < 12 &&
+                value.hardCuts.every((hardCut) => value.expected < hardCut)
+            ),
+            `${surface} failed dissolve or accepted hard-cut control at ${transition.frame}`
+          );
+        }
       }
     }
   }
@@ -9979,6 +10270,12 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
     recordProofTrace: true,
   });
   try {
+    await browser.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
     await waitReady(browser);
     const stopCast = await browser.startScreencast();
     const capture = await browser.evaluate<{
@@ -9987,9 +10284,11 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       restored: number;
       trace: {
         sampleRate: number;
+        sampleFrame: number;
         contextState: string;
         audioOverflow: boolean;
         visualOverflow: boolean;
+        eventsOverflow: boolean;
         audio: Array<{ sampleFrame: number; channels: number[][] }>;
         visual: Array<{ timestamp: number; error?: string }>;
       };
@@ -10003,13 +10302,13 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       while (root.dataset.playing !== 'true' && performance.now() < deadline) await sleep(25);
       if (root.dataset.playing !== 'true') throw new Error('playback did not start');
       await sleep(600);
-      const start = globalThis.__otioProofTrace.start();
+      const start = await globalThis.__otioProofTrace.start();
       await sleep(600);
       const mute = globalThis.__otioProofTrace.mute();
       await sleep(600);
       const restored = globalThis.__otioProofTrace.restore(mute.value);
       await sleep(600);
-      const trace = globalThis.__otioProofTrace.stop();
+      const trace = await globalThis.__otioProofTrace.stop();
       if (root.dataset.playing === 'true') button.click();
       return {start, mute, restored, trace};
     })()`);
@@ -10017,6 +10316,10 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
     await writeFile(
       join(shotDir, 'post-gain-calibration.json'),
       JSON.stringify({ capture, cast })
+    );
+    assert.ok(
+      proofWorkletRequests > 0,
+      'same-origin proof worklet was not requested'
     );
     assert.equal(
       capture.start.contextState,
@@ -10033,6 +10336,11 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       false,
       'canvas capture overflow'
     );
+    assert.equal(
+      capture.trace.eventsOverflow,
+      false,
+      'audio event capture overflow'
+    );
     assert.equal(cast.overflow, false, 'screencast capture overflow');
     assert.ok(
       cast.frames.length >= 2,
@@ -10044,6 +10352,11 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       'canvas trace unavailable'
     );
     const chunks = capture.trace.audio;
+    assertPcmCoverage(
+      capture.start.sampleFrame,
+      capture.trace.sampleFrame,
+      chunks
+    );
     assert.ok(chunks.length > 2, 'post-gain PCM tap produced no chunks');
     for (let i = 1; i < chunks.length; i++) {
       const previous = chunks[i - 1]!;
@@ -10194,6 +10507,73 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       );
     } finally {
       await reopened.close();
+    }
+    const sourceRange: TimeRange = {
+      start_time: { value: 8, rate: 30 },
+      duration: { value: 4, rate: 30 },
+    };
+    let revisionDir = directory;
+    for (const [operation, status] of [
+      ['boundary-insert', 'mapped'],
+      ['boundary-trim', 'partial'],
+      ['boundary-ambiguous', 'ambiguous'],
+    ] as const) {
+      const nextDir = join(scratch, `${operation}.otiod`);
+      const result = JSON.parse(
+        await oracle([
+          'mutate',
+          operation,
+          revisionDir,
+          nextDir,
+          JSON.stringify(sourceRange),
+        ])
+      ) as { status: string; mapped_range: TimeRange | null };
+      assert.equal(result.status, status, `official ${operation} oracle`);
+      const updated = await callMcp('relic_republish', {
+        relic_id: relicId,
+        path: nextDir,
+        cover: false,
+        notify: false,
+        ...(operation === 'boundary-insert'
+          ? {
+              addresses: [
+                { comment_id: commentId, note: 'Retained the clip.' },
+              ],
+            }
+          : {}),
+      });
+      assert.ok(updated['version'], `${operation} did not republish`);
+      const after = commentByBody(await readComments(relicId), body);
+      const originalAnchor = after['anchor'] as {
+        item_id?: string;
+        track_id?: string;
+        range?: TimeRange;
+      };
+      assert.equal(originalAnchor.item_id, 'moving-b');
+      assert.equal(originalAnchor.track_id, 'boundary-lower');
+      assert.ok(
+        rangeClose(originalAnchor.range, anchor.range),
+        `${operation} rewrote original anchor`
+      );
+      const projection = resolvedOf(after)['current_projection'] as {
+        status?: string;
+        mapped_range?: TimeRange;
+        mapped_start_seconds?: number | null;
+      };
+      assert.equal(projection.status, status, `${operation} projection status`);
+      if (status === 'ambiguous') {
+        assert.equal(projection.mapped_range, undefined);
+        assert.ok(
+          projection.mapped_start_seconds == null,
+          'ambiguous projection guessed a coordinate'
+        );
+      } else {
+        assert.ok(
+          rangeClose(projection.mapped_range, result.mapped_range),
+          `${operation} projection disagrees with official reader`
+        );
+      }
+      revisionDir = nextDir;
     }
     pass('focused-nonzero-comment');
   } finally {
