@@ -8576,6 +8576,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
 
 class LayoutOnlyComplete extends Error {}
 class DecoderOnlyComplete extends Error {}
+class InteractionOnlyComplete extends Error {}
 async function probeMobileInspector(
   browser: ChromeSession
 ): Promise<Record<string, unknown> & { failures: string[] }> {
@@ -9201,18 +9202,24 @@ async function assertFocusedWheelZoom(browser: ChromeSession): Promise<void> {
     y: number;
     fraction: number;
     scale: number;
+    trackId: string;
     frame: string;
   } | null>(`(() => {
-    const rail = document.querySelector('.otio-track-rail');
     const scroller = document.querySelector('.otio-timeline-scroll');
     const root = document.querySelector('.otio-view');
-    if (!(rail instanceof HTMLElement) || !(scroller instanceof HTMLElement) ||
-        !(root instanceof HTMLElement)) return null;
+    if (!(scroller instanceof HTMLElement) || !(root instanceof HTMLElement)) return null;
+    const rail = [...root.querySelectorAll('.otio-track-rail')].find(node => {
+      if (!(node instanceof HTMLElement)) return false;
+      const r = node.getBoundingClientRect(), s = scroller.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.right > s.left && r.left < s.right &&
+        r.bottom > s.top && r.top < s.bottom;
+    });
+    if (!(rail instanceof HTMLElement)) return null;
     const r = rail.getBoundingClientRect(), s = scroller.getBoundingClientRect();
     const left = Math.max(r.left, s.left), right = Math.min(r.right, s.right);
     if (right <= left || r.width <= 0) return null;
     const x = left + (right - left) * .5, y = r.top + r.height * .5;
-    return {x, y, fraction: (x - r.left) / r.width,
+    return {x, y, trackId:rail.dataset.trackId ?? '', fraction: (x - r.left) / r.width,
       scale: Number(scroller.dataset.pixelsPerFrame), frame: root.dataset.frame ?? ''};
   })()`);
   assert.ok(
@@ -9234,7 +9241,8 @@ async function assertFocusedWheelZoom(browser: ChromeSession): Promise<void> {
   } | null>(`(async () => {
     const {promise, resolve} = Promise.withResolvers();
     requestAnimationFrame(() => requestAnimationFrame(resolve)); await promise;
-    const rail = document.querySelector('.otio-track-rail');
+    const rail = [...document.querySelectorAll('.otio-track-rail')]
+      .find(node => node.dataset.trackId === ${JSON.stringify(before.trackId)});
     const scroller = document.querySelector('.otio-timeline-scroll');
     const root = document.querySelector('.otio-view');
     if (!(rail instanceof HTMLElement) || !(scroller instanceof HTMLElement) ||
@@ -10940,7 +10948,10 @@ async function assessMovingWindowControls(
   }
 }
 
-async function calibratePostGainTap(sessionToken: string): Promise<void> {
+async function calibratePostGainTap(
+  sessionToken: string,
+  interactionOnly = false
+): Promise<void> {
   const directory = join(scratch, 'playback-boundaries.otiod');
   const media = join(directory, 'media');
   await mkdir(media, { recursive: true });
@@ -10973,8 +10984,8 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
     'boundary fixture publish failed'
   );
   const browser = await openBrowser(url, sessionToken, {
-    label: 'post-gain-calibration',
-    recordProofTrace: true,
+    label: interactionOnly ? 'interaction-only' : 'post-gain-calibration',
+    recordProofTrace: !interactionOnly,
   });
   try {
     await browser.send('Emulation.setDeviceMetricsOverride', {
@@ -10985,22 +10996,27 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
     });
     await waitReady(browser);
     const provenance = await proofProvenance(browser);
-    const stopCast = await browser.startScreencast();
-    const capture = await browser.evaluate<{
-      start: { sampleRate: number; contextState: string; sampleFrame: number };
-      mute: { value: number; sampleFrame: number };
-      restored: number;
-      trace: {
-        sampleRate: number;
-        sampleFrame: number;
-        contextState: string;
-        audioOverflow: boolean;
-        visualOverflow: boolean;
-        eventsOverflow: boolean;
-        audio: Array<{ sampleFrame: number; channels: number[][] }>;
-        visual: Array<{ timestamp: number; error?: string }>;
-      };
-    }>(`(async () => {
+    if (!interactionOnly) {
+      const stopCast = await browser.startScreencast();
+      const capture = await browser.evaluate<{
+        start: {
+          sampleRate: number;
+          contextState: string;
+          sampleFrame: number;
+        };
+        mute: { value: number; sampleFrame: number };
+        restored: number;
+        trace: {
+          sampleRate: number;
+          sampleFrame: number;
+          contextState: string;
+          audioOverflow: boolean;
+          visualOverflow: boolean;
+          eventsOverflow: boolean;
+          audio: Array<{ sampleFrame: number; channels: number[][] }>;
+          visual: Array<{ timestamp: number; error?: string }>;
+        };
+      }>(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
       const button = document.querySelector('button.otio-play');
       const root = document.querySelector('.otio-view');
@@ -11020,99 +11036,165 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       if (root.dataset.playing === 'true') button.click();
       return {start, mute, restored, trace};
     })()`);
-    const cast = await stopCast();
-    await writeFile(
-      join(shotDir, 'post-gain-calibration.json'),
-      JSON.stringify({ provenance, capture, cast })
-    );
-    assert.ok(
-      proofWorkletRequests > 0,
-      'same-origin proof worklet was not requested'
-    );
-    assert.equal(
-      capture.start.contextState,
-      'running',
-      'audio context not running'
-    );
-    assert.equal(
-      capture.trace.audioOverflow,
-      false,
-      'post-gain PCM capture overflow'
-    );
-    assert.equal(
-      capture.trace.visualOverflow,
-      false,
-      'canvas capture overflow'
-    );
-    assert.equal(
-      capture.trace.eventsOverflow,
-      false,
-      'audio event capture overflow'
-    );
-    assert.equal(cast.overflow, false, 'screencast capture overflow');
-    assert.ok(
-      cast.frames.length >= 2,
-      'screencast returned fewer than two frames'
-    );
-    assert.ok(
-      capture.trace.visual.length >= 2 &&
-        capture.trace.visual.every((s) => !s.error),
-      'canvas trace unavailable'
-    );
-    const chunks = capture.trace.audio;
-    assertPcmCoverage(
-      capture.start.sampleFrame,
-      capture.trace.sampleFrame,
-      chunks
-    );
-    assert.ok(chunks.length > 2, 'post-gain PCM tap produced no chunks');
-    for (let i = 1; i < chunks.length; i++) {
-      const previous = chunks[i - 1]!;
-      assert.equal(
-        chunks[i]!.sampleFrame,
-        previous.sampleFrame + previous.channels[0]!.length,
-        'post-gain PCM chunk missing'
+      const cast = await stopCast();
+      await writeFile(
+        join(shotDir, 'post-gain-calibration.json'),
+        JSON.stringify({ provenance, capture, cast })
       );
-    }
-    const rms = (from: number, to: number): number => {
-      let sum = 0,
-        count = 0;
-      for (const chunk of chunks)
-        for (const channel of chunk.channels)
-          for (let i = 0; i < channel.length; i++) {
-            const frame = chunk.sampleFrame + i;
-            if (frame >= from && frame < to) {
-              sum += channel[i]! ** 2;
-              count++;
+      assert.ok(
+        proofWorkletRequests > 0,
+        'same-origin proof worklet was not requested'
+      );
+      assert.equal(
+        capture.start.contextState,
+        'running',
+        'audio context not running'
+      );
+      assert.equal(
+        capture.trace.audioOverflow,
+        false,
+        'post-gain PCM capture overflow'
+      );
+      assert.equal(
+        capture.trace.visualOverflow,
+        false,
+        'canvas capture overflow'
+      );
+      assert.equal(
+        capture.trace.eventsOverflow,
+        false,
+        'audio event capture overflow'
+      );
+      assert.equal(cast.overflow, false, 'screencast capture overflow');
+      assert.ok(
+        cast.frames.length >= 2,
+        'screencast returned fewer than two frames'
+      );
+      assert.ok(
+        capture.trace.visual.length >= 2 &&
+          capture.trace.visual.every((s) => !s.error),
+        'canvas trace unavailable'
+      );
+      const chunks = capture.trace.audio;
+      assertPcmCoverage(
+        capture.start.sampleFrame,
+        capture.trace.sampleFrame,
+        chunks
+      );
+      assert.ok(chunks.length > 2, 'post-gain PCM tap produced no chunks');
+      for (let i = 1; i < chunks.length; i++) {
+        const previous = chunks[i - 1]!;
+        assert.equal(
+          chunks[i]!.sampleFrame,
+          previous.sampleFrame + previous.channels[0]!.length,
+          'post-gain PCM chunk missing'
+        );
+      }
+      const rms = (from: number, to: number): number => {
+        let sum = 0,
+          count = 0;
+        for (const chunk of chunks)
+          for (const channel of chunk.channels)
+            for (let i = 0; i < channel.length; i++) {
+              const frame = chunk.sampleFrame + i;
+              if (frame >= from && frame < to) {
+                sum += channel[i]! ** 2;
+                count++;
+              }
             }
-          }
-      assert.ok(count > 0, 'audio calibration window has no PCM');
-      return Math.sqrt(sum / count);
-    };
-    const guard = Math.ceil(capture.trace.sampleRate * 0.15);
-    const before = rms(
-      capture.start.sampleFrame + guard,
-      capture.mute.sampleFrame - guard
-    );
-    const muted = rms(
-      capture.mute.sampleFrame + guard,
-      capture.restored - guard
-    );
-    assert.ok(
-      before > 0.0001,
-      `post-gain source was silent before mute: ${before}`
-    );
-    assert.ok(
-      muted < before * 0.01,
-      `master-gain mute did not silence the tapped signal: ${before} -> ${muted}`
-    );
-    pass('post-gain-tap-calibration');
-    await assessMovingWindowControls(browser, before, muted, provenance);
-    await calibrateCaptureOverhead(browser, provenance);
-    await focusItem(browser, 'moving-a');
-    await assessMovingWindowControls(browser, before, muted, provenance, true);
-    await leaveFocus(browser);
+        assert.ok(count > 0, 'audio calibration window has no PCM');
+        return Math.sqrt(sum / count);
+      };
+      const guard = Math.ceil(capture.trace.sampleRate * 0.15);
+      const before = rms(
+        capture.start.sampleFrame + guard,
+        capture.mute.sampleFrame - guard
+      );
+      const muted = rms(
+        capture.mute.sampleFrame + guard,
+        capture.restored - guard
+      );
+      assert.ok(
+        before > 0.0001,
+        `post-gain source was silent before mute: ${before}`
+      );
+      assert.ok(
+        muted < before * 0.01,
+        `master-gain mute did not silence the tapped signal: ${before} -> ${muted}`
+      );
+      pass('post-gain-tap-calibration');
+      await assessMovingWindowControls(browser, before, muted, provenance);
+      await calibrateCaptureOverhead(browser, provenance);
+      await focusItem(browser, 'moving-a');
+      await assessMovingWindowControls(
+        browser,
+        before,
+        muted,
+        provenance,
+        true
+      );
+      await leaveFocus(browser);
+    }
     await focusItem(browser, 'moving-b');
+    if (interactionOnly) {
+      const matrix: Array<Record<string, unknown>> = [];
+      for (const [width, scheme] of [
+        [1440, 'light'],
+        [390, 'light'],
+        [1440, 'dark'],
+        [390, 'dark'],
+      ] as const) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: width < 600,
+        });
+        await browser.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: scheme }],
+        });
+        const fit = await browser.evaluate<boolean>(`(() => {
+          const button=document.querySelector('.otio-zoom-fit');
+          if (!(button instanceof HTMLButtonElement)) return false;
+          button.click(); return true;
+        })()`);
+        assert.ok(fit, 'focused Fit control missing');
+        await openComposer(browser);
+        const seeded = await browser.evaluate<boolean>(`(() => {
+          const field=document.querySelector('.popover-composer textarea.popover-field');
+          if (!(field instanceof HTMLTextAreaElement)) return false;
+          field.value='Draft survives zoom.';
+          field.dispatchEvent(new Event('input',{bubbles:true}));
+          globalThis.__interactionDraft=field; return true;
+        })()`);
+        assert.ok(seeded, 'focused draft unavailable');
+        await assertFocusedWheelZoom(browser);
+        const draftKept = await browser.evaluate<boolean>(`(() => {
+          const field=document.querySelector('.popover-composer textarea.popover-field');
+          return field === globalThis.__interactionDraft && field?.value === 'Draft survives zoom.';
+        })()`);
+        assert.ok(draftKept, 'wheel zoom lost focused draft');
+        const geometry = await measureComposer(browser);
+        assertComposerProbe(
+          geometry,
+          `${width}px ${scheme} interaction composer`,
+          false
+        );
+        await browser.screenshot(`interaction-${width}-${scheme}`);
+        matrix.push({ width, scheme, geometry });
+        await dismissComposer(browser);
+      }
+      await writeFile(
+        join(shotDir, 'interaction-layout.json'),
+        JSON.stringify({ provenance, matrix })
+      );
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width: 1440,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+    }
     const local = await browser.evaluate<{
       origin: number;
       rate: number;
@@ -11140,6 +11222,11 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
     const body = 'Check the second moving occurrence.';
     await postComposer(browser, body);
     const comment = commentByBody(await readComments(relicId), body);
+    if (interactionOnly)
+      await writeFile(
+        join(shotDir, 'interaction-original-comment.json'),
+        JSON.stringify({ provenance, comment })
+      );
     const anchor = comment['anchor'] as {
       item_id?: string;
       track_id?: string;
@@ -11217,6 +11304,18 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
     } finally {
       await reopened.close();
     }
+    if (interactionOnly) {
+      assert.equal(
+        mails.length,
+        0,
+        `interaction comment unexpectedly invoked mailer: ${JSON.stringify(mails.map(({ to, mail }) => ({ to, subject: mail.subject })))}`
+      );
+      await store.putOptOut({
+        relicId,
+        addressHash: await sha256Hex('reader@example.test'),
+        at: fakeNow,
+      });
+    }
     const sourceRange: TimeRange = {
       start_time: { value: 8, rate: 30 },
       duration: { value: 4, rate: 30 },
@@ -11283,8 +11382,25 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
         );
       }
       revisionDir = nextDir;
+      if (interactionOnly)
+        await writeFile(
+          join(shotDir, `interaction-${operation}.json`),
+          JSON.stringify({ provenance, oracle: result, comment: after })
+        );
     }
-    pass('focused-nonzero-comment');
+    if (interactionOnly) {
+      assert.deepEqual(
+        browser.blocked,
+        [],
+        'interaction proof attempted non-loopback network'
+      );
+      assert.deepEqual(
+        browser.continuedNonLoopback,
+        [],
+        'interaction proof continued non-loopback network'
+      );
+    }
+    if (!interactionOnly) pass('focused-nonzero-comment');
   } finally {
     await browser.close();
   }
@@ -11292,6 +11408,13 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
 
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
+  if (process.env['RELIC_OTIO_INTERACTION_ONLY'] === '1') {
+    const token = await createSession();
+    await calibratePostGainTap(token, true);
+    assert.equal(mails.length, 0, 'interaction proof emitted external mail');
+    console.log('OTIO_INTERACTION_ONLY_OK');
+    throw new InteractionOnlyComplete();
+  }
   await assertPacketGateRejectsPlantedFrames();
   pass('packet-gate-negative-controls');
   await assertQuantizedMovingOracle();
@@ -14352,7 +14475,8 @@ try {
   if (
     !(
       error instanceof LayoutOnlyComplete ||
-      error instanceof DecoderOnlyComplete
+      error instanceof DecoderOnlyComplete ||
+      error instanceof InteractionOnlyComplete
     )
   )
     throw error;
