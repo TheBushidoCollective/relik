@@ -20,6 +20,61 @@ function node(doc: OtioDocumentV1, id: string): OtioNode {
 }
 
 describe('official OTIO placement and Relik sampling', () => {
+  test('boundary fixture follows official ranges and file-relative source samples', () => {
+    const doc = load('edge-cases/playback-boundaries.otio');
+    const oracle = JSON.parse(
+      readFileSync(
+        new URL('edge-cases/playback-boundaries-oracle.json', root),
+        'utf8'
+      )
+    ) as {
+      fixture: {
+        items: Array<{
+          id: string;
+          library: {
+            range_in_parent: {
+              start_time: { value: number; rate: number };
+              duration: { value: number; rate: number };
+            } | null;
+          };
+        }>;
+        evaluations_at_time: Array<{
+          time: { value: number; rate: number };
+          contributions: Array<{
+            node_id: string;
+            file_relative_time: { value: number; rate: number } | null;
+          }>;
+        }>;
+      };
+    };
+    for (const item of oracle.fixture.items) {
+      const expected = item.library.range_in_parent;
+      if (!expected) continue;
+      const actual = node(doc, item.id).parent_range;
+      expect(actual?.start_time.value).toBeCloseTo(expected.start_time.value);
+      expect(actual?.start_time.rate).toBe(expected.start_time.rate);
+      expect(actual?.duration.value).toBeCloseTo(expected.duration.value);
+      expect(actual?.duration.rate).toBe(expected.duration.rate);
+    }
+    for (const sample of oracle.fixture.evaluations_at_time) {
+      const result = evaluateOtioAt(doc, 'playback-boundaries', sample.time);
+      const contributions = [
+        ...result.video_contributions,
+        ...result.audio_contributions,
+      ];
+      for (const expected of sample.contributions) {
+        if (!expected.file_relative_time) continue;
+        const actual = contributions.find(
+          (item) => item.node_id === expected.node_id
+        );
+        expect(actual?.source_time.value).toBeCloseTo(
+          expected.file_relative_time.value
+        );
+        expect(actual?.source_time.rate).toBe(expected.file_relative_time.rate);
+      }
+    }
+  });
+
   test('standard dissolve, handles, nested frame, and retained effects', () => {
     const doc = load('standard-sample.otiod/content.otio');
     const timelineId = doc.timeline_ids[0] as string;

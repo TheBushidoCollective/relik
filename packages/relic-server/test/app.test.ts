@@ -3954,7 +3954,12 @@ describe('comment edits and resolutions', () => {
 
   async function postAs(
     relicId: string,
-    init: { cookie?: string; publishToken?: string; ciphertext?: string } = {}
+    init: {
+      cookie?: string;
+      publishToken?: string;
+      ciphertext?: string;
+      addresses?: string;
+    } = {}
   ): Promise<{ commentId: string; author: string }> {
     const posted = await app.fetch(
       req(`/api/relics/${relicId}/comments`, {
@@ -3967,6 +3972,9 @@ describe('comment edits and resolutions', () => {
             ? {}
             : { publish_token: init.publishToken }),
           ciphertext: init.ciphertext ?? 'YWJjZA',
+          ...(init.addresses === undefined
+            ? {}
+            : { addresses: init.addresses }),
         }),
       })
     );
@@ -4006,6 +4014,125 @@ describe('comment edits and resolutions', () => {
     resolved_at: string | null;
     resolved_by: string | null;
   };
+
+  test('delete enforces the author boundary and relic scope without changing refused threads', async () => {
+    const { id, grant } = await publish();
+    const other = await publish();
+    const alice = await createSession('alice@example.com');
+    const bob = await createSession('bob@example.com');
+    const expired = await createSession('alice@example.com', now);
+    const token = grant['publish_token'] as string;
+    const readerRow = await postAs(id, {
+      cookie: alice,
+      ciphertext: 'YWxpY2U',
+    });
+    const publisherRow = await postAs(id, {
+      publishToken: token,
+      ciphertext: 'cHVibGlzaGVy',
+    });
+    const otherRow = await postAs(other.id, {
+      cookie: alice,
+      ciphertext: 'b3RoZXI',
+    });
+    const before = structuredClone(await app.store.listComments(id));
+    const otherBefore = structuredClone(await app.store.listComments(other.id));
+    const commenters = [...(await app.store.listCommenters(id))].sort();
+
+    const remove = (
+      relicId: string,
+      commentId: string,
+      cookie?: string,
+      publishToken?: string
+    ) =>
+      app.fetch(
+        req(`/api/relics/${relicId}/comments/${commentId}`, {
+          method: 'DELETE',
+          headers: cookie === undefined ? {} : { cookie },
+          ...(publishToken === undefined
+            ? {}
+            : { body: JSON.stringify({ publish_token: publishToken }) }),
+        })
+      );
+    const refusals: Array<
+      [string, string, string | undefined, string | undefined, number]
+    > = [
+      [id, readerRow.commentId, bob, undefined, 403],
+      [id, readerRow.commentId, undefined, token, 403],
+      [id, publisherRow.commentId, alice, undefined, 403],
+      [id, readerRow.commentId, undefined, undefined, 403],
+      [id, readerRow.commentId, expired, undefined, 403],
+      [id, readerRow.commentId, alice, 'invalid-token', 403],
+      [id, otherRow.commentId, alice, undefined, 404],
+      [other.id, readerRow.commentId, alice, undefined, 404],
+      [id, 'missing-comment', alice, undefined, 404],
+    ];
+    for (const [relicId, commentId, cookie, publishToken, status] of refusals) {
+      expect(
+        (await remove(relicId, commentId, cookie, publishToken)).status
+      ).toBe(status);
+      expect(await app.store.listComments(id)).toEqual(before);
+      expect(await app.store.listComments(other.id)).toEqual(otherBefore);
+      expect([...(await app.store.listCommenters(id))].sort()).toEqual(
+        commenters
+      );
+    }
+
+    const readerDeleted = await remove(id, readerRow.commentId, alice);
+    expect(readerDeleted.status).toBe(204);
+    expect(await readerDeleted.text()).toBe('');
+    expect(await app.store.listComments(id)).toEqual(
+      before.filter((row) => row.id !== readerRow.commentId)
+    );
+    const publisherDeleted = await remove(
+      id,
+      publisherRow.commentId,
+      undefined,
+      token
+    );
+    expect(publisherDeleted.status).toBe(204);
+    expect(await app.store.listComments(id)).toEqual([]);
+    expect(await app.store.listComments(other.id)).toEqual(otherBefore);
+  });
+
+  test('deleting a parent and then an intermediate reply retains descendant rows unchanged', async () => {
+    const { id } = await publish();
+    const alice = await createSession('alice@example.com');
+    const bob = await createSession('bob@example.com');
+    const parent = await postAs(id, { cookie: alice, ciphertext: 'cGFyZW50' });
+    const reply = await postAs(id, {
+      cookie: bob,
+      ciphertext: 'cmVwbHk',
+      addresses: parent.commentId,
+    });
+    const child = await postAs(id, {
+      cookie: alice,
+      ciphertext: 'Y2hpbGQ',
+      addresses: reply.commentId,
+    });
+    const original = structuredClone(await app.store.listComments(id));
+    for (const [commentId, cookie] of [
+      [parent.commentId, alice],
+      [reply.commentId, bob],
+    ] as const) {
+      const response = await app.fetch(
+        req(`/api/relics/${id}/comments/${commentId}`, {
+          method: 'DELETE',
+          headers: { cookie },
+        })
+      );
+      expect(response.status).toBe(204);
+      const deletedIds =
+        commentId === parent.commentId
+          ? [parent.commentId]
+          : [parent.commentId, reply.commentId];
+      expect(await app.store.listComments(id)).toEqual(
+        original.filter((row) => !deletedIds.includes(row.id))
+      );
+    }
+    expect(await app.store.getComment(id, child.commentId)).toEqual(
+      original.find((row) => row.id === child.commentId)
+    );
+  });
 
   test('comment posts and edits remain available beyond the former quota', async () => {
     const { id, grant } = await publish();

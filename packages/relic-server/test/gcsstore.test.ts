@@ -550,6 +550,56 @@ describe('gcsStore', () => {
     expect(await store.deleteCommentsForRelic('relic')).toBe(1);
     expect(await store.listComments('relic')).toEqual([]);
   });
+
+  test('deleting parents or intermediate replies leaves descendants and other relics untouched', async () => {
+    const store = storeOn(fakeGcs());
+    const rows = [
+      {
+        id: 'parent',
+        relicId: 'relic',
+        author: 'alice@example.com',
+        createdAt: 1,
+        ciphertext: 'cGFyZW50',
+      },
+      {
+        id: 'reply',
+        relicId: 'relic',
+        author: 'bob@example.com',
+        createdAt: 2,
+        ciphertext: 'cmVwbHk',
+        addresses: 'parent',
+      },
+      {
+        id: 'child',
+        relicId: 'relic',
+        author: 'alice@example.com',
+        createdAt: 3,
+        ciphertext: 'Y2hpbGQ',
+        addresses: 'reply',
+        editedAt: 4,
+      },
+      {
+        id: 'parent',
+        relicId: 'other',
+        author: 'alice@example.com',
+        createdAt: 1,
+        ciphertext: 'b3RoZXI',
+      },
+    ];
+    for (const row of rows) await store.putComment(row);
+    const before = await store.listComments('relic');
+    const otherBefore = await store.listComments('other');
+    await store.deleteComment('relic', 'parent');
+    expect(await store.listComments('relic')).toEqual(
+      before.filter((row) => row.id !== 'parent')
+    );
+    expect(await store.listComments('other')).toEqual(otherBefore);
+    await store.deleteComment('relic', 'reply');
+    expect(await store.listComments('relic')).toEqual(
+      before.filter((row) => row.id === 'child')
+    );
+    expect(await store.listComments('other')).toEqual(otherBefore);
+  });
   test('a legacy comment row with no version key in the bucket reads back with version undefined', async () => {
     const gcs = fakeGcs();
     gcs.objects.set('m/comment/relic/legacy.json', {

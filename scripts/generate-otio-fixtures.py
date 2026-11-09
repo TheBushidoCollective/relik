@@ -703,6 +703,70 @@ def build_decoder_boundary_timeline() -> Timeline:
     return tl
 
 
+def build_playback_boundaries_timeline() -> Timeline:
+    """Repeatable 30 fps playback with hard cuts, stills, gaps, dissolves and audio."""
+    timeline = Timeline(name="Playback Boundary Handoff")
+    timeline.metadata["relic"] = {"id": "playback-boundaries"}
+    rate = 30
+
+    def clip(identifier, target, start, duration, available):
+        item = Clip(
+            name=identifier,
+            source_range=TimeRange(RationalTime(start, rate), RationalTime(duration, rate)),
+            media_reference=ExternalReference(
+                target_url="media/" + target,
+                available_range=TimeRange(RationalTime(0, rate), RationalTime(available, rate)),
+            ),
+        )
+        item.metadata["relic"] = {"id": identifier}
+        return item
+
+    def dissolve(identifier):
+        item = Transition(
+            name=identifier,
+            transition_type=TransitionTypes.SMPTE_Dissolve,
+            in_offset=RationalTime(3, rate),
+            out_offset=RationalTime(3, rate),
+        )
+        item.metadata["relic"] = {"id": identifier}
+        return item
+
+    def gap(identifier):
+        item = Gap(source_range=TimeRange(RationalTime(0, rate), RationalTime(15, rate)))
+        item.metadata["relic"] = {"id": identifier}
+        return item
+
+    lower = Track(name="Continuous moving picture", kind=TrackKind.Video)
+    lower.metadata["relic"] = {"id": "boundary-lower"}
+    lower.extend([
+        clip("moving-a", "fr30.webm", 0, 60, 90),
+        dissolve("lower-dissolve"),
+        clip("moving-b", "fr30.webm", 6, 60, 90),
+        clip("moving-c", "fr30.webm", 0, 60, 90),
+    ])
+    upper = Track(name="Cuts, stills and dissolves", kind=TrackKind.Video)
+    upper.metadata["relic"] = {"id": "boundary-upper"}
+    upper.extend([
+        clip("upper-video-a", "fr30.webm", 6, 30, 90),
+        dissolve("upper-dissolve-a"),
+        clip("upper-video-b", "fr30.webm", 6, 30, 90),
+        dissolve("upper-dissolve-to-gap"),
+        gap("boundary-gap-a"),
+        clip("still-a-first", "plate_1001.png", 0, 15, 180),
+        clip("still-b", "plate_1002.png", 0, 15, 180),
+        clip("still-a-return", "plate_1001.png", 0, 15, 180),
+        gap("boundary-gap-b"),
+        clip("upper-video-c", "fr30.webm", 6, 15, 90),
+        dissolve("upper-dissolve-b"),
+        clip("upper-video-d", "fr30.webm", 6, 15, 90),
+    ])
+    audio = Track(name="Continuous known chirp", kind=TrackKind.Audio)
+    audio.metadata["relic"] = {"id": "boundary-audio"}
+    audio.append(clip("continuous-audio", "mx_bed.wav", 0, 180, 240))
+    timeline.tracks.extend([lower, upper, audio])
+    return timeline
+
+
 
 # -----------------------------------------------------------------------------
 # Oracle: official library ranges, plus a labeled Relik rendering contract
@@ -1361,6 +1425,7 @@ def build_oracle():
     missing = build_missing_unsupported_timeline()
     duplicate = build_duplicate_tracks_timeline()
     decoder = build_decoder_boundary_timeline()
+    playback_boundaries = build_playback_boundaries_timeline()
     oracle = {
         "version": 1,
         "provenance": {
@@ -1423,6 +1488,7 @@ def build_oracle():
         "missing-unsupported": missing,
         "duplicate-tracks": duplicate,
         "decoder-boundary": decoder,
+        "playback-boundaries": playback_boundaries,
     }
 
 
@@ -1521,6 +1587,15 @@ def write_outputs(root: Path, oracle, timelines, check: bool) -> int:
         standard_dir / "version.txt": "1.0.0\n",
         decoder_dir / "content.otio": serialize_timeline(timelines["decoder-boundary"]),
         decoder_dir / "version.txt": "1.0.0\n",
+        edge / "playback-boundaries.otio": serialize_timeline(timelines["playback-boundaries"]),
+        edge / "playback-boundaries-oracle.json": oracle_text({
+            "otio_version": REQUIRED_OTIO_VERSION,
+            "fixture": fixture_oracle(
+                "playback-boundaries", timelines["playback-boundaries"],
+                (0, 27, 30, 33, 57, 60, 63, 75, 90, 105, 120, 135, 147, 150, 153, 165),
+                (("boundary-upper", 0, 165), ("boundary-audio", 0, 180)),
+            ),
+        }),
     }
     missing_text = serialize_timeline(timelines["missing-unsupported"])
     files[edge / "missing-unsupported.otio"] = missing_text

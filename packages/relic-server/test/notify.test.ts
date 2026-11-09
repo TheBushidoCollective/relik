@@ -2440,6 +2440,75 @@ describe('change notices and relic_share', () => {
 
       expect(listCommentsCalls).toBe(0);
     });
+    test('deleting comments maintains commenter registration independently of sharing', async () => {
+      const { id, grant } = await publish({ title: 'Shared thread' });
+      const token = grant['publish_token'] as string;
+      const alice = await createSession('alice@example.com');
+      const bob = await createSession('bob@example.com');
+      const share = await app.fetch(
+        req(`/api/relics/${id}/share`, {
+          method: 'POST',
+          body: JSON.stringify({
+            publish_token: token,
+            emails: ['alice@example.com'],
+          }),
+        })
+      );
+      expect(share.status).toBe(200);
+      const ids: string[] = [];
+      for (const ciphertext of ['YWxpY2Ux', 'YWxpY2Uy']) {
+        const response = await app.fetch(
+          req(`/api/relics/${id}/comments`, {
+            method: 'POST',
+            headers: { cookie: alice },
+            body: JSON.stringify({ ciphertext }),
+          })
+        );
+        expect(response.status).toBe(201);
+        const body: unknown = await response.json();
+        if (
+          !body ||
+          typeof body !== 'object' ||
+          !('comment_id' in body) ||
+          typeof body.comment_id !== 'string'
+        ) {
+          throw new Error('Comment response missing comment_id');
+        }
+        ids.push(body.comment_id);
+      }
+      const original = structuredClone(await store.listComments(id));
+      const shares = structuredClone(await store.listShares(id));
+      sentMails = [];
+      for (const [index, commentId] of ids.entries()) {
+        const response = await app.fetch(
+          req(`/api/relics/${id}/comments/${commentId}`, {
+            method: 'DELETE',
+            headers: { cookie: alice },
+          })
+        );
+        expect(response.status).toBe(204);
+        expect(await store.listComments(id)).toEqual(
+          original.filter((row) => !ids.slice(0, index + 1).includes(row.id))
+        );
+        expect(
+          (await store.listCommenters(id)).includes('alice@example.com')
+        ).toBe(index === 0);
+        expect(await store.listShares(id)).toEqual(shares);
+        expect(sentMails).toEqual([]);
+      }
+      now += 15 * 60 * 1000;
+      const response = await app.fetch(
+        req(`/api/relics/${id}/comments`, {
+          method: 'POST',
+          headers: { cookie: bob },
+          body: JSON.stringify({ ciphertext: 'Ym9i' }),
+        })
+      );
+      expect(response.status).toBe(201);
+      expect(sentMails.map((mail) => mail.email)).toEqual([
+        'alice@example.com',
+      ]);
+    });
     test('a deleted-last-comment author stops receiving comment notifications', async () => {
       const { id } = await publish({
         title: 'Roadmap with deletions',

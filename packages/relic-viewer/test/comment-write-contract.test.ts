@@ -27,9 +27,11 @@ import {
 import {
   type CommentEntry,
   type CommentRecord,
+  canDeleteComment,
   canEditComment,
   canResolveComment,
   commentCipher,
+  deleteComment,
   editComment,
   MAX_BODY_BYTES,
   openEntry,
@@ -304,6 +306,58 @@ describe('the geometry the frame reports', () => {
   });
 });
 
+describe('deleting a comment', () => {
+  test('sends only DELETE to the encoded comment URL and accepts 204', async () => {
+    const calls: Call[] = [];
+    const deps = stubDeps(() => new Response(null, { status: 204 }), calls);
+    expect(await deleteComment(RELIC_ID, 'reply /?', deps)).toEqual({
+      kind: 'deleted',
+    });
+    expect(calls).toEqual([
+      {
+        url: `https://relik.example/api/relics/${RELIC_ID}/comments/reply%20%2F%3F`,
+        method: 'DELETE',
+        body: undefined,
+      },
+    ]);
+  });
+
+  test('preserves server refusal codes including a missing comment', async () => {
+    for (const [code, status] of [
+      ['comment_forbidden', 403],
+      ['comment_not_found', 404],
+    ] as const) {
+      const result = await deleteComment(
+        RELIC_ID,
+        COMMENT_ID,
+        stubDeps(() => problem(code, status), [])
+      );
+      expect(result.kind === 'refused' && result.refusal.code).toBe(code);
+    }
+  });
+
+  test('does not mistake another success status for a confirmed deletion', async () => {
+    for (const status of [200, 202, 205]) {
+      const result = await deleteComment(
+        RELIC_ID,
+        COMMENT_ID,
+        stubDeps(() => new Response(null, { status }), [])
+      );
+      expect(result.kind === 'refused' && result.refusal.code).toBe(
+        `http_${status}`
+      );
+    }
+  });
+
+  test('reports network failures rather than deleting locally', async () => {
+    const deps = stubDeps(() => {
+      throw new Error('offline');
+    }, []);
+    const result = await deleteComment(RELIC_ID, COMMENT_ID, deps);
+    expect(result.kind === 'refused' && result.refusal.code).toBe('network');
+  });
+});
+
 describe('editing a comment', () => {
   test('sends the resealed envelope to the comment own url', async () => {
     const calls: Call[] = [];
@@ -469,5 +523,40 @@ describe('which controls a reader is offered', () => {
     };
     expect(canEditComment(sealedEntry, verified)).toBe(false);
     expect(canResolveComment(sealedEntry, verified)).toBe(true);
+  });
+
+  test('deletion requires verified exact authorship and usable metadata, not plaintext', () => {
+    const sealed: CommentEntry = {
+      kind: 'sealed',
+      id: COMMENT_ID,
+      author: 'ada@example.com',
+      createdAt: '2026-09-20T00:00:00.000Z',
+    };
+    const unreadable: CommentEntry = {
+      kind: 'unreadable',
+      id: COMMENT_ID,
+      author: 'ada@example.com',
+      createdAt: null,
+    };
+    for (const entry of [mine, sealed, unreadable]) {
+      expect(canDeleteComment(entry, verified)).toBe(true);
+      expect(canDeleteComment(entry, { kind: 'anonymous' })).toBe(false);
+      expect(canDeleteComment(entry, { kind: 'unknown' })).toBe(false);
+      expect(
+        canDeleteComment(entry, { kind: 'verified', email: 'ADA@example.com' })
+      ).toBe(false);
+    }
+    expect(canDeleteComment(theirs, verified)).toBe(false);
+    expect(canDeleteComment({ ...unreadable, id: null }, verified)).toBe(false);
+    expect(canDeleteComment({ ...unreadable, id: '' }, verified)).toBe(false);
+    expect(canDeleteComment({ ...unreadable, author: null }, verified)).toBe(
+      false
+    );
+    expect(
+      canDeleteComment(
+        { ...unreadable, author: '' },
+        { kind: 'verified', email: '' }
+      )
+    ).toBe(false);
   });
 });

@@ -1,0 +1,6587 @@
+{
+  "otio_version": "0.18.1",
+  "fixture": {
+    "timeline_name": "Playback Boundary Handoff",
+    "global_start_time": null,
+    "duration": {
+      "value": 180.0,
+      "rate": 30.0
+    },
+    "duration_note": "library Timeline.duration(). global_start_time does not shift this.",
+    "tracks": [
+      {
+        "id": "boundary-lower",
+        "name": "Continuous moving picture",
+        "kind": "Video",
+        "child_count": 4,
+        "duration": {
+          "value": 180.0,
+          "rate": 30.0
+        }
+      },
+      {
+        "id": "boundary-upper",
+        "name": "Cuts, stills and dissolves",
+        "kind": "Video",
+        "child_count": 12,
+        "duration": {
+          "value": 165.0,
+          "rate": 30.0
+        }
+      },
+      {
+        "id": "boundary-audio",
+        "name": "Continuous known chirp",
+        "kind": "Audio",
+        "child_count": 1,
+        "duration": {
+          "value": 180.0,
+          "rate": 30.0
+        }
+      }
+    ],
+    "items": [
+      {
+        "id": "boundary-lower",
+        "name": "Continuous moving picture",
+        "schema": "Track.1",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "moving-a",
+        "name": "moving-a",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            {
+              "value": 3.0,
+              "rate": 30.0
+            }
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/fr30.webm",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/fr30.webm",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "lower-dissolve",
+        "name": "lower-dissolve",
+        "schema": "Transition.1",
+        "enabled": null,
+        "library": {
+          "trimmed_range": null,
+          "trimmed_range_error": "not_on_this_schema",
+          "visible_range": null,
+          "visible_range_error": "not_on_this_schema",
+          "available_range": null,
+          "available_range_error": "not_on_this_schema",
+          "range_in_parent": {
+            "start_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          },
+          "in_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "out_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "transition_type": "SMPTE_Dissolve"
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "moving-b",
+        "name": "moving-b",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 66.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 66.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/fr30.webm",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/fr30.webm",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "moving-c",
+        "name": "moving-c",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/fr30.webm",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/fr30.webm",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "boundary-upper",
+        "name": "Cuts, stills and dissolves",
+        "schema": "Track.1",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "upper-video-a",
+        "name": "upper-video-a",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 36.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 39.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            {
+              "value": 3.0,
+              "rate": 30.0
+            }
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/fr30.webm",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/fr30.webm",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "upper-dissolve-a",
+        "name": "upper-dissolve-a",
+        "schema": "Transition.1",
+        "enabled": null,
+        "library": {
+          "trimmed_range": null,
+          "trimmed_range_error": "not_on_this_schema",
+          "visible_range": null,
+          "visible_range_error": "not_on_this_schema",
+          "available_range": null,
+          "available_range_error": "not_on_this_schema",
+          "range_in_parent": {
+            "start_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 33.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 33.0,
+              "rate": 30.0
+            }
+          },
+          "in_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "out_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "transition_type": "SMPTE_Dissolve"
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "upper-video-b",
+        "name": "upper-video-b",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 36.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 39.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            {
+              "value": 3.0,
+              "rate": 30.0
+            }
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/fr30.webm",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/fr30.webm",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "upper-dissolve-to-gap",
+        "name": "upper-dissolve-to-gap",
+        "schema": "Transition.1",
+        "enabled": null,
+        "library": {
+          "trimmed_range": null,
+          "trimmed_range_error": "not_on_this_schema",
+          "visible_range": null,
+          "visible_range_error": "not_on_this_schema",
+          "available_range": null,
+          "available_range_error": "not_on_this_schema",
+          "range_in_parent": {
+            "start_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          },
+          "in_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "out_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "transition_type": "SMPTE_Dissolve"
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "boundary-gap-a",
+        "name": "",
+        "schema": "Gap.1",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": -3.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 18.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": null,
+          "available_range_error": {
+            "error": "NotImplementedError",
+            "message": "method not implemented for this class"
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 75.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 75.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 75.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 75.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "still-a-first",
+        "name": "still-a-first",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/plate_1001.png",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/plate_1001.png",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "still-b",
+        "name": "still-b",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 105.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 105.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 105.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 105.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/plate_1002.png",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/plate_1002.png",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "still-a-return",
+        "name": "still-a-return",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/plate_1001.png",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/plate_1001.png",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "boundary-gap-b",
+        "name": "",
+        "schema": "Gap.1",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 15.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": null,
+          "available_range_error": {
+            "error": "NotImplementedError",
+            "message": "method not implemented for this class"
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 135.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 135.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 135.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 135.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "upper-video-c",
+        "name": "upper-video-c",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 21.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 18.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 24.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            {
+              "value": 3.0,
+              "rate": 30.0
+            }
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/fr30.webm",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/fr30.webm",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "upper-dissolve-b",
+        "name": "upper-dissolve-b",
+        "schema": "Transition.1",
+        "enabled": null,
+        "library": {
+          "trimmed_range": null,
+          "trimmed_range_error": "not_on_this_schema",
+          "visible_range": null,
+          "visible_range_error": "not_on_this_schema",
+          "available_range": null,
+          "available_range_error": "not_on_this_schema",
+          "range_in_parent": {
+            "start_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 153.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 153.0,
+              "rate": 30.0
+            }
+          },
+          "in_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "out_offset": {
+            "value": 3.0,
+            "rate": 30.0
+          },
+          "transition_type": "SMPTE_Dissolve"
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "upper-video-d",
+        "name": "upper-video-d",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 21.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 18.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 21.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/fr30.webm",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/fr30.webm",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "boundary-audio",
+        "name": "Continuous known chirp",
+        "schema": "Track.1",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": null,
+        "active_reference": null,
+        "media_references": {},
+        "effects": [],
+        "markers": []
+      },
+      {
+        "id": "continuous-audio",
+        "name": "continuous-audio",
+        "schema": "Clip.2",
+        "enabled": true,
+        "library": {
+          "trimmed_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "visible_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 240.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 240.0,
+              "rate": 30.0
+            }
+          },
+          "range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_in_parent": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "handles_of_child": [
+            null,
+            null
+          ],
+          "range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          },
+          "trimmed_range_of_child": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 180.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 180.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "active_media_reference_key": "DEFAULT_MEDIA",
+        "active_reference": {
+          "schema": "ExternalReference.1",
+          "target_url": "media/mx_bed.wav",
+          "available_range": {
+            "start_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "duration": {
+              "value": 240.0,
+              "rate": 30.0
+            },
+            "end_time_exclusive": {
+              "value": 240.0,
+              "rate": 30.0
+            }
+          }
+        },
+        "media_references": {
+          "DEFAULT_MEDIA": {
+            "schema": "ExternalReference.1",
+            "target_url": "media/mx_bed.wav",
+            "available_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 240.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 240.0,
+                "rate": 30.0
+              }
+            }
+          }
+        },
+        "effects": [],
+        "markers": []
+      }
+    ],
+    "evaluations_at_time": [
+      {
+        "time": {
+          "value": 0.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-a",
+            "name": "moving-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 0.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-a",
+            "name": "upper-video-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 0.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 0.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 27.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-a",
+            "name": "moving-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 27.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-a",
+            "name": "upper-video-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 27.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 33.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "outgoing",
+              "weight": 1.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 27.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-b",
+            "name": "upper-video-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 27.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 33.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "incoming",
+              "weight": 0.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 27.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 27.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 30.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-a",
+            "name": "moving-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-a",
+            "name": "upper-video-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 27.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 33.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "outgoing",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-b",
+            "name": "upper-video-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 27.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 33.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "incoming",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 30.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 33.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-a",
+            "name": "moving-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 33.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-b",
+            "name": "upper-video-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 33.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 33.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 57.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-a",
+            "name": "moving-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "outgoing",
+              "weight": 1.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 57.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-b",
+            "name": "moving-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "incoming",
+              "weight": 0.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 57.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-b",
+            "name": "upper-video-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "outgoing",
+              "weight": 1.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 57.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "boundary-gap-a",
+            "name": "",
+            "schema": "Gap.1",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "gap",
+            "bundle_path": null,
+            "active_media_reference_key": null,
+            "library_source_time": {
+              "value": -3.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": null,
+            "library_file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": -3.0,
+              "rate": 30.0
+            },
+            "file_relative_time": null,
+            "file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "transition_weight": 0.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "incoming",
+              "weight": 0.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 57.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 57.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 57.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 60.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-a",
+            "name": "moving-a",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "outgoing",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-b",
+            "name": "moving-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "incoming",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-b",
+            "name": "upper-video-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "outgoing",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "boundary-gap-a",
+            "name": "",
+            "schema": "Gap.1",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "gap",
+            "bundle_path": null,
+            "active_media_reference_key": null,
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": null,
+            "library_file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": null,
+            "file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 57.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 63.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "incoming",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 60.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 60.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 63.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-b",
+            "name": "moving-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "boundary-gap-a",
+            "name": "",
+            "schema": "Gap.1",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "gap",
+            "bundle_path": null,
+            "active_media_reference_key": null,
+            "library_source_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": null,
+            "library_file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "file_relative_time": null,
+            "file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 63.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 63.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 75.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-b",
+            "name": "moving-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 75.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "still-a-first",
+            "name": "still-a-first",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/plate_1001.png",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 75.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 75.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 75.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 90.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-b",
+            "name": "moving-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 36.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "still-b",
+            "name": "still-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/plate_1002.png",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 90.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 90.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 105.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-b",
+            "name": "moving-b",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 51.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 51.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 51.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 51.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 105.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "still-a-return",
+            "name": "still-a-return",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/plate_1001.png",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 105.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 105.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 105.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 120.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-c",
+            "name": "moving-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "boundary-gap-b",
+            "name": "",
+            "schema": "Gap.1",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "gap",
+            "bundle_path": null,
+            "active_media_reference_key": null,
+            "library_source_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": null,
+            "library_file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 0.0,
+              "rate": 30.0
+            },
+            "file_relative_time": null,
+            "file_relative_error": {
+              "error": "NotImplementedError",
+              "message": "method not implemented for this class"
+            },
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 120.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 120.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 135.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-c",
+            "name": "moving-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 15.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 135.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-c",
+            "name": "upper-video-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 135.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 135.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 135.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 147.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-c",
+            "name": "moving-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 27.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 147.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-c",
+            "name": "upper-video-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 18.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 18.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 18.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 18.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 147.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 153.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "outgoing",
+              "weight": 1.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 147.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-d",
+            "name": "upper-video-d",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 3.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.0,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 147.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 153.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.0,
+              "role": "incoming",
+              "weight": 0.0
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 147.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 147.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 147.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 150.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-c",
+            "name": "moving-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 30.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-c",
+            "name": "upper-video-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 21.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 147.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 153.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "outgoing",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-d",
+            "name": "upper-video-d",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 6.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 0.5,
+            "transition": {
+              "contract": "relik-smpte-dissolve",
+              "not_library_output": true,
+              "library_range_in_parent": {
+                "start_time": {
+                  "value": 147.0,
+                  "rate": 30.0
+                },
+                "duration": {
+                  "value": 6.0,
+                  "rate": 30.0
+                },
+                "end_time_exclusive": {
+                  "value": 153.0,
+                  "rate": 30.0
+                }
+              },
+              "in_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "out_offset": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "u": 0.5,
+              "role": "incoming",
+              "weight": 0.5
+            },
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 150.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 150.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 153.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-c",
+            "name": "moving-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 33.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 153.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 153.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-upper",
+            "node_id": "upper-video-d",
+            "name": "upper-video-d",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 9.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 153.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 153.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 153.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 153.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 153.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 153.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 153.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 153.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      },
+      {
+        "time": {
+          "value": 165.0,
+          "rate": 30.0
+        },
+        "contributions": [
+          {
+            "track_id": "boundary-lower",
+            "node_id": "moving-c",
+            "name": "moving-c",
+            "schema": "Clip.2",
+            "kind": "Video",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/fr30.webm",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 45.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 45.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 45.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 45.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          },
+          {
+            "track_id": "boundary-audio",
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "kind": "Audio",
+            "enabled": true,
+            "contributes": true,
+            "status": "supported",
+            "bundle_path": "media/mx_bed.wav",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "library_source_time": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "library_source_time_error": null,
+            "library_file_relative_time": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "library_file_relative_error": null,
+            "retime_contract": "none",
+            "retime_sample_time": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "file_relative_time": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "file_relative_error": null,
+            "transition_weight": 1.0,
+            "transition": null,
+            "image_sequence": null,
+            "effects": [],
+            "timeline_time": {
+              "value": 165.0,
+              "rate": 30.0
+            },
+            "local_time": {
+              "value": 165.0,
+              "rate": 30.0
+            }
+          }
+        ]
+      }
+    ],
+    "source_span_queries": [
+      {
+        "track_id": "boundary-upper",
+        "query_range": {
+          "start_time": {
+            "value": 0.0,
+            "rate": 30.0
+          },
+          "duration": {
+            "value": 165.0,
+            "rate": 30.0
+          },
+          "end_time_exclusive": {
+            "value": 165.0,
+            "rate": 30.0
+          }
+        },
+        "query_in_track": {
+          "start_time": {
+            "value": 0.0,
+            "rate": 30.0
+          },
+          "duration": {
+            "value": 165.0,
+            "rate": 30.0
+          },
+          "end_time_exclusive": {
+            "value": 165.0,
+            "rate": 30.0
+          }
+        },
+        "spans": [
+          {
+            "node_id": "upper-video-a",
+            "name": "upper-video-a",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 33.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 33.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 30.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 30.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 30.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 30.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 33.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 33.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": true,
+            "library_source_range": {
+              "start_time": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 33.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 39.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 33.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 39.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/fr30.webm"
+          },
+          {
+            "node_id": "upper-dissolve-a",
+            "schema": "Transition.1",
+            "library_range_in_parent": {
+              "start_time": {
+                "value": 27.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 33.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 27.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 33.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": null,
+            "note": "Transition has no transformed_time. Range is range_in_parent."
+          },
+          {
+            "node_id": "upper-video-b",
+            "name": "upper-video-b",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 27.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 36.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 63.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 30.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 30.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 60.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 30.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 30.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 60.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 27.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 36.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 63.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": true,
+            "library_source_range": {
+              "start_time": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 36.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 39.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 36.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 39.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/fr30.webm"
+          },
+          {
+            "node_id": "upper-dissolve-to-gap",
+            "schema": "Transition.1",
+            "library_range_in_parent": {
+              "start_time": {
+                "value": 57.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 63.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 57.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 63.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": null,
+            "note": "Transition has no transformed_time. Range is range_in_parent."
+          },
+          {
+            "node_id": "boundary-gap-a",
+            "name": "",
+            "schema": "Gap.1",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 57.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 75.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 60.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 75.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 60.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 75.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 57.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 75.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": true,
+            "library_source_range": {
+              "start_time": {
+                "value": -3.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": null,
+            "bundle_path": null
+          },
+          {
+            "node_id": "still-a-first",
+            "name": "still-a-first",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 75.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 75.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 75.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 75.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 90.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/plate_1001.png"
+          },
+          {
+            "node_id": "still-b",
+            "name": "still-b",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 105.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 105.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 105.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 90.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 105.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/plate_1002.png"
+          },
+          {
+            "node_id": "still-a-return",
+            "name": "still-a-return",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 105.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 120.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 105.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 120.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 105.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 120.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 105.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 120.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/plate_1001.png"
+          },
+          {
+            "node_id": "boundary-gap-b",
+            "name": "",
+            "schema": "Gap.1",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 120.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 135.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 120.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 135.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 120.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 135.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 120.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 135.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 15.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": null,
+            "bundle_path": null
+          },
+          {
+            "node_id": "upper-video-c",
+            "name": "upper-video-c",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 135.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 153.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 135.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 150.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 135.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 150.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 135.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 153.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": true,
+            "library_source_range": {
+              "start_time": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 24.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 24.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/fr30.webm"
+          },
+          {
+            "node_id": "upper-dissolve-b",
+            "schema": "Transition.1",
+            "library_range_in_parent": {
+              "start_time": {
+                "value": 147.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 153.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 147.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 6.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 153.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": null,
+            "note": "Transition has no transformed_time. Range is range_in_parent."
+          },
+          {
+            "node_id": "upper-video-d",
+            "name": "upper-video-d",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 147.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 165.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 150.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 165.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 150.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 15.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 165.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 147.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 165.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": true,
+            "library_source_range": {
+              "start_time": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 21.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 3.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 18.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 21.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/fr30.webm"
+          }
+        ]
+      },
+      {
+        "track_id": "boundary-audio",
+        "query_range": {
+          "start_time": {
+            "value": 0.0,
+            "rate": 30.0
+          },
+          "duration": {
+            "value": 180.0,
+            "rate": 30.0
+          },
+          "end_time_exclusive": {
+            "value": 180.0,
+            "rate": 30.0
+          }
+        },
+        "query_in_track": {
+          "start_time": {
+            "value": 0.0,
+            "rate": 30.0
+          },
+          "duration": {
+            "value": 180.0,
+            "rate": 30.0
+          },
+          "end_time_exclusive": {
+            "value": 180.0,
+            "rate": 30.0
+          }
+        },
+        "spans": [
+          {
+            "node_id": "continuous-audio",
+            "name": "continuous-audio",
+            "schema": "Clip.2",
+            "enabled": true,
+            "visible_parent_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            },
+            "library_range_of_child": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            },
+            "library_trimmed_range_of_child": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            },
+            "intersected_parent_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            },
+            "includes_transition_handle": false,
+            "library_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            },
+            "library_source_endpoint_error": null,
+            "file_relative_source_range": {
+              "start_time": {
+                "value": 0.0,
+                "rate": 30.0
+              },
+              "duration": {
+                "value": 180.0,
+                "rate": 30.0
+              },
+              "end_time_exclusive": {
+                "value": 180.0,
+                "rate": 30.0
+              }
+            },
+            "bundle_path": "media/mx_bed.wav"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -3,9 +3,11 @@ import { readOtioDocument } from '../src/otio-identity.ts';
 import {
   addRationalTimes,
   compareRationalTimes,
+  classifyOtioTransition,
   evaluateOtioAt,
   intersectRanges,
   markersForOtioTimeline,
+  otioPlaybackBoundaries,
   otioSamplingMap,
   rangeContainsTime,
   rescaleTime,
@@ -359,7 +361,13 @@ describe('otio-timing evaluator and source spans', () => {
 
     expect(outClip?.transition_weight).toBeCloseTo(0.5, 5);
     expect(inClip?.transition_weight).toBeCloseTo(0.5, 5);
-    expect(outClip?.transition_type).toBe('SMPTE_Dissolve');
+    expect(evalResult.active_transitions).toEqual([
+      expect.objectContaining({
+        node_id: expect.any(String),
+        track_id: 'track_v1',
+        render_kind: 'smpte-dissolve',
+      }),
+    ]);
   });
 
   test('sourceSpansForOtioRange returns clips, the transition, and handles', () => {
@@ -2537,5 +2545,186 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         contrib.diagnostics.some((d) => d.message.includes('was not searched'))
       ).toBe(false);
     }
+  });
+});
+
+describe('transition admission and boundary scheduling', () => {
+  function documentWithTransition(type: string | undefined, kind = 'Video') {
+    const transition = {
+      ...transitionNode('transition', 6, 4),
+      transition_type: type,
+    };
+    const track = {
+      ...trackNode('track', [
+        clipNode('before', 'Before', 0, 24, 0, 48),
+        transition,
+        clipNode('after', 'After', 0, 24, 0, 48),
+      ]),
+      kind,
+    };
+    return readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: { OTIO_SCHEMA: 'Stack.1', children: [track] },
+      })
+    );
+  }
+
+  test('only the exact standard schema and type are supported', () => {
+    const node = requiredNode(
+      documentWithTransition('SMPTE_Dissolve'),
+      'transition'
+    );
+    expect(classifyOtioTransition(node)).toBe('smpte-dissolve');
+    expect(classifyOtioTransition({ ...node, schema: 'Transition.2' })).toBe(
+      'opaque'
+    );
+    for (const type of [
+      '',
+      undefined,
+      'SMPTE_Dissolve_custom',
+      'custom dissolve',
+    ]) {
+      expect(classifyOtioTransition({ ...node, transition_type: type })).toBe(
+        'opaque'
+      );
+    }
+  });
+
+  test('opaque video and audio transitions use the editorial cut and report context', () => {
+    for (const kind of ['Video', 'Audio']) {
+      for (const type of [undefined, '', 'custom dissolve']) {
+        const doc = documentWithTransition(type, kind);
+        for (const [frame, expected] of [
+          [23, 'before'],
+          [24, 'after'],
+        ] as const) {
+          const evaluated = evaluateOtioAt(doc, 'timeline', {
+            value: frame,
+            rate: 24,
+          });
+          const contributions =
+            kind === 'Audio'
+              ? evaluated.audio_contributions
+              : evaluated.video_contributions;
+          expect(contributions.map((item) => item.node_id)).toEqual([expected]);
+          expect(contributions[0]?.transition_weight).toBe(1);
+          expect(evaluated.active_transitions).toEqual([
+            {
+              node_id: 'transition',
+              track_id: 'track',
+              ancestry: expect.arrayContaining([
+                'timeline',
+                'track',
+                'transition',
+              ]),
+              render_kind: 'opaque',
+            },
+          ]);
+          expect(
+            evaluated.diagnostics.some(
+              (item) =>
+                item.code === 'unsupported-effect' &&
+                item.target?.node_id === 'transition'
+            )
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  test('nested audio transitions are recorded without relying on video leaves', () => {
+    const audioTrack = {
+      ...trackNode('nested-audio', [
+        clipNode('nested-before', 'Before', 0, 24, 0, 48),
+        { ...transitionNode('nested-transition', 6, 4), transition_type: '' },
+        clipNode('nested-after', 'After', 0, 24, 0, 48),
+      ]),
+      kind: 'Audio',
+    };
+    const doc = readOtioDocument(
+      timelineWithTrack('timeline', 'outer', [
+        stackNode('nested-stack', [audioTrack]),
+      ])
+    );
+    const result = evaluateOtioAt(doc, 'timeline', { value: 24, rate: 24 });
+    expect(result.video_contributions).toEqual([]);
+    expect(result.active_transitions).toEqual([
+      expect.objectContaining({
+        node_id: 'nested-transition',
+        track_id: 'nested-audio',
+        render_kind: 'opaque',
+        ancestry: expect.arrayContaining([
+          'outer',
+          'nested-stack',
+          'nested-audio',
+          'nested-transition',
+        ]),
+      }),
+    ]);
+    expect(result.audio_contributions.map((item) => item.node_id)).toEqual([
+      'nested-after',
+    ]);
+  });
+
+  test('a transition between gaps remains active without a media contribution', () => {
+    const gap = (id: string) => ({
+      OTIO_SCHEMA: 'Gap.1',
+      metadata: { relic: { id } },
+      source_range: rangeFromEndpoints(0, 24),
+    });
+    const doc = readOtioDocument(
+      timelineWithTrack('timeline', 'track', [
+        gap('before'),
+        { ...transitionNode('transition', 6, 4), transition_type: '' },
+        gap('after'),
+      ])
+    );
+    const evaluated = evaluateOtioAt(doc, 'timeline', { value: 24, rate: 24 });
+    expect(evaluated.video_contributions).toEqual([]);
+    expect(evaluated.active_transitions[0]).toMatchObject({
+      node_id: 'transition',
+      track_id: 'track',
+      render_kind: 'opaque',
+    });
+  });
+
+  test('boundaries retain exposure, cut and mixed-rate deduplication', () => {
+    const doc = documentWithTransition('SMPTE_Dissolve');
+    const boundaries = otioPlaybackBoundaries(doc, 'timeline', {
+      start_time: { value: 36, rate: 48 },
+      duration: { value: 20, rate: 48 },
+    });
+    expect(
+      boundaries.map((entry) => entry.time.value / entry.time.rate)
+    ).toEqual([18 / 24, 24 / 24, 28 / 24]);
+    expect(
+      boundaries.every((entry) => entry.node_ids.includes('transition'))
+    ).toBe(true);
+    expect(boundaries[1]?.node_ids).toEqual(
+      expect.arrayContaining(['before', 'after'])
+    );
+  });
+
+  test('an ancestor trim does not restart the dissolve curve', () => {
+    const doc = readOtioDocument(
+      timelineWithTrack(
+        'timeline',
+        'track',
+        [
+          clipNode('before', 'Before', 0, 24, 0, 48),
+          transitionNode('transition', 6, 4),
+          clipNode('after', 'After', 0, 24, 0, 48),
+        ],
+        rangeFromEndpoints(20, 30)
+      )
+    );
+    const result = evaluateOtioAt(doc, 'timeline', { value: 2, rate: 24 });
+    expect(result.active_transitions[0]?.render_kind).toBe('smpte-dissolve');
+    expect(
+      result.video_contributions.find((item) => item.node_id === 'after')
+        ?.transition_weight
+    ).toBeCloseTo(0.4);
   });
 });

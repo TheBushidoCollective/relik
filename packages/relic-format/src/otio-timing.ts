@@ -9,6 +9,7 @@
 
 import { readOtioImageSequence } from './otio-sequence.ts';
 import type {
+  OtioActiveTransition,
   OtioAudioContribution,
   OtioBundleEntryName,
   OtioDiagnostic,
@@ -16,11 +17,13 @@ import type {
   OtioEvaluationResult,
   OtioMediaReference,
   OtioNode,
+  OtioPlaybackBoundary,
   OtioRationalTime,
   OtioSourceMapping,
   OtioSourceSpan,
   OtioTimelineMarker,
   OtioTimeRange,
+  OtioTransitionRenderKind,
   OtioVideoComposition,
   OtioVideoContribution,
 } from './otio-types.ts';
@@ -270,6 +273,16 @@ function isGap(schema: string): boolean {
 }
 function isTransition(schema: string): boolean {
   return schema === 'Transition.1';
+}
+
+/** Only the standard schema and exact OTIO transition type have known semantics. */
+export function classifyOtioTransition(
+  node: OtioNode
+): OtioTransitionRenderKind {
+  return node.schema === 'Transition.1' &&
+    node.transition_type === 'SMPTE_Dissolve'
+    ? 'smpte-dissolve'
+    : 'opaque';
 }
 
 export function sampleOtioMedia(
@@ -631,18 +644,6 @@ function unknownEffectDiagnostics(node: OtioNode): OtioDiagnostic[] {
       target: { node_id: node.id, json_pointer: node.json_pointer },
     });
   }
-  if (
-    isTransition(node.schema) &&
-    node.transition_type &&
-    node.transition_type !== 'SMPTE_Dissolve'
-  ) {
-    found.push({
-      severity: 'warning',
-      code: 'unsupported-effect',
-      message: `Transition ${node.transition_type} is previewed as a linear dissolve`,
-      target: { node_id: node.id },
-    });
-  }
   return found;
 }
 
@@ -682,6 +683,102 @@ function missingHandleRangeDiagnostic(
     message: `Requested source for ${node.name || node.id} is outside available media`,
     target: { node_id: node.id, json_pointer: node.json_pointer },
   };
+}
+
+function activeOtioTransitions(
+  document: OtioDocumentV1,
+  timeline: OtioNode,
+  time: OtioRationalTime
+): OtioActiveTransition[] {
+  const result: OtioActiveTransition[] = [];
+  function visit(
+    node: OtioNode,
+    ancestry: readonly string[],
+    trackId: string | null
+  ): void {
+    const nextTrack = isTrack(node.schema) ? node.id : trackId;
+    for (const id of node.children_ids) {
+      const child = ownNode(document.nodes, id);
+      if (!child) continue;
+      const path = [...ancestry, child.id];
+      const exposure = child.visible_timeline_range ?? child.timeline_range;
+      if (isTransition(child.schema)) {
+        if (nextTrack && exposure && rangeContainsTime(exposure, time)) {
+          result.push({
+            node_id: child.id,
+            track_id: nextTrack,
+            ancestry: path,
+            render_kind: classifyOtioTransition(child),
+          });
+        }
+      } else if (
+        (isTimeline(child.schema) ||
+          isStack(child.schema) ||
+          isTrack(child.schema)) &&
+        child.enabled &&
+        (!exposure || rangeContainsTime(exposure, time))
+      ) {
+        visit(child, path, nextTrack);
+      }
+    }
+  }
+  visit(timeline, [timeline.id], null);
+  return result;
+}
+
+/** Placed editorial, exposure and transition boundaries in composition coordinates. */
+export function otioPlaybackBoundaries(
+  document: OtioDocumentV1,
+  timelineId: string,
+  range: OtioTimeRange
+): OtioPlaybackBoundary[] {
+  const timeline = ownNode(document.nodes, timelineId);
+  if (!timeline || !document.timeline_ids.includes(timelineId)) return [];
+  const entries: { time: OtioRationalTime; nodeId: string }[] = [];
+  const scopeEnd = rangeEndTime(range);
+  function add(time: OtioRationalTime, nodeId: string): void {
+    if (
+      compareRationalTimes(time, range.start_time) >= 0 &&
+      compareRationalTimes(time, scopeEnd) <= 0
+    )
+      entries.push({ time, nodeId });
+  }
+  function visit(node: OtioNode): void {
+    for (const placed of [node.timeline_range, node.visible_timeline_range]) {
+      if (!placed) continue;
+      add(placed.start_time, node.id);
+      add(rangeEndTime(placed), node.id);
+    }
+    if (isTransition(node.schema) && node.in_offset) {
+      const exposure = node.visible_timeline_range ?? node.timeline_range;
+      const origin = boundMaps.get(node)?.timeline_origin;
+      if (origin && exposure) {
+        const cut = addRationalTimes(origin, node.in_offset);
+        if (
+          compareRationalTimes(cut, exposure.start_time) >= 0 &&
+          compareRationalTimes(cut, rangeEndTime(exposure)) <= 0
+        )
+          add(cut, node.id);
+      }
+    }
+    for (const id of node.children_ids) {
+      const child = ownNode(document.nodes, id);
+      if (child) visit(child);
+    }
+  }
+  visit(timeline);
+  entries.sort((a, b) => compareRationalTimes(a.time, b.time));
+  const result: { time: OtioRationalTime; node_ids: string[] }[] = [];
+  for (const entry of entries) {
+    const last = result[result.length - 1];
+    if (last && compareRationalTimes(last.time, entry.time) === 0) {
+      if (!last.node_ids.includes(entry.nodeId))
+        last.node_ids.push(entry.nodeId);
+    } else {
+      result.push({ time: entry.time, node_ids: [entry.nodeId] });
+    }
+  }
+  return result;
 }
 
 function transitionAt(
@@ -799,12 +896,14 @@ function composeChild(
       return null;
     }
     const active = transitionAt(document, node, time);
-    if (active) {
+    if (
+      active &&
+      classifyOtioTransition(active.transition) === 'smpte-dissolve'
+    ) {
       const outgoing = neighborItem(document, node, active.transition.id, -1);
       const incoming = neighborItem(document, node, active.transition.id, 1);
       const outWeight = 1 - active.progress;
       const inWeight = active.progress;
-      diagnostics.push(...unknownEffectDiagnostics(active.transition));
       return {
         kind: 'track',
         node_id: node.id,
@@ -903,8 +1002,17 @@ function itemAt(
   for (const childId of track.children_ids) {
     const child = ownNode(document.nodes, childId);
     if (!child || isTransition(child.schema)) continue;
-    const range = child.visible_timeline_range ?? child.timeline_range;
-    if (range && rangeContainsTime(range, time)) return child;
+    const exposure = child.visible_timeline_range ?? child.timeline_range;
+    if (!exposure || !rangeContainsTime(exposure, time)) continue;
+    const map = boundMaps.get(child);
+    const body =
+      map && child.parent_range
+        ? {
+            start_time: map.timeline_origin,
+            duration: child.parent_range.duration,
+          }
+        : child.timeline_range;
+    if (body && rangeContainsTime(body, time)) return child;
   }
   return null;
 }
@@ -927,7 +1035,10 @@ function emitTrackItems(
     weight: number;
     transition: OtioNode | null;
   }[] = [];
-  if (active) {
+  if (
+    active &&
+    classifyOtioTransition(active.transition) === 'smpte-dissolve'
+  ) {
     const outgoing = neighborItem(document, track, active.transition.id, -1);
     const incoming = neighborItem(document, track, active.transition.id, 1);
     if (outgoing) {
@@ -987,7 +1098,7 @@ function buildVideoContribution(
   trackPath: readonly string[],
   time: OtioRationalTime,
   weight: number,
-  transition: OtioNode | null,
+  _transition: OtioNode | null,
   diagnostics: OtioDiagnostic[]
 ): OtioVideoContribution | null {
   if (!node.enabled) return null;
@@ -1027,7 +1138,6 @@ function buildVideoContribution(
   }
   diagnostics.push(...localDiagnostics);
   const trackId = trackPath[trackPath.length - 1] ?? node.parent_id ?? node.id;
-  const transitionType = transition?.transition_type;
   return {
     track_id: trackId,
     track_index: trackPath.length > 0 ? trackPath.length - 1 : 0,
@@ -1039,9 +1149,6 @@ function buildVideoContribution(
     ...(sourceFrame === undefined ? {} : { source_frame: sourceFrame }),
     alpha: 1,
     transition_weight: weight,
-    ...(transitionType === undefined
-      ? {}
-      : { transition_type: transitionType }),
     active_effects: (node.effects ?? []).filter((effect) => effect.enabled),
     diagnostics: localDiagnostics,
     ancestry,
@@ -1056,7 +1163,7 @@ function buildAudioContribution(
   track: OtioNode,
   time: OtioRationalTime,
   weight: number,
-  transition: OtioNode | null,
+  _transition: OtioNode | null,
   diagnostics: OtioDiagnostic[]
 ): OtioAudioContribution | null {
   if (!node.enabled || !isClip(node.schema)) return null;
@@ -1074,7 +1181,6 @@ function buildAudioContribution(
     : null;
   if (handle) localDiagnostics.push(handle);
   diagnostics.push(...localDiagnostics);
-  const transitionType = transition?.transition_type;
   return {
     track_id: track.id,
     track_index: 0,
@@ -1085,9 +1191,6 @@ function buildAudioContribution(
     source_time: relative ?? media,
     volume: 1,
     transition_weight: weight,
-    ...(transitionType === undefined
-      ? {}
-      : { transition_type: transitionType }),
     active_effects: (node.effects ?? []).filter((effect) => effect.enabled),
     diagnostics: localDiagnostics,
     ancestry,
@@ -1116,6 +1219,7 @@ export function evaluateOtioAt(
       timeline_time: time,
       video_contributions: [],
       audio_contributions: [],
+      active_transitions: [],
       active_markers: [],
       diagnostics: [
         {
@@ -1139,6 +1243,18 @@ export function evaluateOtioAt(
     audio,
     diagnostics
   );
+  const activeTransitions = activeOtioTransitions(document, timeline, time);
+  for (const active of activeTransitions) {
+    if (active.render_kind === 'opaque') {
+      const node = ownNode(document.nodes, active.node_id);
+      diagnostics.push({
+        severity: 'warning',
+        code: 'unsupported-effect',
+        message: `Transition ${node?.transition_type || '(missing type)'} is unsupported; preview uses the editorial cut`,
+        target: { node_id: active.node_id, json_pointer: node?.json_pointer },
+      });
+    }
+  }
   const markers = markersForOtioTimeline(document, timelineId).filter(
     (marker) => rangeContainsTime(marker.timeline_range, time)
   );
@@ -1148,6 +1264,7 @@ export function evaluateOtioAt(
     video_contributions: video,
     audio_contributions: audio,
     active_markers: markers,
+    active_transitions: activeTransitions,
     diagnostics,
     video_composition: composition,
   };

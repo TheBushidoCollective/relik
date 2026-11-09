@@ -161,6 +161,20 @@ export interface OtioDocumentV1 {
 
 export type OtioSampleKind = 'media' | 'black';
 
+export type OtioTransitionRenderKind = 'smpte-dissolve' | 'opaque';
+
+export interface OtioActiveTransition {
+  readonly node_id: string;
+  readonly track_id: string;
+  readonly ancestry: readonly string[];
+  readonly render_kind: OtioTransitionRenderKind;
+}
+
+export interface OtioPlaybackBoundary {
+  readonly time: OtioRationalTime;
+  readonly node_ids: readonly string[];
+}
+
 export interface OtioVideoContribution {
   readonly track_id: string;
   readonly track_index: number;
@@ -173,7 +187,6 @@ export interface OtioVideoContribution {
   readonly source_frame?: number;
   readonly alpha: number;
   readonly transition_weight: number;
-  readonly transition_type?: string;
   readonly active_effects: readonly OtioEffect[];
   readonly diagnostics: readonly OtioDiagnostic[];
   readonly ancestry: readonly string[];
@@ -190,7 +203,6 @@ export interface OtioAudioContribution {
   readonly source_time: OtioRationalTime;
   readonly volume: number;
   readonly transition_weight: number;
-  readonly transition_type?: string;
   readonly active_effects: readonly OtioEffect[];
   readonly diagnostics: readonly OtioDiagnostic[];
   readonly ancestry: readonly string[];
@@ -231,6 +243,7 @@ export interface OtioEvaluationResult {
   readonly video_contributions: readonly OtioVideoContribution[];
   readonly audio_contributions: readonly OtioAudioContribution[];
   readonly active_markers: readonly OtioTimelineMarker[];
+  readonly active_transitions: readonly OtioActiveTransition[];
   readonly diagnostics: readonly OtioDiagnostic[];
   /** Null when the selected timeline has no video stack to composite. */
   readonly video_composition: OtioVideoComposition | null;
