@@ -44,7 +44,6 @@ export type ProblemCode =
   // construction rather than merely redundant.
   | 'invalid_comment'
   | 'comment_not_found'
-  | 'comment_rate_limited'
   // A commenter may delete their own comment and no one else's. The operator
   // path is the abuse surface, not this one.
   | 'comment_forbidden'
@@ -99,7 +98,6 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   invalid_publish_token: 403,
   invalid_comment: 400,
   comment_not_found: 404,
-  comment_rate_limited: 429,
   comment_forbidden: 403,
   nothing_to_change: 400,
   invalid_session: 401,
@@ -148,7 +146,6 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   invalid_publish_token: 'Publish token is missing or wrong',
   invalid_comment: 'Invalid comment',
   comment_not_found: 'No such comment',
-  comment_rate_limited: 'Too many comments',
   comment_forbidden: 'Not your comment',
   nothing_to_change: 'Nothing to change',
   invalid_session: 'Sign-in link is dead or already used',

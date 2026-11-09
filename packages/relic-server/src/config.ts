@@ -52,12 +52,6 @@ export interface RelicConfig {
 
   readonly publishRateLimit: RateLimitConfig;
   readonly mintRateLimit: RateLimitConfig;
-  /**
-   * Comment writes per IP. Lower than publishing, because a comment costs
-   * the writer nothing to produce and the thread is the one surface a
-   * link-holder can add to.
-   */
-  readonly commentRateLimit: RateLimitConfig;
   /** Sign-in requests per IP. Each one can send mail, so it is the tightest. */
   readonly authRateLimit: RateLimitConfig;
   /**
@@ -216,7 +210,6 @@ export const DEFAULT_CONFIG: RelicConfig = {
 
   publishRateLimit: { limit: 60, windowSeconds: 3600 },
   mintRateLimit: { limit: 240, windowSeconds: 3600 },
-  commentRateLimit: { limit: 30, windowSeconds: 3600 },
   authRateLimit: { limit: 10, windowSeconds: 3600 },
   notificationRateLimit: { limit: 1, windowSeconds: 10 * 60 },
   shareRateLimit: { limit: 30, windowSeconds: 3600 },
