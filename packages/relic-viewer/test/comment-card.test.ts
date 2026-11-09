@@ -12,6 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
 import { MARK_HOVER_OPEN_MS } from '../src/main.ts';
+import { MAX_BODY_BYTES } from '../src/comments.ts';
 import {
   clearDom,
   documentNode,
@@ -801,4 +802,212 @@ describe('deleting only the selected authored comment', () => {
       'Keep this draft.'
     );
   });
+
+  test('the real expired-cookie DELETE refusal rechecks identity and preserves both drafts', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'c1', body: 'mine', anchor: PINNED },
+    ]);
+    const sidebar = only(mounted.thread, 'compose-textarea');
+    sidebar.value = 'Keep the sidebar draft.';
+    only(mounted.stage, 'comment-pin').dispatch('click');
+    const card = only(mounted.stage, 'popover-card');
+    only(card, 'popover-reply').dispatch('click');
+    const reply = only(card, 'popover-field');
+    reply.value = 'Keep the reply draft.';
+    // The server cookie expires without a visibility or auth-broadcast event.
+    mounted.setReader('anonymous');
+    mounted.setDeleteResponse(() =>
+      Response.json({ code: 'comment_forbidden' }, { status: 403 })
+    );
+    confirmRemoval(mounted, 'c1');
+    await mounted.idle();
+    expect(mounted.thread.dataset['session']).toBe('anonymous');
+    expect(withClass(mounted.thread, 'compose-textarea')).toHaveLength(0);
+    expect(withClass(mounted.thread, 'comment-delete')).toHaveLength(0);
+    expect(withClass(card, 'popover-edit')).toHaveLength(0);
+    expect(only(card, 'popover-field')).toBe(reply);
+    expect(reply.value).toBe('Keep the reply draft.');
+    expect(
+      mounted.calls.filter((call) => call.url.endsWith('/api/auth/session'))
+    ).toHaveLength(2);
+    expect(await mounted.commentResponse().json()).toHaveLength(1);
+    await mounted.changeReader('verified');
+    expect(only(mounted.thread, 'compose-textarea').value).toBe(
+      'Keep the sidebar draft.'
+    );
+    expect(
+      mounted.calls.filter((call) => call.method === 'DELETE')
+    ).toHaveLength(1);
+  });
+
+  test('deletion readback refreshes Edit and Resolve against the displayed parent', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'parent', body: 'old parent text', anchor: PINNED },
+      { id: 'child', body: 'reply', anchor: null, addresses: 'parent' },
+    ]);
+    only(mounted.stage, 'comment-pin').dispatch('click');
+    const card = only(mounted.stage, 'popover-card');
+    mounted.setDeleteResponse(async () => {
+      await mounted.editStoredComment('parent', 'parent text from another tab');
+      mounted.setStoredResolved('parent', true);
+      return new Response(null, { status: 204 });
+    });
+    confirmRemoval(mounted, 'child', card);
+    await mounted.idle();
+    expect(only(mounted.stage, 'popover-card')).toBe(card);
+    expect(withClass(card, 'comment-badge-edited')).toHaveLength(1);
+    expect(withClass(card, 'comment-badge-resolved')).toHaveLength(1);
+    expect(only(card, 'popover-resolve').textContent).toBe('Reopen');
+    only(card, 'popover-resolve').dispatch('click');
+    await mounted.waitFor(() =>
+      withClass(mounted.stage, 'popover-resolve').some(
+        (control) => control.textContent === 'Resolve'
+      )
+    );
+    await mounted.idle();
+    const resolution = mounted.calls.find((call) => call.method === 'PATCH');
+    expect(JSON.parse(resolution?.body ?? '{}')).toEqual({ resolved: false });
+    only(mounted.stage, 'popover-edit').dispatch('click');
+    expect(only(mounted.stage, 'popover-field').value).toBe(
+      'parent text from another tab'
+    );
+  });
+
+  for (const action of ['popover-edit', 'popover-reply']) {
+    test(`a refreshed parent preserves an existing ${action} draft`, async () => {
+      const mounted = await mount({}, 'verified', [
+        { id: 'parent', body: 'old parent text', anchor: PINNED },
+        { id: 'child', body: 'reply', anchor: null, addresses: 'parent' },
+      ]);
+      only(mounted.stage, 'comment-pin').dispatch('click');
+      only(mounted.stage, action).dispatch('click');
+      const panel = only(mounted.stage, 'popover-card');
+      const field = only(panel, 'popover-field');
+      field.value = 'Keep this unposted draft.';
+      mounted.setDeleteResponse(async () => {
+        await mounted.editStoredComment(
+          'parent',
+          'parent text from another tab'
+        );
+        mounted.setStoredResolved('parent', true);
+        return new Response(null, { status: 204 });
+      });
+      confirmRemoval(mounted, 'child');
+      await mounted.idle();
+      expect(only(mounted.stage, 'popover-card')).toBe(panel);
+      expect(only(panel, 'popover-field')).toBe(field);
+      expect(field.value).toBe('Keep this unposted draft.');
+      if (action === 'popover-reply') {
+        expect(only(panel, 'popover-resolve').textContent).toBe('Reopen');
+      }
+    });
+  }
+
+  for (const newerDraft of [undefined, 'A different unposted comment.']) {
+    test(`pending sidebar POST survives offer dismissal and ${newerDraft ? 'retains a newer draft' : 'clears only its acknowledged text'}`, async () => {
+      const original = new Map<string, PropertyDescriptor | undefined>(
+        ['localStorage', 'PublicKeyCredential', 'isSecureContext'].map(
+          (key) =>
+            [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const
+        )
+      );
+      const store = new Map<string, string>();
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: {
+          getItem: (key: string) => store.get(key) ?? null,
+          setItem: (key: string, value: string) => {
+            store.set(key, value);
+          },
+        },
+      });
+      Object.defineProperty(globalThis, 'PublicKeyCredential', {
+        configurable: true,
+        value: class {},
+      });
+      Object.defineProperty(globalThis, 'isSecureContext', {
+        configurable: true,
+        value: true,
+      });
+      Reflect.set(
+        Reflect.get(globalThis, 'document'),
+        'cookie',
+        'relic_passkey_offer=1'
+      );
+      const pending = Promise.withResolvers<Response>();
+      let mounted: Mounted | undefined;
+      try {
+        mounted = await mount();
+        const current = mounted;
+        await current.waitFor(() =>
+          withClass(current.thread, 'passkey-offer').some(
+            (offer) => offer.getAttribute('data-state') === 'link-required'
+          )
+        );
+        current.setPostResponse(() => pending.promise);
+        const body = only(current.thread, 'compose-textarea');
+        body.value = 'Submit this comment once.';
+        body.dispatch('input');
+        body.closest('.compose')?.dispatch('submit');
+        await current.waitFor(() =>
+          current.calls.some(
+            (call) => call.method === 'POST' && call.url.endsWith('/comments')
+          )
+        );
+        const dismiss = current.thread.querySelector(
+          '[data-passkey-offer-dismiss]'
+        );
+        expect(dismiss).not.toBeNull();
+        dismiss?.dispatch('click');
+        const replacement = only(current.thread, 'compose-textarea');
+        expect(replacement).not.toBe(body);
+        const post = withClass(current.thread, 'action').find(
+          (control) => control.textContent === 'Post comment'
+        );
+        expect(post?.disabled).toBe(true);
+        replacement.closest('.compose')?.dispatch('submit');
+        expect(
+          current.calls.filter(
+            (call) => call.method === 'POST' && call.url.endsWith('/comments')
+          )
+        ).toHaveLength(1);
+        if (newerDraft !== undefined) {
+          replacement.value = newerDraft;
+          replacement.dispatch('input');
+        }
+        pending.resolve(
+          Response.json({
+            comment_id: 'posted',
+            author: 'ada@example.com',
+          })
+        );
+        await current.idle();
+        expect(only(current.thread, 'compose-textarea')).toBe(replacement);
+        expect(replacement.value).toBe(newerDraft ?? '');
+        expect(post?.disabled).toBe(false);
+        expect(
+          current.calls.filter(
+            (call) => call.method === 'POST' && call.url.endsWith('/comments')
+          )
+        ).toHaveLength(1);
+        if (newerDraft === undefined) {
+          expect(only(current.thread, 'compose-count').textContent).toBe(
+            `0 of ${MAX_BODY_BYTES} bytes`
+          );
+        }
+      } finally {
+        pending.resolve(
+          Response.json({
+            comment_id: 'posted',
+            author: 'ada@example.com',
+          })
+        );
+        await mounted?.idle();
+        for (const [key, descriptor] of original) {
+          if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+          else Reflect.deleteProperty(globalThis, key);
+        }
+      }
+    });
+  }
 });

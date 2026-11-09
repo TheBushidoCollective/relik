@@ -110,6 +110,12 @@ export class Node {
 
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
+    if (name.startsWith('data-')) {
+      const key = name
+        .slice(5)
+        .replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      this.dataset[key] = value;
+    }
     notifyDom();
   }
 
@@ -119,6 +125,12 @@ export class Node {
 
   removeAttribute(name: string): void {
     this.attributes.delete(name);
+    if (name.startsWith('data-')) {
+      const key = name
+        .slice(5)
+        .replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      delete this.dataset[key];
+    }
   }
 
   showModal(): void {
@@ -486,6 +498,13 @@ export interface Mounted {
   ): void;
   commentResponse(): Response;
   forgetComment(id: string): void;
+  /** Change only the fake server's cookie state, without a visibility signal. */
+  setReader(reader: 'verified' | 'anonymous'): void;
+  setPostResponse(
+    handler: (ciphertext: string) => Response | Promise<Response>
+  ): void;
+  editStoredComment(id: string, body: string): Promise<void>;
+  setStoredResolved(id: string, resolved: boolean): void;
   changeReader(reader: 'verified' | 'anonymous'): Promise<void>;
   waitFor(predicate: () => boolean): Promise<void>;
 }
@@ -531,6 +550,8 @@ export async function mount(
   let deleteResponse: (id: string) => Response | Promise<Response> = () =>
     new Response(null, { status: 204 });
   let commentRead: (() => Response | Promise<Response>) | undefined;
+  let postResponse: (ciphertext: string) => Response | Promise<Response> = () =>
+    Response.json({ comment_id: 'c1', author: 'ada@example.com' });
   let records = await Promise.all(
     seeds.map(async (seed) => ({
       comment_id: seed.id,
@@ -577,6 +598,13 @@ export async function mount(
         method: init?.method ?? 'GET',
         body: typeof init?.body === 'string' ? init.body : undefined,
       });
+      notifyDom();
+      if (url.endsWith('/api/auth/passkeys/options')) {
+        return Response.json(
+          { code: 'passkey_fresh_link_required' },
+          { status: 403 }
+        );
+      }
       if (init?.method === 'DELETE') {
         const id = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
         const response = await deleteResponse(id);
@@ -585,7 +613,20 @@ export async function mount(
         }
         return response;
       }
-      if (init?.method === 'PATCH') {
+      if (init?.method === 'PATCH' && typeof init.body === 'string') {
+        const id = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
+        const record = records.find((candidate) => candidate.comment_id === id);
+        const patch: unknown = JSON.parse(init.body);
+        if (record && typeof patch === 'object' && patch !== null) {
+          if ('ciphertext' in patch && typeof patch.ciphertext === 'string') {
+            record.ciphertext = patch.ciphertext;
+            record.edited_at = '2026-08-26T00:00:00Z';
+          }
+          if ('resolved' in patch && typeof patch.resolved === 'boolean') {
+            record.resolved_at = patch.resolved ? '2026-08-26T00:00:00Z' : null;
+            record.resolved_by = patch.resolved ? 'ada@example.com' : null;
+          }
+        }
         return new Response(null, { status: 204 });
       }
       if (init?.method === 'POST' && typeof init.body === 'string') {
@@ -597,6 +638,7 @@ export async function mount(
           typeof wire.ciphertext === 'string'
         ) {
           sealed.push(wire.ciphertext);
+          return postResponse(wire.ciphertext);
         }
         return new Response(
           JSON.stringify({ comment_id: 'c1', author: 'ada@example.com' }),
@@ -692,6 +734,27 @@ export async function mount(
     commentResponse,
     forgetComment: (id) => {
       records = records.filter((record) => record.comment_id !== id);
+    },
+    setReader: (next) => {
+      currentReader = next;
+    },
+    setPostResponse: (handler) => {
+      postResponse = handler;
+    },
+    editStoredComment: async (id, body) => {
+      const record = records.find((candidate) => candidate.comment_id === id);
+      if (!record?.ciphertext)
+        throw new Error(`Missing readable fixture: ${id}`);
+      const cipher = await seedCipher();
+      const opened = await cipher.open(record.ciphertext);
+      record.ciphertext = await cipher.seal({ ...opened, body });
+      record.edited_at = '2026-08-26T00:00:00Z';
+    },
+    setStoredResolved: (id, resolved) => {
+      const record = records.find((candidate) => candidate.comment_id === id);
+      if (!record) throw new Error(`Missing fixture: ${id}`);
+      record.resolved_at = resolved ? '2026-08-26T00:00:00Z' : null;
+      record.resolved_by = resolved ? 'ada@example.com' : null;
     },
     changeReader: async (next) => {
       currentReader = next;

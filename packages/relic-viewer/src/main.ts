@@ -5702,6 +5702,12 @@ export function buildThread(
   let composerNameDraft: string | undefined;
   let sidebarBody: HTMLTextAreaElement | undefined;
   let sidebarName: HTMLInputElement | undefined;
+  let sidebarPost: HTMLButtonElement | undefined;
+  let sidebarPaintCount: (() => void) | undefined;
+  let composerDraftRevision = 0;
+  let sidebarSubmission:
+    | { readonly body: string; readonly revision: number }
+    | undefined;
   let sessionGeneration = 0;
   const originalViews = new Map<number, Promise<ReadyView | undefined>>();
   const projectionAttempts = new Set<string>();
@@ -6549,6 +6555,7 @@ export function buildThread(
     const scrollTop = rows.scrollTop;
     const node = findNode(threadEntries(lastEntries, allEntries), cardId);
     if (node !== undefined) rows.replaceChildren(renderCommentNode(node));
+    repaintCardPermissions?.();
     popover?.reposition();
     rows.scrollTop = scrollTop;
   };
@@ -6674,6 +6681,10 @@ export function buildThread(
         section.dataset['session'] = session.kind;
         paintComposer();
         repaintCardPermissions?.();
+      } else if (refusal.code === 'comment_forbidden') {
+        // DELETE uses this refusal for both ownership and an expired cookie.
+        // Ask the session endpoint rather than guessing which one occurred.
+        await recheck();
       }
       repaintDeleteControls();
       showDeleteOutcome(
@@ -6870,6 +6881,8 @@ export function buildThread(
 
     const permissionActions = (): PopoverAction[] => {
       const actions: PopoverAction[] = [];
+      const entry = entryById(id);
+      if (entry === undefined) return actions;
       if (canEditComment(entry, session) && entry.kind === 'open') {
         actions.push({
           label: 'Edit',
@@ -8018,13 +8031,20 @@ export function buildThread(
       count.textContent = `${used} of ${MAX_BODY_BYTES} bytes`;
       count.classList.toggle('over', used > MAX_BODY_BYTES);
     };
+    sidebarPaintCount = paintCount;
     paintCount();
-    body.addEventListener('input', paintCount);
+    body.addEventListener('input', () => {
+      composerDraftRevision++;
+      composerDraft = body.value;
+      paintCount();
+    });
 
     const post = document.createElement('button');
     post.type = 'submit';
     post.className = 'action primary';
     post.textContent = 'Post comment';
+    post.disabled = sidebarSubmission !== undefined;
+    sidebarPost = post;
 
     foot.append(count, post);
     form.appendChild(foot);
@@ -8032,70 +8052,99 @@ export function buildThread(
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const sealer = cipher;
-      if (sealer === undefined || post.disabled) return;
-      const target = marks.target();
-      if (target?.kind === 'image') {
-        post.disabled = true;
-        body.disabled = true;
-        const placement = await awaitPendingImage(target);
-        body.disabled = false;
-        post.disabled = false;
-        if (!form.isConnected) return;
-        if (placement !== 'placed' || marks.target() !== target) {
-          outcome.replaceChildren(
-            line(
-              'thread-note',
-              placement === 'unavailable'
-                ? 'This image is unavailable. Choose it again or clear the target.'
-                : placement === 'timeout'
-                  ? 'Could not verify this image. Try posting again.'
-                  : 'The target changed. Review it and post again.'
-            )
-          );
-          return;
-        }
-      }
-      const draft = {
+      if (
+        sealer === undefined ||
+        post.disabled ||
+        sidebarSubmission !== undefined
+      )
+        return;
+      const submitted = {
         body: body.value,
-        display_name: name.value.trim().length > 0 ? name.value.trim() : null,
-        anchor: marks.target(),
+        revision: composerDraftRevision,
       };
-      // The target is spent. Leaving it set would aim the reader's next
-      // comment at the last thing they marked, which is the bug this whole
-      // change exists to remove, one comment later.
-      marks.clear();
+      sidebarSubmission = submitted;
       post.disabled = true;
-      outcome.replaceChildren(line('thread-note', 'Encrypting and posting.'));
-      void postComment(relicId, draft, deps, sealer, view.version).then(
-        async (result) => {
-          post.disabled = false;
-          if (result.kind === 'refused') {
-            outcome.replaceChildren(threadRefusal(result.refusal, () => {}));
-            if (result.refusal.code === 'invalid_session') {
-              sessionGeneration++;
-              session = { kind: 'anonymous' };
-              section.dataset['session'] = session.kind;
-              paintComposer();
-              repaintDeleteControls();
-              repaintCardPermissions?.();
-            }
+      const work = Promise.withResolvers<void>();
+      threadWork.add(work.promise);
+      try {
+        const target = marks.target();
+        if (target?.kind === 'image') {
+          body.disabled = true;
+          const placement = await awaitPendingImage(target);
+          body.disabled = false;
+          if (!form.isConnected) return;
+          if (placement !== 'placed' || marks.target() !== target) {
+            outcome.replaceChildren(
+              line(
+                'thread-note',
+                placement === 'unavailable'
+                  ? 'This image is unavailable. Choose it again or clear the target.'
+                  : placement === 'timeout'
+                    ? 'Could not verify this image. Try posting again.'
+                    : 'The target changed. Review it and post again.'
+              )
+            );
             return;
           }
-          body.value = '';
-          // The body is this comment's and goes. The name is the reader's and
-          // stays, here and on the next relic they open.
-          writeDisplayName(name.value);
-          paintCount();
-          outcome.replaceChildren(
-            line(
-              'thread-note',
-              `Posted as ${plainLabel(result.author)}, which is what everybody ` +
-                'holding this link now sees.'
-            )
-          );
-          await refresh();
         }
-      );
+        const draft = {
+          body: submitted.body,
+          display_name: name.value.trim().length > 0 ? name.value.trim() : null,
+          anchor: marks.target(),
+        };
+        // The target belongs to this captured submission, not the next draft.
+        marks.clear();
+        outcome.replaceChildren(line('thread-note', 'Encrypting and posting.'));
+        const result = await postComment(
+          relicId,
+          draft,
+          deps,
+          sealer,
+          view.version
+        );
+        if (typeof document === 'undefined') return;
+        if (result.kind === 'refused') {
+          outcome.replaceChildren(threadRefusal(result.refusal, () => {}));
+          if (result.refusal.code === 'invalid_session') {
+            sessionGeneration++;
+            session = { kind: 'anonymous' };
+            section.dataset['session'] = session.kind;
+            paintComposer();
+            repaintDeleteControls();
+            repaintCardPermissions?.();
+          }
+          return;
+        }
+        // A passkey or session repaint may have replaced the original form.
+        // Clear the submitted text only if the live draft is still that text.
+        const liveBody = sidebarBody?.value ?? composerDraft;
+        if (
+          composerDraftRevision === submitted.revision &&
+          liveBody === submitted.body
+        ) {
+          composerDraft = '';
+          if (sidebarBody !== undefined) sidebarBody.value = '';
+        }
+        writeDisplayName(sidebarName?.value ?? composerNameDraft ?? name.value);
+        sidebarPaintCount?.();
+        outcome.replaceChildren(
+          line(
+            'thread-note',
+            `Posted as ${plainLabel(result.author)}, which is what everybody ` +
+              'holding this link now sees.'
+          )
+        );
+        await refresh();
+      } finally {
+        if (sidebarSubmission === submitted) {
+          sidebarSubmission = undefined;
+          if (sidebarPost !== undefined) sidebarPost.disabled = false;
+        }
+        post.disabled = false;
+        body.disabled = false;
+        threadWork.delete(work.promise);
+        work.resolve();
+      }
     });
 
     return form;
@@ -8108,6 +8157,8 @@ export function buildThread(
     if (sidebarName !== undefined) composerNameDraft = sidebarName.value;
     sidebarBody = undefined;
     sidebarName = undefined;
+    sidebarPost = undefined;
+    sidebarPaintCount = undefined;
     if (session.kind === 'verified') {
       const commentEl = composeComment(session.email);
       composer.replaceChildren(
