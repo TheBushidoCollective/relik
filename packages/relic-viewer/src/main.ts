@@ -6595,6 +6595,9 @@ export function buildThread(
       section.classList.contains('is-open') ? 'off' : 'polite'
     );
     deleteNotice.hidden = false;
+    // A status with no outcome must not join the stage's aiming hints.
+    // Mount it only once it has something to report.
+    host?.appendChild(deleteNotice);
   };
 
   const deleteRefreshControl = (): HTMLElement => {
@@ -8261,7 +8264,7 @@ export function buildThread(
       }
       host = next;
       popover = popoverLayer(next);
-      next.appendChild(deleteNotice);
+      if (!deleteNotice.hidden) next.appendChild(deleteNotice);
       // Once per stage. A second binding would toggle the class twice on one
       // pointer crossing, which reads as the pairing not working at all.
       if (next.dataset.pairBind !== '1') {
