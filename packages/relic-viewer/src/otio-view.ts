@@ -359,6 +359,7 @@ export async function mountOtioView(
   let paintedStatusNotice: string | null = null;
   let paintedStatusSettled = false;
   let viewportKey = '';
+  let pendingTimelineScroll: { key: string; top: number } | undefined;
   const viewports = new Map<
     string,
     { scale: number; left: number; top: number; mode: 'fit' | 'manual' }
@@ -892,9 +893,22 @@ export async function mountOtioView(
     viewports.set(viewportKey, {
       scale: pixelsPerFrame,
       left: scroll.scrollLeft,
-      top: scroll.scrollTop,
+      top:
+        pendingTimelineScroll?.key === viewportKey
+          ? pendingTimelineScroll.top
+          : scroll.scrollTop,
       mode: zoomMode,
     });
+  }
+
+  function applyPendingTimelineScroll(afterRepack = false): void {
+    const pending = pendingTimelineScroll;
+    if (!pending || pending.key !== viewportKey || disposed) return;
+    scroll.scrollTop = pending.top;
+    // A row rebuild can precede the shell's async comment paint. Only retire
+    // the request after packed bands actually support the saved position.
+    if (afterRepack && scroll.scrollTop === pending.top)
+      pendingTimelineScroll = undefined;
   }
 
   function paintRuler(): void {
@@ -1015,6 +1029,8 @@ export async function mountOtioView(
       element('div', 'otio-ruler-ticks')
     );
     const saved = viewports.get(viewportKey);
+    pendingTimelineScroll =
+      saved && saved.top > 0 ? { key: viewportKey, top: saved.top } : undefined;
     const { width } = viewportDimensions();
     zoomMode = saved?.mode ?? 'fit';
     const limits = otioZoomLimits(domain, width);
@@ -1042,7 +1058,8 @@ export async function mountOtioView(
     if (rebuildTracks) paintTracks();
     paintTimelineGeometry();
     scroll.scrollLeft = saved?.left ?? 0;
-    scroll.scrollTop = saved?.top ?? 0;
+    if (pendingTimelineScroll) applyPendingTimelineScroll();
+    else scroll.scrollTop = 0;
     scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
@@ -1070,6 +1087,7 @@ export async function mountOtioView(
 
   function zoomTimeline(factor: number, pointerX?: number): void {
     if (disposed || cancelRailGesture || cancelResizeGesture) return;
+    pendingTimelineScroll = undefined;
     const dimensions = viewportDimensions();
     const { width } = dimensions;
     const next = otioZoomAt(
@@ -1094,6 +1112,7 @@ export async function mountOtioView(
 
   function fitTimeline(): void {
     if (disposed || cancelRailGesture || cancelResizeGesture) return;
+    pendingTimelineScroll = undefined;
     zoomMode = 'fit';
     const dimensions = viewportDimensions();
     pixelsPerFrame = otioZoomLimits(domain, dimensions.width).fit;
@@ -1118,6 +1137,9 @@ export async function mountOtioView(
     scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
+  scroll.addEventListener('pointerdown', () => {
+    pendingTimelineScroll = undefined;
+  });
   scroll.addEventListener('scroll', () => {
     rememberTimelineViewport();
     paintRuler();
@@ -1127,6 +1149,7 @@ export async function mountOtioView(
     (event) => {
       if (event.ctrlKey || event.metaKey || !(event.target instanceof Element))
         return;
+      pendingTimelineScroll = undefined;
       if (
         !event.target.closest(
           '.otio-ruler-ticks, .otio-track-rail, .otio-comment-band'
@@ -1161,6 +1184,28 @@ export async function mountOtioView(
     { passive: false }
   );
   scroll.addEventListener('keydown', (event) => {
+    if (
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      event.target instanceof Element &&
+      !event.target.closest('input, textarea, select, [contenteditable]') &&
+      [
+        'ArrowUp',
+        'ArrowDown',
+        'ArrowLeft',
+        'ArrowRight',
+        'PageUp',
+        'PageDown',
+        'Home',
+        'End',
+        '-',
+        '+',
+        '=',
+        '0',
+      ].includes(event.key)
+    )
+      pendingTimelineScroll = undefined;
     if (
       event.ctrlKey ||
       event.metaKey ||
@@ -1539,6 +1584,7 @@ export async function mountOtioView(
   }
 
   function revealTimelineTarget(target: HTMLElement, center = false): void {
+    pendingTimelineScroll = undefined;
     const box = target.getBoundingClientRect();
     const viewport = timelineViewport(target);
     if (viewport.width <= 0 || viewport.height <= 0) return;
@@ -1664,6 +1710,7 @@ export async function mountOtioView(
       range.duration.value > 0 ? `${geometry.width * 100}%` : '';
   }
   function repackCommentBands(): void {
+    let geometryChanged = false;
     const measured: {
       band: HTMLElement;
       width: number;
@@ -1698,7 +1745,10 @@ export async function mountOtioView(
     }
     for (const { band, width, entries } of measured) {
       if (width <= 0) {
-        band.style.height = '0px';
+        if (band.style.height !== '0px') {
+          band.style.height = '0px';
+          geometryChanged = true;
+        }
         continue;
       }
       entries.sort(
@@ -1715,8 +1765,16 @@ export async function mountOtioView(
         laneEnds[lane] = right;
         mark.style.setProperty('--otio-comment-lane', String(lane));
       }
-      band.style.height = `${laneEnds.length * 22}px`;
+      const height = `${laneEnds.length * 22}px`;
+      if (band.style.height !== height) {
+        band.style.height = height;
+        geometryChanged = true;
+      }
     }
+    const previousTop = scroll.scrollTop;
+    applyPendingTimelineScroll(true);
+    if (geometryChanged || previousTop !== scroll.scrollTop)
+      scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
   function flushCommentRepack(): void {

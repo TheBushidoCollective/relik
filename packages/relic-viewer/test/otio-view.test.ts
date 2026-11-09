@@ -2759,6 +2759,135 @@ describe('OTIO focused scope review regressions', () => {
     choose('long-timeline');
     expect(scroll.scrollTop).toBe(540);
   });
+  test('coincident comments restore the pending viewport after readiness and band repacking', async () => {
+    const content = new TextEncoder().encode(
+      JSON.stringify({
+        OTIO_SCHEMA: 'SerializableCollection.1',
+        children: ['comment-timeline', 'other-timeline'].map((id) => ({
+          OTIO_SCHEMA: 'Timeline.1',
+          name: id,
+          metadata: { relic: { id } },
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: [
+              {
+                OTIO_SCHEMA: 'Track.1',
+                kind: 'Video',
+                metadata: { relic: { id: `${id}-track` } },
+                children: [clip(`${id}-clip`, 'Nested clip')],
+              },
+            ],
+          },
+        })),
+      })
+    );
+    const current = await mount(content);
+    const select = root.querySelector('.otio-timeline-select')!;
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    const tracks = root.querySelector('.otio-track-rows')!;
+    scroll.clientWidth = 640;
+    scroll.clientHeight = 120;
+    let top = 0;
+    Object.defineProperty(scroll, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (requested: number) => {
+        const height = tracks.children
+          .filter((node) => !node.hidden)
+          .reduce(
+            (sum, node) =>
+              sum +
+              60 +
+              Number.parseFloat(
+                node.querySelector('.otio-comment-band')?.style.height || '0'
+              ),
+            0
+          );
+        top = Math.max(
+          0,
+          Math.min(Math.max(0, height - scroll.clientHeight), requested)
+        );
+      },
+    });
+    const anchors = Array.from({ length: 40 }, () =>
+      createOtioSelection(
+        current.document,
+        'comment-timeline',
+        'comment-timeline-track',
+        1,
+        range(5, 0),
+        'comment-timeline-clip'
+      )
+    );
+    const originals = anchors.map((anchor) => JSON.stringify(anchor));
+    root.addEventListener('relic:otio-ready', () => {
+      if (root.dataset['timelineId'] === 'comment-timeline')
+        anchors.forEach((anchor, index) =>
+          current.paint(anchor, `coincident-${index}`)
+        );
+    });
+    const choose = (id: string) => {
+      select.value = id;
+      select.dispatchEvent(new Event('change'));
+    };
+    const settle = () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      return promise;
+    };
+    choose('comment-timeline');
+    await settle();
+    expect(
+      row('comment-timeline-track').querySelector('.otio-comment-band')!.style
+        .height
+    ).toBe('880px');
+    expect(root.querySelectorAll('.otio-comment-mark')).toHaveLength(40);
+    root.querySelector('.otio-zoom-in')!.dispatchEvent(new Event('click'));
+    const scale = scroll.dataset['pixelsPerFrame'];
+    scroll.scrollLeft = 50;
+    scroll.scrollTop = 600;
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    choose('other-timeline');
+    await settle();
+    expect(scroll.scrollTop).toBe(0);
+    choose('comment-timeline');
+    expect(scroll.scrollTop).toBe(0);
+    // Native clamp/scroll notifications arrive before the shell repaints marks.
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await settle();
+    expect(
+      row('comment-timeline-track').querySelector('.otio-comment-band')!.style
+        .height
+    ).toBe('880px');
+    expect(scroll.scrollTop).toBe(600);
+    expect(scroll.scrollLeft).toBe(50);
+    expect(scroll.dataset['pixelsPerFrame']).toBe(scale);
+    expect(anchors.map((anchor) => JSON.stringify(anchor))).toEqual(originals);
+    choose('other-timeline');
+    await settle();
+    choose('comment-timeline');
+    await settle();
+    expect(scroll.scrollTop).toBe(600);
+    expect(root.querySelectorAll('.otio-comment-mark')).toHaveLength(40);
+    // An explicit user scroll supersedes an outstanding delayed restoration.
+    choose('other-timeline');
+    await settle();
+    choose('comment-timeline');
+    row('comment-timeline-track')
+      .querySelector('.otio-track-label')!
+      .dispatchEvent(
+        Object.assign(new Event('wheel', { bubbles: true, cancelable: true }), {
+          deltaX: 0,
+          deltaY: 30,
+          deltaMode: 0,
+          ctrlKey: false,
+          metaKey: false,
+        })
+      );
+    await settle();
+    expect(scroll.scrollTop).toBe(0);
+    expect(anchors.map((anchor) => JSON.stringify(anchor))).toEqual(originals);
+  });
 });
 
 describe('OTIO media and timeline divider', () => {
