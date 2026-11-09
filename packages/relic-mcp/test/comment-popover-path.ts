@@ -2507,7 +2507,21 @@ console.log('Testing comment deletion...');
     await owner.setViewport(320, 800, 'light');
     await owner.screenshot('delete-confirm-mobile-light.png');
     await owner.setViewport(320, 800, 'dark');
-    await owner.pressEscape();
+    // A synthetic KeyboardEvent has no native dialog default action.
+    await owner.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
+    await owner.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
     await owner.waitFor(
       "!document.querySelector('dialog.comment-delete-dialog[open]')"
     );
