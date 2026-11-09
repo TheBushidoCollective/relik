@@ -37,6 +37,7 @@ import {
 } from './otio-playback.ts';
 
 const encoder = new TextEncoder();
+let nextMonitorId = 0;
 const projectionsKey = (anchor: OtioAnchorV1): string => JSON.stringify(anchor);
 const element = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -335,6 +336,7 @@ export async function mountOtioView(
   const cleanup: (() => void)[] = [];
 
   const monitor = element('div', 'otio-monitor-row');
+  monitor.id = `otio-monitor-${++nextMonitorId}`;
   const preview = element('div', 'otio-preview');
   const canvas = element('canvas', 'otio-canvas');
   canvas.width = 960;
@@ -531,6 +533,18 @@ export async function mountOtioView(
   const scroll = element('div', 'otio-timeline-scroll');
   scroll.tabIndex = 0;
   scroll.setAttribute('aria-label', 'Timeline tracks');
+  const resizeHandle = element('div', 'otio-resize-handle');
+  resizeHandle.tabIndex = 0;
+  resizeHandle.setAttribute('role', 'separator');
+  resizeHandle.setAttribute('aria-orientation', 'horizontal');
+  resizeHandle.setAttribute('aria-label', 'Resize media preview and timeline');
+  resizeHandle.setAttribute('aria-controls', monitor.id);
+  resizeHandle.setAttribute(
+    'aria-description',
+    'Drag or use Arrow up and Arrow down to resize. Home shows more timeline; End shows more media preview.'
+  );
+  resizeHandle.title =
+    'Resize media preview and timeline (drag or use Arrow up and Arrow down)';
   const grid = element('div', 'otio-track-grid');
   const ruler = element('div', 'otio-ruler');
   const trackRows = element('div', 'otio-track-rows');
@@ -587,12 +601,186 @@ export async function mountOtioView(
   diagnostics.setAttribute('role', 'status');
   root.replaceChildren(
     monitor,
+    resizeHandle,
     transport,
     heading,
     scroll,
     selectionBar,
     diagnostics
   );
+
+  let timelineFraction: number | undefined;
+  let cancelResizeGesture: (() => void) | undefined;
+  const fixedRows = [transport, heading, selectionBar, diagnostics];
+  const splitBounds = () => {
+    const available = Math.max(
+      0,
+      root.clientHeight -
+        resizeHandle.getBoundingClientRect().height -
+        fixedRows.reduce(
+          (height, row) => height + row.getBoundingClientRect().height,
+          0
+        )
+    );
+    // Keep a preview and at least a ruler/track visible. On short viewports the
+    // floors scale down instead of forcing the controls outside the stage.
+    return {
+      available,
+      minimum: Math.min(
+        96,
+        available * 0.25,
+        grid.getBoundingClientRect().height
+      ),
+      maximum: available - Math.min(160, available * 0.4),
+    };
+  };
+  function refreshSplit(): void {
+    if (disposed) return;
+    const { available, minimum, maximum } = splitBounds();
+    monitor.style.minHeight = `${available - maximum}px`;
+    if (timelineFraction !== undefined) {
+      const height = `${Math.max(minimum, Math.min(maximum, available * timelineFraction))}px`;
+      if (scroll.style.height !== height) {
+        scroll.style.height = height;
+        // The existing popover follows inner scroll events. A new pane height
+        // moves its target even when the scroll offsets themselves stay put.
+        scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+      }
+    }
+    const timelineHeight =
+      timelineFraction === undefined
+        ? scroll.getBoundingClientRect().height
+        : Math.max(minimum, Math.min(maximum, available * timelineFraction));
+    const mediaPercent = available
+      ? Math.round((1 - Math.min(available, timelineHeight) / available) * 100)
+      : 0;
+    const minimumPercent = available
+      ? Math.round((1 - maximum / available) * 100)
+      : 0;
+    const maximumPercent = available
+      ? Math.round((1 - minimum / available) * 100)
+      : 0;
+    // Report the actual content-sized default before the first adjustment.
+    resizeHandle.setAttribute(
+      'aria-valuemin',
+      String(Math.min(minimumPercent, mediaPercent))
+    );
+    resizeHandle.setAttribute(
+      'aria-valuemax',
+      String(Math.max(maximumPercent, mediaPercent))
+    );
+    resizeHandle.setAttribute('aria-valuenow', String(mediaPercent));
+    resizeHandle.setAttribute(
+      'aria-valuetext',
+      `Media preview ${mediaPercent}%; timeline ${available ? 100 - mediaPercent : 0}%`
+    );
+    resizeHandle.setAttribute('aria-disabled', String(available <= 0));
+  }
+  function setTimelineHeight(height: number): void {
+    const { available, minimum, maximum } = splitBounds();
+    if (available <= 0) return;
+    timelineFraction = Math.max(minimum, Math.min(maximum, height)) / available;
+    root.classList.add('is-resized');
+    refreshSplit();
+  }
+  const startResize = (event: PointerEvent): void => {
+    if (
+      disposed ||
+      cancelResizeGesture ||
+      event.button !== 0 ||
+      event.isPrimary === false ||
+      splitBounds().available <= 0
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pointerId = event.pointerId;
+    const previousFraction = timelineFraction;
+    const startHeight = scroll.getBoundingClientRect().height;
+    const startY = event.clientY;
+    let dragging = false;
+    resizeHandle.setPointerCapture(pointerId);
+    root.classList.add('is-resizing');
+    const move = (moved: PointerEvent): void => {
+      if (moved.pointerId !== pointerId) return;
+      moved.preventDefault();
+      moved.stopPropagation();
+      if (!dragging && Math.abs(moved.clientY - startY) < 2) return;
+      dragging = true;
+      setTimelineHeight(startHeight - (moved.clientY - startY));
+    };
+    const release = (): void => {
+      resizeHandle.removeEventListener('pointermove', move);
+      resizeHandle.removeEventListener('pointerup', done);
+      resizeHandle.removeEventListener('pointercancel', cancel);
+      resizeHandle.removeEventListener('lostpointercapture', cancel);
+      window.removeEventListener('blur', cancel);
+      root.classList.remove('is-resizing');
+      cancelResizeGesture = undefined;
+      if (resizeHandle.hasPointerCapture(pointerId))
+        resizeHandle.releasePointerCapture(pointerId);
+    };
+    const done = (released: PointerEvent): void => {
+      if (released.pointerId !== pointerId) return;
+      move(released);
+      release();
+    };
+    const cancel = (cancelled?: Event): void => {
+      if (
+        cancelled &&
+        'pointerId' in cancelled &&
+        cancelled.pointerId !== pointerId
+      )
+        return;
+      cancelled?.stopPropagation();
+      release();
+      timelineFraction = previousFraction;
+      root.classList.toggle('is-resized', timelineFraction !== undefined);
+      if (timelineFraction === undefined) scroll.style.height = '';
+      refreshSplit();
+      scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    };
+    cancelResizeGesture = cancel;
+    resizeHandle.addEventListener('pointermove', move);
+    resizeHandle.addEventListener('pointerup', done);
+    resizeHandle.addEventListener('pointercancel', cancel);
+    resizeHandle.addEventListener('lostpointercapture', cancel);
+    window.addEventListener('blur', cancel);
+  };
+  const resizeWithKeyboard = (event: KeyboardEvent): void => {
+    if (
+      disposed ||
+      !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    const { minimum, maximum } = splitBounds();
+    const step = event.shiftKey ? 64 : 16;
+    setTimelineHeight(
+      event.key === 'Home'
+        ? maximum
+        : event.key === 'End'
+          ? minimum
+          : scroll.getBoundingClientRect().height +
+            (event.key === 'ArrowUp' ? step : -step)
+    );
+  };
+  const stopResizeClick = (event: MouseEvent): void => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  resizeHandle.addEventListener('pointerdown', startResize);
+  resizeHandle.addEventListener('keydown', resizeWithKeyboard);
+  resizeHandle.addEventListener('click', stopResizeClick);
+  window.addEventListener('resize', refreshSplit);
+  cleanup.push(() => {
+    cancelResizeGesture?.();
+    resizeHandle.removeEventListener('pointerdown', startResize);
+    resizeHandle.removeEventListener('keydown', resizeWithKeyboard);
+    resizeHandle.removeEventListener('click', stopResizeClick);
+    window.removeEventListener('resize', refreshSplit);
+  });
 
   function currentFrame(): number {
     const time = playback?.getState().time;
@@ -1988,6 +2176,7 @@ export async function mountOtioView(
         ? 'Select timeline'
         : 'OTIO structural inspector';
       transport.hidden = true;
+      resizeHandle.hidden = true;
       tools.hidden = true;
       selectionBar.hidden = true;
       grid.hidden = true;
@@ -2001,6 +2190,7 @@ export async function mountOtioView(
       return;
     }
     transport.hidden = false;
+    resizeHandle.hidden = false;
     tools.hidden = false;
     selectionBar.hidden = false;
     grid.hidden = false;
@@ -2231,12 +2421,18 @@ export async function mountOtioView(
   if (typeof ResizeObserver !== 'undefined') {
     let gridWidth = grid.getBoundingClientRect().width;
     const observer = new ResizeObserver(() => {
+      refreshSplit();
       const width = grid.getBoundingClientRect().width;
       if (width === gridWidth) return;
       gridWidth = width;
       queueCommentRepack();
     });
     observer.observe(grid);
+    observer.observe(root);
+    observer.observe(monitor);
+    observer.observe(scroll);
+    observer.observe(resizeHandle);
+    for (const row of fixedRows) observer.observe(row);
     cleanup.push(() => observer.disconnect());
   }
   if (typeof MutationObserver !== 'undefined') {
@@ -2247,4 +2443,5 @@ export async function mountOtioView(
     cleanup.push(() => observer.disconnect());
   }
   initializeTimeline();
+  refreshSplit();
 }

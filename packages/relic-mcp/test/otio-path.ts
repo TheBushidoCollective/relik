@@ -168,6 +168,7 @@ const REQUIRED = [
   'focus-comment',
   'focus-reveal',
   'focus-viewports',
+  'resize-viewer',
 ] as const;
 
 const passed = new Set<string>();
@@ -8519,7 +8520,7 @@ async function runLayoutMatrix(
         >(String.raw`(() => {
           const selectors = {
             stage: '.stage-wrap', root: '.otio-view', monitor: '.otio-monitor-row',
-            transport: '.otio-transport', heading: '.otio-timeline-heading',
+            divider: '.otio-resize-handle', transport: '.otio-transport', heading: '.otio-timeline-heading',
             timeline: '.otio-timeline-scroll', readout: '.otio-selection-readout',
             diagnostics: '.otio-diagnostics', preview: '.otio-preview', canvas: '.otio-canvas',
             inspector: '.otio-inspector', tabs: '.otio-inspector-tabs', context: '.otio-context',
@@ -8536,13 +8537,15 @@ async function runLayoutMatrix(
             return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
           };
           const rectangles = Object.fromEntries(Object.entries(nodes).map(([key, node]) => [key, rect(node)]));
-          const { stage, root, monitor, transport, heading, timeline, readout, diagnostics, preview, canvas } = rectangles;
+          const { stage, root, monitor, divider, transport, heading, timeline, readout, diagnostics, preview, canvas } = rectangles;
           const stageBottom = stage.top + nodes.stage.clientTop + nodes.stage.clientHeight;
           const near = (a, b, name) => { if (Math.abs(a - b) > 2) failures.push(name + ': ' + a + ' vs ' + b); };
           near(root.bottom, stageBottom, 'bottom fill');
           const diagnosticsVisible = nodes.diagnostics.children.length > 0 && diagnostics.height > 0;
           near(diagnosticsVisible ? diagnostics.bottom : readout.bottom, root.bottom, 'bottom stack');
-          near(monitor.bottom, transport.top, 'monitor/transport adjacency');
+          near(monitor.bottom, divider.top, 'monitor/divider adjacency');
+          near(divider.bottom, transport.top, 'divider/transport adjacency');
+          if (divider.height < 12) failures.push('divider hit target too small');
           near(transport.bottom, heading.top, 'transport/heading adjacency');
           if (document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1) failures.push('document overflow');
           if (nodes.stage.scrollHeight > nodes.stage.clientHeight + 2) failures.push('stage vertical overflow');
@@ -8730,6 +8733,141 @@ async function runLayoutMatrix(
   await browser.send('Emulation.setEmulatedMedia', {
     features: [{ name: 'prefers-color-scheme', value: 'light' }],
   });
+}
+async function exerciseViewerResize(browser: ChromeSession): Promise<void> {
+  type ResizeGeometry = {
+    x: number;
+    y: number;
+    preview: number;
+    tracks: number;
+    role: string | null;
+    label: string | null;
+    overflow: boolean;
+  };
+  const measure = () =>
+    browser.evaluate<ResizeGeometry>(`(() => {
+      const handle = document.querySelector('.otio-resize-handle');
+      const preview = document.querySelector('.otio-monitor-row');
+      const tracks = document.querySelector('.otio-timeline-scroll');
+      if (!(handle instanceof HTMLElement) || !(preview instanceof HTMLElement) ||
+          !(tracks instanceof HTMLElement)) throw new Error('OTIO resize controls missing');
+      const rect = handle.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width / 2, y: rect.top + rect.height / 2,
+        preview: preview.getBoundingClientRect().height,
+        tracks: tracks.getBoundingClientRect().height,
+        role: handle.getAttribute('role'), label: handle.getAttribute('aria-label'),
+        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
+      };
+    })()`);
+  for (const [width, height] of [
+    [1440, 900],
+    [320, 480],
+  ] as const) {
+    await browser.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: width < 600,
+    });
+    await browser.evaluate<void>(`(async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      await promise;
+      document.querySelector('.otio-resize-handle')?.focus();
+    })()`);
+    for (const type of ['rawKeyDown', 'keyUp'])
+      await browser.send('Input.dispatchKeyEvent', {
+        type,
+        key: 'End',
+        code: 'End',
+        windowsVirtualKeyCode: 35,
+      });
+    const before = await measure();
+    assert.equal(
+      before.role,
+      'separator',
+      'resize control must expose separator role'
+    );
+    assert.ok(before.label, 'resize control needs an accessible label');
+    assert.equal(before.overflow, false, 'resize caused page overflow');
+    const delta = height < 600 ? 35 : 100;
+    if (width < 600) {
+      await browser.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [{ x: before.x, y: before.y }],
+      });
+      await browser.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: before.x, y: before.y - delta }],
+      });
+      await browser.send('Input.dispatchTouchEvent', {
+        type: 'touchEnd',
+        touchPoints: [],
+      });
+    } else {
+      await browser.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: before.x,
+        y: before.y,
+        button: 'none',
+      });
+      await browser.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        x: before.x,
+        y: before.y,
+        button: 'left',
+        clickCount: 1,
+      });
+      await browser.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: before.x,
+        y: before.y - delta,
+        button: 'left',
+        buttons: 1,
+      });
+      await browser.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x: before.x,
+        y: before.y - delta,
+        button: 'left',
+        clickCount: 1,
+      });
+    }
+    const after = await measure();
+    assert.ok(
+      after.preview < before.preview - 5,
+      `${width}px drag did not shrink preview: ${JSON.stringify({ before, after })}`
+    );
+    assert.ok(
+      after.tracks > before.tracks + 5,
+      `${width}px drag did not reveal more tracks: ${JSON.stringify({ before, after })}`
+    );
+    assert.equal(
+      after.overflow,
+      false,
+      `${width}px resize caused page overflow`
+    );
+    await browser.screenshot(`resize-${width}-timeline`);
+    const focused = await browser.evaluate<boolean>(`(() => {
+      const handle = document.querySelector('.otio-resize-handle');
+      if (!(handle instanceof HTMLElement)) return false;
+      handle.focus(); return document.activeElement === handle;
+    })()`);
+    assert.ok(focused, `${width}px resize control cannot be focused`);
+    for (const type of ['rawKeyDown', 'keyUp'])
+      await browser.send('Input.dispatchKeyEvent', {
+        type,
+        key: 'ArrowDown',
+        code: 'ArrowDown',
+        windowsVirtualKeyCode: 40,
+      });
+    const keyboard = await measure();
+    assert.ok(
+      keyboard.preview > after.preview && keyboard.tracks < after.tracks,
+      `${width}px keyboard resize did not restore preview space`
+    );
+  }
 }
 
 const focusedCommentBody = 'Focus the primary grade, not the overlay.';
@@ -10784,6 +10922,16 @@ try {
     pass('screenshots');
   } finally {
     await browser.close();
+  }
+  const resizeBrowser = await openBrowser(shareUrl, sessionToken, {
+    label: 'resize-viewer',
+  });
+  try {
+    await waitReady(resizeBrowser);
+    await exerciseViewerResize(resizeBrowser);
+    pass('resize-viewer');
+  } finally {
+    await resizeBrowser.close();
   }
 
   // A separate owned browser keeps focused playback from changing the
