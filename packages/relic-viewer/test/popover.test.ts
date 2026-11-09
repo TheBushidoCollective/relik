@@ -280,6 +280,50 @@ describe('popoverLayer behavior', () => {
     layer.hide();
   });
 
+  test('a live viewport reserves player controls and is reapplied during tracking', () => {
+    const host = document.createElement('div');
+    Object.defineProperties(host, {
+      scrollLeft: { value: 0, writable: true },
+      scrollTop: { value: 0, writable: true },
+      clientWidth: { value: 320 },
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 1000 },
+    });
+    const panel = document.createElement('div');
+    Object.defineProperties(panel, {
+      offsetWidth: { value: 280 },
+      offsetHeight: { value: 240 },
+    });
+    const anchor = { left: 150, top: 500, width: 120, height: 20 };
+    let viewport:
+      | { left: number; top: number; width: number; height: number }
+      | undefined = {
+      left: 0,
+      top: 300,
+      width: 320,
+      height: 300,
+    };
+    const layer = popoverLayer(host);
+    layer.show(panel, anchor, {
+      follow: () => anchor,
+      viewport: () => viewport,
+      reveal: true,
+      prefer: 'below',
+    });
+    expect(panel.style.top).toBe('308px');
+    expect(panel.style.maxHeight).toBe('184px');
+    expect(host.scrollTop).toBe(0);
+    viewport = { left: 0, top: 400, width: 320, height: 200 };
+    layer.track();
+    expect(panel.style.top).toBe('408px');
+    expect(panel.style.maxHeight).toBe('84px');
+    viewport = undefined;
+    layer.track();
+    expect(panel.style.top).toBe('252px');
+    expect(panel.style.maxHeight).toBe('');
+    layer.hide();
+  });
+
   test('reveal: an anchor below the visible box scrolls the host so the panel top sits at vt', () => {
     const host = document.createElement('div');
     let st = 0;

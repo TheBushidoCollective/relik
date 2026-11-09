@@ -161,6 +161,13 @@ const REQUIRED = [
   'decoder-no-duration',
   'decoder-worker-csp',
   'screenshots',
+  'focus-video',
+  'focus-fallback',
+  'focus-audio',
+  'focus-special-items',
+  'focus-comment',
+  'focus-reveal',
+  'focus-viewports',
 ] as const;
 
 const passed = new Set<string>();
@@ -8725,6 +8732,163 @@ async function runLayoutMatrix(
   });
 }
 
+const focusedCommentBody = 'Focus the primary grade, not the overlay.';
+
+async function focusItem(
+  browser: ChromeSession,
+  id: string,
+  method: 'pointer' | 'Enter' | ' ' = 'pointer'
+): Promise<void> {
+  const target = await browser.evaluate<{
+    x: number;
+    y: number;
+    hit: string;
+    rect: { left: number; right: number; top: number; bottom: number };
+  } | null>(`(() => {
+    const item = [...document.querySelectorAll('.otio-item')]
+      .find(node => node.dataset.itemId === ${JSON.stringify(id)});
+    if (!(item instanceof HTMLButtonElement)) return null;
+    item.scrollIntoView({block: 'center', inline: 'center'});
+    item.focus({preventScroll: true});
+    const rect = item.getBoundingClientRect();
+    const bounds = {left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom};
+    for (const fy of [.5, .7, .3, .85, .15]) {
+      for (const fx of [.5, .25, .75, .1, .9]) {
+        const x = rect.left + rect.width * fx, y = rect.top + rect.height * fy;
+        const hit = document.elementFromPoint(x, y);
+        if (hit === item || item.contains(hit)) return {x, y, hit: hit?.outerHTML ?? '', rect: bounds};
+      }
+    }
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2,
+      hit: hit?.outerHTML?.slice(0, 500) ?? '', rect: bounds};
+  })()`);
+  assert.ok(target, `focus target ${id} missing`);
+  assert.ok(
+    target.hit.includes('data-item-id=') && target.hit.includes(id),
+    `focus target ${id} is occluded: ${JSON.stringify(target)}`
+  );
+  await browser.evaluate<void>(`(() => {
+    const events = [];
+    const handler = event => events.push({
+      type: event.type, trusted: event.isTrusted,
+      target: event.target?.outerHTML?.slice(0, 300) ?? '',
+      x: event.clientX, y: event.clientY
+    });
+    window.__otioFocusEvents = events;
+    window.__otioFocusEventHandler = handler;
+    for (const type of ['pointerdown', 'pointerup', 'click']) document.addEventListener(type, handler, true);
+  })()`);
+  if (method === 'pointer')
+    await clickWithRealPointer(browser, target.x, target.y);
+  else {
+    const code = method === ' ' ? 'Space' : 'Enter';
+    const keyCode = method === ' ' ? 32 : 13;
+    await browser.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: method,
+      code,
+      text: method === 'Enter' ? '\r' : ' ',
+      windowsVirtualKeyCode: keyCode,
+    });
+    await browser.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: method,
+      code,
+      windowsVirtualKeyCode: keyCode,
+    });
+  }
+  const state = await browser.evaluate<{
+    id: string;
+    pressed: string;
+    title: string;
+  }>(`(async () => {
+    const start = Date.now();
+    while (Date.now() - start < 12000) {
+      const root = document.querySelector('.otio-view');
+      const item = [...document.querySelectorAll('.otio-item')]
+        .find(node => node.dataset.itemId === ${JSON.stringify(id)});
+      if (root?.dataset.scopeNodeId === ${JSON.stringify(id)} &&
+          root.dataset.buffering === 'false') return {
+        id: root.dataset.scopeNodeId,
+        pressed: item?.getAttribute('aria-pressed') ?? '',
+        title: document.querySelector('.otio-focus-title')?.textContent ?? '',
+      };
+      const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+    }
+    return {id: document.querySelector('.otio-view')?.dataset.scopeNodeId ?? '',
+      pressed: '', title: ''};
+  })()`);
+  const events = await browser.evaluate<unknown[]>(`(() => {
+    for (const type of ['pointerdown', 'pointerup', 'click'])
+      document.removeEventListener(type, window.__otioFocusEventHandler, true);
+    return window.__otioFocusEvents ?? [];
+  })()`);
+  if (state.id !== id) {
+    await browser.screenshot('focus-activation-failure');
+    console.error(
+      `FOCUS_ACTIVATION ${JSON.stringify({ id, method, target, state, events })}`
+    );
+  }
+  assert.equal(state.id, id, `focus did not settle on ${id}`);
+  assert.equal(state.pressed, 'true', `${id} has no accessible active state`);
+  assert.ok(state.title.trim(), `${id} has no focus title`);
+}
+
+async function leaveFocus(browser: ChromeSession): Promise<void> {
+  const cleared = await browser.evaluate<boolean>(`(async () => {
+    const button = document.querySelector('button.otio-back-composition');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    const start = Date.now();
+    while (Date.now() - start < 12000) {
+      const root = document.querySelector('.otio-view');
+      if (root && !root.dataset.scopeNodeId && root.dataset.buffering === 'false') return true;
+      const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+    }
+    return false;
+  })()`);
+  assert.ok(cleared, 'back to composition did not clear focus');
+}
+
+async function assertFocusedPlaybackBound(
+  browser: ChromeSession,
+  start: number,
+  end: number
+): Promise<void> {
+  await seekTo(browser, end - 8);
+  const result = await browser.evaluate<{
+    frames: number[];
+    stopped: boolean;
+  }>(`(async () => {
+    const root = document.querySelector('.otio-view');
+    const button = document.querySelector('button.otio-play');
+    if (!root || !(button instanceof HTMLButtonElement)) return {frames: [], stopped: false};
+    const frames = [Number(root.dataset.frame)];
+    const observer = new MutationObserver(() => frames.push(Number(root.dataset.frame)));
+    observer.observe(root, {attributes: true, attributeFilter: ['data-frame']});
+    button.click();
+    let started = false;
+    const until = Date.now() + 10000;
+    while (Date.now() < until) {
+      if (root.dataset.playing === 'true') started = true;
+      if (started && root.dataset.playing === 'false' && root.dataset.buffering === 'false') break;
+      const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 25); await promise;
+    }
+    observer.disconnect();
+    return {frames, stopped: started && root.dataset.playing === 'false'};
+  })()`);
+  assert.ok(result.stopped, 'focused playback did not start and stop');
+  assert.ok(
+    result.frames.some((frame) => frame > end - 8),
+    'focused playback did not advance'
+  );
+  assert.ok(
+    result.frames.every((frame) => frame >= start && frame < end),
+    `focused playback escaped [${start}, ${end}): ${result.frames.join(', ')}`
+  );
+}
+
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
   await assertPacketGateRejectsPlantedFrames();
@@ -10622,6 +10786,372 @@ try {
     await browser.close();
   }
 
+  // A separate owned browser keeps focused playback from changing the
+  // composition-mode evidence above. Both publication and comments use the
+  // same loopback-only server and fresh MCP process as the rest of this path.
+  let focusedCommentId = '';
+  const focused = await openBrowser(shareUrl, sessionToken, {
+    label: 'focused-item',
+  });
+  try {
+    await waitReady(focused);
+    await seekTo(focused, 12);
+    const composition = await sampleCanvas(focused, width, height);
+    await focusItem(focused, plan.comment_source.relic_id);
+    await seekTo(focused, 12);
+    const isolated = await sampleCanvas(focused, width, height);
+    const expected = await extractFrame(
+      join(mediaDir, plan.primary_media),
+      36,
+      width,
+      height
+    );
+    assert.ok(
+      rmse(isolated, expected) + 2 < rmse(composition, expected),
+      'focused primary pixels do not exclude the composition overlay'
+    );
+    assert.ok(
+      rmse(isolated, expected) < 12,
+      'focused primary does not match decoded source frame 36'
+    );
+    const primary = scopedDocument.nodes[plan.comment_source.relic_id];
+    assert.ok(primary?.timeline_range, 'primary focus has no editorial range');
+    const primaryEnd = Math.round(
+      (primary.timeline_range.start_time.value /
+        primary.timeline_range.start_time.rate +
+        primary.timeline_range.duration.value /
+          primary.timeline_range.duration.rate) *
+        plan.timeline_rate
+    );
+    await assertFocusedPlaybackBound(focused, 0, primaryEnd);
+    await leaveFocus(focused);
+    await focusItem(focused, plan.comment_source.relic_id, 'Enter');
+    await leaveFocus(focused);
+    await focusItem(focused, plan.comment_source.relic_id, ' ');
+    pass('focus-video');
+
+    // The official reader derives both the expected source interval and the
+    // file-relative one. Keep the explicit item while narrowing its range.
+    const focusedEditorial: TimeRange = {
+      start_time: { value: 12, rate: 24 },
+      duration: { value: 8, rate: 24 },
+    };
+    const focusedSource: TimeRange = {
+      start_time: {
+        value:
+          plan.comment_source.source_range.start_time.value +
+          (4 * plan.comment_source.source_range.start_time.rate) /
+            plan.timeline_rate,
+        rate: plan.comment_source.source_range.start_time.rate,
+      },
+      duration: plan.comment_source.source_range.duration,
+    };
+    assert.ok(rationalClose(focusedSource.start_time, { value: 60, rate: 24 }));
+    const adjusted = await focused.evaluate<boolean>(`(() => {
+      const input = document.querySelector('.otio-selection-in');
+      const output = document.querySelector('.otio-selection-out');
+      const range = document.querySelector('button[data-otio-mode="range"]');
+      if (!(input instanceof HTMLInputElement) || !(output instanceof HTMLInputElement) ||
+          !(range instanceof HTMLButtonElement)) return false;
+      range.click();
+      input.value = '12'; input.dispatchEvent(new Event('change', {bubbles:true}));
+      output.value = '20'; output.dispatchEvent(new Event('change', {bubbles:true}));
+      return true;
+    })()`);
+    assert.ok(adjusted, 'focus range controls are missing');
+    await postComposer(focused, focusedCommentBody);
+
+    const comments = await readComments(relicId);
+    const comment = commentByBody(comments, focusedCommentBody);
+    const anchor = comment['anchor'] as {
+      item_id?: string;
+      track_id?: string;
+      timeline_id?: string;
+      relic_version?: number;
+      document_sha256?: string;
+      range?: TimeRange;
+    };
+    assert.equal(
+      anchor.item_id,
+      plan.comment_source.relic_id,
+      'focused anchor lost its explicit item'
+    );
+    assert.equal(anchor.track_id, plan.dissolve_track_id);
+    assert.equal(anchor.relic_version, 1);
+    assert.equal(anchor.document_sha256, scopedDocument.document_sha256);
+    assert.equal(anchor.timeline_id, scopedDocument.timeline_ids[0]);
+    assert.ok(
+      rangeClose(anchor.range, focusedEditorial),
+      'focused anchor changed editorial coordinates'
+    );
+    const resolved = resolvedOf(comment);
+    const spans = resolved['intersections'] as Array<Record<string, unknown>>;
+    assert.equal(resolved['status'], 'resolved');
+    assert.ok(Array.isArray(spans), 'focused comment has no source spans');
+    const span = spans.find(
+      (row) => row['node_id'] === plan.comment_source.relic_id
+    );
+    assert.ok(span, 'focused comment lost primary source mapping');
+    assert.ok(rangeClose(asRange(span['source_range']), focusedSource));
+    assert.ok(
+      rationalClose(asRange(span['file_relative_source_range'])?.start_time, {
+        value: 36,
+        rate: 24,
+      }),
+      'focused comment has wrong file-relative source'
+    );
+    const commentId = String(comment['comment_id']);
+    assert.ok(commentId && commentId !== 'undefined');
+    focusedCommentId = commentId;
+    const ciphertextRows = JSON.stringify(
+      await (await fetch(`${origin}/api/relics/${relicId}/comments`)).json()
+    );
+    assert.ok(
+      !ciphertextRows.includes(focusedCommentBody) &&
+        !ciphertextRows.includes(plan.comment_source.relic_id),
+      'focused comment leaked plaintext'
+    );
+    pass('focus-comment');
+
+    const matrix: Array<Record<string, unknown>> = [];
+    for (const [shotWidth, scheme] of [
+      [1440, 'light'],
+      [390, 'light'],
+      [320, 'light'],
+      [1440, 'dark'],
+      [390, 'dark'],
+      [320, 'dark'],
+    ] as const) {
+      await focused.send('Emulation.setDeviceMetricsOverride', {
+        width: shotWidth,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: shotWidth < 600,
+      });
+      await focused.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: scheme }],
+      });
+      await focusItem(focused, plan.comment_source.relic_id);
+      await openComposer(focused);
+      const geometry = await measureComposer(focused);
+      assertComposerProbe(
+        geometry,
+        `${shotWidth}px ${scheme} focused composer`,
+        false
+      );
+      await focused.screenshot(`focus-${shotWidth}-${scheme}-composer`);
+      matrix.push({ width: shotWidth, scheme, geometry });
+      await dismissComposer(focused);
+    }
+    await writeFile(
+      join(shotDir, 'focus-viewport-measurements.json'),
+      `${JSON.stringify(matrix, null, 2)}\n`
+    );
+    pass('focus-viewports');
+
+    await focused.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await focusItem(focused, 'clip-a1-interview');
+    await seekTo(focused, plan.audio_frame);
+    const audioFocus = await focused.evaluate<{
+      paths: string[];
+      rms: number;
+    }>(`(async () => {
+      const nodes = [...document.querySelectorAll('.otio-audio-graph audio[data-active="true"]')];
+      if (nodes.length !== 1) return {paths: nodes.map(node => node.dataset.bundlePath), rms: 0};
+      const node = nodes[0]; const ctx = new AudioContext();
+      const source = ctx.createMediaStreamSource(node.captureStream());
+      const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; source.connect(analyser);
+      await node.play();
+      const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 300); await promise;
+      const data = new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(data);
+      let sum = 0; for (const value of data) sum += ((value - 128) / 128) ** 2;
+      node.pause(); await ctx.close();
+      return {paths: nodes.map(item => item.dataset.bundlePath), rms: Math.sqrt(sum / data.length)};
+    })()`);
+    assert.deepEqual(
+      audioFocus.paths,
+      ['media/dx_mic1.wav'],
+      'focused audio did not isolate dialogue'
+    );
+    assert.ok(audioFocus.rms > 0.01, 'focused dialogue produced no signal');
+    await leaveFocus(focused);
+    await seekTo(focused, plan.audio_frame);
+    const restoredAudio = await focused.evaluate<string[]>(
+      `[...document.querySelectorAll('.otio-audio-graph audio[data-active="true"]')].map(node => node.dataset.bundlePath)`
+    );
+    for (const expectedAudio of plan.audio)
+      assert.ok(
+        restoredAudio.includes(expectedAudio.bundle_path),
+        `composition lost ${expectedAudio.bundle_path}`
+      );
+    pass('focus-audio');
+
+    await focusItem(focused, 'gap-v1-slug');
+    await seekTo(focused, plan.gap_frame);
+    assert.ok(
+      isOpaqueBlack(await sampleCanvas(focused, width, height)),
+      'focused gap is not black'
+    );
+    await focusItem(focused, 'trans-v1-dissolve-1');
+    await seekTo(focused, plan.dissolve_frame);
+    const focusedDissolve = await sampleCanvas(focused, width, height);
+    const [a, b] = plan.dissolve_weights;
+    assert.ok(a && b, 'dissolve oracle lacks branches');
+    const frameA = await extractFrame(
+      join(mediaDir, a.media),
+      a.file_frame,
+      width,
+      height
+    );
+    const frameB = await extractFrame(
+      join(mediaDir, b.media),
+      b.file_frame,
+      width,
+      height
+    );
+    const mixture = blend(frameA, frameB, a.weight, b.weight);
+    assert.ok(
+      rmse(focusedDissolve, mixture) + 2 < rmse(focusedDissolve, frameA) &&
+        rmse(focusedDissolve, mixture) + 2 < rmse(focusedDissolve, frameB),
+      'focused transition did not retain both weighted branches'
+    );
+    // The compound contains both the plate and its FX Glow descendant. Its
+    // oracle is the ordinary composition with only outside layers hidden, not
+    // the isolated plate used by the separate nested image-sequence proof.
+    await leaveFocus(focused);
+    const outsideOccluders = plan.nested_occluders.filter(
+      (id) => id !== 'track-nested-fx-glow'
+    );
+    await setTracksHidden(focused, outsideOccluders, true);
+    await seekTo(focused, plan.nested_frame);
+    const nestedExpected = await sampleCanvas(focused, width, height);
+    await setTracksHidden(focused, outsideOccluders, false);
+    await focusItem(focused, 'stack-vfx-submaster');
+    await seekTo(focused, plan.nested_frame);
+    const nestedFocused = await sampleCanvas(focused, width, height);
+    assert.ok(
+      rmse(nestedFocused, nestedExpected) <= 1,
+      'focused nested stack did not retain its descendant composition'
+    );
+    await focusItem(focused, 'clip-v2-duplicate-disabled');
+    assert.ok(
+      isOpaqueBlack(await sampleCanvas(focused, width, height)),
+      'disabled clip painted media'
+    );
+    const marker = await focused.evaluate<{
+      clicked: boolean;
+      scope: string;
+      start: number;
+      duration: number;
+    }>(`(async () => {
+      const mark = [...document.querySelectorAll('.otio-timeline-marker')]
+        .find(node => node.dataset.ownerId === ${JSON.stringify(plan.comment_source.relic_id)} &&
+          node.getAttribute('aria-label')?.includes('In Trim Note'));
+      if (!(mark instanceof HTMLButtonElement)) return {clicked: false, scope: '', start: -1, duration: -1};
+      mark.click();
+      const until = Date.now() + 10000;
+      while (Date.now() < until) {
+        const root = document.querySelector('.otio-view');
+        const selection = document.querySelector('.otio-selection');
+        if (root?.dataset.scopeNodeId === ${JSON.stringify(plan.comment_source.relic_id)} && selection)
+          return {clicked: true, scope: root.dataset.scopeNodeId,
+            start: Number(selection.dataset.start), duration: Number(selection.dataset.duration)};
+        const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+      }
+      return {clicked: true, scope: '', start: -1, duration: -1};
+    })()`);
+    assert.ok(
+      marker.clicked && marker.scope === plan.comment_source.relic_id,
+      'marker did not focus owner'
+    );
+    assert.equal(
+      marker.start,
+      36,
+      'marker moved from its mapped editorial position'
+    );
+    assert.equal(
+      marker.duration,
+      0,
+      'point marker acquired a positive duration'
+    );
+    pass('focus-special-items');
+
+    await leaveFocus(focused);
+    const markClicked = await focused.evaluate<boolean>(`(() => {
+      const mark = [...document.querySelectorAll('.otio-comment-mark')]
+        .find(node => node.dataset.commentId === ${JSON.stringify(commentId)});
+      if (!(mark instanceof HTMLButtonElement)) return false;
+      mark.click(); return true;
+    })()`);
+    assert.ok(markClicked, 'focused comment mark missing');
+    assert.equal(
+      await focused.evaluate<string>(`(async () => {
+        const until = Date.now() + 10000;
+        while (Date.now() < until) {
+          const id = document.querySelector('.otio-view')?.dataset.scopeNodeId ?? '';
+          if (id) return id;
+          const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+        }
+        return '';
+      })()`),
+      plan.comment_source.relic_id,
+      'comment reveal did not restore item focus'
+    );
+  } finally {
+    await focused.close();
+  }
+  const reopened = await openBrowser(shareUrl, sessionToken, {
+    label: 'focused-reload',
+  });
+  try {
+    await waitReady(reopened);
+    const revealed = await reopened.evaluate<boolean>(`(async () => {
+      const until = Date.now() + 10000;
+      while (Date.now() < until) {
+        const mark = [...document.querySelectorAll('.otio-comment-mark')]
+          .find(node => node.dataset.commentId === ${JSON.stringify(focusedCommentId)});
+        if (mark instanceof HTMLButtonElement) { mark.click(); return true; }
+        const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+      }
+      return false;
+    })()`);
+    assert.ok(revealed, 'reloaded comment mark did not appear');
+    const scope = await reopened.evaluate<string>(`(async () => {
+      const until = Date.now() + 10000;
+      while (Date.now() < until) {
+        const id = document.querySelector('.otio-view')?.dataset.scopeNodeId ?? '';
+        if (id) return id;
+        const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+      }
+      return '';
+    })()`);
+    assert.equal(
+      scope,
+      plan.comment_source.relic_id,
+      'reloaded comment did not reveal its item'
+    );
+    pass('focus-reveal');
+  } finally {
+    await reopened.close();
+  }
+  const fallback = await openBrowser(shareUrl, sessionToken, {
+    label: 'focused-fallback',
+    blockRequestVideoFrameCallback: true,
+  });
+  try {
+    await waitReady(fallback);
+    await focusItem(fallback, plan.comment_source.relic_id);
+    await assertFocusedPlaybackBound(fallback, 0, 72);
+    pass('focus-fallback');
+  } finally {
+    await fallback.close();
+  }
+
   await runDecoderTimingProof(sessionToken);
 
   const listed = (await (
@@ -10642,6 +11172,7 @@ try {
     'Duplicate Video 2 range stays on this id.',
     'Dissolve window needs both sources.',
     'Primary grade range, before the dissolve.',
+    focusedCommentBody,
     wholeTrackBody,
     pointerBody,
     editedDupRangeBody,
