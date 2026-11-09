@@ -3200,6 +3200,56 @@ describe('otio playback controller', () => {
     playback.dispose();
   });
 
+  test('cancelled audio play does not persist a failure, but a genuine rejection does', async () => {
+    const playback = createOtioPlayback({
+      document: buildDocument(),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:media',
+    });
+    const playStarted = Promise.withResolvers<void>();
+    const pendingPlay = Promise.withResolvers<void>();
+    try {
+      await playback.setScope({ nodeId: 'audio_a', range: range(0, 24, 24) });
+      const audio = created.find(
+        (element) =>
+          element.attrs.get('data-bundle-path') === 'media/dialogue.wav'
+      );
+      if (!audio) throw new Error('audio decoder was not created');
+      audio.play = () => {
+        playStarted.resolve();
+        return pendingPlay.promise;
+      };
+      const starting = playback.play();
+      await playStarted.promise;
+      await playback.setScope({ nodeId: 'clip_v', range: range(0, 24, 24) });
+      pendingPlay.reject(new Error('cancelled by scope change'));
+      await starting;
+      await playback.setScope({ nodeId: 'audio_a', range: range(0, 24, 24) });
+      expect(
+        playback
+          .getState()
+          .diagnostics.some((issue) =>
+            issue.message.includes('cancelled by scope change')
+          )
+      ).toBe(false);
+
+      audio.play = () => Promise.reject(new Error('decoder rejected playback'));
+      await playback.play();
+      expect(
+        playback
+          .getState()
+          .diagnostics.some(
+            (issue) =>
+              issue.code === 'unsupported-browser' &&
+              issue.message.includes('decoder rejected playback')
+          )
+      ).toBe(true);
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('trimmed audio stops and mute reaches the fallback element', async () => {
     const env = globalThis as { AudioContext?: unknown };
     env.AudioContext = undefined;

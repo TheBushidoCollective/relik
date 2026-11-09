@@ -2154,6 +2154,7 @@ export function createOtioPlayback(
           decodedAt.delete(loaded.element);
           await loaded.element.play();
         } catch (error) {
+          if (stale(gen)) return;
           rememberFailure(
             contrib.bundle_path,
             diagnostic(
