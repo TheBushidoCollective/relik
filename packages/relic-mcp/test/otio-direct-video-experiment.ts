@@ -100,7 +100,7 @@ function checkSample(
 async function main() {
   const executable = process.env.RELIC_CHROME_PATH;
   assert.ok(
-    executable && executable.includes('headless'),
+    executable?.includes('headless'),
     'set RELIC_CHROME_PATH to an owned chrome-headless-shell executable'
   );
   const browser = await discoverChrome(executable);
@@ -110,7 +110,6 @@ async function main() {
     entrypoints: [join(here, 'otio-direct-video-browser.ts')],
     target: 'browser',
     format: 'esm',
-    write: false,
   });
   if (!build.success || !build.outputs[0])
     throw new Error(`browser bundle failed: ${build.logs.join('\n')}`);
@@ -139,7 +138,7 @@ async function main() {
         ? files.get(name)
         : undefined;
       return file
-        ? new Response(file)
+        ? new Response(new Uint8Array(file))
         : new Response('not found', { status: 404 });
     },
   });
@@ -174,7 +173,8 @@ async function main() {
       targetId: created.targetId,
       flatten: true,
     });
-    assert.equal(typeof attached.sessionId, 'string');
+    if (typeof attached.sessionId !== 'string')
+      throw new Error('CDP target attachment returned no session id');
     const session = attached.sessionId;
     await cdp.send('Page.enable', {}, session);
     await cdp.send('Runtime.enable', {}, session);

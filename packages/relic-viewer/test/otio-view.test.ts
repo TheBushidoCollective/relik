@@ -2847,11 +2847,9 @@ describe('OTIO focused scope review regressions', () => {
       if (root.dataset['timelineId'] === 'comment-timeline') {
         latestBatch = current.beginMarkBatch();
         current.clearMarks();
-        anchors
-          .slice(0, visibleComments)
-          .forEach((anchor, index) =>
-            current.paint(anchor, `coincident-${index}`)
-          );
+        anchors.slice(0, visibleComments).forEach((anchor, index) => {
+          current.paint(anchor, `coincident-${index}`);
+        });
         if (autoComplete) current.completeMarkBatch(latestBatch);
       }
     });

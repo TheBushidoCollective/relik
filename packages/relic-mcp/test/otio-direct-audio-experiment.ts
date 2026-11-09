@@ -23,8 +23,11 @@ const fixture = resolve(
   testDir,
   '../../relic-format/test/fixtures/otio/standard-sample.otiod/media'
 );
-const paths = [join(fixture, 'mx_bed.wav'), join(fixture, 'dx_mic1.wav')];
-function reference(path: string): Uint8Array {
+const paths = [
+  join(fixture, 'mx_bed.wav'),
+  join(fixture, 'dx_mic1.wav'),
+] as const;
+function reference(path: string): Uint8Array<ArrayBuffer> {
   const result = spawnSync(
     'ffmpeg',
     [
@@ -50,7 +53,7 @@ function reference(path: string): Uint8Array {
     );
   if (!result.stdout.length || result.stdout.length % 4)
     throw new Error('invalid ffmpeg PCM');
-  return result.stdout;
+  return new Uint8Array(result.stdout);
 }
 
 async function main() {
@@ -66,13 +69,15 @@ async function main() {
   });
   if (!bundle.success)
     throw new Error(`Browser bundle failed: ${bundle.logs.join('\n')}`);
-  const script = await bundle.outputs[0].text();
+  const output = bundle.outputs[0];
+  if (!output) throw new Error('Browser bundle has no output');
+  const script = await output.text();
   const bed = await Bun.file(paths[0]).arrayBuffer();
   const dialog = await Bun.file(paths[1]).arrayBuffer();
-  const refs = paths.map(reference);
+  const refs = [reference(paths[0]), reference(paths[1])] as const;
   const data = new Map<
     string,
-    { body: ArrayBuffer | Uint8Array; type: string }
+    { body: ArrayBuffer | Uint8Array<ArrayBuffer>; type: string }
   >([
     ['/bed.wav', { body: bed, type: 'audio/wav' }],
     ['/dialog.wav', { body: dialog, type: 'audio/wav' }],

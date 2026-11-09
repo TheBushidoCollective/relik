@@ -25,11 +25,7 @@ const clips: Clip[] = [
   { url: '/bed.wav', source: 72000, start: FADE_START, end: TOTAL, fade: 'in' },
 ];
 
-async function prepare(
-  ctx: AudioContext,
-  clip: Clip,
-  counters: { frames: number; peak: number }
-) {
+async function prepare(clip: Clip, counters: { frames: number; peak: number }) {
   const input = new Input({
     formats: ALL_FORMATS,
     source: new UrlSource(location.origin + clip.url),
@@ -82,8 +78,18 @@ async function prepare(
     input.dispose();
   }
 }
+function sampleAt(samples: Float32Array, index: number): number {
+  const value = samples[index];
+  if (value === undefined)
+    throw new Error(`PCM sample out of bounds: ${index}`);
+  return value;
+}
 
-function expected(refs: Float32Array[], wrongOffset = false, muted = false) {
+function expected(
+  refs: readonly [Float32Array, Float32Array],
+  wrongOffset = false,
+  muted = false
+) {
   const out = new Float32Array(TOTAL);
   if (muted) return out;
   for (const clip of clips) {
@@ -98,7 +104,7 @@ function expected(refs: Float32Array[], wrongOffset = false, muted = false) {
         Math.min(1, (n - FADE_START) / (FADE_END - FADE_START))
       );
       const gain = clip.fade === 'in' ? x : clip.fade === 'out' ? 1 - x : 1;
-      out[n] += ref[sourceIndex] * gain;
+      out[n] = sampleAt(out, n) + sampleAt(ref, sourceIndex) * gain;
     }
   }
   return out;
@@ -112,9 +118,10 @@ function metric(
   let error = 0,
     energy = 0;
   for (let n = start; n < end; n++) {
-    const d = actual[n] - target[n];
+    const targetSample = sampleAt(target, n);
+    const d = sampleAt(actual, n) - targetSample;
     error += d * d;
-    energy += target[n] * target[n];
+    energy += targetSample * targetSample;
   }
   return {
     rmse: Math.sqrt(error / (end - start)),
@@ -140,7 +147,7 @@ async function run() {
   const sources: AudioBufferSourceNode[] = [];
   const nodes: AudioNode[] = [];
   try {
-    for (const clip of clips) all.push(await prepare(ctx, clip, counters));
+    for (const clip of clips) all.push(await prepare(clip, counters));
     await ctx.resume();
     const master = ctx.createGain();
     const worklet = URL.createObjectURL(
@@ -203,6 +210,9 @@ async function run() {
     sources.push(canceled);
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i];
+      const chunks = all[i];
+      if (!clip || !chunks)
+        throw new Error(`Missing clip or decoded chunks: ${i}`);
       const gain = ctx.createGain();
       nodes.push(gain);
       gain.connect(master);
@@ -217,7 +227,7 @@ async function run() {
           start + FADE_END / RATE
         );
       }
-      for (const chunk of all[i]) {
+      for (const chunk of chunks) {
         const source = ctx.createBufferSource();
         sources.push(source);
         source.buffer = chunk.buffer;
@@ -244,7 +254,8 @@ async function run() {
     const wrong = metric(actual, expected(refs, true));
     const mute = metric(actual, expected(refs, false, true));
     const uncanceled = target.slice();
-    for (let i = 0; i < RATE; i++) uncanceled[i] += 0.4;
+    for (let i = 0; i < RATE; i++)
+      uncanceled[i] = sampleAt(uncanceled, i) + 0.4;
     const cancellationControl = metric(actual, uncanceled);
     const regions = {
       beforeCut: metric(actual, target, CUT - 2400, CUT),
@@ -272,16 +283,20 @@ async function run() {
       expected: number;
     }[] = [];
     for (let n = 0; n < TOTAL; n++) {
-      if (Math.abs(actual[n] - target[n]) <= 0.003) continue;
+      if (Math.abs(sampleAt(actual, n) - sampleAt(target, n)) <= 0.003)
+        continue;
       const first = n;
-      while (n + 1 < TOTAL && Math.abs(actual[n + 1] - target[n + 1]) > 0.003)
+      while (
+        n + 1 < TOTAL &&
+        Math.abs(sampleAt(actual, n + 1) - sampleAt(target, n + 1)) > 0.003
+      )
         n++;
       if (n - first >= 8)
         badRuns.push({
           first,
           last: n,
-          actual: actual[first],
-          expected: target[first],
+          actual: sampleAt(actual, first),
+          expected: sampleAt(target, first),
         });
     }
     // WAV PCM and context share a sample rate; small tolerance covers browser float mixing.

@@ -24,7 +24,7 @@ export const otioProofTracePrelude = String.raw`(() => {
     CanvasRenderingContext2D.prototype[name] = function(...args) {
       const frame = Number(document.querySelector('.otio-view')?.dataset.frame);
       const skippingStill = fault === 'skip-still' && frame >= 89 && frame < 105;
-      if ((fault === 'freeze' || skippingStill) && visual.active && this.canvas?.matches?.('canvas.otio-canvas')) return;
+      if ((fault === 'freeze' || skippingStill) && (visual.active || screenOnlyActive) && this.canvas?.matches?.('canvas.otio-canvas')) return;
       return original.apply(this, args);
     };
   }
@@ -58,6 +58,7 @@ export const otioProofTracePrelude = String.raw`(() => {
   console.log = function(...args) {
     if (args[0] === 'OTIO_PROOF_MISSING_TAG') recordEvent('missing-tag', null, args[1]);
     if (args[0] === 'OTIO_PROOF_PILOT') recordEvent('pilot', null, args[1]);
+    if (args[0] === 'OTIO_PROOF_RING') recordEvent('ring', null, args[1]);
     return originalConsoleLog.apply(this, args);
   };
   const NativeVideoFrame = globalThis.VideoFrame;
@@ -97,11 +98,14 @@ export const otioProofTracePrelude = String.raw`(() => {
   if (typeof originalRvfc === 'function') {
     HTMLVideoElement.prototype.requestVideoFrameCallback = function(callback) {
       const element = this;
-      return originalRvfc.call(this, (now, metadata) => {
-        recordEvent('rvfc', element, {callbackTime:now, mediaTime:metadata.mediaTime,
+      const callbackId = originalRvfc.call(this, (now, metadata) => {
+        recordEvent('rvfc', element, {callbackId, callbackTime:now, mediaTime:metadata.mediaTime,
           presentedFrames:metadata.presentedFrames, expectedDisplayTime:metadata.expectedDisplayTime});
-        return callback(now, metadata);
+        try { return callback(now, metadata); }
+        finally { recordEvent('rvfc-return', element, {callbackId}); }
       });
+      recordEvent('rvfc-request', element, {callbackId});
+      return callbackId;
     };
   }
   let bufferingObserver = null;
@@ -154,7 +158,25 @@ export const otioProofTracePrelude = String.raw`(() => {
     return result;
   };
   const visual = {active: false, overflow: false, samples: []};
+  let screenOnlyActive = false;
+  let lightweightEvents = [];
+  let lightweightOverflow = false;
+  let clockRaf = null;
+  let clockRafOverflow = false;
   function tick(now) {
+    if (clockRaf) {
+      if (clockRaf.length < 3000) clockRaf.push(now);
+      else clockRafOverflow = true;
+    }
+    if (screenOnlyActive) {
+      if (fault === 'stall' && now - lastStall >= 300) {
+        lastStall = now;
+        const until = performance.now() + 200;
+        while (performance.now() < until) {}
+      }
+      if (lightweightEvents.length >= 3000) lightweightOverflow = true;
+      else lightweightEvents.push({timestamp: performance.now(), frame: document.querySelector('.otio-view')?.getAttribute('data-frame') ?? null});
+    }
     if (visual.active) {
       if (fault === 'stall' && now - lastStall >= 300) {
         lastStall = now;
@@ -168,6 +190,7 @@ export const otioProofTracePrelude = String.raw`(() => {
         try {
           if (!canvas || !canvas.width || !canvas.height) throw new Error('missing canvas');
           const ctx = canvas.getContext('2d');
+          const sampleStarted = performance.now();
           if (!ctx) throw new Error('missing context');
           const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
           let hash = 2166136261;
@@ -184,7 +207,7 @@ export const otioProofTracePrelude = String.raw`(() => {
             const i = (Math.min(canvas.height - 1, Math.floor((y + .5) * canvas.height / 36)) * canvas.width + Math.min(canvas.width - 1, Math.floor((x + .5) * canvas.width / 64))) * 4;
             pixels16.push(pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]);
           }
-          visual.samples.push({timestamp: performance.now(), hash: hash >>> 0, pixels16,
+          visual.samples.push({timestamp: performance.now(), sampleDuration: performance.now() - sampleStarted, hash: hash >>> 0, pixels16,
             frame: root?.getAttribute('data-frame') ?? null});
         } catch (error) {
           visual.samples.push({timestamp: now, error: String(error)});
@@ -198,6 +221,38 @@ export const otioProofTracePrelude = String.raw`(() => {
     setFault(value) {
       if (!['none', 'freeze', 'stall', 'skip-still'].includes(value)) throw new Error('unknown proof fault');
       fault = value; lastStall = performance.now();
+    },
+    async waitForPresentedChanges(required, timeoutMs) {
+      const start = performance.now();
+      while (performance.now() - start < timeoutMs) {
+        let count = 0, previous = null;
+        for (const sample of visual.samples) {
+          if (sample.error || sample.hash === undefined) throw new Error('warm readiness missing canvas provenance');
+          if (previous !== null && sample.hash !== previous) count++;
+          previous = sample.hash;
+        }
+        if (count >= required) {
+          const root = document.querySelector('.otio-view');
+          return {timestamp:performance.now(), frame:Number(root?.dataset.frame),
+            sampleCount:visual.samples.length, changes:count};
+        }
+        const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 10); await promise;
+      }
+      throw new Error('warm readiness did not observe ' + required + ' distinct canvas changes');
+    },
+    startClockCalibration() { clockRaf = []; clockRafOverflow = false; return performance.now(); },
+    stopClockCalibration() {
+      const samples = clockRaf; clockRaf = null;
+      return {samples, overflow:clockRafOverflow, timestamp:performance.now()};
+    },
+    startLightweight() {
+      lightweightEvents = []; lightweightOverflow = false; screenOnlyActive = true;
+      return {timestamp:performance.now(), frame:Number(document.querySelector('.otio-view')?.dataset.frame)};
+    },
+    stopLightweight() {
+      screenOnlyActive = false;
+      return {timestamp:performance.now(), frame:Number(document.querySelector('.otio-view')?.dataset.frame),
+        samples:lightweightEvents, overflow:lightweightOverflow};
     },
     async start() {
       if (graphs.length !== 1) throw new Error('expected exactly one controller destination gain, got ' + graphs.length);

@@ -30,12 +30,14 @@
  */
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
   cp,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
@@ -1716,6 +1718,8 @@ interface ChromeSession {
   continuedNonLoopback: string[];
   cspHeaders: string[];
   workerUrls: string[];
+  readonly browserVersion: Record<string, unknown>;
+  readonly launchFlags: readonly string[];
   label: string | null;
   getContextEvents?(): Promise<
     Array<{ type: string; timestamp: number; target: string | null }>
@@ -2080,6 +2084,7 @@ async function openBrowser(
     let stopWorkerAttach: (() => void) | undefined;
     const documentUrl = url.split('#')[0] ?? url;
     await attestBrowserHeadless(cdp, launch);
+    const browserVersion = await cdp.send('Browser.getVersion');
     const created = (await cdp.send('Target.createTarget', {
       url: 'about:blank',
     })) as { targetId: string };
@@ -2325,6 +2330,12 @@ async function openBrowser(
       cspHeaders,
       workerUrls,
       label,
+      browserVersion,
+      launchFlags: launch.args.map((arg) =>
+        arg.startsWith('--user-data-dir=')
+          ? '--user-data-dir=<owned-profile>'
+          : arg
+      ),
       async getContextEvents(): Promise<
         Array<{ type: string; timestamp: number; target: string | null }>
       > {
@@ -8061,6 +8072,53 @@ async function assertExactMediaTarget(
   );
 }
 
+async function assertQuantizedMovingOracle(): Promise<void> {
+  const windows = await packetWindows('fr30.webm', false);
+  const decoded = await decodeFixtureFrames('fr30.webm');
+  const cases = [
+    { seconds: 2 / 30, frame: 1 },
+    { seconds: (3.995 + 6) / 30, frame: 10 },
+    { seconds: 0.333 - 0.000003, frame: 9 },
+    { seconds: 0.333, frame: 10 },
+    { seconds: 0.333 + 0.000003, frame: 10 },
+  ];
+  for (const witness of cases) {
+    const expected = windowForSeconds(
+      windows,
+      witness.seconds,
+      'quantized witness'
+    );
+    assert.equal(
+      expected.frame,
+      witness.frame,
+      `wrong packet for ${witness.seconds}`
+    );
+    const adjacent = witness.frame - 1;
+    assert.ok(adjacent >= 0);
+    const good = scorePacketCanvas({
+      label: 'quantized witness',
+      canvas: decoded[witness.frame]!,
+      decoded,
+      expectedFrame: expected.frame,
+      neighborFrame: adjacent,
+    });
+    const stale = scorePacketCanvas({
+      label: 'quantized stale control',
+      canvas: decoded[adjacent]!,
+      decoded,
+      expectedFrame: expected.frame,
+      neighborFrame: adjacent,
+    });
+    assert.equal(
+      good.failure,
+      undefined,
+      `correct packet rejected at ${witness.seconds}: ${good.failure}`
+    );
+    assert.ok(stale.failure, `adjacent packet accepted at ${witness.seconds}`);
+  }
+  console.log(`OTIO_QUANTIZED_ORACLE_OK witnesses=${cases.length}`);
+}
+
 async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   const knownUrl = await publishDecoderDirectory('known', decoderFixtureDir);
   const knownBrowser = await openBrowser(knownUrl, sessionToken, {
@@ -9181,6 +9239,12 @@ async function assertFocusedPlaybackBound(
 
 interface MovingTrace {
   start: { timestamp: number; frame: number; sampleFrame: number };
+  warm?: {
+    timestamp: number;
+    frame: number;
+    sampleCount: number;
+    changes: number;
+  };
   trace: {
     timestamp: number;
     frame: number;
@@ -9489,10 +9553,230 @@ async function decodeScreencastFrames(
   }));
 }
 
+async function proofProvenance(
+  browser: ChromeSession
+): Promise<Record<string, unknown>> {
+  const repository = fileURLToPath(new URL('../../../', import.meta.url));
+  const revision = await runChild(['git', 'rev-parse', 'HEAD'], {
+    cwd: repository,
+    timeoutMs: 10000,
+  });
+  assert.equal(revision.exit, 0, 'cannot identify proof source revision');
+  const tracked = await runChild(
+    ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+    {
+      cwd: repository,
+      timeoutMs: 10000,
+    }
+  );
+  assert.equal(tracked.exit, 0, 'cannot enumerate tracked proof source');
+  const sourceHash = createHash('sha256');
+  for (const path of tracked.stdout
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .sort()) {
+    sourceHash.update(path).update('\0');
+    try {
+      sourceHash.update(await readFile(join(repository, path)));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      sourceHash.update('<deleted>');
+    }
+    sourceHash.update('\0');
+  }
+  const assets: Record<string, string> = {};
+  for (const name of (await readdir(viewerDist)).sort()) {
+    try {
+      assets[name] = createHash('sha256')
+        .update(await readFile(join(viewerDist, name)))
+        .digest('hex');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EISDIR') throw error;
+    }
+  }
+  const media: Record<string, string> = {};
+  for (const [name, path] of [
+    ['fr30.webm', join(decoderMediaDir, 'fr30.webm')],
+    ...[
+      'secondary_b.mp4',
+      'plate_1001.png',
+      'plate_1002.png',
+      'mx_bed.wav',
+    ].map((file) => [file, join(fixtureDir, 'media', file)] as const),
+    ['timing-oracle.json', join(decoderMediaDir, 'timing-oracle.json')],
+    [
+      'boundary.otio',
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+          import.meta.url
+        )
+      ),
+    ],
+  ] as const)
+    media[name] = createHash('sha256')
+      .update(await readFile(path))
+      .digest('hex');
+  const viewport = await browser.evaluate<Record<string, unknown>>(
+    '({width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio})'
+  );
+  return {
+    revision: revision.stdout.toString('utf8').trim(),
+    workingTreeSha256: sourceHash.digest('hex'),
+    builtAssets: assets,
+    media,
+    browser: browser.browserVersion,
+    launchFlags: browser.launchFlags,
+    viewport,
+    capture: {
+      canvasGrid: [64, 36],
+      screencast: { format: 'jpeg', quality: 90, everyNthFrame: 1 },
+      audio: 'post-master-gain AudioWorklet currentFrame',
+      maxSamples: 3000,
+    },
+  };
+}
+
+async function calibrateCaptureOverhead(
+  browser: ChromeSession,
+  provenance: Record<string, unknown>
+): Promise<void> {
+  const geometry = await browser.evaluate<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    scale: number;
+    timeOrigin: number;
+  }>(`(() => {
+    const canvas = document.querySelector('canvas.otio-canvas');
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+    const r = canvas.getBoundingClientRect();
+    const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+    const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+    return {x:r.left + (r.width - width)/2, y:r.top + (r.height - height)/2,
+      width, height, scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
+  })()`);
+  const records: Array<Record<string, unknown>> = [];
+  for (const [mode, fault] of [
+    ['light', 'none'],
+    ['full', 'none'],
+    ['light', 'freeze'],
+    ['full', 'freeze'],
+    ['light', 'stall'],
+    ['full', 'stall'],
+  ] as const) {
+    await seekTo(browser, 0);
+    const stopCast = await browser.startScreencast();
+    const result = await browser.evaluate<{
+      start: { timestamp: number; frame: number };
+      trace: {
+        timestamp: number;
+        frame: number;
+        visual?: Array<{ sampleDuration?: number }>;
+        samples?: unknown[];
+      };
+      clock: { samples: number[]; overflow: boolean; timestamp: number };
+    }>(`(async () => {
+      const delay = ms => {const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise;};
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!root || !(button instanceof HTMLButtonElement)) throw new Error('proof playback control missing');
+      globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
+      globalThis.__otioProofTrace.startClockCalibration();
+      const start = ${mode === 'full' ? 'await globalThis.__otioProofTrace.start()' : 'globalThis.__otioProofTrace.startLightweight()'};
+      button.click();
+      await delay(250);
+      const first = {timestamp:performance.now(), frame:Number(root.dataset.frame),
+        buffering:root.dataset.buffering, playing:root.dataset.playing};
+      await delay(750);
+      const trace = ${mode === 'full' ? 'await globalThis.__otioProofTrace.stop()' : 'globalThis.__otioProofTrace.stopLightweight()'};
+      const clock = globalThis.__otioProofTrace.stopClockCalibration();
+      globalThis.__otioProofTrace.setFault('none');
+      if (root.dataset.playing === 'true') button.click();
+      return {start, trace, clock, first};
+    })()`);
+    const cast = await stopCast();
+    const decoded = await decodeScreencastFrames(cast, geometry);
+    const samples = decoded.filter((frame) => {
+      const timestamp = frame.timestamp - geometry.timeOrigin;
+      return (
+        timestamp >= result.start.timestamp &&
+        timestamp <= result.trace.timestamp
+      );
+    });
+    const states: Array<{ timestamp: number; pixels: Uint8Array }> = [];
+    for (const sample of samples) {
+      const previous = states[states.length - 1];
+      if (!previous || rmse(sample.pixels, previous.pixels) > 2)
+        states.push({ timestamp: sample.timestamp, pixels: sample.pixels });
+    }
+    const startMs = result.start.timestamp + geometry.timeOrigin;
+    const endMs = result.trace.timestamp + geometry.timeOrigin;
+    const gaps = [
+      states.length ? states[0]!.timestamp - startMs : endMs - startMs,
+    ];
+    for (let i = 1; i < states.length; i++)
+      gaps.push(states[i]!.timestamp - states[i - 1]!.timestamp);
+    if (states.length) gaps.push(endMs - states[states.length - 1]!.timestamp);
+    gaps.sort((a, b) => a - b);
+    const frameGaps = result.clock.samples
+      .slice(1)
+      .map((time, i) => time - result.clock.samples[i]!);
+    const first250FrameGaps = result.clock.samples
+      .slice(1)
+      .filter((time) => time <= result.start.timestamp + 250)
+      .map((time, i) => time - result.clock.samples[i]!);
+    const sampleCosts =
+      result.trace.visual?.flatMap((sample) =>
+        typeof sample.sampleDuration === 'number' ? [sample.sampleDuration] : []
+      ) ?? [];
+    const receipt = {
+      provenance,
+      mode,
+      fault,
+      geometry,
+      result,
+      cast,
+      stateTimes: states.map((state) => state.timestamp),
+      frameGaps,
+      sampleCosts,
+      p95: gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))],
+      max: gaps[gaps.length - 1],
+      first250FrameGaps,
+    };
+    await writeFile(
+      join(shotDir, `capture-overhead-${mode}-${fault}.json`),
+      JSON.stringify(receipt)
+    );
+    assert.ok(
+      !result.clock.overflow && !cast.overflow,
+      'capture-overhead sample overflow'
+    );
+    records.push(receipt);
+  }
+  for (const mode of ['light', 'full']) {
+    const healthy = records.find(
+      (r) => r['mode'] === mode && r['fault'] === 'none'
+    )!;
+    for (const fault of ['freeze', 'stall']) {
+      const bad = records.find(
+        (r) => r['mode'] === mode && r['fault'] === fault
+      )!;
+      assert.ok(
+        Number(bad['max']) > Number(healthy['max']),
+        `${mode} screencast did not distinguish ${fault} from healthy`
+      );
+    }
+  }
+}
+
 async function assessMovingWindowControls(
   browser: ChromeSession,
   healthyRms: number,
   mutedRms: number,
+  provenance: Record<string, unknown>,
   focused = false
 ): Promise<void> {
   const decoded = await runChild(
@@ -9521,7 +9805,54 @@ async function assessMovingWindowControls(
     36 * frameBytes,
     'independent reference frame count mismatch'
   );
-  const sourceOffset = focused ? 0 : 6;
+  const windows = await packetWindows('fr30.webm', false);
+  const fixture = JSON.parse(
+    await readFile(
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+          import.meta.url
+        )
+      ),
+      'utf8'
+    )
+  ) as {
+    tracks: {
+      children: Array<{
+        children: Array<{
+          metadata?: { relic?: { id?: string } };
+          source_range?: { start_time: { value: number; rate: number } };
+          media_references?: Record<
+            string,
+            {
+              available_range?: { start_time: { value: number; rate: number } };
+            }
+          >;
+          active_media_reference_key?: string;
+        }>;
+      }>;
+    };
+  };
+  const itemId = focused ? 'moving-a' : 'upper-video-a';
+  const item = fixture.tracks.children
+    .flatMap((track) => track.children)
+    .find((candidate) => candidate.metadata?.relic?.id === itemId);
+  const source = item?.source_range?.start_time;
+  const available =
+    item?.media_references?.[item.active_media_reference_key ?? '']
+      ?.available_range?.start_time;
+  assert.ok(
+    source && available && source.rate > 0 && available.rate > 0,
+    `fixture mapping unavailable for ${itemId}`
+  );
+  const sourceOffsetSeconds =
+    source.value / source.rate - available.value / available.rate;
+  assert.equal(
+    sourceOffsetSeconds,
+    focused ? 0 : 6 / 30,
+    'fixture mapping changed; update the reference span'
+  );
+  const sourceOffset = Math.round(sourceOffsetSeconds * 30);
   const references = Array.from({ length: 30 }, (_, i) =>
     decoded.stdout.subarray(
       (i + sourceOffset) * frameBytes,
@@ -9548,7 +9879,12 @@ async function assessMovingWindowControls(
       ambiguous: best.error >= 12 || best.error >= next.error,
       wrongSource:
         !Number.isFinite(composition) ||
-        best.frame !== Math.floor(composition) + sourceOffset,
+        best.frame !==
+          windowForSeconds(
+            windows,
+            composition / 30 + sourceOffsetSeconds,
+            'moving-window'
+          ).frame,
     };
   };
   const receipts: Array<Record<string, unknown>> = [];
@@ -9584,21 +9920,26 @@ async function assessMovingWindowControls(
       const root = document.querySelector('.otio-view');
       const button = document.querySelector('button.otio-play');
       if (!root || !(button instanceof HTMLButtonElement)) throw new Error('missing playback controls');
-      if (root.dataset.playing !== 'true') button.click();
+      if (root.dataset.playing === 'true') throw new Error('cold capture began while playback was running');
+      globalThis.__otioProofTrace.setFault('none');
+      const start = await globalThis.__otioProofTrace.start();
+      button.click();
       const until = performance.now() + 12000;
       while (root.dataset.playing !== 'true' && performance.now() < until) await sleep(10);
       if (root.dataset.playing !== 'true') throw new Error('playback did not start');
-      await sleep(40);
+      const warm = await globalThis.__otioProofTrace.waitForPresentedChanges(3, 5000);
       globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
-      const start = await globalThis.__otioProofTrace.start();
       await sleep(500);
       const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
       if (root.dataset.playing === 'true') button.click();
-      return {start, trace};
+      return {start, warm, trace};
     })()`);
     const cast = await stopCast();
-    const samples = capture.trace.visual;
+    assert.ok(capture.warm, 'warm presentation readiness not recorded');
+    const samples = capture.trace.visual.filter(
+      (sample) => sample.timestamp >= capture.warm!.timestamp
+    );
     const issues: string[] = [];
     if (
       capture.trace.visualOverflow ||
@@ -9632,7 +9973,11 @@ async function assessMovingWindowControls(
         issues.push('unresolved or ambiguous source pixels');
       if (result.wrongSource)
         issues.push('source pixels disagree with composition frame');
-      const expectedFrame = Math.floor(composition) + sourceOffset;
+      const expectedFrame = windowForSeconds(
+        windows,
+        composition / 30 + sourceOffsetSeconds,
+        'moving-window control'
+      ).frame;
       const staleIndex = expectedFrame - sourceOffset - 1;
       if (
         !staleControl &&
@@ -9668,15 +10013,17 @@ async function assessMovingWindowControls(
           sourceFrame: best.frame,
         });
     }
-    const elapsedMs = capture.trace.timestamp - capture.start.timestamp;
+    const elapsedMs = capture.trace.timestamp - capture.warm.timestamp;
+    // The first observed state is left-censored. Charge the entire known
+    // capture edge through its first change, not two artificially short gaps.
     const gaps = [
-      identified.length
-        ? identified[0]!.timestamp - capture.start.timestamp
+      identified.length > 1
+        ? identified[1]!.timestamp - capture.warm.timestamp
         : elapsedMs,
     ];
-    for (let i = 1; i < identified.length; i++)
+    for (let i = 2; i < identified.length; i++)
       gaps.push(identified[i]!.timestamp - identified[i - 1]!.timestamp);
-    if (identified.length)
+    if (identified.length > 1)
       gaps.push(
         capture.trace.timestamp - identified[identified.length - 1]!.timestamp
       );
@@ -9685,7 +10032,7 @@ async function assessMovingWindowControls(
       new Set(identified.map((entry) => entry.sourceFrame)).size /
       ((elapsedMs * 30) / 1000);
     const progress =
-      (capture.trace.frame - capture.start.frame) / ((elapsedMs * 30) / 1000);
+      (capture.trace.frame - capture.warm.frame) / ((elapsedMs * 30) / 1000);
     const p95 =
       gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))] ??
       Infinity;
@@ -9701,6 +10048,97 @@ async function assessMovingWindowControls(
     )
       issues.push('moving-window thresholds');
     const screen = await decodeScreencastFrames(cast, geometry);
+    const coldCanvas = capture.trace.visual
+      .filter(
+        (sample) =>
+          sample.timestamp >= capture.start.timestamp &&
+          sample.timestamp < capture.warm!.timestamp
+      )
+      .map((sample) => {
+        if (
+          !sample.pixels16 ||
+          sample.pixels16.length !== frameBytes ||
+          sample.error
+        )
+          throw new Error('cold canvas sample lacks pixel provenance');
+        const classified = classifyPixels(
+          Uint8Array.from(sample.pixels16),
+          Number(sample.frame)
+        );
+        if (classified.ambiguous || classified.wrongSource)
+          issues.push('cold canvas source provenance');
+        return {
+          timestamp: sample.timestamp,
+          sourceFrame: classified.best.frame,
+        };
+      });
+    const coldScreen = screen
+      .filter((sample) => {
+        const time = sample.timestamp - geometry.timeOrigin;
+        return (
+          time >= capture.start.timestamp && time < capture.warm!.timestamp
+        );
+      })
+      .map((sample) => {
+        const matches = references
+          .map((reference, i) => ({
+            frame: i + sourceOffset,
+            error: rmse(sample.pixels, reference),
+          }))
+          .sort((a, b) => a.error - b.error);
+        const best = matches[0]!,
+          next = matches[1]!;
+        if (best.error >= 12 || best.error >= next.error)
+          issues.push('cold screencast source provenance');
+        return {
+          timestamp: sample.timestamp - geometry.timeOrigin,
+          sourceFrame: best.frame,
+        };
+      });
+    const coldMetrics = (
+      samples: Array<{ timestamp: number; sourceFrame: number }>
+    ) => {
+      const changes: Array<{ timestamp: number; sourceFrame: number }> = [];
+      for (const sample of samples)
+        if (
+          !changes.length ||
+          changes[changes.length - 1]!.sourceFrame !== sample.sourceFrame
+        )
+          changes.push(sample);
+      const duration = capture.warm!.timestamp - capture.start.timestamp;
+      const intervals = [
+        changes.length > 1
+          ? changes[1]!.timestamp - capture.start.timestamp
+          : duration,
+      ];
+      for (let i = 2; i < changes.length; i++)
+        intervals.push(changes[i]!.timestamp - changes[i - 1]!.timestamp);
+      if (changes.length > 1)
+        intervals.push(
+          capture.warm!.timestamp - changes[changes.length - 1]!.timestamp
+        );
+      intervals.sort((a, b) => a - b);
+      return {
+        changes,
+        duration,
+        p95:
+          intervals[
+            Math.min(intervals.length - 1, Math.floor(intervals.length * 0.95))
+          ] ?? Infinity,
+        max: intervals[intervals.length - 1] ?? Infinity,
+      };
+    };
+    const coldCanvasMetrics = coldMetrics(coldCanvas);
+    const coldScreenMetrics = coldMetrics(coldScreen);
+    if (
+      coldCanvasMetrics.changes.length < 2 ||
+      coldScreenMetrics.changes.length < 2 ||
+      coldCanvasMetrics.p95 > 50 ||
+      coldCanvasMetrics.max > 100 ||
+      coldScreenMetrics.p95 > 50 ||
+      coldScreenMetrics.max > 100
+    )
+      issues.push('cold presentation thresholds');
     const screenStates: Array<{
       timestamp: number;
       sourceFrame: number;
@@ -9709,7 +10147,7 @@ async function assessMovingWindowControls(
     for (const sample of screen) {
       const timestamp = sample.timestamp - geometry.timeOrigin;
       if (
-        timestamp < capture.start.timestamp ||
+        timestamp < capture.warm.timestamp ||
         timestamp > capture.trace.timestamp
       )
         continue;
@@ -9747,15 +10185,15 @@ async function assessMovingWindowControls(
         });
     }
     const screenGaps = [
-      screenStates.length
-        ? screenStates[0]!.timestamp - capture.start.timestamp
+      screenStates.length > 1
+        ? screenStates[1]!.timestamp - capture.warm.timestamp
         : elapsedMs,
     ];
-    for (let i = 1; i < screenStates.length; i++)
+    for (let i = 2; i < screenStates.length; i++)
       screenGaps.push(
         screenStates[i]!.timestamp - screenStates[i - 1]!.timestamp
       );
-    if (screenStates.length)
+    if (screenStates.length > 1)
       screenGaps.push(
         capture.trace.timestamp -
           screenStates[screenStates.length - 1]!.timestamp
@@ -9812,13 +10250,24 @@ async function assessMovingWindowControls(
       screenStates,
       screenCoverage,
       screenP95,
+      coldCanvasMetrics,
+      coldScreenMetrics,
       screenMax,
+      initialCanvasCensoredMs:
+        identified.length > 1
+          ? identified[1]!.timestamp - capture.warm.timestamp
+          : elapsedMs,
+      initialScreenCensoredMs:
+        screenStates.length > 1
+          ? screenStates[1]!.timestamp - capture.warm.timestamp
+          : elapsedMs,
       longestSilentSamples,
       silenceThreshold,
       issues,
       identified,
       staleControl,
       wrongSourceControl,
+      provenance,
       capture,
       geometry,
       cast,
@@ -9884,17 +10333,19 @@ async function assessMovingWindowControls(
       extractFrame(join(decoderMediaDir, 'fr30.webm'), frame, 64, 36);
     const readSecondary = (frame: number) =>
       extractFrame(join(fixtureDir, 'media', 'secondary_b.mp4'), frame, 64, 36);
-    const [a30, b30, b31, lowerA, lowerB, upper60, upper61, a150] =
-      await Promise.all([
-        readVideo(36),
-        readSecondary(4),
-        readSecondary(5),
-        readVideo(60),
-        readVideo(6),
-        readSecondary(28),
-        readSecondary(29),
-        readVideo(21),
-      ]);
+    const videoFrameNumbers = [36, 37, 60, 61, 6, 7, 21, 22];
+    const videoFrames = new Map<number, Uint8Array>();
+    await Promise.all(
+      videoFrameNumbers.map(async (frame) => {
+        videoFrames.set(frame, await readVideo(frame));
+      })
+    );
+    const [b30, b31, upper60, upper61] = await Promise.all([
+      readSecondary(4),
+      readSecondary(5),
+      readSecondary(28),
+      readSecondary(29),
+    ]);
     const transitions = [30, 60, 150];
     function transitionComparison(
       frame: number,
@@ -9909,6 +10360,22 @@ async function assessMovingWindowControls(
       let expected: Uint8Array;
       let hardCuts: Uint8Array[];
       if (frame === 60) {
+        const lowerAIndex = windowForSeconds(
+          windows,
+          time / 30,
+          'dissolve lower outgoing'
+        ).frame;
+        const lowerBIndex = windowForSeconds(
+          windows,
+          (time - 54) / 30,
+          'dissolve lower incoming'
+        ).frame;
+        const lowerA = videoFrames.get(lowerAIndex);
+        const lowerB = videoFrames.get(lowerBIndex);
+        assert.ok(
+          lowerA && lowerB,
+          `missing independently decoded dissolve frames ${lowerAIndex}/${lowerBIndex}`
+        );
         const upper = secondaryIndex === 28 ? upper60 : upper61;
         const lower = blend(lowerA, lowerB, 1 - u, u);
         expected = blend(lower, upper, u, 1 - u);
@@ -9919,7 +10386,16 @@ async function assessMovingWindowControls(
           blend(lowerB, upper, u, 1 - u),
         ];
       } else {
-        const outgoing = frame === 30 ? a30 : a150;
+        const index = windowForSeconds(
+          windows,
+          (time - (frame === 30 ? -6 : 129)) / 30,
+          'dissolve upper outgoing'
+        ).frame;
+        const outgoing = videoFrames.get(index);
+        assert.ok(
+          outgoing,
+          `missing independently decoded dissolve frame ${index}`
+        );
         expected = blend(outgoing, incoming, 1 - u, u);
         hardCuts = [outgoing, incoming];
       }
@@ -10091,6 +10567,7 @@ async function assessMovingWindowControls(
       await writeFile(
         join(shotDir, `boundary-sustained-${repetition}.json`),
         JSON.stringify({
+          provenance,
           capture,
           cast,
           geometry,
@@ -10277,6 +10754,7 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       mobile: false,
     });
     await waitReady(browser);
+    const provenance = await proofProvenance(browser);
     const stopCast = await browser.startScreencast();
     const capture = await browser.evaluate<{
       start: { sampleRate: number; contextState: string; sampleFrame: number };
@@ -10315,7 +10793,7 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
     const cast = await stopCast();
     await writeFile(
       join(shotDir, 'post-gain-calibration.json'),
-      JSON.stringify({ capture, cast })
+      JSON.stringify({ provenance, capture, cast })
     );
     assert.ok(
       proofWorkletRequests > 0,
@@ -10399,9 +10877,10 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       `master-gain mute did not silence the tapped signal: ${before} -> ${muted}`
     );
     pass('post-gain-tap-calibration');
-    await assessMovingWindowControls(browser, before, muted);
+    await calibrateCaptureOverhead(browser, provenance);
+    await assessMovingWindowControls(browser, before, muted, provenance);
     await focusItem(browser, 'moving-a');
-    await assessMovingWindowControls(browser, before, muted, true);
+    await assessMovingWindowControls(browser, before, muted, provenance, true);
     await leaveFocus(browser);
     await focusItem(browser, 'moving-b');
     const local = await browser.evaluate<{
@@ -10585,6 +11064,9 @@ try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
   await assertPacketGateRejectsPlantedFrames();
   pass('packet-gate-negative-controls');
+  await assertQuantizedMovingOracle();
+  if (process.env['RELIC_OTIO_PACKET_ORACLE_ONLY'] === '1')
+    throw new DecoderOnlyComplete();
   const sessionToken = await createSession();
   if (process.env['RELIC_OTIO_DECODER_ONLY'] === '1') {
     await runDecoderTimingProof(sessionToken);
