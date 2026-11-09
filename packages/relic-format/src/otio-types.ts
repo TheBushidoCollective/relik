@@ -259,6 +259,40 @@ export interface OtioSourceMapping {
   readonly scalar: number;
 }
 
+/** A linear fade in original, untrimmed composition coordinates. */
+export interface OtioAudioGainFactor {
+  readonly range: OtioTimeRange;
+  readonly direction: 'in' | 'out';
+}
+
+/**
+ * One occurrence over a half-open composition interval. Multiple spans with
+ * the same occurrence are the same voice, not independent clip instances.
+ * Gain factors multiply, and remain in untrimmed transition coordinates.
+ */
+export interface OtioAudioScheduleSpan {
+  readonly occurrence: string;
+  readonly node_id: string;
+  readonly track_id: string;
+  readonly bundle_path: OtioBundleEntryName | null;
+  readonly timeline_range: OtioTimeRange;
+  readonly source_mapping: OtioSourceMapping | null;
+  readonly gain_factors: readonly OtioAudioGainFactor[];
+  readonly disposition: 'media' | 'silence' | 'unavailable';
+  readonly diagnostics: readonly OtioDiagnostic[];
+}
+
+/** Integer sample coordinates, or a reason this interval cannot be scheduled exactly. */
+export type OtioAudioSampleLattice =
+  | {
+      readonly eligible: true;
+      readonly timeline_start: number;
+      readonly timeline_end: number;
+      readonly source_start: number;
+      readonly source_end: number;
+    }
+  | { readonly eligible: false; readonly reason: string };
+
 export interface OtioSourceSpan {
   readonly timeline_id: string;
   readonly track_id: string;

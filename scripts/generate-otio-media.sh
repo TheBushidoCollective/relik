@@ -12,12 +12,14 @@ DECODER_DIR="$REPO_ROOT/packages/relic-format/test/fixtures/otio/decoder-boundar
 DECODER_TIMING="$DECODER_DIR/timing-oracle.json"
 CHECK=0
 BOUNDARY_ONLY=0
+SCHEDULED_ONLY=0
 case "${1:-}" in
   "") ;;
   --check) CHECK=1 ;;
   --decoder-boundary) BOUNDARY_ONLY=1 ;;
+  --scheduled-audio) SCHEDULED_ONLY=1 ;;
   *)
-    echo "usage: $0 [--check|--decoder-boundary]" >&2
+    echo "usage: $0 [--check|--decoder-boundary|--scheduled-audio]" >&2
     exit 2
     ;;
 esac
@@ -443,6 +445,50 @@ PY
   write_decoder_timing write
 }
 
+generate_scheduled_audio() {
+  local dir="$REPO_ROOT/packages/relic-format/test/fixtures/otio/scheduled-audio.otiod/media"
+  mkdir -p "$dir"
+  python3 - "$dir" <<'PY'
+import hashlib, json, struct, sys, wave
+from pathlib import Path
+
+media = Path(sys.argv[1])
+frames = 192000
+payload = bytearray(frames * 4)
+for i in range(frames):
+    struct.pack_into("<hh", payload, i * 4, ((i * 109 + 12345) % 16001) - 8000,
+                     ((i * 257 + 5345) % 16001) - 8000)
+with wave.open(str(media / "indexed-stereo.wav"), "wb") as wav:
+    wav.setnchannels(2)
+    wav.setsampwidth(2)
+    wav.setframerate(48000)
+    wav.writeframes(payload)
+oracle = {
+    "sample_rate": 48000, "channels": 2, "frames": frames, "encoding": "signed little-endian PCM16",
+    "pcm_sha256": hashlib.sha256(payload).hexdigest(),
+    "left": "((sample_index * 109 + 12345) % 16001) - 8000",
+    "right": "((sample_index * 257 + 5345) % 16001) - 8000",
+    "unit_frames": 1600,
+    "source_edits": {
+        "scheduled-a1": [30, 56], "scheduled-a2": [100, 4],
+        "scheduled-b1": [20, 4], "scheduled-b2": [50, 56],
+        "scheduled-cut-a": [10, 30], "scheduled-cut-b": [60, 30]
+    },
+    "transition_offsets": {
+        "scheduled-inner-a": [3, 2], "scheduled-outer-fade": [4, 2],
+        "scheduled-inner-b": [3, 2]
+    },
+    "edit_unit": "1/30 second", "intervals": "half-open",
+}
+(media / "sample-oracle.json").write_text(json.dumps(oracle, indent=2) + "\n")
+PY
+}
+
+if [[ "$SCHEDULED_ONLY" == 1 ]]; then
+  generate_scheduled_audio
+  exit 0
+fi
+
 if [[ "$CHECK" == 1 ]]; then
   check_all
   check_decoder
@@ -564,6 +610,7 @@ print(f"measured {len(rows)} files")
 PY
 
 generate_decoder
+generate_scheduled_audio
 check_all
 check_decoder
 echo "Media generation complete in $MEDIA_DIR and $DECODER_DIR"

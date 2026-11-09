@@ -767,6 +767,47 @@ def build_playback_boundaries_timeline() -> Timeline:
     return timeline
 
 
+def build_scheduled_audio_timeline() -> Timeline:
+    """Independent stereo PCM ownership fixture; all edit units are 30 fps."""
+    timeline = Timeline(name="Scheduled Audio Proof")
+    timeline.metadata["relic"] = {"id": "scheduled-audio"}
+    rate = 30
+
+    def clip(identifier, start, duration):
+        item = Clip(name=identifier, source_range=TimeRange(RationalTime(start, rate), RationalTime(duration, rate)),
+                    media_reference=ExternalReference(target_url="media/indexed-stereo.wav",
+                        available_range=TimeRange(RationalTime(0, rate), RationalTime(120, rate))))
+        item.metadata["relic"] = {"id": identifier}
+        return item
+
+    def fade(identifier, before, after):
+        item = Transition(name=identifier, transition_type=TransitionTypes.SMPTE_Dissolve,
+                          in_offset=RationalTime(before, rate), out_offset=RationalTime(after, rate))
+        item.metadata["relic"] = {"id": identifier}
+        return item
+
+    def group(identifier, clips):
+        stack = Stack(name=identifier)
+        stack.metadata["relic"] = {"id": identifier}
+        track = Track(name=identifier + "-audio", kind=TrackKind.Audio)
+        track.metadata["relic"] = {"id": identifier + "-audio"}
+        track.extend(clips)
+        stack.append(track)
+        return stack
+
+    outer = Track(name="Nested audio dissolves", kind=TrackKind.Video)
+    outer.metadata["relic"] = {"id": "scheduled-outer"}
+    outer.extend([
+        group("scheduled-group-a", [clip("scheduled-a1", 30, 56), fade("scheduled-inner-a", 3, 2), clip("scheduled-a2", 100, 4)]),
+        fade("scheduled-outer-fade", 4, 2),
+        group("scheduled-group-b", [clip("scheduled-b1", 20, 4), fade("scheduled-inner-b", 3, 2), clip("scheduled-b2", 50, 56)]),
+    ])
+    cuts = Track(name="Stereo hard cuts", kind=TrackKind.Audio)
+    cuts.metadata["relic"] = {"id": "scheduled-cuts"}
+    cuts.extend([clip("scheduled-cut-a", 10, 30), clip("scheduled-cut-b", 60, 30)])
+    timeline.tracks.extend([outer, cuts])
+    return timeline
+
 
 # -----------------------------------------------------------------------------
 # Oracle: official library ranges, plus a labeled Relik rendering contract
@@ -1426,6 +1467,7 @@ def build_oracle():
     duplicate = build_duplicate_tracks_timeline()
     decoder = build_decoder_boundary_timeline()
     playback_boundaries = build_playback_boundaries_timeline()
+    scheduled_audio = build_scheduled_audio_timeline()
     oracle = {
         "version": 1,
         "provenance": {
@@ -1489,6 +1531,7 @@ def build_oracle():
         "duplicate-tracks": duplicate,
         "decoder-boundary": decoder,
         "playback-boundaries": playback_boundaries,
+        "scheduled-audio": scheduled_audio,
     }
 
 
@@ -1587,6 +1630,8 @@ def write_outputs(root: Path, oracle, timelines, check: bool) -> int:
         standard_dir / "version.txt": "1.0.0\n",
         decoder_dir / "content.otio": serialize_timeline(timelines["decoder-boundary"]),
         decoder_dir / "version.txt": "1.0.0\n",
+        fixtures / "scheduled-audio.otiod" / "content.otio": serialize_timeline(timelines["scheduled-audio"]),
+        fixtures / "scheduled-audio.otiod" / "version.txt": "1.0.0\n",
         edge / "playback-boundaries.otio": serialize_timeline(timelines["playback-boundaries"]),
         edge / "playback-boundaries-oracle.json": oracle_text({
             "otio_version": REQUIRED_OTIO_VERSION,

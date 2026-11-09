@@ -11,6 +11,9 @@ import { readOtioImageSequence } from './otio-sequence.ts';
 import type {
   OtioActiveTransition,
   OtioAudioContribution,
+  OtioAudioGainFactor,
+  OtioAudioSampleLattice,
+  OtioAudioScheduleSpan,
   OtioBundleEntryName,
   OtioDiagnostic,
   OtioDocumentV1,
@@ -781,6 +784,13 @@ export function otioPlaybackBoundaries(
   return result;
 }
 
+function untrimmedTransitionRange(node: OtioNode): OtioTimeRange | null {
+  const map = boundMaps.get(node);
+  return map && node.parent_range
+    ? { start_time: map.timeline_origin, duration: node.parent_range.duration }
+    : (node.timeline_range ?? null);
+}
+
 function transitionAt(
   document: OtioDocumentV1,
   track: OtioNode,
@@ -791,14 +801,7 @@ function transitionAt(
     if (!child || !isTransition(child.schema)) continue;
     const visible = child.visible_timeline_range ?? child.timeline_range;
     if (!visible || !rangeContainsTime(visible, time)) continue;
-    const map = boundMaps.get(child);
-    const untrimmed =
-      map && child.parent_range
-        ? {
-            start_time: map.timeline_origin,
-            duration: child.parent_range.duration,
-          }
-        : child.timeline_range;
+    const untrimmed = untrimmedTransitionRange(child);
     if (!untrimmed) continue;
     const duration = timeToSeconds(untrimmed.duration);
     const into = timeToSeconds(
@@ -1270,6 +1273,278 @@ export function evaluateOtioAt(
     active_transitions: activeTransitions,
     diagnostics,
     video_composition: composition,
+  };
+}
+/** Plan half-open audio intervals using the same traversal as point evaluation. */
+export function audioScheduleForOtioRange(
+  document: OtioDocumentV1,
+  timelineId: string,
+  range: OtioTimeRange
+): OtioAudioScheduleSpan[] {
+  const timeline = ownNode(document.nodes, timelineId);
+  if (!timeline || !document.timeline_ids.includes(timelineId)) {
+    return [
+      {
+        occurrence: JSON.stringify([timelineId]),
+        node_id: timelineId,
+        track_id: timelineId,
+        bundle_path: null,
+        timeline_range: range,
+        source_mapping: null,
+        gain_factors: [],
+        disposition: 'unavailable',
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'unplaced-item',
+            message: `Timeline ${timelineId} is not in this document`,
+          },
+        ],
+      },
+    ];
+  }
+  if (compareRationalTimes(range.duration, { value: 0, rate: 1 }) <= 0)
+    return [];
+  const end = rangeEndTime(range);
+  const boundaries = [
+    range.start_time,
+    end,
+    ...otioPlaybackBoundaries(document, timelineId, range).map(
+      (entry) => entry.time
+    ),
+  ];
+  const add = (time: OtioRationalTime): void => {
+    if (
+      compareRationalTimes(time, range.start_time) > 0 &&
+      compareRationalTimes(time, end) < 0
+    )
+      boundaries.push(time);
+  };
+  const visit = (node: OtioNode): void => {
+    const map = boundMaps.get(node);
+    if (map && node.parent_range) {
+      add(map.timeline_origin);
+      add(addRationalTimes(map.timeline_origin, node.parent_range.duration));
+    }
+    if (map && node.available_range && map.scalar !== 0) {
+      for (const edge of [
+        node.available_range.start_time,
+        rangeEndTime(node.available_range),
+      ]) {
+        const time = invertOtioIntervalEdge(map, edge);
+        if (time) add(time);
+      }
+    }
+    for (const id of node.children_ids) {
+      const child = ownNode(document.nodes, id);
+      if (child) visit(child);
+    }
+  };
+  visit(timeline);
+  boundaries.sort(compareRationalTimes);
+  const unique = boundaries.filter(
+    (time, index) =>
+      index === 0 || compareRationalTimes(time, boundaries[index - 1]!) !== 0
+  );
+  const result: OtioAudioScheduleSpan[] = [];
+  for (let i = 0; i + 1 < unique.length; i++) {
+    const start = unique[i]!;
+    const stop = unique[i + 1]!;
+    const duration = subtractRationalTimes(stop, start);
+    if (duration.value <= 0) continue;
+    const interval = { start_time: start, duration };
+    const midpoint = addRationalTimes(start, {
+      value: duration.value / 2,
+      rate: duration.rate,
+    });
+    const evaluated = evaluateOtioAt(document, timelineId, midpoint);
+    if (evaluated.audio_contributions.length === 0) {
+      result.push({
+        occurrence: JSON.stringify([timelineId, 'silence']),
+        node_id: timelineId,
+        track_id: timelineId,
+        bundle_path: null,
+        timeline_range: interval,
+        source_mapping: null,
+        gain_factors: [],
+        disposition: 'silence',
+        diagnostics: evaluated.diagnostics,
+      });
+      continue;
+    }
+    for (const contribution of evaluated.audio_contributions) {
+      const node = ownNode(document.nodes, contribution.node_id)!;
+      const map = boundMaps.get(node);
+      const source = map
+        ? fileRelative(map, sampleOtioMedia(map, start))
+        : null;
+      const mapping =
+        source && map
+          ? {
+              timeline_origin: start,
+              source_origin: source,
+              scalar: map.scalar,
+            }
+          : null;
+      const gainFactors: OtioAudioGainFactor[] = [];
+      const diagnostics = [
+        ...contribution.diagnostics,
+        ...evaluated.diagnostics.filter(
+          (diagnostic) => diagnostic.code === 'unsupported-effect'
+        ),
+      ];
+      for (let n = 0; n + 1 < contribution.ancestry.length; n++) {
+        const ancestor = ownNode(document.nodes, contribution.ancestry[n]!);
+        if (!ancestor) continue;
+        diagnostics.push(...unknownEffectDiagnostics(ancestor));
+        if (
+          (ancestor.effects ?? []).some(
+            (effect) =>
+              effect.enabled &&
+              (effect.schema === 'FreezeFrame.1' ||
+                (effect.schema === 'LinearTimeWarp.1' &&
+                  effect.time_scalar !== 1))
+          )
+        ) {
+          diagnostics.push({
+            severity: 'warning',
+            code: 'unsupported-effect',
+            message: 'Ancestor retiming is not eligible for scheduled PCM',
+            target: { node_id: ancestor.id },
+          });
+        }
+        if (!isTrack(ancestor.schema)) continue;
+        const active = transitionAt(document, ancestor, midpoint);
+        if (
+          !active ||
+          classifyOtioTransition(active.transition) !== 'smpte-dissolve'
+        )
+          continue;
+        const transitionRange = untrimmedTransitionRange(active.transition);
+        const child = contribution.ancestry[n + 1];
+        if (!transitionRange) continue;
+        if (
+          neighborItem(document, ancestor, active.transition.id, -1)?.id ===
+          child
+        ) {
+          gainFactors.push({ range: transitionRange, direction: 'out' });
+        } else if (
+          neighborItem(document, ancestor, active.transition.id, 1)?.id ===
+          child
+        ) {
+          gainFactors.push({ range: transitionRange, direction: 'in' });
+        }
+      }
+      const handle = map
+        ? missingHandleRangeDiagnostic(
+            node,
+            sourceExtentForInterval(map, interval),
+            node.available_range
+          )
+        : null;
+      if (handle) diagnostics.push(handle);
+      const absent =
+        contribution.bundle_path !== null &&
+        Object.keys(document.media).length > 0 &&
+        !Object.hasOwn(document.media, contribution.bundle_path);
+      if (absent)
+        diagnostics.push({
+          severity: 'warning',
+          code: 'missing-media',
+          message: `Audio media for ${node.name || node.id} is not in the bundle`,
+          target: { node_id: node.id },
+        });
+      result.push({
+        occurrence: JSON.stringify(contribution.ancestry),
+        node_id: node.id,
+        track_id: contribution.track_id,
+        bundle_path: contribution.bundle_path,
+        timeline_range: interval,
+        source_mapping: mapping,
+        gain_factors: gainFactors,
+        disposition:
+          !mapping || !contribution.bundle_path || !!handle || absent
+            ? 'unavailable'
+            : 'media',
+        diagnostics,
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * Prove integer sample boundaries and unit-rate mapping. Callers must separately
+ * validate PCM format, sample rate, resource bounds, and muted participation.
+ */
+export function otioAudioSampleLattice(
+  span: OtioAudioScheduleSpan,
+  sampleRate: number
+): OtioAudioSampleLattice {
+  if (!Number.isSafeInteger(sampleRate) || sampleRate <= 0)
+    return { eligible: false, reason: 'invalid sample rate' };
+  if (span.disposition !== 'media' || !span.source_mapping)
+    return { eligible: false, reason: span.disposition };
+  if (span.source_mapping.scalar !== 1)
+    return { eligible: false, reason: 'non-unit source mapping' };
+  if (
+    compareRationalTimes(
+      span.source_mapping.timeline_origin,
+      span.timeline_range.start_time
+    ) !== 0
+  )
+    return {
+      eligible: false,
+      reason: 'source mapping does not begin at interval start',
+    };
+  if (
+    span.diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === 'unsupported-effect' ||
+        diagnostic.severity === 'error'
+    )
+  ) {
+    return { eligible: false, reason: 'unsupported effect or invalid timing' };
+  }
+  const frame = (time: OtioRationalTime): number | null => {
+    const candidate = Math.round((time.value * sampleRate) / time.rate);
+    return Number.isSafeInteger(candidate) &&
+      compareRationalTimes(time, { value: candidate, rate: sampleRate }) === 0
+      ? candidate
+      : null;
+  };
+  const timelineStart = frame(span.timeline_range.start_time);
+  const timelineEnd = frame(rangeEndTime(span.timeline_range));
+  const sourceStart = frame(span.source_mapping.source_origin);
+  if (
+    timelineStart === null ||
+    timelineEnd === null ||
+    sourceStart === null ||
+    sourceStart < 0 ||
+    timelineEnd < timelineStart
+  ) {
+    return { eligible: false, reason: 'fractional or invalid sample boundary' };
+  }
+  const sourceEnd = sourceStart + timelineEnd - timelineStart;
+  if (!Number.isSafeInteger(sourceEnd))
+    return {
+      eligible: false,
+      reason: 'sample index exceeds safe integer range',
+    };
+  for (const factor of span.gain_factors) {
+    if (
+      frame(factor.range.start_time) === null ||
+      frame(rangeEndTime(factor.range)) === null
+    ) {
+      return { eligible: false, reason: 'fractional transition boundary' };
+    }
+  }
+  return {
+    eligible: true,
+    timeline_start: timelineStart,
+    timeline_end: timelineEnd,
+    source_start: sourceStart,
+    source_end: sourceEnd,
   };
 }
 
