@@ -39,6 +39,7 @@ export type PresentedWindowOutcome =
   | { readonly kind: 'match'; readonly index: number }
   | { readonly kind: 'uncovered' }
   | { readonly kind: 'outside' }
+  | { readonly kind: 'backpressure' }
   | { readonly kind: 'readout-failed' };
 
 export function compareDecoderSourceTimes(
@@ -474,6 +475,95 @@ export function computePhaseAnchor(
   };
 }
 
+export interface OtioAudioClockBridge {
+  readonly contextTime: number;
+  readonly performanceTime: number;
+  readonly uncertaintyMs: number;
+}
+
+export interface OtioCausalEpoch {
+  readonly contextFrame: number;
+  readonly contextTime: number;
+  readonly performanceTime: number;
+  readonly intervalLower: number;
+  readonly intervalUpper: number;
+}
+
+/** Select a future integer audio frame inside every admitted video phase band. */
+export function selectOtioCausalEpoch(
+  samples: readonly DecoderPhaseSample[],
+  vsyncSeconds: number,
+  bridge: OtioAudioClockBridge,
+  sampleRate: number,
+  contextNow: number,
+  requestWall: number,
+  nowWall: number,
+  guardFrames: number
+): OtioCausalEpoch | null {
+  if (
+    !Number.isSafeInteger(sampleRate) ||
+    sampleRate <= 0 ||
+    !Number.isSafeInteger(guardFrames) ||
+    guardFrames < 0 ||
+    !Number.isFinite(vsyncSeconds) ||
+    vsyncSeconds <= 0 ||
+    !Number.isFinite(bridge.contextTime) ||
+    !Number.isFinite(bridge.performanceTime) ||
+    !Number.isFinite(bridge.uncertaintyMs) ||
+    bridge.uncertaintyMs < 0 ||
+    !Number.isFinite(contextNow) ||
+    !Number.isFinite(requestWall) ||
+    !Number.isFinite(nowWall)
+  )
+    return null;
+  let lower = -Infinity;
+  let upper = Infinity;
+  for (const sample of samples) {
+    if (
+      !Number.isFinite(sample.dL) ||
+      !Number.isFinite(sample.iL0Plus1Start) ||
+      !Number.isFinite(sample.sourceT0Seconds) ||
+      !Number.isFinite(sample.rL) ||
+      sample.rL <= 0 ||
+      !Number.isFinite(sample.wMinSeconds) ||
+      sample.wMinSeconds < vsyncSeconds
+    )
+      return null;
+    const preferred =
+      sample.dL +
+      1000 *
+        (sample.wMinSeconds +
+          vsyncSeconds / 2 -
+          (sample.iL0Plus1Start - sample.sourceT0Seconds) / sample.rL);
+    const halfWidth = 1000 * (sample.wMinSeconds - vsyncSeconds / 2);
+    lower = Math.max(lower, preferred - halfWidth);
+    upper = Math.min(upper, preferred + halfWidth);
+  }
+  const safeWall = Math.max(lower + bridge.uncertaintyMs, requestWall, nowWall);
+  const contextAtSafeWall =
+    bridge.contextTime + (safeWall - bridge.performanceTime) / 1000;
+  const contextFrame = Math.max(
+    Math.ceil(contextAtSafeWall * sampleRate),
+    Math.ceil(contextNow * sampleRate) + guardFrames
+  );
+  if (!Number.isSafeInteger(contextFrame) || contextFrame < 0) return null;
+  const contextTime = contextFrame / sampleRate;
+  const performanceTime =
+    bridge.performanceTime + 1000 * (contextTime - bridge.contextTime);
+  if (
+    performanceTime < safeWall ||
+    performanceTime + bridge.uncertaintyMs > upper
+  )
+    return null;
+  return {
+    contextFrame,
+    contextTime,
+    performanceTime,
+    intervalLower: lower,
+    intervalUpper: upper,
+  };
+}
+
 export interface NativeSnapshotSlot {
   readonly canvas: HTMLCanvasElement;
   readonly ctx: CanvasRenderingContext2D | null;
@@ -482,12 +572,52 @@ export interface NativeSnapshotSlot {
   lead: number;
 }
 
+export interface NativeSnapshotReservation {
+  readonly epoch: number;
+  readonly occurrence: string;
+  readonly tags: readonly number[];
+  isValid(): boolean;
+  release(): void;
+}
+
+export interface NativeSnapshotIdentity {
+  readonly videoElement: HTMLVideoElement;
+  readonly bundlePath: string;
+  readonly width: number;
+  readonly height: number;
+  readonly onInvalidated?: () => void;
+}
+
 export class NativeDecoderRing {
   readonly slots: NativeSnapshotSlot[] = [];
   private nextSlotIndex = 0;
   private currentEpoch = 0;
   private rVfcHandle: number | null = null;
   private allocatedPixels = 0;
+  private reservationGeneration = 0;
+  private readonly pinnedSlots = new Map<NativeSnapshotSlot, number>();
+  private readonly invalidationListeners = new Set<() => void>();
+  private callbackGeneration = 0;
+  private width = 0;
+  private height = 0;
+
+  private invalidateReservations(): void {
+    this.reservationGeneration++;
+    const listeners = [...this.invalidationListeners];
+    this.invalidationListeners.clear();
+    this.pinnedSlots.clear();
+    for (const notify of listeners) {
+      try {
+        notify();
+      } catch {
+        // One consumer must not prevent the other leases being invalidated.
+      }
+    }
+  }
+
+  private readonly onContextLost = (): void => {
+    this.invalidateReservations();
+  };
 
   consecutiveUncovered = 0;
   totalUncovered = 0;
@@ -525,9 +655,9 @@ export class NativeDecoderRing {
       return false;
     }
     if (
+      this.width === width &&
+      this.height === height &&
       this.slots.length === SNAPSHOT_SLOTS_PER_DECODER &&
-      this.slots[0]?.canvas.width === width &&
-      this.slots[0]?.canvas.height === height &&
       !this.hasLostContext()
     ) {
       return true;
@@ -537,23 +667,36 @@ export class NativeDecoderRing {
     this.release();
     if (!this.budget.allocate(needed)) return false;
     this.allocatedPixels = needed;
-    for (let i = 0; i < SNAPSHOT_SLOTS_PER_DECODER; i++) {
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      this.slots.push({
-        canvas,
-        ctx,
-        tag: null,
-        epoch: -1,
-        lead: 0,
-      });
+    try {
+      for (let i = 0; i < SNAPSHOT_SLOTS_PER_DECODER; i++) {
+        const canvas = document.createElement('canvas');
+        // Register the surface before any operation that can throw.
+        const slot: NativeSnapshotSlot = {
+          canvas,
+          ctx: null,
+          tag: null,
+          epoch: -1,
+          lead: 0,
+        };
+        this.slots.push(slot);
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('snapshot-context-unavailable');
+        this.slots[i] = { ...slot, ctx };
+        canvas.addEventListener?.('contextlost', this.onContextLost);
+      }
+      this.width = width;
+      this.height = height;
+      return true;
+    } catch {
+      this.release();
+      return false;
     }
-    return true;
   }
 
   release(): void {
+    this.invalidateReservations();
     this.cancelCallback();
     if (this.startupWaiter) {
       const waiter = this.startupWaiter;
@@ -561,12 +704,17 @@ export class NativeDecoderRing {
       waiter.reject?.(new Error('ring-released'));
     }
     for (const slot of this.slots) {
-      slot.canvas.width = 0;
-      slot.canvas.height = 0;
+      slot.canvas.removeEventListener?.('contextlost', this.onContextLost);
+      try {
+        slot.canvas.width = 0;
+        slot.canvas.height = 0;
+      } catch {}
       slot.tag = null;
       slot.epoch = -1;
     }
     this.slots.length = 0;
+    this.width = 0;
+    this.height = 0;
     if (this.allocatedPixels > 0) {
       this.budget.release(this.allocatedPixels);
       this.allocatedPixels = 0;
@@ -574,6 +722,7 @@ export class NativeDecoderRing {
   }
 
   cancelCallback(): void {
+    this.callbackGeneration++;
     const rvfcVideo = this.videoElement as HTMLVideoElementWithRvfc;
     if (
       this.rVfcHandle !== null &&
@@ -582,11 +731,12 @@ export class NativeDecoderRing {
       try {
         rvfcVideo.cancelVideoFrameCallback(this.rVfcHandle);
       } catch {}
-      this.rVfcHandle = null;
     }
+    this.rVfcHandle = null;
   }
 
   resetEpoch(newEpoch: number): void {
+    this.invalidateReservations();
     this.cancelCallback();
     if (this.startupWaiter) {
       const waiter = this.startupWaiter;
@@ -636,7 +786,8 @@ export class NativeDecoderRing {
   }
 
   readoutFrame(timing: OtioVideoTiming, epoch: number): PresentedWindowOutcome {
-    if (this.slots.length === 0) {
+    if (epoch !== this.currentEpoch || this.hasLostContext()) {
+      if (epoch === this.currentEpoch) this.invalidateReservations();
       return { kind: 'readout-failed' };
     }
     const { outcome, frame } = readPresentedFrame(this.videoElement, timing);
@@ -646,8 +797,17 @@ export class NativeDecoderRing {
         this.lastCapturedTag = outcome.index;
         return outcome;
       }
-      const slot = this.slots[this.nextSlotIndex];
-      if (!slot) return { kind: 'readout-failed' };
+      let slotIndex = this.nextSlotIndex;
+      let slot: NativeSnapshotSlot | undefined;
+      for (let i = 0; i < this.slots.length; i++) {
+        slotIndex = (this.nextSlotIndex + i) % this.slots.length;
+        const candidate = this.slots[slotIndex];
+        if (candidate && !this.pinnedSlots.has(candidate)) {
+          slot = candidate;
+          break;
+        }
+      }
+      if (!slot) return { kind: 'backpressure' };
       const ctx = slot.ctx;
       slot.tag = null;
       slot.epoch = -1;
@@ -658,7 +818,7 @@ export class NativeDecoderRing {
       } catch {
         return { kind: 'readout-failed' };
       }
-      this.nextSlotIndex = (this.nextSlotIndex + 1) % this.slots.length;
+      this.nextSlotIndex = (slotIndex + 1) % this.slots.length;
       slot.tag = outcome.index;
       slot.epoch = epoch;
       slot.lead = 0;
@@ -689,8 +849,19 @@ export class NativeDecoderRing {
   }
 
   findSlotWithTag(tag: number, epoch: number): NativeSnapshotSlot | null {
+    if (epoch !== this.currentEpoch) return null;
+    if (this.hasLostContext()) {
+      this.invalidateReservations();
+      return null;
+    }
     for (const slot of this.slots) {
-      if (slot.epoch === epoch && slot.tag === tag) {
+      if (
+        slot.ctx &&
+        slot.canvas.width === this.width &&
+        slot.canvas.height === this.height &&
+        slot.epoch === epoch &&
+        slot.tag === tag
+      ) {
         return slot;
       }
     }
@@ -701,8 +872,101 @@ export class NativeDecoderRing {
     return this.findSlotWithTag(tag, epoch) !== null;
   }
 
+  reserveTags(
+    tags: readonly number[],
+    epoch: number,
+    identity?: NativeSnapshotIdentity
+  ): NativeSnapshotReservation | null {
+    if (this.hasLostContext()) {
+      this.invalidateReservations();
+      return null;
+    }
+    if (
+      epoch !== this.currentEpoch ||
+      (identity &&
+        (identity.videoElement !== this.videoElement ||
+          identity.bundlePath !== this.bundlePath ||
+          identity.width !== this.width ||
+          identity.height !== this.height))
+    )
+      return null;
+    const unique = [...new Set(tags)];
+    const slots: NativeSnapshotSlot[] = [];
+    for (const tag of unique) {
+      const slot = this.findSlotWithTag(tag, epoch);
+      if (!slot) return null;
+      slots.push(slot);
+    }
+    const generation = this.reservationGeneration;
+    const width = this.width;
+    const height = this.height;
+    const surfaces = slots.map((slot) => ({
+      canvas: slot.canvas,
+      ctx: slot.ctx,
+    }));
+    for (const slot of slots)
+      this.pinnedSlots.set(slot, (this.pinnedSlots.get(slot) ?? 0) + 1);
+    let released = false;
+    let notified = false;
+    const notify = (): void => {
+      if (released || notified) return;
+      notified = true;
+      identity?.onInvalidated?.();
+    };
+    this.invalidationListeners.add(notify);
+    return {
+      epoch,
+      occurrence: this.key,
+      tags: unique,
+      isValid: () => {
+        if (released || generation !== this.reservationGeneration) return false;
+        const valid =
+          epoch === this.currentEpoch &&
+          this.width === width &&
+          this.height === height &&
+          !this.hasLostContext() &&
+          slots.every(
+            (slot, index) =>
+              this.slots.includes(slot) &&
+              slot.canvas === surfaces[index]?.canvas &&
+              slot.ctx === surfaces[index]?.ctx &&
+              slot.ctx !== null &&
+              slot.canvas.width === width &&
+              slot.canvas.height === height &&
+              slot.epoch === epoch &&
+              slot.tag === unique[index]
+          );
+        if (!valid) this.invalidateReservations();
+        return valid;
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        this.invalidationListeners.delete(notify);
+        if (generation !== this.reservationGeneration) return;
+        for (const slot of slots) {
+          const count = this.pinnedSlots.get(slot) ?? 0;
+          if (count <= 1) this.pinnedSlots.delete(slot);
+          else this.pinnedSlots.set(slot, count - 1);
+        }
+      },
+    };
+  }
+
   hasLostContext(): boolean {
+    if (
+      this.slots.length !== SNAPSHOT_SLOTS_PER_DECODER ||
+      this.width <= 0 ||
+      this.height <= 0
+    )
+      return true;
     for (const slot of this.slots) {
+      if (
+        !slot.ctx ||
+        slot.canvas.width !== this.width ||
+        slot.canvas.height !== this.height
+      )
+        return true;
       const surface = slot.canvas as HTMLCanvasElement & {
         isContextLost?: () => boolean;
       };
@@ -730,15 +994,19 @@ export class NativeDecoderRing {
   startCallbacks(
     timing: OtioVideoTiming,
     _rL: number,
-    onUncoveredStickyIneligible: () => void
+    onUncoveredStickyIneligible: () => void,
+    onBackpressure?: () => void
   ): void {
     this.timing = timing;
     const rvfcVideo = this.videoElement as HTMLVideoElementWithRvfc;
     if (typeof rvfcVideo.requestVideoFrameCallback !== 'function') {
       return;
     }
+    this.cancelCallback();
     const epoch = this.currentEpoch;
+    const callbackGeneration = this.callbackGeneration;
     const loop = (): void => {
+      if (callbackGeneration !== this.callbackGeneration) return;
       if (this.currentEpoch !== epoch || this.videoElement.paused) {
         this.rVfcHandle = null;
         return;
@@ -746,6 +1014,7 @@ export class NativeDecoderRing {
       try {
         this.rVfcHandle = rvfcVideo.requestVideoFrameCallback!(
           (now: number, _metadata: VideoFrameCallbackMetadata) => {
+            if (callbackGeneration !== this.callbackGeneration) return;
             this.rVfcHandle = null;
             if (this.currentEpoch !== epoch || this.videoElement.paused) {
               return;
@@ -779,8 +1048,11 @@ export class NativeDecoderRing {
                 return;
               }
               loop();
+            } else if (outcome.kind === 'backpressure') {
+              onBackpressure?.();
+              loop();
             } else {
-              // outside span: ignored, re-register
+              // Outside the certified span.
               loop();
             }
           }
