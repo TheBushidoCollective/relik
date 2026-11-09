@@ -749,7 +749,7 @@ def build_playback_boundaries_timeline() -> Timeline:
     upper.extend([
         clip("upper-video-a", "fr30.webm", 6, 30, 90),
         dissolve("upper-dissolve-a"),
-        clip("upper-video-b", "fr30.webm", 6, 30, 90),
+        clip("upper-video-b", "secondary_b.mp4", 6, 30, 180),
         dissolve("upper-dissolve-to-gap"),
         gap("boundary-gap-a"),
         clip("still-a-first", "plate_1001.png", 0, 15, 180),
@@ -758,7 +758,7 @@ def build_playback_boundaries_timeline() -> Timeline:
         gap("boundary-gap-b"),
         clip("upper-video-c", "fr30.webm", 6, 15, 90),
         dissolve("upper-dissolve-b"),
-        clip("upper-video-d", "fr30.webm", 6, 15, 90),
+        clip("upper-video-d", "secondary_b.mp4", 6, 15, 180),
     ])
     audio = Track(name="Continuous known chirp", kind=TrackKind.Audio)
     audio.metadata["relic"] = {"id": "boundary-audio"}

@@ -1251,7 +1251,10 @@ export function evaluateOtioAt(
         severity: 'warning',
         code: 'unsupported-effect',
         message: `Transition ${node?.transition_type || '(missing type)'} is unsupported; preview uses the editorial cut`,
-        target: { node_id: active.node_id, json_pointer: node?.json_pointer },
+        target: {
+          node_id: active.node_id,
+          ...(node ? { json_pointer: node.json_pointer } : {}),
+        },
       });
     }
   }

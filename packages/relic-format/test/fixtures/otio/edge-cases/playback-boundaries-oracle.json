@@ -1036,11 +1036,11 @@
               "rate": 30.0
             },
             "duration": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             },
             "end_time_exclusive": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             }
           },
@@ -1114,18 +1114,18 @@
         "active_media_reference_key": "DEFAULT_MEDIA",
         "active_reference": {
           "schema": "ExternalReference.1",
-          "target_url": "media/fr30.webm",
+          "target_url": "media/secondary_b.mp4",
           "available_range": {
             "start_time": {
               "value": 0.0,
               "rate": 30.0
             },
             "duration": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             },
             "end_time_exclusive": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             }
           }
@@ -1133,18 +1133,18 @@
         "media_references": {
           "DEFAULT_MEDIA": {
             "schema": "ExternalReference.1",
-            "target_url": "media/fr30.webm",
+            "target_url": "media/secondary_b.mp4",
             "available_range": {
               "start_time": {
                 "value": 0.0,
                 "rate": 30.0
               },
               "duration": {
-                "value": 90.0,
+                "value": 180.0,
                 "rate": 30.0
               },
               "end_time_exclusive": {
-                "value": 90.0,
+                "value": 180.0,
                 "rate": 30.0
               }
             }
@@ -2127,11 +2127,11 @@
               "rate": 30.0
             },
             "duration": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             },
             "end_time_exclusive": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             }
           },
@@ -2202,18 +2202,18 @@
         "active_media_reference_key": "DEFAULT_MEDIA",
         "active_reference": {
           "schema": "ExternalReference.1",
-          "target_url": "media/fr30.webm",
+          "target_url": "media/secondary_b.mp4",
           "available_range": {
             "start_time": {
               "value": 0.0,
               "rate": 30.0
             },
             "duration": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             },
             "end_time_exclusive": {
-              "value": 90.0,
+              "value": 180.0,
               "rate": 30.0
             }
           }
@@ -2221,18 +2221,18 @@
         "media_references": {
           "DEFAULT_MEDIA": {
             "schema": "ExternalReference.1",
-            "target_url": "media/fr30.webm",
+            "target_url": "media/secondary_b.mp4",
             "available_range": {
               "start_time": {
                 "value": 0.0,
                 "rate": 30.0
               },
               "duration": {
-                "value": 90.0,
+                "value": 180.0,
                 "rate": 30.0
               },
               "end_time_exclusive": {
-                "value": 90.0,
+                "value": 180.0,
                 "rate": 30.0
               }
             }
@@ -2780,7 +2780,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 3.0,
@@ -3020,7 +3020,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 6.0,
@@ -3188,7 +3188,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 9.0,
@@ -3428,7 +3428,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 33.0,
@@ -3768,7 +3768,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 36.0,
@@ -4920,7 +4920,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 3.0,
@@ -5160,7 +5160,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 6.0,
@@ -5328,7 +5328,7 @@
             "enabled": true,
             "contributes": true,
             "status": "supported",
-            "bundle_path": "media/fr30.webm",
+            "bundle_path": "media/secondary_b.mp4",
             "active_media_reference_key": "DEFAULT_MEDIA",
             "library_source_time": {
               "value": 9.0,
@@ -5757,7 +5757,7 @@
                 "rate": 30.0
               }
             },
-            "bundle_path": "media/fr30.webm"
+            "bundle_path": "media/secondary_b.mp4"
           },
           {
             "node_id": "upper-dissolve-to-gap",
@@ -6452,7 +6452,7 @@
                 "rate": 30.0
               }
             },
-            "bundle_path": "media/fr30.webm"
+            "bundle_path": "media/secondary_b.mp4"
           }
         ]
       },

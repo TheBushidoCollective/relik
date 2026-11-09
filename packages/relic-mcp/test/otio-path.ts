@@ -68,6 +68,7 @@ import {
   createBrowserHeadlessLaunch,
 } from './browser-headless.ts';
 import { isOpaqueBlack } from './otio-path-pixels.ts';
+import { otioProofTracePrelude } from './otio-proof-trace.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
@@ -169,6 +170,8 @@ const REQUIRED = [
   'focus-reveal',
   'focus-viewports',
   'resize-viewer',
+  'post-gain-tap-calibration',
+  'focused-nonzero-comment',
 ] as const;
 
 const passed = new Set<string>();
@@ -1672,6 +1675,9 @@ interface ChromeSession {
   screenshot(label: string): Promise<void>;
   mediaSeekTargets(): Promise<number[]>;
   waitForWorkerHooks(): Promise<void>;
+  startScreencast(): Promise<
+    () => Promise<{ frames: Array<Record<string, unknown>>; overflow: boolean }>
+  >;
   close(): Promise<void>;
   blocked: string[];
   continuedNonLoopback: string[];
@@ -1689,6 +1695,7 @@ interface OpenBrowserOptions {
   readonly blockRequestVideoFrameCallback?: boolean;
   readonly rvfcBusyWaitMs?: number;
   readonly recordDecoderPresentation?: boolean;
+  readonly recordProofTrace?: boolean;
 }
 
 function loopbackUrl(value: string): boolean {
@@ -2177,6 +2184,7 @@ async function openBrowser(
       rvfcLateTrap,
       contextEventLogPrelude,
       options.recordDecoderPresentation ? decoderPresentationPrelude : '',
+      options.recordProofTrace ? otioProofTracePrelude : '',
       options.blockWebCodecs ? webCodecsTrap : '',
     ]
       .filter(Boolean)
@@ -2304,6 +2312,41 @@ async function openBrowser(
           timestamp: number;
           target: string | null;
         }>;
+      },
+      async startScreencast() {
+        const frames: Array<Record<string, unknown>> = [];
+        let overflow = false;
+        const unsubscribe = cdp.onEvent((event) => {
+          if (
+            event.sessionId !== sessionId ||
+            event.method !== 'Page.screencastFrame'
+          )
+            return;
+          if (frames.length < 900) frames.push(event.params);
+          else overflow = true;
+          void cdp
+            .send(
+              'Page.screencastFrameAck',
+              { sessionId: event.params['sessionId'] },
+              sessionId
+            )
+            .catch(() => {});
+        });
+        try {
+          await cdp.send(
+            'Page.startScreencast',
+            { format: 'jpeg', quality: 90, everyNthFrame: 1 },
+            sessionId
+          );
+        } catch (error) {
+          unsubscribe();
+          throw error;
+        }
+        return async () => {
+          await cdp.send('Page.stopScreencast', {}, sessionId);
+          unsubscribe();
+          return { frames, overflow };
+        };
       },
       send: (method, params) => cdp.send(method, params, sessionId),
       async evaluate<T>(expression: string): Promise<T> {
@@ -2465,8 +2508,11 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
   const landed = await browser.evaluate<boolean>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
     const seek = document.querySelector('input.otio-seek');
-    if (!seek) { resolve(false); return promise; }
-    seek.value = '${frame}';
+    const root = document.querySelector('.otio-view');
+    if (!(seek instanceof HTMLInputElement) || !(root instanceof HTMLElement)) { resolve(false); return promise; }
+    const origin = Number(root.dataset.domainOrigin);
+    if (!Number.isFinite(origin)) { resolve(false); return promise; }
+    seek.value = String(${frame} - origin);
     seek.dispatchEvent(new Event('input', { bubbles: true }));
     const start = Date.now();
     const tick = () => {
@@ -8989,6 +9035,68 @@ async function leaveFocus(browser: ChromeSession): Promise<void> {
   assert.ok(cleared, 'back to composition did not clear focus');
 }
 
+async function assertFocusedWheelZoom(browser: ChromeSession): Promise<void> {
+  const before = await browser.evaluate<{
+    x: number;
+    y: number;
+    fraction: number;
+    scale: number;
+    frame: string;
+  } | null>(`(() => {
+    const rail = document.querySelector('.otio-track-rail');
+    const scroller = document.querySelector('.otio-timeline-scroll');
+    const root = document.querySelector('.otio-view');
+    if (!(rail instanceof HTMLElement) || !(scroller instanceof HTMLElement) ||
+        !(root instanceof HTMLElement)) return null;
+    const r = rail.getBoundingClientRect(), s = scroller.getBoundingClientRect();
+    const left = Math.max(r.left, s.left), right = Math.min(r.right, s.right);
+    if (right <= left || r.width <= 0) return null;
+    const x = left + (right - left) * .5, y = r.top + r.height * .5;
+    return {x, y, fraction: (x - r.left) / r.width,
+      scale: Number(scroller.dataset.pixelsPerFrame), frame: root.dataset.frame ?? ''};
+  })()`);
+  assert.ok(
+    before && Number.isFinite(before.scale) && before.scale > 0,
+    'wheel zoom geometry unavailable'
+  );
+  await browser.send('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x: before.x,
+    y: before.y,
+    deltaX: 0,
+    deltaY: -250,
+  });
+  const after = await browser.evaluate<{
+    fraction: number;
+    scale: number;
+    frame: string;
+    mode: string;
+  } | null>(`(async () => {
+    const {promise, resolve} = Promise.withResolvers();
+    requestAnimationFrame(() => requestAnimationFrame(resolve)); await promise;
+    const rail = document.querySelector('.otio-track-rail');
+    const scroller = document.querySelector('.otio-timeline-scroll');
+    const root = document.querySelector('.otio-view');
+    if (!(rail instanceof HTMLElement) || !(scroller instanceof HTMLElement) ||
+        !(root instanceof HTMLElement)) return null;
+    const r = rail.getBoundingClientRect();
+    return {fraction: (${before.x} - r.left) / r.width,
+      scale: Number(scroller.dataset.pixelsPerFrame), frame: root.dataset.frame ?? '',
+      mode: scroller.dataset.zoomMode ?? ''};
+  })()`);
+  assert.ok(after, 'wheel zoom lost timeline');
+  assert.equal(after.mode, 'manual', 'wheel did not select manual zoom');
+  assert.ok(
+    after.scale > before.scale,
+    'wheel did not increase timeline scale'
+  );
+  assert.ok(
+    Math.abs(after.fraction - before.fraction) < 0.01,
+    'wheel zoom moved time under pointer'
+  );
+  assert.equal(after.frame, before.frame, 'wheel zoom sought playback');
+}
+
 async function assertFocusedPlaybackBound(
   browser: ChromeSession,
   start: number,
@@ -9027,6 +9135,1072 @@ async function assertFocusedPlaybackBound(
   );
 }
 
+interface MovingTrace {
+  start: { timestamp: number; frame: number };
+  trace: {
+    timestamp: number;
+    frame: number;
+    audioOverflow: boolean;
+    visualOverflow: boolean;
+    visual: Array<{
+      timestamp: number;
+      frame: string | null;
+      pixels16?: number[];
+      error?: string;
+    }>;
+    audio: Array<{ sampleFrame: number; channels: number[][] }>;
+    sampleRate: number;
+  };
+}
+async function comparePostGainPcm(
+  trace: MovingTrace['trace'],
+  referenceCache: Map<number, Float32Array>,
+  healthyRms: number,
+  mutedRms: number
+): Promise<{
+  offset: number;
+  correlation: number;
+  gain: number;
+  longestDropoutMs: number;
+}> {
+  const rate = trace.sampleRate;
+  assert.ok(Number.isFinite(rate) && rate > 0, 'invalid PCM sample rate');
+  let reference = referenceCache.get(rate);
+  if (!reference) {
+    const decoded = await runChild(
+      [
+        'ffmpeg',
+        '-v',
+        'error',
+        '-i',
+        join(fixtureDir, 'media', 'mx_bed.wav'),
+        '-af',
+        'pan=mono|c0=c0',
+        '-ar',
+        String(rate),
+        '-f',
+        'f32le',
+        'pipe:1',
+      ],
+      { timeoutMs: 30000 }
+    );
+    assert.equal(
+      decoded.exit,
+      0,
+      `source audio decode failed: ${decoded.stderr}`
+    );
+    assert.equal(decoded.stdout.length % 4, 0, 'source PCM is truncated');
+    reference = new Float32Array(decoded.stdout.length / 4);
+    for (let i = 0; i < reference.length; i++)
+      reference[i] = decoded.stdout.readFloatLE(i * 4);
+    referenceCache.set(rate, reference);
+  }
+  assert.ok(
+    trace.audio.length > 0 && !trace.audioOverflow,
+    'post-gain PCM unavailable'
+  );
+  for (let i = 1; i < trace.audio.length; i++) {
+    const previous = trace.audio[i - 1]!;
+    assert.ok(previous.channels[0], 'post-gain PCM channel missing');
+    assert.equal(
+      trace.audio[i]!.sampleFrame,
+      previous.sampleFrame + previous.channels[0].length,
+      'post-gain PCM has a missing chunk'
+    );
+  }
+  const captured = trace.audio.flatMap((chunk) => chunk.channels[0] ?? []);
+  const n = Math.min(Math.floor(rate * 0.5), captured.length);
+  assert.ok(n >= rate * 0.25, 'post-gain PCM too short to align');
+  const maxOffset = Math.min(Math.floor(rate), reference.length - n);
+  assert.ok(maxOffset > 0, 'source PCM too short to align');
+  const stride = Math.max(1, Math.floor(rate / 1000));
+  const score = (offset: number): { correlation: number; gain: number } => {
+    let cross = 0,
+      sourceEnergy = 0,
+      capturedEnergy = 0;
+    for (let i = 0; i < n; i += stride) {
+      const source = reference![offset + i]!,
+        actual = captured[i]!;
+      cross += source * actual;
+      sourceEnergy += source * source;
+      capturedEnergy += actual * actual;
+    }
+    return {
+      correlation: cross / Math.sqrt(sourceEnergy * capturedEnergy),
+      gain: cross / sourceEnergy,
+    };
+  };
+  let offset = 0,
+    best = -Infinity;
+  for (let candidate = 0; candidate <= maxOffset; candidate += stride) {
+    const current = score(candidate).correlation;
+    if (Number.isFinite(current) && current > best) {
+      best = current;
+      offset = candidate;
+    }
+  }
+  const coarse = offset;
+  for (
+    let candidate = Math.max(0, coarse - stride);
+    candidate <= Math.min(maxOffset, coarse + stride);
+    candidate++
+  ) {
+    const current = score(candidate).correlation;
+    if (Number.isFinite(current) && current > best) {
+      best = current;
+      offset = candidate;
+    }
+  }
+  const aligned = score(offset);
+  assert.ok(
+    aligned.correlation > 0 && aligned.gain > 0,
+    'post-gain PCM could not be correlated to source'
+  );
+  const window = Math.max(1, Math.round(rate * 0.005));
+  const threshold = Math.max(mutedRms * 2, healthyRms * 0.01);
+  let run = 0,
+    longest = 0;
+  const length = Math.min(captured.length, reference.length - offset);
+  let sourceEnergy = 0,
+    actualEnergy = 0;
+  for (let i = 0; i < Math.min(window, length); i++) {
+    sourceEnergy += (reference[offset + i]! * aligned.gain) ** 2;
+    actualEnergy += captured[i]! ** 2;
+  }
+  for (let start = 0; start + window <= length; start++) {
+    if (start > 0) {
+      sourceEnergy +=
+        (reference[offset + start + window - 1]! * aligned.gain) ** 2 -
+        (reference[offset + start - 1]! * aligned.gain) ** 2;
+      actualEnergy +=
+        captured[start + window - 1]! ** 2 - captured[start - 1]! ** 2;
+    }
+    const expected = Math.sqrt(Math.max(0, sourceEnergy) / window);
+    const actual = Math.sqrt(Math.max(0, actualEnergy) / window);
+    if (expected > threshold && actual <= threshold) {
+      run = run === 0 ? window : run + 1;
+      longest = Math.max(longest, run);
+    } else run = 0;
+  }
+  return {
+    offset,
+    correlation: aligned.correlation,
+    gain: aligned.gain,
+    longestDropoutMs: (longest * 1000) / rate,
+  };
+}
+
+async function decodeScreencastFrames(
+  cast: { frames: Array<Record<string, unknown>>; overflow: boolean },
+  rect: { x: number; y: number; width: number; height: number; scale: number }
+): Promise<Array<{ timestamp: number; pixels: Uint8Array }>> {
+  assert.equal(
+    rect.scale,
+    1,
+    'screencast calibration requires unit device scale'
+  );
+  const frames = cast.frames.map((frame) => {
+    const metadata = frame['metadata'] as { timestamp?: number } | undefined;
+    assert.ok(
+      typeof frame['data'] === 'string' && Number.isFinite(metadata?.timestamp),
+      'screencast frame missing image or timestamp'
+    );
+    return {
+      data: Buffer.from(frame['data'] as string, 'base64'),
+      timestamp: metadata!.timestamp! * 1000,
+    };
+  });
+  assert.ok(
+    frames.length >= 2 && !cast.overflow,
+    'screencast capture unavailable or overflowed'
+  );
+  const x = Math.round(rect.x),
+    y = Math.round(rect.y);
+  const width = Math.floor(rect.width),
+    height = Math.floor(rect.height);
+  assert.ok(
+    x >= 0 && y >= 0 && width > 0 && height > 0,
+    'canvas outside screencast viewport'
+  );
+  const output = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-f',
+      'image2pipe',
+      '-vcodec',
+      'mjpeg',
+      '-i',
+      'pipe:0',
+      '-vf',
+      `crop=${width}:${height}:${x}:${y},scale=16:9:flags=neighbor`,
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    {
+      input: Buffer.concat(frames.map((frame) => frame.data)),
+      timeoutMs: 30000,
+    }
+  );
+  assert.equal(
+    output.exit,
+    0,
+    `screencast JPEG decode failed: ${output.stderr}`
+  );
+  const frameBytes = 16 * 9 * 4;
+  assert.equal(
+    output.stdout.length,
+    frames.length * frameBytes,
+    'screencast decoder dropped frames'
+  );
+  return frames.map((frame, i) => ({
+    timestamp: frame.timestamp,
+    pixels: output.stdout.subarray(i * frameBytes, (i + 1) * frameBytes),
+  }));
+}
+
+async function assessMovingWindowControls(
+  browser: ChromeSession,
+  healthyRms: number,
+  mutedRms: number,
+  focused = false
+): Promise<void> {
+  const decoded = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(decoderMediaDir, 'fr30.webm'),
+      '-vf',
+      'scale=16:9:flags=neighbor',
+      '-frames:v',
+      '36',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(decoded.exit, 0, `reference decoding failed: ${decoded.stderr}`);
+  const frameBytes = 16 * 9 * 4;
+  assert.equal(
+    decoded.stdout.length,
+    36 * frameBytes,
+    'independent reference frame count mismatch'
+  );
+  const sourceOffset = focused ? 0 : 6;
+  const references = Array.from({ length: 30 }, (_, i) =>
+    decoded.stdout.subarray(
+      (i + sourceOffset) * frameBytes,
+      (i + sourceOffset + 1) * frameBytes
+    )
+  );
+  const wrongSourcePixels = await extractFrame(
+    join(fixtureDir, 'media', 'secondary_b.mp4'),
+    5,
+    16,
+    9
+  );
+  const classifyPixels = (pixels: Uint8Array, composition: number) => {
+    const matches = references
+      .map((reference, i) => ({
+        frame: i + sourceOffset,
+        error: rmse(pixels, reference),
+      }))
+      .sort((a, b) => a.error - b.error);
+    const best = matches[0]!,
+      next = matches[1]!;
+    return {
+      best,
+      ambiguous: best.error >= 12 || best.error >= next.error,
+      wrongSource:
+        !Number.isFinite(composition) ||
+        best.frame !== Math.floor(composition) + sourceOffset,
+    };
+  };
+  const receipts: Array<Record<string, unknown>> = [];
+  for (const [name, fault] of [
+    ['healthy-1', 'none'],
+    ['healthy-2', 'none'],
+    ['healthy-3', 'none'],
+    ['frozen', 'freeze'],
+    ['stalled', 'stall'],
+  ] as const) {
+    await seekTo(browser, 0);
+    const geometry = await browser.evaluate<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scale: number;
+      timeOrigin: number;
+    }>(`(() => {
+      const canvas = document.querySelector('canvas.otio-canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+      const r = canvas.getBoundingClientRect();
+      if (r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
+        throw new Error('canvas is clipped in screencast viewport');
+      return {x:r.left, y:r.top, width:r.width, height:r.height,
+        scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
+    })()`);
+    const stopCast = await browser.startScreencast();
+    const capture = await browser.evaluate<MovingTrace>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!root || !(button instanceof HTMLButtonElement)) throw new Error('missing playback controls');
+      if (root.dataset.playing !== 'true') button.click();
+      const until = performance.now() + 12000;
+      while (root.dataset.playing !== 'true' && performance.now() < until) await sleep(10);
+      if (root.dataset.playing !== 'true') throw new Error('playback did not start');
+      await sleep(40);
+      globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
+      const start = globalThis.__otioProofTrace.start();
+      await sleep(500);
+      const trace = globalThis.__otioProofTrace.stop();
+      globalThis.__otioProofTrace.setFault('none');
+      if (root.dataset.playing === 'true') button.click();
+      return {start, trace};
+    })()`);
+    const cast = await stopCast();
+    const samples = capture.trace.visual;
+    const issues: string[] = [];
+    if (
+      capture.trace.visualOverflow ||
+      capture.trace.audioOverflow ||
+      cast.overflow
+    )
+      issues.push('trace overflow');
+    if (
+      samples.length === 0 ||
+      samples.some(
+        (sample) => sample.error || sample.pixels16?.length !== frameBytes
+      )
+    )
+      issues.push('missing canvas pixels');
+    const identified: Array<{ timestamp: number; sourceFrame: number }> = [];
+    let staleControl: {
+      expectedFrame: number;
+      injectedFrame: number;
+      detected: boolean;
+    } | null = null;
+    let wrongSourceControl: { distance: number; detected: boolean } | null =
+      null;
+    for (const sample of samples) {
+      if (!sample.pixels16 || sample.pixels16.length !== frameBytes) continue;
+      const pixels = Uint8Array.from(sample.pixels16);
+      const composition = Number(sample.frame);
+      const result = classifyPixels(pixels, composition);
+      const best = result.best;
+      if (result.ambiguous)
+        issues.push('unresolved or ambiguous source pixels');
+      if (result.wrongSource)
+        issues.push('source pixels disagree with composition frame');
+      const expectedFrame = Math.floor(composition) + sourceOffset;
+      const staleIndex = expectedFrame - sourceOffset - 1;
+      if (
+        !staleControl &&
+        !result.ambiguous &&
+        !result.wrongSource &&
+        staleIndex >= 0
+      ) {
+        const planted = classifyPixels(references[staleIndex]!, composition);
+        staleControl = {
+          expectedFrame,
+          injectedFrame: staleIndex + sourceOffset,
+          detected: !planted.ambiguous && planted.wrongSource,
+        };
+      }
+      if (!wrongSourceControl && !result.ambiguous && !result.wrongSource) {
+        const distance = rmse(
+          wrongSourcePixels,
+          references[expectedFrame - sourceOffset]!
+        );
+        const planted = classifyPixels(wrongSourcePixels, composition);
+        wrongSourceControl = {
+          distance,
+          detected:
+            distance >= 12 && (planted.ambiguous || planted.wrongSource),
+        };
+      }
+      const previous = identified[identified.length - 1];
+      if (previous && best.frame < previous.sourceFrame)
+        issues.push('source pixels moved backward');
+      if (!previous || previous.sourceFrame !== best.frame)
+        identified.push({
+          timestamp: sample.timestamp,
+          sourceFrame: best.frame,
+        });
+    }
+    const elapsedMs = capture.trace.timestamp - capture.start.timestamp;
+    const gaps = [
+      identified.length
+        ? identified[0]!.timestamp - capture.start.timestamp
+        : elapsedMs,
+    ];
+    for (let i = 1; i < identified.length; i++)
+      gaps.push(identified[i]!.timestamp - identified[i - 1]!.timestamp);
+    if (identified.length)
+      gaps.push(
+        capture.trace.timestamp - identified[identified.length - 1]!.timestamp
+      );
+    gaps.sort((a, b) => a - b);
+    const coverage =
+      new Set(identified.map((entry) => entry.sourceFrame)).size /
+      ((elapsedMs * 30) / 1000);
+    const progress =
+      (capture.trace.frame - capture.start.frame) / ((elapsedMs * 30) / 1000);
+    const p95 =
+      gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))] ??
+      Infinity;
+    const max = gaps[gaps.length - 1] ?? Infinity;
+    if (
+      !(
+        coverage >= 0.95 &&
+        progress >= 0.95 &&
+        progress <= 1.05 &&
+        p95 <= 50 &&
+        max <= 100
+      )
+    )
+      issues.push('moving-window thresholds');
+    const screen = await decodeScreencastFrames(cast, geometry);
+    const screenStates: Array<{
+      timestamp: number;
+      sourceFrame: number;
+      error: number;
+    }> = [];
+    for (const sample of screen) {
+      const timestamp = sample.timestamp - geometry.timeOrigin;
+      if (
+        timestamp < capture.start.timestamp ||
+        timestamp > capture.trace.timestamp
+      )
+        continue;
+      const matches = references
+        .map((reference, i) => ({
+          frame: i + sourceOffset,
+          error: rmse(sample.pixels, reference),
+        }))
+        .sort((a, b) => a.error - b.error);
+      const best = matches[0]!,
+        next = matches[1]!;
+      if (best.error >= 12 || best.error >= next.error)
+        issues.push('screencast pixels lack unambiguous source provenance');
+      const closest = identified.reduce<(typeof identified)[number] | null>(
+        (prior, entry) =>
+          !prior ||
+          Math.abs(entry.timestamp - timestamp) <
+            Math.abs(prior.timestamp - timestamp)
+            ? entry
+            : prior,
+        null
+      );
+      if (
+        !closest ||
+        Math.abs(closest.timestamp - timestamp) > 50 ||
+        Math.abs(closest.sourceFrame - best.frame) > 1
+      )
+        issues.push('screencast and canvas traces disagree');
+      const previous = screenStates[screenStates.length - 1];
+      if (!previous || previous.sourceFrame !== best.frame)
+        screenStates.push({
+          timestamp,
+          sourceFrame: best.frame,
+          error: best.error,
+        });
+    }
+    const screenGaps = [
+      screenStates.length
+        ? screenStates[0]!.timestamp - capture.start.timestamp
+        : elapsedMs,
+    ];
+    for (let i = 1; i < screenStates.length; i++)
+      screenGaps.push(
+        screenStates[i]!.timestamp - screenStates[i - 1]!.timestamp
+      );
+    if (screenStates.length)
+      screenGaps.push(
+        capture.trace.timestamp -
+          screenStates[screenStates.length - 1]!.timestamp
+      );
+    screenGaps.sort((a, b) => a - b);
+    const screenCoverage =
+      new Set(screenStates.map((entry) => entry.sourceFrame)).size /
+      ((elapsedMs * 30) / 1000);
+    const screenP95 =
+      screenGaps[
+        Math.min(screenGaps.length - 1, Math.floor(screenGaps.length * 0.95))
+      ] ?? Infinity;
+    const screenMax = screenGaps[screenGaps.length - 1] ?? Infinity;
+    if (!(screenCoverage >= 0.95 && screenP95 <= 50 && screenMax <= 100))
+      issues.push('screencast moving-window thresholds');
+    const audio = capture.trace.audio;
+    if (!focused && !audio.length) issues.push('missing controller audio');
+    for (let i = 1; i < audio.length; i++) {
+      const previous = audio[i - 1]!;
+      if (
+        !previous.channels[0] ||
+        audio[i]!.sampleFrame !==
+          previous.sampleFrame + previous.channels[0].length
+      )
+        issues.push('missing controller audio chunk');
+    }
+    const channel = audio.flatMap((chunk) => chunk.channels[0] ?? []);
+    const windowSize = Math.ceil(capture.trace.sampleRate * 0.02);
+    const silenceThreshold = Math.max(mutedRms * 2, healthyRms * 0.01);
+    let longestSilentSamples = 0,
+      silentSamples = 0;
+    for (
+      let offset = 0;
+      offset + windowSize <= channel.length;
+      offset += windowSize
+    ) {
+      let energy = 0;
+      for (let i = 0; i < windowSize; i++) energy += channel[offset + i]! ** 2;
+      if (Math.sqrt(energy / windowSize) <= silenceThreshold) {
+        silentSamples += windowSize;
+        longestSilentSamples = Math.max(longestSilentSamples, silentSamples);
+      } else silentSamples = 0;
+    }
+    if (!focused && longestSilentSamples > capture.trace.sampleRate * 0.02)
+      issues.push('post-gain silence exceeds 20ms');
+    const receipt = {
+      name,
+      fault,
+      elapsedMs,
+      coverage,
+      progress,
+      p95,
+      max,
+      screenStates,
+      screenCoverage,
+      screenP95,
+      screenMax,
+      longestSilentSamples,
+      silenceThreshold,
+      issues,
+      identified,
+      staleControl,
+      wrongSourceControl,
+      capture,
+      cast,
+    };
+    await writeFile(
+      join(
+        shotDir,
+        `${focused ? 'focused' : 'composition'}-moving-window-${name}.json`
+      ),
+      JSON.stringify(receipt)
+    );
+    receipts.push(receipt);
+  }
+  if (!focused) {
+    const stillA = await extractFrame(
+      join(fixtureDir, 'media', 'plate_1001.png'),
+      0,
+      16,
+      9
+    );
+    const stillB = await extractFrame(
+      join(fixtureDir, 'media', 'plate_1002.png'),
+      0,
+      16,
+      9
+    );
+    assert.ok(
+      rmse(stillA, stillB) > 0,
+      'still reference pixels cannot distinguish the fixture images'
+    );
+    const referenceAudio = new Map<number, Float32Array>();
+    for (let repetition = 1; repetition <= 5; repetition++) {
+      await seekTo(browser, 0);
+      const geometry = await browser.evaluate<{
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        scale: number;
+        timeOrigin: number;
+      }>(`(() => {
+        const canvas = document.querySelector('canvas.otio-canvas');
+        if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+        const r = canvas.getBoundingClientRect();
+        if (r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
+          throw new Error('canvas is clipped in screencast viewport');
+        return {x:r.left, y:r.top, width:r.width, height:r.height,
+          scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
+      })()`);
+      const stopCast = await browser.startScreencast();
+      const capture = await browser.evaluate<MovingTrace>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!root || !(button instanceof HTMLButtonElement)) throw new Error('missing playback controls');
+      if (root.dataset.playing !== 'true') button.click();
+      const deadline = performance.now() + 12000;
+      while (root.dataset.playing !== 'true' && performance.now() < deadline) await sleep(10);
+      if (root.dataset.playing !== 'true') throw new Error('playback did not start');
+      await sleep(40);
+      globalThis.__otioProofTrace.setFault(${JSON.stringify(repetition === 4 ? 'skip-still' : 'none')});
+      const start = globalThis.__otioProofTrace.start();
+      if (${repetition === 5}) {
+        await sleep(2200);
+        const muted = globalThis.__otioProofTrace.mute();
+        await sleep(300);
+        globalThis.__otioProofTrace.restore(muted.value);
+        await sleep(2300);
+      } else await sleep(4800);
+      const trace = globalThis.__otioProofTrace.stop();
+      globalThis.__otioProofTrace.setFault('none');
+      if (root.dataset.playing === 'true') button.click();
+      return {start, trace};
+    })()`);
+      const cast = await stopCast();
+      const elapsedMs = capture.trace.timestamp - capture.start.timestamp;
+      const progress =
+        (capture.trace.frame - capture.start.frame) / ((elapsedMs * 30) / 1000);
+      const stills = [
+        { from: 77, to: 88, reference: stillA, other: stillB },
+        { from: 92, to: 103, reference: stillB, other: stillA },
+        { from: 107, to: 118, reference: stillA, other: stillB },
+      ].map(({ from, to, reference, other }) => {
+        const matches = capture.trace.visual.filter((sample) => {
+          const frame = Number(sample.frame);
+          return (
+            frame >= from &&
+            frame < to &&
+            sample.pixels16?.length === frameBytes
+          );
+        });
+        const errors = matches.map((sample) => {
+          const pixels = Uint8Array.from(sample.pixels16!);
+          return {
+            expected: rmse(pixels, reference),
+            other: rmse(pixels, other),
+          };
+        });
+        return { from, to, errors };
+      });
+      const screen = await decodeScreencastFrames(cast, geometry);
+      const screenStills = [
+        { from: 77, to: 88, reference: stillA, other: stillB },
+        { from: 92, to: 103, reference: stillB, other: stillA },
+        { from: 107, to: 118, reference: stillA, other: stillB },
+      ].map(({ from, to, reference, other }) => {
+        const errors: Array<{ expected: number; other: number; skew: number }> =
+          [];
+        for (const frame of screen) {
+          const timestamp = frame.timestamp - geometry.timeOrigin;
+          const closest = capture.trace.visual.reduce<
+            (typeof capture.trace.visual)[number] | null
+          >(
+            (prior, sample) =>
+              !prior ||
+              Math.abs(sample.timestamp - timestamp) <
+                Math.abs(prior.timestamp - timestamp)
+                ? sample
+                : prior,
+            null
+          );
+          if (!closest || Math.abs(closest.timestamp - timestamp) > 50)
+            continue;
+          const composition = Number(closest.frame);
+          if (composition >= from && composition < to)
+            errors.push({
+              expected: rmse(frame.pixels, reference),
+              other: rmse(frame.pixels, other),
+              skew: Math.abs(closest.timestamp - timestamp),
+            });
+        }
+        return { from, to, errors };
+      });
+      const audio = await comparePostGainPcm(
+        capture.trace,
+        referenceAudio,
+        healthyRms,
+        mutedRms
+      );
+      await writeFile(
+        join(shotDir, `boundary-sustained-${repetition}.json`),
+        JSON.stringify({
+          capture,
+          cast,
+          elapsedMs,
+          progress,
+          stills,
+          screenStills,
+          audio,
+        })
+      );
+      if (repetition === 5)
+        assert.ok(
+          audio.longestDropoutMs > 20,
+          'controller mute control was not detected'
+        );
+      else
+        assert.ok(
+          audio.longestDropoutMs <= 20,
+          `post-gain dropout ${audio.longestDropoutMs}ms`
+        );
+      assert.ok(
+        !capture.trace.visualOverflow &&
+          !capture.trace.audioOverflow &&
+          !cast.overflow,
+        'boundary trace overflow'
+      );
+      assert.ok(
+        progress >= 0.95 && progress <= 1.05,
+        `boundary wall progress ratio ${progress}`
+      );
+      for (const still of stills) {
+        assert.ok(
+          still.errors.length > 0,
+          `skipped still interval [${still.from}, ${still.to})`
+        );
+        const matched = still.errors.some(
+          (error) => error.expected < 12 && error.expected < error.other
+        );
+        if (repetition === 4 && still.from === 92)
+          assert.equal(
+            matched,
+            false,
+            'skipped-still control was not detected'
+          );
+        else
+          assert.ok(
+            matched,
+            `wrong still pixels in [${still.from}, ${still.to})`
+          );
+      }
+      for (const still of screenStills) {
+        assert.ok(
+          still.errors.length > 0,
+          `missing screencast still interval [${still.from}, ${still.to})`
+        );
+        const matched = still.errors.some(
+          (error) => error.expected < 12 && error.expected < error.other
+        );
+        if (repetition === 4 && still.from === 92)
+          assert.equal(
+            matched,
+            false,
+            'screencast accepted skipped-still control'
+          );
+        else
+          assert.ok(
+            matched,
+            `wrong screencast still pixels in [${still.from}, ${still.to})`
+          );
+      }
+    }
+  }
+  for (const receipt of receipts) {
+    const issues = receipt['issues'] as string[];
+    if (receipt['fault'] === 'none') {
+      assert.deepEqual(
+        issues,
+        [],
+        `healthy moving window failed: ${receipt['name']}`
+      );
+      const stale = receipt['staleControl'] as { detected: boolean } | null;
+      assert.ok(
+        stale?.detected,
+        'independently decoded stale source-frame control was not rejected'
+      );
+      const wrong = receipt['wrongSourceControl'] as {
+        detected: boolean;
+      } | null;
+      assert.ok(
+        wrong?.detected,
+        'independently decoded wrong-media control was not rejected'
+      );
+    } else {
+      assert.ok(
+        issues.includes('moving-window thresholds'),
+        `moving-window gate did not detect ${receipt['name']}`
+      );
+      assert.ok(
+        issues.includes('screencast moving-window thresholds'),
+        `screencast gate did not detect ${receipt['name']}`
+      );
+      if (receipt['fault'] === 'freeze')
+        assert.ok(
+          (receipt['progress'] as number) >= 0.95,
+          'freeze control did not advance the composition clock'
+        );
+    }
+  }
+}
+
+async function calibratePostGainTap(sessionToken: string): Promise<void> {
+  const directory = join(scratch, 'playback-boundaries.otiod');
+  const media = join(directory, 'media');
+  await mkdir(media, { recursive: true });
+  await cp(
+    fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+        import.meta.url
+      )
+    ),
+    join(directory, 'content.otio')
+  );
+  await cp(join(decoderMediaDir, 'fr30.webm'), join(media, 'fr30.webm'));
+  for (const name of [
+    'plate_1001.png',
+    'plate_1002.png',
+    'mx_bed.wav',
+    'secondary_b.mp4',
+  ])
+    await cp(join(fixtureDir, 'media', name), join(media, name));
+  const published = await callMcp('relic_publish', {
+    path: directory,
+    title: 'OTIO playback boundary proof',
+    cover: false,
+  });
+  const relicId = String(published['relic_id'] ?? '');
+  const url = String(published['url'] ?? published['link'] ?? '');
+  assert.ok(
+    relicId && url.startsWith(origin) && url.includes('#'),
+    'boundary fixture publish failed'
+  );
+  const browser = await openBrowser(url, sessionToken, {
+    label: 'post-gain-calibration',
+    recordProofTrace: true,
+  });
+  try {
+    await waitReady(browser);
+    const stopCast = await browser.startScreencast();
+    const capture = await browser.evaluate<{
+      start: { sampleRate: number; contextState: string; sampleFrame: number };
+      mute: { value: number; sampleFrame: number };
+      restored: number;
+      trace: {
+        sampleRate: number;
+        contextState: string;
+        audioOverflow: boolean;
+        visualOverflow: boolean;
+        audio: Array<{ sampleFrame: number; channels: number[][] }>;
+        visual: Array<{ timestamp: number; error?: string }>;
+      };
+    }>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const button = document.querySelector('button.otio-play');
+      const root = document.querySelector('.otio-view');
+      if (!(button instanceof HTMLButtonElement) || !root) throw new Error('playback controls missing');
+      button.click();
+      const deadline = performance.now() + 12000;
+      while (root.dataset.playing !== 'true' && performance.now() < deadline) await sleep(25);
+      if (root.dataset.playing !== 'true') throw new Error('playback did not start');
+      await sleep(600);
+      const start = globalThis.__otioProofTrace.start();
+      await sleep(600);
+      const mute = globalThis.__otioProofTrace.mute();
+      await sleep(600);
+      const restored = globalThis.__otioProofTrace.restore(mute.value);
+      await sleep(600);
+      const trace = globalThis.__otioProofTrace.stop();
+      if (root.dataset.playing === 'true') button.click();
+      return {start, mute, restored, trace};
+    })()`);
+    const cast = await stopCast();
+    await writeFile(
+      join(shotDir, 'post-gain-calibration.json'),
+      JSON.stringify({ capture, cast })
+    );
+    assert.equal(
+      capture.start.contextState,
+      'running',
+      'audio context not running'
+    );
+    assert.equal(
+      capture.trace.audioOverflow,
+      false,
+      'post-gain PCM capture overflow'
+    );
+    assert.equal(
+      capture.trace.visualOverflow,
+      false,
+      'canvas capture overflow'
+    );
+    assert.equal(cast.overflow, false, 'screencast capture overflow');
+    assert.ok(
+      cast.frames.length >= 2,
+      'screencast returned fewer than two frames'
+    );
+    assert.ok(
+      capture.trace.visual.length >= 2 &&
+        capture.trace.visual.every((s) => !s.error),
+      'canvas trace unavailable'
+    );
+    const chunks = capture.trace.audio;
+    assert.ok(chunks.length > 2, 'post-gain PCM tap produced no chunks');
+    for (let i = 1; i < chunks.length; i++) {
+      const previous = chunks[i - 1]!;
+      assert.equal(
+        chunks[i]!.sampleFrame,
+        previous.sampleFrame + previous.channels[0]!.length,
+        'post-gain PCM chunk missing'
+      );
+    }
+    const rms = (from: number, to: number): number => {
+      let sum = 0,
+        count = 0;
+      for (const chunk of chunks)
+        for (const channel of chunk.channels)
+          for (let i = 0; i < channel.length; i++) {
+            const frame = chunk.sampleFrame + i;
+            if (frame >= from && frame < to) {
+              sum += channel[i]! ** 2;
+              count++;
+            }
+          }
+      assert.ok(count > 0, 'audio calibration window has no PCM');
+      return Math.sqrt(sum / count);
+    };
+    const guard = Math.ceil(capture.trace.sampleRate * 0.15);
+    const before = rms(
+      capture.start.sampleFrame + guard,
+      capture.mute.sampleFrame - guard
+    );
+    const muted = rms(
+      capture.mute.sampleFrame + guard,
+      capture.restored - guard
+    );
+    assert.ok(
+      before > 0.0001,
+      `post-gain source was silent before mute: ${before}`
+    );
+    assert.ok(
+      muted < before * 0.01,
+      `master-gain mute did not silence the tapped signal: ${before} -> ${muted}`
+    );
+    pass('post-gain-tap-calibration');
+    await assessMovingWindowControls(browser, before, muted);
+    await focusItem(browser, 'moving-a');
+    await assessMovingWindowControls(browser, before, muted, true);
+    await leaveFocus(browser);
+    await focusItem(browser, 'moving-b');
+    const local = await browser.evaluate<{
+      origin: number;
+      rate: number;
+      start: string;
+      end: string;
+    } | null>(`(() => {
+      const root = document.querySelector('.otio-view');
+      const input = document.querySelector('.otio-selection-in');
+      const output = document.querySelector('.otio-selection-out');
+      const range = document.querySelector('button[data-otio-mode="range"]');
+      if (!(root instanceof HTMLElement) || !(input instanceof HTMLInputElement) ||
+          !(output instanceof HTMLInputElement) || !(range instanceof HTMLButtonElement)) return null;
+      range.click();
+      input.value = '2'; input.dispatchEvent(new Event('change', {bubbles:true}));
+      output.value = '6'; output.dispatchEvent(new Event('change', {bubbles:true}));
+      return {origin: Number(root.dataset.domainOrigin), rate: Number(root.dataset.domainRate),
+        start: input.value, end: output.value};
+    })()`);
+    assert.ok(
+      local && local.origin === 60 && local.rate === 30,
+      `wrong focus origin: ${JSON.stringify(local)}`
+    );
+    assert.equal(local.start, '2');
+    assert.equal(local.end, '6');
+    const body = 'Check the second moving occurrence.';
+    await postComposer(browser, body);
+    const comment = commentByBody(await readComments(relicId), body);
+    const anchor = comment['anchor'] as {
+      item_id?: string;
+      track_id?: string;
+      relic_version?: number;
+      range?: TimeRange;
+    };
+    assert.equal(anchor.item_id, 'moving-b');
+    assert.equal(anchor.track_id, 'boundary-lower');
+    assert.equal(anchor.relic_version, 1);
+    assert.ok(
+      rangeClose(anchor.range, {
+        start_time: { value: 62, rate: 30 },
+        duration: { value: 4, rate: 30 },
+      }),
+      'local range was not persisted in composition coordinates'
+    );
+    const resolved = resolvedOf(comment);
+    const spans = resolved['intersections'] as Array<Record<string, unknown>>;
+    assert.equal(resolved['status'], 'resolved');
+    assert.ok(Array.isArray(spans), 'focused comment has no source spans');
+    const span = spans.find((item) => item['node_id'] === 'moving-b');
+    assert.ok(
+      span &&
+        rationalClose(asRange(span['source_range'])?.start_time, {
+          value: 8,
+          rate: 30,
+        }),
+      'focused comment resolved to the wrong source interval'
+    );
+    assert.ok(
+      rationalClose(asRange(span['file_relative_source_range'])?.start_time, {
+        value: 8,
+        rate: 30,
+      }),
+      'focused comment resolved to the wrong file-relative interval'
+    );
+    const encrypted = JSON.stringify(
+      await (await fetch(`${origin}/api/relics/${relicId}/comments`)).json()
+    );
+    assert.ok(
+      !encrypted.includes(body) && !encrypted.includes('moving-b'),
+      'focused comment leaked plaintext'
+    );
+    const commentId = String(comment['comment_id'] ?? '');
+    assert.ok(commentId, 'focused comment has no ID');
+    const reopened = await openBrowser(url, sessionToken, {
+      label: 'nonzero-focus-reload',
+    });
+    try {
+      await waitReady(reopened);
+      const clicked = await reopened.evaluate<boolean>(`(async () => {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const mark = [...document.querySelectorAll('.otio-comment-mark')]
+            .find(node => node.dataset.commentId === ${JSON.stringify(commentId)});
+          if (mark instanceof HTMLButtonElement) { mark.click(); return true; }
+          const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+        }
+        return false;
+      })()`);
+      assert.ok(clicked, 'focused comment was not revealed after reload');
+      const revealed = await reopened.evaluate<boolean>(`(async () => {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const root = document.querySelector('.otio-view');
+          if (root?.dataset.scopeNodeId === 'moving-b') return true;
+          const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+        }
+        return false;
+      })()`);
+      assert.ok(
+        revealed,
+        'reload reveal did not restore the original focused item'
+      );
+    } finally {
+      await reopened.close();
+    }
+    pass('focused-nonzero-comment');
+  } finally {
+    await browser.close();
+  }
+}
+
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
   await assertPacketGateRejectsPlantedFrames();
@@ -9037,6 +10211,7 @@ try {
     console.log('OTIO_DECODER_OK');
     throw new DecoderOnlyComplete();
   }
+  await calibratePostGainTap(sessionToken);
 
   const published = await callMcp('relic_publish', {
     path: fixtureDir,
@@ -11001,9 +12176,13 @@ try {
       const range = document.querySelector('button[data-otio-mode="range"]');
       if (!(input instanceof HTMLInputElement) || !(output instanceof HTMLInputElement) ||
           !(range instanceof HTMLButtonElement)) return false;
+      const root = document.querySelector('.otio-view');
+      if (!(root instanceof HTMLElement)) return false;
+      const origin = Number(root.dataset.domainOrigin);
+      if (!Number.isFinite(origin)) return false;
       range.click();
-      input.value = '12'; input.dispatchEvent(new Event('change', {bubbles:true}));
-      output.value = '20'; output.dispatchEvent(new Event('change', {bubbles:true}));
+      input.value = String(12 - origin); input.dispatchEvent(new Event('change', {bubbles:true}));
+      output.value = String(20 - origin); output.dispatchEvent(new Event('change', {bubbles:true}));
       return true;
     })()`);
     assert.ok(adjusted, 'focus range controls are missing');
@@ -11080,7 +12259,28 @@ try {
         features: [{ name: 'prefers-color-scheme', value: scheme }],
       });
       await focusItem(focused, plan.comment_source.relic_id);
+      const fit = await focused.evaluate<boolean>(`(() => {
+        const button = document.querySelector('.otio-zoom-fit');
+        if (!(button instanceof HTMLButtonElement)) return false;
+        button.click(); return true;
+      })()`);
+      assert.ok(fit, 'focus fit control missing');
       await openComposer(focused);
+      const draftSet = await focused.evaluate<boolean>(`(() => {
+        const field = document.querySelector('.popover-composer textarea.popover-field');
+        if (!(field instanceof HTMLTextAreaElement)) return false;
+        field.value = 'Draft survives timeline zoom.';
+        field.dispatchEvent(new Event('input', {bubbles:true}));
+        globalThis.__zoomDraft = field;
+        return true;
+      })()`);
+      assert.ok(draftSet, 'focused draft missing before zoom');
+      await assertFocusedWheelZoom(focused);
+      const draftKept = await focused.evaluate<boolean>(`(() => {
+        const field = document.querySelector('.popover-composer textarea.popover-field');
+        return field === globalThis.__zoomDraft && field?.value === 'Draft survives timeline zoom.';
+      })()`);
+      assert.ok(draftKept, 'timeline zoom discarded the open draft');
       const geometry = await measureComposer(focused);
       assertComposerProbe(
         geometry,
