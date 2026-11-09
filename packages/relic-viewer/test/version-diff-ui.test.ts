@@ -1439,4 +1439,59 @@ describe('comment version scoping', () => {
     expect(v2Count).toBe(0);
     expect(textOf(v2Element)).toContain('No comments yet.');
   });
+
+  test('a truly absent parent recovers the visible-version reply and its descendants', async () => {
+    const { key, shareUrl, makeDeps } = await createCommentFixture();
+    const cipher = commentCipher(await deriveCommentKey(key));
+    const records = [
+      {
+        comment_id: 'surviving-reply',
+        author: 'alice@example.com',
+        created_at: '2026-09-16T11:00:00.000Z',
+        ciphertext: await cipher.seal({
+          body: 'reply whose parent is unavailable',
+          display_name: null,
+          addresses: 'absent-parent',
+        }),
+        version: 2,
+      },
+      {
+        comment_id: 'surviving-descendant',
+        author: 'bob@example.com',
+        created_at: '2026-09-16T12:00:00.000Z',
+        ciphertext: await cipher.seal({
+          body: 'nested reply remains reachable',
+          display_name: null,
+          addresses: 'surviving-reply',
+        }),
+        version: 2,
+      },
+      {
+        comment_id: 'other-revision',
+        author: 'carol@example.com',
+        created_at: '2026-09-16T10:00:00.000Z',
+        ciphertext: await cipher.seal({
+          body: 'another version remains filtered',
+          display_name: null,
+          addresses: null,
+        }),
+        version: 1,
+      },
+    ];
+    let count = -1;
+    const thread = buildThread(
+      view('code', 2, undefined, 2, shareUrl),
+      RELIC_ID,
+      makeDeps(records),
+      (next) => {
+        count = next;
+      }
+    );
+    await thread.ready;
+    const element = thread.element as unknown as ElementStub;
+    expect(textOf(element)).toContain('reply whose parent is unavailable');
+    expect(textOf(element)).toContain('nested reply remains reachable');
+    expect(textOf(element)).not.toContain('another version remains filtered');
+    expect(count).toBe(2);
+  });
 });

@@ -28,6 +28,9 @@
   Art direction: none new. The accession band, the patina primary, square ruled panels,
   Charter comment text and monospace coordinates are the viewer's own. Rejected: a
   connector or caret (plan 4.10), any decoration on the stages that the viewer lacks.
+  Deletion uses the existing share-sheet dialog and text row actions. Rejected:
+  icon-only trash controls and a red primary default, because the target and
+  irreversible consequence need words, and Cancel must hold default focus.
 
   Where the plan's state text and the code disagree, the code wins:
   - The OTIO target line reads "v2 · ..." on the version 2 page, because otio-view.ts
@@ -381,6 +384,15 @@ body {
 .compose-count { color: var(--ink-soft); font-family: var(--mono); font-size: .7rem; }
 .compose .action.primary { justify-self: start; align-self: center; }
 
+/* The viewer's existing native share-sheet primitives, reused for deletion. */
+.share-panel { position: fixed; inset: var(--share-top, var(--bar-height)) 0 auto auto; width: min(28rem, 100vw); max-width: 100vw; max-height: calc(100dvh - var(--share-top, var(--bar-height))); margin: 0; padding: 0; overflow-y: auto; overscroll-behavior: contain; color: var(--ink); font-family: var(--sans); background: var(--surface); border: 1px solid var(--rule-strong); border-top: 2px solid var(--patina); border-right: 0; box-shadow: 0 6px 18px rgb(0 0 0 / 18%); }
+.share-panel::backdrop { background: rgb(16 19 20 / 28%); }
+.share-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 2.75rem; padding: 0 .4rem 0 1.25rem; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.share-title { margin: 0; font-size: 1rem; font-weight: 600; }
+.share-body { display: grid; gap: .75rem; padding: 1.1rem 1.25rem 1.4rem; }
+.share-body > * { min-width: 0; }
+.thread-note { margin: 0; color: var(--ink-soft); font-size: .84rem; overflow-wrap: anywhere; }
+
 /* ---------- the popover layer (styles.css 241-444, with the composer column of 4128-4162 on every class) ---------- */
 .popover { position: absolute; z-index: 8; background: var(--surface); color: var(--ink); border: 1px solid var(--rule-strong); box-shadow: 0 6px 18px rgb(0 0 0 / 14%); font-family: var(--sans); font-size: 16px; line-height: 1.55; text-align: left; }
 .popover-offer { display: flex; align-items: stretch; }
@@ -412,6 +424,7 @@ body {
 .popover-member-time { font-family: var(--mono); font-size: .72rem; color: var(--patina); }
 .popover-member-author { overflow: hidden; font-family: var(--mono); font-size: .72rem; color: var(--ink-soft); white-space: nowrap; text-overflow: ellipsis; }
 .popover-member-body { grid-column: 1 / -1; display: -webkit-box; overflow: hidden; font-family: var(--serif); font-size: .86rem; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.popover-bounded-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 /* The stage composer, on every class: its context scrolls when capped, the field and the actions stay. */
 .popover-card.popover-composer { display: flex; flex-direction: column; overflow: hidden; min-width: 0; margin-top: 0; }
 .popover-card.popover-composer .popover-bounded-body { flex: 1 1 auto; min-height: 1.35rem; overflow-y: auto; overscroll-behavior: contain; }
@@ -623,6 +636,8 @@ const WHOLE = 'Commenting on the whole document';
 const MARK_PIN_HINT = 'Click the document to place a point';
 const MARK_REGION_HINT = 'Click to place a point, or drag to select a region (use arrows and Enter for keyboard)';
 const EDIT_NOTE = 'Editing replaces the text. No earlier copy is kept.';
+const DELETE_NOTE = 'This removes only your comment. Replies will stay. Relik has no undo.';
+const ORPHAN_NOTE = 'The parent comment is unavailable. This reply is shown separately.';
 const STORE = 'relik-anchored-popover-mock';
 const SVGNS = 'http://www.w3.org/2000/svg';
 const MEDIA_DURATION = 12;
@@ -1090,7 +1105,17 @@ class Viewer {
     this.opts = opts;
     this.spec = CLASS_SPECS[cls];
     this.session = opts.session || 'verified';
-    this.comments = (opts.comments || fixtureComments(cls)).map((x) => ({ ...x, replies: [...(x.replies || [])] }));
+    const copyComment = (entry, parent = null) => ({
+      ...entry,
+      anchor: entry.anchor || null,
+      addresses: entry.addresses || parent,
+      replies: (entry.replies || []).map((reply) => copyComment(reply, entry.id)),
+    });
+    this.comments = (opts.comments || fixtureComments(cls)).map((entry) => copyComment(entry));
+    this.pendingDeletes = new Set();
+    this.unconfirmedDeletes = new Set();
+    this.deleteRequests = [];
+    this.deleteDialog = null;
     this.newCount = 0;
     this.composing = null;
     this.cardId = null;
@@ -1215,7 +1240,10 @@ class Viewer {
         h('p', { class: 'compose-fine' }, DELIVERY),
         h('button', { type: 'submit', class: 'action primary' }, 'Send me a link'));
     }
-    this.thread = h('aside', { class: 'thread', 'aria-label': 'Comments' }, h('h2', { class: 'thread-title' }, this.threadToggle), this.tools, this.list, compose);
+    this.outcome = h('div', { class: 'comment-delete-outcome', 'aria-live': 'polite' });
+    this.deleteNotice = h('div', { class: 'mark-hint comment-delete-notice', role: 'status', hidden: true, style: 'pointer-events:auto' });
+    this.host.append(this.deleteNotice);
+    this.thread = h('aside', { class: 'thread', 'aria-label': 'Comments' }, h('h2', { class: 'thread-title' }, this.threadToggle), this.tools, this.outcome, this.list, compose);
     this.tab = h('button', { type: 'button', class: 'thread-tab', 'aria-expanded': 'false', onclick: () => this.setSidebar(true) }, 'Comments');
     this.row.append(this.thread, this.tab);
     if (this.adapter.tools) this.adapter.tools(this.tools);
@@ -1249,30 +1277,45 @@ class Viewer {
 
   /* ---------- counts and rows ---------- */
   updateCounts() {
-    const n = this.comments.length;
+    const count = (rows) => rows.reduce((n, row) => n + 1 + count(row.replies), 0);
+    const n = count(this.comments);
     if (this.countBadge) { this.countBadge.textContent = String(n); this.commentsButton.title = countLabel(n); }
     if (this.threadToggle) this.threadToggle.textContent = countLabel(n);
     if (this.list) this.list.replaceChildren(...this.comments.map((c) => this.commentRow(c, false)));
   }
-  commentRow(c, inCard) {
+  commentRow(c, inCard, isReply = false) {
     const head = h('div', { class: 'comment-head' }, h('span', { class: 'comment-author' }, c.author));
     if (c.resolved) head.append(h('span', { class: 'comment-badge comment-badge-resolved' }, 'Resolved'));
     head.append(h('time', { class: 'comment-time' }, c.time));
-    const row = h('li', { class: `comment${c.resolved ? ' is-resolved' : ''}${!inCard && c.id === this.activeId ? ' is-active' : ''}`, 'data-comment-id': c.id }, head);
-    if (c.anchor.kind === 'otio') row.append(h('p', { class: 'otio-feedback-target' }, targetLabel(c.anchor), h('span', null, OTIO_BY_KEY[c.anchor.track]?.id || '')));
+    if (this.session === 'verified' && c.id && c.author === READER) head.append(h('button', {
+      type: 'button', class: 'popover-action comment-delete', 'data-delete-comment-id': c.id,
+      disabled: this.pendingDeletes.has(c.id) || this.unconfirmedDeletes.has(c.id),
+      onclick: (event) => { event.stopPropagation(); this.confirmDelete(c, event.currentTarget); },
+    }, this.pendingDeletes.has(c.id) ? 'Deleting...' : 'Delete'));
+    const row = h('li', { class: `comment${isReply ? ' comment-reply' : ''}${c.resolved ? ' is-resolved' : ''}${!inCard && c.id === this.activeId ? ' is-active' : ''}`, 'data-comment-id': c.id }, head);
+    if (c.anchor?.kind === 'otio') row.append(h('p', { class: 'otio-feedback-target' }, targetLabel(c.anchor), h('span', null, OTIO_BY_KEY[c.anchor.track]?.id || '')));
+    if (c.recovery) row.append(h('p', { class: 'thread-note comment-recovery', 'data-recovery': 'orphan' }, ORPHAN_NOTE));
     row.append(h('div', { class: 'comment-body' }, h('p', null, c.body)));
-    if (c.replies.length) row.append(h('ol', { class: 'comment-replies' }, c.replies.map((r) => h('li', { class: 'comment comment-reply' }, h('div', { class: 'comment-head' }, h('span', { class: 'comment-author' }, r.author), h('time', { class: 'comment-time' }, r.time)), h('div', { class: 'comment-body' }, h('p', null, r.body))))));
+    if (c.replies.length) row.append(h('ol', { class: 'comment-replies' }, c.replies.map((reply) => this.commentRow(reply, inCard, true))));
     if (!inCard) row.addEventListener('click', () => this.rowPressed(c.id));
     return row;
   }
   rowPressed(id) {
+    if (!this.byId(id)?.anchor) return;
     if (this.device.offsetWidth <= 704) this.setSidebar(false);
     this.adapter.reveal?.(id);
     requestAnimationFrame(() => this.openCard(id, true, {}));
   }
 
   /* ---------- painting ---------- */
-  byId(id) { return this.comments.find((c) => c.id === id); }
+  byId(id, entries = this.comments) {
+    for (const entry of entries) {
+      if (entry.id === id) return entry;
+      const nested = this.byId(id, entry.replies);
+      if (nested) return nested;
+    }
+    return null;
+  }
   pendingAnchor() { return this.composing ? this.composing.anchor : null; }
   /* The reader's own scroll, so the thing they are about to press sits in view. */
   scrollIntoStage(el, at = 0.5) { const r = el.getBoundingClientRect(), hr = this.host.getBoundingClientRect(); this.host.scrollTop += r.top - hr.top - this.host.clientHeight * at; }
@@ -1291,6 +1334,8 @@ class Viewer {
     document.addEventListener('pointerdown', this.onPress, true);
   }
   destroy() {
+    this.deleteDialog?.close();
+    clearTimeout(this.deleteTimer);
     clearTimeout(this.openTimer); clearTimeout(this.leaveTimer);
     document.removeEventListener('keydown', this.onKey);
     document.removeEventListener('pointerdown', this.onPress, true);
@@ -1352,6 +1397,7 @@ class Viewer {
     else this.openCard(m.id, true, { focus: keyboard ? 'first' : null });
   }
   pressed(e) {
+    if (this.deleteDialog) return;
     const t = e.target;
     if (!t || !t.closest || t.closest('.mk-bar, .mk-drawer')) return;
     if (this.offer && !this.offer.panel.contains(t)) this.dismissOffer({ keepSelection: true });
@@ -1364,6 +1410,7 @@ class Viewer {
   }
   keydown(e) {
     if (e.key !== 'Escape') return;
+    if (this.deleteDialog) return;
     if (e.target && e.target.closest && e.target.closest('.mk-bar, .mk-drawer')) return;
     if (this.offer) { this.dismissOffer(); return; }
     if (this.layer.current() || this.fullscreenLayer?.current()) { e.preventDefault(); this.closePanel({ restore: true }); return; }
@@ -1532,7 +1579,8 @@ class Viewer {
       h('button', { type: 'button', class: 'popover-action popover-resolve', onclick: () => this.resolve(c.id) }, c.resolved ? 'Reopen' : 'Resolve'),
       h('button', { type: 'button', class: 'popover-action is-quiet popover-open-thread', onclick: () => this.openInThread(c.id) }, 'Open in thread'));
     tools.append(this.dismissButton());
-    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': 'Comment', 'data-comment-id': c.id, 'data-anchor-kind': kindAttr(c.anchor.kind) }, h('ol', { class: 'popover-thread' }, this.commentRow(c, true)), tools);
+    tools.style.flex = 'none';
+    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': 'Comment', 'data-comment-id': c.id, 'data-anchor-kind': kindAttr(c.anchor.kind), style: 'display:flex;flex-direction:column;overflow:hidden' }, h('ol', { class: 'popover-thread popover-bounded-body', tabindex: '0', 'aria-label': 'Comments' }, this.commentRow(c, true)), tools);
     panel.addEventListener('pointerleave', () => this.scheduleLeave());
     panel.addEventListener('pointerenter', () => clearTimeout(this.leaveTimer));
     return panel;
@@ -1579,10 +1627,10 @@ class Viewer {
     const c = this.byId(id);
     const layer = this.layerFor(c.anchor);
     const field = h('textarea', { class: 'popover-field', placeholder: `Reply to ${c.author}`, 'aria-label': 'Reply' });
-    const send = h('button', { type: 'button', class: 'popover-action is-primary', onclick: () => { const v = field.value.trim(); if (!v) { field.focus(); return; } c.replies.push({ author: READER, time: POSTED_AT, body: v }); this.updateCounts(); this.openCard(id, true, { focus: 'first' }); } }, 'Post reply');
+    const send = h('button', { type: 'button', class: 'popover-action is-primary', onclick: () => { const v = field.value.trim(); if (!v) { field.focus(); return; } c.replies.push({ id: `reply-${this.newCount += 1}`, anchor: null, addresses: id, author: READER, time: POSTED_AT, body: v, resolved: false, replies: [] }); this.updateCounts(); this.openCard(id, true, { focus: 'first' }); } }, 'Post reply');
     const cancel = h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => this.openCard(id, true, { focus: 'first' }) }, 'Cancel');
-    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': 'Reply', 'data-comment-id': id, 'data-anchor-kind': kindAttr(c.anchor.kind) },
-      h('ol', { class: 'popover-thread' }, this.commentRow(c, true)), h('div', { class: 'popover-composer' }, field, h('div', { class: 'popover-tools' }, send, cancel)));
+    const panel = h('div', { class: 'popover popover-card', role: 'dialog', 'aria-label': 'Reply', 'data-comment-id': id, 'data-anchor-kind': kindAttr(c.anchor.kind), style: 'display:flex;flex-direction:column;overflow:hidden' },
+      h('ol', { class: 'popover-thread popover-bounded-body', tabindex: '0', 'aria-label': 'Comments' }, this.commentRow(c, true)), h('div', { class: 'popover-composer', style: 'flex:none' }, field, h('div', { class: 'popover-tools' }, send, cancel)));
     layer.show(panel, this.measure(id), { follow: () => this.measure(id), reveal: true, prefer: preferFor(c.anchor.kind) });
     this.sticky = true;
     field.focus({ preventScroll: true });
@@ -1592,6 +1640,88 @@ class Viewer {
     c.resolved = !c.resolved;
     this.updateCounts();
     this.openCard(id, true, { focus: 'first' });
+  }
+
+  repaintDeleteRows() {
+    this.updateCounts();
+    if (!this.cardId) return;
+    const card = this.layer.current() || this.fullscreenLayer?.current();
+    const entry = this.byId(this.cardId);
+    const rows = card?.querySelector('.popover-thread');
+    if (entry && rows) rows.replaceChildren(this.commentRow(entry, true));
+    this.layer.reposition();
+    this.fullscreenLayer?.reposition();
+  }
+  deleteOutcome(text, refreshable = false) {
+    this.deleteNotice.setAttribute('aria-live', this.isOpen() ? 'off' : 'polite');
+    for (const slot of [this.outcome, this.deleteNotice]) {
+      slot.replaceChildren(h('p', { class: slot === this.outcome ? 'thread-note' : '' }, text));
+      if (refreshable) slot.append(h('button', {
+        type: 'button', class: 'action',
+        onclick: () => { this.unconfirmedDeletes.clear(); this.repaintDeleteRows(); this.deleteOutcome('Comments refreshed. Check the thread before deleting again.'); },
+      }, 'Refresh comments'));
+    }
+    this.deleteNotice.hidden = false;
+  }
+  confirmDelete(entry, opener) {
+    if (this.deleteDialog || this.session !== 'verified' || entry.author !== READER || this.pendingDeletes.has(entry.id) || this.unconfirmedDeletes.has(entry.id)) return;
+    const cancel = h('button', { type: 'button', class: 'action comment-delete-cancel', autofocus: '' }, 'Cancel');
+    const remove = h('button', { type: 'button', class: 'action comment-delete-confirm' }, 'Delete comment');
+    const dialog = h('dialog', { class: 'share-panel comment-delete-dialog', 'aria-label': 'Delete comment?', 'aria-describedby': 'mock-delete-consequence' },
+      h('div', { class: 'share-head' }, h('h2', { class: 'share-title' }, 'Delete comment?')),
+      h('div', { class: 'share-body' },
+        h('p', { class: 'comment-author' }, entry.author),
+        h('p', { class: 'comment-body' }, entry.body || 'Comment text unavailable.'),
+        h('p', { class: 'thread-note', id: 'mock-delete-consequence' }, DELETE_NOTE),
+        h('div', { class: 'popover-tools' }, cancel, remove)));
+    dialog.style.setProperty('--share-top', `${this.root.querySelector('.bar').getBoundingClientRect().bottom}px`);
+    dialog.addEventListener('close', () => {
+      this.deleteDialog = null;
+      dialog.remove();
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    });
+    dialog.addEventListener('keydown', (event) => event.stopPropagation());
+    dialog.addEventListener('pointerdown', (event) => event.stopPropagation());
+    cancel.addEventListener('click', () => dialog.close());
+    remove.addEventListener('click', () => { remove.disabled = true; dialog.close(); this.deleteComment(entry.id); });
+    this.deleteDialog = dialog;
+    document.body.append(dialog);
+    dialog.showModal();
+    cancel.focus({ preventScroll: true });
+  }
+  deleteComment(id) {
+    if (this.pendingDeletes.has(id)) return;
+    this.pendingDeletes.add(id);
+    this.deleteRequests.push(id);
+    this.repaintDeleteRows();
+    this.deleteOutcome('Deleting comment...');
+    const finish = () => {
+      this.pendingDeletes.delete(id);
+      if (this.opts.deleteResponse === 'failure') {
+        this.unconfirmedDeletes.add(id);
+        this.repaintDeleteRows();
+        this.deleteOutcome('Deletion could not be confirmed. Refresh comments to check whether it took effect.', true);
+        return;
+      }
+      const recovered = [];
+      const remove = (entries) => entries.flatMap((entry) => {
+        if (entry.id === id) {
+          recovered.push(...entry.replies.map((reply) => ({ ...reply, recovery: true })));
+          return [];
+        }
+        entry.replies = remove(entry.replies);
+        return [entry];
+      });
+      this.comments = remove(this.comments);
+      this.comments.push(...recovered);
+      if (this.cardId === id) this.closePanel({});
+      this.paint();
+      this.repaintDeleteRows();
+      this.deleteOutcome('Comment deleted. Replies remain.');
+    };
+    if (this.opts.deleteResponse === 'pending') return;
+    if (this.instant) finish();
+    else this.deleteTimer = setTimeout(finish, POST_MS);
   }
   openInThread(id) {
     this.closePanel({});
@@ -1729,6 +1859,7 @@ function textAdapter(v, o, isCode) {
     pins.replaceChildren();
     let n = 0;
     for (const c of v.comments) {
+      if (!c.anchor) continue;
       if (c.anchor.kind === 'text') {
         const block = resolveText(c.anchor);
         if (block) wrapOffsets(block, c.anchor.start, c.anchor.end, () => h('mark', { class: textMarkClass(v, c), 'data-comment-id': c.id }));
@@ -1834,6 +1965,7 @@ function imageAdapter(v) {
     overlay.replaceChildren();
     let n = 0;
     for (const c of v.comments) {
+      if (!c.anchor) continue;
       n += 1;
       if (c.anchor.kind === 'region') overlay.append(h('div', { class: `comment-region${c.id === v.activeId ? ' is-active' : ''}${c.resolved ? ' is-resolved' : ''}`, 'data-comment-id': c.id, role: 'button', 'aria-label': `Comment ${n}: ${c.body}`, style: pct(c.anchor.rect) }, h('span', { class: 'comment-region-badge' }, String(n))));
       else if (c.anchor.kind === 'pin') overlay.append(h('button', { type: 'button', class: `comment-pin${c.id === v.activeId ? ' is-active' : ''}`, 'data-comment-id': c.id, 'aria-label': `Comment ${n}: ${c.body}`, style: `left:${c.anchor.x * 100}%;top:${c.anchor.y * 100}%` }, String(n)));
@@ -1913,7 +2045,7 @@ function pdfAdapter(v) {
   const pct = (r) => `left:${r.x * 100}%;top:${r.y * 100}%;width:${r.w * 100}%;height:${r.h * 100}%`;
   const paint = () => {
     for (const m of [...container.querySelectorAll('.mark-page')]) m.remove();
-    for (const c of v.comments) if (c.anchor.kind === 'page') container.append(h('div', { class: `mark-page${c.id === v.activeId ? ' is-active' : ''}`, 'data-comment-id': c.id, role: 'button', 'aria-label': c.body, style: pct(c.anchor.rect) }));
+    for (const c of v.comments) if (c.anchor?.kind === 'page') container.append(h('div', { class: `mark-page${c.id === v.activeId ? ' is-active' : ''}`, 'data-comment-id': c.id, role: 'button', 'aria-label': c.body, style: pct(c.anchor.rect) }));
     const p = v.pendingAnchor();
     if (p && p.kind === 'page') container.append(h('div', { class: 'mark-page is-pending', 'data-comment-id': PENDING, style: pct(p.rect) }));
     if (drawing) container.append(h('div', { class: 'mark-page is-pending', style: pct(drawing) }));
@@ -1978,7 +2110,7 @@ function mediaAdapter(v, o, isAudio) {
   const seek = (t) => { played.style.width = `${(t / MEDIA_DURATION) * 100}%`; current.textContent = tcMedia(t); scrubber.setAttribute('aria-valuenow', String(Math.round(t))); };
   seek(4);
   const clusters = () => {
-    const sorted = v.comments.filter((c) => c.anchor.kind === 'time').sort((a, b) => a.anchor.t - b.anchor.t);
+    const sorted = v.comments.filter((c) => c.anchor?.kind === 'time').sort((a, b) => a.anchor.t - b.anchor.t);
     const groups = [];
     for (const c of sorted) {
       const last = groups[groups.length - 1];
@@ -2127,7 +2259,7 @@ function frameAdapter(v, o, isSvg) {
     unwrap(fdoc, 'mark.relic-text-mark');
     overlay.replaceChildren();
     imageFigure.querySelectorAll('.frame-image-mark').forEach((mark) => mark.remove());
-    const imageComments = [...v.comments.filter((comment) => comment.anchor.kind === 'image')];
+    const imageComments = [...v.comments.filter((comment) => comment.anchor?.kind === 'image')];
     if (v.pendingAnchor()?.kind === 'image') imageComments.push({ id: PENDING, body: 'Commenting on an image.' });
     imageComments.forEach((comment, index) => imageFigure.append(h('button', {
       type: 'button', class: `frame-image-mark${comment.id === v.activeId ? ' is-active' : ''}`,
@@ -2135,6 +2267,7 @@ function frameAdapter(v, o, isSvg) {
       style: `left:${index * 40}px`,
     }, String(index + 1))));
     for (const c of v.comments) {
+      if (!c.anchor) continue;
       if (c.anchor.kind === 'frame-text') { const b = resolve(c.anchor); if (b) wrapOffsets(b, c.anchor.start, c.anchor.end, () => h('mark', { class: textMarkClass(v, c), 'data-comment-id': c.id })); }
       else if (c.anchor.kind === 'frame-pin') overlay.append(h('button', { type: 'button', class: `relic-pin-mark${c.id === v.activeId ? ' is-active' : ''}`, 'data-comment-id': c.id, 'aria-label': c.body, style: `left:${c.anchor.x}px;top:${c.anchor.y}px` }));
     }
@@ -2433,7 +2566,7 @@ function otioAdapter(v, o) {
   }
   const paint = () => {
     for (const band of Object.values(bands)) band.replaceChildren();
-    const list = v.comments.filter((c) => c.anchor.kind === 'otio');
+    const list = v.comments.filter((c) => c.anchor?.kind === 'otio');
     const laneOf = lanes(list);
     for (const c of list) {
       const a = c.anchor;
@@ -2517,6 +2650,18 @@ async function shortenToScrubber(v) {
   await settle(2);
 }
 
+const deleteFixture = () => {
+  const roots = fixtureComments('otio').slice(0, 2);
+  roots[0].replies = [{
+    id: 'delete-reply', anchor: null, author: READER, time: POSTED_AT,
+    body: 'Second reader comment', resolved: false, replies: [{
+      id: 'delete-nested', anchor: null, author: 'bob@example.com', time: POSTED_AT,
+      body: 'Dissolve window needs both sources.', resolved: false, replies: [],
+    }],
+  }];
+  return roots;
+};
+
 const STATES = [
   /* ---------- OTIO ---------- */
   S('OTIO', 'otio-1', '1', 'otio', 'Version 2 of 2, sidebar closed: "Earlier versions" in the taskbar, no notice on the page', async () => {}),
@@ -2546,6 +2691,14 @@ const STATES = [
   S('OTIO', 'otio-focus-audio', '16', 'otio', 'Interview Mic 1 · Back to composition', async (v) => { await toTimeline(v); v.adapter.activate('clip-a1-interview'); }),
   S('OTIO', 'otio-focus-draft', '17', 'otio', 'An open draft survives switching between valid targets', async (v) => { await toTimeline(v); v.adapter.activate('clip-v1-primary-a'); v.type('Primary grade range, before the dissolve.'); v.adapter.activate('clip-v1-secondary-b'); }),
   S('OTIO', 'otio-focus-posted', '18', 'otio', 'Primary Grade A · Post', async (v) => { await toTimeline(v); v.adapter.activate('clip-v1-primary-a'); v.type('Primary grade range, before the dissolve.'); v.post({ instant: true }); }),
+
+  /* ---------- comment deletion ---------- */
+  S('Comments', 'delete-confirm', 'Delete', 'otio', 'Delete comment?', async (v) => { v.setSidebar(true); v.confirmDelete(v.byId('c1'), v.list.querySelector('[data-delete-comment-id="c1"]')); }, { opts: { comments: deleteFixture() } }),
+  S('Comments', 'delete-cancel', 'Cancel', 'otio', 'Cancel', async (v) => { v.setSidebar(true); v.confirmDelete(v.byId('c1')); v.deleteDialog.querySelector('.comment-delete-cancel').click(); }, { opts: { comments: deleteFixture() } }),
+  S('Comments', 'delete-pending', 'Pending', 'otio', 'Deleting comment...', async (v) => { await toTimeline(v); v.openCard('c1', true); v.deleteComment('delete-reply'); }, { opts: { comments: deleteFixture(), deleteResponse: 'pending' } }),
+  S('Comments', 'delete-failure', 'Failure', 'otio', 'Deletion could not be confirmed.', async (v) => { v.setSidebar(true); v.deleteComment('c1'); }, { opts: { comments: deleteFixture(), deleteResponse: 'failure' } }),
+  S('Comments', 'delete-orphan', 'Replies', 'otio', ORPHAN_NOTE, async (v) => { v.setSidebar(true); v.deleteComment('c1'); }, { opts: { comments: deleteFixture() } }),
+  S('Comments', 'delete-reply', 'Reply', 'otio', 'Comment deleted. Replies remain.', async (v) => { await toTimeline(v); v.openCard('c1', true); v.deleteComment('delete-reply'); if (wide()) v.setSidebar(true); }, { opts: { comments: deleteFixture() } }),
 
   /* ---------- video ---------- */
   S('Video', 'video-1', 'V1', 'video', 'Span dragged from 0:04 to 0:07: the composer opens at the scrubber, below by preference; at 1440 the picture leaves no room below in view, so it opens above', async (v) => { v.adapter.span(4, 7); }),
@@ -2697,7 +2850,7 @@ function buildChrome() {
   for (const s of STATES) { let g = groups.find((x) => x.name === s.group); if (!g) groups.push(g = { name: s.group, items: [] }); g.items.push(s); }
   const banner = groups.find((g) => g.name === 'Banner');
   banner.items.unshift(...BANNER_ALIASES.map((a) => ({ ...STATE_BY_ID[a.id], label: a.label, title: a.title, alias: true })));
-  const groupTitles = { OTIO: 'OpenTimelineIO', Video: 'Video', Audio: 'Audio', Markdown: 'Markdown', Code: 'Code', Image: 'Image', PDF: 'PDF', HTML: 'HTML in the sandboxed frame', SVG: 'SVG in the sandboxed frame', Banner: 'Version banner' };
+  const groupTitles = { OTIO: 'OpenTimelineIO', Comments: 'Comments', Video: 'Video', Audio: 'Audio', Markdown: 'Markdown', Code: 'Code', Image: 'Image', PDF: 'PDF', HTML: 'HTML in the sandboxed frame', SVG: 'SVG in the sandboxed frame', Banner: 'Version banner' };
   for (const g of groups) {
     chips.append(h('span', { class: 'mk-chip-group' }, g.name));
     for (const s of g.items) if (!s.alias) chips.append(h('button', { type: 'button', class: 'mk-btn', 'data-state': s.id, title: `${s.group} ${s.label}: ${s.title}`, onclick: () => go(s.id) }, s.label));
@@ -2727,6 +2880,13 @@ window.mockProbe = () => {
   out.sidebarOpen = v.isOpen();
   out.chip = v.chipLabel ? v.chipLabel.textContent : null;
   out.count = v.countBadge ? v.countBadge.textContent : null;
+  out.deleteRequests = [...v.deleteRequests];
+  out.deleteNotice = v.deleteNotice ? v.deleteNotice.textContent : null;
+  out.deleteDialog = v.deleteDialog ? {
+    rect: rectOf(v.deleteDialog.getBoundingClientRect()),
+    defaultCancel: document.activeElement === v.deleteDialog.querySelector('.comment-delete-cancel'),
+    text: v.deleteDialog.textContent,
+  } : null;
   const layer = v.fullscreenLayer?.current() ? v.fullscreenLayer : v.layer;
   const panel = layer.current();
   out.offer = v.offer ? rectOf(v.offer.panel.getBoundingClientRect()) : null;

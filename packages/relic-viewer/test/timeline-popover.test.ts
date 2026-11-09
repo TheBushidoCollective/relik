@@ -631,3 +631,193 @@ describe('a marker on the timeline', () => {
     expect(field.value).toBe('Half a sentence');
   });
 });
+
+describe('deletion preserves the timeline review state', () => {
+  beforeEach(installDom);
+  afterEach(clearDom);
+
+  test('deleting an OTIO row preserves another target, its draft and fullscreen focus', async () => {
+    const otio = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        name: 'A',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              name: 'Video 1',
+              metadata: { relic: { id: 'track-a' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Gap.1',
+                  name: 'Primary Grade A',
+                  metadata: { relic: { id: 'clip-a' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 48, rate: 24 },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const anchor: Extract<CommentAnchor, { kind: 'otio' }> = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: otio.document_sha256,
+      timeline_id: 'timeline',
+      track_id: 'track-a',
+      item_id: 'clip-a',
+      range: {
+        start_time: { value: 4, rate: 24 },
+        duration: { value: 12, rate: 24 },
+      },
+      snapshot: { timeline: 'A', track: 'Video 1', item: 'Primary Grade A' },
+    };
+    const mounted = await mount({}, 'verified', [
+      {
+        id: 'otio-own',
+        body: 'Primary grade range, before the dissolve.',
+        anchor,
+        version: 1,
+      },
+    ]);
+    const root = new Node('div');
+    root.className = 'otio-view is-element-focused';
+    root.dataset['focusNode'] = 'clip-a';
+    root.dataset['playhead'] = '24';
+    mounted.stage.appendChild(root);
+    let revealed = 0;
+    let painted: string[] = [];
+    const controller: OtioUiController = {
+      document: otio,
+      revision: 1,
+      paint: (_target, id) => {
+        painted.push(id);
+        return true;
+      },
+      reveal: () => {
+        revealed++;
+      },
+      clearMarks: () => {
+        painted = [];
+      },
+      measure: () => ({
+        ...AT,
+        x: AT.left,
+        y: AT.top,
+        right: AT.left + AT.width,
+        bottom: AT.top + AT.height,
+        toJSON: () => ({}),
+      }),
+      project: async (target) => ({
+        status: 'same',
+        original_anchor: target,
+        mapped_timeline_id: 'timeline',
+        mapped_track_id: 'track-a',
+        mapped_item_id: 'clip-a',
+        mapped_range: target.range,
+        mapped_ranges: [target.range],
+        source_spans: [],
+        diagnostics: [],
+      }),
+      projection: () => undefined,
+      dispose: () => {},
+    };
+    attachOtioController(root as unknown as HTMLElement, controller);
+    mounted.repaint();
+    const doc = Reflect.get(globalThis, 'document') as {
+      fullscreenElement?: Node;
+    };
+    doc.fullscreenElement = root;
+    aimOtio(
+      mounted,
+      {
+        ...anchor,
+        range: {
+          ...anchor.range,
+          start_time: { value: 24, rate: 24 },
+        },
+      },
+      false,
+      { left: 0, top: 0, width: 800, height: 600 }
+    );
+    const panel = only(root, 'popover-card');
+    const field = only(panel, 'popover-field');
+    field.value = 'This different target still needs a reply.';
+    const sidebarState = expanded(mounted);
+    const remove = mounted.thread.querySelector(
+      '[data-delete-comment-id="otio-own"]'
+    );
+    expect(remove).not.toBeNull();
+    remove?.dispatch('click');
+    const confirmation = only(documentNode, 'comment-delete-dialog');
+    only(confirmation, 'comment-delete-cancel').dispatch('click');
+    expect(only(root, 'popover-field')).toBe(field);
+    expect(
+      mounted.calls.filter((call) => call.method === 'DELETE')
+    ).toHaveLength(0);
+    remove?.dispatch('click');
+    only(
+      only(documentNode, 'comment-delete-dialog'),
+      'comment-delete-confirm'
+    ).dispatch('click');
+    await mounted.idle();
+    expect(only(root, 'popover-card')).toBe(panel);
+    expect(only(panel, 'popover-field')).toBe(field);
+    expect(field.value).toBe('This different target still needs a reply.');
+    expect(root.dataset['focusNode']).toBe('clip-a');
+    expect(root.dataset['playhead']).toBe('24');
+    expect(doc.fullscreenElement).toBe(root);
+    expect(root.classList.contains('is-element-focused')).toBe(true);
+    expect(revealed).toBe(0);
+    expect(painted).not.toContain('otio-own');
+    expect(expanded(mounted)).toBe(sidebarState);
+    expect(mounted.counts.at(-1)).toBe(0);
+  });
+
+  test('deleting a time row never seeks or pauses the media player', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'time-own', body: 'Bars jump.', anchor: { kind: 'time', t: 3.5 } },
+    ]);
+    const video = new Node('video');
+    video.className = 'media-player media-video relic-media';
+    let pauses = 0;
+    let seeks = 0;
+    Object.defineProperties(video, {
+      duration: { value: 20 },
+      currentTime: {
+        get: () => 9,
+        set: () => {
+          seeks++;
+        },
+      },
+      pause: {
+        value: () => {
+          pauses++;
+        },
+      },
+    });
+    mounted.stage.appendChild(video);
+    mounted.stage.dispatch('relic-repaint');
+    const remove = mounted.thread.querySelector(
+      '[data-delete-comment-id="time-own"]'
+    );
+    remove?.dispatch('click');
+    only(
+      only(documentNode, 'comment-delete-dialog'),
+      'comment-delete-confirm'
+    ).dispatch('click');
+    await mounted.idle();
+    expect(pauses).toBe(0);
+    expect(seeks).toBe(0);
+    expect(withClass(mounted.stage, 'time-marker')).toHaveLength(0);
+    expect(mounted.counts.at(-1)).toBe(0);
+  });
+});

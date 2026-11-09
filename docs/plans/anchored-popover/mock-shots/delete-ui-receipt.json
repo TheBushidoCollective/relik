@@ -1,0 +1,1708 @@
+{
+  "source": "docs/plans/anchored-popover/mockup.html",
+  "sourceSha256": "e20cefd7a57868d0013e82906fa3105d3fc01f9dcccf2daf8e36384af0dd596a",
+  "browser": "HeadlessChrome/156.0.8078.4",
+  "network": "Loopback-only HTML server; mock CSP connect-src none",
+  "designGate": {
+    "verdict": "passed",
+    "excludedSite": "relic",
+    "templateTells": 0,
+    "nearestSite": "iocore-demo",
+    "nearestSimilarity": 0.554,
+    "threshold": 0.59
+  },
+  "rendered": [
+    {
+      "width": 1440,
+      "theme": "light",
+      "state": "delete-confirm",
+      "probe": {
+        "state": "delete-confirm",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": [],
+        "deleteNotice": "",
+        "deleteDialog": {
+          "rect": {
+            "left": 992,
+            "top": 131.5,
+            "width": 448,
+            "height": 266.484375
+          },
+          "defaultCancel": true,
+          "text": "Delete comment?reader@example.testPrimary grade range, before the dissolve.This removes only your comment. Replies will stay. Relik has no undo.CancelDelete comment"
+        },
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 225.515625,
+        "text": ""
+      },
+      "dialogOverflow": 0,
+      "buttons": [
+        {
+          "text": "Cancel",
+          "width": 71.71875,
+          "height": 20.34375,
+          "inViewport": true
+        },
+        {
+          "text": "Delete comment",
+          "width": 130.140625,
+          "height": 20.34375,
+          "inViewport": true
+        }
+      ],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "state": "delete-failure",
+      "probe": {
+        "state": "delete-failure",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 291.96875,
+        "text": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments"
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "state": "delete-orphan",
+      "probe": {
+        "state": "delete-orphan",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "state": "delete-pending",
+      "probe": {
+        "state": "delete-pending",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Deleting comment...",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 242.4375,
+          "top": 197.671875,
+          "width": 352,
+          "height": 484.375
+        },
+        "anchor": {
+          "left": 357.328125,
+          "top": 689.671875,
+          "width": 122.21875,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 131.5,
+          "width": 1411,
+          "height": 769
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Deleting comment..."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 387,
+        "client": 387,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "state": "delete-reply",
+      "probe": {
+        "state": "delete-reply",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 177.78125,
+          "top": 417.671875,
+          "width": 352,
+          "height": 263.921875
+        },
+        "anchor": {
+          "left": 308.84375,
+          "top": 689.671875,
+          "width": 89.890625,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 131.5,
+          "width": 1088,
+          "height": 769
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 166,
+        "client": 166,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "dark",
+      "state": "delete-confirm",
+      "probe": {
+        "state": "delete-confirm",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": [],
+        "deleteNotice": "",
+        "deleteDialog": {
+          "rect": {
+            "left": 992,
+            "top": 131.5,
+            "width": 448,
+            "height": 266.484375
+          },
+          "defaultCancel": true,
+          "text": "Delete comment?reader@example.testPrimary grade range, before the dissolve.This removes only your comment. Replies will stay. Relik has no undo.CancelDelete comment"
+        },
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 225.515625,
+        "text": ""
+      },
+      "dialogOverflow": 0,
+      "buttons": [
+        {
+          "text": "Cancel",
+          "width": 71.71875,
+          "height": 20.34375,
+          "inViewport": true
+        },
+        {
+          "text": "Delete comment",
+          "width": 130.140625,
+          "height": 20.34375,
+          "inViewport": true
+        }
+      ],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "dark",
+      "state": "delete-failure",
+      "probe": {
+        "state": "delete-failure",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 291.96875,
+        "text": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments"
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "dark",
+      "state": "delete-orphan",
+      "probe": {
+        "state": "delete-orphan",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "dark",
+      "state": "delete-pending",
+      "probe": {
+        "state": "delete-pending",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Deleting comment...",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 242.4375,
+          "top": 197.671875,
+          "width": 352,
+          "height": 484.375
+        },
+        "anchor": {
+          "left": 357.328125,
+          "top": 689.671875,
+          "width": 122.21875,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 131.5,
+          "width": 1411,
+          "height": 769
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Deleting comment..."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 387,
+        "client": 387,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 1440,
+      "theme": "dark",
+      "state": "delete-reply",
+      "probe": {
+        "state": "delete-reply",
+        "ready": true,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 177.78125,
+          "top": 417.671875,
+          "width": 352,
+          "height": 263.921875
+        },
+        "anchor": {
+          "left": 308.84375,
+          "top": 689.671875,
+          "width": 89.890625,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 131.5,
+          "width": 1088,
+          "height": 769
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 166,
+        "client": 166,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "light",
+      "state": "delete-confirm",
+      "probe": {
+        "state": "delete-confirm",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": [],
+        "deleteNotice": "",
+        "deleteDialog": {
+          "rect": {
+            "left": 0,
+            "top": 99.5,
+            "width": 390,
+            "height": 266.484375
+          },
+          "defaultCancel": true,
+          "text": "Delete comment?reader@example.testPrimary grade range, before the dissolve.This removes only your comment. Replies will stay. Relik has no undo.CancelDelete comment"
+        },
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 225.515625,
+        "text": ""
+      },
+      "dialogOverflow": 0,
+      "buttons": [
+        {
+          "text": "Cancel",
+          "width": 71.71875,
+          "height": 20.34375,
+          "inViewport": true
+        },
+        {
+          "text": "Delete comment",
+          "width": 130.140625,
+          "height": 20.34375,
+          "inViewport": true
+        }
+      ],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "light",
+      "state": "delete-failure",
+      "probe": {
+        "state": "delete-failure",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 291.96875,
+        "text": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments"
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "light",
+      "state": "delete-orphan",
+      "probe": {
+        "state": "delete-orphan",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "light",
+      "state": "delete-pending",
+      "probe": {
+        "state": "delete-pending",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Deleting comment...",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 177.03125,
+          "width": 345.21875,
+          "height": 484.375
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 669.03125,
+          "width": 61.1875,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 361,
+          "height": 801
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Deleting comment..."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 387,
+        "client": 387,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "light",
+      "state": "delete-reply",
+      "probe": {
+        "state": "delete-reply",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 397.03125,
+          "width": 345.21875,
+          "height": 263.921875
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 669.03125,
+          "width": 61.1875,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 361,
+          "height": 801
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 166,
+        "client": 166,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "state": "delete-confirm",
+      "probe": {
+        "state": "delete-confirm",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": [],
+        "deleteNotice": "",
+        "deleteDialog": {
+          "rect": {
+            "left": 0,
+            "top": 99.5,
+            "width": 390,
+            "height": 266.484375
+          },
+          "defaultCancel": true,
+          "text": "Delete comment?reader@example.testPrimary grade range, before the dissolve.This removes only your comment. Replies will stay. Relik has no undo.CancelDelete comment"
+        },
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 225.515625,
+        "text": ""
+      },
+      "dialogOverflow": 0,
+      "buttons": [
+        {
+          "text": "Cancel",
+          "width": 71.71875,
+          "height": 20.34375,
+          "inViewport": true
+        },
+        {
+          "text": "Delete comment",
+          "width": 130.140625,
+          "height": 20.34375,
+          "inViewport": true
+        }
+      ],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "state": "delete-failure",
+      "probe": {
+        "state": "delete-failure",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 291.96875,
+        "text": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments"
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "state": "delete-orphan",
+      "probe": {
+        "state": "delete-orphan",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "state": "delete-pending",
+      "probe": {
+        "state": "delete-pending",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Deleting comment...",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 177.03125,
+          "width": 345.21875,
+          "height": 484.375
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 669.03125,
+          "width": 61.1875,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 361,
+          "height": 801
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Deleting comment..."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 387,
+        "client": 387,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "state": "delete-reply",
+      "probe": {
+        "state": "delete-reply",
+        "ready": true,
+        "viewport": {
+          "width": 390,
+          "height": 900
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 397.03125,
+          "width": 345.21875,
+          "height": 263.921875
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 669.03125,
+          "width": 61.1875,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 361,
+          "height": 801
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 166,
+        "client": 166,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "state": "delete-confirm",
+      "probe": {
+        "state": "delete-confirm",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": [],
+        "deleteNotice": "",
+        "deleteDialog": {
+          "rect": {
+            "left": 0,
+            "top": 99.5,
+            "width": 320,
+            "height": 266.484375
+          },
+          "defaultCancel": true,
+          "text": "Delete comment?reader@example.testPrimary grade range, before the dissolve.This removes only your comment. Replies will stay. Relik has no undo.CancelDelete comment"
+        },
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 225.515625,
+        "text": ""
+      },
+      "dialogOverflow": 0,
+      "buttons": [
+        {
+          "text": "Cancel",
+          "width": 71.71875,
+          "height": 20.34375,
+          "inViewport": true
+        },
+        {
+          "text": "Delete comment",
+          "width": 130.140625,
+          "height": 20.34375,
+          "inViewport": true
+        }
+      ],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "state": "delete-failure",
+      "probe": {
+        "state": "delete-failure",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 291.96875,
+        "text": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments"
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "state": "delete-orphan",
+      "probe": {
+        "state": "delete-orphan",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "state": "delete-pending",
+      "probe": {
+        "state": "delete-pending",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Deleting comment...",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 107.5,
+          "width": 275.21875,
+          "height": 371.390625
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 486.890625,
+          "width": 36.203125,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 291,
+          "height": 541
+        },
+        "side": "above",
+        "capped": true,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Deleting comment..."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 475,
+        "client": 274,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "state": "delete-reply",
+      "probe": {
+        "state": "delete-reply",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 174.890625,
+          "width": 275.21875,
+          "height": 304.125
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 486.890625,
+          "width": 36.203125,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 291,
+          "height": 541
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 206,
+        "client": 206,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "state": "delete-confirm",
+      "probe": {
+        "state": "delete-confirm",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": [],
+        "deleteNotice": "",
+        "deleteDialog": {
+          "rect": {
+            "left": 0,
+            "top": 99.5,
+            "width": 320,
+            "height": 266.484375
+          },
+          "defaultCancel": true,
+          "text": "Delete comment?reader@example.testPrimary grade range, before the dissolve.This removes only your comment. Replies will stay. Relik has no undo.CancelDelete comment"
+        },
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 225.515625,
+        "text": ""
+      },
+      "dialogOverflow": 0,
+      "buttons": [
+        {
+          "text": "Cancel",
+          "width": 71.71875,
+          "height": 20.34375,
+          "inViewport": true
+        },
+        {
+          "text": "Delete comment",
+          "width": 130.140625,
+          "height": 20.34375,
+          "inViewport": true
+        }
+      ],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "state": "delete-failure",
+      "probe": {
+        "state": "delete-failure",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 291.96875,
+        "text": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments"
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "state": "delete-orphan",
+      "probe": {
+        "state": "delete-orphan",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": true,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["c1"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null
+      },
+      "summary": {
+        "top": 225.515625,
+        "bottom": 246.34375,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": false,
+      "toolsInside": true,
+      "threadScroll": null,
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "state": "delete-pending",
+      "probe": {
+        "state": "delete-pending",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "4",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Deleting comment...",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 107.5,
+          "width": 275.21875,
+          "height": 371.390625
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 486.890625,
+          "width": 36.203125,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 291,
+          "height": 541
+        },
+        "side": "above",
+        "capped": true,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Deleting comment..."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 475,
+        "client": 274,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "state": "delete-reply",
+      "probe": {
+        "state": "delete-reply",
+        "ready": true,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflowX": 0,
+        "bodyOverflowX": 0,
+        "sidebarOpen": false,
+        "chip": "Commenting on the whole document",
+        "count": "3",
+        "deleteRequests": ["delete-reply"],
+        "deleteNotice": "Comment deleted. Replies remain.",
+        "deleteDialog": null,
+        "offer": null,
+        "held": false,
+        "heldRect": null,
+        "panel": {
+          "left": 8,
+          "top": 174.890625,
+          "width": 275.21875,
+          "height": 304.125
+        },
+        "anchor": {
+          "left": 239.796875,
+          "top": 486.890625,
+          "width": 36.203125,
+          "height": 14
+        },
+        "host": {
+          "left": 0,
+          "top": 99.5,
+          "width": 291,
+          "height": 541
+        },
+        "side": "above",
+        "capped": false,
+        "prefer": "below",
+        "kind": "otio",
+        "isComposer": false,
+        "commentId": "c1",
+        "busy": false,
+        "focusInside": false,
+        "anchorExposed": true
+      },
+      "summary": {
+        "top": 0,
+        "bottom": 0,
+        "text": "Comment deleted. Replies remain."
+      },
+      "dialogOverflow": 0,
+      "buttons": [],
+      "panelVisible": true,
+      "toolsInside": true,
+      "threadScroll": {
+        "scroll": 206,
+        "client": 206,
+        "overflow": "auto"
+      },
+      "error": null,
+      "images": 0
+    }
+  ],
+  "functional": {
+    "cancel": {
+      "state": "delete-confirm",
+      "ready": true,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "overflowX": 0,
+      "bodyOverflowX": 0,
+      "sidebarOpen": true,
+      "chip": "Commenting on the whole document",
+      "count": "4",
+      "deleteRequests": [],
+      "deleteNotice": "",
+      "deleteDialog": null,
+      "offer": null
+    },
+    "escape": {
+      "state": "delete-confirm",
+      "ready": true,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "overflowX": 0,
+      "bodyOverflowX": 0,
+      "sidebarOpen": true,
+      "chip": "Commenting on the whole document",
+      "count": "4",
+      "deleteRequests": [],
+      "deleteNotice": "",
+      "deleteDialog": null,
+      "offer": null
+    },
+    "parent": {
+      "state": "delete-confirm",
+      "ready": true,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "overflowX": 0,
+      "bodyOverflowX": 0,
+      "sidebarOpen": true,
+      "chip": "Commenting on the whole document",
+      "count": "3",
+      "deleteRequests": ["c1"],
+      "deleteNotice": "Comment deleted. Replies remain.",
+      "deleteDialog": null,
+      "offer": null
+    },
+    "survivors": ["c2", "delete-reply", "delete-nested"],
+    "failureBefore": {
+      "state": "delete-failure",
+      "ready": true,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "overflowX": 0,
+      "bodyOverflowX": 0,
+      "sidebarOpen": true,
+      "chip": "Commenting on the whole document",
+      "count": "4",
+      "deleteRequests": ["c1"],
+      "deleteNotice": "Deletion could not be confirmed. Refresh comments to check whether it took effect.Refresh comments",
+      "deleteDialog": null,
+      "offer": null
+    },
+    "failureAfter": {
+      "state": "delete-failure",
+      "ready": true,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "overflowX": 0,
+      "bodyOverflowX": 0,
+      "sidebarOpen": true,
+      "chip": "Commenting on the whole document",
+      "count": "4",
+      "deleteRequests": ["c1"],
+      "deleteNotice": "Comments refreshed. Check the thread before deleting again.",
+      "deleteDialog": null,
+      "offer": null
+    },
+    "newReplyId": "reply-1",
+    "newReplyDeleted": {
+      "state": "delete-reply",
+      "ready": true,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "overflowX": 0,
+      "bodyOverflowX": 0,
+      "sidebarOpen": true,
+      "chip": "Commenting on the whole document",
+      "count": "3",
+      "deleteRequests": ["delete-reply", "reply-1"],
+      "deleteNotice": "Comment deleted. Replies remain.",
+      "deleteDialog": null,
+      "offer": null,
+      "held": false,
+      "heldRect": null,
+      "panel": {
+        "left": 177.78125,
+        "top": 417.671875,
+        "width": 352,
+        "height": 263.921875
+      },
+      "anchor": {
+        "left": 308.84375,
+        "top": 689.671875,
+        "width": 89.890625,
+        "height": 14
+      },
+      "host": {
+        "left": 0,
+        "top": 131.5,
+        "width": 1088,
+        "height": 769
+      },
+      "side": "above",
+      "capped": false,
+      "prefer": "below",
+      "kind": "otio",
+      "isComposer": false,
+      "commentId": "c1",
+      "busy": false,
+      "focusInside": false,
+      "anchorExposed": true
+    }
+  },
+  "scrolledPending": {
+    "width": 320,
+    "height": 640,
+    "scrollTop": 178,
+    "scrollHeight": 452,
+    "clientHeight": 274,
+    "toolsInside": true,
+    "screenshot": "delete-pending-scroll-320-dark.png"
+  }
+}

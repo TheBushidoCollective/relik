@@ -131,12 +131,14 @@ import {
   type CommentCipher,
   type CommentEntry,
   type CommentNode,
+  canDeleteComment,
   canEditComment,
   canResolveComment,
   collectDisplayedEntries,
   commentCipher,
   commentTime,
   DELIVERY_DISCLOSURE,
+  deleteComment,
   DISPLAY_NAME_NOTE,
   EDITED_LABEL,
   editComment,
@@ -3686,6 +3688,8 @@ interface ThreadHandle {
    * path ignores it, because there the page outlives the fetch.
    */
   readonly ready: Promise<void>;
+  /** Settles active thread reads and deletions before a caller tears down. */
+  readonly idle: () => Promise<void>;
   /** The stage the marks are painted on. */
   readonly attach: (host: HTMLElement) => void;
 }
@@ -5601,6 +5605,9 @@ export function buildThread(
   const outcome = document.createElement('div');
   outcome.className = 'thread-outcome';
   outcome.setAttribute('aria-live', 'polite');
+  const deletionOutcome = document.createElement('div');
+  deletionOutcome.className = 'comment-delete-outcome';
+  deletionOutcome.setAttribute('aria-live', 'polite');
 
   let settled = false;
   let readyResolve: () => void = () => {};
@@ -5654,7 +5661,15 @@ export function buildThread(
     },
   });
 
-  section.append(title, marks.tools, status, list, composer, outcome);
+  section.append(
+    title,
+    marks.tools,
+    status,
+    deletionOutcome,
+    list,
+    composer,
+    outcome
+  );
 
   // The one place the in-memory fragment is already carried on a ready view.
   // Reading it back from here rather than adding a second copy to `ReadyView`
@@ -5665,6 +5680,29 @@ export function buildThread(
   let session: SessionState = { kind: 'unknown' };
   let host: HTMLElement | undefined;
   let lastEntries: readonly CommentEntry[] = [];
+  // The complete successful read is distinct from the version-filtered rows
+  // held by paintMarks. Only this snapshot can distinguish a missing parent
+  // from one that is deliberately hidden on another revision.
+  let allEntries: readonly CommentEntry[] = [];
+  let hasThreadSnapshot = false;
+  let loadGeneration = 0;
+  const threadWork = new Set<Promise<void>>();
+  const confirmedAbsent = new Set<string>();
+  const pendingDeletes = new Set<string>();
+  const unconfirmedDeletes = new Set<string>();
+  let deleteDialog: HTMLDialogElement | undefined;
+  const deleteNotice = document.createElement('div');
+  deleteNotice.className = 'mark-hint comment-delete-notice';
+  deleteNotice.setAttribute('role', 'status');
+  deleteNotice.setAttribute('aria-live', 'polite');
+  deleteNotice.style.pointerEvents = 'auto';
+  deleteNotice.hidden = true;
+  let addressedById = new Map<string, AddressedBy>();
+  let composerDraft = '';
+  let composerNameDraft: string | undefined;
+  let sidebarBody: HTMLTextAreaElement | undefined;
+  let sidebarName: HTMLInputElement | undefined;
+  let sessionGeneration = 0;
   const originalViews = new Map<number, Promise<ReadyView | undefined>>();
   const projectionAttempts = new Set<string>();
   const projectionFailures = new Set<string>();
@@ -6232,6 +6270,7 @@ export function buildThread(
    * the scrubber.
    */
   let rerenderRows: (() => void) | undefined;
+  let repaintCardPermissions: (() => void) | undefined;
 
   const frameWindow = (): Window | null =>
     host?.querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
@@ -6451,6 +6490,276 @@ export function buildThread(
   const entryById = (id: string): CommentEntry | undefined =>
     lastEntries.find((entry) => entry.id === id);
 
+  const findNode = (
+    nodes: readonly CommentNode[],
+    id: string
+  ): CommentNode | undefined => {
+    for (const node of nodes) {
+      if (node.entry.id === id) return node;
+      const child = findNode(node.replies, id);
+      if (child !== undefined) return child;
+    }
+    return undefined;
+  };
+
+  /** Every depth and placement uses the same recovery note and author gate. */
+  const renderCommentNode = (
+    node: CommentNode,
+    isReply = false
+  ): HTMLElement => {
+    const entry = node.entry;
+    const row = commentRow(
+      entry,
+      entry.id !== null && unplaceable.has(entry.id),
+      entry.id !== null ? (addressedById.get(entry.id) ?? null) : null,
+      node.replies.map((child) => renderCommentNode(child, true)),
+      isReply
+    );
+    const head = row.children[0];
+    if (node.recovery !== undefined) {
+      const note = line('thread-note comment-recovery', node.recovery.detail);
+      note.dataset['recovery'] = node.recovery.kind;
+      row.replaceChildren(note, ...Array.from(row.children));
+    }
+    addOtioFeedbackContext(row, entry);
+    if (canDeleteComment(entry, session) && entry.id !== null) {
+      const id = entry.id;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'popover-action comment-delete';
+      remove.dataset['deleteCommentId'] = id;
+      remove.textContent = pendingDeletes.has(id) ? 'Deleting...' : 'Delete';
+      remove.disabled = pendingDeletes.has(id) || unconfirmedDeletes.has(id);
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!remove.disabled) confirmDelete(entry, remove);
+      });
+      head?.appendChild(remove);
+    }
+    return row;
+  };
+
+  // Replacing only the rows keeps reply/edit fields, their selection and the
+  // panel itself alive. A delayed mutation never opens or replaces a card.
+  const repaintCardRows = (): void => {
+    const panel = popover?.current();
+    if (panel === undefined || cardId === undefined) return;
+    const rows = panel.querySelector('.popover-thread');
+    if (rows === null) return;
+    const scrollTop = rows.scrollTop;
+    const node = findNode(threadEntries(lastEntries, allEntries), cardId);
+    if (node !== undefined) rows.replaceChildren(renderCommentNode(node));
+    popover?.reposition();
+    rows.scrollTop = scrollTop;
+  };
+
+  const repaintDeleteControls = (): void => {
+    if (
+      deleteDialog !== undefined &&
+      (session.kind !== 'verified' ||
+        deleteDialog.dataset['commentAuthor'] !== session.email)
+    ) {
+      deleteDialog.close();
+    }
+    const focused = document.activeElement;
+    const focusedId =
+      typeof HTMLElement !== 'undefined' && focused instanceof HTMLElement
+        ? focused.dataset['deleteCommentId']
+        : undefined;
+    const inCard =
+      typeof Element !== 'undefined' &&
+      focused instanceof Element &&
+      focused.closest('.popover');
+    rerenderRows?.();
+    repaintCardRows();
+    if (focusedId === undefined || deleteDialog !== undefined) return;
+    const root = inCard ? popover?.current() : list;
+    const replacement = root?.querySelector<HTMLButtonElement>(
+      `[data-delete-comment-id="${focusedId}"]`
+    );
+    const fallback = section.classList.contains('is-open') ? toggle : tab;
+    (replacement && !replacement.disabled ? replacement : fallback).focus({
+      preventScroll: true,
+    });
+  };
+
+  const showDeleteOutcome = (text: string, refreshable = false): void => {
+    deletionOutcome.replaceChildren(line('thread-note', text));
+    deleteNotice.replaceChildren(line('', text));
+    if (refreshable) {
+      deletionOutcome.appendChild(deleteRefreshControl());
+      deleteNotice.appendChild(deleteRefreshControl());
+    }
+    deleteNotice.setAttribute(
+      'aria-live',
+      section.classList.contains('is-open') ? 'off' : 'polite'
+    );
+    deleteNotice.hidden = false;
+  };
+
+  const deleteRefreshControl = (): HTMLElement => {
+    const again = document.createElement('button');
+    again.type = 'button';
+    again.className = 'action';
+    again.textContent = 'Refresh comments';
+    again.addEventListener('click', () => {
+      again.disabled = true;
+      void refresh().then((readBack) => {
+        if (readBack !== true) {
+          again.disabled = false;
+          return;
+        }
+        showDeleteOutcome(
+          'Comments refreshed. Check the thread before deleting again.'
+        );
+      });
+    });
+    return again;
+  };
+
+  const performDelete = async (entry: CommentEntry): Promise<void> => {
+    const id = entry.id;
+    if (
+      id === null ||
+      !canDeleteComment(entry, session) ||
+      pendingDeletes.has(id) ||
+      unconfirmedDeletes.has(id)
+    )
+      return;
+    const work = Promise.withResolvers<void>();
+    threadWork.add(work.promise);
+    try {
+      pendingDeletes.add(id);
+      // A read begun before this write must never paint over its result.
+      loadGeneration++;
+      repaintDeleteControls();
+      showDeleteOutcome('Deleting comment...');
+      const result = await deleteComment(relicId, id, deps);
+      if (typeof document === 'undefined') return;
+      pendingDeletes.delete(id);
+      loadGeneration++;
+      if (
+        result.kind === 'deleted' ||
+        result.refusal.code === 'comment_not_found'
+      ) {
+        confirmedAbsent.add(id);
+        allEntries = allEntries.filter((candidate) => candidate.id !== id);
+        if (cardId === id) closeCard();
+        if (activeId === id) setActiveMark(undefined);
+        paintThreadSnapshot();
+        const message =
+          result.kind === 'deleted'
+            ? 'Comment deleted. Replies remain.'
+            : 'This comment was already absent. Replies remain.';
+        showDeleteOutcome(message);
+        const readBack = await refresh();
+        if (readBack === false) {
+          showDeleteOutcome(
+            `${message} The thread could not be refreshed. The confirmed removal is kept here.`,
+            true
+          );
+        }
+        return;
+      }
+      // A transport failure can follow a committed write. Read before allowing
+      // another deliberate attempt; never turn Try again into another DELETE.
+      const refusal = result.refusal;
+      unconfirmedDeletes.add(id);
+      if (refusal.code === 'invalid_session') {
+        sessionGeneration++;
+        session = { kind: 'anonymous' };
+        section.dataset['session'] = session.kind;
+        paintComposer();
+        repaintCardPermissions?.();
+      }
+      repaintDeleteControls();
+      showDeleteOutcome(
+        'Deletion could not be confirmed. Refresh comments to check whether it took effect.',
+        true
+      );
+      deletionOutcome.appendChild(
+        threadRefusal({ ...refusal, retryable: false }, () => {})
+      );
+    } finally {
+      threadWork.delete(work.promise);
+      work.resolve();
+    }
+  };
+
+  const confirmDelete = (entry: CommentEntry, opener: HTMLElement): void => {
+    if (deleteDialog !== undefined || !canDeleteComment(entry, session)) return;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'share-panel comment-delete-dialog';
+    dialog.dataset['commentAuthor'] = entry.author ?? '';
+    dialog.setAttribute('aria-label', 'Delete comment?');
+    dialog.setAttribute('aria-describedby', 'comment-delete-consequence');
+    const heading = line('share-title', 'Delete comment?');
+    const head = document.createElement('div');
+    head.className = 'share-head';
+    head.appendChild(heading);
+    const body = document.createElement('div');
+    body.className = 'share-body';
+    const consequence = line(
+      'thread-note',
+      'This removes only your comment. Replies will stay. Relik has no undo.'
+    );
+    consequence.id = 'comment-delete-consequence';
+    const excerpt =
+      entry.kind === 'open'
+        ? plainLabel(entry.body).replace(/\s+/g, ' ').trim().slice(0, 240)
+        : 'Comment text unavailable.';
+    body.append(
+      line('comment-author', plainLabel(entry.author ?? '')),
+      line('comment-body', excerpt || 'Comment text unavailable.'),
+      consequence
+    );
+    const tools = document.createElement('div');
+    tools.className = 'popover-tools';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'action comment-delete-cancel';
+    cancel.textContent = 'Cancel';
+    cancel.setAttribute('autofocus', '');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'action comment-delete-confirm';
+    remove.textContent = 'Delete comment';
+    const cleanUp = (): void => {
+      if (deleteDialog !== dialog) return;
+      deleteDialog = undefined;
+      dialog.remove();
+      if (opener.isConnected) opener.focus({ preventScroll: true });
+      else tab.focus({ preventScroll: true });
+    };
+    const dismiss = (): void => {
+      if (typeof dialog.close === 'function') dialog.close();
+      cleanUp();
+    };
+    cancel.addEventListener('click', dismiss);
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      dismiss();
+    });
+    dialog.addEventListener('close', cleanUp);
+    dialog.addEventListener('keydown', (event) => event.stopPropagation());
+    dialog.addEventListener('pointerdown', (event) => event.stopPropagation());
+    remove.addEventListener('click', () => {
+      // Capture the row before closing. Confirmation cannot drift to another
+      // card while its request is waiting.
+      remove.disabled = true;
+      dismiss();
+      void performDelete(entry);
+    });
+    tools.append(cancel, remove);
+    body.appendChild(tools);
+    dialog.append(head, body);
+    deleteDialog = dialog;
+    document.body.appendChild(dialog);
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    cancel.focus({ preventScroll: true });
+  };
+
   /**
    * The card, built from the same renderer the sidebar uses.
    *
@@ -6473,22 +6782,13 @@ export function buildThread(
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
 
-    const nodes = threadEntries(lastEntries);
-    const node = nodes.find((candidate) => candidate.entry.id === entry.id);
-    const replies = (node?.replies ?? []).map((reply) =>
-      commentRow(reply.entry, false, undefined, [], true)
-    );
+    const nodes = threadEntries(lastEntries, allEntries);
+    const node = findNode(nodes, entry.id);
     const rows = document.createElement('ol');
-    rows.className = 'popover-thread';
-    const row = commentRow(
-      entry,
-      unplaceable.has(entry.id),
-      undefined,
-      replies,
-      false
-    );
-    addOtioFeedbackContext(row, entry);
-    rows.appendChild(row);
+    rows.className = 'popover-thread popover-bounded-body';
+    rows.tabIndex = 0;
+    rows.setAttribute('aria-label', 'Comments');
+    rows.appendChild(renderCommentNode(node ?? { entry, replies: [] }));
 
     const id = entry.id;
     const actions: PopoverAction[] = [];
@@ -6558,123 +6858,129 @@ export function buildThread(
             })();
           },
         });
+        composer.element.style.flex = 'none';
         layer.current()?.appendChild(composer.element);
         layer.reposition();
         composer.field.focus();
       },
     });
 
-    if (canEditComment(entry, session) && entry.kind === 'open') {
-      actions.push({
-        label: 'Edit',
-        className: 'popover-edit',
-        onSelect: () => {
-          cardGeneration++;
-          stickyId = id;
-          const target = document.createElement('p');
-          target.className = 'popover-target';
-          target.textContent = markTargetLabel(entry.anchor);
-          const panel = popoverCard({
-            content: target,
-            actions: [],
-            commentId: id,
-          });
-          const composer = inlineComposer({
-            placeholder: 'What it should say instead',
-            submitLabel: 'Save',
-            value: entry.body,
-            disclosure: 'Editing replaces the text. No earlier copy is kept.',
-            onCancel: reopen,
-            onSubmit: (body) => {
-              const opener = cipher;
-              if (opener === undefined) return;
-              composer.setBusy(true);
-              void (async () => {
-                const result = await editComment(
-                  relicId,
-                  id,
-                  {
-                    body,
-                    display_name: entry.displayName,
-                    // Carried forward rather than rebuilt. An edit changes
-                    // what a remark says and never where it points, and
-                    // moving the mark would leave every reply answering
-                    // something the reader can no longer see.
-                    anchor: entry.anchor,
-                    addresses: entry.addresses ?? null,
-                  },
-                  deps,
-                  opener
-                );
-                if (layer.current() !== panel) {
-                  if (result.kind !== 'refused') await refresh();
-                  return;
-                }
-                if (result.kind === 'refused') {
-                  composer.setBusy(false);
-                  composer.setNote(result.refusal.headline);
-                  return;
-                }
-                await refresh();
-                if (layer.current() === panel) reopen();
-              })();
-            },
-          });
-          const editKind = entry.anchor ? entry.anchor.kind : 'text';
-          panel.dataset['anchorKind'] = editKind;
-          panel.appendChild(composer.element);
-          activePanel = panel;
-          layer.show(panel, box, {
-            follow: () => anchorBoxFor(id),
-            reveal: sticky,
-            prefer: preferFor(editKind),
-          });
-          composer.field.focus({ preventScroll: true });
-        },
-      });
-    }
+    const permissionActions = (): PopoverAction[] => {
+      const actions: PopoverAction[] = [];
+      if (canEditComment(entry, session) && entry.kind === 'open') {
+        actions.push({
+          label: 'Edit',
+          className: 'popover-edit',
+          onSelect: () => {
+            cardGeneration++;
+            stickyId = id;
+            const target = document.createElement('p');
+            target.className = 'popover-target';
+            target.textContent = markTargetLabel(entry.anchor);
+            const panel = popoverCard({
+              content: target,
+              actions: [],
+              commentId: id,
+            });
+            const composer = inlineComposer({
+              placeholder: 'What it should say instead',
+              submitLabel: 'Save',
+              value: entry.body,
+              disclosure: 'Editing replaces the text. No earlier copy is kept.',
+              onCancel: reopen,
+              onSubmit: (body) => {
+                const opener = cipher;
+                if (opener === undefined) return;
+                composer.setBusy(true);
+                void (async () => {
+                  const result = await editComment(
+                    relicId,
+                    id,
+                    {
+                      body,
+                      display_name: entry.displayName,
+                      // Carried forward rather than rebuilt. An edit changes
+                      // what a remark says and never where it points, and
+                      // moving the mark would leave every reply answering
+                      // something the reader can no longer see.
+                      anchor: entry.anchor,
+                      addresses: entry.addresses ?? null,
+                    },
+                    deps,
+                    opener
+                  );
+                  if (layer.current() !== panel) {
+                    if (result.kind !== 'refused') await refresh();
+                    return;
+                  }
+                  if (result.kind === 'refused') {
+                    composer.setBusy(false);
+                    composer.setNote(result.refusal.headline);
+                    return;
+                  }
+                  await refresh();
+                  if (layer.current() === panel) reopen();
+                })();
+              },
+            });
+            const editKind = entry.anchor ? entry.anchor.kind : 'text';
+            panel.dataset['anchorKind'] = editKind;
+            panel.appendChild(composer.element);
+            activePanel = panel;
+            layer.show(panel, box, {
+              follow: () => anchorBoxFor(id),
+              reveal: sticky,
+              prefer: preferFor(editKind),
+            });
+            composer.field.focus({ preventScroll: true });
+          },
+        });
+      }
 
-    if (canResolveComment(entry, session)) {
-      const settled = (entry.resolution ?? null) !== null;
-      actions.push({
-        label: settled ? 'Reopen' : 'Resolve',
-        className: 'popover-resolve',
-        onSelect: () => {
-          const resolvePanel = activePanel;
-          const resolveGeneration = cardGeneration;
-          stickyId = id;
-          void (async () => {
-            const result = await setCommentResolved(
-              relicId,
-              id,
-              !settled,
-              deps
-            );
-            if (
-              layer.current() !== resolvePanel ||
-              cardGeneration !== resolveGeneration
-            ) {
-              if (result.kind !== 'refused') await refresh();
-              return;
-            }
-            if (result.kind === 'refused') {
-              const note = document.createElement('p');
-              note.className = 'popover-note';
-              note.textContent = result.refusal.headline;
-              layer.current()?.appendChild(note);
-              layer.reposition();
-              return;
-            }
-            await refresh();
-            if (
-              layer.current() === resolvePanel &&
-              cardGeneration === resolveGeneration
-            )
-              reopen();
-          })();
-        },
-      });
-    }
+      if (canResolveComment(entry, session)) {
+        const settled = (entry.resolution ?? null) !== null;
+        actions.push({
+          label: settled ? 'Reopen' : 'Resolve',
+          className: 'popover-resolve',
+          onSelect: () => {
+            const resolvePanel = activePanel;
+            const resolveGeneration = cardGeneration;
+            stickyId = id;
+            void (async () => {
+              const result = await setCommentResolved(
+                relicId,
+                id,
+                !settled,
+                deps
+              );
+              if (
+                layer.current() !== resolvePanel ||
+                cardGeneration !== resolveGeneration
+              ) {
+                if (result.kind !== 'refused') await refresh();
+                return;
+              }
+              if (result.kind === 'refused') {
+                const note = document.createElement('p');
+                note.className = 'popover-note';
+                note.textContent = result.refusal.headline;
+                layer.current()?.appendChild(note);
+                layer.reposition();
+                return;
+              }
+              await refresh();
+              if (
+                layer.current() === resolvePanel &&
+                cardGeneration === resolveGeneration
+              )
+                reopen();
+            })();
+          },
+        });
+      }
+      return actions;
+    };
+    actions.push(...permissionActions());
 
     actions.push({
       label: 'Open in thread',
@@ -6707,7 +7013,32 @@ export function buildThread(
     const cardKind =
       entry.kind === 'open' && entry.anchor ? entry.anchor.kind : 'text';
     const card = popoverCard({ content: rows, actions, commentId: id });
+    // Recursive threads can exceed either side of the target. Reuse the
+    // bounded-body scroller while keeping the card's actions on screen.
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.overflow = 'hidden';
+    const tools = card.querySelector<HTMLElement>('.popover-tools');
+    if (tools !== null) tools.style.flex = 'none';
     activePanel = card;
+    repaintCardPermissions = (): void => {
+      if (layer.current() !== card) return;
+      // The toolbar can change identity without replacing a reply field.
+      const tools = card.querySelector('.popover-tools');
+      if (tools === null) return;
+      tools.querySelector('.popover-edit')?.remove();
+      tools.querySelector('.popover-resolve')?.remove();
+      const before = tools.querySelector('.popover-open-thread');
+      for (const action of permissionActions()) {
+        const control = document.createElement('button');
+        control.type = 'button';
+        control.className = `popover-action ${action.className ?? ''}`;
+        control.textContent = action.label;
+        control.addEventListener('click', action.onSelect);
+        if (before !== null) before.before(control);
+        else tools.appendChild(control);
+      }
+    };
     card.dataset['anchorKind'] = cardKind;
     holdOnHover(card);
     layer.show(card, box, {
@@ -7346,6 +7677,7 @@ export function buildThread(
   // a reader who has learned one has learned the other.
   document.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
+    if (deleteDialog !== undefined) return;
     if (popover?.current() !== undefined) closeCard();
     else cardGeneration++;
   });
@@ -7392,6 +7724,7 @@ export function buildThread(
    * throw the sentences away, and nothing here could give them back.
    */
   document.addEventListener('pointerdown', (event: Event) => {
+    if (deleteDialog !== undefined) return;
     if (popover?.current() === undefined) {
       if (
         !(event.target instanceof Element) ||
@@ -7504,32 +7837,48 @@ export function buildThread(
     }
   });
 
-  const refresh = async (): Promise<void> => {
-    if (typeof document === 'undefined') return;
+  const refresh = async (): Promise<boolean | undefined> => {
+    if (typeof document === 'undefined') return false;
     const opener = cipher;
-    if (opener === undefined) return;
-    status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
-    const state = await loadThread(relicId, deps, opener);
-    // The fetch above can outlive the page that asked for it. In a browser
-    // this is a navigation; under test it is teardown. Either way there is
-    // nothing left to paint into, and painting is what throws.
-    if (typeof document === 'undefined') return;
-    if (state.kind === 'refused') {
-      list.replaceChildren();
-      status.replaceChildren(
-        threadRefusal(state.refusal, () => {
-          void refresh();
-        })
+    if (opener === undefined) return false;
+    const work = Promise.withResolvers<void>();
+    threadWork.add(work.promise);
+    try {
+      const generation = ++loadGeneration;
+      status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
+      const state = await loadThread(relicId, deps, opener);
+      if (typeof document === 'undefined') return false;
+      if (generation !== loadGeneration) return undefined;
+      if (state.kind === 'refused') {
+        if (!hasThreadSnapshot) list.replaceChildren();
+        status.replaceChildren(
+          threadRefusal(state.refusal, () => {
+            void refresh();
+          })
+        );
+        return false;
+      }
+      allEntries = state.entries.filter(
+        (entry) => entry.id === null || !confirmedAbsent.has(entry.id)
       );
-      return;
+      hasThreadSnapshot = true;
+      unconfirmedDeletes.clear();
+      paintThreadSnapshot();
+      return true;
+    } finally {
+      threadWork.delete(work.promise);
+      work.resolve();
     }
+  };
+
+  const paintThreadSnapshot = (): void => {
     // Paint first, then build the rows. Which marks landed is only known
     // after the paint pass, and a row that has to say its mark could not be
     // placed cannot be built before that is decided.
     const viewedVersion = view.version;
     const isCurrentVersion = view.version === view.currentVersion;
     const hasHistory = view.currentVersion > 1;
-    const filteredEntries = state.entries.filter((entry) => {
+    const filteredEntries = allEntries.filter((entry) => {
       // OTIO placement is eligible only when its sealed target is bound to the
       // service-stamped revision. A mismatch remains on that service revision
       // as unresolvable body text, never as a claimed historical coordinate.
@@ -7557,34 +7906,17 @@ export function buildThread(
       return viewedVersion === 1;
     });
 
-    const addressedMap = resolveAddressedMap(state.entries);
-    const tree = threadEntries(filteredEntries);
+    addressedById = resolveAddressedMap(allEntries);
+    const tree = threadEntries(filteredEntries, allEntries);
     const displayedEntries = collectDisplayedEntries(tree);
 
     paintMarks(displayedEntries);
 
-    const renderNode = (node: CommentNode, isReply = false): HTMLElement => {
-      const replies = node.replies.map((child) => renderNode(child, true));
-      const isUnplaceable =
-        node.entry.id !== null && unplaceable.has(node.entry.id);
-      const addressed =
-        node.entry.id !== null ? addressedMap.get(node.entry.id) : null;
-      const row = commentRow(
-        node.entry,
-        isUnplaceable,
-        addressed,
-        replies,
-        isReply
-      );
-      addOtioFeedbackContext(row, node.entry);
-      return row;
-    };
-
     const renderRows = (): void => {
-      list.replaceChildren(...tree.map((node) => renderNode(node)));
+      list.replaceChildren(...tree.map((node) => renderCommentNode(node)));
     };
-    renderRows();
     rerenderRows = renderRows;
+    repaintDeleteControls();
     updateThreadToggle(toggle, displayedEntries.length);
     status.replaceChildren(
       ...(displayedEntries.length === 0
@@ -7656,6 +7988,8 @@ export function buildThread(
     );
 
     const name = displayNameInput();
+    if (composerNameDraft !== undefined) name.value = composerNameDraft;
+    sidebarName = name;
     form.appendChild(field('Display name', name));
     // The aside that used to inflate the identity disclosure into a
     // paragraph, said where it is actually a question.
@@ -7664,6 +7998,8 @@ export function buildThread(
     const body = document.createElement('textarea');
     body.className = 'compose-textarea';
     body.rows = 4;
+    body.value = composerDraft;
+    sidebarBody = body;
     body.required = true;
     form.appendChild(field('Comment', body));
 
@@ -7733,8 +8069,12 @@ export function buildThread(
           if (result.kind === 'refused') {
             outcome.replaceChildren(threadRefusal(result.refusal, () => {}));
             if (result.refusal.code === 'invalid_session') {
+              sessionGeneration++;
               session = { kind: 'anonymous' };
-              composer.replaceChildren(composeIdentity());
+              section.dataset['session'] = session.kind;
+              paintComposer();
+              repaintDeleteControls();
+              repaintCardPermissions?.();
             }
             return;
           }
@@ -7761,6 +8101,10 @@ export function buildThread(
   let offerHost: HTMLElement | undefined;
 
   const paintComposer = (): void => {
+    if (sidebarBody !== undefined) composerDraft = sidebarBody.value;
+    if (sidebarName !== undefined) composerNameDraft = sidebarName.value;
+    sidebarBody = undefined;
+    sidebarName = undefined;
     if (session.kind === 'verified') {
       const commentEl = composeComment(session.email);
       composer.replaceChildren(
@@ -7813,7 +8157,10 @@ export function buildThread(
    */
   const recheck = async (): Promise<void> => {
     if (cipher === undefined) return;
+    const generation = ++sessionGeneration;
     const discovered = await readSession(deps);
+    if (typeof document === 'undefined' || generation !== sessionGeneration)
+      return;
     let mounted = false;
     if (offerOwed && discovered.kind === 'verified') {
       offerOwed = false;
@@ -7823,9 +8170,12 @@ export function buildThread(
       sessionSignature(discovered) !== sessionSignature(session);
     if (sessionChanged) {
       session = discovered;
+      section.dataset['session'] = session.kind;
     }
     if (sessionChanged || mounted) {
       paintComposer();
+      repaintDeleteControls();
+      repaintCardPermissions?.();
     }
   };
 
@@ -7856,16 +8206,19 @@ export function buildThread(
         return;
       }
       cipher = commentCipher(await deriveCommentKey(key));
+      const generation = ++sessionGeneration;
       const [, discovered] = await Promise.all([refresh(), readSession(deps)]);
       if (typeof document === 'undefined') return;
-      session = discovered;
+      if (generation === sessionGeneration) session = discovered;
       section.dataset['threadReady'] = 'true';
-      section.dataset['session'] = discovered.kind;
-      if (discovered.kind === 'verified' && takePasskeyOfferMarker()) {
-        mountOfferFor(discovered.email);
+      section.dataset['session'] = session.kind;
+      if (session.kind === 'verified' && takePasskeyOfferMarker()) {
+        mountOfferFor(session.email);
       }
       paintComposer();
-      if (discovered.kind === 'verified') {
+      repaintDeleteControls();
+      repaintCardPermissions?.();
+      if (session.kind === 'verified') {
         announceVerified();
       }
     } finally {
@@ -7894,6 +8247,9 @@ export function buildThread(
     tab,
     resizer,
     ready,
+    idle: async () => {
+      while (threadWork.size > 0) await Promise.all([...threadWork]);
+    },
     toggle: toggleOpen,
     attach: (next) => {
       if (host !== undefined && host !== next) {
@@ -7905,6 +8261,7 @@ export function buildThread(
       }
       host = next;
       popover = popoverLayer(next);
+      next.appendChild(deleteNotice);
       // Once per stage. A second binding would toggle the class twice on one
       // pointer crossing, which reads as the pairing not working at all.
       if (next.dataset.pairBind !== '1') {
