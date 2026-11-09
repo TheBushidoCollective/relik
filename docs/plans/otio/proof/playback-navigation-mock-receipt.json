@@ -1,0 +1,62 @@
+{
+  "desktop": {
+    "original": {
+      "left": 174,
+      "width": 1266,
+      "scale": "Fit",
+      "scroll": 0,
+      "start": "0",
+      "end": "48",
+      "overflow": false
+    },
+    "zoomed": {
+      "left": -85,
+      "width": 1888.640625,
+      "scale": "39.35 px/frame",
+      "scroll": 259,
+      "start": "0",
+      "end": "48",
+      "overflow": false
+    },
+    "pointerErrorCssPx": 0.30413210900483134,
+    "point": {
+      "left": -85,
+      "width": 1888.640625,
+      "scale": "39.35 px/frame",
+      "scroll": 259,
+      "start": "15",
+      "end": "15",
+      "overflow": false
+    },
+    "draftAfterZoomAndPan": "Point inside the stack source range"
+  },
+  "canonical": {
+    "start": 204,
+    "end": 210,
+    "text": "Point inside the stack source range"
+  },
+  "touched": {
+    "left": 108,
+    "width": 285,
+    "scale": "Fit",
+    "scroll": 0,
+    "start": "5",
+    "end": "20",
+    "overflow": false
+  },
+  "narrow": {
+    "overflow": false,
+    "composerLeft": 55,
+    "composerRight": 385,
+    "viewport": 393,
+    "images": [
+      {
+        "complete": true,
+        "width": 320
+      }
+    ],
+    "resources": 0
+  },
+  "mock_sha256": "9a94642a8997db9057c1e16452f77bd441f42579274a25ffc07d5ec5368b22d5",
+  "proof_scope": "Standalone local-only mock, not native OTIO playback or encrypted comment persistence"
+}

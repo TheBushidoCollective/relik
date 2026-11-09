@@ -35,6 +35,17 @@ import {
   type OtioPlaybackController,
   type OtioPlaybackState,
 } from './otio-playback.ts';
+import {
+  otioCompositionTime,
+  otioDomainFrames,
+  type OtioDomainFrameBounds,
+  otioLocalTime,
+  otioPointerTime,
+  otioRangeGeometry,
+  type OtioTimelineDomain,
+  otioZoomAt,
+  otioZoomLimits,
+} from './otio-timeline-viewport.ts';
 
 const encoder = new TextEncoder();
 let nextMonitorId = 0;
@@ -59,8 +70,6 @@ const button = (
   node.addEventListener('click', run);
   return node;
 };
-const bound = (value: number, max: number): number =>
-  Math.max(0, Math.min(max, value));
 const schemaIs = (node: OtioNode, kind: string): boolean =>
   node.schema.split('.')[0] === kind;
 
@@ -71,17 +80,17 @@ export function formatOtioTime(
 ): string {
   const value = global ? addRationalTimes(global, time) : time;
   const seconds = timeToSeconds(value);
+  const negative = seconds < 0;
+  const magnitude = Math.abs(seconds);
   const rate = value.rate;
-  const whole = Math.floor(Math.max(0, seconds));
-  const frame = Math.floor((seconds - whole) * rate + 1e-5);
-  return [
-    Math.floor(whole / 3600),
-    Math.floor(whole / 60) % 60,
-    whole % 60,
-    frame,
-  ]
-    .map((n) => String(n).padStart(2, '0'))
-    .join(':');
+  const whole = Math.floor(magnitude);
+  const frame = Math.floor((magnitude - whole) * rate + 1e-5);
+  return (
+    (negative ? '-' : '') +
+    [Math.floor(whole / 3600), Math.floor(whole / 60) % 60, whole % 60, frame]
+      .map((n) => String(n).padStart(2, '0'))
+      .join(':')
+  );
 }
 
 function boundedLabel(text: string): string {
@@ -321,6 +330,22 @@ export async function mountOtioView(
   let focusNotice: string | null = null;
   let scopeGeneration = 0;
   let cancelRailGesture: (() => void) | undefined;
+  let domain: OtioTimelineDomain = {
+    origin: { value: 0, rate: 24 },
+    range: {
+      start_time: { value: 0, rate: 24 },
+      duration: { value: 0, rate: 24 },
+    },
+    rate: 24,
+  };
+  let pixelsPerFrame = 1;
+  let zoomMode: 'fit' | 'manual' = 'fit';
+  let railViewportWidth = 0;
+  let viewportKey = '';
+  const viewports = new Map<
+    string,
+    { scale: number; left: number; top: number; mode: 'fit' | 'manual' }
+  >();
   let currentTab: 'inspector' | 'markers' | 'media' = 'inspector';
   let disposed = false;
   let timelineSettled = false;
@@ -434,7 +459,7 @@ export async function mountOtioView(
   const seek = element('input', 'otio-seek');
   seek.type = 'range';
   seek.min = '0';
-  seek.step = '1';
+  seek.step = 'any';
   seek.value = '0';
   seek.setAttribute('aria-label', 'Timeline frame');
   seek.addEventListener('input', () => seekFrame(Number(seek.value)));
@@ -485,19 +510,28 @@ export async function mountOtioView(
   const trackSelect = element('select', 'otio-track-select');
   trackSelect.setAttribute('aria-label', 'Comment track');
   trackSelect.addEventListener('change', () => {
+    const start =
+      selected?.range.start_time ?? otioCompositionTime(domain, currentFrame());
+    const end = selected
+      ? rangeEndTime(selected.range)
+      : otioCompositionTime(
+          domain,
+          currentFrame() + (mode === 'point' ? 0 : 1)
+        );
     setPlaybackFocus();
     selectedTrack = trackSelect.value || null;
-    const start = selected
-      ? rescaleTime(selected.range.start_time, rate).value
-      : currentFrame();
-    const end = selected
-      ? rescaleTime(rangeEndTime(selected.range), rate).value
-      : start + (mode === 'point' ? 0 : 1);
-    selectFrames(selectedTrack, start, end, false);
+    selectFrames(
+      selectedTrack,
+      otioLocalTime(domain, start).value,
+      otioLocalTime(domain, end).value,
+      false
+    );
   });
   for (const value of ['point', 'range', 'track'] as const) {
     const control = button(
-      value.charAt(0).toUpperCase() + value.slice(1),
+      value === 'track'
+        ? 'Whole track'
+        : value.charAt(0).toUpperCase() + value.slice(1),
       'otio-mode',
       () => {
         mode = value;
@@ -506,18 +540,18 @@ export async function mountOtioView(
             selectedTrack ? doc.nodes[selectedTrack] : undefined
           );
         const start = selected
-          ? rescaleTime(selected.range.start_time, rate).value
+          ? otioLocalTime(domain, selected.range.start_time).value
           : currentFrame();
         const end = selected
-          ? rescaleTime(rangeEndTime(selected.range), rate).value
+          ? otioLocalTime(domain, rangeEndTime(selected.range)).value
           : start + 1;
         selectFrames(
           selectedTrack,
-          value === 'track' ? 0 : start,
+          value === 'track' ? playbackFrames().start : start,
           value === 'point'
             ? start
             : value === 'track'
-              ? frameCount()
+              ? playbackFrames().end
               : Math.max(start + 1, end),
           false
         );
@@ -530,6 +564,17 @@ export async function mountOtioView(
   }
   tools.append(trackSelect);
   heading.append(name, timelineSelect, tools);
+  const zoomTools = element('div', 'otio-zoom-tools');
+  zoomTools.setAttribute('aria-label', 'Timeline zoom');
+  const zoomOut = button('-', 'otio-zoom-out', () => zoomTimeline(1 / 1.5));
+  zoomOut.setAttribute('aria-label', 'Zoom out');
+  const zoomIn = button('+', 'otio-zoom-in', () => zoomTimeline(1.5));
+  zoomIn.setAttribute('aria-label', 'Zoom in');
+  const zoomFit = button('Fit', 'otio-zoom-fit', () => fitTimeline());
+  const zoomReadout = element('output', 'otio-zoom-readout');
+  zoomReadout.setAttribute('aria-label', 'Timeline scale');
+  zoomTools.append(zoomOut, zoomIn, zoomFit, zoomReadout);
+  heading.append(zoomTools);
   const scroll = element('div', 'otio-timeline-scroll');
   scroll.tabIndex = 0;
   scroll.setAttribute('aria-label', 'Timeline tracks');
@@ -557,28 +602,36 @@ export async function mountOtioView(
   const inputIn = element('input', 'otio-selection-in');
   inputIn.type = 'number';
   inputIn.min = '0';
-  inputIn.step = '1';
+  inputIn.step = 'any';
   inputIn.setAttribute('aria-label', 'Selection in frame');
   const inputOut = element('input', 'otio-selection-out');
   inputOut.type = 'number';
   inputOut.min = '0';
-  inputOut.step = '1';
+  inputOut.step = 'any';
   inputOut.setAttribute('aria-label', 'Selection out frame');
   const inLabel = element('label', '', 'In ');
   inLabel.append(inputIn);
   const outLabel = element('label', '', 'Out ');
   outLabel.append(inputOut);
   const applyInputs = (): void => {
-    const start = bound(
-      Number(inputIn.value) || 0,
-      Math.max(0, frameCount() - 1)
+    const bounds = playbackFrames();
+    const parsedStart = Number(inputIn.value);
+    const parsedEnd = Number(inputOut.value);
+    const requestedStart = Number.isFinite(parsedStart)
+      ? parsedStart
+      : bounds.start;
+    const start = Math.max(
+      bounds.start,
+      requestedStart < bounds.end ? requestedStart : bounds.last
     );
     const end =
       mode === 'point'
         ? start
-        : Math.max(
-            start + 1,
-            Math.min(frameCount(), Number(inputOut.value) || start + 1)
+        : Math.min(
+            bounds.end,
+            Number.isFinite(parsedEnd) && parsedEnd > start
+              ? parsedEnd
+              : start + 1
           );
     selectFrames(selectedTrack, start, end, false);
     if (focusedNode) emitAim(false);
@@ -687,6 +740,7 @@ export async function mountOtioView(
     if (
       disposed ||
       cancelResizeGesture ||
+      cancelRailGesture ||
       event.button !== 0 ||
       event.isPrimary === false ||
       splitBounds().available <= 0
@@ -782,9 +836,299 @@ export async function mountOtioView(
     window.removeEventListener('resize', refreshSplit);
   });
 
+  function scopeIncludesTrack(lane: Lane): boolean {
+    if (!focusedNode) return true;
+    if (focusedNode.children_ids.length)
+      return (
+        lane.node.id === focusedNode.id ||
+        lane.ancestors.includes(focusedNode.id)
+      );
+    return lane.node.id === ownerTrackId(focusedNode.id);
+  }
+
+  function scopeIncludesItem(id: string | undefined): boolean {
+    if (!focusedNode || !id || id === focusedNode.id) return true;
+    if (!focusedNode.children_ids.length) return false;
+    let node = doc.nodes[id];
+    while (node?.parent_id) {
+      if (node.parent_id === focusedNode.id) return true;
+      node = doc.nodes[node.parent_id];
+    }
+    return false;
+  }
+
+  function viewportDimensions(): { label: number; width: number } {
+    const label =
+      ruler
+        .querySelector<HTMLElement>('.otio-ruler-label')
+        ?.getBoundingClientRect().width ?? 0;
+    return { label, width: Math.max(1, scroll.clientWidth - label) };
+  }
+
+  function rememberTimelineViewport(): void {
+    if (!viewportKey) return;
+    viewports.set(viewportKey, {
+      scale: pixelsPerFrame,
+      left: scroll.scrollLeft,
+      top: scroll.scrollTop,
+      mode: zoomMode,
+    });
+  }
+
+  function paintRuler(): void {
+    const ticks = ruler.querySelector<HTMLElement>('.otio-ruler-ticks');
+    if (!ticks) return;
+    const frames = playbackFrames();
+    ticks.replaceChildren();
+    if (frames.duration <= 0) return;
+    // Only visible ticks exist, including at very large inspection scales.
+    const desired = Math.max(1, 86 / pixelsPerFrame);
+    const magnitude = 10 ** Math.floor(Math.log10(desired));
+    const step =
+      [1, 2, 5, 10]
+        .map((factor) => magnitude * factor)
+        .find((candidate) => candidate >= desired) ?? magnitude * 10;
+    const firstVisible = frames.start + scroll.scrollLeft / pixelsPerFrame;
+    const lastVisible = Math.min(
+      frames.end,
+      firstVisible + railViewportWidth / pixelsPerFrame
+    );
+    for (
+      let frame = Math.ceil(firstVisible / step) * step;
+      frame <= lastVisible;
+      frame += step
+    ) {
+      const tick = element('span', '', formatOtioTime({ value: frame, rate }));
+      tick.style.left = `${((frame - frames.start) / frames.duration) * 100}%`;
+      ticks.append(tick);
+    }
+  }
+
+  function paintTimelineGeometry(): void {
+    const { label, width } = viewportDimensions();
+    railViewportWidth = width;
+    const frames = playbackFrames();
+    grid.style.width = `${label + (frames.duration > 0 ? frames.duration * pixelsPerFrame : width)}px`;
+    scroll.dataset['pixelsPerFrame'] = String(pixelsPerFrame);
+    scroll.dataset['zoomMode'] = zoomMode;
+    zoomReadout.textContent =
+      zoomMode === 'fit'
+        ? 'Fit'
+        : `${Number(pixelsPerFrame.toFixed(2))} px/frame`;
+    zoomReadout.title = `${pixelsPerFrame} CSS pixels per frame`;
+    zoomFit.setAttribute('aria-pressed', String(zoomMode === 'fit'));
+    const limits = otioZoomLimits(domain, width);
+    zoomOut.disabled = pixelsPerFrame <= limits.fit || frames.duration <= 0;
+    zoomIn.disabled = pixelsPerFrame >= limits.maximum || frames.duration <= 0;
+    zoomFit.disabled = frames.duration <= 0;
+    for (const mark of trackRows.querySelectorAll<HTMLElement>(
+      '[data-start]'
+    )) {
+      const range = {
+        start_time: {
+          value: Number(mark.dataset['start']),
+          rate: Number(mark.dataset['rate']),
+        },
+        duration: {
+          value: Number(mark.dataset['duration']),
+          rate: Number(mark.dataset['durationRate']),
+        },
+      };
+      positionMark(mark, range);
+      if (!scopeIncludesItem(mark.dataset['itemId'] ?? mark.dataset['ownerId']))
+        mark.hidden = true;
+    }
+    for (const item of trackRows.querySelectorAll<HTMLElement>('.otio-item')) {
+      const node = doc.nodes[item.dataset['itemId'] ?? ''];
+      if (!node) continue;
+      const range =
+        node.timeline_range ??
+        (focusedNode?.id === node.id ? focusedRange : undefined);
+      if (range) {
+        positionMark(item, range);
+        item.classList.remove('is-trimmed-out');
+        item.textContent = node.name || node.schema;
+      } else {
+        item.hidden = !scopeIncludesItem(node.id);
+        if (!item.classList.contains('is-unplaced')) {
+          item.classList.add('is-trimmed-out');
+          item.textContent = `Trimmed out · ${node.name || node.schema}`;
+        }
+        item.style.left = '';
+        item.style.width = '';
+      }
+      if (!scopeIncludesItem(node.id)) item.hidden = true;
+    }
+    applyDisclosure();
+    paintRuler();
+    queueCommentRepack();
+    // Existing popovers follow this inner notification. No readiness/repaint
+    // event: geometry changes must not replace an encrypted aim or its draft.
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+  }
+
+  function restoreTimelineViewport(): void {
+    viewportKey = `${timelineId ?? ''}:${focusedNode?.id ?? ''}:${domain.range.start_time.value}@${domain.range.start_time.rate}:${domain.range.duration.value}@${domain.range.duration.rate}`;
+    ruler.replaceChildren(
+      element('div', 'otio-ruler-label', `${rate} fps`),
+      element('div', 'otio-ruler-ticks')
+    );
+    const saved = viewports.get(viewportKey);
+    const { width } = viewportDimensions();
+    zoomMode = saved?.mode ?? 'fit';
+    const limits = otioZoomLimits(domain, width);
+    pixelsPerFrame =
+      zoomMode === 'fit'
+        ? limits.fit
+        : Math.max(
+            limits.fit,
+            Math.min(limits.maximum, saved?.scale ?? limits.fit)
+          );
+    const frames = playbackFrames();
+    inputIn.min = inputOut.min = String(frames.start);
+    inputIn.max = String(frames.end);
+    inputOut.max = String(frames.end);
+    root.dataset['domainOrigin'] = String(
+      rescaleTime(domain.origin, rate).value
+    );
+    root.dataset['domainStart'] = String(
+      rescaleTime(domain.range.start_time, rate).value
+    );
+    root.dataset['domainDuration'] = String(frames.duration);
+    root.dataset['domainRate'] = String(rate);
+    paintTimelineGeometry();
+    scroll.scrollLeft = saved?.left ?? 0;
+    scroll.scrollTop = saved?.top ?? 0;
+    paintRuler();
+  }
+
+  function updateTimelineDomain(): void {
+    rememberTimelineViewport();
+    const composition = timeline?.timeline_range ?? {
+      start_time: { value: 0, rate },
+      duration,
+    };
+    const range = focusedRange ?? composition;
+    domain = {
+      origin: focusedNode?.timeline_range?.start_time ?? range.start_time,
+      range,
+      rate,
+    };
+    root.dataset['handleContext'] = String(
+      !!focusedNode &&
+        (!focusedNode.timeline_range || range !== focusedNode.timeline_range)
+    );
+    if (root.dataset['handleContext'] === 'true')
+      focusTitle.textContent = `${focusedNode?.name || focusedNode?.schema} · Transition handles`;
+    restoreTimelineViewport();
+    paintSelection();
+  }
+
+  function zoomTimeline(factor: number, pointerX?: number): void {
+    if (disposed || cancelRailGesture || cancelResizeGesture) return;
+    const { width } = viewportDimensions();
+    const next = otioZoomAt(
+      { domain, pixelsPerFrame, scrollLeft: scroll.scrollLeft },
+      width,
+      pointerX ?? width / 2,
+      pixelsPerFrame * factor
+    );
+    zoomMode = 'manual';
+    pixelsPerFrame = next.pixelsPerFrame;
+    paintTimelineGeometry();
+    scroll.scrollLeft = next.scrollLeft;
+    rememberTimelineViewport();
+    paintRuler();
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+  }
+
+  function fitTimeline(): void {
+    if (disposed || cancelRailGesture || cancelResizeGesture) return;
+    zoomMode = 'fit';
+    pixelsPerFrame = otioZoomLimits(domain, viewportDimensions().width).fit;
+    paintTimelineGeometry();
+    scroll.scrollLeft = 0;
+    rememberTimelineViewport();
+    paintRuler();
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+  }
+
+  function refreshTimelineViewport(): void {
+    if (disposed) return;
+    const { width } = viewportDimensions();
+    if (width === railViewportWidth) return;
+    // Preserve the visible centre in manual mode. Fit alone follows the width.
+    const pivot = (scroll.scrollLeft + railViewportWidth / 2) / pixelsPerFrame;
+    if (zoomMode === 'fit') pixelsPerFrame = otioZoomLimits(domain, width).fit;
+    paintTimelineGeometry();
+    if (zoomMode === 'manual')
+      scroll.scrollLeft = Math.max(0, pivot * pixelsPerFrame - width / 2);
+    rememberTimelineViewport();
+    paintRuler();
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+  }
+
+  scroll.addEventListener('scroll', () => {
+    rememberTimelineViewport();
+    paintRuler();
+  });
+  scroll.addEventListener(
+    'wheel',
+    (event) => {
+      if (event.ctrlKey || event.metaKey || !(event.target instanceof Element))
+        return;
+      if (
+        !event.target.closest(
+          '.otio-ruler-ticks, .otio-track-rail, .otio-comment-band'
+        )
+      )
+        return;
+      event.preventDefault();
+      if (cancelRailGesture || cancelResizeGesture) return;
+      const unit =
+        event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? scroll.clientHeight
+            : 1;
+      if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        scroll.scrollLeft +=
+          (Math.abs(event.deltaX) > Math.abs(event.deltaY)
+            ? event.deltaX
+            : event.deltaY) * unit;
+      } else {
+        const { label } = viewportDimensions();
+        zoomTimeline(
+          Math.exp(
+            -Math.max(-240, Math.min(240, event.deltaY * unit)) * 0.0025
+          ),
+          event.clientX -
+            scroll.getBoundingClientRect().left -
+            scroll.clientLeft -
+            label
+        );
+      }
+    },
+    { passive: false }
+  );
+  scroll.addEventListener('keydown', (event) => {
+    if (
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      !(event.target instanceof Element) ||
+      event.target.closest('input, textarea, select, [contenteditable]') ||
+      !['-', '+', '=', '0'].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === '0') fitTimeline();
+    else zoomTimeline(event.key === '-' ? 1 / 1.5 : 1.5);
+  });
   function currentFrame(): number {
     const time = playback?.getState().time;
-    return time ? Math.round(rescaleTime(time, rate).value) : 0;
+    return time ? otioLocalTime(domain, time).value : playbackFrames().start;
   }
   function frameCount(): number {
     return Math.max(0, Math.ceil(rescaleTime(duration, rate).value));
@@ -806,10 +1150,10 @@ export async function mountOtioView(
     const current = playback;
     if (!current || focusUnavailable) return;
     const bounds = playbackFrames();
-    const time = {
-      value: Math.max(bounds.start, Math.min(bounds.end - 1, frame)),
-      rate,
-    };
+    const time = otioCompositionTime(
+      domain,
+      Math.max(bounds.start, frame < bounds.end ? frame : bounds.last)
+    );
     current.pause();
     const generation = ++scopeGeneration;
     void current.seek(time).catch((error) => {
@@ -817,14 +1161,8 @@ export async function mountOtioView(
         reportPlaybackError(error);
     });
   }
-  function playbackFrames(): { start: number; end: number } {
-    const range = focusedRange;
-    return range
-      ? {
-          start: rescaleTime(range.start_time, rate).value,
-          end: rescaleTime(rangeEndTime(range), rate).value,
-        }
-      : { start: 0, end: frameCount() };
+  function playbackFrames(): OtioDomainFrameBounds {
+    return otioDomainFrames(domain);
   }
   function paintFocus(): void {
     root.dataset['scopeNodeId'] = focusedNode?.id ?? '';
@@ -887,6 +1225,7 @@ export async function mountOtioView(
       ancestor = ancestor.parent_id ? doc.nodes[ancestor.parent_id] : undefined;
     }
     paintFocus();
+    updateTimelineDomain();
     const current = playback;
     if (!current) return;
     void current
@@ -979,36 +1318,28 @@ export async function mountOtioView(
     end: number,
     focus: boolean
   ): void {
-    if (!timelineId || frameCount() === 0) return;
-    let item =
+    if (!timelineId || frameCount() === 0 || focusUnavailable) return;
+    const item =
       focusedNode && ownerTrackId(focusedNode.id) === trackId
         ? focusedNode
         : undefined;
-    const exposure = item ? (focusedRange ?? item.timeline_range) : undefined;
-    if (
-      exposure &&
-      mode !== 'track' &&
-      (Math.min(start, end) < rescaleTime(exposure.start_time, rate).value ||
-        Math.max(start, end) > rescaleTime(rangeEndTime(exposure), rate).value)
-    )
-      item = undefined;
-    if (focusedNode && !item) setPlaybackFocus();
-    const bounds = item ? playbackFrames() : { start: 0, end: frameCount() };
+    const bounds = playbackFrames();
+    const requestedStart = Math.min(start, end);
     const a = Math.max(
       bounds.start,
-      Math.min(bounds.end - 1, Math.round(Math.min(start, end)))
+      requestedStart < bounds.end ? requestedStart : bounds.last
     );
-    const b = Math.max(
-      a,
-      Math.min(bounds.end, Math.round(Math.max(start, end)))
-    );
+    const b = Math.max(a, Math.min(bounds.end, Math.max(start, end)));
     const range =
       mode === 'track'
         ? otioScopeRange(doc, timelineId, trackId)
         : {
-            start_time: { value: a, rate },
+            start_time: otioCompositionTime(domain, a),
             duration: {
-              value: mode === 'point' ? 0 : Math.max(1, b - a),
+              value:
+                mode === 'point'
+                  ? 0
+                  : Math.min(bounds.end - a, b > a ? b - a : 1),
               rate,
             },
           };
@@ -1068,7 +1399,7 @@ export async function mountOtioView(
         : timeline;
     paintSelection();
     paintInspector();
-    if (seek) seekFrame(rescaleTime(range.start_time, rate).value);
+    if (seek) seekFrame(otioLocalTime(domain, range.start_time).value);
     if (focus) emitAim(true);
   }
   function timelineViewport(target: HTMLElement): DOMRect {
@@ -1116,9 +1447,16 @@ export async function mountOtioView(
   function measure(commentId?: string): DOMRect | undefined {
     let target: HTMLElement | null | undefined;
     if (commentId !== undefined) {
-      target = root.querySelector<HTMLElement>(
-        `.otio-comment-mark[data-comment-id="${commentId}"]`
-      );
+      const pieces = marks.get(commentId);
+      target = pieces
+        ? pieces.find(
+            (piece) =>
+              !piece.hidden &&
+              !piece.closest<HTMLElement>('.otio-track-row')?.hidden
+          )
+        : root.querySelector<HTMLElement>(
+            `.otio-comment-mark[data-comment-id="${commentId}"]`
+          );
     } else {
       const anchor = projectedSelection?.anchor ?? selected;
       if (!anchor) return undefined;
@@ -1130,7 +1468,12 @@ export async function mountOtioView(
         root.querySelector<HTMLElement>('.otio-track-rail');
       target = rail?.querySelector<HTMLElement>('.otio-selection');
     }
-    if (!target) return undefined;
+    if (
+      !target ||
+      target.hidden ||
+      target.closest<HTMLElement>('.otio-track-row')?.hidden
+    )
+      return undefined;
 
     const box = target.getBoundingClientRect();
     const viewport = timelineViewport(target);
@@ -1230,10 +1573,10 @@ export async function mountOtioView(
         ? ` · v${options.revision} · ${ranges.map(rangeLabel).join(' | ')}`
         : '');
     inputIn.value = selected
-      ? String(rescaleTime(selected.range.start_time, rate).value)
+      ? String(otioLocalTime(domain, selected.range.start_time).value)
       : '';
     inputOut.value = selected
-      ? String(rescaleTime(rangeEndTime(selected.range), rate).value)
+      ? String(otioLocalTime(domain, rangeEndTime(selected.range)).value)
       : '';
     outLabel.hidden = selected?.range.duration.value === 0;
     trackSelect.value = trackId ?? '';
@@ -1262,11 +1605,12 @@ export async function mountOtioView(
     mark.dataset['duration'] = String(range.duration.value);
     mark.dataset['rate'] = String(range.start_time.rate);
     mark.dataset['durationRate'] = String(range.duration.rate);
-    const total = timeToSeconds(duration);
-    if (total <= 0) return;
-    mark.style.left = `${(timeToSeconds(range.start_time) / total) * 100}%`;
-    if (range.duration.value > 0)
-      mark.style.width = `${(timeToSeconds(range.duration) / total) * 100}%`;
+    const geometry = otioRangeGeometry(domain, range);
+    mark.hidden = !geometry;
+    if (!geometry) return;
+    mark.style.left = `${geometry.left * 100}%`;
+    mark.style.width =
+      range.duration.value > 0 ? `${geometry.width * 100}%` : '';
   }
   function repackCommentBands(): void {
     const measured: {
@@ -1288,6 +1632,7 @@ export async function mountOtioView(
         for (const child of band.children) {
           if (!child.classList.contains('otio-comment-mark')) continue;
           const mark = child as HTMLElement;
+          if (mark.hidden) continue;
           const box = mark.getBoundingClientRect();
           entries.push({
             mark,
@@ -1344,8 +1689,17 @@ export async function mountOtioView(
   function applyDisclosure(): void {
     for (const lane of lanes) {
       const row = rows.get(lane.node.id);
-      if (row) row.hidden = lane.ancestors.some((id) => collapsed.has(id));
+      if (row)
+        row.hidden =
+          !scopeIncludesTrack(lane) ||
+          lane.ancestors.some(
+            (id) => collapsed.has(id) && id !== focusedNode?.id
+          );
     }
+    const compositionRow = trackRows.querySelector<HTMLElement>(
+      '.otio-composition-row'
+    );
+    if (compositionRow) compositionRow.hidden = focusedNode !== undefined;
     for (const control of trackRows.querySelectorAll<HTMLButtonElement>(
       '[data-disclose]'
     ))
@@ -1516,6 +1870,9 @@ export async function mountOtioView(
       rail.addEventListener('pointerdown', (event) => {
         if (
           frameCount() === 0 ||
+          focusUnavailable !== null ||
+          cancelResizeGesture !== undefined ||
+          event.isPrimary === false ||
           event.button !== 0 ||
           (event.target instanceof Element &&
             event.target.closest('[data-comment-id], .otio-timeline-marker'))
@@ -1537,35 +1894,48 @@ export async function mountOtioView(
         const previousFocusRange = focusedRange;
         const previousTime = playback?.getState().time;
         let dragging = false;
-        const rect = rail.getBoundingClientRect();
-        const at = (clientX: number): number =>
-          bound(
-            Math.round(((clientX - rect.left) / rect.width) * frameCount()),
-            frameCount()
+        let verticalTouch = false;
+        const at = (clientX: number): number => {
+          const bounds = playbackFrames();
+          const local = otioLocalTime(
+            domain,
+            otioPointerTime(domain, clientX, rail.getBoundingClientRect())
+          ).value;
+          if (local <= bounds.start) return bounds.start;
+          if (local >= bounds.end) return bounds.end;
+          return Math.max(
+            bounds.start,
+            Math.min(bounds.end, Math.round(local))
           );
-        const from = Math.min(frameCount() - 1, at(event.clientX));
+        };
+        const from = Math.min(playbackFrames().last, at(event.clientX));
         rail.setPointerCapture(event.pointerId);
         const update = (moved: PointerEvent, final = false): void => {
           const current = at(moved.clientX);
           let start = Math.min(from, current);
           let end = Math.max(from, current);
           if (mode === 'point') {
-            start = Math.min(frameCount() - 1, current);
+            start = Math.min(playbackFrames().last, current);
             end = start;
           }
           if (mode === 'range' && end === start)
-            end = Math.min(frameCount(), start + 1);
+            end = Math.min(playbackFrames().end, start + 1);
           if (mode === 'track') {
-            start = 0;
-            end = frameCount();
+            start = playbackFrames().start;
+            end = playbackFrames().end;
           }
           selectFrames(id, start, end, false);
           if (final) emitAim(false);
         };
         const move = (moved: PointerEvent): void => {
           if (moved.pointerId !== pointerId) return;
-          if (!dragging && Math.abs(moved.clientX - event.clientX) < 5) return;
+          const dx = Math.abs(moved.clientX - event.clientX);
+          const dy = Math.abs(moved.clientY - event.clientY);
+          if (!dragging && event.pointerType === 'touch' && dy > dx && dy >= 5)
+            verticalTouch = true;
+          if (verticalTouch || (!dragging && dx < 5)) return;
           dragging = true;
+          moved.preventDefault();
           update(moved);
         };
         const release = (): void => {
@@ -1573,6 +1943,7 @@ export async function mountOtioView(
           rail.removeEventListener('pointerup', done);
           rail.removeEventListener('pointercancel', cancel);
           rail.removeEventListener('lostpointercapture', cancel);
+          window.removeEventListener('blur', cancel);
           if (rail.hasPointerCapture(pointerId))
             rail.releasePointerCapture(pointerId);
           if (cancelRailGesture === cancel) cancelRailGesture = undefined;
@@ -1581,11 +1952,23 @@ export async function mountOtioView(
           if (moved.pointerId !== pointerId) return;
           release();
           suppressPointerClick = true;
-          if (item && !dragging && Math.abs(moved.clientX - event.clientX) < 5)
+          if (verticalTouch) return;
+          if (
+            item &&
+            focusedNode?.id !== item.id &&
+            !dragging &&
+            Math.abs(moved.clientX - event.clientX) < 5
+          )
             activateNode(item);
           else update(moved, true);
         };
-        const cancel = (): void => {
+        const cancel = (cancelled?: Event): void => {
+          if (
+            cancelled &&
+            'pointerId' in cancelled &&
+            cancelled.pointerId !== pointerId
+          )
+            return;
           release();
           suppressPointerClick = true;
           if (!dragging || disposed) return;
@@ -1597,6 +1980,8 @@ export async function mountOtioView(
             null;
           if (focusedNode !== previousFocus)
             setPlaybackFocus(previousFocus, previousTime, previousFocusRange);
+          else if (previousTime)
+            seekFrame(otioLocalTime(domain, previousTime).value);
           paintSelection();
           paintInspector();
         };
@@ -1605,10 +1990,14 @@ export async function mountOtioView(
         rail.addEventListener('pointerup', done);
         rail.addEventListener('pointercancel', cancel);
         rail.addEventListener('lostpointercapture', cancel);
+        window.addEventListener('blur', cancel);
       });
       rail.addEventListener('keydown', (event) => {
         if (
           event.target !== rail ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey ||
           !['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].includes(
             event.key
           )
@@ -1628,22 +2017,31 @@ export async function mountOtioView(
         }
         const start =
           selected?.track_id === id
-            ? rescaleTime(selected.range.start_time, rate).value
+            ? otioLocalTime(domain, selected.range.start_time).value
             : currentFrame();
         const end =
           selected?.track_id === id
-            ? rescaleTime(rangeEndTime(selected.range), rate).value
+            ? otioLocalTime(domain, rangeEndTime(selected.range)).value
             : start;
         const delta = event.key === 'ArrowLeft' ? -1 : 1;
         const next =
           event.key === 'Home'
-            ? 0
+            ? playbackFrames().start
             : event.key === 'End'
-              ? frameCount() - 1
+              ? playbackFrames().last
               : start + delta;
         if (event.shiftKey) {
           mode = 'range';
-          selectFrames(id, start, Math.max(start + 1, end + delta), false);
+          selectFrames(
+            id,
+            start,
+            event.key === 'Home'
+              ? playbackFrames().start
+              : event.key === 'End'
+                ? playbackFrames().end
+                : end + delta,
+            false
+          );
         } else
           selectFrames(id, next, mode === 'point' ? next : next + 1, false);
         paintModes();
@@ -1659,6 +2057,7 @@ export async function mountOtioView(
     applyDisclosure();
     paintSelection();
     paintFocus();
+    paintTimelineGeometry();
   }
   function ownerTrackId(nodeId: string): string | null {
     let node = doc.nodes[nodeId];
@@ -2010,30 +2409,36 @@ export async function mountOtioView(
     root.dataset['buffering'] = String(state.buffering);
     const bounds = playbackFrames();
     const unavailable = focusUnavailable !== null || bounds.end <= bounds.start;
+    const localFrame = otioLocalTime(domain, state.time).value;
     seek.min = String(bounds.start);
-    seek.max = String(Math.max(bounds.start, bounds.end - 1));
+    seek.max = String(bounds.last);
     seek.disabled = unavailable;
-    previous.disabled =
-      unavailable || rescaleTime(state.time, rate).value <= bounds.start;
-    next.disabled =
-      unavailable || rescaleTime(state.time, rate).value >= bounds.end - 1;
+    previous.disabled = unavailable || localFrame <= bounds.start;
+    next.disabled = unavailable || localFrame >= bounds.last;
     root.dataset['frame'] = String(rescaleTime(state.time, rate).value);
     root.dataset['previewBlocked'] = String(state.previewBlocked);
     root.classList.toggle('is-base-preview', state.baseMediaPreviewAllowed);
     play.textContent = state.playing ? 'Pause' : 'Play';
     play.disabled = unavailable || state.previewBlocked || frameCount() === 0;
     clock.textContent = formatOtioTime(
-      state.time,
-      timelineId ? doc.global_start_times?.[timelineId] : undefined
+      focusedNode ? otioLocalTime(domain, state.time) : state.time,
+      !focusedNode && timelineId
+        ? doc.global_start_times?.[timelineId]
+        : undefined
     );
     clock.dataset['value'] = String(state.time.value);
     clock.dataset['rate'] = String(state.time.rate);
-    seek.value = String(rescaleTime(state.time, rate).value);
+    seek.value = String(localFrame);
     const fraction =
-      timeToSeconds(duration) > 0
-        ? timeToSeconds(state.time) / timeToSeconds(duration)
-        : 0;
-    playhead.style.left = `calc(var(--otio-label-width) + (100% - var(--otio-label-width)) * ${fraction})`;
+      domain.range.duration.value > 0
+        ? otioRangeGeometry(domain, {
+            start_time: state.time,
+            duration: { value: 0, rate },
+          })?.left
+        : undefined;
+    playhead.hidden = fraction === undefined;
+    if (fraction !== undefined)
+      playhead.style.left = `calc(var(--otio-label-width) + (100% - var(--otio-label-width)) * ${fraction})`;
     for (const toggle of trackRows.querySelectorAll<HTMLButtonElement>(
       '[data-track-toggle]'
     )) {
@@ -2140,6 +2545,7 @@ export async function mountOtioView(
     }
   }
   function initializeTimeline(): void {
+    rememberTimelineViewport();
     cancelRailGesture?.();
     ++scopeGeneration;
     focusedNode = undefined;
@@ -2178,6 +2584,7 @@ export async function mountOtioView(
       transport.hidden = true;
       resizeHandle.hidden = true;
       tools.hidden = true;
+      zoomTools.hidden = true;
       selectionBar.hidden = true;
       grid.hidden = true;
       trackRows.replaceChildren();
@@ -2192,6 +2599,7 @@ export async function mountOtioView(
     transport.hidden = false;
     resizeHandle.hidden = false;
     tools.hidden = false;
+    zoomTools.hidden = false;
     selectionBar.hidden = false;
     grid.hidden = false;
     lanes = otioLanes(doc, timelineId);
@@ -2208,28 +2616,15 @@ export async function mountOtioView(
       rate: initial.rate,
     };
     rate = duration.rate;
-    seek.max = String(Math.max(0, frameCount() - 1));
-    inputIn.max = seek.max;
-    inputOut.max = String(frameCount());
-    seek.disabled = frameCount() === 0;
-    previous.disabled = seek.disabled;
-    next.disabled = seek.disabled;
-    comment.disabled = seek.disabled;
-    ruler.replaceChildren(element('div', 'otio-ruler-label', `${rate} fps`));
-    const ticks = element('div', 'otio-ruler-ticks');
-    for (let i = 0; i <= 10; i++) {
-      const label = element(
-        'span',
-        '',
-        formatOtioTime({
-          value: (duration.value * i) / 10,
-          rate: duration.rate,
-        })
-      );
-      label.style.left = `${i * 10}%`;
-      ticks.append(label);
-    }
-    ruler.append(ticks);
+    domain = {
+      origin: timeline.timeline_range?.start_time ?? { value: 0, rate },
+      range: timeline.timeline_range ?? {
+        start_time: { value: 0, rate },
+        duration,
+      },
+      rate,
+    };
+    restoreTimelineViewport();
     paintTracks();
     paintMarkers();
     paintInspector();
@@ -2282,6 +2677,7 @@ export async function mountOtioView(
         mark.setAttribute('aria-label', label);
         mark.title = label;
         positionMark(mark, range);
+        if (!scopeIncludesItem(target.item)) mark.hidden = true;
         const projection = projections.get(projectionsKey(anchor));
         if (projection) mark.dataset['projection'] = projection.status;
         commentBands.get(target.track)?.append(mark);
@@ -2346,7 +2742,9 @@ export async function mountOtioView(
           ? rails
               .get(target.track)
               ?.querySelector<HTMLElement>('.otio-selection')
-          : marks.get(commentId)?.find((piece) => piece.isConnected);
+          : marks
+              .get(commentId)
+              ?.find((piece) => piece.isConnected && !piece.hidden);
       if (mark) revealTimelineTarget(mark, true);
     },
     clearMarks() {
@@ -2419,12 +2817,9 @@ export async function mountOtioView(
   window.addEventListener('pagehide', pagehide);
   cleanup.push(() => window.removeEventListener('pagehide', pagehide));
   if (typeof ResizeObserver !== 'undefined') {
-    let gridWidth = grid.getBoundingClientRect().width;
     const observer = new ResizeObserver(() => {
       refreshSplit();
-      const width = grid.getBoundingClientRect().width;
-      if (width === gridWidth) return;
-      gridWidth = width;
+      refreshTimelineViewport();
       queueCommentRepack();
     });
     observer.observe(grid);

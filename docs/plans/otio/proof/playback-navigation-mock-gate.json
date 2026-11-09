@@ -1,0 +1,5 @@
+{
+  "mock_sha256": "9a94642a8997db9057c1e16452f77bd441f42579274a25ffc07d5ec5368b22d5",
+  "gate_exit": 0,
+  "output": "=== DESIGN GATE EVALUATION ===\nURL: http://127.0.0.1:52414/\nMeasured at: 2026-11-09T20:13:09.170Z\n\nPASSED: Zero template tells detected.\n\nNearest registered sites (registry: 16 sites, threshold: 0.59):\n  [ok] baseplot (https://baseplot.app/): 0.570 (skel: 0.679, shape: 0.350, pal: 0.888, type: 0.000, img: 0.836)\n  [ok] iocore-demo (https://iocore-demo-tbc.web.app/): 0.524 (skel: 0.500, shape: 0.500, pal: 0.938, type: 0.200, img: 0.162)\n  [ok] relic (https://relik.link/): 0.515 (skel: 0.650, shape: 0.500, pal: 0.598, type: 0.500, img: 0.000)\n  [ok] endmetaltheft-demo (https://endmetaltheft-demo-tbc.web.app/): 0.480 (skel: 0.529, shape: 0.500, pal: 0.780, type: 0.000, img: 0.156)\n  [ok] ompctl (https://ompctl.ai/): 0.455 (skel: 0.375, shape: 0.500, pal: 0.540, type: 0.200, img: 0.646)\n\nOVERALL VERDICT: PASSED\n"
+}

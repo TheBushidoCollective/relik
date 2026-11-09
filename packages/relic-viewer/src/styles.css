@@ -4879,18 +4879,18 @@ canvas.relic-page {
 .otio-mode { border: 1px solid var(--rule-strong); border-radius: 0; padding: .3rem .5rem; background: var(--surface); color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-mode[aria-pressed="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
 .otio-track-select, .otio-timeline-select { max-width: 190px; min-width: 0; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .28rem; padding-inline-end: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .62rem var(--sans); }
+.otio-zoom-tools { display: flex; align-items: center; gap: .25rem; margin-left: auto; }
+.otio-zoom-tools button { min-width: 30px; border: 1px solid var(--rule-strong); border-radius: 0; padding: .3rem .45rem; background: var(--surface); color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
+.otio-zoom-tools button[aria-pressed="true"] { border-color: var(--patina); color: var(--patina-ink); background: var(--diff-added); }
+.otio-zoom-tools button:disabled { cursor: default; opacity: .5; }
+.otio-zoom-readout { min-width: 8ch; text-align: right; color: var(--ink-soft); font: .6rem var(--mono); font-variant-numeric: tabular-nums; }
 .otio-timeline-scroll { flex: 0 1 auto; min-height: 0; max-height: min(240px, 30%); max-width: 100%; overflow: auto; overscroll-behavior: contain; scroll-padding-inline-start: var(--otio-label-width); }
 .otio-view.is-resized .otio-timeline-scroll { flex: 0 0 auto; max-height: none; }
-.otio-track-grid { position: relative; min-width: 760px; }
+.otio-track-grid { position: relative; min-width: var(--otio-label-width); }
 .otio-ruler, .otio-track-row { display: grid; grid-template-columns: var(--otio-label-width) minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
 .otio-ruler-label { position: sticky; z-index: 7; left: 0; padding: .35rem .6rem; border-right: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft); font: .6rem var(--mono); }
-.otio-ruler-ticks { container-name: otio-ruler; container-type: inline-size; height: 26px; position: relative; overflow: hidden; }
-.otio-ruler-ticks span { position: absolute; top: 5px; color: var(--ink-soft); font: .53rem var(--mono); transform: translateX(-50%); }
-.otio-ruler-ticks span:first-child { transform: none; }
-.otio-ruler-ticks span:last-child { transform: translateX(-100%); }
-@container otio-ruler (max-width: 54rem) {
-  .otio-ruler-ticks span:nth-child(2n) { display: none; }
-}
+.otio-ruler-ticks { height: 26px; position: relative; overflow: hidden; touch-action: pan-y; }
+.otio-ruler-ticks span { position: absolute; top: 5px; color: var(--ink-soft); font: .53rem var(--mono); white-space: nowrap; }
 .otio-track-label { position: sticky; left: 0; z-index: 6; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .4rem .45rem; border-right: 1px solid var(--rule-strong); background: var(--surface); }
 .otio-track-code { flex: 0 0 auto; color: var(--ink-soft); font: .6rem var(--mono); }
 .otio-track-name { flex: 1; min-width: 0; line-height: 1.35; }
@@ -4923,15 +4923,15 @@ canvas.relic-page {
 .otio-focus-status { font: .75rem/1.6 var(--mono); color: #e6e9e7; }
 .otio-timeline-marker { position: absolute; top: 0; height: 5px; min-width: 7px; z-index: 4; padding: 0; border: 1px solid var(--ink); border-radius: 0; background: var(--otio-marker-color, var(--patina)); cursor: pointer; }
 .otio-timeline-marker.is-point { top: 1px; width: 7px; height: 7px; z-index: 5; transform: translateX(-50%) rotate(45deg); }
-.otio-selection { position: absolute; top: 1px; bottom: 1px; z-index: 3; min-width: 4px; border: 2px dashed var(--patina); background: color-mix(in srgb, var(--patina) 22%, transparent); pointer-events: none; }
+.otio-selection { position: absolute; top: 1px; bottom: 1px; z-index: 3; min-width: 0; outline: 2px dashed var(--patina); outline-offset: -2px; background: color-mix(in srgb, var(--patina) 22%, transparent); pointer-events: none; }
 .otio-selection.is-point { width: 4px; transform: translateX(-50%); }
-.otio-comment-mark { position: absolute; bottom: 1px; height: 14px; min-width: 5px; z-index: 4; padding: 0; border: 1px solid var(--patina); border-left-width: 2px; border-right-width: 2px; border-radius: 0; background: color-mix(in srgb, var(--patina) 35%, var(--surface)); cursor: pointer; }
+.otio-comment-mark { position: absolute; bottom: 1px; height: 14px; min-width: 0; z-index: 4; padding: 0; border: 0; border-radius: 0; box-shadow: inset 0 0 0 1px var(--patina); background: color-mix(in srgb, var(--patina) 35%, var(--surface)); cursor: pointer; }
 .otio-comment-band .otio-comment-mark { bottom: calc(4px + var(--otio-comment-lane, 0) * 22px); }
-.otio-comment-mark.is-point { width: 5px; transform: translateX(-50%); background: var(--ink); border-color: var(--surface); }
+.otio-comment-mark.is-point { width: 5px; transform: translateX(-50%); background: var(--ink); box-shadow: inset 0 0 0 1px var(--surface); }
+.otio-comment-mark.is-pending { box-shadow: none; outline: 1px dashed var(--patina); outline-offset: -1px; }
+.otio-comment-mark.is-resolved { opacity: .55; filter: grayscale(.6); box-shadow: none; outline: 1px dotted var(--patina); outline-offset: -1px; }
+.otio-comment-mark[data-projection="partial"] { box-shadow: none; outline: 1px dashed var(--patina); outline-offset: -1px; }
 .otio-comment-mark.is-active { outline: 2px solid var(--patina); outline-offset: 2px; z-index: 8; }
-.otio-comment-mark.is-pending { border-style: dashed; }
-.otio-comment-mark.is-resolved { opacity: .55; filter: grayscale(.6); border-style: dotted; }
-.otio-comment-mark[data-projection="partial"] { border-style: dashed; }
 .otio-playhead { position: absolute; top: 25px; bottom: 0; z-index: 5; width: 1px; background: var(--ink); box-shadow: 0 0 0 1px var(--surface); pointer-events: none; }
 .otio-selection-readout { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .65rem .75rem; border-bottom: 1px solid var(--rule-strong); background: var(--surface); }
 .otio-transport, .otio-timeline-heading, .otio-selection-readout { flex: none; }
@@ -5005,6 +5005,9 @@ canvas.relic-page {
   .otio-focus-context { gap: .25rem .5rem; }
   .otio-focus-title { flex-basis: 8rem; font-size: .63rem; }
   .otio-timeline-heading { padding: .65rem .5rem; }
+  .otio-zoom-tools { flex: 1 0 auto; justify-content: flex-end; }
+  .otio-zoom-tools button { min-width: 36px; min-height: 32px; }
+  .otio-zoom-readout { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; font-size: .55rem; }
   .otio-track-select { flex: 1 1 7rem; width: 7rem; max-width: 160px; }
   .otio-view.is-element-focused .otio-selection-label { display: none; }
   .otio-preview-scope { font-size: .5rem; }

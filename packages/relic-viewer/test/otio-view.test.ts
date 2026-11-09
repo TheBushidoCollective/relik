@@ -414,6 +414,7 @@ class ViewElement {
   readonly style = {
     setProperty: (): void => {},
     position: '',
+    left: '',
     width: '',
     height: '',
     minHeight: '',
@@ -545,6 +546,7 @@ class ViewElement {
   matches(selector: string): boolean {
     if (selector.includes(','))
       return selector.split(',').some((part) => this.matches(part.trim()));
+    if (/^[a-z]+$/.test(selector)) return this.tagName === selector;
     if (selector.startsWith('.'))
       return this.className.split(/\s+/).includes(selector.slice(1));
     const attribute = selector.match(/^\[data-([a-z-]+)\]$/);
@@ -1897,7 +1899,7 @@ describe('OTIO focused element activation', () => {
     expect(otioTargetLabel(aims.at(-1)!.anchor)).toContain('Secondary Grade B');
   });
 
-  test('pointer click waits for release and a drag from the item keeps the rail range', () => {
+  test('pointer release focuses an item and a subsequent drag selects in its local domain', () => {
     const first = item('focused-a');
     const rail = first.parentElement!;
     rail.layout = new DOMRect(100, 0, 480, 54);
@@ -1911,9 +1913,9 @@ describe('OTIO focused element activation', () => {
     rail.dispatchEvent(pointer('pointerup', 280));
     first.dispatchEvent(Object.assign(new Event('click'), { detail: 1 }));
     expect(aims).toHaveLength(2);
-    expect(aims[1]?.anchor.range).toEqual(range(12, 24));
-    expect(aims[1]?.anchor.item_id).toBeUndefined();
-    expect(root.dataset['scopeNodeId']).toBe('');
+    expect(aims[1]?.anchor.range).toEqual(range(3, 6));
+    expect(aims[1]?.anchor.item_id).toBe('focused-a');
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
     expect(rail.hasPointerCapture(7)).toBe(false);
   });
 
@@ -1944,12 +1946,12 @@ describe('OTIO focused element activation', () => {
     )!;
     point.dispatchEvent(new Event('click'));
     const input = root.querySelector('.otio-selection-in')!;
-    input.value = '30';
+    input.value = '6';
     input.dispatchEvent(new Event('change'));
     expect(aims.at(-1)?.anchor.item_id).toBe('focused-b');
     expect(aims.at(-1)?.anchor.range).toEqual(range(30, 0));
-    expect(root.querySelector('.otio-seek')?.min).toBe('24');
-    expect(root.querySelector('.otio-seek')?.max).toBe('47');
+    expect(root.querySelector('.otio-seek')?.min).toBe('0');
+    expect(root.querySelector('.otio-seek')?.max).toBe('23');
     root
       .querySelector('.otio-back-composition')!
       .dispatchEvent(new Event('click'));
@@ -2047,7 +2049,7 @@ describe('OTIO focused element activation', () => {
 
   test('review regression: pre-handles and ranges extending into post-handles stay exposed', async () => {
     for (const [id, selectedRange, start, end] of [
-      ['focused-b', range(20, 0), '18', '47'],
+      ['focused-b', range(20, 0), '-6', '23'],
       ['focused-a', range(22, 6), '0', '29'],
     ] as const) {
       const anchor = createOtioSelection(
@@ -2147,6 +2149,296 @@ describe('OTIO focused element activation', () => {
     expect(root.dataset['frame']).toBe('1');
     await settleFocusRendering();
     expect(root.dataset['frame']).toBe('1');
+  });
+
+  test('local controls persist composition frames and only show the focused owner rail', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    expect(root.dataset['domainOrigin']).toBe('24');
+    expect(root.dataset['domainStart']).toBe('24');
+    expect(root.dataset['domainDuration']).toBe('24');
+    const visibleRows = root
+      .querySelectorAll('.otio-track-row')
+      .filter((row) => !row.hidden);
+    expect(visibleRows.map((row) => row.dataset['trackId'])).toEqual([
+      'focused-video',
+    ]);
+    expect(item('focused-a').hidden).toBe(true);
+    expect(item('focused-b').hidden).toBe(false);
+    const inputIn = root.querySelector('.otio-selection-in')!;
+    const inputOut = root.querySelector('.otio-selection-out')!;
+    inputIn.value = '2';
+    inputOut.value = '6';
+    inputIn.dispatchEvent(new Event('change'));
+    expect(aims.at(-1)?.anchor.range).toEqual(range(26, 4));
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-b');
+    expect(inputIn.value).toBe('2');
+    expect(inputOut.value).toBe('6');
+    expect(root.querySelector('.otio-selection')?.dataset['start']).toBe('26');
+    expect(root.querySelector('.otio-selection-label')?.textContent).toContain(
+      'Composition'
+    );
+  });
+
+  test('fractional local inputs and an exclusive range end remain exact', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    const inputIn = root.querySelector('.otio-selection-in')!;
+    const inputOut = root.querySelector('.otio-selection-out')!;
+    inputIn.value = '22.125';
+    inputOut.value = '22.5';
+    inputIn.dispatchEvent(new Event('change'));
+    expect(aims.at(-1)?.anchor.range).toEqual(range(46.125, 0.375));
+    inputOut.value = '24';
+    inputOut.dispatchEvent(new Event('change'));
+    expect(aims.at(-1)?.anchor.range).toEqual(range(46.125, 1.875));
+  });
+
+  test('zoom, pan and Fit do not emit another aim, clear marks or change the current anchor', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    const before = aims.at(-1)!.anchor;
+    controller.paint(before, 'viewport-comment');
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    scroll.clientWidth = 640;
+    scroll.layout = new DOMRect(0, 400, 640, 200);
+    root.querySelector('.otio-ruler-label')!.layout = new DOMRect(
+      0,
+      400,
+      174,
+      26
+    );
+    root.querySelector('.otio-zoom-fit')!.dispatchEvent(new Event('click'));
+    const scale = Number(scroll.dataset['pixelsPerFrame']);
+    const count = aims.length;
+    const marks = root.querySelectorAll('.otio-comment-mark');
+    const frame = root.dataset['frame'];
+    const rail = item('focused-b').parentElement!;
+    rail.dispatchEvent(
+      Object.assign(new Event('wheel', { bubbles: true, cancelable: true }), {
+        deltaX: 0,
+        deltaY: -160,
+        deltaMode: 0,
+        clientX: 400,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+      })
+    );
+    expect(Number(scroll.dataset['pixelsPerFrame'])).toBeGreaterThan(scale);
+    expect(scroll.dataset['zoomMode']).toBe('manual');
+    const zoomed = Number(scroll.dataset['pixelsPerFrame']);
+    const left = scroll.scrollLeft;
+    rail.dispatchEvent(
+      Object.assign(new Event('wheel', { bubbles: true, cancelable: true }), {
+        deltaX: 100,
+        deltaY: 1,
+        deltaMode: 0,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+      })
+    );
+    expect(scroll.scrollLeft).toBe(left + 100);
+    expect(Number(scroll.dataset['pixelsPerFrame'])).toBe(zoomed);
+    expect(root.dataset['frame']).toBe(frame);
+    expect(aims).toHaveLength(count);
+    expect(root.querySelectorAll('.otio-comment-mark')).toEqual(marks);
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(aims.at(-1)?.anchor).toBe(before);
+  });
+
+  test('browser-modified wheel and wheel over labels retain native behavior', () => {
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    const rail = item('focused-b').parentElement!;
+    const label = rail
+      .closest('.otio-track-row')!
+      .querySelector('.otio-track-label')!;
+    for (const [target, ctrlKey, metaKey] of [
+      [rail, true, false],
+      [rail, false, true],
+      [label, false, false],
+    ] as const) {
+      const event = Object.assign(
+        new Event('wheel', { bubbles: true, cancelable: true }),
+        {
+          deltaX: 0,
+          deltaY: -120,
+          deltaMode: 0,
+          clientX: 400,
+          ctrlKey,
+          metaKey,
+        }
+      );
+      const scale = scroll.dataset['pixelsPerFrame'];
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(scroll.dataset['pixelsPerFrame']).toBe(scale);
+    }
+  });
+
+  test('timeline zoom shortcuts leave editable fields and modified browser shortcuts alone', () => {
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    const key = (target: ViewElement, value: string, modifiers = {}) => {
+      const event = Object.assign(
+        new Event('keydown', { bubbles: true, cancelable: true }),
+        {
+          key: value,
+          ctrlKey: false,
+          metaKey: false,
+          altKey: false,
+          ...modifiers,
+        }
+      );
+      target.dispatchEvent(event);
+      return event;
+    };
+    const rail = item('focused-b').parentElement!;
+    expect(key(rail, '+').defaultPrevented).toBe(true);
+    expect(scroll.dataset['zoomMode']).toBe('manual');
+    expect(key(rail, '0').defaultPrevented).toBe(true);
+    expect(scroll.dataset['zoomMode']).toBe('fit');
+    expect(
+      key(root.querySelector('.otio-selection-in')!, '-').defaultPrevented
+    ).toBe(false);
+    expect(key(rail, '+', { ctrlKey: true }).defaultPrevented).toBe(false);
+  });
+
+  test('Whole track leaves clip focus and uses the actual canonical track range', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    findViewElement(
+      root,
+      (node) => node.dataset['otioMode'] === 'track'
+    )!.dispatchEvent(new Event('click'));
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(root.dataset['scopeNodeId']).toBe('focused-video');
+    expect(aims.at(-1)?.anchor.track_id).toBe('focused-video');
+    expect(aims.at(-1)?.anchor.item_id).toBeUndefined();
+    expect(aims.at(-1)?.anchor.range).toEqual(
+      controller.document.nodes['focused-video']!.timeline_range!
+    );
+  });
+
+  test('scoped mark registry survives focus changes without manufacturing exposure', () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    item('focused-b').dispatchEvent(new Event('click'));
+    expect(controller.paint(anchor, 'off-domain')).toBe(true);
+    const mark = root.querySelector('.otio-comment-mark')!;
+    expect(mark.hidden).toBe(true);
+    expect(controller.measure('off-domain')).toBeUndefined();
+    controller.reveal(anchor, 'off-domain');
+    expect(root.querySelector('.otio-comment-mark')).toBe(mark);
+    expect(mark.hidden).toBe(false);
+    expect(mark.dataset['start']).toBe('6');
+    expect(anchor.range).toEqual(range(6, 0));
+  });
+
+  test('a captured touch drag selects locally and cancellation restores its original aim', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    const before = aims.at(-1)!.anchor;
+    const rail = item('focused-b').parentElement!;
+    rail.layout = new DOMRect(-200, 400, 960, 54);
+    const touch = (type: string, x: number, y = 410, id = 7) =>
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+        button: 0,
+        clientX: x,
+        clientY: y,
+        pointerId: id,
+        pointerType: 'touch',
+        isPrimary: true,
+      });
+    rail.dispatchEvent(touch('pointerdown', 0));
+    rail.dispatchEvent(touch('pointermove', 160));
+    expect(root.querySelector('.otio-selection-in')!.value).toBe('5');
+    expect(root.querySelector('.otio-selection-out')!.value).toBe('9');
+    rail.dispatchEvent(touch('pointercancel', 160, 410, 8));
+    expect(rail.hasPointerCapture(7)).toBe(true);
+    rail.dispatchEvent(touch('pointercancel', 160));
+    expect(rail.hasPointerCapture(7)).toBe(false);
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(aims.at(-1)?.anchor).toBe(before);
+  });
+
+  test('vertical touch scroll does not author a point or range', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    const before = aims.at(-1)!.anchor;
+    const rail = item('focused-b').parentElement!;
+    const touch = (type: string, x: number, y: number) =>
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+        button: 0,
+        clientX: x,
+        clientY: y,
+        pointerId: 7,
+        pointerType: 'touch',
+        isPrimary: true,
+      });
+    rail.dispatchEvent(touch('pointerdown', 200, 400));
+    rail.dispatchEvent(touch('pointermove', 202, 440));
+    rail.dispatchEvent(touch('pointerup', 202, 440));
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(aims.at(-1)?.anchor).toBe(before);
+    expect(rail.hasPointerCapture(7)).toBe(false);
+  });
+
+  test('captured selection gestures ignore wheel and button zoom until released', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    const rail = item('focused-b').parentElement!;
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    const scale = scroll.dataset['pixelsPerFrame'];
+    rail.dispatchEvent(pointer('pointerdown', 0));
+    rail.dispatchEvent(
+      Object.assign(new Event('wheel', { bubbles: true, cancelable: true }), {
+        deltaX: 0,
+        deltaY: -120,
+        deltaMode: 0,
+        clientX: 0,
+      })
+    );
+    root.querySelector('.otio-zoom-in')!.dispatchEvent(new Event('click'));
+    expect(scroll.dataset['pixelsPerFrame']).toBe(scale);
+    rail.dispatchEvent(pointer('pointercancel', 0));
+    root.querySelector('.otio-zoom-in')!.dispatchEvent(new Event('click'));
+    expect(Number(scroll.dataset['pixelsPerFrame'])).toBeGreaterThan(
+      Number(scale)
+    );
+  });
+
+  test('returning to composition restores its previous zoom and scroll position', () => {
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    scroll.clientWidth = 640;
+    root.querySelector('.otio-ruler-label')!.layout = new DOMRect(
+      0,
+      400,
+      174,
+      26
+    );
+    root.querySelector('.otio-zoom-fit')!.dispatchEvent(new Event('click'));
+    root.querySelector('.otio-zoom-in')!.dispatchEvent(new Event('click'));
+    const scale = scroll.dataset['pixelsPerFrame'];
+    scroll.scrollLeft = 85;
+    scroll.scrollTop = 19;
+    item('focused-b').dispatchEvent(new Event('click'));
+    expect(root.dataset['domainOrigin']).toBe('24');
+    root
+      .querySelector('.otio-back-composition')!
+      .dispatchEvent(new Event('click'));
+    expect(scroll.dataset['zoomMode']).toBe('manual');
+    expect(scroll.dataset['pixelsPerFrame']).toBe(scale);
+    expect(scroll.scrollLeft).toBe(85);
+    expect(scroll.scrollTop).toBe(19);
+    expect(root.dataset['domainOrigin']).toBe('0');
   });
 
   test('disposing a captured gesture removes listeners and ignores stale activation', () => {
