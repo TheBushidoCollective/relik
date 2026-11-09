@@ -190,7 +190,6 @@ async function run() {
     });
     const silent = ctx.createGain();
     silent.gain.value = 0;
-    master.connect(ctx.destination);
     master.connect(tap);
     tap.connect(silent);
     silent.connect(ctx.destination);
@@ -349,3 +348,314 @@ async function run() {
 (
   globalThis as typeof globalThis & { runDirectAudio: typeof run }
 ).runDirectAudio = run;
+
+// Optimistic lower-bound probe: all PCM and both independent video frames are
+// prepared before the request. This does not exercise a streaming worker.
+async function runIdealCold() {
+  const params = new URLSearchParams(location.search);
+  const guard = Number(params.get('guard') ?? '256');
+  if (![0, 128, 256].includes(guard)) throw new Error('invalid guard');
+  const condition = params.get('condition') ?? 'running';
+  if (!['running', 'suspended'].includes(condition))
+    throw new Error('invalid condition');
+  const hint = params.get('hint') === '0' ? 0 : 'interactive';
+  const ctx = new AudioContext({ sampleRate: RATE, latencyHint: hint });
+  const refs = await reference('/bed.f32');
+  const counters = { frames: 0, peak: 0 };
+  const clip: Clip = { url: '/bed.wav', source: 12000, start: 0, end: 12000 };
+  const chunks = await prepare(clip, counters);
+  const images = await Promise.all(
+    ['/frame0.png', '/frame1.png'].map(async (url) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`frame fetch ${r.status}`);
+      return createImageBitmap(await r.blob());
+    })
+  );
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 160;
+  document.body.style.margin = '0';
+  document.body.replaceChildren(canvas);
+  const gc = canvas.getContext('2d', { willReadFrequently: true });
+  if (!gc || !images[0] || !images[1])
+    throw new Error('Missing canvas or frames');
+  gc.imageSmoothingEnabled = false;
+  const image0 = images[0],
+    image1 = images[1];
+  gc.drawImage(image0, 0, 0, 640, 160);
+  const pixel0 = gc.getImageData(0, 0, 640, 160).data;
+  gc.drawImage(image1, 0, 0, 640, 160);
+  const pixel1 = gc.getImageData(0, 0, 640, 160).data;
+  let diff = 0;
+  for (let n = 0; n < pixel0.length; n++)
+    diff += Math.abs((pixel0[n] ?? 0) - (pixel1[n] ?? 0));
+  if (diff < 10000) throw new Error('Video frames indistinguishable');
+  gc.drawImage(image0, 0, 0, 640, 160);
+  const code = `class Recorder extends AudioWorkletProcessor { process(inputs) { const x=inputs[0][0]; if(x) this.port.postMessage({frame:currentFrame, samples:x.slice()}); return true; } } registerProcessor('ideal-recorder', Recorder);`;
+  const workletUrl = URL.createObjectURL(
+    new Blob([code], { type: 'text/javascript' })
+  );
+  try {
+    await ctx.audioWorklet.addModule(workletUrl);
+  } finally {
+    URL.revokeObjectURL(workletUrl);
+  }
+  const master = ctx.createGain();
+  const tap = new AudioWorkletNode(ctx, 'ideal-recorder', {
+    numberOfInputs: 1,
+    numberOfOutputs: 1,
+    outputChannelCount: [1],
+  });
+  const silent = ctx.createGain();
+  silent.gain.value = 0;
+  master.connect(tap);
+  tap.connect(silent);
+  silent.connect(ctx.destination);
+  const blocks: { frame: number; samples: Float32Array }[] = [];
+  tap.port.onmessage = (e) => blocks.push(e.data);
+  const sources = chunks.map((chunk) => {
+    const node = ctx.createBufferSource();
+    node.buffer = chunk.buffer;
+    node.connect(master);
+    return node;
+  });
+  if (condition === 'running') await ctx.resume();
+  let request = 0;
+  let requestState = ctx.state;
+  if (condition === 'suspended') {
+    if (ctx.state !== 'suspended')
+      throw new Error(`Expected suspended context, got ${ctx.state}`);
+    const button = document.createElement('button');
+    button.textContent = 'Start';
+    button.style.cssText =
+      'position:fixed;left:650px;top:0;width:100px;height:50px';
+    document.body.append(button);
+    await new Promise<void>((resolve, reject) => {
+      button.addEventListener(
+        'click',
+        (event) => {
+          if (!event.isTrusted) {
+            reject(new Error('Input is not trusted'));
+            return;
+          }
+          request = performance.now();
+          requestState = ctx.state;
+          ctx.resume().then(() => resolve(), reject);
+        },
+        { once: true }
+      );
+      (globalThis as typeof globalThis & { coldReady?: boolean }).coldReady =
+        true;
+    });
+    button.remove();
+  }
+  const bridgeDeadline = performance.now() + 1000;
+  let bridge = ctx.getOutputTimestamp();
+  while (
+    (!(typeof bridge.contextTime === 'number' && bridge.contextTime > 0) ||
+      !(
+        typeof bridge.performanceTime === 'number' && bridge.performanceTime > 0
+      )) &&
+    performance.now() < bridgeDeadline
+  ) {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve())
+    );
+    bridge = ctx.getOutputTimestamp();
+  }
+  const bridgeBeforePerf = performance.now();
+  bridge = ctx.getOutputTimestamp();
+  const bridgeAfterPerf = performance.now();
+  const { contextTime, performanceTime } = bridge;
+  if (
+    typeof contextTime !== 'number' ||
+    contextTime <= 0 ||
+    typeof performanceTime !== 'number' ||
+    performanceTime <= 0
+  )
+    throw new Error(
+      `No usable output timestamp bridge: ${JSON.stringify(bridge)}`
+    );
+  let previousTimer = performance.now(),
+    minimumTimerStep = Infinity;
+  for (let i = 0; i < 10000; i++) {
+    const now = performance.now();
+    if (now > previousTimer)
+      minimumTimerStep = Math.min(minimumTimerStep, now - previousTimer);
+    previousTimer = now;
+  }
+  const bridgeSamples: {
+    before: number;
+    after: number;
+    clock: AudioTimestamp;
+  }[] = [];
+  const recordBridge = () => {
+    const before = performance.now();
+    const clock = ctx.getOutputTimestamp();
+    bridgeSamples.push({ before, after: performance.now(), clock });
+    return clock;
+  };
+  recordBridge();
+  if (condition === 'running') {
+    request = performance.now();
+    requestState = ctx.state;
+  }
+  const requestContextTime = ctx.currentTime;
+  const f0 = Math.ceil((requestContextTime * RATE + guard) / 128) * 128;
+  const c0 = f0 / RATE;
+  for (const [index, chunk] of chunks.entries()) {
+    const source = sources[index];
+    if (!source) throw new Error('Missing scheduled node');
+    source.start(c0 + chunk.timeline / RATE, 0, chunk.frames / RATE);
+  }
+  recordBridge();
+  const outputEpochPerf = performanceTime + (c0 - contextTime) * 1000;
+  let canvasChangedPerf = 0;
+  let wakeupPerf = 0;
+  const intendedDeadline = outputEpochPerf + 1000 / 30;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error('video render timeout')),
+      1000
+    );
+    const tick = () => {
+      wakeupPerf = performance.now();
+      const clock = recordBridge();
+      if (
+        typeof clock.contextTime !== 'number' ||
+        typeof clock.performanceTime !== 'number' ||
+        clock.performanceTime <= 0
+      ) {
+        clearTimeout(timeout);
+        reject(new Error('output clock unavailable at presentation'));
+        return;
+      }
+      const nowOutput =
+        clock.contextTime + (wakeupPerf - clock.performanceTime) / 1000;
+      if (nowOutput >= c0 + 1 / 30) {
+        gc.drawImage(image1, 0, 0, 640, 160);
+        canvasChangedPerf = performance.now();
+        clearTimeout(timeout);
+        resolve();
+      } else setTimeout(tick, Math.max(0, (c0 + 1 / 30 - nowOutput) * 1000));
+    };
+    setTimeout(tick, Math.max(0, intendedDeadline - performance.now()));
+  });
+  recordBridge();
+  await new Promise<void>((resolve) => setTimeout(resolve, 350));
+  const actual = new Float32Array(12000);
+  const seen = new Uint8Array(12000);
+  for (const block of blocks)
+    for (let i = 0; i < block.samples.length; i++) {
+      const index = block.frame + i - f0;
+      if (index >= 0 && index < actual.length) {
+        actual[index] = sampleAt(block.samples, i);
+        seen[index] = 1;
+      }
+    }
+  if (seen.some((x) => x !== 1))
+    throw new Error(`Missing prefix samples ${seen.filter((x) => !x).length}`);
+  let error = 0,
+    shifted = 0,
+    missingPrefixError = 0,
+    dropoutRun = 0,
+    maxDropoutFrames = 0;
+  for (let n = 0; n < actual.length; n++) {
+    const a = sampleAt(actual, n),
+      expected = sampleAt(refs, 12000 + n),
+      wrong = sampleAt(refs, 12000 + n + 240);
+    error += (a - expected) ** 2;
+    shifted += (a - wrong) ** 2;
+    const missingPrefixSample = n < 960 ? 0 : a;
+    missingPrefixError += (missingPrefixSample - expected) ** 2;
+    if (Math.abs(a) < 0.000001 && Math.abs(expected) > 0.003) {
+      dropoutRun++;
+      maxDropoutFrames = Math.max(maxDropoutFrames, dropoutRun);
+    } else dropoutRun = 0;
+  }
+  const pcmRmse = Math.sqrt(error / actual.length),
+    shiftedRmse = Math.sqrt(shifted / actual.length),
+    missingPrefixRmse = Math.sqrt(missingPrefixError / actual.length);
+  const projectedEpochs = bridgeSamples.flatMap(({ clock }) =>
+    typeof clock.contextTime === 'number' &&
+    typeof clock.performanceTime === 'number'
+      ? [clock.performanceTime + (c0 - clock.contextTime) * 1000]
+      : []
+  );
+  const bridgeSpreadMs = projectedEpochs.length
+    ? Math.max(...projectedEpochs) - Math.min(...projectedEpochs)
+    : null;
+  const result = {
+    request,
+    requestContextTime,
+    state: requestState,
+    condition,
+    requestedLatencyHint: hint,
+    actualSampleRate: ctx.sampleRate,
+    baseLatency: ctx.baseLatency,
+    outputLatency: ctx.outputLatency,
+    f0,
+    c0,
+    sourceFrameAtF0: 12000,
+    referenceSampleAtF0: sampleAt(refs, 12000),
+    firstSampleMatches: sampleAt(actual, 0) === sampleAt(refs, 12000),
+    firstSamples: Array.from(actual.slice(0, 8)),
+    pcmRmse,
+    maxDropoutFrames,
+    maxDropoutMs: (maxDropoutFrames * 1000) / RATE,
+    dropoutMethod:
+      'consecutive exact-zero output samples where reference exceeds 0.003; waveform zero crossings can split runs',
+    shiftedRmse,
+    missingPrefixRmse,
+    missingPrefixControlFrames: 960,
+    outputEpochPerf,
+    predictedOutputEpochAfterRequestMs: outputEpochPerf - request,
+    bridge,
+    bridgeSamples,
+    minimumObservedTimerStepMs: Number.isFinite(minimumTimerStep)
+      ? minimumTimerStep
+      : null,
+    bridgeSpreadMs,
+    bridgeSamplingBracketMs: bridgeAfterPerf - bridgeBeforePerf,
+    bridgeUncertainty:
+      'timestamp accuracy, timer quantization, and output-device latency are not independently calibrated',
+    schedulingGuardFrames: guard,
+    schedulingGuardQualification:
+      'qualifies only with exact prefix and dropout checks',
+    intendedDeadline,
+    wakeupPerf,
+    canvasChangedPerf,
+    canvasAfterRequestMs: canvasChangedPerf - request,
+    performanceTimeOrigin: performance.timeOrigin,
+    predecodedFrameDifference: diff,
+    framesRetained: counters.peak,
+    scheduledNodes: sources.length,
+    copying: 'AudioSample trim and toAudioBuffer per packet',
+    limitation: 'preprepared PCM, no bounded worker, no streaming startup',
+  };
+  for (const node of sources) {
+    try {
+      node.stop();
+    } catch {}
+    node.disconnect();
+  }
+  master.disconnect();
+  tap.disconnect();
+  silent.disconnect();
+  for (const image of images) image.close();
+  await ctx.close();
+  if (
+    sampleAt(actual, 0) !== sampleAt(refs, 12000) ||
+    pcmRmse > 0.003 ||
+    shiftedRmse < 0.01 ||
+    missingPrefixRmse <= 0.003 ||
+    maxDropoutFrames > 960
+  )
+    throw new Error(
+      `PCM prefix or offset control failed: ${JSON.stringify(result)}`
+    );
+  return result;
+}
+(
+  globalThis as typeof globalThis & { runIdealCold: typeof runIdealCold }
+).runIdealCold = runIdealCold;

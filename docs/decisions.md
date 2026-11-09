@@ -947,6 +947,10 @@ Every change to the set of drawn video occurrences (cuts, unhiding a track, solo
 
 **Update, 2026-11-09:** A native boundary can retain continuing decoders and the transport anchor when it only retires occurrences or joins occurrences prepared against the fixed anchor. The join requires phase-admitted video, current required snapshot tags, and entering audio that is playing within the existing drift tolerance. Preparation uses two workers; unprepared or ineligible boundaries retain the resync path.
 
+**Scheduled PCM scope and initial playback budget, 2026-11-09.** Jason approved a separate maximum of 350 ms from the play request to initial presentation. The steady playback p95 remains 50 ms, the maximum gap remains 100 ms, and the source-aware audio dropout limit remains 20 ms. The initial budget does not authorize skipping the source prefix or backdating the playback epoch.
+
+The scheduled PCM design is limited to independently validated local WAV PCM16 or float32, mono or stereo, at the context's 44.1 or 48 kHz sample rate, with unit-rate sample-aligned mappings. Other codecs, layouts, rates, retimes and mappings retain scope-wide browser-native playback with an explicit compatibility reason. Scheduled qualification requires captured post-gain output against source samples at the actual context-frame epoch, not a fitted offset; it does not establish equivalent timing for native compatibility mode. The video producer and readiness frontier remain part of the smooth-playback requirement.
+
 **Residuals:**
 - Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
 - Any media path failing native admission criteria runs on today's exact midpoint seek cadence with existing diagnostic reporting.

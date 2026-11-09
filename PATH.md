@@ -69,6 +69,10 @@ Success requires `OTIO_PATH_OK`, decoded playback observations, encrypted commen
 
 The playback gate collects browser-local canvas samples, decoded CDP screencast frames, and PCM from a proof-only AudioWorklet connected downstream of the controller's master gain. It checks each moving-window repetition against independently decoded source frames, and retains freeze, stall, wrong-source, stale-frame, skipped-still, and master-gain mute controls. The boundary composition exercises repeated cuts, stills, gaps, dissolves, and continuous audio. The focused-comment proof reads the encrypted anchor through a fresh MCP process and checks composition and source coordinates after a nonzero-origin selection. A failed calibration or unavailable worklet blocks `OTIO_PATH_OK`; it is not a performance pass.
 
+The cold initial presentation limit is 350 ms from the play request through the first observed change, charged conservatively for the left-censored initial frame. Thereafter, cold and warm presentation retain the 50 ms p95 and 100 ms maximum interval limits. The separate source-aware audio dropout limit remains 20 ms, and the source-prefix and audio epoch controls remain required.
+
+Scheduled PCM qualification must observe the selected backend and compare the post-gain output against independently decoded source samples at the reported context-frame epoch, without fitting an offset. It must cover stereo, cuts and dissolves, a run longer than the 500 ms queue horizon, cancellation and starvation, and native compatibility for unsupported scopes. A diagnostic event alone is not playback proof.
+
 The complete source path passed locally at `5a4bd6d` with Node 24.15.0, Bun 1.4.3, and the owned Chromium headless shell 1228. It exercised the original archive/playback/encrypted-feedback/revision stages, both exact-identity sidebar reveals after 40 coincident UI comments, and the zero-mail assertion, ending `OTIO_PATH_OK`. The matched old renderer failed the exact marker-center reveal assertion after the same 40 UI posts. Release qualification, CI, deployment, and the published npm client remain separate gates.
 
 # Anchored comment popovers on every class

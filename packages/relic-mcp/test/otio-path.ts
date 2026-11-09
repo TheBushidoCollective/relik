@@ -177,6 +177,13 @@ const REQUIRED = [
   'resize-viewer',
   'post-gain-tap-calibration',
   'focused-nonzero-comment',
+  'scheduled-pcm-playback',
+  'scheduled-pcm-starvation-cancel',
+  'scheduled-pcm-native-compatibility',
+  'scheduled-video-reservation-invalidation',
+  'scheduled-pcm-seek-scope-cancel',
+  'scheduled-pcm-terminal-failure',
+  'scheduled-pcm-mute-solo',
 ] as const;
 
 const passed = new Set<string>();
@@ -9333,7 +9340,12 @@ interface MovingTrace {
     audioOverflow: boolean;
     visualOverflow: boolean;
     eventsOverflow: boolean;
-    events: Array<{ kind: string; timestamp: number; value?: unknown }>;
+    events: Array<{
+      kind: string;
+      timestamp: number;
+      value?: unknown;
+      mediaType?: string | null;
+    }>;
     visual: Array<{
       timestamp: number;
       frame: string | null;
@@ -9375,12 +9387,108 @@ function assertPcmCoverage(
     'post-gain PCM is missing its trailing samples'
   );
 }
+interface ScheduledPcmComparison {
+  sampleCount: number;
+  rmse: [number, number];
+  shiftedRmse: [number, number];
+  swappedRmse: [number, number];
+  mutedPrefixRmse: [number, number];
+}
+
+// The expected planes are produced independently of the player. No offset or
+// gain is fitted: context frame F0 owns expected sample zero in both channels.
+function compareScheduledPcm(
+  chunks: Array<{ sampleFrame: number; channels: number[][] }>,
+  f0: number,
+  expected: readonly [Float32Array, Float32Array],
+  first: number,
+  end: number
+): ScheduledPcmComparison {
+  assert.ok(
+    Number.isSafeInteger(f0) &&
+      Number.isSafeInteger(first) &&
+      Number.isSafeInteger(end)
+  );
+  assert.ok(
+    first >= 0 &&
+      end > first &&
+      end <= expected[0].length &&
+      end <= expected[1].length
+  );
+  assert.ok(
+    chunks.length > 0 && chunks[chunks.length - 1]!.channels[0],
+    'scheduled PCM capture is empty'
+  );
+  assertPcmCoverage(
+    chunks[0]!.sampleFrame,
+    chunks[chunks.length - 1]!.sampleFrame +
+      chunks[chunks.length - 1]!.channels[0]!.length,
+    chunks
+  );
+  const sums = [0, 0],
+    shifted = [0, 0],
+    mutedPrefix = [0, 0],
+    swapped = [0, 0];
+  let count = 0;
+  const prefixEnd = Math.min(end, first + 960);
+  for (const chunk of chunks) {
+    assert.equal(
+      chunk.channels.length,
+      2,
+      'scheduled output must capture stereo'
+    );
+    assert.equal(
+      chunk.channels[0]!.length,
+      chunk.channels[1]!.length,
+      'stereo capture length mismatch'
+    );
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const index = chunk.sampleFrame + i - f0;
+      if (index < first || index >= end) continue;
+      for (let ch = 0; ch < 2; ch++) {
+        const actual = chunk.channels[ch]![i]!;
+        const reference = expected[ch]![index]!;
+        assert.ok(
+          Number.isFinite(actual) && Number.isFinite(reference),
+          'non-finite PCM'
+        );
+        sums[ch]! += (actual - reference) ** 2;
+        const oneSampleLate = index > first ? expected[ch]![index - 1]! : 0;
+        shifted[ch]! += (oneSampleLate - reference) ** 2;
+        swapped[ch]! += (expected[1 - ch]![index]! - reference) ** 2;
+        if (index < prefixEnd) mutedPrefix[ch]! += reference ** 2;
+      }
+      count++;
+    }
+  }
+  assert.equal(
+    count,
+    end - first,
+    'scheduled PCM does not cover the complete expected frame range'
+  );
+  const metric = (values: number[]): [number, number] => [
+    Math.sqrt(values[0]! / count),
+    Math.sqrt(values[1]! / count),
+  ];
+  return {
+    sampleCount: count,
+    rmse: metric(sums),
+    shiftedRmse: metric(shifted),
+    swappedRmse: metric(swapped),
+    mutedPrefixRmse: [
+      Math.sqrt(mutedPrefix[0]! / (prefixEnd - first)),
+      Math.sqrt(mutedPrefix[1]! / (prefixEnd - first)),
+    ],
+  };
+}
+
 async function comparePostGainPcm(
   capture: MovingTrace,
   referenceCache: Map<number, Float32Array>,
   healthyRms: number,
   mutedRms: number,
-  requireSustainedAgreement = true
+  requireSustainedAgreement = true,
+  sourceActiveFrame?: number
 ): Promise<{
   offset: number;
   correlation: number;
@@ -9491,7 +9599,7 @@ async function comparePostGainPcm(
   const window = Math.max(1, Math.round(rate * 0.005));
   const threshold = Math.max(mutedRms * 2, healthyRms * 0.01);
   let run = 0,
-    longest = Math.max(0, -offset);
+    longest = sourceActiveFrame === undefined ? Math.max(0, -offset) : 0;
   assert.ok(
     reference.length - offset >= captured.length,
     'source PCM does not cover the full capture'
@@ -9512,6 +9620,11 @@ async function comparePostGainPcm(
       actualEnergy +=
         captured[start + window - 1]! ** 2 - captured[start - 1]! ** 2;
     }
+    if (
+      sourceActiveFrame !== undefined &&
+      capture.start.sampleFrame + start < sourceActiveFrame
+    )
+      continue;
     const expected = Math.sqrt(Math.max(0, sourceEnergy) / window);
     const actual = Math.sqrt(Math.max(0, actualEnergy) / window);
     if (expected > threshold && actual <= threshold) {
@@ -9864,6 +9977,78 @@ async function calibrateCaptureOverhead(
   }
 }
 
+interface ColdPresentationMetrics {
+  changes: Array<{ timestamp: number; sourceFrame: number }>;
+  duration: number;
+  initialMs: number;
+  p95: number;
+  max: number;
+}
+
+function coldPresentationMetrics(
+  samples: Array<{ timestamp: number; sourceFrame: number }>,
+  playTimestamp: number,
+  warmTimestamp: number
+): ColdPresentationMetrics {
+  const changes: Array<{ timestamp: number; sourceFrame: number }> = [];
+  for (const sample of samples)
+    if (
+      !changes.length ||
+      changes[changes.length - 1]!.sourceFrame !== sample.sourceFrame
+    )
+      changes.push(sample);
+  const initialMs =
+    changes.length > 1 ? changes[1]!.timestamp - playTimestamp : Infinity;
+  const intervals: number[] = [];
+  for (let i = 2; i < changes.length; i++)
+    intervals.push(changes[i]!.timestamp - changes[i - 1]!.timestamp);
+  if (changes.length > 1)
+    intervals.push(warmTimestamp - changes[changes.length - 1]!.timestamp);
+  intervals.sort((a, b) => a - b);
+  return {
+    changes,
+    duration: warmTimestamp - playTimestamp,
+    initialMs,
+    p95:
+      intervals[
+        Math.min(intervals.length - 1, Math.floor(intervals.length * 0.95))
+      ] ?? Infinity,
+    max: intervals[intervals.length - 1] ?? Infinity,
+  };
+}
+
+function passesColdPresentation(metrics: ColdPresentationMetrics): boolean {
+  return (
+    metrics.changes.length >= 2 &&
+    metrics.initialMs <= 350 &&
+    metrics.p95 <= 50 &&
+    metrics.max <= 100
+  );
+}
+
+function assertColdPresentationGateControls(): void {
+  const samples = (times: number[]) =>
+    times.map((timestamp, sourceFrame) => ({ timestamp, sourceFrame }));
+  assert.ok(
+    passesColdPresentation(
+      coldPresentationMetrics(samples([0, 350, 383]), 0, 416)
+    )
+  );
+  assert.ok(
+    !passesColdPresentation(
+      coldPresentationMetrics(samples([0, 351, 384]), 0, 417)
+    )
+  );
+  assert.ok(
+    !passesColdPresentation(
+      coldPresentationMetrics(samples([0, 300, 351]), 0, 384)
+    )
+  );
+  assert.ok(
+    !passesColdPresentation(coldPresentationMetrics(samples([0]), 0, 400))
+  );
+}
+
 async function assessMovingWindowControls(
   browser: ChromeSession,
   healthyRms: number,
@@ -9871,6 +10056,7 @@ async function assessMovingWindowControls(
   provenance: Record<string, unknown>,
   focused = false
 ): Promise<void> {
+  assertColdPresentationGateControls();
   const decoded = await runChild(
     [
       'ffmpeg',
@@ -10190,48 +10376,21 @@ async function assessMovingWindowControls(
           sourceFrame: best.frame,
         };
       });
-    const coldMetrics = (
-      samples: Array<{ timestamp: number; sourceFrame: number }>
-    ) => {
-      const changes: Array<{ timestamp: number; sourceFrame: number }> = [];
-      for (const sample of samples)
-        if (
-          !changes.length ||
-          changes[changes.length - 1]!.sourceFrame !== sample.sourceFrame
-        )
-          changes.push(sample);
-      const duration = capture.warm!.timestamp - capture.playEdge!.timestamp;
-      const intervals = [
-        changes.length > 1
-          ? changes[1]!.timestamp - capture.playEdge!.timestamp
-          : duration,
-      ];
-      for (let i = 2; i < changes.length; i++)
-        intervals.push(changes[i]!.timestamp - changes[i - 1]!.timestamp);
-      if (changes.length > 1)
-        intervals.push(
-          capture.warm!.timestamp - changes[changes.length - 1]!.timestamp
-        );
-      intervals.sort((a, b) => a - b);
-      return {
-        changes,
-        duration,
-        p95:
-          intervals[
-            Math.min(intervals.length - 1, Math.floor(intervals.length * 0.95))
-          ] ?? Infinity,
-        max: intervals[intervals.length - 1] ?? Infinity,
-      };
-    };
-    const coldCanvasMetrics = coldMetrics(coldCanvas);
-    const coldScreenMetrics = coldMetrics(coldScreen);
+    // Charge the left-censored initial state through the first observed
+    // change, then assess subsequent intervals against the steady gate.
+    const coldCanvasMetrics = coldPresentationMetrics(
+      coldCanvas,
+      capture.playEdge.timestamp,
+      capture.warm.timestamp
+    );
+    const coldScreenMetrics = coldPresentationMetrics(
+      coldScreen,
+      capture.playEdge.timestamp,
+      capture.warm.timestamp
+    );
     if (
-      coldCanvasMetrics.changes.length < 2 ||
-      coldScreenMetrics.changes.length < 2 ||
-      coldCanvasMetrics.p95 > 50 ||
-      coldCanvasMetrics.max > 100 ||
-      coldScreenMetrics.p95 > 50 ||
-      coldScreenMetrics.max > 100
+      !passesColdPresentation(coldCanvasMetrics) ||
+      !passesColdPresentation(coldScreenMetrics)
     )
       issues.push('cold presentation thresholds');
     const screenStates: Array<{
@@ -10316,17 +10475,45 @@ async function assessMovingWindowControls(
         issues.push('missing controller audio chunk');
     }
     const channel = audio.flatMap((chunk) => chunk.channels[0] ?? []);
+    const pcmEpoch = capture.trace.events.find(
+      (entry) =>
+        entry.kind === 'scheduled-pcm' &&
+        entry.value &&
+        typeof entry.value === 'object' &&
+        'event' in entry.value &&
+        entry.value.event === 'epoch'
+    )?.value as
+      | {
+          f0?: number;
+          c0?: number;
+          bridge?: { contextTime: number; performanceTime: number };
+        }
+      | undefined;
+    const sourceActiveFrame = Number.isSafeInteger(pcmEpoch?.f0)
+      ? pcmEpoch!.f0
+      : undefined;
+    const activeChannel =
+      sourceActiveFrame === undefined
+        ? channel
+        : channel.slice(
+            Math.max(0, sourceActiveFrame - capture.start.sampleFrame)
+          );
     const windowSize = Math.ceil(capture.trace.sampleRate * 0.02);
     const silenceThreshold = Math.max(mutedRms * 2, healthyRms * 0.01);
     let longestSilentSamples = 0,
       silentSamples = 0,
       energy = 0;
-    for (let i = 0; i < Math.min(windowSize, channel.length); i++)
-      energy += channel[i]! ** 2;
-    for (let offset = 0; offset + windowSize <= channel.length; offset++) {
+    for (let i = 0; i < Math.min(windowSize, activeChannel.length); i++)
+      energy += activeChannel[i]! ** 2;
+    for (
+      let offset = 0;
+      offset + windowSize <= activeChannel.length;
+      offset++
+    ) {
       if (offset > 0)
         energy +=
-          channel[offset + windowSize - 1]! ** 2 - channel[offset - 1]! ** 2;
+          activeChannel[offset + windowSize - 1]! ** 2 -
+          activeChannel[offset - 1]! ** 2;
       if (Math.sqrt(Math.max(0, energy) / windowSize) <= silenceThreshold) {
         silentSamples = silentSamples === 0 ? windowSize : silentSamples + 1;
         longestSilentSamples = Math.max(longestSilentSamples, silentSamples);
@@ -10342,7 +10529,8 @@ async function assessMovingWindowControls(
         coldReferenceAudio,
         healthyRms,
         mutedRms,
-        false
+        false,
+        sourceActiveFrame
       );
       const solver = capture.trace.events.find(
         (entry) =>
@@ -10365,7 +10553,13 @@ async function assessMovingWindowControls(
           ? bridge.output.performanceTime - bridge.output.contextTime * 1000
           : NaN
       );
-      const anchor = solver?.chosenAnchor;
+      const anchor =
+        sourceActiveFrame !== undefined &&
+        pcmEpoch?.bridge &&
+        Number.isFinite(pcmEpoch.c0)
+          ? pcmEpoch.bridge.performanceTime +
+            (pcmEpoch.c0! - pcmEpoch.bridge.contextTime) * 1000
+          : solver?.chosenAnchor;
       if (
         !Number.isFinite(anchor) ||
         offsets.some((value) => !Number.isFinite(value))
@@ -10420,7 +10614,8 @@ async function assessMovingWindowControls(
               coldReferenceAudio,
               healthyRms,
               mutedRms,
-              false
+              false,
+              sourceActiveFrame
             );
             const plantedErrorMs =
               ((planted.offset - expectedOffset) * 1000) /
@@ -10948,6 +11143,191 @@ async function assessMovingWindowControls(
   }
 }
 
+async function assertVideoReservationInvalidation(
+  browser: ChromeSession,
+  provenance: Record<string, unknown>
+): Promise<void> {
+  await seekTo(browser, 0);
+  const capture = await browser.evaluate<MovingTrace>(`(async () => {
+    const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+    const root = document.querySelector('.otio-view');
+    const button = document.querySelector('button.otio-play');
+    if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('reservation proof controls missing');
+    const start = await globalThis.__otioProofTrace.start();
+    globalThis.__otioProofPcmFault = 'invalidate-next-reserved-tag';
+    const playEdge = globalThis.__otioProofTrace.playRequest();
+    button.click();
+    await sleep(2500);
+    const trace = await globalThis.__otioProofTrace.stop();
+    globalThis.__otioProofPcmFault = null;
+    if (root.dataset.playing === 'true') button.click();
+    return {start, playEdge, trace};
+  })()`);
+  await writeFile(
+    join(shotDir, 'video-reservation-invalidated.json'),
+    JSON.stringify({ provenance, capture })
+  );
+  const events = capture.trace.events.filter(
+    (entry) => entry.kind === 'scheduled-pcm'
+  );
+  const faultIndex = events.findIndex((entry) => {
+    const value = entry.value;
+    return (
+      value &&
+      typeof value === 'object' &&
+      'event' in value &&
+      value.event === 'fault' &&
+      'code' in value &&
+      value.code === 'reserved-frame-invalidated'
+    );
+  });
+  assert.ok(faultIndex >= 0, 'reserved-frame invalidation was not applied');
+  const closure = events.slice(faultIndex + 1).find((entry) => {
+    const value = entry.value;
+    return (
+      value &&
+      typeof value === 'object' &&
+      'event' in value &&
+      value.event === 'gate-close' &&
+      'contextStopFrame' in value
+    );
+  });
+  const closureValue = closure?.value;
+  assert.ok(
+    closureValue &&
+      typeof closureValue === 'object' &&
+      'contextStopFrame' in closureValue &&
+      'compositionStop' in closureValue &&
+      'generation' in closureValue,
+    'invalidated frame did not close the audio frontier'
+  );
+  const gateFrame = Number(closureValue.contextStopFrame);
+  assert.ok(
+    Number.isSafeInteger(gateFrame),
+    'invalidated frontier gate is not a context frame'
+  );
+  const epochEntry = events.slice(0, faultIndex).find((entry) => {
+    const value = entry.value;
+    return (
+      value &&
+      typeof value === 'object' &&
+      'event' in value &&
+      value.event === 'epoch' &&
+      'generation' in value &&
+      value.generation === closureValue.generation
+    );
+  });
+  const epoch = epochEntry?.value;
+  assert.ok(
+    epoch &&
+      typeof epoch === 'object' &&
+      'f0' in epoch &&
+      'contextSampleRate' in epoch &&
+      'compositionT0' in epoch,
+    'gate closure has no matching epoch'
+  );
+  const startTime = epoch.compositionT0 as { value: number; rate: number };
+  const stopTime = closureValue.compositionStop as {
+    value: number;
+    rate: number;
+  };
+  const rate = Number(epoch.contextSampleRate);
+  assert.ok(
+    Number.isFinite(rate) && rate > 0 && startTime.rate > 0 && stopTime.rate > 0
+  );
+  const expectedStop =
+    startTime.value / startTime.rate + (gateFrame - Number(epoch.f0)) / rate;
+  assert.ok(
+    Math.abs(stopTime.value / stopTime.rate - expectedStop) <= 1 / rate,
+    'programmed gate and stopped composition coordinate disagree'
+  );
+  const resumed = events.slice(faultIndex + 1).find((entry) => {
+    const value = entry.value;
+    return (
+      value &&
+      typeof value === 'object' &&
+      'event' in value &&
+      value.event === 'epoch' &&
+      'generation' in value &&
+      value.generation !== closureValue.generation
+    );
+  })?.value as
+    | { f0: number; compositionT0: { value: number; rate: number } }
+    | undefined;
+  assert.ok(resumed, 'video starvation did not resume playback');
+  assert.ok(
+    resumed.f0 > gateFrame,
+    'resumed epoch did not follow the stopped epoch'
+  );
+  assert.ok(
+    Math.abs(
+      resumed.compositionT0.value / resumed.compositionT0.rate - expectedStop
+    ) <=
+      1 / rate,
+    'resumed epoch did not start at the committed stop coordinate'
+  );
+  const underflow = events.slice(faultIndex + 1).find((entry) => {
+    const value = entry.value;
+    return (
+      value &&
+      typeof value === 'object' &&
+      'event' in value &&
+      value.event === 'cancel' &&
+      'reason' in value &&
+      value.reason === 'underflow' &&
+      'generation' in value &&
+      value.generation === closureValue.generation
+    );
+  })?.value;
+  assert.ok(
+    underflow &&
+      typeof underflow === 'object' &&
+      'compositionStop' in underflow,
+    'underflow cancellation omitted its committed stop coordinate'
+  );
+  const cancelStop = underflow.compositionStop as {
+    value: number;
+    rate: number;
+  };
+  assert.ok(
+    cancelStop.rate > 0 &&
+      Math.abs(cancelStop.value / cancelStop.rate - expectedStop) <= 1 / rate,
+    'underflow cancellation changed the committed stop coordinate'
+  );
+  assert.ok(
+    capture.trace.events.some((entry) => {
+      const value = entry.value;
+      return (
+        entry.kind === 'buffering-change' &&
+        value &&
+        typeof value === 'object' &&
+        'current' in value &&
+        value.current === 'true'
+      );
+    }),
+    'invalidated reserved video did not expose buffering'
+  );
+  const afterGate = capture.trace.audio
+    .flatMap((chunk) =>
+      chunk.channels.map((channel) =>
+        channel.slice(
+          Math.max(0, gateFrame - chunk.sampleFrame),
+          Math.max(0, resumed.f0 - chunk.sampleFrame)
+        )
+      )
+    )
+    .flat();
+  assert.ok(
+    afterGate.length > 0,
+    'no PCM captured after invalidated video frontier'
+  );
+  assert.ok(
+    afterGate.every((value) => Math.abs(value) < 0.001),
+    'audio continued past invalidated video frontier'
+  );
+  pass('scheduled-video-reservation-invalidation');
+}
+
 async function calibratePostGainTap(
   sessionToken: string,
   interactionOnly = false
@@ -11124,6 +11504,7 @@ async function calibratePostGainTap(
       );
       pass('post-gain-tap-calibration');
       await assessMovingWindowControls(browser, before, muted, provenance);
+      await assertVideoReservationInvalidation(browser, provenance);
       await calibrateCaptureOverhead(browser, provenance);
       await focusItem(browser, 'moving-a');
       await assessMovingWindowControls(
@@ -11405,6 +11786,671 @@ async function calibratePostGainTap(
     await browser.close();
   }
 }
+async function runNativeAudioCompatibilityProof(
+  sessionToken: string
+): Promise<void> {
+  const source = fileURLToPath(
+    new URL(
+      '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
+      import.meta.url
+    )
+  );
+  const directory = join(scratch, 'scheduled-native.otiod');
+  await cp(source, directory, { recursive: true });
+  const compressed = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(source, 'media', 'indexed-stereo.wav'),
+      '-f',
+      'mp3',
+      'pipe:1',
+    ],
+    { timeoutMs: 30000 }
+  );
+  assert.equal(
+    compressed.exit,
+    0,
+    `native compatibility fixture conversion failed: ${compressed.stderr}`
+  );
+  assert.ok(compressed.stdout.length > 0);
+  await writeFile(
+    join(directory, 'media', 'indexed-stereo.mp3'),
+    compressed.stdout
+  );
+  const document = await readFile(join(directory, 'content.otio'), 'utf8');
+  assert.ok(
+    document.includes('media/indexed-stereo.wav'),
+    'native compatibility source reference missing'
+  );
+  await writeFile(
+    join(directory, 'content.otio'),
+    document.replaceAll('media/indexed-stereo.wav', 'media/indexed-stereo.mp3')
+  );
+  const url = await publishDecoderDirectory('native-compatibility', directory);
+  const browser = await openBrowser(url, sessionToken, {
+    label: 'native-audio-compatibility',
+    recordProofTrace: true,
+  });
+  try {
+    await waitReady(browser);
+    const provenance = await proofProvenance(browser);
+    const capture = await browser.evaluate<MovingTrace>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const button = document.querySelector('button.otio-play');
+      const root = document.querySelector('.otio-view');
+      if (!(button instanceof HTMLButtonElement) || !(root instanceof HTMLElement)) throw new Error('native compatibility controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(1500);
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (root.dataset.playing === 'true') button.click();
+      return {start, playEdge, trace};
+    })()`);
+    await writeFile(
+      join(shotDir, 'native-audio-compatibility.json'),
+      JSON.stringify({ provenance, capture })
+    );
+    const backends = capture.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .filter((event) => event['event'] === 'backend');
+    const backend = backends.at(-1);
+    assert.equal(
+      backend?.['backend'],
+      'native',
+      'compressed audio did not select native compatibility'
+    );
+    assert.ok(
+      typeof backend?.['reason'] === 'string' && backend['reason'].length > 0,
+      'native compatibility reason missing'
+    );
+    assert.ok(
+      capture.trace.events.some(
+        (entry) => entry.kind === 'play' && entry.mediaType === 'AUDIO'
+      ),
+      'native compatibility did not play an audio element'
+    );
+    const samples = capture.trace.audio.flatMap(
+      (chunk) => chunk.channels[0] ?? []
+    );
+    assert.ok(
+      samples.length > 0 && samples.some((value) => Math.abs(value) > 0.001),
+      'native compatibility output was silent'
+    );
+    assert.ok(
+      !capture.trace.audioOverflow && !capture.trace.eventsOverflow,
+      'native compatibility trace overflow'
+    );
+    pass('scheduled-pcm-native-compatibility');
+  } finally {
+    await browser.close();
+  }
+}
+
+async function runScheduledPcmProof(sessionToken: string): Promise<void> {
+  const directory = fileURLToPath(
+    new URL(
+      '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
+      import.meta.url
+    )
+  );
+  const oracle = JSON.parse(
+    await readFile(join(directory, 'media', 'sample-oracle.json'), 'utf8')
+  ) as {
+    sample_rate: number;
+    channels: number;
+    frames: number;
+    pcm_sha256: string;
+  };
+  assert.equal(oracle.sample_rate, 48000);
+  assert.equal(oracle.channels, 2);
+  const decoded = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(directory, 'media', 'indexed-stereo.wav'),
+      '-f',
+      's16le',
+      'pipe:1',
+    ],
+    { timeoutMs: 30000 }
+  );
+  assert.equal(decoded.exit, 0, decoded.stderr);
+  assert.equal(decoded.stdout.length, oracle.frames * 4);
+  assert.equal(
+    createHash('sha256').update(decoded.stdout).digest('hex'),
+    oracle.pcm_sha256,
+    'scheduled fixture PCM hash mismatch'
+  );
+  const source = (channel: number, frame: number): number =>
+    (((frame * (channel === 0 ? 109 : 257) + (channel === 0 ? 12345 : 5345)) %
+      16001) -
+      8000) /
+    32768;
+  for (let n = 0; n < oracle.frames; n++)
+    for (let ch = 0; ch < 2; ch++)
+      assert.equal(
+        decoded.stdout.readInt16LE(n * 4 + ch * 2) / 32768,
+        source(ch, n),
+        `fixture formula disagrees at ${n}/${ch}`
+      );
+  const length = 3 * oracle.sample_rate;
+  const expected: [Float32Array, Float32Array] = [
+    new Float32Array(length),
+    new Float32Array(length),
+  ];
+  const unit = 1600;
+  const ramp = (t: number, from: number, to: number) =>
+    Math.max(0, Math.min(1, (t - from) / (to - from)));
+  for (let n = 0; n < length; n++) {
+    const t = n / unit;
+    const outer = ramp(t, 56, 62),
+      a = ramp(t, 53, 58),
+      b = ramp(t, 61, 66);
+    for (let ch = 0; ch < 2; ch++) {
+      let sum = 0;
+      if (t < 58) sum += source(ch, 30 * unit + n) * (1 - a) * (1 - outer);
+      if (t >= 53 && t < 62)
+        sum += source(ch, 100 * unit + n - 56 * unit) * a * (1 - outer);
+      if (t >= 56 && t < 66)
+        sum += source(ch, 20 * unit + n - 60 * unit) * (1 - b) * outer;
+      if (t >= 61) sum += source(ch, 50 * unit + n - 64 * unit) * b * outer;
+      if (t < 30) sum += source(ch, 10 * unit + n);
+      else if (t < 60) sum += source(ch, 60 * unit + n - 30 * unit);
+      expected[ch]![n] = sum;
+    }
+  }
+  const url = await publishDecoderDirectory('scheduled-pcm', directory);
+  const browser = await openBrowser(url, sessionToken, {
+    label: 'scheduled-pcm',
+    recordProofTrace: true,
+  });
+  try {
+    await waitReady(browser);
+    const provenance = await proofProvenance(browser);
+    const capture = await browser.evaluate<MovingTrace>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('scheduled proof controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(3700);
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (root.dataset.playing === 'true') button.click();
+      return {start, playEdge, trace};
+    })()`);
+    await writeFile(
+      join(shotDir, 'scheduled-pcm.json'),
+      JSON.stringify({ provenance, capture, fixtureHash: oracle.pcm_sha256 })
+    );
+    assert.ok(
+      !capture.trace.audioOverflow && !capture.trace.eventsOverflow,
+      'scheduled proof trace overflow'
+    );
+    const pcmEvents = capture.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const backend = pcmEvents
+      .filter((event) => event['event'] === 'backend')
+      .at(-1);
+    assert.equal(
+      backend?.['backend'],
+      'pcm',
+      'scheduled fixture did not select the PCM backend'
+    );
+    const epochs = pcmEvents.filter((event) => event['event'] === 'epoch');
+    assert.equal(
+      epochs.length,
+      1,
+      'scheduled proof requires one observed playback epoch'
+    );
+    const epoch = epochs[0]!;
+    const f0 = Number(epoch['f0']),
+      c0 = Number(epoch['c0']);
+    const t0 = epoch['compositionT0'] as { value: number; rate: number };
+    assert.equal(Number(epoch['contextSampleRate']), oracle.sample_rate);
+    assert.equal(
+      c0,
+      f0 / oracle.sample_rate,
+      'scheduled epoch does not own an integral context frame'
+    );
+    assert.equal(
+      t0.value,
+      0,
+      'scheduled proof did not start at composition zero'
+    );
+    assert.ok(t0.rate > 0);
+    const bridge = epoch['bridge'] as {
+      contextTime: number;
+      performanceTime: number;
+    };
+    assert.ok(
+      Number.isFinite(bridge?.contextTime) &&
+        Number.isFinite(bridge?.performanceTime),
+      'scheduled output clock bridge missing'
+    );
+    const outputStartMs =
+      bridge.performanceTime + (c0 - bridge.contextTime) * 1000;
+    assert.ok(
+      capture.playEdge &&
+        outputStartMs >= capture.playEdge.timestamp &&
+        outputStartMs - capture.playEdge.timestamp <= 350,
+      'scheduled audio epoch must be causal and within the initial budget'
+    );
+    const comparison = compareScheduledPcm(
+      capture.trace.audio,
+      f0,
+      expected,
+      0,
+      length
+    );
+    for (let ch = 0; ch < 2; ch++) {
+      assert.ok(
+        comparison.rmse[ch]! <= 0.003,
+        `scheduled PCM channel ${ch} RMSE ${comparison.rmse[ch]}`
+      );
+      assert.ok(
+        comparison.shiftedRmse[ch]! > 0.003,
+        `one-sample negative control did not fail for channel ${ch}`
+      );
+      assert.ok(
+        comparison.mutedPrefixRmse[ch]! > 0.003,
+        `muted-prefix negative control did not fail for channel ${ch}`
+      );
+      assert.ok(
+        comparison.swappedRmse[ch]! > 0.003,
+        `stereo swap or duplication control did not fail for channel ${ch}`
+      );
+    }
+    for (const [first, end] of [
+      [30 * unit - 1600, 30 * unit + 1600],
+      [53 * unit, 66 * unit],
+    ] as const) {
+      const region = compareScheduledPcm(
+        capture.trace.audio,
+        f0,
+        expected,
+        first,
+        end
+      );
+      assert.ok(
+        region.rmse.every((value) => value <= 0.003),
+        `scheduled cut or dissolve RMSE ${region.rmse}`
+      );
+    }
+    // Every 20 ms source-active window must agree, so a localized dropout
+    // cannot disappear inside a passing whole-run average.
+    for (let first = 0; first + 960 <= length; first += 960) {
+      const window = compareScheduledPcm(
+        capture.trace.audio,
+        f0,
+        expected,
+        first,
+        first + 960
+      );
+      assert.ok(
+        window.rmse.every((value) => value <= 0.003),
+        `scheduled 20ms PCM window failed at ${first}: ${window.rmse}`
+      );
+    }
+    assert.ok(
+      pcmEvents.some((event) => event['event'] === 'frontier'),
+      'scheduled readiness frontier missing'
+    );
+    assert.ok(
+      pcmEvents.filter((event) => event['event'] === 'scheduled').length > 1,
+      'scheduled queue did not replenish'
+    );
+    const scheduled = pcmEvents.filter(
+      (event) => event['event'] === 'scheduled'
+    );
+    for (const span of scheduled) {
+      const sourceStart = Number(span['sourceStartFrame']);
+      const sourceEnd = Number(span['sourceEndFrame']);
+      const contextStart = Number(span['contextStartFrame']);
+      const contextEnd = Number(span['contextEndFrame']);
+      assert.ok(
+        [sourceStart, sourceEnd, contextStart, contextEnd].every(
+          Number.isSafeInteger
+        ),
+        'scheduled ownership is not integral'
+      );
+      assert.ok(
+        sourceStart >= 0 && sourceEnd > sourceStart && contextStart >= f0,
+        'invalid scheduled ownership interval'
+      );
+      assert.equal(
+        sourceEnd - sourceStart,
+        contextEnd - contextStart,
+        'scheduled source and context frame counts differ'
+      );
+      assert.equal(
+        span['generation'],
+        epoch['generation'],
+        'scheduled frame belongs to another generation'
+      );
+      assert.equal(
+        span['sampleRate'],
+        oracle.sample_rate,
+        'scheduled sample rate changed'
+      );
+    }
+    assert.ok(
+      !capture.trace.events.some(
+        (event) => event.kind === 'play' && event.mediaType === 'AUDIO'
+      ),
+      'scheduled mode played a native audio element'
+    );
+    assert.deepEqual(
+      browser.blocked,
+      [],
+      'scheduled proof attempted a non-loopback request'
+    );
+    pass('scheduled-pcm-playback');
+    await seekTo(browser, 0);
+    const tracks = await browser.evaluate<
+      MovingTrace & { edges: number[] }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      const button = document.querySelector('button.otio-play');
+      const mute = document.querySelector('[data-track-toggle="scheduled-cuts"]');
+      const solo = document.querySelector('[data-track-solo="scheduled-cuts"]');
+      if (!(button instanceof HTMLButtonElement) || !(mute instanceof HTMLButtonElement) || !(solo instanceof HTMLButtonElement)) throw new Error('track mute/solo controls missing');
+      button.click();
+      await sleep(400);
+      const edges = [];
+      for (const control of [mute, mute, solo, solo]) {
+        edges.push(globalThis.__otioProofTrace.audioFrame());
+        control.click();
+        await sleep(300);
+      }
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
+      return {start, playEdge, trace, edges};
+    })()`);
+    await writeFile(
+      join(shotDir, 'scheduled-pcm-track-controls.json'),
+      JSON.stringify({ provenance, capture: tracks })
+    );
+    const trackEpochs = tracks.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .filter((event) => event['event'] === 'epoch');
+    assert.equal(
+      trackEpochs.length,
+      1,
+      'track controls restarted the scheduled epoch'
+    );
+    const trackF0 = Number(trackEpochs[0]!['f0']);
+    for (let phase = 0; phase < 4; phase++) {
+      const from = tracks.edges[phase]! + 4800;
+      const to = (tracks.edges[phase + 1] ?? tracks.trace.sampleFrame) - 2400;
+      let count = 0;
+      const errors = [0, 0];
+      for (const chunk of tracks.trace.audio)
+        for (let i = 0; i < (chunk.channels[0]?.length ?? 0); i++) {
+          const frame = chunk.sampleFrame + i,
+            n = frame - trackF0;
+          if (frame < from || frame >= to || n < 0 || n >= length) continue;
+          const t = n / unit;
+          for (let ch = 0; ch < 2; ch++) {
+            const cut =
+              t < 30
+                ? source(ch, 10 * unit + n)
+                : t < 60
+                  ? source(ch, 60 * unit + n - 30 * unit)
+                  : 0;
+            const nested = expected[ch]![n]! - cut;
+            const reference =
+              phase === 0 ? nested : phase === 2 ? cut : expected[ch]![n]!;
+            errors[ch]! += (chunk.channels[ch]![i]! - reference) ** 2;
+          }
+          count++;
+        }
+      assert.ok(count > 0, `track control phase ${phase} has no PCM`);
+      assert.ok(
+        errors.every((sum) => Math.sqrt(sum / count) <= 0.003),
+        `mute/solo phase ${phase} has wrong PCM`
+      );
+    }
+    pass('scheduled-pcm-mute-solo');
+    await seekTo(browser, 0);
+    const interrupted = await browser.evaluate<
+      MovingTrace & { held: number; released: number; releaseFrame: number }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('starvation controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(600);
+      globalThis.__otioProofTrace.holdPcmResponses(true);
+      const deadline = performance.now() + 4000;
+      while ((globalThis.__otioProofTrace.heldPcmCount() === 0 || root.dataset.buffering !== 'true') && performance.now() < deadline) await sleep(20);
+      const held = globalThis.__otioProofTrace.heldPcmCount();
+      if (root.dataset.playing === 'true') button.click();
+      await sleep(100);
+      const releaseFrame = globalThis.__otioProofTrace.audioFrame();
+      const released = globalThis.__otioProofTrace.holdPcmResponses(false);
+      await sleep(350);
+      const trace = await globalThis.__otioProofTrace.stop();
+      return {start, playEdge, trace, held, released, releaseFrame};
+    })()`);
+    await writeFile(
+      join(shotDir, 'scheduled-pcm-starvation.json'),
+      JSON.stringify({ provenance, capture: interrupted })
+    );
+    assert.ok(
+      interrupted.held > 0 && interrupted.released === interrupted.held,
+      'starvation control did not withhold and release PCM'
+    );
+    assert.ok(
+      interrupted.trace.events.some(
+        (entry) =>
+          entry.kind === 'buffering-change' &&
+          (entry.value as { current?: string })?.current === 'true'
+      ),
+      'real PCM starvation did not expose buffering'
+    );
+    assert.ok(
+      interrupted.trace.events.some(
+        (entry) =>
+          entry.kind === 'scheduled-pcm' &&
+          (entry.value as { event?: string })?.event === 'cancel'
+      ),
+      'starvation did not cancel the active generation'
+    );
+    const afterRelease = interrupted.trace.audio
+      .flatMap((chunk) =>
+        chunk.channels.map((channel) =>
+          channel.slice(
+            Math.max(0, interrupted.releaseFrame + 256 - chunk.sampleFrame)
+          )
+        )
+      )
+      .flat();
+    assert.ok(
+      afterRelease.length > 0,
+      'late-result observation window has no PCM'
+    );
+    assert.ok(
+      afterRelease.every((value) => Math.abs(value) < 0.001),
+      'released stale PCM produced sound after cancellation'
+    );
+    pass('scheduled-pcm-starvation-cancel');
+    for (const action of ['seek', 'scope'] as const) {
+      await seekTo(browser, 0);
+      const start = await browser.evaluate<MovingTrace['start']>(`(async () => {
+        const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+        const start = await globalThis.__otioProofTrace.start();
+        document.querySelector('button.otio-play').click();
+        await sleep(500);
+        globalThis.__otioProofTrace.holdPcmResponses(true);
+        const deadline = performance.now() + 3000;
+        while (!globalThis.__otioProofTrace.heldPcmCount() && performance.now() < deadline) await sleep(10);
+        if (!globalThis.__otioProofTrace.heldPcmCount()) throw new Error('no PCM response held');
+        return start;
+      })()`);
+      await browser.evaluate<void>(`(() => {
+        if (${JSON.stringify(action)} === 'seek') {
+          const input = document.querySelector('input.otio-seek');
+          const root = document.querySelector('.otio-view');
+          if (!(input instanceof HTMLInputElement) || !(root instanceof HTMLElement)) throw new Error('seek control missing');
+          input.value = String(30 - Number(root.dataset.domainOrigin));
+          input.dispatchEvent(new Event('input', {bubbles:true}));
+          input.dispatchEvent(new Event('change', {bubbles:true}));
+        } else {
+          const item = [...document.querySelectorAll('.otio-item')].find(node => node.dataset.itemId === 'scheduled-cut-b');
+          if (!(item instanceof HTMLButtonElement)) throw new Error('scope control missing');
+          item.click();
+        }
+      })()`);
+      const outcome = await browser.evaluate<{
+        trace: MovingTrace['trace'];
+        released: number;
+        releaseFrame: number;
+      }>(`(async () => {
+        const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+        const deadline = performance.now() + 3000;
+        while (!globalThis.__otioProofTrace.hasPcmCancel(${JSON.stringify(action)}) && performance.now() < deadline) await sleep(10);
+        if (!globalThis.__otioProofTrace.hasPcmCancel(${JSON.stringify(action)})) throw new Error('no cancellation before stale release');
+        const releaseFrame = globalThis.__otioProofTrace.audioFrame();
+        const released = globalThis.__otioProofTrace.holdPcmResponses(false);
+        const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 500); await promise;
+        const trace = await globalThis.__otioProofTrace.stop();
+        const root = document.querySelector('.otio-view');
+        if (root?.dataset.playing === 'true') document.querySelector('button.otio-play').click();
+        return {trace, released, releaseFrame};
+      })()`);
+      await writeFile(
+        join(shotDir, `scheduled-${action}-cancel.json`),
+        JSON.stringify({ provenance, start, ...outcome })
+      );
+      assert.ok(
+        outcome.released > 0,
+        `${action} did not release a stale response`
+      );
+      const events = outcome.trace.events
+        .filter((entry) => entry.kind === 'scheduled-pcm')
+        .map((entry) => entry.value as Record<string, unknown>);
+      const cancellation = events.findIndex(
+        (event) => event['event'] === 'cancel' && event['reason'] === action
+      );
+      assert.ok(
+        cancellation >= 0,
+        `${action} did not cancel its prior generation`
+      );
+      const generation = events[cancellation]!['generation'];
+      assert.ok(
+        !events
+          .slice(cancellation + 1)
+          .some(
+            (event) =>
+              event['event'] === 'scheduled' &&
+              event['generation'] === generation
+          ),
+        `${action} accepted a stale PCM result after cancellation`
+      );
+      const nextEpoch = events
+        .slice(cancellation + 1)
+        .find((event) => event['event'] === 'epoch');
+      const nextFrame = nextEpoch
+        ? Number(nextEpoch['f0'])
+        : outcome.trace.sampleFrame;
+      assert.ok(
+        Number.isSafeInteger(nextFrame),
+        `${action} resumed without an integral frame`
+      );
+      const quietStart = outcome.releaseFrame + 256;
+      const staleOutput = outcome.trace.audio
+        .flatMap((chunk) =>
+          chunk.channels.map((channel) =>
+            channel.slice(
+              Math.max(0, quietStart - chunk.sampleFrame),
+              Math.max(0, nextFrame - chunk.sampleFrame)
+            )
+          )
+        )
+        .flat();
+      assert.ok(
+        nextFrame > quietStart && staleOutput.length > 0,
+        `${action} left no observation window for stale output`
+      );
+      assert.ok(
+        staleOutput.every((value) => Math.abs(value) < 0.001),
+        `${action} stale response produced audible PCM`
+      );
+      if (action === 'scope') await leaveFocus(browser);
+    }
+    pass('scheduled-pcm-seek-scope-cancel');
+    await seekTo(browser, 0);
+    const failure = await browser.evaluate<
+      MovingTrace & { playing: string; diagnostic: string }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      document.querySelector('button.otio-play').click();
+      await sleep(500);
+      globalThis.__otioProofTrace.failNextPcm();
+      await sleep(1800);
+      const trace = await globalThis.__otioProofTrace.stop();
+      const root = document.querySelector('.otio-view');
+      const playing = root?.dataset.playing ?? '';
+      const diagnostic = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+      if (root?.dataset.playing === 'true') document.querySelector('button.otio-play').click();
+      return {start, playEdge, trace, playing, diagnostic};
+    })()`);
+    await writeFile(
+      join(shotDir, 'scheduled-pcm-terminal-failure.json'),
+      JSON.stringify({ provenance, capture: failure })
+    );
+    const failureEvents = failure.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    assert.ok(
+      failureEvents.some(
+        (event) => event['event'] === 'error' && event['stage'] === 'provider'
+      ),
+      'injected worker failure did not produce an explicit provider error'
+    );
+    assert.ok(
+      failureEvents.some((event) => event['event'] === 'gate-close'),
+      'provider failure did not close the transport gate'
+    );
+    assert.equal(
+      failure.playing,
+      'false',
+      'terminal provider failure left playback active'
+    );
+    assert.match(
+      failure.diagnostic,
+      /Scheduled audio stopped:/,
+      'provider failure was not visible to the reader'
+    );
+    assert.ok(
+      !failureEvents.some(
+        (event) => event['event'] === 'backend' && event['backend'] === 'native'
+      ),
+      'terminal provider failure silently switched backend'
+    );
+    pass('scheduled-pcm-terminal-failure');
+  } finally {
+    await browser.close();
+  }
+}
 
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
@@ -11426,6 +12472,8 @@ try {
     console.log('OTIO_DECODER_OK');
     throw new DecoderOnlyComplete();
   }
+  await runNativeAudioCompatibilityProof(sessionToken);
+  await runScheduledPcmProof(sessionToken);
   await calibratePostGainTap(sessionToken);
 
   const published = await callMcp('relic_publish', {

@@ -16,6 +16,36 @@ registerProcessor('relic-proof-pcm', RelicProofTap);`;
 
 export const otioProofTracePrelude = String.raw`(() => {
   globalThis.__otioProofCold = true;
+  globalThis.__otioProofPcm = true;
+  // Hold worker responses, not requests, so cancellation preserves the
+  // worker port's ordering while late results can be replayed to the client.
+  const NativeWorker = globalThis.Worker;
+  let holdPcmResponses = false;
+  let failNextPcm = false;
+  const heldPcmResponses = [];
+  const releasedPcmResponses = new WeakSet();
+  globalThis.Worker = class extends NativeWorker {
+    constructor(url, options) {
+      super(url, options);
+      if (new URL(String(url), location.href).pathname !== '/assets/otio-audio-pcm-worker.js') return;
+      this.addEventListener('message', event => {
+        if (!releasedPcmResponses.has(event) && failNextPcm && event.data?.protocol === 1 && event.data?.kind === 'pcm') {
+          failNextPcm = false;
+          event.stopImmediatePropagation();
+          const data = event.data;
+          const failed = new MessageEvent('message', {data: {protocol:1, kind:'failed', generation:data.generation,
+            streamId:data.streamId, requestId:data.requestId, reason:'proof-injected-provider-failure'}});
+          releasedPcmResponses.add(failed);
+          this.dispatchEvent(failed);
+          return;
+        }
+        if (releasedPcmResponses.has(event) || !holdPcmResponses ||
+            event.data?.protocol !== 1 || event.data?.kind !== 'pcm') return;
+        event.stopImmediatePropagation();
+        heldPcmResponses.push({worker:this, data:event.data});
+      });
+    }
+  };
   const MAX_AUDIO_SAMPLES = 48000 * 20 * 2;
   const MAX_VISUAL_SAMPLES = 3000;
   let fault = 'none';
@@ -35,6 +65,7 @@ export const otioProofTracePrelude = String.raw`(() => {
     violations.push({directive:event.effectiveDirective, blockedURI:event.blockedURI});
   });
   const events = [];
+  let lastPcmBackend = null;
   let eventsOverflow = false;
   const elementIds = new WeakMap();
   let nextElementId = 0;
@@ -61,6 +92,10 @@ export const otioProofTracePrelude = String.raw`(() => {
     if (args[0] === 'OTIO_PROOF_PILOT') recordEvent('pilot', null, args[1]);
     if (args[0] === 'OTIO_PROOF_RING') recordEvent('ring', null, args[1]);
     if (args[0] === 'OTIO_PROOF_COLD') recordEvent('cold-controller', null, args[1]);
+    if (args[0] === 'OTIO_PROOF_PCM') {
+      if (args[1]?.event === 'backend') lastPcmBackend = args[1];
+      recordEvent('scheduled-pcm', null, args[1]);
+    }
     return originalConsoleLog.apply(this, args);
   };
   const NativeVideoFrame = globalThis.VideoFrame;
@@ -230,6 +265,27 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   requestAnimationFrame(tick);
   globalThis.__otioProofTrace = {
+    audioFrame() {
+      if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
+      return Math.ceil(graphs[0].context.currentTime * graphs[0].context.sampleRate);
+    },
+    hasPcmCancel(reason) {
+      return events.some(entry => entry.kind === 'scheduled-pcm' &&
+        entry.value?.event === 'cancel' && entry.value?.reason === reason);
+    },
+    failNextPcm() { failNextPcm = true; },
+    heldPcmCount() { return heldPcmResponses.length; },
+    holdPcmResponses(value) {
+      holdPcmResponses = Boolean(value);
+      if (holdPcmResponses) return heldPcmResponses.length;
+      const held = heldPcmResponses.splice(0);
+      for (const item of held) {
+        const event = new MessageEvent('message', {data:item.data});
+        releasedPcmResponses.add(event);
+        item.worker.dispatchEvent(event);
+      }
+      return held.length;
+    },
     setFault(value) {
       if (!['none', 'freeze', 'stall', 'skip-still'].includes(value)) throw new Error('unknown proof fault');
       fault = value; lastStall = performance.now();
@@ -275,6 +331,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       visual.samples = []; visual.overflow = false; visual.active = true;
       events.length = 0; eventsOverflow = false;
       const root = document.querySelector('.otio-view');
+      if (lastPcmBackend) recordEvent('scheduled-pcm', null, lastPcmBackend);
       if (!(root instanceof HTMLElement)) throw new Error('proof view missing');
       recordEvent('buffering-initial', null, root.dataset.buffering ?? null);
       bufferingObserver?.disconnect();
