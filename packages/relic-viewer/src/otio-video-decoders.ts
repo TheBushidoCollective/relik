@@ -499,7 +499,7 @@ export class NativeDecoderRing {
   startupFirstAdvancedTag: number | null = null;
   timing: OtioVideoTiming | null = null;
   startupWaiter: {
-    resolve: (sample: { now: number; tag: number }) => void;
+    resolve: (sample: { now: number; capturedAt: number; tag: number }) => void;
     reject?: (reason?: unknown) => void;
   } | null = null;
   constructor(
@@ -613,6 +613,26 @@ export class NativeDecoderRing {
       return;
     this.lastProgressTag = outcome.index;
     this.lastProgressWallMs = now;
+  }
+
+  admitStartupCapture(
+    outcome: PresentedWindowOutcome,
+    epoch: number,
+    now: number,
+    capturedAt: number
+  ): void {
+    if (
+      epoch !== this.currentEpoch ||
+      outcome.kind !== 'match' ||
+      this.startupFirstAdvancedTag === null ||
+      outcome.index < this.startupFirstAdvancedTag ||
+      !this.hasTag(outcome.index, epoch)
+    )
+      return;
+    const waiter = this.startupWaiter;
+    if (!waiter) return;
+    this.startupWaiter = null;
+    waiter.resolve({ now, capturedAt, tag: outcome.index });
   }
 
   readoutFrame(timing: OtioVideoTiming, epoch: number): PresentedWindowOutcome {
@@ -735,15 +755,7 @@ export class NativeDecoderRing {
             this.recordProgress(outcome, now);
             if (outcome.kind === 'match') {
               this.consecutiveUncovered = 0;
-              if (
-                this.startupWaiter &&
-                this.startupFirstAdvancedTag !== null &&
-                outcome.index >= this.startupFirstAdvancedTag
-              ) {
-                const waiter = this.startupWaiter;
-                this.startupWaiter = null;
-                waiter.resolve({ now, tag: outcome.index });
-              }
+              this.admitStartupCapture(outcome, epoch, now, performance.now());
               loop();
             } else if (
               outcome.kind === 'uncovered' ||

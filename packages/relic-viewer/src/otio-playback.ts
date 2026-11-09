@@ -882,6 +882,7 @@ export function createOtioPlayback(
   let frameHandle: number | null = null;
   let clockAnchor: ClockAnchor | null = null;
   let renderTail: Promise<void> = Promise.resolve();
+  let pendingRender: Promise<void> | null = null;
 
   const listeners = new Set<OtioPlaybackListener>();
   const mediaFailures = new Map<string, OtioDiagnostic>();
@@ -908,6 +909,22 @@ export function createOtioPlayback(
   const images = new ImageFrameCache(OTIO_RETAINED_IMAGE_PIXELS);
   const imageElements = new Map<string, LoadedImage>();
   const surfacePool: HTMLCanvasElement[] = [];
+  const coldProofGlobal = globalThis as typeof globalThis & {
+    __otioProofCold?: boolean;
+  };
+  function coldProof(
+    event: string,
+    details: Record<string, unknown> = {}
+  ): void {
+    if (coldProofGlobal.__otioProofCold === true)
+      console.log('OTIO_PROOF_COLD', {
+        event,
+        wall: presentClockMs(),
+        ...details,
+      });
+  }
+  let coldFirstTick = false;
+  let coldFirstPaint = false;
   let graphicsLost = false;
   let graphicsFailed = false;
   let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -931,6 +948,7 @@ export function createOtioPlayback(
   const hiddenWarmSeen = new Set<string>();
   const hiddenWarmInFlight = new Set<string>();
   let isStarting = false;
+  let playRequestEpoch = 0;
   let cancelStartupSampling: (() => void) | null = null;
   let startingStartTime = 0;
   const videoTimingCache = new Map<string, OtioVideoTiming>();
@@ -2177,8 +2195,10 @@ export function createOtioPlayback(
     const pending = (async () => {
       const url = await sharedUrl(path);
       if (!hasOwner()) {
-        if (imageOwners.get(path) === ownerSet) imageOwners.delete(path);
-        if (imagePromises.get(path) === pending) imagePromises.delete(path);
+        if (imageOwners.get(path) === ownerSet) {
+          imageOwners.delete(path);
+          imagePromises.delete(path);
+        }
         return null;
       }
       if (!url || isDisposed || typeof Image === 'undefined') {
@@ -2205,8 +2225,10 @@ export function createOtioPlayback(
       }
       if (isDisposed || !hasOwner()) {
         element.src = '';
-        if (imageOwners.get(path) === ownerSet) imageOwners.delete(path);
-        if (imagePromises.get(path) === pending) imagePromises.delete(path);
+        if (imageOwners.get(path) === ownerSet) {
+          imageOwners.delete(path);
+          imagePromises.delete(path);
+        }
         return null;
       }
       const width = element.naturalWidth;
@@ -2810,6 +2832,15 @@ export function createOtioPlayback(
   function enqueueRender(time: OtioRationalTime, gen: number): Promise<void> {
     const run = (): Promise<void> => renderAt(time, gen);
     const done = renderTail.then(run, run);
+    pendingRender = done;
+    void done.then(
+      () => {
+        if (pendingRender === done) pendingRender = null;
+      },
+      () => {
+        if (pendingRender === done) pendingRender = null;
+      }
+    );
     renderTail = done.then(
       () => undefined,
       () => undefined
@@ -3115,7 +3146,11 @@ export function createOtioPlayback(
         return;
       }
 
-      const firstAdvancedPromises: Promise<{ now: number; tag: number }>[] = [];
+      const firstAdvancedPromises: Promise<{
+        now: number;
+        capturedAt: number;
+        tag: number;
+      }>[] = [];
       const playPromises: Promise<void>[] = [];
 
       for (const leaf of drawnVideoLeaves) {
@@ -3125,6 +3160,7 @@ export function createOtioPlayback(
         ring.startupFirstAdvancedTag = leaf.iL0 + 1;
         const { promise, resolve, reject } = Promise.withResolvers<{
           now: number;
+          capturedAt: number;
           tag: number;
         }>();
         ring.startupWaiter = { resolve, reject };
@@ -3166,6 +3202,12 @@ export function createOtioPlayback(
             continue;
           const outcome = ring.readoutFrame(leaf.timing, ring.captureEpoch);
           ring.recordProgress(outcome, now);
+          ring.admitStartupCapture(
+            outcome,
+            ring.captureEpoch,
+            now,
+            presentClockMs()
+          );
         }
         if (typeof requestAnimationFrame === 'function')
           startupFrame = requestAnimationFrame(sampleStartup);
@@ -3193,7 +3235,10 @@ export function createOtioPlayback(
       );
 
       let raceResult:
-        | [{ now: number; tag: number }[], PromiseSettledResult<void>[]]
+        | [
+            { now: number; capturedAt: number; tag: number }[],
+            PromiseSettledResult<void>[],
+          ]
         | 'timeout'
         | 'failed'
         | 'cancelled';
@@ -3246,6 +3291,17 @@ export function createOtioPlayback(
           break;
         }
         const sourceT0Seconds = decoderLocalSeconds(leaf.contrib.source_time);
+        coldProof('capture', {
+          occurrence: leaf.key,
+          tag: adv.tag,
+          epoch: nativeRings.get(leaf.key)?.captureEpoch,
+          schedulingTime: adv.now,
+          capturedAt: adv.capturedAt,
+          sourceT0: sourceT0Seconds,
+          packetStart: actualStart,
+          rate: leaf.rL,
+          wMin: leaf.wMinSeconds,
+        });
         phaseSamples.push({
           dL: adv.now,
           iL0Plus1Start: actualStart,
@@ -3265,6 +3321,30 @@ export function createOtioPlayback(
         phaseSamples,
         vsyncTracker.medianSeconds
       );
+      if (coldProofGlobal.__otioProofCold === true) {
+        const phaseVsync = vsyncTracker.medianSeconds;
+        const intervals = phaseSamples.map((sample) => {
+          const preferred =
+            sample.dL +
+            1000 *
+              (sample.wMinSeconds +
+                phaseVsync / 2 -
+                (sample.iL0Plus1Start - sample.sourceT0Seconds) / sample.rL);
+          const half = 1000 * (sample.wMinSeconds - phaseVsync / 2);
+          return { lower: preferred - half, upper: preferred + half };
+        });
+        coldProof('solver', {
+          samples: phaseSamples,
+          intervalLower: Math.max(
+            ...intervals.map((interval) => interval.lower)
+          ),
+          intervalUpper: Math.min(
+            ...intervals.map((interval) => interval.upper)
+          ),
+          chosenAnchor: anchorResult.tauStar,
+          spreadAcceptable: anchorResult.spreadAcceptable,
+        });
+      }
       if (!anchorResult.spreadAcceptable) {
         if (attempt === 0) continue;
         fallbackToSeekCadence();
@@ -3288,6 +3368,9 @@ export function createOtioPlayback(
 
     isStarting = false;
     isBuffering = false;
+    coldFirstTick = true;
+    coldFirstPaint = true;
+    coldProof('startup-complete', { chosenAnchor: nativeAnchor?.wallMs });
     playbackBoundaries = otioPlaybackBoundaries(
       doc,
       timelineId,
@@ -3341,6 +3424,15 @@ export function createOtioPlayback(
         T = addRationalTimes(nativeAnchor.time, {
           value: elapsed * clock.rate,
           rate: clock.rate,
+        });
+      }
+      if (coldFirstTick) {
+        coldFirstTick = false;
+        coldProof('first-tick', {
+          compositionTime: T,
+          schedulingTime: now,
+          anchor: nativeAnchor.wallMs,
+          futureAnchorWait: Math.max(0, nativeAnchor.wallMs - now),
         });
       }
 
@@ -3782,6 +3874,14 @@ export function createOtioPlayback(
         nativeLastPresentMs = now;
         isNativeHolding = false;
         currentTime = T;
+        if (coldFirstPaint) {
+          coldFirstPaint = false;
+          coldProof('first-paint', {
+            compositionTime: T,
+            schedulingTime: now,
+            anchor: nativeAnchor.wallMs,
+          });
+        }
         void reconcileAudio(evaluation, renderGeneration);
         prepareNextBoundary();
         notify();
@@ -4019,6 +4119,7 @@ export function createOtioPlayback(
 
     async play(): Promise<void> {
       if (isDisposed || isPlaying) return;
+      coldProof('play-request', { compositionTime: currentTime });
       if (previewBlocked()) {
         notify();
         return;
@@ -4037,6 +4138,7 @@ export function createOtioPlayback(
         currentTime = scope?.range.start_time ?? { value: 0, rate: clock.rate };
       }
       const playGeneration = renderGeneration;
+      const requestEpoch = ++playRequestEpoch;
       const ctx = getAudioContext();
       if (ctx && ctx.state === 'suspended') {
         try {
@@ -4045,15 +4147,26 @@ export function createOtioPlayback(
           // Ignore resume failure; fallback volume still applies.
         }
       }
-      if (stale(playGeneration)) return;
+      if (stale(playGeneration) || requestEpoch !== playRequestEpoch) return;
       isPlaying = true;
       failureSeekCadence = false;
       await startSequence(currentTime);
     },
 
     pause(): void {
-      if (isDisposed || !isPlaying) return;
+      if (isDisposed) return;
+      playRequestEpoch++;
+      if (!isPlaying && isBuffering && !isStarting) {
+        pauseAllMedia();
+        return;
+      }
+      const replaceRender = isBuffering || pendingRender !== null;
       cancelPreparedBoundary();
+      renderGeneration++;
+      scopeAbort.abort();
+      scopeAbort = new AbortController();
+      renderTail = Promise.resolve();
+      renderInFlight = false;
       isNativeHolding = false;
       isPlaying = false;
       isStarting = false;
@@ -4064,13 +4177,36 @@ export function createOtioPlayback(
         cancelAnimationFrame(frameHandle);
         frameHandle = null;
       }
+      if (replaceRender) isBuffering = true;
       pauseAllMedia();
       notify();
+      if (replaceRender) {
+        const gen = renderGeneration;
+        void enqueueRender(currentTime, gen).catch((error: unknown) => {
+          if (stale(gen)) return;
+          mediaFailures.set(
+            timelineId,
+            diagnostic(
+              'error',
+              'unsupported-browser',
+              `Paused preview could not settle: ${error instanceof Error ? error.message : String(error)}`,
+              timelineId
+            )
+          );
+          isBuffering = false;
+          notify();
+        });
+      }
     },
 
     async seek(time: OtioRationalTime): Promise<void> {
       if (isDisposed) return;
       cancelPreparedBoundary();
+      renderGeneration++;
+      scopeAbort.abort();
+      scopeAbort = new AbortController();
+      renderTail = Promise.resolve();
+      renderInFlight = false;
       currentTime = clampTime(time);
       failureSeekCadence = false;
       clockAnchor = null;

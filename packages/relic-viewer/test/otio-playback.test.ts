@@ -1723,6 +1723,78 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('pausing a buffering recovery schedules a fresh paused render', async () => {
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 30, duration: 60 }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      await playback.play();
+      const video = created.find((entry) => entry.src === 'blob:clip')!;
+      video.advanceTo(1);
+      let position = 1;
+      let seeking = false;
+      Object.defineProperty(video, 'seeking', { get: () => seeking });
+      Object.defineProperty(video, 'currentTime', {
+        get: () => position,
+        set: (value: number) => {
+          position = value;
+          seeking = true;
+        },
+      });
+      playback.setTrackVisibility('track_v', true);
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(playback.getState().buffering).toBe(true);
+      playback.pause();
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(playback.getState().buffering).toBe(true);
+      seeking = false;
+      video.dispatch('seeked');
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(playback.getState().buffering).toBe(false);
+      expect(playback.getState().playing).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('pause invalidates a startup waiting on media and a later seek settles', async () => {
+    const source = Promise.withResolvers<string>();
+    const started = Promise.withResolvers<void>();
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 30, duration: 60 }),
+      timelineId: 'timeline_1',
+      canvas: canvas(),
+      resolveMedia: () => {
+        started.resolve();
+        return source.promise;
+      },
+    });
+    try {
+      const pendingPlay = playback.play();
+      await started.promise;
+      playback.pause();
+      expect(playback.getState().playing).toBe(false);
+      source.resolve('blob:late-video');
+      await pendingPlay;
+      const video = created.find((entry) => entry.src === 'blob:late-video')!;
+      expect(video).toBeDefined();
+      expect(video.paused).toBe(true);
+      // A stray decoder must also be stopped when the public state is already paused.
+      video.paused = false;
+      playback.pause();
+      expect(video.paused).toBe(true);
+      await playback.seek({ value: 0, rate: 30 });
+      expect(playback.getState().buffering).toBe(false);
+      expect(playback.getState().time.value).toBe(0);
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('a later focus invalidates an in-flight media load', async () => {
     const pending = Promise.withResolvers<string | null>();
     const started = Promise.withResolvers<void>();
@@ -1989,6 +2061,68 @@ describe('otio playback controller', () => {
     playback.dispose();
   });
 
+  test('pause replaces a queued paused visibility render', async () => {
+    const output = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 24, duration: 48 }),
+      timelineId: 'timeline_1',
+      canvas: output as unknown as HTMLCanvasElement,
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      await playback.seek({ value: 0, rate: 24 });
+      expect(output.pixel.r).toBe(1);
+      playback.setTrackVisibility('track_v', false);
+      playback.pause();
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(output.pixel.r).toBe(0);
+      expect(playback.getState().tracks.track_v?.visible).toBe(false);
+      expect(playback.getState().buffering).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('a new paused seek cancels an older decoder wait before its seeked event', async () => {
+    const output = new SoftCanvas();
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 24, duration: 48 }),
+      timelineId: 'timeline_1',
+      canvas: output as unknown as HTMLCanvasElement,
+      resolveMedia: async () => 'blob:clip',
+    });
+    try {
+      await playback.seek({ value: 0, rate: 24 });
+      const video = created.find((entry) => entry.src === 'blob:clip')!;
+      let currentTime = video.currentTime;
+      let seeking = false;
+      Object.defineProperty(video, 'seeking', { get: () => seeking });
+      Object.defineProperty(video, 'currentTime', {
+        get: () => currentTime,
+        set: (value: number) => {
+          currentTime = value;
+          seeking = true;
+        },
+      });
+      const first = playback.seek({ value: 4, rate: 24 });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(currentTime).toBeCloseTo(4 / 24);
+      const second = playback.seek({ value: 8, rate: 24 });
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(currentTime).toBeCloseTo(8 / 24);
+      expect(playback.getState().buffering).toBe(true);
+      video.pixel = { r: 0, g: 0, b: 1, a: 1 };
+      seeking = false;
+      video.dispatch('seeked');
+      await Promise.all([first, second]);
+      expect(output.pixel.b).toBe(1);
+      expect(playback.getState().time.value).toBe(8);
+      expect(playback.getState().buffering).toBe(false);
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('paused seek does not publish stale pixels while the decoder is seeking', async () => {
     const output = new SoftCanvas();
     const playback = createOtioPlayback({
@@ -2019,11 +2153,15 @@ describe('otio playback controller', () => {
         // Drain the controller's promise chain without advancing a media event.
         for (let i = 0; i < 100; i++) await Promise.resolve();
       };
+      playback.pause();
+      expect(playback.getState().playing).toBe(false);
       let firstSettled = false;
       const first = playback.seek({ value: 4, rate: 24 }).then(() => {
         firstSettled = true;
       });
       await tick();
+      playback.pause();
+      expect(playback.getState().buffering).toBe(true);
       const beforeEvent = {
         seeking,
         buffering: playback.getState().buffering,
@@ -5508,7 +5646,7 @@ describe('otio native video playback S-C and S-B', () => {
       playback.dispose();
     }
   });
-  test('startup rAF retains a first packet omitted by the first video callback', async () => {
+  test('startup rAF satisfies first-frame admission without an rVFC callback', async () => {
     const blob = new Blob(['startup observation'], { type: 'video/mp4' });
     const timing: Extract<OtioVideoTiming, { kind: 'windows' }> = {
       kind: 'windows',
@@ -5543,10 +5681,9 @@ describe('otio native video playback S-C and S-B', () => {
       await waitForRvfc(video);
       video.advanceTo(1 / 30);
       raf?.(90);
-      video.triggerRvfc(100, 2 / 30);
       await playing;
       const wMin = minWindowDuration(timing, 1);
-      const tau = 100 + ((1 / 60 + 2 * wMin) / 2 - 2 / 30) * 1000;
+      const tau = 90 + ((1 / 60 + 2 * wMin) / 2 - 1 / 30) * 1000;
       raf?.(tau + (1.5 * 1000) / 30);
       expect(playback.getState().buffering).toBe(false);
       expect(playback.getState().time.value).toBeCloseTo(1.5);
@@ -6583,6 +6720,32 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
     } finally {
       ring.release();
     }
+  });
+
+  test('startup admission requires a retained exact current-epoch capture and resolves once', () => {
+    const ring = new NativeDecoderRing(
+      new MockMedia() as unknown as HTMLVideoElement,
+      'admission',
+      'media/clip.mp4',
+      new SnapshotPixelBudget(300)
+    );
+    expect(ring.allocate(10, 10)).toBe(true);
+    ring.resetEpoch(4);
+    ring.startupFirstAdvancedTag = 1;
+    const resolved: Array<{ now: number; capturedAt: number; tag: number }> =
+      [];
+    ring.startupWaiter = { resolve: (value) => resolved.push(value) };
+    ring.admitStartupCapture({ kind: 'match', index: 1 }, 4, 10, 11);
+    expect(resolved).toHaveLength(0); // No retained slot.
+    const slot = ring.slots[0]!;
+    slot.tag = 1;
+    slot.epoch = 4;
+    ring.admitStartupCapture({ kind: 'match', index: 1 }, 3, 12, 13);
+    expect(resolved).toHaveLength(0); // Prior epoch cannot satisfy it.
+    ring.admitStartupCapture({ kind: 'match', index: 1 }, 4, 14, 15);
+    ring.admitStartupCapture({ kind: 'match', index: 1 }, 4, 16, 17);
+    expect(resolved).toEqual([{ now: 14, capturedAt: 15, tag: 1 }]);
+    ring.release();
   });
 
   test('duplicate and uncovered callbacks do not consume certified slots', () => {

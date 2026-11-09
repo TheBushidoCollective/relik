@@ -15,6 +15,7 @@ class RelicProofTap extends AudioWorkletProcessor {
 registerProcessor('relic-proof-pcm', RelicProofTap);`;
 
 export const otioProofTracePrelude = String.raw`(() => {
+  globalThis.__otioProofCold = true;
   const MAX_AUDIO_SAMPLES = 48000 * 20 * 2;
   const MAX_VISUAL_SAMPLES = 3000;
   let fault = 'none';
@@ -59,6 +60,7 @@ export const otioProofTracePrelude = String.raw`(() => {
     if (args[0] === 'OTIO_PROOF_MISSING_TAG') recordEvent('missing-tag', null, args[1]);
     if (args[0] === 'OTIO_PROOF_PILOT') recordEvent('pilot', null, args[1]);
     if (args[0] === 'OTIO_PROOF_RING') recordEvent('ring', null, args[1]);
+    if (args[0] === 'OTIO_PROOF_COLD') recordEvent('cold-controller', null, args[1]);
     return originalConsoleLog.apply(this, args);
   };
   const NativeVideoFrame = globalThis.VideoFrame;
@@ -157,6 +159,16 @@ export const otioProofTracePrelude = String.raw`(() => {
     }
     return result;
   };
+  function audioBridge(graph) {
+    const before = performance.now();
+    const currentBefore = graph.context.currentTime;
+    const output = typeof graph.context.getOutputTimestamp === 'function'
+      ? graph.context.getOutputTimestamp() : null;
+    const currentAfter = graph.context.currentTime;
+    const after = performance.now();
+    return {before, after, currentBefore, currentAfter,
+      output: output ? {contextTime:output.contextTime, performanceTime:output.performanceTime} : null};
+  }
   const visual = {active: false, overflow: false, samples: []};
   let screenOnlyActive = false;
   let lightweightEvents = [];
@@ -271,9 +283,17 @@ export const otioProofTracePrelude = String.raw`(() => {
           recordEvent('buffering-change', null, {old:record.oldValue, current:root.dataset.buffering});
       });
       bufferingObserver.observe(root, {attributes:true, attributeOldValue:true, attributeFilter:['data-buffering']});
+      const bridge = audioBridge(graph);
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
-        sampleFrame, timestamp: performance.now(),
+        sampleFrame, bridge, timestamp: performance.now(),
         frame: Number(document.querySelector('.otio-view')?.dataset.frame)};
+    },
+    playRequest() {
+      if (graphs.length !== 1) throw new Error('controller audio graph ambiguous at play edge');
+      const edge = {timestamp:performance.now(), bridge:audioBridge(graphs[0]),
+        frame:Number(document.querySelector('.otio-view')?.dataset.frame)};
+      recordEvent('play-request', null, edge);
+      return edge;
     },
     mute() {
       if (graphs.length !== 1) throw new Error('controller destination gain ambiguous');
@@ -294,9 +314,10 @@ export const otioProofTracePrelude = String.raw`(() => {
       bufferingObserver?.disconnect();
       const timestamp = performance.now();
       const frame = Number(document.querySelector('.otio-view')?.dataset.frame);
+      const bridge = audioBridge(graph);
       const sampleFrame = await command(graph, 'stop');
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
-        timestamp, frame, sampleFrame,
+        timestamp, frame, sampleFrame, bridge,
         audio: graph.chunks, audioOverflow: graph.overflow,
         visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow};
     },

@@ -2548,6 +2548,8 @@ async function waitReady(browser: ChromeSession): Promise<string> {
   return ready;
 }
 
+let coldSeekReceiptNumber = 0;
+
 async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
   const landed = await browser.evaluate<boolean>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
@@ -2556,26 +2558,82 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
     if (!(seek instanceof HTMLInputElement) || !(root instanceof HTMLElement)) { resolve(false); return promise; }
     const origin = Number(root.dataset.domainOrigin);
     if (!Number.isFinite(origin)) { resolve(false); return promise; }
+    const ids = new WeakMap(), sources = new Map();
+    let nextId = 0, overflow = false;
+    const events = [];
+    const snapshot = (node) => {
+      if (!ids.has(node)) ids.set(node, nextId++);
+      const source = node.currentSrc || node.src || '';
+      if (source && !sources.has(source)) sources.set(source, sources.size);
+      return {id:ids.get(node), sourceId:source ? sources.get(source) : null,
+        bundlePath:node.dataset.bundlePath ?? null, tag:node.tagName,
+        readyState:node.readyState, networkState:node.networkState,
+        seeking:node.seeking, currentTime:node.currentTime, paused:node.paused,
+        error:node.error?.code ?? null};
+    };
+    const nodes = () => [...document.querySelectorAll('.otio-video-decoders video,.otio-audio-graph audio')].map(snapshot);
+    const before = nodes();
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+    if (!descriptor?.get || !descriptor.set || !descriptor.configurable) {
+      resolve(false); return promise;
+    }
+    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+      ...descriptor,
+      set(value) {
+        const prior = descriptor.get.call(this);
+        descriptor.set.call(this, value);
+        if (events.length >= 10000) overflow = true;
+        else events.push({type:'assigned-currentTime', timestamp:performance.now(),
+          target:Number(value), prior, media:snapshot(this)});
+      },
+    });
+    const onEvent = (event) => {
+      if (!(event.target instanceof HTMLMediaElement)) return;
+      if (events.length >= 10000) {overflow = true; return;}
+      events.push({type:event.type, timestamp:performance.now(), media:snapshot(event.target)});
+    };
+    const eventTypes = ['loadstart','loadedmetadata','loadeddata','canplay','seeking','seeked','waiting','playing','pause','error','abort','emptied'];
+    for (const type of eventTypes) document.addEventListener(type, onEvent, true);
+    const finish = (landed) => {
+      Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', descriptor);
+      for (const type of eventTypes) document.removeEventListener(type, onEvent, true);
+      globalThis.__otioSeekEvidence = {before, after:nodes(), events, overflow, landed};
+      resolve(landed);
+    };
     seek.value = String(${frame} - origin);
     seek.dispatchEvent(new Event('input', { bubbles: true }));
     const start = Date.now();
     const tick = () => {
       const root = document.querySelector('.otio-view');
-      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) resolve(true);
-      else if (Date.now() - start > 12000) resolve(false);
+      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) finish(true);
+      else if (Date.now() - start > 12000) finish(false);
       else setTimeout(tick, 50);
     };
     tick();
     return promise;
   })()`);
+  if (landed && browser.label === 'post-gain-calibration') {
+    const evidence = await browser.evaluate<unknown>(
+      'globalThis.__otioSeekEvidence ?? null'
+    );
+    await writeFile(
+      join(shotDir, `seek-success-${++coldSeekReceiptNumber}.json`),
+      JSON.stringify({ frame, evidence })
+    );
+  }
   if (!landed) {
     const state = await browser.evaluate<Record<string, unknown>>(`(() => {
       const root = document.querySelector('.otio-view');
       const seek = document.querySelector('input.otio-seek');
       return {dataset: root ? {...root.dataset} : null,
         seek: seek instanceof HTMLInputElement ? {value:seek.value, min:seek.min, max:seek.max} : null,
-        status: document.querySelector('.otio-preview-status')?.textContent ?? null};
+        status: document.querySelector('.otio-preview-status')?.textContent ?? null,
+        seekEvidence: globalThis.__otioSeekEvidence ?? null};
     })()`);
+    await writeFile(
+      join(shotDir, 'seek-failure.json'),
+      JSON.stringify({ frame, state })
+    );
     await browser.screenshot('seek-failed');
     console.error('OTIO_SEEK_FAILURE', JSON.stringify({ frame, state }));
   }
@@ -9237,8 +9295,22 @@ async function assertFocusedPlaybackBound(
   );
 }
 
+interface AudioClockBridge {
+  before: number;
+  after: number;
+  currentBefore: number;
+  currentAfter: number;
+  output: { contextTime: number; performanceTime: number } | null;
+}
+
 interface MovingTrace {
-  start: { timestamp: number; frame: number; sampleFrame: number };
+  start: {
+    timestamp: number;
+    frame: number;
+    sampleFrame: number;
+    bridge: AudioClockBridge;
+  };
+  playEdge?: { timestamp: number; frame: number; bridge: AudioClockBridge };
   warm?: {
     timestamp: number;
     frame: number;
@@ -9249,9 +9321,11 @@ interface MovingTrace {
     timestamp: number;
     frame: number;
     sampleFrame: number;
+    bridge: AudioClockBridge;
     audioOverflow: boolean;
     visualOverflow: boolean;
     eventsOverflow: boolean;
+    events: Array<{ kind: string; timestamp: number; value?: unknown }>;
     visual: Array<{
       timestamp: number;
       frame: string | null;
@@ -9297,15 +9371,16 @@ async function comparePostGainPcm(
   capture: MovingTrace,
   referenceCache: Map<number, Float32Array>,
   healthyRms: number,
-  mutedRms: number
+  mutedRms: number,
+  requireSustainedAgreement = true
 ): Promise<{
   offset: number;
   correlation: number;
   gain: number;
   longestDropoutMs: number;
   agreement: Array<{ start: number; observed: number; repeated: number }>;
-  agreementFloor: number;
-  repeatedCeiling: number;
+  agreementFloor: number | null;
+  repeatedCeiling: number | null;
 }> {
   const trace = capture.trace;
   assertPcmCoverage(capture.start.sampleFrame, trace.sampleFrame, trace.audio);
@@ -9358,6 +9433,7 @@ async function comparePostGainPcm(
   const n = Math.min(Math.floor(rate * 0.5), captured.length);
   assert.ok(n >= rate * 0.25, 'post-gain PCM too short to align');
   const maxOffset = Math.min(Math.floor(rate), reference.length - n);
+  const minOffset = -Math.min(Math.floor(rate), n - Math.ceil(rate * 0.25));
   assert.ok(maxOffset > 0, 'source PCM too short to align');
   const stride = Math.max(1, Math.floor(rate / 1000));
   const score = (offset: number): { correlation: number; gain: number } => {
@@ -9365,7 +9441,9 @@ async function comparePostGainPcm(
       sourceEnergy = 0,
       capturedEnergy = 0;
     for (let i = 0; i < n; i += stride) {
-      const source = reference![offset + i]!,
+      const sourceIndex = offset + i;
+      if (sourceIndex < 0 || sourceIndex >= reference!.length) continue;
+      const source = reference![sourceIndex]!,
         actual = captured[i]!;
       cross += source * actual;
       sourceEnergy += source * source;
@@ -9376,27 +9454,27 @@ async function comparePostGainPcm(
       gain: cross / sourceEnergy,
     };
   };
+  const coarseCandidates: Array<{ offset: number; correlation: number }> = [];
+  for (let candidate = minOffset; candidate <= maxOffset; candidate += stride) {
+    const correlation = score(candidate).correlation;
+    if (Number.isFinite(correlation))
+      coarseCandidates.push({ offset: candidate, correlation });
+  }
+  coarseCandidates.sort((a, b) => b.correlation - a.correlation);
   let offset = 0,
     best = -Infinity;
-  for (let candidate = 0; candidate <= maxOffset; candidate += stride) {
-    const current = score(candidate).correlation;
-    if (Number.isFinite(current) && current > best) {
-      best = current;
-      offset = candidate;
+  for (const coarse of coarseCandidates.slice(0, 16))
+    for (
+      let candidate = Math.max(minOffset, coarse.offset - stride);
+      candidate <= Math.min(maxOffset, coarse.offset + stride);
+      candidate++
+    ) {
+      const current = score(candidate).correlation;
+      if (Number.isFinite(current) && current > best) {
+        best = current;
+        offset = candidate;
+      }
     }
-  }
-  const coarse = offset;
-  for (
-    let candidate = Math.max(0, coarse - stride);
-    candidate <= Math.min(maxOffset, coarse + stride);
-    candidate++
-  ) {
-    const current = score(candidate).correlation;
-    if (Number.isFinite(current) && current > best) {
-      best = current;
-      offset = candidate;
-    }
-  }
   const aligned = score(offset);
   assert.ok(
     aligned.correlation > 0 && aligned.gain > 0,
@@ -9405,23 +9483,24 @@ async function comparePostGainPcm(
   const window = Math.max(1, Math.round(rate * 0.005));
   const threshold = Math.max(mutedRms * 2, healthyRms * 0.01);
   let run = 0,
-    longest = 0;
+    longest = Math.max(0, -offset);
   assert.ok(
     reference.length - offset >= captured.length,
     'source PCM does not cover the full capture'
   );
   const length = captured.length;
+  const sourceSample = (index: number) => (index < 0 ? 0 : reference![index]!);
   let sourceEnergy = 0,
     actualEnergy = 0;
   for (let i = 0; i < Math.min(window, length); i++) {
-    sourceEnergy += (reference[offset + i]! * aligned.gain) ** 2;
+    sourceEnergy += (sourceSample(offset + i) * aligned.gain) ** 2;
     actualEnergy += captured[i]! ** 2;
   }
   for (let start = 0; start + window <= length; start++) {
     if (start > 0) {
       sourceEnergy +=
-        (reference[offset + start + window - 1]! * aligned.gain) ** 2 -
-        (reference[offset + start - 1]! * aligned.gain) ** 2;
+        (sourceSample(offset + start + window - 1) * aligned.gain) ** 2 -
+        (sourceSample(offset + start - 1) * aligned.gain) ** 2;
       actualEnergy +=
         captured[start + window - 1]! ** 2 - captured[start - 1]! ** 2;
     }
@@ -9446,7 +9525,7 @@ async function comparePostGainPcm(
       power = 0,
       replayPower = 0;
     for (let i = 0; i < segment; i += stride) {
-      const expected = reference[offset + start + i]!;
+      const expected = sourceSample(offset + start + i);
       const actual = captured[start + i]!;
       const replay = captured[(start + i) % replayLength]!;
       cross += expected * actual;
@@ -9464,9 +9543,14 @@ async function comparePostGainPcm(
     );
     agreement.push({ start, observed, repeated });
   }
-  assert.ok(agreement.length > 0, 'no sustained audio agreement windows');
-  const agreementFloor = Math.min(...agreement.map((entry) => entry.observed));
-  const repeatedCeiling = Math.max(...agreement.map((entry) => entry.repeated));
+  if (requireSustainedAgreement)
+    assert.ok(agreement.length > 0, 'no sustained audio agreement windows');
+  const agreementFloor = agreement.length
+    ? Math.min(...agreement.map((entry) => entry.observed))
+    : null;
+  const repeatedCeiling = agreement.length
+    ? Math.max(...agreement.map((entry) => entry.repeated))
+    : null;
   return {
     offset,
     correlation: aligned.correlation,
@@ -9888,6 +9972,7 @@ async function assessMovingWindowControls(
     };
   };
   const receipts: Array<Record<string, unknown>> = [];
+  const coldReferenceAudio = new Map<number, Float32Array>();
   for (const [name, fault] of [
     ['healthy-1', 'none'],
     ['healthy-2', 'none'],
@@ -9923,6 +10008,7 @@ async function assessMovingWindowControls(
       if (root.dataset.playing === 'true') throw new Error('cold capture began while playback was running');
       globalThis.__otioProofTrace.setFault('none');
       const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
       button.click();
       const until = performance.now() + 12000;
       while (root.dataset.playing !== 'true' && performance.now() < until) await sleep(10);
@@ -9933,10 +10019,11 @@ async function assessMovingWindowControls(
       const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
       if (root.dataset.playing === 'true') button.click();
-      return {start, warm, trace};
+      return {start, playEdge, warm, trace};
     })()`);
     const cast = await stopCast();
     assert.ok(capture.warm, 'warm presentation readiness not recorded');
+    assert.ok(capture.playEdge, 'play request edge not recorded');
     const samples = capture.trace.visual.filter(
       (sample) => sample.timestamp >= capture.warm!.timestamp
     );
@@ -10051,7 +10138,7 @@ async function assessMovingWindowControls(
     const coldCanvas = capture.trace.visual
       .filter(
         (sample) =>
-          sample.timestamp >= capture.start.timestamp &&
+          sample.timestamp >= capture.playEdge!.timestamp &&
           sample.timestamp < capture.warm!.timestamp
       )
       .map((sample) => {
@@ -10076,7 +10163,7 @@ async function assessMovingWindowControls(
       .filter((sample) => {
         const time = sample.timestamp - geometry.timeOrigin;
         return (
-          time >= capture.start.timestamp && time < capture.warm!.timestamp
+          time >= capture.playEdge!.timestamp && time < capture.warm!.timestamp
         );
       })
       .map((sample) => {
@@ -10105,10 +10192,10 @@ async function assessMovingWindowControls(
           changes[changes.length - 1]!.sourceFrame !== sample.sourceFrame
         )
           changes.push(sample);
-      const duration = capture.warm!.timestamp - capture.start.timestamp;
+      const duration = capture.warm!.timestamp - capture.playEdge!.timestamp;
       const intervals = [
         changes.length > 1
-          ? changes[1]!.timestamp - capture.start.timestamp
+          ? changes[1]!.timestamp - capture.playEdge!.timestamp
           : duration,
       ];
       for (let i = 2; i < changes.length; i++)
@@ -10224,21 +10311,160 @@ async function assessMovingWindowControls(
     const windowSize = Math.ceil(capture.trace.sampleRate * 0.02);
     const silenceThreshold = Math.max(mutedRms * 2, healthyRms * 0.01);
     let longestSilentSamples = 0,
-      silentSamples = 0;
-    for (
-      let offset = 0;
-      offset + windowSize <= channel.length;
-      offset += windowSize
-    ) {
-      let energy = 0;
-      for (let i = 0; i < windowSize; i++) energy += channel[offset + i]! ** 2;
-      if (Math.sqrt(energy / windowSize) <= silenceThreshold) {
-        silentSamples += windowSize;
+      silentSamples = 0,
+      energy = 0;
+    for (let i = 0; i < Math.min(windowSize, channel.length); i++)
+      energy += channel[i]! ** 2;
+    for (let offset = 0; offset + windowSize <= channel.length; offset++) {
+      if (offset > 0)
+        energy +=
+          channel[offset + windowSize - 1]! ** 2 - channel[offset - 1]! ** 2;
+      if (Math.sqrt(Math.max(0, energy) / windowSize) <= silenceThreshold) {
+        silentSamples = silentSamples === 0 ? windowSize : silentSamples + 1;
         longestSilentSamples = Math.max(longestSilentSamples, silentSamples);
       } else silentSamples = 0;
     }
     if (!focused && longestSilentSamples > capture.trace.sampleRate * 0.02)
       issues.push('post-gain silence exceeds 20ms');
+    let coldAudio: { offset: number; longestDropoutMs: number } | null = null;
+    let clockEvidence: Record<string, unknown> | null = null;
+    if (!focused) {
+      coldAudio = await comparePostGainPcm(
+        capture,
+        coldReferenceAudio,
+        healthyRms,
+        mutedRms,
+        false
+      );
+      const solver = capture.trace.events.find(
+        (entry) =>
+          entry.kind === 'cold-controller' &&
+          (entry.value as { event?: string } | null)?.event === 'solver'
+      )?.value as
+        | {
+            chosenAnchor?: number;
+            intervalLower?: number;
+            intervalUpper?: number;
+          }
+        | undefined;
+      const bridges = [
+        capture.start.bridge,
+        capture.playEdge.bridge,
+        capture.trace.bridge,
+      ];
+      const offsets = bridges.map((bridge) =>
+        bridge.output
+          ? bridge.output.performanceTime - bridge.output.contextTime * 1000
+          : NaN
+      );
+      const anchor = solver?.chosenAnchor;
+      if (
+        !Number.isFinite(anchor) ||
+        offsets.some((value) => !Number.isFinite(value))
+      ) {
+        issues.push('cold audio clock bridge or solver anchor unavailable');
+      } else {
+        const bridgeOffset = offsets[1]!;
+        const measuredSpreadMs = Math.max(...offsets) - Math.min(...offsets);
+        const maxReadMs = Math.max(
+          ...bridges.map((bridge) => bridge.after - bridge.before)
+        );
+        const uncertaintyMs =
+          measuredSpreadMs +
+          maxReadMs +
+          (128 * 1000) / capture.trace.sampleRate;
+        const expectedOffset =
+          capture.start.sampleFrame -
+          ((anchor! - bridgeOffset) / 1000) * capture.trace.sampleRate;
+        const offsetErrorMs =
+          ((coldAudio.offset - expectedOffset) * 1000) /
+          capture.trace.sampleRate;
+        const clockLimitMs = (2 * 1000) / 30;
+        const controls: Array<{
+          kind: string;
+          fittedOffset: number;
+          offsetErrorMs: number;
+          dropoutMs: number;
+          rejected: boolean;
+        }> = [];
+        if (fault === 'none') {
+          const shift = Math.round(capture.trace.sampleRate * 0.1);
+          for (const [kind, direction] of [
+            ['lost-prefix', 1],
+            ['delayed-audio', -1],
+          ] as const) {
+            let position = 0;
+            const shifted = audio.map((chunk) => {
+              const channels = chunk.channels.map((samples) =>
+                samples.map((_, i) => {
+                  const sourceIndex = position + i + direction * shift;
+                  if (sourceIndex < 0 || sourceIndex >= channel.length)
+                    return 0;
+                  // The fixture is mono; both worklet channels carry that source.
+                  return channel[sourceIndex]!;
+                })
+              );
+              position += chunk.channels[0]?.length ?? 0;
+              return { ...chunk, channels };
+            });
+            const planted = await comparePostGainPcm(
+              { ...capture, trace: { ...capture.trace, audio: shifted } },
+              coldReferenceAudio,
+              healthyRms,
+              mutedRms,
+              false
+            );
+            const plantedErrorMs =
+              ((planted.offset - expectedOffset) * 1000) /
+              capture.trace.sampleRate;
+            const rejected =
+              plantedErrorMs > uncertaintyMs ||
+              Math.abs(plantedErrorMs) + uncertaintyMs > clockLimitMs ||
+              planted.longestDropoutMs > 20;
+            controls.push({
+              kind,
+              fittedOffset: planted.offset,
+              offsetErrorMs: plantedErrorMs,
+              dropoutMs: planted.longestDropoutMs,
+              rejected,
+            });
+            if (
+              !rejected ||
+              Math.abs(planted.offset - coldAudio.offset) <=
+                (2 * capture.trace.sampleRate) / 30
+            )
+              issues.push(
+                `cold ${kind} negative control was not distinguished`
+              );
+          }
+        }
+        clockEvidence = {
+          anchor,
+          intervalLower: solver?.intervalLower,
+          intervalUpper: solver?.intervalUpper,
+          playRequest: capture.playEdge.timestamp,
+          bridges,
+          measuredSpreadMs,
+          maxReadMs,
+          uncertaintyMs,
+          signedFittedOffset: coldAudio.offset,
+          expectedOffset,
+          offsetErrorMs,
+          controls,
+        };
+        if (anchor! < capture.playEdge.timestamp)
+          issues.push('cold anchor precedes play request');
+        if (offsetErrorMs > uncertaintyMs)
+          issues.push('cold audio source begins ahead of the canonical clock');
+        if (
+          uncertaintyMs >= (2 * 1000) / 30 ||
+          Math.abs(offsetErrorMs) + uncertaintyMs > (2 * 1000) / 30
+        )
+          issues.push('cold audio epoch exceeds two-frame bound');
+      }
+      if (coldAudio.longestDropoutMs > 20)
+        issues.push('source-aware cold PCM dropout exceeds 20ms');
+    }
     const receipt = {
       name,
       fault,
@@ -10252,6 +10478,8 @@ async function assessMovingWindowControls(
       screenP95,
       coldCanvasMetrics,
       coldScreenMetrics,
+      coldAudio,
+      clockEvidence,
       screenMax,
       initialCanvasCensoredMs:
         identified.length > 1
@@ -10581,7 +10809,9 @@ async function assessMovingWindowControls(
         })
       );
       assert.ok(
-        audio.agreementFloor > audio.repeatedCeiling &&
+        audio.agreementFloor !== null &&
+          audio.repeatedCeiling !== null &&
+          audio.agreementFloor > audio.repeatedCeiling &&
           audio.agreementFloor > 0,
         `audio source agreement is not separated from repeated-audio control: ${audio.agreementFloor} vs ${audio.repeatedCeiling}`
       );
@@ -10877,8 +11107,8 @@ async function calibratePostGainTap(sessionToken: string): Promise<void> {
       `master-gain mute did not silence the tapped signal: ${before} -> ${muted}`
     );
     pass('post-gain-tap-calibration');
-    await calibrateCaptureOverhead(browser, provenance);
     await assessMovingWindowControls(browser, before, muted, provenance);
+    await calibrateCaptureOverhead(browser, provenance);
     await focusItem(browser, 'moving-a');
     await assessMovingWindowControls(browser, before, muted, provenance, true);
     await leaveFocus(browser);
