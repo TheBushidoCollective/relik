@@ -945,6 +945,8 @@ Every change to the set of drawn video occurrences (cuts, unhiding a track, solo
 - In admitted native mode, video decoders run continuously rather than seeking on every transport tick.
 - For rapid cuts or montages, frequent resyncs could hitch; this is bounded by a change-rate guard (more than 3 changes in 5 s falls back to seek cadence) and a storm guard (3 failure resyncs in 10 s falls back to seek cadence). Lookahead preroll remains an uncommitted future consideration if measured multi-clip cut performance requires it.
 
+**Update, 2026-11-09:** A native boundary can retain continuing decoders and the transport anchor when it only retires occurrences or joins occurrences prepared against the fixed anchor. The join requires phase-admitted video, current required snapshot tags, and entering audio that is playing within the existing drift tolerance. Preparation uses two workers; unprepared or ineligible boundaries retain the resync path.
+
 **Residuals:**
 - Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
 - Any media path failing native admission criteria runs on today's exact midpoint seek cadence with existing diagnostic reporting.

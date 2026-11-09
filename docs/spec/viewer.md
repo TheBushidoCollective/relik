@@ -201,8 +201,8 @@ Movie samples outside their available range are withheld for video and silent fo
 - **Playback modes and continuous native decode:** Continuous native playback activates only when every drawn video leaf passes native admission: certified presentation windows (`timing.kind === 'windows'`), every window duration and every gap between packet starts greater than 2Q (`Q = 2e-6` seconds), `requestVideoFrameCallback` and `VideoFrame` available, rate application succeeds, the smallest presentation window divided by rate is at least the display refresh interval, the media path has not been marked runtime-ineligible, and the snapshot budget permits. Freeze frames and still images are static and admitted; image sequences run on seek cadence. When any drawn video leaf fails native admission, the composition falls back to seek cadence, preserving exact midpoint seeks and existing diagnostics.
 - **Snapshot ring and synchronous callback capture:** Each native decoder maintains a fixed ring of three reused snapshot canvas surfaces sized to the output (960x540). They are allocated once on entering native mode, reallocated only on canvas resize or canvas context loss, and freed on release, counting against `OTIO_RETAINED_SNAPSHOT_PIXELS`. No canvas, bitmap, or ImageData allocations occur per frame. Inside `requestVideoFrameCallback`, the callback checks the current controller and epoch; stale callbacks return without re-registering. Tagging matches the captured frame's own timestamp (microsecond whole numbers, Q = 2 microseconds retained, `Q = 2e-6` seconds) from `new VideoFrame(video)` against packet start times rather than callback metadata. If two packet starts fall within 2Q, the media is ineligible. On a match, the video frame is drawn synchronously into the oldest ring slot before the element can advance, tagged with packet index `k` and lead, and re-registered; the `VideoFrame` is closed in a finally block.
 - **Certified-span tail rule:** Callbacks outside the certified contiguous span (`mediaTime < starts[0] - Q` or `mediaTime >= ends[last] - Q`), such as decoders running ahead into uncertified tail frames or lead-in, are ignored: no capture, no tag, no sticky ineligibility mark, and no resync. Inside the certified span, an unmatched callback is an uncovered presentation. Any uncovered callback during startup or two consecutive uncovered callbacks marks that media path sticky-ineligible for native playback. When transport required time reaches an uncertified sample (`certifiedWindowIndex` returns null), the leaf becomes uncertified at T. This triggers an eligibility discontinuity: one exact resync into seek cadence, seeking exact normalized source seconds and reporting `invalid-timing`. The uncertified tail frame is never approved for native display. Eligibility-driven fallback applies only to the current drawn set and re-evaluates at each discontinuity, returning subsequent certified clips to native playback.
-- **Approval gate and hold:** At transport tick time T, the required presentation window index `req` for each drawn native leaf is derived via rational half-open search. The composite paints and advances `currentTime` only if every drawn native leaf has a ring slot tagged `req` in the current epoch, and all static leaves are ready. If any drawn leaf lacks its required frame, the compositor holds: the previous composite remains on screen, and `currentTime` and `notify` do not advance. The compositor never paints a playing video element directly; it renders only approved snapshots through the multi-track compositor. Controller `notify` fires at most once per tick, on repaint or a new timeline frame.
-- **Discontinuities, phase anchoring, and bounded resync:** Discontinuities trigger on play, seek, resync, canvas context restore while playing, and any change to the set of drawn occurrences or their eligibility. A discontinuity freezes the transport, pauses decoders and audio elements, increments epochs, runs exact `renderAt(T0)` (seeking leaves to midpoints and audio to exact positions), and starts playback on drawn media. Transport phase anchors once per start in closed form from the measured arrival of the first advanced frame callback across all drawn native decoders. If the phase spread across decoders exceeds the tolerance band, it retries once, then drops to failure-driven seek cadence until the next play or seek. Every change to the set of drawn occurrences triggers one exact resync. Montage churn and unstable tracks are bounded: more than 3 drawn set changes within 5 s, or 3 failure resyncs within 10 s, switch playback to seek cadence until the next play or seek.
+- **Approval gate and hold:** At transport tick time T, the required presentation window index `req` for each drawn native leaf is derived via rational half-open search. The composite paints and advances `currentTime` only if every drawn native leaf has a ring slot tagged `req` in its capture epoch, and all static leaves are ready. If a required frame is missing, the previous composite and time remain on screen and the controller notifies listeners that buffering has begun. It notifies again when a complete composite is painted and buffering clears. Playing video elements are never painted directly; only approved snapshots enter the compositor.
+- **Discontinuities, phase anchoring, and bounded resync:** Play, seek, recovery, and context restoration trigger exact resynchronization. During native playback, the controller may prepare incoming moving-video occurrences and audio at an upcoming boundary, using at most two preparation workers. Incoming video uses occurrence-specific decoders and a fixed-anchor phase check; incoming audio starts at zero clip gain and must meet the existing drift tolerance at handoff. Before painting, the controller rechecks required live snapshot tags. A successful prepared join, or a boundary that only retires occurrences, retains the transport anchor and continuing decoders. Unprepared or ineligible boundaries use the resync path. A resynchronization freezes transport, pauses media, increments epochs, and runs exact `renderAt(T0)`. Excessive startup phase spread retries once before falling back to seek cadence. More than 3 resynchronizing drawn-set changes within 5 s or 3 failure resyncs within 10 s switch playback to seek cadence until the next play or seek.
 - **Audio synchronization in both modes:** Steady audio drift is evaluated against the current tick target with a tolerance of 2 timeline frames, rather than the reciprocal of the audio source rate. Drift corrections execute as asynchronous seeks with gain set to 0 until the `seeked` event fires, never blocking transport ticks. Discontinuities execute an exact seek and resume playback.
 
 - **Fidelity boundaries and diagnostic states:** Browser playback operates in browser-managed SDR. Unsupported effects, proprietary plugins, unknown schemas, and unavailable codecs trigger explicit diagnostic states (`supported`, `missing-media`, `unsupported-codec`, `unsupported-effect`, `unsupported-schema`, `invalid-timing`, `unsupported-browser`). An incomplete preview provides a deliberate "Preview base media without unsupported effects" control; it is never claimed as full fidelity.
@@ -461,6 +461,50 @@ Version moved into the taskbar, then Comments did, and the row had already overf
 **A timeline marker opens the same card every other mark does.** Hovering a marker opens its card after `MARK_HOVER_OPEN_MS`, and a press or keyboard focus pins it while the press still seeks to the moment and pauses. Enter on a focused marker moves focus into the card. Reply, edit, resolve and "Open in thread" work from it. A cluster opens a card listing every member, with its time to the tenth, its author and the start of what it says, and each row opens that member's own card and seeks to its moment. The bespoke `.timeline-marker-tooltip` is gone: one form per idea. A card never replaces a panel holding unposted text, and focus moving inside an open card never rebuilds it.
 
 **Saved comment overlays can be dismissed without changing the comment.** Every saved card, including the card shown after Post and a timeline cluster's member list, offers a native **Dismiss** button (`.popover-dismiss`, accessible name `Dismiss comment overlay`). Dismiss closes only the overlay: it does not delete, resolve, send a request, open the sidebar, change counts, seek, stop playback or leave fullscreen. The comment remains available from its mark and thread, and the mark can reopen its card. There is no automatic dismissal. New and edit composers do not offer Dismiss, and the button is hidden while replying so it cannot discard a reply draft. Keyboard dismissal restores focus without reopening the mark during that synchronous focus restoration. Work started by a dismissed saved card must not reopen it or overwrite a newer panel.
+
+**Delete belongs to the verified author, at every depth and on every surface.**
+The sidebar and attached cards use one recursive row renderer. A row offers
+**Delete** only when its nonempty ID and author match the verified session's
+address exactly. Freeform, sealed, unreadable and unavailable-target rows use
+the same gate, including OTIO comments. Anchor placement and the broader
+publisher resolution permission confer no deletion privilege. Session
+discovery and later sign-in changes repaint row controls and the open card
+without discarding unrelated reply, edit or sidebar drafts.
+
+**Deletion requires a native confirmation dialog, with Cancel focused.**
+The dialog names the selected author and shows a readable excerpt, or
+“Comment text unavailable.” Both use text content, never interpreted markup.
+It says: “This removes only your comment. Replies will stay. Relik has no
+undo.” Cancel and Escape send no request. Confirmation sends one session-cookie
+DELETE for the captured ID, without a key, publish token, ciphertext or
+client-selected author. Both placements disable that ID while the request
+is pending, and the row stays until the server acknowledges it.
+
+Exactly `204` confirms deletion. `404 comment_not_found` reconciles the row
+as already absent and says so without claiming this request deleted it.
+Other refusals retain the last confirmed thread and name the server's code.
+A transport failure may follow a committed write, so the viewer says deletion
+could not be confirmed and offers **Refresh comments** before another
+deliberate attempt. A confirmed removal survives a failed refresh, whose
+failure is reported separately. Thread reads are ordered; a read superseded
+by deletion cannot restore the acknowledged ID.
+
+**Only the selected row goes.** The full fetched thread is kept separately
+from the version-filtered displayed tree. A surviving reply whose decrypted
+parent ID is absent from that full snapshot becomes a root, with its own
+descendants still nested, and says: “The parent comment is unavailable. This
+reply is shown separately.” Absence establishes unavailability, not why the
+parent disappeared. A parent present only on another version retains the
+existing omission behavior. Clear routing hints never establish ancestry.
+Counts, addressed badges and marks are rebuilt from the surviving rows.
+Only the deleted target's card closes; removing a reply updates its parent's
+card in place. Late responses never replace a newer panel. Deletion does not
+seek, pause playback, exit fullscreen, change OTIO selection or open the sidebar.
+Deletion feedback and its read-only refresh control stay above the thread
+list, including on narrow screens that hide the stage. Long card threads
+reuse the keyboard-reachable bounded-body scroller, keeping row actions and
+the card toolbar inside the capped panel.
+
 
 **Images inside HTML have their own attached comments.** Each eligible image gets a shim-owned native **Comment on image** button usable by pointer, touch and keyboard. Ordinary image clicks, including linked-image navigation, keep their existing behavior. Activating the button opens the existing composer directly, reading **Commenting on an image.** An unverified reader follows sidebar verification with the target retained. New-comment controls and saved badges are separate; multiple comments remain individually reachable. Dismiss leaves the comment, badge and thread intact.
 

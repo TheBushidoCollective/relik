@@ -83,6 +83,7 @@ class ElementStub {
   htmlFor = '';
   rows = 0;
   readonly dataset: Record<string, string> = {};
+  readonly style: Record<string, string> = {};
   readonly children: ElementStub[] = [];
   parent: ElementStub | null = null;
   readonly attributes = new Map<string, string>();

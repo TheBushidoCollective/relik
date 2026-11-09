@@ -732,7 +732,7 @@ describe('deletion preserves the timeline review state', () => {
     };
     attachOtioController(root as unknown as HTMLElement, controller);
     mounted.repaint();
-    const doc = Reflect.get(globalThis, 'document') as {
+    const doc = Reflect.get(globalThis, 'document') as unknown as {
       fullscreenElement?: Node;
     };
     doc.fullscreenElement = root;

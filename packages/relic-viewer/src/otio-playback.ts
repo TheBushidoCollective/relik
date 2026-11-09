@@ -14,6 +14,7 @@ import type {
   OtioEffect,
   OtioEvaluationResult,
   OtioNode,
+  OtioPlaybackBoundary,
   OtioRationalTime,
   OtioTimeRange,
   OtioVideoContribution,
@@ -22,6 +23,7 @@ import {
   addRationalTimes,
   compareRationalTimes,
   evaluateOtioAt,
+  otioPlaybackBoundaries,
   otioSamplingMap,
   rangeContainsTime,
   rescaleTime,
@@ -264,7 +266,14 @@ export class ImageFrameCache {
     this.pixels += pixels;
     this.pinned.add(key);
     this.evict();
-    return this.entries.has(key);
+    if (this.pixels > this.budget) {
+      this.entries.delete(key);
+      this.pinned.delete(key);
+      this.pixels -= pixels;
+      release();
+      return false;
+    }
+    return true;
   }
 
   evict(): void {
@@ -457,10 +466,6 @@ function isLinear(effect: OtioEffect): boolean {
     schemaBase(effect.schema) === 'LinearTimeWarp' ||
     effect.effect_name === 'LinearTimeWarp'
   );
-}
-
-function isDissolve(type: string | undefined): boolean {
-  return type === 'SMPTE_Dissolve';
 }
 
 function effectFidelity(
@@ -661,9 +666,22 @@ function collectVideoOccurrenceKeys(
   });
 }
 
+function collectAudioOccurrenceKeys(
+  contributions: readonly OtioAudioContribution[]
+): string[] {
+  const seen = new Map<string, number>();
+  return contributions.map((contrib) => {
+    const identity = `${ancestryOf(contrib).join('/')}|${contrib.node_id}`;
+    const dup = seen.get(identity) ?? 0;
+    seen.set(identity, dup + 1);
+    return occurrenceKey(contrib.node_id, ancestryOf(contrib), dup);
+  });
+}
+
 function getDrawnLeafIndices(
   tree: OtioVideoCompositionTree | null,
-  isHidden: (nodeId: string, ancestry: readonly string[]) => boolean
+  isHidden: (nodeId: string, ancestry: readonly string[]) => boolean,
+  includeZeroWeight = false
 ): number[] {
   const indices: number[] = [];
   if (!tree) return indices;
@@ -681,7 +699,8 @@ function getDrawnLeafIndices(
     }
     if (node.kind === 'track') {
       for (const branch of node.branches) {
-        if (branch.child && branch.weight > 0) visit(branch.child);
+        if (branch.child && (includeZeroWeight || branch.weight > 0))
+          visit(branch.child);
       }
     }
   };
@@ -819,6 +838,12 @@ export function createOtioPlayback(
       ...result,
       video_contributions: video,
       audio_contributions: result.audio_contributions.filter(selected),
+      active_transitions: result.active_transitions.filter(
+        (item) =>
+          scopeContext.has(item.track_id) ||
+          scopeNodes.has(item.node_id) ||
+          item.ancestry.includes(scopeRootId!)
+      ),
       video_composition: prune(result.video_composition),
       active_markers: result.active_markers.filter((marker) =>
         scopeNodes.has(marker.owner_node_id)
@@ -896,16 +921,37 @@ export function createOtioPlayback(
   let nativeAnchor: { wallMs: number; time: OtioRationalTime } | null = null;
   let nativeLastPresentMs: number | null = null;
   let nativeEpoch = 0;
+  let isNativeHolding = false;
   let failureResyncTimestamps: number[] = [];
   let drawnSetChangeTimestamps: number[] = [];
   let lastDrawnOccurrenceKeys = new Set<string>();
   let lastRenderDrawnOccurrenceKeys = new Set<string>();
   const lastRenderVideoContributions = new Map<string, OtioVideoContribution>();
-  let knownVideoKeys = new Set<string>();
+  const hiddenWarmSeen = new Set<string>();
+  const hiddenWarmInFlight = new Set<string>();
   let isStarting = false;
   let startingStartTime = 0;
   const videoTimingCache = new Map<string, OtioVideoTiming>();
   const audioSeeking = new WeakSet<LoadedAudio>();
+  let audioReconcileRevision = 0;
+  const desiredAudioGain = new WeakMap<
+    LoadedAudio,
+    { gain: number; audible: boolean }
+  >();
+  type BoundaryPreparation = {
+    readonly at: OtioRationalTime;
+    readonly keys: ReadonlySet<string>;
+    readonly generation: number;
+    readonly scope: number;
+    readonly anchor: { wallMs: number; time: OtioRationalTime };
+    readonly abort: AbortController;
+    status: 'preparing' | 'ready' | 'failed';
+    readonly rings: Map<string, NativeDecoderRing>;
+    readonly audioKeys: ReadonlySet<string>;
+    readonly audio: Map<string, LoadedAudio>;
+  };
+  let preparedBoundary: BoundaryPreparation | null = null;
+  let playbackBoundaries: OtioPlaybackBoundary[] = [];
 
   function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
     if (a.size !== b.size) return false;
@@ -921,7 +967,7 @@ export function createOtioPlayback(
   ): Set<string> {
     const keys = new Set<string>();
     if (!tree) return keys;
-    const blocked = blockedTracks(tree);
+    const blocked = blockedTracks(evaluation);
     const isHidden = (nodeId: string, ancestry: readonly string[]) =>
       videoHidden(nodeId, ancestry) || blocked.has(nodeId);
     const drawnLeafIndices = getDrawnLeafIndices(tree, isHidden);
@@ -955,6 +1001,400 @@ export function createOtioPlayback(
       nativeRings.set(key, ring);
     }
     return ring;
+  }
+
+  function cancelPreparedBoundary(): void {
+    const candidate = preparedBoundary;
+    if (!candidate) return;
+    preparedBoundary = null;
+    candidate.abort.abort();
+    for (const [key, ring] of candidate.rings) {
+      if (nativeRings.get(key) !== ring) continue;
+      ring.videoElement.pause();
+      decodedAt.delete(ring.videoElement);
+      ring.release();
+      nativeRings.delete(key);
+    }
+    for (const [key, audio] of candidate.audio) {
+      if (
+        audios.get(key) !== audio ||
+        audio.element.getAttribute('data-active') === 'true'
+      )
+        continue;
+      audio.element.pause();
+      if (audio.gainNode) audio.gainNode.gain.value = 0;
+      else audio.element.volume = 0;
+    }
+  }
+
+  function prepareNextBoundary(): void {
+    const anchor = nativeAnchor;
+    if (!anchor || !nativeMode || !isPlaying || preparedBoundary) return;
+    for (const boundary of playbackBoundaries) {
+      if (compareRationalTimes(boundary.time, currentTime) <= 0) continue;
+      const evaluation = scopedEvaluation(boundary.time);
+      const tree = videoTree(evaluation);
+      const blocked = blockedTracks(evaluation);
+      const indices = getDrawnLeafIndices(
+        tree,
+        (id, ancestry) => videoHidden(id, ancestry) || blocked.has(id),
+        true
+      );
+      const keys = collectVideoOccurrenceKeys(evaluation.video_contributions);
+      const incoming = indices.flatMap((index) => {
+        const contribution = evaluation.video_contributions[index];
+        const key = keys[index];
+        if (
+          !contribution ||
+          !key ||
+          !contribution.bundle_path ||
+          !inferMediaMimeType(contribution.bundle_path).startsWith('video/') ||
+          lastDrawnOccurrenceKeys.has(key)
+        )
+          return [];
+        return [{ contribution, key }];
+      });
+      const previousAudio = new Set(
+        collectAudioOccurrenceKeys(
+          scopedEvaluation(currentTime).audio_contributions
+        )
+      );
+      const audioKeys = collectAudioOccurrenceKeys(
+        evaluation.audio_contributions
+      );
+      const incomingAudio = evaluation.audio_contributions.flatMap(
+        (contribution, index) => {
+          const key = audioKeys[index];
+          if (
+            !key ||
+            previousAudio.has(key) ||
+            !trackAudible(contribution.track_id)
+          )
+            return [];
+          return [{ contribution, key }];
+        }
+      );
+      if (incoming.length === 0 && incomingAudio.length === 0) continue;
+      if (incoming.some(({ key }) => hiddenWarmInFlight.has(key))) return;
+      if (previewBlocked(evaluation)) return;
+      const candidate: BoundaryPreparation = {
+        at: boundary.time,
+        keys: new Set(incoming.map((item) => item.key)),
+        generation: renderGeneration,
+        scope: scopeEpoch,
+        anchor,
+        abort: new AbortController(),
+        status: 'preparing',
+        rings: new Map(),
+        audioKeys: new Set(incomingAudio.map((item) => item.key)),
+        audio: new Map(),
+      };
+      preparedBoundary = candidate;
+      const valid = (): boolean =>
+        preparedBoundary === candidate &&
+        !candidate.abort.signal.aborted &&
+        !isDisposed &&
+        isPlaying &&
+        nativeMode &&
+        renderGeneration === candidate.generation &&
+        scopeEpoch === candidate.scope &&
+        nativeAnchor === candidate.anchor;
+      const fail = (): void => {
+        if (preparedBoundary !== candidate) return;
+        candidate.status = 'failed';
+        candidate.abort.abort();
+        for (const [key, ring] of candidate.rings) {
+          if (nativeRings.get(key) !== ring) continue;
+          ring.videoElement.pause();
+          ring.release();
+          nativeRings.delete(key);
+        }
+        for (const [key, audio] of candidate.audio) {
+          if (
+            audios.get(key) !== audio ||
+            audio.element.getAttribute('data-active') === 'true'
+          )
+            continue;
+          audio.element.pause();
+          if (audio.gainNode) audio.gainNode.gain.value = 0;
+          else audio.element.volume = 0;
+        }
+        candidate.audio.clear();
+        candidate.rings.clear();
+      };
+      const bounded = async <T>(
+        promise: Promise<T>,
+        ms: number
+      ): Promise<T> => {
+        const interruption = Promise.withResolvers<never>();
+        const timer = setTimeout(
+          () => interruption.reject(new Error('boundary-timeout')),
+          ms
+        );
+        const abort = () =>
+          interruption.reject(new Error('boundary-cancelled'));
+        candidate.abort.signal.addEventListener('abort', abort, { once: true });
+        try {
+          return await Promise.race([promise, interruption.promise]);
+        } finally {
+          clearTimeout(timer);
+          candidate.abort.signal.removeEventListener('abort', abort);
+        }
+      };
+      const starts: Promise<void>[] = [];
+      const prepareOne = async ({
+        contribution,
+        key,
+      }: (typeof incoming)[number]): Promise<void> => {
+        const path = contribution.bundle_path!;
+        const node = doc.nodes[contribution.node_id];
+        const map = node && otioSamplingMap(node);
+        const fidelity = effectFidelity(
+          contribution.active_effects,
+          contribution.node_id
+        );
+        if (
+          !map ||
+          fidelity.kind !== 'ok' ||
+          map.scalar !== fidelity.rate ||
+          sampleUnavailable(doc, contribution) ||
+          (node?.active_media_reference_key &&
+            node.media_references?.[node.active_media_reference_key]?.schema ===
+              'ImageSequenceReference.1') ||
+          nativeIneligiblePaths.has(path) ||
+          nativeRings.has(key)
+        )
+          return fail();
+        try {
+          const video = await bounded(
+            acquireVideo(key, path, candidate.generation),
+            3000
+          );
+          if (
+            !valid() ||
+            !video ||
+            videos.get(key) !== video ||
+            lastDrawnOccurrenceKeys.has(key)
+          )
+            return fail();
+          const timing = await bounded(
+            sharedVideoTiming(path, inferMediaMimeType(path)),
+            3000
+          );
+          if (
+            !valid() ||
+            !timing ||
+            timing.kind !== 'windows' ||
+            !checkNativeTimingEligibility(
+              timing,
+              fidelity.rate,
+              vsyncTracker.medianSeconds
+            ) ||
+            typeof VideoFrame !== 'function' ||
+            typeof (video.element as HTMLVideoElementWithRvfc)
+              .requestVideoFrameCallback !== 'function' ||
+            !applyRate(video.element, fidelity.rate)
+          )
+            return fail();
+          const tag = certifiedWindowIndex(contribution.source_time, timing);
+          const midpoint = videoDecoderTime(contribution.source_time, timing);
+          if (
+            tag === null ||
+            midpoint === null ||
+            timing.starts[tag + 1] === undefined
+          )
+            return fail();
+          if (nativeRings.has(key) || lastDrawnOccurrenceKeys.has(key))
+            return fail();
+          const ring = getOrCreateNativeRing(key, video.element, path);
+          candidate.rings.set(key, ring);
+          const { width, height } = outputSize();
+          if (!ring.allocate(width, height)) return fail();
+          ring.resetEpoch(ring.captureEpoch + 1);
+          if (
+            !(await bounded(
+              seekElement(
+                video.element,
+                midpoint,
+                candidate.generation,
+                candidate.abort.signal
+              ),
+              1000
+            )) ||
+            !valid()
+          )
+            return fail();
+          if (!ring.capturePausedFrame(tag, ring.captureEpoch, timing))
+            return fail();
+          const vsync = vsyncTracker.medianSeconds;
+          const wMin = minWindowDuration(timing, fidelity.rate);
+          const lead = wMin + vsync / 2;
+          const sB = decoderLocalSeconds(contribution.source_time);
+          const boundaryWall =
+            anchor.wallMs +
+            1000 *
+              (boundary.time.value / boundary.time.rate -
+                anchor.time.value / anchor.time.rate);
+          const requestWall =
+            boundaryWall + 1000 * ((midpoint - sB) / fidelity.rate - lead);
+          const delay = Math.max(0, requestWall - presentClockMs());
+          starts.push(
+            (async () => {
+              try {
+                const wait = Promise.withResolvers<void>();
+                const waitTimer = setTimeout(wait.resolve, delay);
+                try {
+                  await bounded(wait.promise, delay + 1000);
+                } finally {
+                  clearTimeout(waitTimer);
+                }
+                if (!valid()) return fail();
+                ring.isStarting = true;
+                ring.startupFirstAdvancedTag = tag + 1;
+                const advanced = Promise.withResolvers<{
+                  now: number;
+                  tag: number;
+                }>();
+                ring.startupWaiter = advanced;
+                const playing = video.element.play();
+                ring.startCallbacks(timing, fidelity.rate, () => {
+                  nativeIneligiblePaths.add(path);
+                  if (preparedBoundary === candidate) fail();
+                  else if (nativeRings.get(key) === ring && isPlaying)
+                    void startSequence(currentTime, true);
+                });
+                const [sample] = await bounded(
+                  Promise.all([advanced.promise, playing]),
+                  Math.max(
+                    500,
+                    4 * maxWindowDuration(timing, fidelity.rate) * 1000
+                  )
+                );
+                if (!valid() || nativeRings.get(key) !== ring) return fail();
+                const sampleStart = timing.starts[sample.tag];
+                if (sampleStart === undefined) return fail();
+                const preferred =
+                  sample.now +
+                  1000 * (lead - (sampleStart - sB) / fidelity.rate);
+                if (
+                  Math.abs(boundaryWall - preferred) >
+                  1000 * (wMin - vsync / 2)
+                )
+                  return fail();
+                ring.isStarting = false;
+              } catch {
+                fail();
+              }
+            })()
+          );
+        } catch {
+          fail();
+        }
+      };
+      const prepareAudio = async ({
+        contribution,
+        key,
+      }: (typeof incomingAudio)[number]): Promise<void> => {
+        const path = contribution.bundle_path;
+        const node = doc.nodes[contribution.node_id];
+        const map = node && otioSamplingMap(node);
+        const fidelity = effectFidelity(
+          contribution.active_effects,
+          contribution.node_id
+        );
+        if (
+          !path ||
+          !map ||
+          fidelity.kind !== 'ok' ||
+          map.scalar !== fidelity.rate ||
+          sampleUnavailable(doc, contribution)
+        )
+          return fail();
+        try {
+          const audio = await bounded(
+            acquireAudio(
+              key,
+              path,
+              contribution.track_id,
+              candidate.generation
+            ),
+            3000
+          );
+          if (
+            !valid() ||
+            !audio ||
+            audio.failed ||
+            audios.get(key) !== audio ||
+            audio.element.getAttribute('data-active') === 'true'
+          )
+            return fail();
+          candidate.audio.set(key, audio);
+          if (audio.gainNode) audio.gainNode.gain.value = 0;
+          else audio.element.volume = 0;
+          if (!applyRate(audio.element, fidelity.rate)) return fail();
+          if (
+            !(await bounded(
+              seekElement(
+                audio.element,
+                decoderLocalSeconds(contribution.source_time),
+                candidate.generation,
+                candidate.abort.signal
+              ),
+              1000
+            )) ||
+            !valid()
+          )
+            return fail();
+          const boundaryWall =
+            anchor.wallMs +
+            1000 *
+              (boundary.time.value / boundary.time.rate -
+                anchor.time.value / anchor.time.rate);
+          const delay = Math.max(
+            0,
+            boundaryWall - 1000 / clock.rate - presentClockMs()
+          );
+          starts.push(
+            (async () => {
+              try {
+                const wait = Promise.withResolvers<void>();
+                const timer = setTimeout(wait.resolve, delay);
+                try {
+                  await bounded(wait.promise, delay + 1000);
+                } finally {
+                  clearTimeout(timer);
+                }
+                if (!valid()) return fail();
+                await bounded(audio.element.play(), 1000);
+                if (!valid() || audios.get(key) !== audio) return fail();
+              } catch {
+                fail();
+              }
+            })()
+          );
+        } catch {
+          fail();
+        }
+      };
+      const jobs = [
+        ...incomingAudio.map((item) => () => prepareAudio(item)),
+        ...incoming.map((item) => () => prepareOne(item)),
+      ];
+      let next = 0;
+      const worker = async (): Promise<void> => {
+        while (valid()) {
+          const job = jobs[next++];
+          if (!job) return;
+          await job();
+        }
+      };
+      void Promise.all([worker(), worker()])
+        .then(() => Promise.all(starts))
+        .then(() => {
+          if (valid()) candidate.status = 'ready';
+        });
+      return;
+    }
   }
 
   function hideVisibleCanvas(): void {
@@ -1029,6 +1469,7 @@ export function createOtioPlayback(
     depth: number
   ): void {
     if (isDisposed) return;
+    cancelPreparedBoundary();
     removeSurfaceListener(surface);
     surface.width = 0;
     surface.height = 0;
@@ -1045,8 +1486,10 @@ export function createOtioPlayback(
 
   function onVisibleContextLost(): void {
     if (isDisposed) return;
+    cancelPreparedBoundary();
     hideVisibleCanvas();
     graphicsLost = true;
+    isNativeHolding = false;
     isBuffering = true;
     for (const surface of surfacePool) {
       if (surface) {
@@ -1222,42 +1665,13 @@ export function createOtioPlayback(
     return false;
   }
 
-  function unknownTransition(transitionId: string | undefined): boolean {
-    if (!transitionId) return false;
-    const node = doc.nodes[transitionId];
-    if (!node || node.enabled === false) return false;
-    return !isDissolve(node.transition_type);
-  }
-
-  function blockedTracks(tree: OtioVideoCompositionTree | null): Set<string> {
+  function blockedTracks(evaluation: OtioEvaluationResult): Set<string> {
     const blocked = new Set<string>();
-    if (!tree || baseMediaPreviewAllowed) return blocked;
-    const visit = (node: OtioVideoCompositionTree): void => {
-      if (node.kind === 'leaf') return;
-      if (node.kind === 'track') {
-        if (unknownTransition(node.transition_id)) blocked.add(node.node_id);
-        for (const branch of node.branches) {
-          if (branch.child) visit(branch.child);
-        }
-        return;
-      }
-      for (const child of node.children) visit(child);
-    };
-    visit(tree);
+    if (baseMediaPreviewAllowed) return blocked;
+    for (const transition of evaluation.active_transitions) {
+      if (transition.render_kind === 'opaque') blocked.add(transition.track_id);
+    }
     return blocked;
-  }
-
-  function transitionIssue(
-    type: string | undefined,
-    nodeId: string
-  ): OtioDiagnostic | null {
-    if (!type || isDissolve(type)) return null;
-    return diagnostic(
-      'warning',
-      'unsupported-effect',
-      `Unsupported transition: ${type}`,
-      nodeId
-    );
   }
 
   function contributionIssues(result: OtioEvaluationResult): OtioDiagnostic[] {
@@ -1272,37 +1686,21 @@ export function createOtioPlayback(
     };
     for (const contrib of result.video_contributions) {
       push(effectFidelity(contrib.active_effects, contrib.node_id).diagnostic);
-      push(transitionIssue(contrib.transition_type, contrib.node_id));
     }
     for (const contrib of result.audio_contributions) {
       push(effectFidelity(contrib.active_effects, contrib.node_id).diagnostic);
-      push(transitionIssue(contrib.transition_type, contrib.node_id));
     }
-    const tree = videoTree(result);
-    if (tree) {
-      const visit = (node: OtioVideoCompositionTree): void => {
-        if (node.kind === 'track') {
-          if (unknownTransition(node.transition_id)) {
-            push(
-              diagnostic(
-                'warning',
-                'unsupported-effect',
-                `Unsupported transition: ${
-                  doc.nodes[node.transition_id ?? '']?.transition_type ??
-                  'unknown'
-                }`,
-                node.node_id
-              )
-            );
-          }
-          for (const branch of node.branches) {
-            if (branch.child) visit(branch.child);
-          }
-        } else if (node.kind === 'stack') {
-          for (const child of node.children) visit(child);
-        }
-      };
-      visit(tree);
+    for (const transition of result.active_transitions) {
+      if (transition.render_kind !== 'opaque') continue;
+      const node = doc.nodes[transition.node_id];
+      push(
+        diagnostic(
+          'warning',
+          'unsupported-effect',
+          `Unsupported transition: ${node?.transition_type || 'unknown'}`,
+          transition.node_id
+        )
+      );
     }
     return issues;
   }
@@ -1490,9 +1888,10 @@ export function createOtioPlayback(
   function seekElement(
     media: HTMLMediaElement,
     target: number,
-    gen: number
+    gen: number,
+    signal: AbortSignal = scopeAbort.signal
   ): Promise<boolean> {
-    if (stale(gen)) return Promise.resolve(false);
+    if (stale(gen) || signal.aborted) return Promise.resolve(false);
     const matchesTarget = (): boolean =>
       Math.abs(media.currentTime - target) <= MEDIA_SEEK_TIME_PRECISION_SECONDS;
     if (
@@ -1505,7 +1904,6 @@ export function createOtioPlayback(
       return Promise.resolve(true);
     }
     const { promise, resolve } = Promise.withResolvers<boolean>();
-    const signal = scopeAbort.signal;
     let settled = false;
     const finish = (ok: boolean): void => {
       if (settled) return;
@@ -1698,7 +2096,15 @@ export function createOtioPlayback(
     if (existing) return existing;
     const pending = (async () => {
       const url = await sharedUrl(path);
-      if (!url || isDisposed || typeof Image === 'undefined') return null;
+      if (!url || isDisposed || typeof Image === 'undefined') {
+        if (!isDisposed) {
+          rememberFailure(
+            path,
+            diagnostic('error', 'missing-media', `Missing image: ${path}`, path)
+          );
+        }
+        return null;
+      }
       const element = new Image();
       element.src = url;
       if (!element.complete || element.naturalWidth === 0) {
@@ -1718,7 +2124,7 @@ export function createOtioPlayback(
       }
       const width = element.naturalWidth;
       const height = element.naturalHeight;
-      if (!decodedImageAllowed(width, height)) {
+      if (width > 0 && height > 0 && !decodedImageAllowed(width, height)) {
         element.src = '';
         rememberFailure(
           path,
@@ -1746,8 +2152,20 @@ export function createOtioPlayback(
       const kept = images.put(path, loaded.pixels, () => {
         loaded.element.src = '';
         imageElements.delete(path);
+        imagePromises.delete(path);
       });
-      if (!kept) return null;
+      if (!kept) {
+        rememberFailure(
+          path,
+          diagnostic(
+            'error',
+            'unsupported-codec',
+            `Image cannot fit the retained pixel budget: ${path}`,
+            path
+          )
+        );
+        return null;
+      }
       imageElements.set(path, loaded);
       mediaFailures.delete(path);
       return loaded;
@@ -1788,6 +2206,7 @@ export function createOtioPlayback(
   }
 
   function pauseAllMedia(): void {
+    audioReconcileRevision++;
     for (const video of videos.values()) video.element.pause();
     for (const audio of audios.values()) {
       audio.element.pause();
@@ -2051,14 +2470,23 @@ export function createOtioPlayback(
     result: OtioEvaluationResult,
     gen: number
   ): Promise<void> {
+    const revision = ++audioReconcileRevision;
     const active = new Set<string>();
     const seen = new Map<string, number>();
     for (const contrib of result.audio_contributions) {
-      if (stale(gen)) return;
+      if (stale(gen) || revision !== audioReconcileRevision) return;
       const fidelity = effectFidelity(contrib.active_effects, contrib.node_id);
+      const opaqueTransition = result.active_transitions.some(
+        (transition) =>
+          transition.render_kind === 'opaque' &&
+          (transition.track_id === contrib.track_id ||
+            ancestryOf(contrib).includes(transition.track_id))
+      );
       const withheld =
         !baseMediaPreviewAllowed &&
-        (fidelity.kind === 'effect' || fidelity.kind === 'rate');
+        (opaqueTransition ||
+          fidelity.kind === 'effect' ||
+          fidelity.kind === 'rate');
       if (!contrib.bundle_path) {
         mediaFailures.set(
           contrib.node_id,
@@ -2089,10 +2517,7 @@ export function createOtioPlayback(
         contrib.track_id,
         gen
       );
-      if (stale(gen)) {
-        loaded?.element.pause();
-        return;
-      }
+      if (stale(gen) || revision !== audioReconcileRevision) return;
       if (!loaded || loaded.failed) {
         if (!loaded) {
           rememberFailure(
@@ -2109,7 +2534,8 @@ export function createOtioPlayback(
       }
       const audible = trackAudible(contrib.track_id);
       const gain = Math.max(0, contrib.volume * contrib.transition_weight);
-      applyAudioGain(loaded, gain, audible);
+      desiredAudioGain.set(loaded, { gain, audible });
+      if (!audioSeeking.has(loaded)) applyAudioGain(loaded, gain, audible);
       const currentActive = loaded.element.getAttribute('data-active');
       const nextActive = audible ? 'true' : 'false';
       if (currentActive !== nextActive) {
@@ -2147,14 +2573,14 @@ export function createOtioPlayback(
       const tolerance = 2 / Math.max(1, clock.rate);
       const drift = Math.abs(loaded.element.currentTime - target);
       if (drift > tolerance && !audioSeeking.has(loaded)) {
-        asyncSeekAudio(loaded, target, gain, audible);
+        asyncSeekAudio(loaded, target);
       }
       if (loaded.element.paused && !audioSeeking.has(loaded)) {
         try {
           decodedAt.delete(loaded.element);
           await loaded.element.play();
         } catch (error) {
-          if (stale(gen)) return;
+          if (stale(gen) || revision !== audioReconcileRevision) return;
           rememberFailure(
             contrib.bundle_path,
             diagnostic(
@@ -2170,9 +2596,10 @@ export function createOtioPlayback(
         }
       }
     }
-    if (stale(gen)) return;
+    if (stale(gen) || revision !== audioReconcileRevision) return;
     for (const [key, entry] of audios) {
-      if (active.has(key)) continue;
+      if (active.has(key) || preparedBoundary?.audio.get(key) === entry)
+        continue;
       entry.element.pause();
       entry.element.setAttribute('data-active', 'false');
       if (entry.gainNode) entry.gainNode.gain.value = 0;
@@ -2181,6 +2608,7 @@ export function createOtioPlayback(
   }
 
   function paint(
+    evaluation: OtioEvaluationResult,
     tree: OtioVideoCompositionTree | null,
     leaves: readonly (OtioPreparedLeaf | null)[]
   ): boolean {
@@ -2193,7 +2621,7 @@ export function createOtioPlayback(
     const ctx = canvas.getContext('2d');
     if (!ctx) return false;
     const { width, height } = outputSize();
-    const blocked = blockedTracks(tree);
+    const blocked = blockedTracks(evaluation);
     renderOtioVideoTree(
       ctx,
       width,
@@ -2216,8 +2644,8 @@ export function createOtioPlayback(
         if (!surface) {
           throw new Error('Canvas surface unavailable');
         }
-        surface.width = width;
-        surface.height = height;
+        if (surface.width !== width) surface.width = width;
+        if (surface.height !== height) surface.height = height;
         return surface;
       },
       (nodeId, ancestry) => videoHidden(nodeId, ancestry) || blocked.has(nodeId)
@@ -2257,7 +2685,7 @@ export function createOtioPlayback(
       if (stale(gen)) return;
       let presented = false;
       try {
-        presented = paint(tree, leaves);
+        presented = paint(evaluation, tree, leaves);
       } catch {
         // A missing surface must not paint a stale frame.
       }
@@ -2290,14 +2718,10 @@ export function createOtioPlayback(
     return done;
   }
 
-  function asyncSeekAudio(
-    audio: LoadedAudio,
-    target: number,
-    volume: number,
-    audible: boolean
-  ): void {
+  function asyncSeekAudio(audio: LoadedAudio, target: number): void {
     if (audioSeeking.has(audio)) return;
     const epoch = scopeEpoch;
+    const generation = renderGeneration;
     audioSeeking.add(audio);
     if (audio.gainNode) {
       audio.gainNode.gain.value = 0;
@@ -2307,8 +2731,22 @@ export function createOtioPlayback(
     const onSeeked = (): void => {
       audio.element.removeEventListener('seeked', onSeeked);
       audioSeeking.delete(audio);
-      if (epoch === scopeEpoch && !isDisposed)
-        applyAudioGain(audio, volume, audible);
+      const desired = desiredAudioGain.get(audio);
+      if (
+        epoch === scopeEpoch &&
+        generation === renderGeneration &&
+        audios.get(audio.key) === audio &&
+        !isDisposed &&
+        isPlaying &&
+        audio.element.getAttribute('data-active') === 'true' &&
+        desired
+      ) {
+        applyAudioGain(
+          audio,
+          desired.gain,
+          desired.audible && trackAudible(audio.trackId)
+        );
+      }
     };
     audio.element.addEventListener('seeked', onSeeked);
     try {
@@ -2316,11 +2754,20 @@ export function createOtioPlayback(
     } catch {
       audio.element.removeEventListener('seeked', onSeeked);
       audioSeeking.delete(audio);
-      applyAudioGain(audio, volume, audible);
+      const desired = desiredAudioGain.get(audio);
+      if (desired && isPlaying) {
+        applyAudioGain(
+          audio,
+          desired.gain,
+          desired.audible && trackAudible(audio.trackId)
+        );
+      }
     }
   }
 
   function fallbackToSeekCadence(): void {
+    cancelPreparedBoundary();
+    isNativeHolding = false;
     nativeEpoch++;
     pauseAllMedia();
     for (const ring of nativeRings.values()) {
@@ -2343,6 +2790,8 @@ export function createOtioPlayback(
     T0: OtioRationalTime,
     buffering: boolean = false
   ): Promise<void> {
+    cancelPreparedBoundary();
+    isNativeHolding = false;
     const gen = ++renderGeneration;
     isStarting = !buffering;
     if (buffering) {
@@ -2372,7 +2821,7 @@ export function createOtioPlayback(
 
     const evaluation = scopedEvaluation(T0);
     const tree = videoTree(evaluation);
-    const blocked = blockedTracks(tree);
+    const blocked = blockedTracks(evaluation);
     const isHidden = (nodeId: string, ancestry: readonly string[]) =>
       videoHidden(nodeId, ancestry) || blocked.has(nodeId);
     const drawnLeafIndices = getDrawnLeafIndices(tree, isHidden);
@@ -2693,13 +3142,17 @@ export function createOtioPlayback(
       return;
     }
 
-    const startOccurrenceKeys = collectVideoOccurrenceKeys(
-      evaluation.video_contributions
-    );
-    knownVideoKeys = new Set(startOccurrenceKeys.filter(Boolean));
-
     isStarting = false;
     isBuffering = false;
+    playbackBoundaries = otioPlaybackBoundaries(
+      doc,
+      timelineId,
+      scope?.range ?? {
+        start_time: { value: 0, rate: clock.rate },
+        duration: clock.duration,
+      }
+    );
+    prepareNextBoundary();
     notify();
     if (isPlaying) scheduleTick();
   }
@@ -2735,6 +3188,7 @@ export function createOtioPlayback(
       }
 
       if (compareRationalTimes(T, scopeEnd()) >= 0) {
+        cancelPreparedBoundary();
         currentTime = scopeLastSample();
         isPlaying = false;
         nativeAnchor = null;
@@ -2746,8 +3200,9 @@ export function createOtioPlayback(
       }
 
       const evaluation = scopedEvaluation(T);
+      images.clearPins();
       const tree = videoTree(evaluation);
-      const blocked = blockedTracks(tree);
+      const blocked = blockedTracks(evaluation);
       const isHidden = (nodeId: string, ancestry: readonly string[]) =>
         videoHidden(nodeId, ancestry) || blocked.has(nodeId);
       const drawnLeafIndices = getDrawnLeafIndices(tree, isHidden);
@@ -2756,23 +3211,32 @@ export function createOtioPlayback(
       );
 
       const currentDrawnOccurrenceKeys = drawnVideoKeys(evaluation, tree);
-      for (let idx = 0; idx < evaluation.video_contributions.length; idx++) {
-        const contrib = evaluation.video_contributions[idx];
-        if (!contrib || contrib.bundle_path === null) continue;
-        const mime = inferMediaMimeType(contrib.bundle_path);
-        if (!mime.startsWith('video/')) continue;
-        const key = occurrenceKeys[idx];
+      for (
+        let index = 0;
+        index < evaluation.video_contributions.length;
+        index++
+      ) {
+        const contribution = evaluation.video_contributions[index];
+        const key = occurrenceKeys[index];
         if (
-          key &&
-          !currentDrawnOccurrenceKeys.has(key) &&
-          !knownVideoKeys.has(key)
-        ) {
-          knownVideoKeys.add(key);
-          const warmFrames: VideoFrame[] = [];
-          void prepareLeaf(contrib, key, renderGeneration, warmFrames).finally(
-            () => closeFrames(warmFrames)
-          );
-        }
+          !contribution?.bundle_path ||
+          !key ||
+          currentDrawnOccurrenceKeys.has(key) ||
+          hiddenWarmSeen.has(key) ||
+          hiddenWarmInFlight.size >= 2 ||
+          preparedBoundary?.keys.has(key) ||
+          !inferMediaMimeType(contribution.bundle_path).startsWith('video/')
+        )
+          continue;
+        hiddenWarmSeen.add(key);
+        hiddenWarmInFlight.add(key);
+        const frames: VideoFrame[] = [];
+        void prepareLeaf(contribution, key, renderGeneration, frames).finally(
+          () => {
+            closeFrames(frames);
+            hiddenWarmInFlight.delete(key);
+          }
+        );
       }
 
       const drawnNativeLeaves: {
@@ -2791,8 +3255,12 @@ export function createOtioPlayback(
         const mime = inferMediaMimeType(contrib.bundle_path);
         if (mime.startsWith('image/')) {
           if (!imageElements.has(contrib.bundle_path)) {
-            scheduleTick();
-            return;
+            if (!mediaFailures.has(contrib.bundle_path)) {
+              void startSequence(T, true);
+              return;
+            }
+          } else {
+            images.pin(contrib.bundle_path);
           }
           continue;
         }
@@ -2829,8 +3297,88 @@ export function createOtioPlayback(
         currentDrawnOccurrenceKeys,
         lastDrawnOccurrenceKeys
       );
+      const candidate = preparedBoundary;
+      const enteringAudio: {
+        key: string;
+        contribution: OtioAudioContribution;
+      }[] = [];
+      if (
+        drawnSetChanged ||
+        (candidate && compareRationalTimes(T, candidate.at) >= 0)
+      ) {
+        const previousKeys = new Set(
+          collectAudioOccurrenceKeys(
+            scopedEvaluation(currentTime).audio_contributions
+          )
+        );
+        const currentAudioKeys = collectAudioOccurrenceKeys(
+          evaluation.audio_contributions
+        );
+        evaluation.audio_contributions.forEach((contribution, index) => {
+          const key = currentAudioKeys[index];
+          if (
+            key &&
+            !previousKeys.has(key) &&
+            trackAudible(contribution.track_id)
+          )
+            enteringAudio.push({ key, contribution });
+        });
+      }
+      const hasEnteringAudio = enteringAudio.length > 0;
 
-      if (drawnSetChanged) {
+      const onlyRetiring =
+        drawnSetChanged &&
+        !hasEnteringAudio &&
+        [...currentDrawnOccurrenceKeys].every((key) =>
+          lastDrawnOccurrenceKeys.has(key)
+        );
+      const joinedPrepared =
+        (drawnSetChanged || hasEnteringAudio) &&
+        candidate !== null &&
+        candidate.status === 'ready' &&
+        candidate.anchor === nativeAnchor &&
+        candidate.generation === renderGeneration &&
+        candidate.scope === scopeEpoch &&
+        compareRationalTimes(T, candidate.at) >= 0 &&
+        [...candidate.audioKeys].every((key) =>
+          enteringAudio.some((item) => item.key === key)
+        ) &&
+        enteringAudio.every(({ key, contribution }) => {
+          const audio = candidate.audio.get(key);
+          const fidelity = effectFidelity(
+            contribution.active_effects,
+            contribution.node_id
+          );
+          return (
+            !!audio &&
+            audios.get(key) === audio &&
+            !audio.failed &&
+            !audio.element.error &&
+            fidelity.kind === 'ok' &&
+            audio.element.playbackRate === fidelity.rate &&
+            !audio.element.paused &&
+            !audio.element.seeking &&
+            audio.element.readyState >= HAVE_CURRENT_DATA &&
+            Math.abs(
+              audio.element.currentTime -
+                decoderLocalSeconds(contribution.source_time)
+            ) <=
+              2 / Math.max(1, clock.rate)
+          );
+        }) &&
+        [...candidate.keys].every(
+          (key) =>
+            currentDrawnOccurrenceKeys.has(key) &&
+            candidate.rings.get(key) === nativeRings.get(key)
+        ) &&
+        [...currentDrawnOccurrenceKeys].every(
+          (key) => lastDrawnOccurrenceKeys.has(key) || candidate.keys.has(key)
+        );
+      if (
+        (drawnSetChanged || hasEnteringAudio) &&
+        !onlyRetiring &&
+        !joinedPrepared
+      ) {
         lastDrawnOccurrenceKeys = currentDrawnOccurrenceKeys;
         drawnSetChangeTimestamps = drawnSetChangeTimestamps.filter(
           (t) => now - t <= 5000
@@ -2854,14 +3402,18 @@ export function createOtioPlayback(
 
       for (const leaf of drawnNativeLeaves) {
         const ring = nativeRings.get(leaf.key);
+        if (ring && ring.videoElement.playbackRate !== leaf.rL) {
+          allApproved = false;
+          failureResyncNeeded = true;
+        }
         if (
           !ring ||
           ring.hasLostContext() ||
-          !ring.hasTag(leaf.req, nativeEpoch)
+          !ring.hasTag(leaf.req, ring.captureEpoch)
         ) {
           allApproved = false;
           if (ring?.hasLostContext()) {
-            ring.resetEpoch(nativeEpoch);
+            ring.resetEpoch(ring.captureEpoch + 1);
           }
         }
 
@@ -2920,6 +3472,10 @@ export function createOtioPlayback(
       }
 
       if (!allApproved) {
+        if (!isNativeHolding) {
+          isNativeHolding = true;
+          notify();
+        }
         scheduleTick();
         return;
       }
@@ -2966,7 +3522,7 @@ export function createOtioPlayback(
           const timing = videoTimingCache.get(contrib.bundle_path);
           const req = certifiedWindowIndex(contrib.source_time, timing ?? null);
           if (req === null) return { kind: 'empty' as const };
-          const slot = ring.findSlotWithTag(req, nativeEpoch);
+          const slot = ring.findSlotWithTag(req, ring.captureEpoch);
           if (!slot) return { kind: 'empty' as const };
           return {
             kind: 'image' as const,
@@ -2977,13 +3533,42 @@ export function createOtioPlayback(
 
       let presented = false;
       try {
-        presented = paint(tree, leaves);
+        presented = paint(evaluation, tree, leaves);
       } catch {}
 
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
+        if (onlyRetiring || joinedPrepared) {
+          for (const key of lastDrawnOccurrenceKeys) {
+            if (currentDrawnOccurrenceKeys.has(key)) continue;
+            const ring = nativeRings.get(key);
+            if (!ring) continue;
+            ring.videoElement.pause();
+            decodedAt.delete(ring.videoElement);
+            ring.release();
+            if (nativeRings.get(key) === ring) nativeRings.delete(key);
+          }
+          lastDrawnOccurrenceKeys = currentDrawnOccurrenceKeys;
+          if (joinedPrepared && candidate) {
+            for (const { key, contribution } of enteringAudio) {
+              const audio = candidate.audio.get(key);
+              if (!audio) continue;
+              const gain = Math.max(
+                0,
+                contribution.volume * contribution.transition_weight
+              );
+              applyAudioGain(audio, gain, trackAudible(contribution.track_id));
+              audio.element.setAttribute('data-active', 'true');
+            }
+          }
+          if (joinedPrepared && preparedBoundary === candidate) {
+            preparedBoundary = null;
+          }
+        }
         nativeLastPresentMs = now;
+        isNativeHolding = false;
         currentTime = T;
         void reconcileAudio(evaluation, renderGeneration);
+        prepareNextBoundary();
         notify();
       } else if (
         nativeLastPresentMs !== null &&
@@ -3183,6 +3768,7 @@ export function createOtioPlayback(
       playing: isPlaying,
       buffering:
         isBuffering ||
+        isNativeHolding ||
         (isStarting &&
           (typeof performance !== 'undefined'
             ? performance.now() - startingStartTime > 250
@@ -3252,6 +3838,8 @@ export function createOtioPlayback(
 
     pause(): void {
       if (isDisposed || !isPlaying) return;
+      cancelPreparedBoundary();
+      isNativeHolding = false;
       isPlaying = false;
       isStarting = false;
       clockAnchor = null;
@@ -3267,6 +3855,7 @@ export function createOtioPlayback(
 
     async seek(time: OtioRationalTime): Promise<void> {
       if (isDisposed) return;
+      cancelPreparedBoundary();
       currentTime = clampTime(time);
       failureSeekCadence = false;
       clockAnchor = null;
@@ -3338,6 +3927,8 @@ export function createOtioPlayback(
         }
         context.add(target.id);
       }
+      cancelPreparedBoundary();
+      isNativeHolding = false;
       scope = next
         ? {
             nodeId: next.nodeId,
@@ -3368,7 +3959,7 @@ export function createOtioPlayback(
       lastDrawnOccurrenceKeys.clear();
       lastRenderDrawnOccurrenceKeys.clear();
       lastRenderVideoContributions.clear();
-      knownVideoKeys.clear();
+      hiddenWarmSeen.clear();
       hideVisibleCanvas();
       scopeEpoch++;
       failureSeekCadence = false;
@@ -3408,6 +3999,7 @@ export function createOtioPlayback(
 
     setTrackMute(trackId: string, muted: boolean): void {
       if (isDisposed) return;
+      cancelPreparedBoundary();
       const track = tracks[trackId];
       if (!track) return;
       tracks[trackId] = { ...track, muted };
@@ -3441,6 +4033,7 @@ export function createOtioPlayback(
 
     setBaseMediaPreviewAllowed(allowed: boolean): void {
       if (isDisposed) return;
+      cancelPreparedBoundary();
       baseMediaPreviewAllowed = allowed;
       notify();
       void enqueueRender(currentTime, ++renderGeneration);
@@ -3448,6 +4041,7 @@ export function createOtioPlayback(
 
     dispose(): void {
       if (isDisposed) return;
+      cancelPreparedBoundary();
       restoreVisibleCanvas();
       isDisposed = true;
       graphicsFailed = false;

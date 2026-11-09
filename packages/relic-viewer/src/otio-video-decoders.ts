@@ -507,18 +507,35 @@ export class NativeDecoderRing {
     private readonly budget: SnapshotPixelBudget
   ) {}
 
+  get captureEpoch(): number {
+    return this.currentEpoch;
+  }
+
   allocate(width: number, height: number): boolean {
-    if (this.slots.length === SNAPSHOT_SLOTS_PER_DECODER) {
+    if (
+      !Number.isSafeInteger(width) ||
+      !Number.isSafeInteger(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      typeof document === 'undefined' ||
+      !document.createElement
+    ) {
+      return false;
+    }
+    if (
+      this.slots.length === SNAPSHOT_SLOTS_PER_DECODER &&
+      this.slots[0]?.canvas.width === width &&
+      this.slots[0]?.canvas.height === height &&
+      !this.hasLostContext()
+    ) {
       return true;
     }
     const needed = SNAPSHOT_SLOTS_PER_DECODER * width * height;
-    if (!this.budget.allocate(needed)) {
-      return false;
-    }
+    if (!Number.isSafeInteger(needed)) return false;
+    this.release();
+    if (!this.budget.allocate(needed)) return false;
     this.allocatedPixels = needed;
     for (let i = 0; i < SNAPSHOT_SLOTS_PER_DECODER; i++) {
-      if (typeof document === 'undefined' || !document.createElement)
-        return false;
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
@@ -589,36 +606,28 @@ export class NativeDecoderRing {
     if (this.slots.length === 0) {
       return { kind: 'readout-failed' };
     }
-    const slot = this.slots[this.nextSlotIndex];
-    if (!slot) {
-      return { kind: 'readout-failed' };
-    }
-    this.nextSlotIndex = (this.nextSlotIndex + 1) % this.slots.length;
     const { outcome, frame } = readPresentedFrame(this.videoElement, timing);
-    if (outcome.kind === 'readout-failed') {
-      slot.tag = null;
-      slot.epoch = -1;
-      return outcome;
-    }
     if (outcome.kind !== 'match' || frame === null) return outcome;
     try {
+      if (this.findSlotWithTag(outcome.index, epoch)) return outcome;
+      const slot = this.slots[this.nextSlotIndex];
+      if (!slot) return { kind: 'readout-failed' };
       const ctx = slot.ctx;
-      const w = slot.canvas.width;
-      const h = slot.canvas.height;
-      if (!ctx) {
-        throw new Error('canvas context missing');
+      slot.tag = null;
+      slot.epoch = -1;
+      if (!ctx) return { kind: 'readout-failed' };
+      try {
+        ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
+        ctx.drawImage(frame, 0, 0, slot.canvas.width, slot.canvas.height);
+      } catch {
+        return { kind: 'readout-failed' };
       }
-      ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(frame, 0, 0, w, h);
+      this.nextSlotIndex = (this.nextSlotIndex + 1) % this.slots.length;
       slot.tag = outcome.index;
       slot.epoch = epoch;
       slot.lead = 0;
       this.lastCapturedTag = outcome.index;
       return outcome;
-    } catch {
-      slot.tag = null;
-      slot.epoch = -1;
-      return { kind: 'readout-failed' };
     } finally {
       frame.close();
     }

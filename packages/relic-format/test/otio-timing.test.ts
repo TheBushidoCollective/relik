@@ -2580,12 +2580,9 @@ describe('transition admission and boundary scheduling', () => {
     expect(classifyOtioTransition({ ...node, schema: 'Transition.2' })).toBe(
       'opaque'
     );
-    for (const type of [
-      '',
-      undefined,
-      'SMPTE_Dissolve_custom',
-      'custom dissolve',
-    ]) {
+    const { transition_type: _type, ...missingType } = node;
+    expect(classifyOtioTransition(missingType)).toBe('opaque');
+    for (const type of ['', 'SMPTE_Dissolve_custom', 'custom dissolve']) {
       expect(classifyOtioTransition({ ...node, transition_type: type })).toBe(
         'opaque'
       );

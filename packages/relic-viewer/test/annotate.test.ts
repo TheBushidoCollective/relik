@@ -205,7 +205,7 @@ export class Node {
   }
 
   focus(): void {
-    const held = Reflect.get(globalThis, 'document') as
+    const held = Reflect.get(globalThis, 'document') as unknown as
       | { activeElement?: Node }
       | undefined;
     if (held?.activeElement) held.activeElement.focused = false;
