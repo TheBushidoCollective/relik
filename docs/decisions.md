@@ -730,7 +730,7 @@ Authorised by Jason Waldrip on 2026-10-14.
 **The rate limits and their reasons:**
 - `shareMaxPerCall: 20`: 20 addresses per share call represents the recipient set of a single conversation or working group.
 - `shareMaxPerRelic: 50`: 50 total shares per relic sits comfortably above the 40-person list that the download cap and egress budget were priced for in `service.md` §2.3.
-- `shareRateLimit: {limit: 30, windowSeconds: 3600}`: 30 shares per IP per hour matches `commentRateLimit` for abuse posture.
+- `shareRateLimit: {limit: 30, windowSeconds: 3600}`: 30 shares per IP per hour bounds share requests.
 - `unsubscribeRateLimit: {limit: 60, windowSeconds: 3600}`: 60 unsubscribes per IP per hour accommodates provider one-click prefetch and automated header checks without blocking human clicks.
 - `readerShareRateLimit: {limit: 10, windowSeconds: 3600}`: 10 reader shares per session per hour bounds sharing from the web viewer to prevent automated spam loops.
 - `changeNoticeRateLimit: {limit: 300, windowSeconds: 3600}`: Resend is paid (upgraded by Jason before server deployment). This global fuse permits batch delivery while bounding spend against runaway notice storms.
@@ -1044,3 +1044,7 @@ Jason Waldrip asked for `/policy` to be formatted in the markdown player, with n
 `/policy` still answers `text/markdown` to anything that does not ask for HTML, so `curl`, the deploy check and the player's own fetch are unchanged. A browser navigation gets the viewer shell in a `document` view that renders the same markdown in the same player and nothing else: no comments, decisions, share, copy link, download or report. The rejected alternative was a server-rendered HTML page: it needs no script, but it would have meant a second markdown renderer or a viewer dependency in the server, and "the same player" means the one renderer. Cost accepted: reading the policy in a browser now needs JavaScript. `/policy?raw=1`, linked from a `<noscript>` block, is the way to the source without it.
 
 The same change fixes the player for every markdown source: an indented line under a list item joins that item. The policy's own bullets wrap that way, and the old renderer broke the list and emitted the continuation as a paragraph.
+
+## 2026-11-09: Comment writes have no rate limit
+
+Jason directed that comments never be rate limited. Comment creation, edits, resolution, and reopening no longer share a per-IP quota. Authentication and author permissions, transport limits, the kill switch, and notification mail limits remain in place. This permits unbounded comment storage and readback work by an authorized actor; the mail limits do not bound that work. A fixed-clock burst exercises writes beyond the former threshold.
