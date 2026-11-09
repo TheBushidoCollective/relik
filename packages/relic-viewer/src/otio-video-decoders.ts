@@ -493,6 +493,8 @@ export class NativeDecoderRing {
   totalUncovered = 0;
   lastCallbackWallMs: number | null = null;
   lastCapturedTag: number | null = null;
+  lastProgressTag: number | null = null;
+  lastProgressWallMs: number | null = null;
   isStarting = false;
   startupFirstAdvancedTag: number | null = null;
   timing: OtioVideoTiming | null = null;
@@ -596,10 +598,21 @@ export class NativeDecoderRing {
     this.consecutiveUncovered = 0;
     this.startupFirstAdvancedTag = null;
     this.lastCapturedTag = null;
+    this.lastProgressTag = null;
+    this.lastProgressWallMs = null;
+    this.lastCallbackWallMs = null;
     for (const slot of this.slots) {
       slot.tag = null;
       slot.epoch = -1;
     }
+  }
+
+  recordProgress(outcome: PresentedWindowOutcome, now: number): void {
+    if (outcome.kind !== 'match') return;
+    if (this.lastProgressTag !== null && outcome.index <= this.lastProgressTag)
+      return;
+    this.lastProgressTag = outcome.index;
+    this.lastProgressWallMs = now;
   }
 
   readoutFrame(timing: OtioVideoTiming, epoch: number): PresentedWindowOutcome {
@@ -719,6 +732,7 @@ export class NativeDecoderRing {
             }
             this.lastCallbackWallMs = now;
             const outcome = this.readoutFrame(timing, epoch);
+            this.recordProgress(outcome, now);
             if (outcome.kind === 'match') {
               this.consecutiveUncovered = 0;
               if (

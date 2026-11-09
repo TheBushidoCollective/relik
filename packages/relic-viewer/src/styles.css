@@ -5013,7 +5013,6 @@ canvas.relic-page {
   .otio-preview-scope { font-size: .5rem; }
   .otio-preview-status { padding: 0 .5rem; overscroll-behavior: contain; }
   .otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-preview-scope { margin-top: .35rem; }
-  .otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-preview-status { margin-top: .5rem; }
   .otio-preview-base { padding: .3rem .35rem; }
   .otio-selection-readout { padding: .6rem .5rem; }
   .otio-selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }

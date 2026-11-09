@@ -1838,6 +1838,26 @@ describe('OTIO eager-shell bridge', () => {
       })
     ).toBe(false);
   });
+
+  test('narrow blocked previews retain the required scope-to-status separation', async () => {
+    const css = (
+      await Bun.file(new URL('../src/styles.css', import.meta.url)).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    const gaps = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((match) => {
+      if (
+        !match[1]!.includes(
+          '.otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-preview-status'
+        )
+      )
+        return [];
+      const margin = /(?:^|;)\s*margin-top:\s*([.\d]+)rem\s*(?:;|$)/.exec(
+        match[2]!
+      );
+      return margin ? [Number(margin[1])] : [];
+    });
+    expect(gaps.length).toBeGreaterThan(0);
+    expect(gaps.every((gap) => gap >= 0.65)).toBe(true);
+  });
 });
 
 describe('OTIO focused element activation', () => {

@@ -901,6 +901,7 @@ export function createOtioPlayback(
   const videoPromises = new Map<string, Promise<LoadedVideo | null>>();
   const audioPromises = new Map<string, Promise<LoadedAudio | null>>();
   const imagePromises = new Map<string, Promise<LoadedImage | null>>();
+  const imageOwners = new Map<string, Set<() => boolean>>();
   const videos = new Map<string, LoadedVideo>();
   const audios = new Map<string, LoadedAudio>();
   const decodedAt = new WeakMap<HTMLMediaElement, number>();
@@ -930,6 +931,7 @@ export function createOtioPlayback(
   const hiddenWarmSeen = new Set<string>();
   const hiddenWarmInFlight = new Set<string>();
   let isStarting = false;
+  let cancelStartupSampling: (() => void) | null = null;
   let startingStartTime = 0;
   const videoTimingCache = new Map<string, OtioVideoTiming>();
   const audioSeeking = new WeakSet<LoadedAudio>();
@@ -1055,9 +1057,18 @@ export function createOtioPlayback(
           return [];
         return [{ contribution, key }];
       });
+      const currentEvaluation = scopedEvaluation(currentTime);
       const previousAudio = new Set(
-        collectAudioOccurrenceKeys(
-          scopedEvaluation(currentTime).audio_contributions
+        collectAudioOccurrenceKeys(currentEvaluation.audio_contributions)
+      );
+      const currentTree = videoTree(currentEvaluation);
+      const currentBlocked = blockedTracks(currentEvaluation);
+      const currentImages = new Set(
+        getDrawnLeafIndices(
+          currentTree,
+          (id, ancestry) => videoHidden(id, ancestry) || currentBlocked.has(id)
+        ).map(
+          (index) => currentEvaluation.video_contributions[index]?.bundle_path
         )
       );
       const audioKeys = collectAudioOccurrenceKeys(
@@ -1081,7 +1092,7 @@ export function createOtioPlayback(
         if (
           path &&
           inferMediaMimeType(path).startsWith('image/') &&
-          !imageElements.has(path)
+          !currentImages.has(path)
         )
           incomingImages.add(path);
       }
@@ -1107,6 +1118,7 @@ export function createOtioPlayback(
         imagePaths: new Set(incomingImages),
       };
       preparedBoundary = candidate;
+      for (const path of incomingImages) images.pin(path);
       const valid = (): boolean =>
         preparedBoundary === candidate &&
         !candidate.abort.signal.aborted &&
@@ -1280,12 +1292,13 @@ export function createOtioPlayback(
             1000 *
               (boundary.time.value / boundary.time.rate -
                 anchor.time.value / anchor.time.rate);
-          const requestWall =
-            boundaryWall + 1000 * ((midpoint - sB) / fidelity.rate - lead);
-          const delay = Math.max(0, requestWall - presentClockMs());
           starts.push(
             (async () => {
               try {
+                const requestWall =
+                  boundaryWall +
+                  1000 * ((midpoint - sB) / fidelity.rate - lead);
+                const delay = Math.max(0, requestWall - presentClockMs());
                 const wait = Promise.withResolvers<void>();
                 const waitTimer = setTimeout(wait.resolve, delay);
                 try {
@@ -1425,7 +1438,7 @@ export function createOtioPlayback(
         ...[...incomingImages].map((path) => async () => {
           try {
             const image = await bounded(
-              acquireImage(path, candidate.generation),
+              acquireImage(path, candidate.generation, valid),
               3000
             );
             if (!valid() || !image || imageElements.get(path) !== image) fail();
@@ -2146,12 +2159,28 @@ export function createOtioPlayback(
 
   function acquireImage(
     path: OtioBundleEntryName,
-    _gen: number
+    gen: number,
+    owns: () => boolean = () => true
   ): Promise<LoadedImage | null> {
+    const loaded = imageElements.get(path);
+    if (loaded) return Promise.resolve(loaded);
+    let owners = imageOwners.get(path);
+    if (!owners) {
+      owners = new Set();
+      imageOwners.set(path, owners);
+    }
+    const ownerSet = owners;
+    ownerSet.add(() => !stale(gen) && owns());
     const existing = imagePromises.get(path);
     if (existing) return existing;
+    const hasOwner = (): boolean => [...ownerSet].some((owner) => owner());
     const pending = (async () => {
       const url = await sharedUrl(path);
+      if (!hasOwner()) {
+        if (imageOwners.get(path) === ownerSet) imageOwners.delete(path);
+        if (imagePromises.get(path) === pending) imagePromises.delete(path);
+        return null;
+      }
       if (!url || isDisposed || typeof Image === 'undefined') {
         if (!isDisposed) {
           rememberFailure(
@@ -2174,8 +2203,10 @@ export function createOtioPlayback(
         element.onerror = done;
         await promise;
       }
-      if (isDisposed) {
+      if (isDisposed || !hasOwner()) {
         element.src = '';
+        if (imageOwners.get(path) === ownerSet) imageOwners.delete(path);
+        if (imagePromises.get(path) === pending) imagePromises.delete(path);
         return null;
       }
       const width = element.naturalWidth;
@@ -2207,8 +2238,8 @@ export function createOtioPlayback(
       };
       const kept = images.put(path, loaded.pixels, () => {
         loaded.element.src = '';
-        imageElements.delete(path);
-        imagePromises.delete(path);
+        if (imageElements.get(path) === loaded) imageElements.delete(path);
+        if (imagePromises.get(path) === pending) imagePromises.delete(path);
       });
       if (!kept) {
         rememberFailure(
@@ -2227,6 +2258,17 @@ export function createOtioPlayback(
       return loaded;
     })();
     imagePromises.set(path, pending);
+    void pending.then(
+      (result) => {
+        if (imageOwners.get(path) === ownerSet) imageOwners.delete(path);
+        if (!result && !hasOwner() && imagePromises.get(path) === pending)
+          imagePromises.delete(path);
+      },
+      () => {
+        if (imageOwners.get(path) === ownerSet) imageOwners.delete(path);
+        if (imagePromises.get(path) === pending) imagePromises.delete(path);
+      }
+    );
     return pending;
   }
 
@@ -2262,6 +2304,7 @@ export function createOtioPlayback(
   }
 
   function pauseAllMedia(): void {
+    cancelStartupSampling?.();
     audioReconcileRevision++;
     for (const video of videos.values()) video.element.pause();
     for (const audio of audios.values()) {
@@ -2847,6 +2890,10 @@ export function createOtioPlayback(
     buffering: boolean = false
   ): Promise<void> {
     cancelPreparedBoundary();
+    if (frameHandle !== null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(frameHandle);
+      frameHandle = null;
+    }
     isNativeHolding = false;
     const gen = ++renderGeneration;
     isStarting = !buffering;
@@ -3092,6 +3139,39 @@ export function createOtioPlayback(
           }
         });
       }
+      // Sample while startup waits for its first rVFC too. Otherwise the
+      // browser can present and skip the first advanced packet before the
+      // ordinary playback tick has been scheduled.
+      let startupFrame: number | null = null;
+      let startupSampling = true;
+      const cancelled = Promise.withResolvers<'cancelled'>();
+      const cancelSampling = (): void => {
+        startupSampling = false;
+        if (
+          startupFrame !== null &&
+          typeof cancelAnimationFrame === 'function'
+        ) {
+          cancelAnimationFrame(startupFrame);
+          startupFrame = null;
+        }
+        cancelled.resolve('cancelled');
+      };
+      cancelStartupSampling = cancelSampling;
+      const sampleStartup = (now: number): void => {
+        startupFrame = null;
+        if (!startupSampling || !isPlaying || stale(gen)) return;
+        for (const leaf of drawnVideoLeaves) {
+          const ring = nativeRings.get(leaf.key);
+          if (!ring || ring.videoElement.paused || ring.hasLostContext())
+            continue;
+          const outcome = ring.readoutFrame(leaf.timing, ring.captureEpoch);
+          ring.recordProgress(outcome, now);
+        }
+        if (typeof requestAnimationFrame === 'function')
+          startupFrame = requestAnimationFrame(sampleStartup);
+      };
+      if (typeof requestAnimationFrame === 'function')
+        startupFrame = requestAnimationFrame(sampleStartup);
 
       let maxW = 0;
       for (const leaf of drawnVideoLeaves) {
@@ -3115,14 +3195,22 @@ export function createOtioPlayback(
       let raceResult:
         | [{ now: number; tag: number }[], PromiseSettledResult<void>[]]
         | 'timeout'
-        | 'failed';
+        | 'failed'
+        | 'cancelled';
       try {
-        raceResult = await Promise.race([waitAll, timeoutPromise]);
+        raceResult = await Promise.race([
+          waitAll,
+          timeoutPromise,
+          cancelled.promise,
+        ]);
       } catch {
         raceResult = 'failed';
       }
+      cancelSampling();
+      if (cancelStartupSampling === cancelSampling)
+        cancelStartupSampling = null;
       clearTimeout(timeoutTimer);
-      if (stale(gen)) return;
+      if (raceResult === 'cancelled' || stale(gen)) return;
 
       if (
         drawnVideoLeaves.some((leaf) =>
@@ -3229,6 +3317,19 @@ export function createOtioPlayback(
       return;
     }
     if (nativeMode && nativeAnchor !== null) {
+      // rVFC may omit a presented packet. Sample each owned running decoder
+      // once on the render tick; the ring admits only timestamp-certified
+      // frames, and duplicate matches do not consume another slot.
+      for (const ring of nativeRings.values()) {
+        if (
+          !ring.videoElement.paused &&
+          ring.timing &&
+          !ring.hasLostContext()
+        ) {
+          const outcome = ring.readoutFrame(ring.timing, ring.captureEpoch);
+          ring.recordProgress(outcome, now);
+        }
+      }
       if (nativeLastPresentMs === null) {
         nativeLastPresentMs = now;
       }
@@ -3490,8 +3591,8 @@ export function createOtioPlayback(
           }
         }
 
-        if (ring && ring.lastCallbackWallMs !== null) {
-          const t = ring.lastCapturedTag ?? leaf.req;
+        if (ring && ring.lastProgressWallMs !== null) {
+          const t = ring.lastProgressTag ?? leaf.req;
           const stallWindowSec =
             (leaf.timing.ends[t] ?? leaf.timing.ends[leaf.req] ?? 0) -
             (leaf.timing.starts[t] ?? leaf.timing.starts[leaf.req] ?? 0);
@@ -3499,7 +3600,7 @@ export function createOtioPlayback(
             3 * (stallWindowSec / leaf.rL) * 1000,
             100
           );
-          if (now - ring.lastCallbackWallMs > stallLimit) {
+          if (now - ring.lastProgressWallMs > stallLimit) {
             failureResyncNeeded = true;
             break;
           }
@@ -3664,6 +3765,19 @@ export function createOtioPlayback(
             candidate.imagePaths.size === 0
           )
             preparedBoundary = null;
+        }
+        if (
+          candidate &&
+          preparedBoundary === candidate &&
+          candidate.status === 'failed' &&
+          candidate.keys.size === 0 &&
+          candidate.audioKeys.size === 0 &&
+          compareRationalTimes(T, candidate.at) >= 0 &&
+          [...candidate.imagePaths].every(
+            (path) => imageElements.has(path) || mediaFailures.has(path)
+          )
+        ) {
+          preparedBoundary = null;
         }
         nativeLastPresentMs = now;
         isNativeHolding = false;
@@ -4177,6 +4291,7 @@ export function createOtioPlayback(
       videoPromises.clear();
       audioPromises.clear();
       imagePromises.clear();
+      imageOwners.clear();
       urlPromises.clear();
       callbackMediaPromises.clear();
       blobPromises.clear();
