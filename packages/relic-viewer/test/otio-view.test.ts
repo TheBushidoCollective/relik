@@ -2547,6 +2547,220 @@ describe('OTIO focused element activation', () => {
   });
 });
 
+describe('OTIO focused scope review regressions', () => {
+  let restoreDom: () => void;
+  let root: ViewElement;
+  let controller: OtioUiController | undefined;
+
+  beforeEach(() => {
+    restoreDom = installProjectionDom();
+    root = new ViewElement('div');
+    controller = undefined;
+  });
+  afterEach(() => {
+    controller?.dispose();
+    restoreDom();
+  });
+
+  async function mount(content: Uint8Array): Promise<OtioUiController> {
+    await mountOtioView(root as unknown as HTMLElement, {
+      content,
+      revision: 1,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement);
+    if (!controller) throw new Error('expected review controller');
+    return controller;
+  }
+
+  function row(id: string): ViewElement {
+    const found = findViewElement(
+      root,
+      (node) =>
+        node.matches('.otio-track-row') && node.dataset['trackId'] === id
+    );
+    if (!found) throw new Error(`expected track ${id}`);
+    return found;
+  }
+
+  test('compound focus retains its canonical owner rail for selection and saved comments', async () => {
+    const current = await mount(nestedSelectionContent());
+    const compound = Object.values(current.document.nodes).find(
+      (node) =>
+        node.schema.startsWith('Stack.') && node.parent_id === 'outer-track'
+    )!;
+    const focus = findViewElement(
+      root,
+      (node) => node.dataset['itemId'] === compound.id
+    )!;
+    const aims: OtioAnchorV1[] = [];
+    root.addEventListener('relic:otio-aim', (event) => {
+      aims.push((event as CustomEvent<{ anchor: OtioAnchorV1 }>).detail.anchor);
+    });
+    const { rail, band } = timelineGeometry(root);
+    rail.layout = new DOMRect(190, 402, 260, 54);
+    focus.dispatchEvent(new Event('click'));
+    const anchor = aims.at(-1)!;
+    expect(anchor.track_id).toBe('outer-track');
+    expect(anchor.item_id).toBe(compound.id);
+    expect(anchor.range).toEqual(compound.timeline_range!);
+    expect(row('outer-track').hidden).toBe(false);
+    expect(row('nested-track').hidden).toBe(false);
+    expect(root.dataset['domainOrigin']).toBe('48');
+    const selection = rail.querySelector('.otio-selection')!;
+    selection.layout = new DOMRect(220, 410, 80, 40);
+    expect(current.measure()).toMatchObject({
+      left: 220,
+      top: 410,
+      width: 80,
+      height: 40,
+    });
+    expect(current.paint(anchor, 'compound-comment')).toBe(true);
+    const posted = band.querySelector('.otio-comment-mark')!;
+    posted.layout = new DOMRect(220, 460, 80, 14);
+    const original = JSON.stringify(anchor);
+    current.reveal(anchor, 'compound-comment');
+    expect(row('outer-track').hidden).toBe(false);
+    expect(current.measure('compound-comment')).toMatchObject({
+      width: 80,
+      height: 14,
+    });
+    expect(JSON.stringify(anchor)).toBe(original);
+  });
+
+  test('focused descendants ignore collapsed ancestors above scope and retain inner collapses', async () => {
+    const source = JSON.parse(
+      new TextDecoder().decode(nestedSelectionContent())
+    );
+    const compoundSource = source.tracks.children[0].children[1];
+    compoundSource.children.push({
+      OTIO_SCHEMA: 'Track.1',
+      kind: 'Video',
+      metadata: { relic: { id: 'inner-parent-track' } },
+      children: [
+        {
+          OTIO_SCHEMA: 'Stack.1',
+          source_range: range(0, 24),
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: 'inner-leaf-track' } },
+              children: [clip('inner-clip', 'Nested clip')],
+            },
+          ],
+        },
+      ],
+    });
+    const current = await mount(
+      new TextEncoder().encode(JSON.stringify(source))
+    );
+    const compound = Object.values(current.document.nodes).find(
+      (node) =>
+        node.schema.startsWith('Stack.') && node.parent_id === 'outer-track'
+    )!;
+    const disclosure = (id: string) =>
+      findViewElement(root, (node) => node.dataset['disclose'] === id)!;
+    disclosure('inner-parent-track').dispatchEvent(new Event('click'));
+    disclosure('outer-track').dispatchEvent(new Event('click'));
+    expect(row('nested-track').hidden).toBe(true);
+    expect(row('inner-leaf-track').hidden).toBe(true);
+    findViewElement(
+      root,
+      (node) => node.dataset['itemId'] === compound.id
+    )!.dispatchEvent(new Event('click'));
+    expect(row('nested-track').hidden).toBe(false);
+    expect(row('inner-parent-track').hidden).toBe(false);
+    expect(row('inner-leaf-track').hidden).toBe(true);
+    root
+      .querySelector('.otio-back-composition')!
+      .dispatchEvent(new Event('click'));
+    expect(row('nested-track').hidden).toBe(true);
+    expect(disclosure('outer-track').getAttribute('aria-expanded')).toBe(
+      'false'
+    );
+    expect(disclosure('inner-parent-track').getAttribute('aria-expanded')).toBe(
+      'false'
+    );
+  });
+
+  test('timeline switching restores scroll after rebuilding the destination rows', async () => {
+    const content = new TextEncoder().encode(
+      JSON.stringify({
+        OTIO_SCHEMA: 'SerializableCollection.1',
+        children: [
+          ['long-timeline', 12],
+          ['short-timeline', 1],
+        ].map(([id, count]) => ({
+          OTIO_SCHEMA: 'Timeline.1',
+          name: id,
+          metadata: { relic: { id } },
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: Array.from({ length: Number(count) }, (_, index) => ({
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              metadata: { relic: { id: `${id}-track-${index}` } },
+              children: [clip(`${id}-clip-${index}`, 'Nested clip')],
+            })),
+          },
+        })),
+      })
+    );
+    const current = await mount(content);
+    const select = root.querySelector('.otio-timeline-select')!;
+    const scroll = root.querySelector('.otio-timeline-scroll')!;
+    const tracks = root.querySelector('.otio-track-rows')!;
+    scroll.clientWidth = 640;
+    scroll.clientHeight = 120;
+    let top = 0;
+    // Browser scroll setters clamp against the rows that exist at assignment
+    // time. A plain fake scrollTop would let this ordering regression pass.
+    Object.defineProperty(scroll, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (requested: number) => {
+        const height =
+          tracks.children.filter((node) => !node.hidden).length * 60;
+        top = Math.max(
+          0,
+          Math.min(Math.max(0, height - scroll.clientHeight), requested)
+        );
+      },
+    });
+    const choose = (id: string) => {
+      select.value = id;
+      select.dispatchEvent(new Event('change'));
+    };
+    choose('long-timeline');
+    root.querySelector('.otio-zoom-in')!.dispatchEvent(new Event('click'));
+    const scale = scroll.dataset['pixelsPerFrame'];
+    scroll.scrollLeft = 50;
+    scroll.scrollTop = 540;
+    const anchor = createOtioSelection(
+      current.document,
+      'long-timeline',
+      'long-timeline-track-0',
+      1,
+      range(5, 0),
+      'long-timeline-clip-0'
+    );
+    const original = JSON.stringify(anchor);
+    choose('short-timeline');
+    expect(tracks.children.filter((node) => !node.hidden)).toHaveLength(2);
+    expect(scroll.scrollTop).toBe(0);
+    choose('long-timeline');
+    expect(scroll.scrollTop).toBe(540);
+    expect(scroll.scrollLeft).toBe(50);
+    expect(scroll.dataset['zoomMode']).toBe('manual');
+    expect(scroll.dataset['pixelsPerFrame']).toBe(scale);
+    expect(current.paint(anchor, 'returned-comment')).toBe(true);
+    expect(JSON.stringify(anchor)).toBe(original);
+    choose('short-timeline');
+    choose('long-timeline');
+    expect(scroll.scrollTop).toBe(540);
+  });
+});
+
 describe('OTIO media and timeline divider', () => {
   let restoreDom: () => void;
   let root: ViewElement;

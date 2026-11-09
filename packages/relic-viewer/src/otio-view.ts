@@ -858,7 +858,8 @@ export async function mountOtioView(
   });
 
   function scopeIncludesTrack(lane: Lane): boolean {
-    if (!focusedNode) return true;
+    if (!focusedNode || lane.node.id === ownerTrackId(focusedNode.id))
+      return true;
     if (focusedNode.children_ids.length)
       return (
         lane.node.id === focusedNode.id ||
@@ -1007,7 +1008,7 @@ export async function mountOtioView(
     queueCommentRepack();
   }
 
-  function restoreTimelineViewport(): void {
+  function restoreTimelineViewport(rebuildTracks = false): void {
     viewportKey = `${timelineId ?? ''}:${focusedNode?.id ?? ''}:${domain.range.start_time.value}@${domain.range.start_time.rate}:${domain.range.duration.value}@${domain.range.duration.rate}`;
     ruler.replaceChildren(
       element('div', 'otio-ruler-label', `${rate} fps`),
@@ -1036,6 +1037,9 @@ export async function mountOtioView(
     );
     root.dataset['domainDuration'] = String(frames.duration);
     root.dataset['domainRate'] = String(rate);
+    // Scroll offsets clamp against the destination's actual rows. Rebuild
+    // before applying the saved viewport, without saving an intermediate clamp.
+    if (rebuildTracks) paintTracks();
     paintTimelineGeometry();
     scroll.scrollLeft = saved?.left ?? 0;
     scroll.scrollTop = saved?.top ?? 0;
@@ -1736,11 +1740,16 @@ export async function mountOtioView(
   function applyDisclosure(): void {
     for (const lane of lanes) {
       const row = rows.get(lane.node.id);
+      const focusIndex = focusedNode
+        ? lane.ancestors.indexOf(focusedNode.id)
+        : -1;
       if (row)
         row.hidden =
           !scopeIncludesTrack(lane) ||
           lane.ancestors.some(
-            (id) => collapsed.has(id) && id !== focusedNode?.id
+            (id, index) =>
+              collapsed.has(id) &&
+              (!focusedNode || (focusIndex >= 0 && index > focusIndex))
           );
     }
     const compositionRow = trackRows.querySelector<HTMLElement>(
@@ -2105,8 +2114,6 @@ export async function mountOtioView(
     applyDisclosure();
     paintSelection();
     paintFocus();
-    paintTimelineGeometry();
-    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
   function ownerTrackId(nodeId: string): string | null {
     let node = doc.nodes[nodeId];
@@ -2750,8 +2757,7 @@ export async function mountOtioView(
       },
       rate,
     };
-    restoreTimelineViewport();
-    paintTracks();
+    restoreTimelineViewport(true);
     paintMarkers();
     paintInspector();
     paintModes();
