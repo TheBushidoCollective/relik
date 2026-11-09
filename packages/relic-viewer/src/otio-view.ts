@@ -341,6 +341,23 @@ export async function mountOtioView(
   let pixelsPerFrame = 1;
   let zoomMode: 'fit' | 'manual' = 'fit';
   let railViewportWidth = 0;
+  let railLabelWidth = 0;
+  let rulerPaint:
+    | {
+        ticks: HTMLElement;
+        domain: OtioTimelineDomain;
+        step: number;
+        first: number;
+        last: number;
+      }
+    | undefined;
+  let paintedTracks: OtioPlaybackState['tracks'] | undefined;
+  let paintedDiagnostics: OtioPlaybackState['diagnostics'] | undefined;
+  let paintedStatus: OtioPlaybackState | undefined;
+  let paintedStatusScope: OtioNode | undefined;
+  let paintedStatusUnavailable: string | null = null;
+  let paintedStatusNotice: string | null = null;
+  let paintedStatusSettled = false;
   let viewportKey = '';
   const viewports = new Map<
     string,
@@ -510,6 +527,9 @@ export async function mountOtioView(
   const trackSelect = element('select', 'otio-track-select');
   trackSelect.setAttribute('aria-label', 'Comment track');
   trackSelect.addEventListener('change', () => {
+    // Repainting the old aim during scope changes updates this select too.
+    // Capture the user's choice before changing the displayed domain.
+    const trackId = trackSelect.value || null;
     const start =
       selected?.range.start_time ?? otioCompositionTime(domain, currentFrame());
     const end = selected
@@ -519,7 +539,8 @@ export async function mountOtioView(
           currentFrame() + (mode === 'point' ? 0 : 1)
         );
     setPlaybackFocus();
-    selectedTrack = trackSelect.value || null;
+    selectedTrack = trackId;
+    trackSelect.value = trackId ?? '';
     selectFrames(
       selectedTrack,
       otioLocalTime(domain, start).value,
@@ -879,8 +900,11 @@ export async function mountOtioView(
     const ticks = ruler.querySelector<HTMLElement>('.otio-ruler-ticks');
     if (!ticks) return;
     const frames = playbackFrames();
-    ticks.replaceChildren();
-    if (frames.duration <= 0) return;
+    if (frames.duration <= 0) {
+      if (ticks.children.length) ticks.replaceChildren();
+      rulerPaint = undefined;
+      return;
+    }
     // Only visible ticks exist, including at very large inspection scales.
     const desired = Math.max(1, 86 / pixelsPerFrame);
     const magnitude = 10 ** Math.floor(Math.log10(desired));
@@ -893,19 +917,31 @@ export async function mountOtioView(
       frames.end,
       firstVisible + railViewportWidth / pixelsPerFrame
     );
-    for (
-      let frame = Math.ceil(firstVisible / step) * step;
-      frame <= lastVisible;
-      frame += step
-    ) {
+    const first = Math.ceil(firstVisible / step) * step;
+    const last = Math.floor(lastVisible / step) * step;
+    if (
+      rulerPaint?.ticks === ticks &&
+      rulerPaint.domain === domain &&
+      rulerPaint.step === step &&
+      rulerPaint.first === first &&
+      rulerPaint.last === last
+    )
+      return;
+    rulerPaint = { ticks, domain, step, first, last };
+    ticks.replaceChildren();
+    for (let frame = first; frame <= last; frame += step) {
       const tick = element('span', '', formatOtioTime({ value: frame, rate }));
       tick.style.left = `${((frame - frames.start) / frames.duration) * 100}%`;
       ticks.append(tick);
     }
   }
 
-  function paintTimelineGeometry(): void {
-    const { label, width } = viewportDimensions();
+  function paintTimelineGeometry(
+    reposition = true,
+    dimensions = viewportDimensions()
+  ): void {
+    const { label, width } = dimensions;
+    railLabelWidth = label;
     railViewportWidth = width;
     const frames = playbackFrames();
     grid.style.width = `${label + (frames.duration > 0 ? frames.duration * pixelsPerFrame : width)}px`;
@@ -921,50 +957,54 @@ export async function mountOtioView(
     zoomOut.disabled = pixelsPerFrame <= limits.fit || frames.duration <= 0;
     zoomIn.disabled = pixelsPerFrame >= limits.maximum || frames.duration <= 0;
     zoomFit.disabled = frames.duration <= 0;
-    for (const mark of trackRows.querySelectorAll<HTMLElement>(
-      '[data-start]'
-    )) {
-      const range = {
-        start_time: {
-          value: Number(mark.dataset['start']),
-          rate: Number(mark.dataset['rate']),
-        },
-        duration: {
-          value: Number(mark.dataset['duration']),
-          rate: Number(mark.dataset['durationRate']),
-        },
-      };
-      positionMark(mark, range);
-      if (!scopeIncludesItem(mark.dataset['itemId'] ?? mark.dataset['ownerId']))
-        mark.hidden = true;
-    }
-    for (const item of trackRows.querySelectorAll<HTMLElement>('.otio-item')) {
-      const node = doc.nodes[item.dataset['itemId'] ?? ''];
-      if (!node) continue;
-      const range =
-        node.timeline_range ??
-        (focusedNode?.id === node.id ? focusedRange : undefined);
-      if (range) {
-        positionMark(item, range);
-        item.classList.remove('is-trimmed-out');
-        item.textContent = node.name || node.schema;
-      } else {
-        item.hidden = !scopeIncludesItem(node.id);
-        if (!item.classList.contains('is-unplaced')) {
-          item.classList.add('is-trimmed-out');
-          item.textContent = `Trimmed out · ${node.name || node.schema}`;
-        }
-        item.style.left = '';
-        item.style.width = '';
+    // Positions are percentages of the canonical domain. Zoom and resize
+    // scale them through the grid width without rewriting every lane/anchor.
+    if (reposition) {
+      for (const mark of trackRows.querySelectorAll<HTMLElement>(
+        '[data-start]'
+      )) {
+        const range = {
+          start_time: {
+            value: Number(mark.dataset['start']),
+            rate: Number(mark.dataset['rate']),
+          },
+          duration: {
+            value: Number(mark.dataset['duration']),
+            rate: Number(mark.dataset['durationRate']),
+          },
+        };
+        positionMark(mark, range);
+        if (
+          !scopeIncludesItem(mark.dataset['itemId'] ?? mark.dataset['ownerId'])
+        )
+          mark.hidden = true;
       }
-      if (!scopeIncludesItem(node.id)) item.hidden = true;
+      for (const item of trackRows.querySelectorAll<HTMLElement>(
+        '.otio-item'
+      )) {
+        const node = doc.nodes[item.dataset['itemId'] ?? ''];
+        if (!node) continue;
+        const range =
+          node.timeline_range ??
+          (focusedNode?.id === node.id ? focusedRange : undefined);
+        if (range) {
+          positionMark(item, range);
+          item.classList.remove('is-trimmed-out');
+          item.textContent = node.name || node.schema;
+        } else {
+          item.hidden = !scopeIncludesItem(node.id);
+          if (!item.classList.contains('is-unplaced')) {
+            item.classList.add('is-trimmed-out');
+            item.textContent = `Trimmed out · ${node.name || node.schema}`;
+          }
+          item.style.left = '';
+          item.style.width = '';
+        }
+        if (!scopeIncludesItem(node.id)) item.hidden = true;
+      }
+      applyDisclosure();
     }
-    applyDisclosure();
-    paintRuler();
     queueCommentRepack();
-    // Existing popovers follow this inner notification. No readiness/repaint
-    // event: geometry changes must not replace an encrypted aim or its draft.
-    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
   function restoreTimelineViewport(): void {
@@ -999,7 +1039,7 @@ export async function mountOtioView(
     paintTimelineGeometry();
     scroll.scrollLeft = saved?.left ?? 0;
     scroll.scrollTop = saved?.top ?? 0;
-    paintRuler();
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
   function updateTimelineDomain(): void {
@@ -1026,45 +1066,51 @@ export async function mountOtioView(
 
   function zoomTimeline(factor: number, pointerX?: number): void {
     if (disposed || cancelRailGesture || cancelResizeGesture) return;
-    const { width } = viewportDimensions();
+    const dimensions = viewportDimensions();
+    const { width } = dimensions;
     const next = otioZoomAt(
       { domain, pixelsPerFrame, scrollLeft: scroll.scrollLeft },
       width,
       pointerX ?? width / 2,
       pixelsPerFrame * factor
     );
+    if (
+      zoomMode === 'manual' &&
+      next.pixelsPerFrame === pixelsPerFrame &&
+      next.scrollLeft === scroll.scrollLeft
+    )
+      return;
     zoomMode = 'manual';
     pixelsPerFrame = next.pixelsPerFrame;
-    paintTimelineGeometry();
+    paintTimelineGeometry(false, dimensions);
     scroll.scrollLeft = next.scrollLeft;
     rememberTimelineViewport();
-    paintRuler();
     scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
   function fitTimeline(): void {
     if (disposed || cancelRailGesture || cancelResizeGesture) return;
     zoomMode = 'fit';
-    pixelsPerFrame = otioZoomLimits(domain, viewportDimensions().width).fit;
-    paintTimelineGeometry();
+    const dimensions = viewportDimensions();
+    pixelsPerFrame = otioZoomLimits(domain, dimensions.width).fit;
+    paintTimelineGeometry(false, dimensions);
     scroll.scrollLeft = 0;
     rememberTimelineViewport();
-    paintRuler();
     scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
   function refreshTimelineViewport(): void {
     if (disposed) return;
-    const { width } = viewportDimensions();
+    const dimensions = viewportDimensions();
+    const { width } = dimensions;
     if (width === railViewportWidth) return;
     // Preserve the visible centre in manual mode. Fit alone follows the width.
     const pivot = (scroll.scrollLeft + railViewportWidth / 2) / pixelsPerFrame;
     if (zoomMode === 'fit') pixelsPerFrame = otioZoomLimits(domain, width).fit;
-    paintTimelineGeometry();
+    paintTimelineGeometry(false, dimensions);
     if (zoomMode === 'manual')
       scroll.scrollLeft = Math.max(0, pivot * pixelsPerFrame - width / 2);
     rememberTimelineViewport();
-    paintRuler();
     scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
@@ -1097,7 +1143,6 @@ export async function mountOtioView(
             ? event.deltaX
             : event.deltaY) * unit;
       } else {
-        const { label } = viewportDimensions();
         zoomTimeline(
           Math.exp(
             -Math.max(-240, Math.min(240, event.deltaY * unit)) * 0.0025
@@ -1105,7 +1150,7 @@ export async function mountOtioView(
           event.clientX -
             scroll.getBoundingClientRect().left -
             scroll.clientLeft -
-            label
+            railLabelWidth
         );
       }
     },
@@ -1135,6 +1180,7 @@ export async function mountOtioView(
   }
   function reportPlaybackError(error: unknown): void {
     if (disposed) return;
+    paintedStatus = undefined;
     root.dataset['ready'] = 'diagnostic';
     root.dataset['previewState'] = 'diagnostic';
     previewStatus.hidden = false;
@@ -1292,6 +1338,7 @@ export async function mountOtioView(
     selectedTrack = trackId;
     inspected = trackId ? doc.nodes[trackId] : timeline;
     clearSelection();
+    paintedDiagnostics = undefined;
     diagnostics.replaceChildren(element('p', 'otio-diagnostic', message));
   }
 
@@ -1710,6 +1757,7 @@ export async function mountOtioView(
     queueCommentRepack();
   }
   function paintTracks(): void {
+    paintedTracks = undefined;
     rails.clear();
     commentBands.clear();
     rows.clear();
@@ -2058,6 +2106,7 @@ export async function mountOtioView(
     paintSelection();
     paintFocus();
     paintTimelineGeometry();
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
   function ownerTrackId(nodeId: string): string | null {
     let node = doc.nodes[nodeId];
@@ -2405,30 +2454,55 @@ export async function mountOtioView(
   }
   function paintState(state: OtioPlaybackState): void {
     if (disposed) return;
-    root.dataset['playing'] = String(state.playing);
-    root.dataset['buffering'] = String(state.buffering);
+    const playingValue = String(state.playing);
+    const bufferingValue = String(state.buffering);
+    if (root.dataset['playing'] !== playingValue)
+      root.dataset['playing'] = playingValue;
+    if (root.dataset['buffering'] !== bufferingValue)
+      root.dataset['buffering'] = bufferingValue;
     const bounds = playbackFrames();
     const unavailable = focusUnavailable !== null || bounds.end <= bounds.start;
     const localFrame = otioLocalTime(domain, state.time).value;
-    seek.min = String(bounds.start);
-    seek.max = String(bounds.last);
-    seek.disabled = unavailable;
-    previous.disabled = unavailable || localFrame <= bounds.start;
-    next.disabled = unavailable || localFrame >= bounds.last;
-    root.dataset['frame'] = String(rescaleTime(state.time, rate).value);
-    root.dataset['previewBlocked'] = String(state.previewBlocked);
-    root.classList.toggle('is-base-preview', state.baseMediaPreviewAllowed);
-    play.textContent = state.playing ? 'Pause' : 'Play';
-    play.disabled = unavailable || state.previewBlocked || frameCount() === 0;
-    clock.textContent = formatOtioTime(
+    const minimum = String(bounds.start);
+    const maximum = String(bounds.last);
+    if (seek.min !== minimum) seek.min = minimum;
+    if (seek.max !== maximum) seek.max = maximum;
+    if (seek.disabled !== unavailable) seek.disabled = unavailable;
+    const previousDisabled = unavailable || localFrame <= bounds.start;
+    const nextDisabled = unavailable || localFrame >= bounds.last;
+    if (previous.disabled !== previousDisabled)
+      previous.disabled = previousDisabled;
+    if (next.disabled !== nextDisabled) next.disabled = nextDisabled;
+    const compositionFrame = String(rescaleTime(state.time, rate).value);
+    if (root.dataset['frame'] !== compositionFrame)
+      root.dataset['frame'] = compositionFrame;
+    const blocked = String(state.previewBlocked);
+    if (root.dataset['previewBlocked'] !== blocked)
+      root.dataset['previewBlocked'] = blocked;
+    if (
+      root.classList.contains('is-base-preview') !==
+      state.baseMediaPreviewAllowed
+    )
+      root.classList.toggle('is-base-preview', state.baseMediaPreviewAllowed);
+    const playLabel = state.playing ? 'Pause' : 'Play';
+    if (play.textContent !== playLabel) play.textContent = playLabel;
+    const playDisabled =
+      unavailable || state.previewBlocked || frameCount() === 0;
+    if (play.disabled !== playDisabled) play.disabled = playDisabled;
+    const clockLabel = formatOtioTime(
       focusedNode ? otioLocalTime(domain, state.time) : state.time,
       !focusedNode && timelineId
         ? doc.global_start_times?.[timelineId]
         : undefined
     );
-    clock.dataset['value'] = String(state.time.value);
-    clock.dataset['rate'] = String(state.time.rate);
-    seek.value = String(localFrame);
+    if (clock.textContent !== clockLabel) clock.textContent = clockLabel;
+    const clockValue = String(state.time.value);
+    const clockRate = String(state.time.rate);
+    if (clock.dataset['value'] !== clockValue)
+      clock.dataset['value'] = clockValue;
+    if (clock.dataset['rate'] !== clockRate) clock.dataset['rate'] = clockRate;
+    const seekValue = String(localFrame);
+    if (seek.value !== seekValue) seek.value = seekValue;
     const fraction =
       domain.range.duration.value > 0
         ? otioRangeGeometry(domain, {
@@ -2436,39 +2510,83 @@ export async function mountOtioView(
             duration: { value: 0, rate },
           })?.left
         : undefined;
-    playhead.hidden = fraction === undefined;
-    if (fraction !== undefined)
-      playhead.style.left = `calc(var(--otio-label-width) + (100% - var(--otio-label-width)) * ${fraction})`;
-    for (const toggle of trackRows.querySelectorAll<HTMLButtonElement>(
-      '[data-track-toggle]'
-    )) {
-      const track = state.tracks[toggle.dataset['trackToggle'] ?? ''];
-      toggle.disabled = !track;
-      if (track)
-        toggle.setAttribute(
-          'aria-pressed',
-          String(track.kind === 'Audio' ? track.muted : !track.visible)
+    if (playhead.hidden !== (fraction === undefined))
+      playhead.hidden = fraction === undefined;
+    if (fraction !== undefined) {
+      const position = `calc(var(--otio-label-width) + (100% - var(--otio-label-width)) * ${fraction})`;
+      if (playhead.style.left !== position) playhead.style.left = position;
+    }
+    const tracksChanged =
+      !paintedTracks ||
+      lanes.some(
+        (lane) => paintedTracks?.[lane.node.id] !== state.tracks[lane.node.id]
+      );
+    if (tracksChanged) {
+      for (const toggle of trackRows.querySelectorAll<HTMLButtonElement>(
+        '[data-track-toggle]'
+      )) {
+        const track = state.tracks[toggle.dataset['trackToggle'] ?? ''];
+        toggle.disabled = !track;
+        if (track)
+          toggle.setAttribute(
+            'aria-pressed',
+            String(track.kind === 'Audio' ? track.muted : !track.visible)
+          );
+      }
+      for (const toggle of trackRows.querySelectorAll<HTMLButtonElement>(
+        '[data-track-solo]'
+      )) {
+        const track = state.tracks[toggle.dataset['trackSolo'] ?? ''];
+        toggle.disabled = !track;
+        if (track) toggle.setAttribute('aria-pressed', String(track.solo));
+      }
+      paintedTracks = state.tracks;
+    }
+    const previousDiagnostics = paintedDiagnostics;
+    const diagnosticsChanged =
+      !previousDiagnostics ||
+      previousDiagnostics.length !== state.diagnostics.length ||
+      state.diagnostics.some((issue, index) => {
+        const before = previousDiagnostics[index]!;
+        return (
+          before.code !== issue.code ||
+          before.severity !== issue.severity ||
+          before.message !== issue.message ||
+          (before.target !== undefined) !== (issue.target !== undefined) ||
+          before.target?.node_id !== issue.target?.node_id
         );
+      });
+    if (diagnosticsChanged) {
+      const issues = [...doc.diagnostics, ...state.diagnostics];
+      const unique = new Map(
+        issues.map((issue) => [
+          `${issue.code}:${issue.target?.node_id}:${issue.message}`,
+          issue,
+        ])
+      );
+      diagnostics.replaceChildren(
+        ...[...unique.values()].map((issue) =>
+          element('p', 'otio-diagnostic', `${issue.code} · ${issue.message}`)
+        )
+      );
+      paintedDiagnostics = state.diagnostics;
     }
-    for (const toggle of trackRows.querySelectorAll<HTMLButtonElement>(
-      '[data-track-solo]'
-    )) {
-      const track = state.tracks[toggle.dataset['trackSolo'] ?? ''];
-      toggle.disabled = !track;
-      if (track) toggle.setAttribute('aria-pressed', String(track.solo));
-    }
-    const issues = [...doc.diagnostics, ...state.diagnostics];
-    const unique = new Map(
-      issues.map((issue) => [
-        `${issue.code}:${issue.target?.node_id}:${issue.message}`,
-        issue,
-      ])
-    );
-    diagnostics.replaceChildren(
-      ...[...unique.values()].map((issue) =>
-        element('p', 'otio-diagnostic', `${issue.code} · ${issue.message}`)
-      )
-    );
+    // Native transport emits multiple snapshots for the same presented frame.
+    // Keep genuine buffering/diagnostic changes immediate, but retain unchanged
+    // status nodes and controls instead of rebuilding them on every snapshot.
+    if (
+      paintedStatus &&
+      paintedStatusScope === focusedNode &&
+      paintedStatusUnavailable === focusUnavailable &&
+      paintedStatusNotice === focusNotice &&
+      paintedStatusSettled === timelineSettled &&
+      paintedStatus.buffering === state.buffering &&
+      paintedStatus.previewBlocked === state.previewBlocked &&
+      paintedStatus.baseMediaPreviewAllowed === state.baseMediaPreviewAllowed &&
+      paintedStatus.graphicsFailed === state.graphicsFailed &&
+      !diagnosticsChanged
+    )
+      return;
     const incomplete = state.diagnostics.filter(
       (issue) =>
         issue.code !== 'supported' &&
@@ -2543,12 +2661,20 @@ export async function mountOtioView(
         root.dataset['previewState'] = 'unavailable';
       }
     }
+    paintedStatus = state;
+    paintedStatusScope = focusedNode;
+    paintedStatusUnavailable = focusUnavailable;
+    paintedStatusNotice = focusNotice;
+    paintedStatusSettled = timelineSettled;
   }
   function initializeTimeline(): void {
+    paintedStatus = undefined;
+    paintedTracks = undefined;
     rememberTimelineViewport();
     cancelRailGesture?.();
     ++scopeGeneration;
     focusedNode = undefined;
+    paintedDiagnostics = undefined;
     focusedRange = undefined;
     focusUnavailable = null;
     focusNotice = null;

@@ -379,7 +379,16 @@ function focusedSelectionContent(timelineRange = range(0, 96)): Uint8Array {
 class ViewElement {
   id = '';
   className = '';
-  textContent = '';
+  private text = '';
+  textWrites = 0;
+  replacements = 0;
+  get textContent(): string {
+    return this.text;
+  }
+  set textContent(value: string) {
+    this.text = value;
+    this.textWrites++;
+  }
   disabled = false;
   hidden = false;
   tabIndex = 0;
@@ -471,6 +480,7 @@ class ViewElement {
   }
 
   replaceChildren(...children: ViewElement[]): void {
+    this.replacements++;
     for (const child of this.children) child.parentElement = null;
     this.children.length = 0;
     this.append(...children);
@@ -1204,14 +1214,24 @@ describe('OTIO archive projection reader', () => {
 
         trackSelect.value = 'nested-track';
         trackSelect.dispatchEvent(new Event('change'));
+        expect(trackSelect.value).toBe('nested-track');
+        expect(root.querySelector('.otio-selection')).toBeNull();
         comment.dispatchEvent(new Event('click'));
         expect(emitted).toHaveLength(1);
 
         trackSelect.value = 'outer-track';
         trackSelect.dispatchEvent(new Event('change'));
+        expect(trackSelect.value).toBe('outer-track');
         comment.dispatchEvent(new Event('click'));
         expect(emitted).toHaveLength(2);
         expect(emitted[1]?.track_id).toBe('outer-track');
+        expect(
+          root
+            .querySelector('.otio-diagnostics')!
+            .children.some((node) =>
+              node.textContent.includes('Selection unavailable')
+            )
+        ).toBe(false);
       } finally {
         controller.dispose();
       }
@@ -2439,6 +2459,81 @@ describe('OTIO focused element activation', () => {
     expect(scroll.scrollLeft).toBe(85);
     expect(scroll.scrollTop).toBe(19);
     expect(root.dataset['domainOrigin']).toBe('0');
+  });
+
+  test('fluid transport updates retain unchanged status DOM and zoom keeps canonical lane nodes', async () => {
+    item('focused-disabled').dispatchEvent(new Event('click'));
+    await settleFocusRendering();
+    root.querySelector('.otio-timeline-scroll')!.clientWidth = 640;
+    root.querySelector('.otio-ruler-label')!.layout = new DOMRect(
+      0,
+      400,
+      174,
+      26
+    );
+    root.querySelector('.otio-zoom-fit')!.dispatchEvent(new Event('click'));
+    const status = root.querySelector('.otio-preview-status')!;
+    const issues = root.querySelector('.otio-diagnostics')!;
+    const clock = root.querySelector('.otio-time')!;
+    const seek = root.querySelector('.otio-seek')!;
+    const beforeStatus = status.replacements;
+    const beforeIssues = issues.replacements;
+    const beforeClock = clock.textWrites;
+    let buffering = root.dataset['buffering'];
+    let bufferingTransitions = 0;
+    let bufferingWrites = 0;
+    let bufferingPanels = 0;
+    Object.defineProperty(root.dataset, 'buffering', {
+      configurable: true,
+      get: () => buffering,
+      set: (value: string) => {
+        bufferingWrites++;
+        if (value !== buffering) bufferingTransitions++;
+        buffering = value;
+      },
+    });
+    const appendStatus = status.append.bind(status);
+    status.append = (...children: ViewElement[]) => {
+      bufferingPanels += children.filter((node) =>
+        node.classList.contains('otio-buffering')
+      ).length;
+      appendStatus(...children);
+    };
+    for (let frame = 1; frame <= 12; frame++) {
+      seek.value = String(frame);
+      seek.dispatchEvent(new Event('input'));
+      await settleFocusRendering();
+    }
+    const transport = {
+      statusRebuilds: status.replacements - beforeStatus,
+      diagnosticRebuilds: issues.replacements - beforeIssues,
+      clockWrites: clock.textWrites - beforeClock,
+      bufferingTransitions,
+      bufferingWrites,
+      bufferingPanels,
+      compositionFrame: root.dataset['frame'],
+    };
+    const clip = item('focused-disabled');
+    const ticks = root.querySelector('.otio-ruler-ticks')!;
+    const beforeName = clip.textWrites;
+    const beforeRuler = ticks.replacements;
+    for (let count = 0; count < 4; count++)
+      root.querySelector('.otio-zoom-in')!.dispatchEvent(new Event('click'));
+    expect({
+      ...transport,
+      zoomClipNameWrites: clip.textWrites - beforeName,
+      zoomRulerRebuilds: ticks.replacements - beforeRuler,
+    }).toEqual({
+      statusRebuilds: 24,
+      bufferingTransitions: 24,
+      bufferingWrites: 24,
+      bufferingPanels: 12,
+      diagnosticRebuilds: 0,
+      clockWrites: 12,
+      compositionFrame: '84',
+      zoomClipNameWrites: 0,
+      zoomRulerRebuilds: 4,
+    });
   });
 
   test('disposing a captured gesture removes listeners and ignores stale activation', () => {
