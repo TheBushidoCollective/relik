@@ -61,6 +61,8 @@ measurements and interaction results are recorded in
 Select a timeline clip or other element to focus its preview and attach
 feedback to that item. Use Back to composition to restore the full timeline
 playback.
+Drag the divider between the player and timeline to change how much space each
+gets. The divider also supports keyboard adjustment.
 
 `/policy` states the whole trade: the telemetry, the optional plaintext title,
 the per-relic cover image raster stored in the clear for unfurl cards
