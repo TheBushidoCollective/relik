@@ -4537,14 +4537,43 @@ describe('otio native video playback S-C and S-B', () => {
                   },
                 },
                 clip('e'),
+                clip('f'),
               ],
             },
             {
               OTIO_SCHEMA: 'Track.1',
               kind: 'Video',
               children: [
-                { OTIO_SCHEMA: 'Gap.1', source_range: span(2) },
-                { ...clip('d'), source_range: span(6) },
+                { OTIO_SCHEMA: 'Gap.1', source_range: span(3) },
+                {
+                  OTIO_SCHEMA: 'Transition.1',
+                  transition_type: 'SMPTE_Dissolve',
+                  in_offset: time(1),
+                  out_offset: time(1),
+                },
+                {
+                  ...clip('d'),
+                  source_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    start_time: time(1),
+                    duration: time(7),
+                  },
+                },
+              ],
+            },
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              children: [
+                { OTIO_SCHEMA: 'Gap.1', source_range: span(5) },
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  source_range: span(5),
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url: 'media/still.png',
+                  },
+                },
               ],
             },
             {
@@ -4553,7 +4582,7 @@ describe('otio native video playback S-C and S-B', () => {
               children: [
                 {
                   OTIO_SCHEMA: 'Clip.1',
-                  source_range: span(8),
+                  source_range: span(10),
                   media_reference: {
                     OTIO_SCHEMA: 'ExternalReference.1',
                     target_url: 'media/bed.wav',
@@ -4568,7 +4597,7 @@ describe('otio native video playback S-C and S-B', () => {
                 { OTIO_SCHEMA: 'Gap.1', source_range: span(2) },
                 {
                   OTIO_SCHEMA: 'Clip.1',
-                  source_range: span(6),
+                  source_range: span(8),
                   media_reference: {
                     OTIO_SCHEMA: 'ExternalReference.1',
                     target_url: 'media/intro.wav',
@@ -4590,8 +4619,10 @@ describe('otio native video playback S-C and S-B', () => {
     const c = new Blob(['c'], { type: 'video/mp4' });
     const d = new Blob(['d'], { type: 'video/mp4' });
     const e = new Blob(['e'], { type: 'video/mp4' });
+    const f = new Blob(['f'], { type: 'video/mp4' });
     const bed = new Blob(['bed'], { type: 'audio/wav' });
     const intro = new Blob(['intro'], { type: 'audio/wav' });
+    const still = new Blob(['still'], { type: 'image/png' });
     const fixture = timingMediaFixture({
       blobs: new Map([
         ['media/a.mp4', a],
@@ -4599,24 +4630,64 @@ describe('otio native video playback S-C and S-B', () => {
         ['media/c.mp4', c],
         ['media/d.mp4', d],
         ['media/e.mp4', e],
+        ['media/f.mp4', f],
         ['media/bed.wav', bed],
         ['media/intro.wav', intro],
+        ['media/still.png', still],
       ]),
       timings: new Map([
         [a, timing],
         [b, timing],
         [c, timing],
         [d, timing],
-        [e, timing],
+        [
+          e,
+          {
+            kind: 'windows',
+            starts: Float64Array.from([0]),
+            ends: Float64Array.from([2 / rate]),
+          },
+        ],
+        [f, timing],
       ]),
     });
     const output = new SoftCanvas();
+    const originalImage = globalThis.Image;
+    const loadedImages: MockMedia[] = [];
+    class TransparentImage extends MockMedia {
+      constructor() {
+        super();
+        this.pixel = { r: 0, g: 0, b: 0, a: 0 };
+        loadedImages.push(this);
+      }
+    }
+    globalThis.Image = TransparentImage as unknown as typeof Image;
     const originalCreate = document.createElement;
     document.createElement = ((tag: string) => {
       const element = originalCreate.call(document, tag);
       if (tag === 'video') {
         const media = element as unknown as MockMedia;
         media.enableRvfc();
+        const src = Object.getOwnPropertyDescriptor(
+          MockMedia.prototype,
+          'src'
+        )!;
+        Object.defineProperty(media, 'src', {
+          get() {
+            return src.get!.call(this);
+          },
+          set(value: string) {
+            src.set!.call(this, value);
+            if (value.includes('b.mp4')) {
+              this.presentationLag = true;
+              this.presentedTime = 1 / rate;
+            }
+            if (value.includes('e.mp4')) {
+              this.presentationLag = true;
+              this.presentedTime = 0;
+            }
+          },
+        });
         media.pixelAt = () => ({
           r: media.src.includes('a.mp4')
             ? 1
@@ -4679,6 +4750,10 @@ describe('otio native video playback S-C and S-B', () => {
       first.triggerRvfc(now, 1 / rate);
       await playing;
       await flush();
+      const delayed = created.find((m) => m.src.includes('b.mp4'))!;
+      expect(delayed.rvfcCallbacks.size).toBeGreaterThan(0);
+      delayed.present(0);
+      await flush();
       const tau = 100 + (1 / 60 + 2 / rate) * 500 - 1000 / rate;
       const wallFor = (frame: number) => tau + (frame * 1000) / rate;
       raf?.(wallFor(1));
@@ -4701,7 +4776,7 @@ describe('otio native video playback S-C and S-B', () => {
         expect(incoming).toBeDefined();
         const overlay = created.find((m) => m.src.includes('d.mp4'));
         expect(overlay).toBeDefined();
-        await advance(wallFor(entry) - 1000 / 40 + 0.01);
+        await advance(wallFor(entry) - 1000 / 60 + 0.01);
         if (name === 'b') {
           const entering = created.find((m) => m.src.includes('intro.wav'))!;
           expect(entering.paused).toBe(false);
@@ -4709,6 +4784,7 @@ describe('otio native video playback S-C and S-B', () => {
           expect(audioContext.gains.at(-1)!.gain.value).toBe(0);
         }
         expect(incoming!.rvfcCallbacks.size).toBeGreaterThan(0);
+        incoming!.presentedTime = null;
         incoming!.triggerRvfc(wallFor(entry) - 1000 / 120, 1 / rate);
         if (name === 'b') {
           expect(overlay!.rvfcCallbacks.size).toBeGreaterThan(0);
@@ -4730,25 +4806,157 @@ describe('otio native video playback S-C and S-B', () => {
           const entering = created.find((m) => m.src.includes('intro.wav'))!;
           expect(entering.getAttribute('data-active')).toBe('true');
           expect(audioContext.gains.at(-1)!.gain.value).toBe(1);
+          audio.advanceTo(2.5 / rate);
+          await advance(wallFor(2.5));
+          raf?.(wallFor(2.5));
+          await flush();
+          expect(playback.getState().buffering).toBe(false);
+          expect(playback.getState().time.value).toBeCloseTo(2.5, 4);
         }
       }
+      await flush();
+      const preparedStill = loadedImages.find((image) =>
+        image.src.includes('still.png')
+      );
+      expect(preparedStill?.complete).toBe(true);
+      const lastVideo = created.find((m) => m.src.includes('c.mp4'))!;
+      const overlay = created.find((m) => m.src.includes('d.mp4'))!;
+      lastVideo.triggerRvfc(wallFor(5), 2 / rate);
+      overlay.triggerRvfc(wallFor(5), 3 / rate);
+      audio.advanceTo(5 / rate);
+      await advance(wallFor(5));
+      raf?.(wallFor(5));
+      await flush();
+      expect(playback.getState().time.value).toBeCloseTo(5, 4);
+      expect(playback.getState().buffering).toBe(false);
+      expect(output.pixel.r).toBeCloseTo(3);
       expect(pauses).toBe(0);
       expect(audio.seekTargets.length).toBe(seeks);
       await flush();
-      const pending = created.find((m) => m.src.includes('e.mp4'));
+      const single = created.find((m) => m.src.includes('e.mp4'))!;
+      expect(single).toBeDefined();
+      expect(single.paused).toBe(true);
+      expect(single.rvfcCallbacks.size).toBe(0);
+      overlay.triggerRvfc(wallFor(6), 4 / rate);
+      audio.advanceTo(6 / rate);
+      await advance(wallFor(6));
+      raf?.(wallFor(6));
+      await flush();
+      expect(playback.getState().time.value).toBeCloseTo(6, 4);
+      expect(playback.getState().buffering).toBe(false);
+      expect(pauses).toBe(0);
+      const pending = created.find((m) => m.src.includes('f.mp4'));
       expect(pending).toBeDefined();
       playback.pause();
-      await advance(wallFor(6));
+      await advance(wallFor(8));
       expect(pending!.paused).toBe(true);
       expect(pending!.rvfcCallbacks.size).toBe(0);
       expect(playback.getState().playing).toBe(false);
     } finally {
       playback.dispose();
       document.createElement = originalCreate;
+      globalThis.Image = originalImage;
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
       if (originalNow) Object.defineProperty(performance, 'now', originalNow);
       else delete (performance as unknown as { now?: unknown }).now;
+    }
+  });
+  test('entering an unprepared freeze never advances with an empty composite', async () => {
+    const rate = 30;
+    const time = (value: number) => ({
+      OTIO_SCHEMA: 'RationalTime.1',
+      value,
+      rate,
+    });
+    const span = {
+      OTIO_SCHEMA: 'TimeRange.1',
+      start_time: time(0),
+      duration: time(30),
+    };
+    const clip = (id: string, freeze: boolean) => ({
+      OTIO_SCHEMA: 'Clip.1',
+      metadata: { relic: { id } },
+      source_range: span,
+      media_reference: {
+        OTIO_SCHEMA: 'ExternalReference.1',
+        target_url: `media/${id}.mp4`,
+      },
+      effects: freeze
+        ? [{ OTIO_SCHEMA: 'FreezeFrame.1', effect_name: 'FreezeFrame' }]
+        : [],
+    });
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline_1' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              children: [clip('moving', false), clip('frozen', true)],
+            },
+          ],
+        },
+      })
+    );
+    const moving = new Blob(['moving'], { type: 'video/mp4' });
+    const frozen = new Blob(['frozen'], { type: 'video/mp4' });
+    const timing: Extract<OtioVideoTiming, { kind: 'windows' }> = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / rate),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / rate),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([
+        ['media/moving.mp4', moving],
+        ['media/frozen.mp4', frozen],
+      ]),
+      timings: new Map([
+        [moving, timing],
+        [frozen, timing],
+      ]),
+    });
+    const output = new SoftCanvas();
+    const originalCreate = document.createElement;
+    document.createElement = ((tag: string) => {
+      const element = originalCreate.call(document, tag);
+      if (tag === 'video') {
+        const media = element as unknown as MockMedia;
+        media.enableRvfc();
+        media.pixelAt = () => ({
+          r: media.src.includes('frozen.mp4') ? 2 : 1,
+          g: 0,
+          b: 0,
+          a: 1,
+        });
+      }
+      return element;
+    }) as typeof document.createElement;
+    const playback = createOtioPlayback({
+      document: doc,
+      timelineId: 'timeline_1',
+      canvas: output as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+    try {
+      await playback.seek({ value: 0, rate });
+      const first = created.find((m) => m.src.includes('moving.mp4'))!;
+      const tau = await startNative(playback, first, timing, { d1: 100 });
+      first.triggerRvfc(tau + (29 * 1000) / rate, 29 / rate);
+      raf?.(tau + (29 * 1000) / rate);
+      expect(output.pixel.r).toBe(1);
+      raf?.(tau + (30 * 1000) / rate);
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      expect(output.pixel.r).toBe(2);
+      expect(playback.getState().time.value).toBeCloseTo(30);
+      expect(playback.getState().buffering).toBe(false);
+    } finally {
+      playback.dispose();
+      document.createElement = originalCreate;
     }
   });
   test('presentedWindowOutcome: matches at ±Q, uncovered at ±(Q + 1e-7), outside span before head and after tail', () => {

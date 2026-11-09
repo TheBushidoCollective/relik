@@ -940,15 +940,16 @@ export function createOtioPlayback(
   >();
   type BoundaryPreparation = {
     readonly at: OtioRationalTime;
-    readonly keys: ReadonlySet<string>;
+    readonly keys: Set<string>;
     readonly generation: number;
     readonly scope: number;
     readonly anchor: { wallMs: number; time: OtioRationalTime };
     readonly abort: AbortController;
     status: 'preparing' | 'ready' | 'failed';
     readonly rings: Map<string, NativeDecoderRing>;
-    readonly audioKeys: ReadonlySet<string>;
+    readonly audioKeys: Set<string>;
     readonly audio: Map<string, LoadedAudio>;
+    readonly imagePaths: Set<OtioBundleEntryName>;
   };
   let preparedBoundary: BoundaryPreparation | null = null;
   let playbackBoundaries: OtioPlaybackBoundary[] = [];
@@ -1074,7 +1075,22 @@ export function createOtioPlayback(
           return [{ contribution, key }];
         }
       );
-      if (incoming.length === 0 && incomingAudio.length === 0) continue;
+      const incomingImages = new Set<OtioBundleEntryName>();
+      for (const index of indices) {
+        const path = evaluation.video_contributions[index]?.bundle_path;
+        if (
+          path &&
+          inferMediaMimeType(path).startsWith('image/') &&
+          !imageElements.has(path)
+        )
+          incomingImages.add(path);
+      }
+      if (
+        incoming.length === 0 &&
+        incomingAudio.length === 0 &&
+        incomingImages.size === 0
+      )
+        continue;
       if (incoming.some(({ key }) => hiddenWarmInFlight.has(key))) return;
       if (previewBlocked(evaluation)) return;
       const candidate: BoundaryPreparation = {
@@ -1088,6 +1104,7 @@ export function createOtioPlayback(
         rings: new Map(),
         audioKeys: new Set(incomingAudio.map((item) => item.key)),
         audio: new Map(),
+        imagePaths: new Set(incomingImages),
       };
       preparedBoundary = candidate;
       const valid = (): boolean =>
@@ -1198,12 +1215,7 @@ export function createOtioPlayback(
             return fail();
           const tag = certifiedWindowIndex(contribution.source_time, timing);
           const midpoint = videoDecoderTime(contribution.source_time, timing);
-          if (
-            tag === null ||
-            midpoint === null ||
-            timing.starts[tag + 1] === undefined
-          )
-            return fail();
+          if (tag === null || midpoint === null) return fail();
           if (nativeRings.has(key) || lastDrawnOccurrenceKeys.has(key))
             return fail();
           const ring = getOrCreateNativeRing(key, video.element, path);
@@ -1224,8 +1236,41 @@ export function createOtioPlayback(
             !valid()
           )
             return fail();
-          if (!ring.capturePausedFrame(tag, ring.captureEpoch, timing))
-            return fail();
+          const presentDeadline =
+            presentClockMs() + OTIO_PAUSED_PRESENT_TIMEOUT_MS;
+          while (!ring.capturePausedFrame(tag, ring.captureEpoch, timing)) {
+            if (!valid() || presentClockMs() >= presentDeadline) return fail();
+            await bounded(
+              nextPresentation(video.element, OTIO_PAUSED_PRESENT_POLL_MS),
+              Math.max(1, presentDeadline - presentClockMs())
+            );
+          }
+          if (!valid()) return fail();
+          if (timing.starts[tag + 1] === undefined) {
+            const exposure =
+              node?.visible_timeline_range ?? node?.timeline_range;
+            if (!exposure) return fail();
+            const end = addRationalTimes(
+              exposure.start_time,
+              exposure.duration
+            );
+            const exposedEnd =
+              compareRationalTimes(end, scopeEnd()) < 0 ? end : scopeEnd();
+            const remaining =
+              exposedEnd.value / exposedEnd.rate -
+              boundary.time.value / boundary.time.rate;
+            const sourceEnd =
+              decoderLocalSeconds(contribution.source_time) +
+              remaining * fidelity.rate;
+            const windowEnd = timing.ends[tag];
+            if (
+              remaining <= 0 ||
+              windowEnd === undefined ||
+              sourceEnd > windowEnd
+            )
+              return fail();
+            return;
+          }
           const vsync = vsyncTracker.medianSeconds;
           const wMin = minWindowDuration(timing, fidelity.rate);
           const lead = wMin + vsync / 2;
@@ -1377,6 +1422,17 @@ export function createOtioPlayback(
         }
       };
       const jobs = [
+        ...[...incomingImages].map((path) => async () => {
+          try {
+            const image = await bounded(
+              acquireImage(path, candidate.generation),
+              3000
+            );
+            if (!valid() || !image || imageElements.get(path) !== image) fail();
+          } catch {
+            fail();
+          }
+        }),
         ...incomingAudio.map((item) => () => prepareAudio(item)),
         ...incoming.map((item) => () => prepareOne(item)),
       ];
@@ -3201,6 +3257,9 @@ export function createOtioPlayback(
 
       const evaluation = scopedEvaluation(T);
       images.clearPins();
+      if (preparedBoundary) {
+        for (const path of preparedBoundary.imagePaths) images.pin(path);
+      }
       const tree = videoTree(evaluation);
       const blocked = blockedTracks(evaluation);
       const isHidden = (nodeId: string, ancestry: readonly string[]) =>
@@ -3225,6 +3284,7 @@ export function createOtioPlayback(
           hiddenWarmSeen.has(key) ||
           hiddenWarmInFlight.size >= 2 ||
           preparedBoundary?.keys.has(key) ||
+          nativeRings.has(key) ||
           !inferMediaMimeType(contribution.bundle_path).startsWith('video/')
         )
           continue;
@@ -3269,7 +3329,23 @@ export function createOtioPlayback(
           contrib.active_effects,
           contrib.node_id
         );
-        if (fidelity.kind === 'freeze') continue;
+        if (fidelity.kind === 'freeze') {
+          const key = occurrenceKeys[idx];
+          const video = key ? videos.get(key) : undefined;
+          const timing = videoTimingCache.get(contrib.bundle_path);
+          const target =
+            videoDecoderTime(contrib.source_time, timing ?? null) ??
+            decoderLocalSeconds(contrib.source_time);
+          if (
+            (!video || decodedAt.get(video.element) !== target) &&
+            !mediaFailures.has(contrib.bundle_path) &&
+            !(key && videoTimingFailures.has(key))
+          ) {
+            void startSequence(T, true);
+            return;
+          }
+          continue;
+        }
 
         const key = occurrenceKeys[idx];
         if (!key) continue;
@@ -3340,9 +3416,6 @@ export function createOtioPlayback(
         candidate.generation === renderGeneration &&
         candidate.scope === scopeEpoch &&
         compareRationalTimes(T, candidate.at) >= 0 &&
-        [...candidate.audioKeys].every((key) =>
-          enteringAudio.some((item) => item.key === key)
-        ) &&
         enteringAudio.every(({ key, contribution }) => {
           const audio = candidate.audio.get(key);
           const fidelity = effectFidelity(
@@ -3368,7 +3441,7 @@ export function createOtioPlayback(
         }) &&
         [...candidate.keys].every(
           (key) =>
-            currentDrawnOccurrenceKeys.has(key) &&
+            !currentDrawnOccurrenceKeys.has(key) ||
             candidate.rings.get(key) === nativeRings.get(key)
         ) &&
         [...currentDrawnOccurrenceKeys].every(
@@ -3509,7 +3582,12 @@ export function createOtioPlayback(
           if (fidelity.kind === 'freeze') {
             const key = occurrenceKeys[idx];
             const video = key ? videos.get(key) : undefined;
-            if (!video) return { kind: 'empty' as const };
+            const timing = videoTimingCache.get(contrib.bundle_path);
+            const target =
+              videoDecoderTime(contrib.source_time, timing ?? null) ??
+              decoderLocalSeconds(contrib.source_time);
+            if (!video || decodedAt.get(video.element) !== target)
+              return { kind: 'empty' as const };
             return {
               kind: 'image' as const,
               source: video.element,
@@ -3558,11 +3636,34 @@ export function createOtioPlayback(
               );
               applyAudioGain(audio, gain, trackAudible(contribution.track_id));
               audio.element.setAttribute('data-active', 'true');
+              candidate.audio.delete(key);
+              candidate.audioKeys.delete(key);
             }
           }
-          if (joinedPrepared && preparedBoundary === candidate) {
-            preparedBoundary = null;
+          if (joinedPrepared && candidate && preparedBoundary === candidate) {
+            for (const key of currentDrawnOccurrenceKeys) {
+              candidate.keys.delete(key);
+              candidate.rings.delete(key);
+            }
           }
+        }
+        if (
+          candidate &&
+          preparedBoundary === candidate &&
+          candidate.status === 'ready' &&
+          compareRationalTimes(T, candidate.at) >= 0
+        ) {
+          for (const index of drawnLeafIndices) {
+            const path = evaluation.video_contributions[index]?.bundle_path;
+            if (path && imageElements.has(path))
+              candidate.imagePaths.delete(path);
+          }
+          if (
+            candidate.keys.size === 0 &&
+            candidate.audioKeys.size === 0 &&
+            candidate.imagePaths.size === 0
+          )
+            preparedBoundary = null;
         }
         nativeLastPresentMs = now;
         isNativeHolding = false;

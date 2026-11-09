@@ -470,6 +470,10 @@ the same gate, including OTIO comments. Anchor placement and the broader
 publisher resolution permission confer no deletion privilege. Session
 discovery and later sign-in changes repaint row controls and the open card
 without discarding unrelated reply, edit or sidebar drafts.
+A pending sidebar submission is held by the thread rather than its original
+button. Repainting the composer keeps Post disabled until that request settles.
+Acknowledgment clears only the matching submitted draft, including after a
+passkey-offer dismissal; text written since submission remains unposted.
 
 **Deletion requires a native confirmation dialog, with Cancel focused.**
 The dialog names the selected author and shows a readable excerpt, or
@@ -483,6 +487,10 @@ is pending, and the row stays until the server acknowledges it.
 Exactly `204` confirms deletion. `404 comment_not_found` reconciles the row
 as already absent and says so without claiming this request deleted it.
 Other refusals retain the last confirmed thread and name the server's code.
+`comment_forbidden` also triggers a session check because DELETE uses that
+code for both ownership refusal and an expired cookie. The 403 alone does
+not sign the reader out; the session response decides which identity form
+and author controls to show.
 A transport failure may follow a committed write, so the viewer says deletion
 could not be confirmed and offers **Refresh comments** before another
 deliberate attempt. A confirmed removal survives a failed refresh, whose
@@ -504,6 +512,8 @@ Deletion feedback and its read-only refresh control stay above the thread
 list, including on narrow screens that hide the stage. Long card threads
 reuse the keyboard-reachable bounded-body scroller, keeping row actions and
 the card toolbar inside the capped panel.
+Card reconciliation also refreshes Edit and Resolve from the same entry shown
+in the updated rows. An already open reply or edit field keeps its draft.
 
 
 **Images inside HTML have their own attached comments.** Each eligible image gets a shim-owned native **Comment on image** button usable by pointer, touch and keyboard. Ordinary image clicks, including linked-image navigation, keep their existing behavior. Activating the button opens the existing composer directly, reading **Commenting on an image.** An unverified reader follows sidebar verification with the target retained. New-comment controls and saved badges are separate; multiple comments remain individually reachable. Dismiss leaves the comment, badge and thread intact.

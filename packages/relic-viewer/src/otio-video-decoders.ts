@@ -609,7 +609,10 @@ export class NativeDecoderRing {
     const { outcome, frame } = readPresentedFrame(this.videoElement, timing);
     if (outcome.kind !== 'match' || frame === null) return outcome;
     try {
-      if (this.findSlotWithTag(outcome.index, epoch)) return outcome;
+      if (this.findSlotWithTag(outcome.index, epoch)) {
+        this.lastCapturedTag = outcome.index;
+        return outcome;
+      }
       const slot = this.slots[this.nextSlotIndex];
       if (!slot) return { kind: 'readout-failed' };
       const ctx = slot.ctx;
