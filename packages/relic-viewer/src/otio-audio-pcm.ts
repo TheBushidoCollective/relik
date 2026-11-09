@@ -77,24 +77,41 @@ export class OtioPcmProvider {
     this.worker.onmessage = (event: MessageEvent<PcmWorkerResponse>) => {
       const m = event.data,
         pending = this.pending;
+      if (!pending) return;
+      // Ignore unrelated stale messages, but reject a malformed matching response.
+      if (!m || typeof m !== 'object') {
+        this.fail('Invalid PCM worker response');
+        return;
+      }
+      if (m.requestId !== pending.id) return;
       if (
-        !pending ||
-        !m ||
-        m.protocol !== OTIO_PCM_PROTOCOL ||
-        m.generation !== this.generation ||
-        m.requestId !== pending.id ||
-        m.streamId !== pending.streamId
+        Number.isSafeInteger(m.generation) &&
+        m.generation !== this.generation
       )
         return;
+      if (
+        m.generation !== this.generation ||
+        m.protocol !== OTIO_PCM_PROTOCOL ||
+        m.streamId !== pending.streamId ||
+        !['ready', 'pcm', 'eos', 'failed'].includes(m.kind) ||
+        (m.kind === 'failed' && typeof m.reason !== 'string')
+      ) {
+        this.fail('Invalid PCM worker response');
+        return;
+      }
       this.pending = null;
       if (m.kind === 'failed') pending.reject(new Error(m.reason));
       else pending.resolve(m);
     };
-    this.worker.onerror = () => {
-      this.pending?.reject(new Error('PCM worker failed'));
-      this.pending = null;
-      this.closed = true;
-    };
+    this.worker.onerror = () => this.fail('PCM worker failed');
+    this.worker.onmessageerror = () => this.fail('PCM worker message error');
+  }
+  private fail(reason: string): void {
+    if (!this.closed) this.worker.terminate();
+    this.closed = true;
+    const pending = this.pending;
+    this.pending = null;
+    pending?.reject(new Error(reason));
   }
   private enqueue<T>(
     streamId: string,
@@ -122,9 +139,8 @@ export class OtioPcmProvider {
     };
     try {
       this.worker.postMessage(message);
-    } catch (error) {
-      this.pending = null;
-      reject(error);
+    } catch {
+      this.fail('PCM worker post failed');
     }
     return promise;
   }
@@ -173,11 +189,12 @@ export class OtioPcmProvider {
         !Number.isSafeInteger(firstFrame) ||
         !Number.isSafeInteger(frameCount) ||
         firstFrame < 0 ||
-        frameCount <= 0 ||
+        frameCount < 0 ||
         firstFrame + frameCount > h.totalFrames ||
         frameCount > Math.floor(h.sampleRate * OTIO_PCM_MAX_HORIZON_SECONDS)
       )
         throw new Error('Invalid PCM frame range');
+      if (frameCount === 0) return { firstFrame, frameCount, planes: [] };
       const bytes = frameCount * h.channels * 4;
       // Covers bridged reads, packet assembly and transient conversion copies.
       const scratch = OTIO_PCM_PULL_SCRATCH_BYTES;
@@ -199,11 +216,19 @@ export class OtioPcmProvider {
           response.kind !== 'pcm' ||
           response.firstFrame !== firstFrame ||
           response.frameCount !== frameCount ||
+          !Array.isArray(response.planes) ||
           response.planes.length !== h.channels ||
           response.planes.some(
             (plane) =>
-              !(plane instanceof Float32Array) || plane.length !== frameCount
-          )
+              !(plane instanceof Float32Array) ||
+              plane.length !== frameCount ||
+              !(plane.buffer instanceof ArrayBuffer) ||
+              plane.byteOffset !== 0 ||
+              plane.buffer.byteLength !== plane.byteLength ||
+              plane.some((sample) => !Number.isFinite(sample))
+          ) ||
+          new Set(response.planes.map((plane) => plane.buffer)).size !==
+            h.channels
         )
           throw new Error('Invalid PCM worker response');
         this.allocations.set(response.planes, bytes);
@@ -224,22 +249,23 @@ export class OtioPcmProvider {
   cancel(streamId: string): void {
     this.versions.set(streamId, (this.versions.get(streamId) ?? 0) + 1);
     this.headers.delete(streamId);
-    if (!this.closed)
-      this.worker.postMessage({
-        protocol: OTIO_PCM_PROTOCOL,
-        kind: 'cancel',
-        generation: this.generation,
-        streamId,
-      } satisfies PcmWorkerRequest);
+    if (this.pending) {
+      this.fail('PCM stream cancelled');
+    } else if (!this.closed) {
+      try {
+        this.worker.postMessage({
+          protocol: OTIO_PCM_PROTOCOL,
+          kind: 'cancel',
+          generation: this.generation,
+          streamId,
+        } satisfies PcmWorkerRequest);
+      } catch {
+        this.fail('PCM worker post failed');
+      }
+    }
   }
   dispose(): void {
-    this.closed = true;
-    this.worker.terminate();
-    this.pending?.reject(new Error('PCM provider disposed'));
-    this.pending = null;
-    for (const bytes of this.allocations.values())
-      this.budget.releaseBytes(bytes);
-    this.allocations.clear();
+    this.fail('PCM provider disposed');
     this.headers.clear();
   }
 }
@@ -257,77 +283,144 @@ export interface OtioPcmScheduleRequest {
   gainFactors: readonly OtioPcmGainFactor[];
   destination?: AudioNode;
 }
+interface PcmOwnedSource {
+  source: AudioBufferSourceNode;
+  nodes: GainNode[];
+  bytes: number;
+  started: boolean;
+  firstFrame: number;
+  naturalEnd: number;
+}
+
+export interface OtioPcmPrepared {
+  start(
+    firstContextFrame: number,
+    gainFactors: readonly OtioPcmGainFactor[]
+  ): number;
+  cancel(): void;
+}
+
 export class OtioPcmScheduler {
-  private readonly sources = new Set<{
-    source: AudioBufferSourceNode;
-    nodes: AudioNode[];
-    bytes: number;
-  }>();
+  private readonly sources = new Set<PcmOwnedSource>();
   private closed = false;
+  private drain: {
+    frame: number;
+    ended: Promise<void>;
+    resolve: () => void;
+  } | null = null;
   constructor(
     readonly context: AudioContext,
     readonly masterGain: AudioNode,
     readonly generation: number,
     readonly budget = new OtioPcmBudget()
   ) {}
-  schedule(request: OtioPcmScheduleRequest): number {
-    const { firstContextFrame, planes, gainFactors } = request;
+
+  prepare(request: {
+    generation: number;
+    planes: Float32Array[];
+    gainFactorCount: number;
+    destination?: AudioNode;
+  }): OtioPcmPrepared {
+    const { planes, gainFactorCount } = request;
     const count = planes[0]?.length ?? 0,
       rate = this.context.sampleRate;
     if (
       this.closed ||
       request.generation !== this.generation ||
-      !Number.isSafeInteger(firstContextFrame) ||
-      firstContextFrame < Math.ceil(this.context.currentTime * rate) ||
+      !Number.isSafeInteger(gainFactorCount) ||
+      gainFactorCount < 0 ||
       count <= 0 ||
       count > Math.floor(rate * OTIO_PCM_MAX_HORIZON_SECONDS) ||
       planes.length < 1 ||
       planes.length > 2 ||
-      planes.some((p) => !(p instanceof Float32Array) || p.length !== count)
-    )
-      throw new Error('Invalid or late PCM scheduling request');
-    if (
-      firstContextFrame + count >
-      Math.floor(
-        (this.context.currentTime + OTIO_PCM_MAX_HORIZON_SECONDS) * rate
+      planes.some(
+        (p) =>
+          !(p instanceof Float32Array) ||
+          !(p.buffer instanceof ArrayBuffer) ||
+          p.length !== count ||
+          p.some((value) => !Number.isFinite(value))
       )
     )
-      throw new Error('PCM scheduling horizon exceeded');
-    for (const f of gainFactors)
-      if (
-        ![f.startFrame, f.endFrame, f.startGain, f.endGain].every(
-          Number.isFinite
-        ) ||
-        f.endFrame <= f.startFrame ||
-        f.startGain < 0 ||
-        f.endGain < 0
-      )
-        throw new Error('Invalid PCM gain factor');
+      throw new Error('Invalid PCM preparation request');
     const bytes = count * planes.length * 4;
-    this.budget.reserveNodes(1 + gainFactors.length);
+    this.budget.reserveNodes(1 + gainFactorCount);
     try {
       this.budget.reserveBytes(bytes);
     } catch (error) {
-      this.budget.releaseNodes(1 + gainFactors.length);
+      this.budget.releaseNodes(1 + gainFactorCount);
       throw error;
     }
     let source: AudioBufferSourceNode | undefined;
-    const nodes: AudioNode[] = [];
+    const nodes: GainNode[] = [];
+    let owned: PcmOwnedSource;
     try {
       const buffer = this.context.createBuffer(planes.length, count, rate);
-      planes.forEach((plane, channel) => buffer.copyToChannel(plane, channel));
+      planes.forEach((plane, channel) =>
+        buffer.copyToChannel(plane as Float32Array<ArrayBuffer>, channel)
+      );
       source = this.context.createBufferSource();
       source.buffer = buffer;
       let previous: AudioNode = source;
-      for (const factor of gainFactors) {
+      for (let i = 0; i < gainFactorCount; i++) {
         const gain = this.context.createGain();
         nodes.push(gain);
         previous.connect(gain);
         previous = gain;
-        const valueAtStart =
-          factor.startGain +
-          (factor.endGain - factor.startGain) *
-            Math.max(
+      }
+      previous.connect(request.destination ?? this.masterGain);
+      owned = {
+        source,
+        nodes,
+        bytes,
+        started: false,
+        firstFrame: 0,
+        naturalEnd: 0,
+      };
+      this.sources.add(owned);
+      source.onended = () => this.release(owned);
+    } catch (error) {
+      source?.disconnect();
+      for (const node of nodes) node.disconnect();
+      this.budget.releaseBytes(bytes);
+      this.budget.releaseNodes(1 + gainFactorCount);
+      throw error;
+    }
+    return {
+      start: (firstContextFrame, factors) => {
+        if (!this.sources.has(owned) || owned.started || this.closed)
+          throw new Error('PCM prepared source is closed');
+        try {
+          if (
+            !Number.isSafeInteger(firstContextFrame) ||
+            firstContextFrame <
+              Math.ceil(this.context.currentTime * rate) +
+                OTIO_PCM_MIN_LEAD_FRAMES
+          )
+            throw new Error('PCM scheduling deadline missed');
+          if (
+            firstContextFrame + count >
+            Math.floor(
+              (this.context.currentTime + OTIO_PCM_MAX_HORIZON_SECONDS) * rate
+            )
+          )
+            throw new Error('PCM scheduling horizon exceeded');
+          if (factors.length !== nodes.length)
+            throw new Error('Invalid PCM gain factor count');
+          factors.forEach((factor, i) => {
+            if (
+              ![
+                factor.startFrame,
+                factor.endFrame,
+                factor.startGain,
+                factor.endGain,
+              ].every(Number.isFinite) ||
+              factor.endFrame <= factor.startFrame ||
+              factor.startGain < 0 ||
+              factor.endGain < 0
+            )
+              throw new Error('Invalid PCM gain factor');
+            const gain = nodes[i]!.gain;
+            const fraction = Math.max(
               0,
               Math.min(
                 1,
@@ -335,61 +428,122 @@ export class OtioPcmScheduler {
                   (factor.endFrame - factor.startFrame)
               )
             );
-        gain.gain.setValueAtTime(valueAtStart, firstContextFrame / rate);
-        if (
-          factor.endFrame > firstContextFrame &&
-          factor.startFrame < firstContextFrame + count
-        ) {
-          if (factor.startFrame > firstContextFrame)
-            gain.gain.setValueAtTime(
-              factor.startGain,
-              factor.startFrame / rate
+            gain.setValueAtTime(
+              factor.startGain + (factor.endGain - factor.startGain) * fraction,
+              firstContextFrame / rate
             );
-          gain.gain.linearRampToValueAtTime(
-            factor.endGain,
-            factor.endFrame / rate
-          );
+            if (
+              factor.endFrame > firstContextFrame &&
+              factor.startFrame < firstContextFrame + count
+            ) {
+              if (factor.startFrame > firstContextFrame)
+                gain.setValueAtTime(factor.startGain, factor.startFrame / rate);
+              gain.linearRampToValueAtTime(
+                factor.endGain,
+                factor.endFrame / rate
+              );
+            }
+          });
+          if (
+            firstContextFrame <
+            Math.ceil(this.context.currentTime * rate) +
+              OTIO_PCM_MIN_LEAD_FRAMES
+          )
+            throw new Error('PCM scheduling deadline missed');
+          owned.firstFrame = firstContextFrame;
+          owned.naturalEnd = firstContextFrame + count;
+          owned.started = true;
+          try {
+            owned.source.start(firstContextFrame / rate);
+          } catch (error) {
+            owned.started = false;
+            throw error;
+          }
+          return owned.naturalEnd;
+        } catch (error) {
+          if (!owned.started) this.release(owned);
+          throw error;
         }
-      }
-      previous.connect(request.destination ?? this.masterGain);
-      const owned = { source, nodes, bytes };
-      if (
-        firstContextFrame <
-        Math.ceil(this.context.currentTime * rate) + OTIO_PCM_MIN_LEAD_FRAMES
-      )
-        throw new Error('PCM scheduling deadline missed');
-      source.start(firstContextFrame / rate);
-      this.sources.add(owned);
-      source.onended = () => this.release(owned);
-      return firstContextFrame + count;
-    } catch (error) {
-      source?.disconnect();
-      for (const node of nodes) node.disconnect();
-      this.budget.releaseBytes(bytes);
-      this.budget.releaseNodes(1 + gainFactors.length);
-      throw error;
-    }
+      },
+      cancel: () => {
+        if (!this.sources.has(owned)) return;
+        if (!owned.started) this.release(owned);
+        else {
+          try {
+            owned.source.stop();
+          } catch {}
+        }
+      },
+    };
   }
-  private release(owned: {
-    source: AudioBufferSourceNode;
-    nodes: AudioNode[];
-    bytes: number;
-  }): void {
+
+  schedule(request: OtioPcmScheduleRequest): number {
+    return this.prepare({
+      generation: request.generation,
+      planes: request.planes,
+      gainFactorCount: request.gainFactors.length,
+      ...(request.destination ? { destination: request.destination } : {}),
+    }).start(request.firstContextFrame, request.gainFactors);
+  }
+
+  private release(owned: PcmOwnedSource): void {
     if (!this.sources.delete(owned)) return;
     owned.source.onended = null;
     owned.source.disconnect();
     for (const node of owned.nodes) node.disconnect();
     this.budget.releaseBytes(owned.bytes);
     this.budget.releaseNodes(1 + owned.nodes.length);
+    if (this.sources.size === 0) this.drain?.resolve();
   }
-  cancel(): void {
-    for (const owned of this.sources) {
-      try {
-        owned.source.stop();
-      } catch {}
-      this.release(owned);
+
+  stopAtFrame(frame: number): { frame: number; ended: Promise<void> } {
+    if (this.drain) {
+      if (this.drain.frame !== frame)
+        throw new Error('Conflicting PCM stop frame');
+      return this.drain;
     }
+    const rate = this.context.sampleRate;
+    if (
+      this.closed ||
+      !Number.isSafeInteger(frame) ||
+      frame <
+        Math.ceil(this.context.currentTime * rate) + OTIO_PCM_MIN_LEAD_FRAMES
+    )
+      throw new Error('PCM stop deadline missed');
     this.closed = true;
+    try {
+      for (const owned of this.sources) {
+        if (!owned.started) {
+          this.release(owned);
+          continue;
+        }
+        if (
+          frame <
+          Math.ceil(this.context.currentTime * rate) + OTIO_PCM_MIN_LEAD_FRAMES
+        )
+          throw new Error('PCM stop deadline missed');
+        if (frame < owned.naturalEnd) owned.source.stop(frame / rate);
+      }
+    } catch (error) {
+      this.cancel();
+      throw error;
+    }
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.drain = { frame, ended: promise, resolve };
+    if (this.sources.size === 0) resolve();
+    return this.drain;
+  }
+
+  cancel(): void {
+    this.closed = true;
+    for (const owned of this.sources) {
+      if (!owned.started) this.release(owned);
+      else {
+        try {
+          owned.source.stop();
+        } catch {}
+      }
+    }
   }
   dispose(): void {
     this.cancel();

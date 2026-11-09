@@ -656,10 +656,11 @@ describe('the shell', () => {
     expect(cssResponse.headers.get('content-encoding')).toBe('gzip');
   });
 
-  test('PCM worker alone gets a no-network execution policy', async () => {
+  test('PCM worker and transport worklet get a no-network execution policy', async () => {
     const customApp = createApp({
       assets: memoryAssets({
         'otio-audio-pcm-worker.js': 'self.onmessage = () => {}',
+        'otio-transport-gate-worklet.js': 'registerProcessor("gate", class {})',
         'viewer.js': 'console.log("viewer")',
       }),
     });
@@ -669,6 +670,13 @@ describe('the shell', () => {
     expect(worker.status).toBe(200);
     expect(worker.headers.get('content-security-policy')).toContain(
       "connect-src 'none'"
+    );
+    const worklet = await customApp.fetch(
+      req('/assets/otio-transport-gate-worklet.js')
+    );
+    expect(worklet.status).toBe(200);
+    expect(worklet.headers.get('content-security-policy')).toBe(
+      worker.headers.get('content-security-policy')
     );
     const viewer = await customApp.fetch(req('/assets/viewer.js'));
     expect(viewer.headers.get('content-security-policy')).toBeNull();

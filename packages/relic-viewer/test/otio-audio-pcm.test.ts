@@ -15,11 +15,12 @@ class FakeSource extends FakeNode {
   buffer: unknown;
   onended: (() => void) | null = null;
   started = -1;
+  stoppedAt: number | undefined;
   start(time: number) {
     this.started = time;
   }
-  stop() {
-    this.onended?.();
+  stop(time?: number) {
+    this.stoppedAt = time;
   }
 }
 class FakeGain extends FakeNode {
@@ -109,6 +110,9 @@ describe('bounded PCM graph', () => {
     expect(budget.usedNodes).toBe(0);
     scheduler.schedule(request);
     scheduler.cancel();
+    expect(budget.usedBytes).toBe(1920);
+    expect(budget.usedNodes).toBe(1);
+    context.sources[context.sources.length - 1]!.onended?.();
     expect(budget.usedBytes).toBe(0);
     expect(budget.usedNodes).toBe(0);
     expect(() => scheduler.schedule(request)).toThrow();
@@ -136,6 +140,132 @@ describe('bounded PCM graph', () => {
     ).toThrow('deadline');
     expect(context.sources[0]!.started).toBe(-1);
     expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+  });
+  test('drains at one frame and retains credits until each generation ends', async () => {
+    const context = new FakeContext(),
+      budget = new OtioPcmBudget();
+    const master = new FakeNode() as unknown as AudioNode;
+    const old = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      master,
+      1,
+      budget
+    );
+    const next = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      master,
+      2,
+      budget
+    );
+    const request = {
+      firstContextFrame: 48200,
+      planes: [new Float32Array(480)],
+      gainFactors: [],
+    };
+    old.schedule({ ...request, generation: 1 });
+    next.schedule({ ...request, generation: 2 });
+    const drain = old.stopAtFrame(48300);
+    expect(old.stopAtFrame(48300)).toBe(drain);
+    expect(() => old.stopAtFrame(48301)).toThrow('Conflicting');
+    let ended = false;
+    void drain.ended.then(() => {
+      ended = true;
+    });
+    await Promise.resolve();
+    expect(ended).toBe(false);
+    expect(context.sources[0]!.stoppedAt).toBe(48300 / 48000);
+    expect(budget.usedNodes).toBe(2);
+    expect(budget.usedBytes).toBe(3840);
+    expect(() => old.schedule({ ...request, generation: 1 })).toThrow();
+    const staleEnded = context.sources[0]!.onended!;
+    staleEnded();
+    await drain.ended;
+    expect(ended).toBe(true);
+    expect(budget.usedNodes).toBe(1);
+    staleEnded();
+    expect(budget.usedBytes).toBe(1920);
+    next.dispose();
+    expect(budget.usedNodes).toBe(1);
+    context.sources[1]!.onended?.();
+    expect(budget.usedNodes).toBe(0);
+    expect(budget.usedBytes).toBe(0);
+  });
+  test('rejects expired stop and leaves the source owned', () => {
+    const context = new FakeContext(),
+      budget = new OtioPcmBudget();
+    const scheduler = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      new FakeNode() as unknown as AudioNode,
+      1,
+      budget
+    );
+    scheduler.schedule({
+      generation: 1,
+      firstContextFrame: 48200,
+      planes: [new Float32Array(480)],
+      gainFactors: [],
+    });
+    expect(() => scheduler.stopAtFrame(48127)).toThrow('deadline');
+    expect(budget.usedNodes).toBe(1);
+    scheduler.dispose();
+    expect(budget.usedNodes).toBe(1);
+    context.sources[0]!.onended?.();
+    expect(budget.usedNodes).toBe(0);
+  });
+  test('prepared nodes retire immediately before start, but started nodes await ended', () => {
+    const context = new FakeContext(),
+      budget = new OtioPcmBudget();
+    const scheduler = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      new FakeNode() as unknown as AudioNode,
+      1,
+      budget
+    );
+    const prepared = scheduler.prepare({
+      generation: 1,
+      planes: [new Float32Array(64)],
+      gainFactorCount: 1,
+    });
+    expect(context.sources[0]!.started).toBe(-1);
+    expect(budget.usedNodes).toBe(2);
+    prepared.cancel();
+    expect(budget.usedNodes).toBe(0);
+    const active = scheduler.prepare({
+      generation: 1,
+      planes: [new Float32Array(64)],
+      gainFactorCount: 0,
+    });
+    active.start(48200, []);
+    active.cancel();
+    expect(budget.usedNodes).toBe(1);
+    context.sources[1]!.onended?.();
+    expect(budget.usedNodes).toBe(0);
+  });
+  test('partial stop failure does not claim a coordinated drain', () => {
+    const context = new FakeContext(),
+      budget = new OtioPcmBudget();
+    const scheduler = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      new FakeNode() as unknown as AudioNode,
+      1,
+      budget
+    );
+    const req = {
+      generation: 1,
+      firstContextFrame: 48200,
+      planes: [new Float32Array(480)],
+      gainFactors: [],
+    };
+    scheduler.schedule(req);
+    scheduler.schedule(req);
+    context.sources[1]!.stop = () => {
+      throw new Error('stop failed');
+    };
+    expect(() => scheduler.stopAtFrame(48300)).toThrow('stop failed');
+    expect(budget.usedNodes).toBe(2);
+    context.sources[0]!.onended?.();
+    context.sources[1]!.onended?.();
     expect(budget.usedNodes).toBe(0);
   });
 });

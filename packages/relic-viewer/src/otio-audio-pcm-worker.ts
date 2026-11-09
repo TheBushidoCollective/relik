@@ -149,6 +149,16 @@ scope.onmessage = (event: MessageEvent<PcmWorkerRequest>) => {
           packet.data.byteLength !== packetFrames * h.blockAlign
         )
           throw new Error('WAV packet discontinuity');
+        if (h.format === 'float32') {
+          const data = new DataView(
+            packet.data.buffer,
+            packet.data.byteOffset,
+            packet.data.byteLength
+          );
+          for (let offset = 0; offset < data.byteLength; offset += 4)
+            if (!Number.isFinite(data.getFloat32(offset, true)))
+              throw new Error('Nonfinite PCM sample');
+        }
         const offset = frame - packetFirst,
           count = Math.min(frameCount - outputOffset, packetFrames - offset);
         const sample = new AudioSample({

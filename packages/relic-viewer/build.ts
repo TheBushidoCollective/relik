@@ -179,6 +179,21 @@ export async function buildViewer(options?: {
     process.exit(1);
   }
 
+  // The render-side gate is loaded only for scheduled PCM playback.
+  const builtTransportGate = await Bun.build({
+    entrypoints: [`${pkgDir}src/otio-transport-gate-worklet.ts`],
+    outdir: out,
+    target: 'browser',
+    format: 'esm',
+    minify: true,
+    splitting: false,
+    naming: '[name].js',
+  });
+  if (!builtTransportGate.success) {
+    for (const log of builtTransportGate.logs) console.error(log);
+    process.exit(1);
+  }
+
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
   await copyFile(`${out}main.js`, `${out}viewer.js`);
