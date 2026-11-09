@@ -164,6 +164,21 @@ export async function buildViewer(options?: {
     process.exit(1);
   }
 
+  const builtPcmWorker = await Bun.build({
+    entrypoints: [`${pkgDir}src/otio-audio-pcm-worker.ts`],
+    outdir: out,
+    target: 'browser',
+    format: 'esm',
+    minify: true,
+    splitting: false,
+    naming: '[name].js',
+    banner: mediabunny.banner,
+  });
+  if (!builtPcmWorker.success) {
+    for (const log of builtPcmWorker.logs) console.error(log);
+    process.exit(1);
+  }
+
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
   await copyFile(`${out}main.js`, `${out}viewer.js`);

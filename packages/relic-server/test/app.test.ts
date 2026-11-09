@@ -655,6 +655,24 @@ describe('the shell', () => {
     expect(cssResponse.headers.get('cache-control')).toBe('no-store');
     expect(cssResponse.headers.get('content-encoding')).toBe('gzip');
   });
+
+  test('PCM worker alone gets a no-network execution policy', async () => {
+    const customApp = createApp({
+      assets: memoryAssets({
+        'otio-audio-pcm-worker.js': 'self.onmessage = () => {}',
+        'viewer.js': 'console.log("viewer")',
+      }),
+    });
+    const worker = await customApp.fetch(
+      req('/assets/otio-audio-pcm-worker.js')
+    );
+    expect(worker.status).toBe(200);
+    expect(worker.headers.get('content-security-policy')).toContain(
+      "connect-src 'none'"
+    );
+    const viewer = await customApp.fetch(req('/assets/viewer.js'));
+    expect(viewer.headers.get('content-security-policy')).toBeNull();
+  });
 });
 
 describe('reserved segments beat ids at the router', () => {

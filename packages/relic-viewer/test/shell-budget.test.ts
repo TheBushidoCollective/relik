@@ -146,6 +146,7 @@ describe('the app shell', () => {
 
     const shell = Bun.file(`${pkgDir}dist/viewer.js`);
     const timingWorker = Bun.file(`${pkgDir}dist/otio-video-timing-worker.js`);
+    const pcmWorker = Bun.file(`${pkgDir}dist/otio-audio-pcm-worker.js`);
     const distributedLicense = Bun.file(`${pkgDir}dist/mediabunny-license.txt`);
     const installedLicense = Bun.file(
       `${pkgDir}node_modules/mediabunny/LICENSE`
@@ -154,6 +155,8 @@ describe('the app shell', () => {
     const timingWorkerText = await timingWorker.text();
     const shellText = await shell.text();
     expect(await timingWorker.exists()).toBe(true);
+    expect(await pcmWorker.exists()).toBe(true);
+    expect(await pcmWorker.text()).toContain('Mediabunny 1.62.0 by Vanilagy');
     expect(await distributedLicense.exists()).toBe(true);
     expect(timingWorker.size).toBeGreaterThan(50 * 1024);
     expect(timingWorkerText).toContain(
@@ -200,6 +203,7 @@ describe('the app shell', () => {
 
     expect(requests).toContain('/assets/viewer.js');
     expect(requests).not.toContain('/assets/otio-video-timing-worker.js');
+    expect(requests).not.toContain('/assets/otio-audio-pcm-worker.js');
     expect(requests).not.toContain('/assets/mediabunny-license.txt');
   });
 });
