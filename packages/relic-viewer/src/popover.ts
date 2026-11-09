@@ -282,6 +282,8 @@ export interface PopoverPlacementOptions {
   readonly follow?: () => AnchorBox | undefined;
   readonly reveal?: boolean;
   readonly prefer?: 'above' | 'below';
+  /** Optional visible region, in the original host's content coordinates. */
+  readonly viewport?: () => AnchorBox | undefined;
 }
 
 export interface PopoverLayer {
@@ -338,6 +340,10 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
     if (!open || !mounted) return;
     const followFn = options?.follow;
     if (!followFn) return;
+    if (options?.viewport) {
+      performFullPlace(false);
+      return;
+    }
     const rawBox = followFn();
     if (!rawBox) return;
     anchored = rawBox;
@@ -405,7 +411,7 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
 
     const targetBox = translate(anchored);
 
-    if (shouldReveal && mounted === host) {
+    if (shouldReveal && mounted === host && !options?.viewport?.()) {
       const panelHeight = open.offsetHeight;
       const nextScroll = revealScrollTop(
         targetBox,
@@ -425,15 +431,30 @@ export function popoverLayer(host: HTMLElement): PopoverLayer {
         host.scrollTop = nextScroll;
       }
     }
+    const viewport = options?.viewport?.();
+    const region = viewport ? translate(viewport) : undefined;
+    const left = Math.max(
+      mounted.scrollLeft,
+      region?.left ?? mounted.scrollLeft
+    );
+    const top = Math.max(mounted.scrollTop, region?.top ?? mounted.scrollTop);
+    const right = Math.min(
+      mounted.scrollLeft + mounted.clientWidth,
+      region ? region.left + region.width : Infinity
+    );
+    const bottom = Math.min(
+      mounted.scrollTop + mounted.clientHeight,
+      region ? region.top + region.height : Infinity
+    );
 
     const placement = placePopover(
       translate(anchored),
       { width: open.offsetWidth, height: open.offsetHeight },
       {
-        scrollLeft: mounted.scrollLeft,
-        scrollTop: mounted.scrollTop,
-        clientWidth: mounted.clientWidth,
-        clientHeight: mounted.clientHeight,
+        scrollLeft: left,
+        scrollTop: top,
+        clientWidth: Math.max(0, right - left),
+        clientHeight: Math.max(0, bottom - top),
       },
       POPOVER_GAP,
       POPOVER_MARGIN,

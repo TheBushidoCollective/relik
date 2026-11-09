@@ -6,7 +6,10 @@ import {
   readOtioDocument,
 } from '@relic/format';
 import { otioAdapter, otioTargetLabel } from '../src/annotate-otio.ts';
-import { otioControllerFor } from '../src/otio-bridge.ts';
+import {
+  otioControllerFor,
+  type OtioUiController,
+} from '../src/otio-bridge.ts';
 import {
   createOtioSelection,
   formatOtioTime,
@@ -294,9 +297,89 @@ function structuralContent(): Uint8Array {
   );
 }
 
+function focusedSelectionContent(timelineRange = range(0, 96)): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      name: 'Relik Feature Editorial',
+      metadata: { relic: { id: 'focused-timeline' } },
+      source_range: timelineRange,
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Video 1',
+            kind: 'Video',
+            metadata: { relic: { id: 'focused-video' } },
+            source_range: range(0, 96),
+            children: [
+              {
+                ...clip('focused-a', 'Primary Grade A'),
+                markers: [
+                  {
+                    OTIO_SCHEMA: 'Marker.2',
+                    name: 'Grade Correction Required',
+                    marked_range: range(54, 0),
+                  },
+                  {
+                    OTIO_SCHEMA: 'Marker.2',
+                    name: 'SMPTE_Dissolve_1',
+                    marked_range: range(74, 0),
+                  },
+                ],
+              },
+              {
+                OTIO_SCHEMA: 'Transition.1',
+                name: 'SMPTE_Dissolve_1',
+                metadata: { relic: { id: 'focused-transition' } },
+                transition_type: 'SMPTE_Dissolve',
+                in_offset: { value: 6, rate: 24 },
+                out_offset: { value: 6, rate: 24 },
+              },
+              clip('focused-b', 'Secondary Grade B'),
+              {
+                OTIO_SCHEMA: 'Gap.1',
+                name: 'Slug V1',
+                metadata: { relic: { id: 'focused-gap' } },
+                source_range: range(0, 24),
+              },
+              {
+                ...clip('focused-disabled', 'Disabled Duplicate Picture'),
+                enabled: false,
+              },
+            ],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Dialogue DX',
+            kind: 'Audio',
+            metadata: { relic: { id: 'focused-audio' } },
+            children: [clip('focused-dialogue', 'Interview Mic 1')],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Unplaced',
+            kind: 'Video',
+            metadata: { relic: { id: 'focused-unplaced-track' } },
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'Unplaced',
+                metadata: { relic: { id: 'focused-unplaced' } },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
 class ViewElement {
   className = '';
   textContent = '';
+  disabled = false;
   hidden = false;
   tabIndex = 0;
   type = '';
@@ -325,6 +408,7 @@ class ViewElement {
   layout?: DOMRect;
   readonly dataset: Record<string, string> = {};
   readonly listeners = new Map<string, Set<(event: Event) => void>>();
+  private readonly capturedPointers = new Set<number>();
   readonly attributes = new Map<string, string>();
   readonly style = {
     setProperty: (): void => {},
@@ -411,10 +495,16 @@ class ViewElement {
   }
 
   dispatchEvent(event: Event): boolean {
-    Object.defineProperty(event, 'target', { configurable: true, value: this });
+    if (!event.target)
+      Object.defineProperty(event, 'target', {
+        configurable: true,
+        value: this,
+      });
     for (const listener of this.listeners.get(event.type) ?? [])
       listener(event);
-    return true;
+    if (event.bubbles && !event.cancelBubble)
+      this.parentElement?.dispatchEvent(event);
+    return !event.defaultPrevented;
   }
 
   querySelector(selector?: string): ViewElement | null {
@@ -451,6 +541,8 @@ class ViewElement {
   }
 
   matches(selector: string): boolean {
+    if (selector.includes(','))
+      return selector.split(',').some((part) => this.matches(part.trim()));
     if (selector.startsWith('.'))
       return this.className.split(/\s+/).includes(selector.slice(1));
     const attribute = selector.match(/^\[data-([a-z-]+)\]$/);
@@ -498,7 +590,17 @@ class ViewElement {
     });
   }
 
-  setPointerCapture(): void {}
+  setPointerCapture(pointerId: number): void {
+    this.capturedPointers.add(pointerId);
+  }
+
+  hasPointerCapture(pointerId: number): boolean {
+    return this.capturedPointers.has(pointerId);
+  }
+
+  releasePointerCapture(pointerId: number): void {
+    this.capturedPointers.delete(pointerId);
+  }
 
   pause(): void {}
 
@@ -574,6 +676,7 @@ function installProjectionDom(): () => void {
     'window',
     'MutationObserver',
     'DOMRect',
+    'Element',
   ] as const;
   const previous = new Map<string, PropertyDescriptor | undefined>();
   for (const name of globals) {
@@ -608,6 +711,11 @@ function installProjectionDom(): () => void {
     configurable: true,
     writable: true,
     value: undefined,
+  });
+  Object.defineProperty(globalThis, 'Element', {
+    configurable: true,
+    writable: true,
+    value: ViewElement,
   });
   Object.defineProperty(globalThis, 'DOMRect', {
     configurable: true,
@@ -1435,6 +1543,13 @@ describe('OTIO track selection contract', () => {
     expect(anchor.range).toEqual(range(12, 0));
     expect(anchor.snapshot.track).toBe('Video 2');
     expect(otioTargetLabel(anchor)).toContain('point 12 @ 24');
+    expect(otioTargetLabel(anchor)).toContain('Picture-in-Picture Alpha');
+    expect(
+      otioTargetLabel({
+        ...anchor,
+        snapshot: { ...anchor.snapshot, item: null },
+      })
+    ).toContain('overlay');
   });
 
   test('a one-frame range stays one frame; mixed rational coordinates stay exact', () => {
@@ -1480,6 +1595,81 @@ describe('OTIO track selection contract', () => {
     );
     expect(multi.range).toEqual(range(12, 24));
     expect(multi.item_id).toBeUndefined();
+  });
+
+  test('explicit identity retains transitions, gaps, compounds and exact source coordinates', () => {
+    const doc = readOtioDocument(focusedSelectionContent());
+    const transition = doc.nodes['focused-transition']!;
+    const focused = createOtioSelection(
+      doc,
+      'focused-timeline',
+      'focused-video',
+      2,
+      transition.timeline_range!,
+      transition.id
+    );
+    expect(focused.item_id).toBe('focused-transition');
+    expect(focused.snapshot.item).toBe('SMPTE_Dissolve_1');
+    const gap = createOtioSelection(
+      doc,
+      'focused-timeline',
+      'focused-video',
+      2,
+      doc.nodes['focused-gap']!.timeline_range!,
+      'focused-gap'
+    );
+    expect(gap.item_id).toBe('focused-gap');
+    const compound = Object.values(document.nodes).find(
+      (node) => node.name === 'VFX Submaster Stack'
+    )!;
+    expect(
+      createOtioSelection(
+        document,
+        'timeline',
+        'video-first',
+        1,
+        compound.timeline_range!,
+        compound.id
+      ).item_id
+    ).toBe(compound.id);
+    const exact = {
+      start_time: { value: 1001, rate: 30000 },
+      duration: { value: 1, rate: 30000 / 1001 },
+    };
+    expect(
+      createOtioSelection(
+        document,
+        'timeline',
+        'video-first',
+        1,
+        exact,
+        'primary'
+      ).range
+    ).toEqual(exact);
+  });
+
+  test('explicit null suppresses inference and invalid explicit targets are rejected', () => {
+    const track = createOtioSelection(
+      document,
+      'timeline',
+      'video-first',
+      1,
+      range(0, 12),
+      null
+    );
+    expect(track.item_id).toBeUndefined();
+    expect(track.snapshot.item).toBeNull();
+    for (const id of ['missing', 'overlay', 'secondary'])
+      expect(() =>
+        createOtioSelection(
+          document,
+          'timeline',
+          'video-first',
+          1,
+          range(0, 12),
+          id
+        )
+      ).toThrow('Selection unavailable.');
   });
 
   test('whole-track selection uses exposed core windows rather than the composition duration', () => {
@@ -1619,5 +1809,347 @@ describe('OTIO eager-shell bridge', () => {
         content: {} as HTMLElement,
       })
     ).toBe(false);
+  });
+});
+
+describe('OTIO focused element activation', () => {
+  let restoreDom: () => void;
+  let root: ViewElement;
+  let controller: OtioUiController;
+  let aims: Array<{ readonly anchor: OtioAnchorV1; readonly focus: boolean }>;
+
+  beforeEach(async () => {
+    restoreDom = installProjectionDom();
+    root = new ViewElement('div');
+    await mountOtioView(root as unknown as HTMLElement, {
+      content: focusedSelectionContent(),
+      revision: 2,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement)!;
+    aims = [];
+    root.addEventListener('relic:otio-aim', (event) => {
+      aims.push((event as CustomEvent<(typeof aims)[number]>).detail);
+    });
+  });
+  afterEach(() => {
+    controller.dispose();
+    restoreDom();
+  });
+
+  function item(id: string): ViewElement {
+    const control = findViewElement(
+      root,
+      (node) => node.matches('.otio-item') && node.dataset['itemId'] === id
+    );
+    if (!control) throw new Error(`Expected item ${id}`);
+    return control;
+  }
+  function pointer(type: string, x: number): Event {
+    return Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+      button: 0,
+      clientX: x,
+      clientY: 10,
+      pointerId: 7,
+    });
+  }
+
+  function settleFocusRendering(): Promise<void> {
+    const completion = Promise.withResolvers<void>();
+    setImmediate(completion.resolve);
+    return completion.promise;
+  }
+
+  test('click and keyboard button activation use explicit editorial identity without composer focus', () => {
+    const first = item('focused-a');
+    first.focus();
+    first.dispatchEvent(Object.assign(new Event('click'), { detail: 0 }));
+    expect(aims).toHaveLength(1);
+    expect(aims[0]?.focus).toBe(false);
+    expect(aims[0]?.anchor.item_id).toBe('focused-a');
+    expect(aims[0]?.anchor.range).toEqual(
+      controller.document.nodes['focused-a']!.timeline_range!
+    );
+    expect(aims[0]?.anchor.range.duration.value).toBe(24);
+    expect(first.getAttribute('aria-pressed')).toBe('true');
+    expect(globalThis.document.activeElement as unknown).toBe(first);
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(root.querySelector('.otio-focus-title')?.textContent).toContain(
+      'Primary Grade A'
+    );
+    expect(
+      findViewElement(root, (node) => node.tagName === 'h3')?.textContent
+    ).toBe('Primary Grade A');
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(aims.at(-1)?.focus).toBe(true);
+    const second = item('focused-b');
+    second.dispatchEvent(Object.assign(new Event('click'), { detail: 0 }));
+    expect(first.getAttribute('aria-pressed')).toBe('false');
+    expect(second.getAttribute('aria-pressed')).toBe('true');
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-b');
+    expect(otioTargetLabel(aims.at(-1)!.anchor)).toContain('Secondary Grade B');
+  });
+
+  test('pointer click waits for release and a drag from the item keeps the rail range', () => {
+    const first = item('focused-a');
+    const rail = first.parentElement!;
+    rail.layout = new DOMRect(100, 0, 480, 54);
+    first.dispatchEvent(pointer('pointerdown', 160));
+    expect(aims).toHaveLength(0);
+    rail.dispatchEvent(pointer('pointerup', 160));
+    expect(aims).toHaveLength(1);
+    expect(aims[0]?.anchor.item_id).toBe('focused-a');
+    first.dispatchEvent(pointer('pointerdown', 160));
+    rail.dispatchEvent(pointer('pointermove', 280));
+    rail.dispatchEvent(pointer('pointerup', 280));
+    first.dispatchEvent(Object.assign(new Event('click'), { detail: 1 }));
+    expect(aims).toHaveLength(2);
+    expect(aims[1]?.anchor.range).toEqual(range(12, 24));
+    expect(aims[1]?.anchor.item_id).toBeUndefined();
+    expect(root.dataset['scopeNodeId']).toBe('');
+    expect(rail.hasPointerCapture(7)).toBe(false);
+  });
+
+  test('cancelling a captured drag restores the prior target and prevents activation', () => {
+    const first = item('focused-a');
+    first.dispatchEvent(new Event('click'));
+    const before = aims[0]!.anchor;
+    const rail = first.parentElement!;
+    rail.layout = new DOMRect(100, 0, 480, 54);
+    first.dispatchEvent(pointer('pointerdown', 160));
+    rail.dispatchEvent(pointer('pointermove', 280));
+    rail.dispatchEvent(pointer('pointercancel', 280));
+    first.dispatchEvent(Object.assign(new Event('click'), { detail: 1 }));
+    expect(aims).toHaveLength(1);
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(rail.listeners.get('pointermove')?.size).toBe(0);
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(aims.at(-1)?.anchor).toEqual(before);
+  });
+
+  test('point and range adjustments retain the focused item while back restores composition', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    const point = findViewElement(
+      root,
+      (node) => node.dataset['otioMode'] === 'point'
+    )!;
+    point.dispatchEvent(new Event('click'));
+    const input = root.querySelector('.otio-selection-in')!;
+    input.value = '30';
+    input.dispatchEvent(new Event('change'));
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-b');
+    expect(aims.at(-1)?.anchor.range).toEqual(range(30, 0));
+    expect(root.querySelector('.otio-seek')?.min).toBe('24');
+    expect(root.querySelector('.otio-seek')?.max).toBe('47');
+    root
+      .querySelector('.otio-back-composition')!
+      .dispatchEvent(new Event('click'));
+    expect(root.dataset['scopeNodeId']).toBe('');
+    expect(root.querySelector('.otio-focus-context')?.hidden).toBe(true);
+    expect(root.querySelector('.otio-selection')).toBeNull();
+    expect(root.querySelector('.otio-selection-label')?.textContent).toBe(
+      'Composition'
+    );
+  });
+
+  test('markers use owner scope and retain zero duration', () => {
+    const mark = findViewElement(
+      root,
+      (node) =>
+        node.matches('.otio-timeline-marker') &&
+        node.dataset['ownerId'] === 'focused-a'
+    )!;
+    mark.dispatchEvent(new Event('click'));
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-a');
+    expect(aims.at(-1)?.anchor.range).toEqual(range(6, 0));
+  });
+
+  test('transitions, audio, disabled items and gaps keep their own identities', () => {
+    for (const id of [
+      'focused-transition',
+      'focused-dialogue',
+      'focused-disabled',
+      'focused-gap',
+    ]) {
+      item(id).dispatchEvent(new Event('click'));
+      expect(root.dataset['scopeNodeId']).toBe(id);
+      expect(aims.at(-1)?.anchor.item_id).toBe(id);
+      expect(aims.at(-1)?.anchor.track_id).toBe(
+        id === 'focused-dialogue' ? 'focused-audio' : 'focused-video'
+      );
+    }
+    expect(root.querySelector('.otio-focus-status')?.textContent).toContain(
+      'No media'
+    );
+  });
+
+  test('unplaced items remain inspectable and refuse anchoring and playback', () => {
+    item('focused-unplaced').dispatchEvent(new Event('click'));
+    expect(aims).toHaveLength(0);
+    expect(root.dataset['scopeAvailable']).toBe('false');
+    expect(root.querySelector('.otio-comment-selection')?.disabled).toBe(true);
+    expect(root.querySelector('.otio-play')?.disabled).toBe(true);
+    expect(root.querySelector('.otio-focus-status')?.textContent).toContain(
+      'Selection unavailable'
+    );
+  });
+
+  test('painting comments leaves playback alone; reveal restores item scope and prior revisions remain read-only', async () => {
+    const doc = controller.document;
+    const anchor = createOtioSelection(
+      doc,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    item('focused-b').dispatchEvent(new Event('click'));
+    expect(controller.paint(anchor, 'focused-comment')).toBe(true);
+    expect(root.dataset['scopeNodeId']).toBe('focused-b');
+    controller.reveal(anchor, 'focused-comment');
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    const earlier = { ...anchor, relic_version: 1 };
+    await controller.project(earlier, focusedSelectionContent());
+    controller.reveal(earlier);
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(root.querySelector('.otio-comment-selection')?.disabled).toBe(true);
+    expect(root.querySelector('.otio-selection-in')?.disabled).toBe(true);
+  });
+
+  test('review regression: a saved item anchor in transition handles reveals its exact frame', async () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(26, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('26');
+    expect(root.querySelector('.otio-seek')?.max).toBe('29');
+    expect(aims).toHaveLength(0);
+    expect(root.querySelector('.otio-selection')?.dataset['start']).toBe('26');
+    expect(anchor.range).toEqual(range(26, 0));
+  });
+
+  test('review regression: pre-handles and ranges extending into post-handles stay exposed', async () => {
+    for (const [id, selectedRange, start, end] of [
+      ['focused-b', range(20, 0), '18', '47'],
+      ['focused-a', range(22, 6), '0', '29'],
+    ] as const) {
+      const anchor = createOtioSelection(
+        controller.document,
+        'focused-timeline',
+        'focused-video',
+        2,
+        selectedRange,
+        id
+      );
+      controller.reveal(anchor);
+      await settleFocusRendering();
+      expect(root.dataset['frame']).toBe(
+        String(selectedRange.start_time.value)
+      );
+      expect(root.querySelector('.otio-seek')?.min).toBe(start);
+      expect(root.querySelector('.otio-seek')?.max).toBe(end);
+      expect(anchor.range).toEqual(selectedRange);
+    }
+  });
+
+  test('review regression: a visible handle can be revealed after its editorial body is trimmed out', async () => {
+    controller.dispose();
+    root = new ViewElement('div');
+    await mountOtioView(root as unknown as HTMLElement, {
+      content: focusedSelectionContent(range(26, 4)),
+      revision: 2,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement)!;
+    expect(controller.document.nodes['focused-a']!.timeline_range).toBeNull();
+    expect(
+      controller.document.nodes['focused-a']!.visible_timeline_range
+    ).toEqual(range(0, 4));
+    item('focused-a').dispatchEvent(new Event('click'));
+    expect(root.dataset['scopeAvailable']).toBe('false');
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(0, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    await settleFocusRendering();
+    expect(root.dataset['scopeAvailable']).toBe('true');
+    expect(root.querySelector('.otio-seek')?.max).toBe('3');
+    expect(root.querySelector('.otio-comment-selection')?.disabled).toBe(false);
+    expect(root.querySelector('.otio-selection-in')?.disabled).toBe(false);
+  });
+
+  test('review regression: a marker in transition handles keeps its exposed owner time', async () => {
+    const mark = findViewElement(
+      root,
+      (node) =>
+        node.matches('.otio-timeline-marker') &&
+        node.title.startsWith('SMPTE_Dissolve_1')
+    )!;
+    mark.dispatchEvent(new Event('click'));
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('26');
+    expect(aims.at(-1)?.anchor.range).toEqual(range(26, 0));
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-a');
+  });
+
+  test('review regression: a newer manual seek wins over a pending focused reveal', async () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    const seek = root.querySelector('.otio-seek')!;
+    seek.value = '12';
+    seek.dispatchEvent(new Event('input'));
+    expect(root.dataset['frame']).toBe('12');
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('12');
+    expect(seek.value).toBe('12');
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+  });
+
+  test('review regression: frame stepping invalidates a pending focused reveal seek', async () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    root.querySelector('.otio-next-frame')!.dispatchEvent(new Event('click'));
+    expect(root.dataset['frame']).toBe('1');
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('1');
+  });
+
+  test('disposing a captured gesture removes listeners and ignores stale activation', () => {
+    const first = item('focused-a');
+    const rail = first.parentElement!;
+    first.dispatchEvent(pointer('pointerdown', 0));
+    controller.dispose();
+    expect(rail.listeners.get('pointerup')?.size).toBe(0);
+    first.dispatchEvent(new Event('click'));
+    expect(aims).toHaveLength(0);
   });
 });

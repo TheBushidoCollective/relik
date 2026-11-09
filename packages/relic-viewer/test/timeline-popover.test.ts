@@ -10,7 +10,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { CommentAnchor } from '@relic/format';
+import { type CommentAnchor, readOtioDocument } from '@relic/format';
+import {
+  attachOtioController,
+  otioControllerFor,
+  type OtioUiController,
+} from '../src/otio-bridge.ts';
 import {
   clearDom,
   documentNode,
@@ -242,6 +247,97 @@ describe('a bounded OTIO composer', () => {
     const posted = await mounted.postInPanel(field.value);
     expect(posted.anchor).toEqual(latest);
   });
+
+  test('focused OTIO composition reserves the player while keeping the re-aimed draft', async () => {
+    const mounted = await mount();
+    const transport = new Node('div');
+    transport.className = 'otio-transport';
+    const focusedView = new Node('div');
+    focusedView.className = 'otio-view is-element-focused';
+    const playControl = new Node('button');
+    playControl.className = 'otio-play';
+    transport.appendChild(playControl);
+    focusedView.appendChild(transport);
+    mounted.stage.appendChild(focusedView);
+    transport.rect = {
+      left: 0,
+      top: 240,
+      width: 320,
+      height: 60,
+      right: 320,
+      bottom: 300,
+    };
+    mounted.stage.rect = {
+      left: 0,
+      top: 0,
+      width: 320,
+      height: 480,
+      right: 320,
+      bottom: 480,
+    };
+    mounted.stage.clientWidth = 320;
+    mounted.stage.clientHeight = 480;
+    Object.defineProperties(mounted.stage, {
+      clientTop: { value: 0 },
+      clientLeft: { value: 0 },
+    });
+    const originalQuery = mounted.stage.querySelector.bind(mounted.stage);
+    let focused = true;
+    mounted.stage.querySelector = (selector) =>
+      selector === '.otio-view.is-element-focused .otio-transport'
+        ? focused
+          ? transport
+          : null
+        : originalQuery(selector);
+    const base: Extract<CommentAnchor, { kind: 'otio' }> = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: 'a'.repeat(64),
+      timeline_id: 'timeline',
+      track_id: 'track-a',
+      item_id: 'clip-a',
+      range: {
+        start_time: { value: 4, rate: 24 },
+        duration: { value: 0, rate: 24 },
+      },
+      snapshot: { timeline: 'A', track: 'A', item: 'Primary Grade A' },
+    };
+    const aim = (anchor: typeof base) =>
+      mounted.content.dispatch('relic:otio-aim', {
+        detail: {
+          anchor,
+          focus: false,
+          measure: () => ({ left: 150, top: 400, width: 160, height: 40 }),
+        },
+      });
+    aim(base);
+    const panel = only(mounted.stage, 'popover-card');
+    const field = only(panel, 'popover-field');
+    panel.offsetHeight = 160;
+    aim(base);
+    expect(panel.classList.contains('is-focused-otio-composer')).toBe(true);
+    expect(panel.style.top).toBe('308px');
+    expect(panel.style.maxHeight).toBe('84px');
+    documentNode.dispatch('pointerdown', { target: playControl });
+    expect(only(mounted.stage, 'popover-card')).toBe(panel);
+    field.value = 'Primary grade range, before the dissolve.';
+    aim({
+      ...base,
+      item_id: 'clip-b',
+      snapshot: { ...base.snapshot, item: 'Secondary Grade B' },
+    });
+    expect(only(mounted.stage, 'popover-card')).toBe(panel);
+    expect(field.value).toBe('Primary grade range, before the dissolve.');
+    expect(textOf(only(panel, 'popover-target'))).toContain(
+      'Secondary Grade B'
+    );
+    focused = false;
+    aim(base);
+    expect(panel.classList.contains('is-focused-otio-composer')).toBe(false);
+    expect(panel.style.maxHeight).toBe('');
+    expect(Number.parseFloat(String(panel.style.top))).toBeLessThan(300);
+  });
   test('fullscreen re-show retains the live bounds policy and a new panel clears it', async () => {
     const doc = Reflect.get(globalThis, 'document') as unknown as {
       addEventListener(type: string, listener: (event: Event) => void): void;
@@ -353,6 +449,156 @@ describe('a marker on the timeline', () => {
     field.dispatch('focusin');
 
     expect(only(mounted.stage, 'popover-field')).toBe(field);
+  });
+
+  for (const action of ['popover-reply', 'popover-edit']) {
+    test(`review regression: automatic item and marker aims preserve an unsaved ${action} draft`, async () => {
+      const mounted = await mount({}, 'verified', [...SEEDS]);
+      marker(mounted, 'c1').dispatch('click');
+      only(mounted.stage, action).dispatch('click');
+      const panel = only(mounted.stage, 'popover-card');
+      const field = only(panel, 'popover-field');
+      field.value = 'Half a sentence';
+      const anchor: Extract<CommentAnchor, { kind: 'otio' }> = {
+        kind: 'otio',
+        v: 1,
+        relic_version: 1,
+        document_sha256: 'a'.repeat(64),
+        timeline_id: 'timeline',
+        track_id: 'track-a',
+        item_id: 'clip-a',
+        range: {
+          start_time: { value: 4, rate: 24 },
+          duration: { value: 12, rate: 24 },
+        },
+        snapshot: { timeline: 'A', track: 'A', item: 'Primary Grade A' },
+      };
+      aimOtio(mounted, anchor, false, {
+        left: 0,
+        top: 0,
+        width: 320,
+        height: 80,
+      });
+      expect(only(mounted.stage, 'popover-card')).toBe(panel);
+      expect(only(panel, 'popover-field')).toBe(field);
+      expect(field.value).toBe('Half a sentence');
+      aimOtio(
+        mounted,
+        {
+          ...anchor,
+          range: { ...anchor.range, duration: { value: 0, rate: 24 } },
+        },
+        false,
+        { left: 0, top: 0, width: 320, height: 80 }
+      );
+      expect(only(mounted.stage, 'popover-card')).toBe(panel);
+      expect(field.value).toBe('Half a sentence');
+    });
+  }
+
+  test('review regression: explicit OTIO mark activation reveals its sealed item anchor', async () => {
+    const range = {
+      start_time: { value: 0, rate: 24 },
+      duration: { value: 24, rate: 24 },
+    };
+    const document = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        name: 'A',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              name: 'Video 1',
+              metadata: { relic: { id: 'track-a' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  name: 'Primary Grade A',
+                  metadata: { relic: { id: 'clip-a' } },
+                  source_range: range,
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const anchor: Extract<CommentAnchor, { kind: 'otio' }> = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: document.document_sha256,
+      timeline_id: 'timeline',
+      track_id: 'track-a',
+      item_id: 'clip-a',
+      range,
+      snapshot: { timeline: 'A', track: 'Video 1', item: 'Primary Grade A' },
+    };
+    const mounted = await mount({}, 'verified', [
+      {
+        id: 'item-comment',
+        version: 1,
+        body: 'Primary grade range, before the dissolve.',
+        anchor,
+      },
+    ]);
+    const root = new Node('div');
+    root.className = 'otio-view';
+    mounted.content.appendChild(root);
+    const revealed: Array<{
+      readonly anchor: typeof anchor;
+      readonly id?: string;
+    }> = [];
+    const controller: OtioUiController = {
+      document,
+      revision: 1,
+      paint: () => true,
+      reveal: (target, id) => {
+        revealed.push({ anchor: target, ...(id ? { id } : {}) });
+      },
+      clearMarks: () => {},
+      measure: () => ({
+        x: 150,
+        y: 400,
+        left: 150,
+        top: 400,
+        right: 310,
+        bottom: 440,
+        width: 160,
+        height: 40,
+        toJSON: () => ({}),
+      }),
+      project: async (target) => ({
+        status: 'same',
+        original_anchor: target,
+        mapped_timeline_id: 'timeline',
+        mapped_track_id: 'track-a',
+        mapped_item_id: 'clip-a',
+        mapped_range: target.range,
+        mapped_ranges: [target.range],
+        source_spans: [],
+        diagnostics: [],
+      }),
+      projection: () => undefined,
+      dispose: () => {},
+    };
+    mounted.repaint();
+    attachOtioController(root as unknown as HTMLElement, controller);
+    expect(otioControllerFor(mounted.stage as unknown as HTMLElement)).toBe(
+      controller
+    );
+    expect(revealed).toHaveLength(0);
+    const mark = marker(mounted, 'item-comment');
+    mark.className = 'otio-comment-mark';
+    mark.dispatch('click');
+    expect(revealed).toEqual([{ anchor, id: 'item-comment' }]);
+    expect(only(mounted.stage, 'popover-card').dataset['commentId']).toBe(
+      'item-comment'
+    );
   });
 
   test('a cluster lists every member, and each one opens its own card', async () => {
