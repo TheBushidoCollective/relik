@@ -192,6 +192,10 @@ popup, and a scripted click is rejected.
 
 **Proposed native timeline player.** Subject to end-to-end surface proof in `packages/relic-mcp/test/otio-path.ts`.
 
+**Archive states and program playback (2026-11-10).** `readOtioProgramArchive` in `packages/relic-format/src/otio-program.ts` gives three outcomes, and the viewer must tell them apart (`format.md` 3.17). Legacy: it returns no program, because the archive has no `relic/program.json` and no other `relic/program` entry. The archive plays under the rules in this section, unchanged. Available: it returns a verified program. Normal mode then plays one native video of the program and maps media time to timeline time. Focusing one track or clip plays that track's original media. Focusing a stack or the whole timeline plays the program range. Unavailable or invalid: the reader throws an `OtioProgramError`, or a timeline is `unavailable` with reason codes. The viewer shows focus-only with the code or codes. A browser that cannot decode the program's codec adds `unsupported-browser`. In focus-only, the viewer offers track and clip focus on original media only. It never composites the whole timeline from original media, and it never plays the legacy path for a manifest it could not verify.
+
+The composition, native admission, and snapshot rules below apply to legacy archives only. An archive in the available state uses the program path above. Comment anchors keep their format and bind to `content.otio` in every state.
+
 `otio` is the tenth renderer class (`RendererClass: otio`, `CLASS_BEHAVIOUR.otio: plays`, `RenderRoute: otio`).
 
 - **Archive routing and sniffing:** Decrypted content is inspected by byte signature and archive index. Standard `.otioz` archives (containing `content.otio` and `version.txt`) route to `otio`. Generic archives remain download-only (`CLASS_BEHAVIOUR.archive: downloads`). A raw `.otio` file provides structural inspection without remote fetching.

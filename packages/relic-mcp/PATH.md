@@ -439,6 +439,42 @@ Success ends with:
 OTIO_PATH_OK
 ```
 
+## Rendered OpenTimelineIO program (not yet implemented)
+
+Status: specified, not built. No command in this section runs yet, and nothing here proves that a program exists. The `OTIO_PATH_OK` run above proves the composition archive path that ships today. It does not prove a program, a manifest, or focus-only reasons.
+
+Once the program exists, publishing a timeline must produce an archive that `format.md` 3.17 requires. Each of the following must hold.
+
+**Contents.** The archive contains `relic/program.json` and one MP4 per rendered timeline outside `content.otio`. The manifest is present on every archive published under this path.
+
+**Identity.** `content.otio`, `document_sha256`, and `relic_version` are unchanged from the composition path.
+
+**Size.** The archive fits within 100 MiB as plaintext, after trying 1080p, then 720p, then 540p per timeline.
+
+**Reasons.** Every timeline that cannot be rendered records a specific code and reason. No approximate render is stored.
+
+The proof must check each of these before this section's status changes.
+
+**Check 1, decoding.** Each MP4 is decoded independently. Frame count, timestamps, audio length, and start alignment match the timeline.
+
+**Check 2, reference match.** Rendered frames and audio match independently prepared references made from the source media. The method and tolerance are fixed in the proof before it runs.
+
+**Check 3, refusal.** The viewer refuses a program on any failed check (schema, document digest, file hash, size, timing, or browser support) and shows focus-only with the reason.
+
+**Check 4, legacy and corrupt manifests.** Remove the manifest from one archive and confirm it plays as before. Flip one byte in the manifest and in one MP4 of another archive and confirm focus-only, never legacy playback.
+
+**Check 5, focus-only reasons.** An unsupported effect or transition, an oversized archive, a missing local Chrome, and a browser without H.264/AAC encoding each produce an unavailable timeline with its matching reason: `unsupported-effect` or `unsupported-transition`, `size-cap-exceeded`, `unsupported-browser`, and `encoder-unavailable`. A Linux publisher without H.264/AAC is focus-only under Jason's rule. A focus-only archive never contains a whole-timeline composite.
+
+**Check 6, budgets.** Cold and warm startup within 350 ms. Steady presentation p95 within 50 ms with a 100 ms maximum gap. Source-aware audio dropout within 20 ms. Failures are reported as failures.
+
+**Check 7, comments.** A comment anchored on a program-bearing timeline still decrypts and resolves against `content.otio`.
+
+**Check 8, isolation and disk.** The render page runs with networking disabled and a temporary profile. The probe records that run's network activity, and it fails if any rendered frame or audio byte is written to a file or to browser storage. This is an absolute constraint, shared with `publish.md` 4.8.
+
+**Check 9, legacy readers (agent-run).** Build the viewer from the revision before the program change, and open two archives with it. A legacy archive must open exactly as it did before. A program-bearing archive from the new publisher must either open its `content.otio` as before or refuse with a clear error, and it must never render a partial program. The proof output records the result. A failure blocks release of program archives until it passes. No human decision is needed: the agent runs the check and fixes what it finds.
+
+No command for this section exists yet. When one exists, add it here with its exact success line. Change this section's status only after that command has passed at the revision being shipped.
+
 ## Passkey-confirmed decisions
 
 Run the full loopback proof from the repository root:

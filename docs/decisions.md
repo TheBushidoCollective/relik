@@ -842,8 +842,12 @@ The coarse renderer class expands from nine to ten values: `markdown`, `code`, `
 **The generic cover exception.**
 By default, `relic-mcp` generates an unencrypted 1200x630 cover image for renderable documents and media. For `otio` relics, unencrypted first-screen media rendering is skipped by default. Unfurl previews display a generic card carrying the publisher-declared title and format label. This exception protects sensitive timeline media frames, cuts, and track metadata from leaking into unencrypted link preview caches without the decryption key.
 
+**Unchanged on 2026-11-10.** A program is rendered only into the encrypted archive and is never produced as an unencrypted preview, so this exception still holds for every OTIO relic.
+
 **Codec, effect, and browser boundaries.**
 Browser playback operates under browser-managed SDR decoding with canvas composition and additive audio. There is no universal effect execution engine, plugin runner, transcode service, or remote asset resolver. Codec decoding is verified via actual element loading rather than speculative `canPlayType`. Unsupported effects, unrecognized schemas, and missing media trigger explicit diagnostic states (`unsupported-effect`, `unsupported-codec`, `unsupported-schema`, `missing-media`) and provide a deliberate "Preview base media without unsupported effects" control. Incomplete playback is never disguised as complete fidelity.
+
+**Scoped on 2026-11-10.** The rule above binds the viewer and the server, and this text stays as written. The 2026-11-10 program decision lets the publisher's own browser encode an MP4 locally before encryption. No server and no viewer encode a timeline. See that entry for the publisher-side renderer and its boundary.
 
 **Encrypted timeline feedback anchoring.**
 Reviewers can anchor point comments or half-open range comments to specific tracks or the entire composition. A new anchor kind (`kind: 'otio'`, `v: 1`) carries rational time coordinates (`{value, rate}`), timeline ID, track ID, optional item ID, document SHA-256, and human snapshot labels. Anchor payloads fit within the 1,536-byte budget before encryption and the 8,192 base64url character ciphertext cap. Comment bodies and anchors remain encrypted under the relic's derived comment key. Historical comments resolve against the original revision's decrypted document, and conservative current-revision projections (`same`, `mapped`, `partial`, `changed`, `ambiguous`, `missing`) are reported separately to publisher agents without rewriting original anchors.
@@ -852,6 +856,8 @@ Reviewers can anchor point comments or half-open range comments to specific trac
 - Browser playback is limited to browser-supported SDR video and audio formats; professional codecs (ProRes, DNxHD) or RAW formats require pre-transcoded web-compatible proxy media inside the bundle.
 - Nonlinear retiming and complex transitions without web-native equivalents fall back to base media preview or diagnostic placeholders.
 - A raw `.otio` file lacking bundled media provides structural track inspection and download, not media playback.
+
+**Annotated on 2026-11-10.** The placeholder behavior above is the viewer's, and it still governs focus-only playback. A timeline with an unsupported feature gets no program: its archive is focus-only with the exact reason. The residual on professional codecs carries over the same way, so a timeline whose media the publisher's browser cannot decode is focus-only with its code. See the 2026-11-10 entry.
 
 ## 2026-10-24: Copy link shows the link and the key phrase
 
@@ -922,6 +928,8 @@ The same bundled video decoded continuously at 30 fps in the native HTML video p
 - WASM would add a software decoder without addressing the measured per-frame seek policy.
 - WebCodecs would add a demuxing and codec-feed pipeline; the measured seek bottleneck can be removed using the existing media element.
 - The boundary from the 2026-10-20 OpenTimelineIO native playback decision is retained: browser playback operates under browser-managed SDR decoding with canvas composition and additive audio, without transcode services, WASM decoders, or WebCodecs pipelines.
+
+**Scoped on 2026-11-10.** The boundary above governs the viewer. The 2026-11-10 program decision lets the publisher's own browser encode H.264/AAC locally before encryption, and that entry does not choose the encoder API. If the renderer uses WebCodecs, it is a publisher-side exception to this boundary and does not reach the viewer. Nothing is proven until the renderer ships.
 
 `VideoFrame` is used only to read the media element's current frame together with its timestamp inside `requestVideoFrameCallback`. No WebCodecs decoder, demuxer or codec configuration is involved. Tagging from the callback metadata can pair a tag with a newer frame when the main thread is late. The admission probe measured it: one fr60 sample in twenty disagreed in a two-decoder run under host load, and with a 40 ms delay injected into the callback the metadata method disagreed on every sample in four classes (fr60, fr30 WebM, no-duration WebM and the 1080p long-GOP file). The `VideoFrame` method matched every sample in every class in the unthrottled, 4x CPU and 40 ms delay runs. Native playback also requires `VideoFrame`; without it the viewer plays on seek cadence.
 
@@ -1062,3 +1070,60 @@ The same change fixes the player for every markdown source: an indented line und
 ## 2026-11-09: Comment writes have no rate limit
 
 Jason directed that comments never be rate limited. Comment creation, edits, resolution, and reopening no longer share a per-IP quota. Authentication and author permissions, transport limits, the kill switch, and notification mail limits remain in place. This permits unbounded comment storage and readback work by an authorized actor; the mail limits do not bound that work. A fixed-clock burst exercises writes beyond the former threshold.
+
+## 2026-11-10: OpenTimelineIO timelines render locally into the archive as a program, with focus-only fallback
+
+The direction came from the PR155 work through Main, and Main added the legacy and corrupt-manifest rule the same day. This entry records both. **Status: decided, not implemented.** No file in `packages/` or `docs/` contains `relic/program.json` or the focus-only codes as of this entry. Nothing here describes working behaviour. `packages/relic-mcp/PATH.md` lists the proofs that must pass first.
+
+**The publisher renders each timeline before encryption.** `relic-mcp` renders every timeline in a composition in a local browser with networking disabled and a temporary profile. The renderer reuses the viewer's compositing and timeline evaluation. It decodes frames at the same certified source times the viewer uses, and it mixes audio at 48 kHz with the playback fade math. Output is H.264/AAC MP4, and only after the browser confirms encoder support. The archive gains `relic/program.json` and one MP4 per timeline, outside `content.otio`.
+
+**Quality ladder and cap.** Each timeline tries 1080p, then 720p, then 540p. The finished plaintext archive must fit the existing 100 MiB cap (`format.md` 3.11), which is not raised. If no rung fits, the timeline is focus-only.
+
+**Focus-only.** Publishing still succeeds. A timeline without a valid program carries no program, and its manifest records a specific code for the reason. The reasons are: no local Chrome, no H.264/AAC encoder, an unsupported feature, a render failure, and a size overrun. A render never approximates. No partial, lower-fidelity, or substituted program is stored. Under Jason's rule, a Linux publisher whose Chrome cannot encode H.264/AAC is focus-only.
+
+**Legacy archives and corrupt manifests.** Main directed this on 2026-11-10, and it is binding.
+
+An archive published before this decision has no `relic/program.json`. It keeps its existing playback, so previously shared links do not break.
+
+Every archive published under this decision carries `relic/program.json`, even when its program is unavailable. A manifest that reports unavailable, or that fails validation, shows focus-only with its reason.
+
+A missing manifest is legacy. A present manifest that is corrupt, unparseable, or tampered is never legacy and is never silently ignored. The viewer shows focus-only and says the manifest is invalid.
+
+**Viewer behaviour.** When a valid program exists, normal mode plays one native video and maps media time to timeline time. Focusing one track or clip plays that track's original media. Focusing a stack or the whole timeline plays the program range. When a program is unavailable or invalid, the viewer shows focus-only: track and clip focus on original media, with the stored reason. Whether the composited whole-timeline path from 2026-10-20 stays reachable in focus-only is open (see below). Comment anchors keep their current format and bind to `content.otio`.
+
+**Budgets.** The plan applies the 2026-11-09 numbers to program playback. Startup from the play request is 350 ms cold and warm, approved for scheduled PCM on 2026-11-09. Steady presentation is 50 ms at p95 with a 100 ms maximum gap, and source-aware audio dropout is 20 ms. Jason is needed only if cold program startup exceeds 350 ms. Failures are reported, not inferred.
+
+**Privacy.** The program is plaintext only in the publisher's browser and inside the encrypted archive. No program field reaches object metadata, the grant request, or the relic row (`format.md` 3.2). The 2026-10-20 cover exception stands, so no unencrypted timeline media is rendered for preview. The length leak (`service.md` section 5) now covers the larger archive total, and the published disclosure must still list it. Networking-disabled rendering is a requirement of this decision and is not proven.
+
+**Resolved on 2026-11-10 by Jason's direction, through Main.** Items 1 to 5 are settled. Item 6 is an agent-run verification, not a question for Jason.
+
+**1. Plaintext temporary file: settled.** Rendered output is plaintext and is held in memory only, within the 100 MiB cap. It is never written to disk. This is an absolute constraint. `publish.md` 4.8 is unchanged and applies in full, so there is no conflict and no amendment.
+
+**2. Renderer: settled.** Local Chrome with WebCodecs encoders, producing H.264/AAC MP4 after the browser confirms support. This supersedes the 2026-11-09 WebCodecs boundary for the publisher renderer only, as annotated above.
+
+**3. Whole-timeline view without a program: settled.** There is none. A timeline with no valid program is focus-only, and the viewer does not composite it from original media.
+
+**4. Unsupported features: settled.** A timeline with an unsupported effect or transition gets no program and is focus-only with `unsupported-effect` or `unsupported-transition`. The 2026-10-20 diagnostic states apply to focused items only.
+
+**5. Reason codes: settled, taken from the implementation.** The codes are the enum `OTIO_PROGRAM_REASON_CODES` in `packages/relic-format/src/otio-program.ts`, listed in `format.md` 3.17. The reader's thrown codes are the `OtioProgramErrorCode` union in the same file. No other names are program codes.
+
+**6. Legacy-reader compatibility: agent-run verification.** Whether a pre-change viewer opens a program archive safely is checked by `packages/relic-mcp/PATH.md` Check 9. The agent runs it before release. A failure blocks program archives until the new viewer or publisher is fixed and the check passes.
+
+**Supersession register.** Earlier entries are annotated in place, not rewritten.
+
+**2026-10-20 codec, effect, and browser boundaries:** scoped to the viewer and the server, annotated above.
+
+**2026-10-20 residuals (professional codecs, unsupported transitions):** carry over to focus-only reasons, annotated above.
+
+**2026-10-20 generic cover exception:** unchanged, annotated above.
+
+**2026-11-09 boundary against WebCodecs and transcode pipelines:** retained for the viewer, scoped for the publisher renderer, annotated above.
+
+**`viewer.md` 3.6 composition and normal-mode playback:** applied on 2026-11-10. Program-bearing archives in the available state use the program path, and the composition rules apply to legacy archives only.
+
+**`publish.md` 4.8, no plaintext temporary file:** no conflict. Rendered output is held in memory and never written to disk, so 4.8 is unchanged and applies in full.
+
+**Locked inputs.** `frame.md` and `preconditions.md` are unchanged. This decision adds a program for OpenTimelineIO only. It does not make general archives first-party rendered.
+
+
+
