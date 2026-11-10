@@ -803,7 +803,7 @@ async function runWorkletClock() {
         this.port.onmessage=e=>{if(e.data.type==='checkpoint')this.port.postMessage({type:'checkpoint',nonce:e.data.nonce,end:this.lastEnd,ordinal:this.ord-1,samples:this.samples,quantumLength:this.lastLength,fault:this.fault,rows:this.rows.splice(0)});else if(e.data.type==='arm'){this.f0=e.data.f0;this.late=this.lastEnd>this.f0;}else if(e.data.type==='finish')this.port.postMessage({type:'finish',rows:this.rows.splice(0)});};
       }
       process(inputs,outputs,params) {
-        const p=params.native, len=outputs[0][0].length, raw=Array.from(p), carrier=inputs[0]||[], actualGate=inputs[1]||[];
+        const p=params.native, len=outputs[0][0].length, raw=Array.from(p), carrier=inputs[0]||[];
         const relative=Math.round(p[0]*1000000), native=this.anchor+relative, input=carrier.map(x=>Array.from(x)); let reason=this.fault;
         const warming = !this.admitted && (p.length===1 || (p[0]===0 && p[p.length-1]===0));
         if(!reason&&warming)reason='warming';
@@ -823,14 +823,13 @@ async function runWorkletClock() {
         if(!reason&&this.f0!==null&&native>=this.f0&&carrier.length===5) { output[0].set(carrier[3]); output[1].set(carrier[4]); decision='pass';this.admitted=true; }
         else for(const channel of output)channel.fill(0);
         if(!reason) {this.lastEnd=native+len;this.expected=native+len;this.lastLength=len;}
-        this.rows.push({ordinal:this.ord++,appendSampleOffset:this.samples,quantumLength:len,cachedCurrentFrame:currentFrame,cachedCurrentTime:currentTime,rawNative:raw,decodedNativeFrame:native,rawCarrier:input,rawActualGate:actualGate.map(x=>Array.from(x)),rawOutput:output.map(x=>Array.from(x)),decision,reason});this.samples+=len;
+        this.rows.push({ordinal:this.ord++,appendSampleOffset:this.samples,quantumLength:len,cachedCurrentFrame:currentFrame,cachedCurrentTime:currentTime,rawNative:raw,decodedNativeFrame:native,rawCarrier:input,rawOutput:output.map(x=>Array.from(x)),decision,reason});this.samples+=len;
         return true;
       }
     } registerProcessor('clock-probe',ClockProbe);`;
   const cases = [
     { construction: 'suspended', mutation: false, control: 'none' },
     { construction: 'running', mutation: true, control: 'none' },
-    { construction: 'suspended', mutation: true, control: 'actual-gate' },
     { construction: 'suspended', mutation: false, control: 'held' },
     { construction: 'suspended', mutation: false, control: 'shift' },
     { construction: 'suspended', mutation: false, control: 'late' },
@@ -860,11 +859,9 @@ async function runWorkletClock() {
     } finally {
       URL.revokeObjectURL(moduleUrl);
     }
-    if (spec.control === 'actual-gate')
-      await context.audioWorklet.addModule('/actual-gate.js');
     const anchor = Math.ceil((context.currentTime * RATE + 4800) / 128) * 128;
     const probe = new AudioWorkletNode(context, 'clock-probe', {
-      numberOfInputs: 2,
+      numberOfInputs: 1,
       numberOfOutputs: 1,
       channelCount: 5,
       channelCountMode: 'explicit',
@@ -980,35 +977,6 @@ async function runWorkletClock() {
         throw new Error('cancelAndHoldAtTime unavailable');
       param.cancelAndHoldAtTime(heldFrame / RATE);
     }
-    const gateMessages: unknown[] = [];
-    let gate: AudioWorkletNode | undefined;
-    let gateSource: AudioBufferSourceNode | undefined;
-    if (spec.control === 'actual-gate') {
-      gate = new AudioWorkletNode(context, 'otio-transport-gate', {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        channelCount: 2,
-        channelCountMode: 'explicit',
-        channelInterpretation: 'speakers',
-        outputChannelCount: [2],
-      });
-      gate.port.onmessage = (event) => gateMessages.push(event.data);
-      const stereo = context.createBuffer(2, length, RATE);
-      stereo.copyToChannel(buffer.getChannelData(3), 0);
-      stereo.copyToChannel(buffer.getChannelData(4), 1);
-      gateSource = context.createBufferSource();
-      gateSource.buffer = stereo;
-      gateSource.connect(gate);
-      gate.connect(probe, 0, 1);
-      gate.port.postMessage({
-        type: 'arm',
-        generation: 1,
-        sequence: 1,
-        f0,
-        throughFrame: f0 + length,
-      });
-      gateSource.start(f0 / RATE);
-    }
     if (spec.control !== 'late') probe.port.postMessage({ type: 'arm', f0 });
     source.start(f0 / RATE);
     await context.resume();
@@ -1069,8 +1037,6 @@ async function runWorkletClock() {
       }
     }
     source.disconnect();
-    gateSource?.disconnect();
-    gate?.disconnect();
     probe.disconnect();
     muted.disconnect();
     await context.close();
@@ -1081,14 +1047,12 @@ async function runWorkletClock() {
       f0,
       sampleRate: RATE,
       carrierLength: length,
-      gateMessages,
       rows,
     });
   }
   return {
     results,
-    limitation:
-      'actual gate wrapper tested in separate input; candidate direct copier is not a transport state machine',
+    limitation: 'independent direct copier, not a production transport gate',
   };
 }
 (

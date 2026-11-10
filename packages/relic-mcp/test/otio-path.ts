@@ -9454,6 +9454,7 @@ interface MovingTrace {
     timestamp: number;
     frame: number;
     sampleFrame: number;
+    contextState: string;
     bridge: AudioClockBridge;
     audioOverflow: boolean;
     visualOverflow: boolean;
@@ -9482,6 +9483,7 @@ interface MovingTrace {
     }>;
     witness?: {
       anchor: number;
+      laterAnchor: number | null;
       frozenAnchor: number;
       length: number;
       gateInitialFrame: number;
@@ -9490,7 +9492,7 @@ interface MovingTrace {
     sampleRate: number;
   };
 }
-function assertPcmCoverage(
+function assertPcmSequence(
   start: number,
   end: number,
   chunks: Array<{
@@ -9550,6 +9552,10 @@ function assertPcmCoverage(
     );
     let frame = chunk.sampleFrame;
     for (let i = 0; i < chunk.quantumFrames.length; i++) {
+      assert.ok(
+        Number.isSafeInteger(chunk.quantumFrames[i]),
+        'invalid raw callback label'
+      );
       if (rawFrameAuthority)
         assert.equal(
           chunk.quantumFrames[i],
@@ -9604,7 +9610,7 @@ function assertPcmCoverage(
 function carrierFrame(
   chunk: MovingTrace['trace']['audio'][number],
   i: number,
-  witness: { anchor: number; length: number }
+  witness: { anchor: number; laterAnchor: number | null; length: number }
 ): number | null {
   const high = chunk.witness?.[0]?.[i],
     low = chunk.witness?.[1]?.[i];
@@ -9617,16 +9623,18 @@ function carrierFrame(
   )
     return null;
   const frame = (high! - 1) * 65536 + low!;
-  if (
-    !Number.isSafeInteger(frame) ||
-    frame < witness.anchor ||
-    frame >= witness.anchor + witness.length
-  )
-    return null;
+  if (!Number.isSafeInteger(frame)) return null;
+  const inInitial =
+    frame >= witness.anchor && frame < witness.anchor + witness.length;
+  const inLater =
+    witness.laterAnchor !== null &&
+    frame >= witness.laterAnchor &&
+    frame < witness.laterAnchor + witness.length;
+  if (!inInitial && !inLater) return null;
   return frame;
 }
 function assertIndependentCarrier(
-  trace: MovingTrace['trace'],
+  trace: Pick<MovingTrace['trace'], 'audio' | 'witness'>,
   first: number,
   end: number
 ): void {
@@ -9636,7 +9644,7 @@ function assertIndependentCarrier(
       Number.isSafeInteger(witness.anchor) &&
       Number.isSafeInteger(witness.length) &&
       witness.length > 0,
-    'independent frozen-checkpoint carrier unavailable'
+    'independent frozen-origin carrier unavailable'
   );
   let seen = 0;
   let previous: number | null = null;
@@ -9679,27 +9687,195 @@ function assertIndependentCarrier(
   );
 }
 
+// Raw currentFrame labels are retained for diagnostics only. Coverage is
+// authenticated by every independently encoded carrier sample and by the
+// callback sequence and cumulative offsets, including across chunk boundaries.
+function assertPcmCoverage(
+  start: number,
+  end: number,
+  chunks: MovingTrace['trace']['audio'],
+  witness: MovingTrace['trace']['witness']
+): void {
+  assert.ok(witness, 'independent native carrier unavailable');
+  assertPcmSequence(start, end, chunks, false);
+  assertIndependentCarrier({ audio: chunks, witness }, start, end);
+}
+
+function assertPcmSilence(
+  trace: MovingTrace['trace'],
+  start: number,
+  end: number,
+  label: string
+): void {
+  const witness = trace.witness;
+  assertPcmCoverage(start, end, trace.audio, witness);
+  assert.ok(witness, 'independent native carrier unavailable');
+  let observed = 0;
+  for (const chunk of trace.audio)
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null || frame < start || frame >= end) continue;
+      assert.ok(
+        Math.abs(chunk.channels[0]![i]!) < 0.001 &&
+          Math.abs(chunk.channels[1]![i]!) < 0.001,
+        label
+      );
+      observed++;
+    }
+  assert.equal(observed, end - start, `${label}: incomplete observation`);
+}
+
+function lastCarrierEnd(trace: MovingTrace['trace']): number {
+  const witness = trace.witness;
+  assert.ok(witness, 'independent native carrier unavailable');
+  for (let c = trace.audio.length - 1; c >= 0; c--) {
+    const chunk = trace.audio[c]!;
+    for (let i = chunk.channels[0]!.length - 1; i >= 0; i--) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame !== null) return frame + 1;
+    }
+  }
+  throw new Error('independent native carrier absent from capture');
+}
+
+function assertAnchorEvidence(
+  trace: MovingTrace['trace']
+): Record<string, unknown> {
+  const witness = trace.witness;
+  assert.ok(
+    witness && witness.gateInitialFrame === witness.frozenAnchor,
+    'independent frozen anchor missing or disagrees with gate construction'
+  );
+  const layout = trace.events.find((event) => event.kind === 'transport-layout')
+    ?.value as Record<string, unknown> | undefined;
+  const productionCarrier = trace.events.find(
+    (event) => event.kind === 'production-anchor-carrier-connected'
+  )?.value as Record<string, unknown> | undefined;
+  assert.ok(
+    layout?.['inputs'] === 2 &&
+      layout['outputs'] === 1 &&
+      layout['channelCount'] === 2 &&
+      layout['channelCountMode'] === 'explicit' &&
+      layout['channelInterpretation'] === 'speakers' &&
+      Array.isArray(layout['outputChannels']) &&
+      layout['outputChannels'][0] === 2,
+    'authored gate channel layout changed'
+  );
+  assert.ok(
+    productionCarrier?.['clockEpoch'] === witness.clockEpoch &&
+      productionCarrier['input'] === 1 &&
+      productionCarrier['frames'] === 8192 &&
+      productionCarrier['channels'] === 2 &&
+      productionCarrier['rate'] === trace.sampleRate &&
+      productionCarrier['channelCount'] === 2 &&
+      productionCarrier['channelCountMode'] === 'explicit' &&
+      productionCarrier['channelInterpretation'] === 'discrete',
+    'native anchor carrier routing is not isolated stereo'
+  );
+  const sourceStart = trace.events.find(
+    (event) => event.kind === 'production-anchor-start-request'
+  )?.value as Record<string, unknown> | undefined;
+  assert.ok(
+    sourceStart?.['clockEpoch'] === witness.clockEpoch &&
+      sourceStart['offset'] === 0 &&
+      sourceStart['playbackRate'] === 1 &&
+      sourceStart['detune'] === 0 &&
+      sourceStart['loop'] === false &&
+      typeof sourceStart['when'] === 'number' &&
+      Math.abs(sourceStart['when'] * trace.sampleRate - witness.frozenAnchor) <=
+        1 / 1024,
+    'native anchor carrier did not start at the frozen origin with unit rate'
+  );
+  const messages = trace.events
+    .filter((event) => event.kind === 'transport-message')
+    .map((event) => event.value as Record<string, unknown>);
+  const anchor = messages.find(
+    (message) => message?.['type'] === 'anchor-certified'
+  );
+  assert.ok(
+    anchor &&
+      anchor['clockEpoch'] === witness.clockEpoch &&
+      anchor['firstFrame'] === witness.frozenAnchor &&
+      anchor['callbackOrdinal'] === 2 &&
+      Number.isSafeInteger(anchor['sampleCount']) &&
+      Number.isSafeInteger(anchor['quantumLength']) &&
+      Number(anchor['quantumLength']) >= 2 &&
+      Number(anchor['quantumLength']) <= 2048 &&
+      Number.isSafeInteger(anchor['bankSerial']) &&
+      anchor['lastCertifiedEnd'] ===
+        witness.frozenAnchor + Number(anchor['sampleCount']) &&
+      anchor['clockCoverageEnd'] === witness.frozenAnchor + 65536 - 2048,
+    'anchor certificate lacks exact frozen-origin provenance'
+  );
+  const boot = trace.events
+    .filter((event) => event.kind === 'transport-bootstrap-clock')
+    .map((event) => event.value as Record<string, unknown>)
+    .filter((record) => record['clockEpoch'] === witness.clockEpoch)
+    .slice(0, 2);
+  assert.equal(
+    boot.length,
+    2,
+    'first two certified native parameter callbacks missing'
+  );
+  let expected = witness.frozenAnchor,
+    total = 0;
+  for (let q = 0; q < 2; q++) {
+    const record = boot[q]!,
+      values = record['clockFrameA'],
+      tags = record['clockTagA'];
+    assert.ok(
+      Array.isArray(values) &&
+        values.length >= 2 &&
+        values.length <= 2048 &&
+        Array.isArray(tags) &&
+        (tags.length === 1 || tags.length === values.length) &&
+        record['callbackOrdinal'] === q + 1 &&
+        record['sampleCount'] === total &&
+        record['certifiedFrame'] === expected,
+      'bootstrap bank provenance invalid'
+    );
+    for (let i = 0; i < values.length; i++) {
+      const value: number = values[i];
+      assert.ok(
+        Number.isFinite(value) &&
+          Math.abs(value - Math.round(value)) < 1 / 16 &&
+          witness.frozenAnchor + Math.round(value) === expected + i &&
+          tags[tags.length === 1 ? 0 : i] === anchor['bankSerial'],
+        'bootstrap bank sample disagrees with frozen origin'
+      );
+    }
+    expected += values.length;
+    total += values.length;
+  }
+  assert.equal(
+    expected,
+    anchor['lastCertifiedEnd'],
+    'anchor boundary differs from actual callbacks'
+  );
+  assert.equal(
+    total,
+    anchor['sampleCount'],
+    'anchor count differs from actual callbacks'
+  );
+  assertPcmSilence(
+    trace,
+    witness.frozenAnchor,
+    expected,
+    'authored PCM escaped before anchor certification'
+  );
+  return anchor;
+}
+
 function assertGateClockEvidence(
   trace: MovingTrace['trace'],
   crossing = false
 ): void {
   const witness = trace.witness;
-  assert.ok(witness, 'carrier checkpoint missing');
-  const checkpoints = trace.events
-    .filter((event) => event.kind === 'transport-checkpoint-context')
-    .map((event) => event.value as Record<string, unknown>);
-  assert.ok(
-    checkpoints.some(
-      (checkpoint) =>
-        checkpoint['state'] === 'suspended' &&
-        Math.abs(
-          Number(checkpoint['currentTime']) * Number(checkpoint['sampleRate']) -
-            Number(checkpoint['lastCertifiedEnd'])
-        ) <=
-          1 / 1024 &&
-        Number(checkpoint['lastCertifiedEnd']) >= witness.frozenAnchor
-    ),
-    'gate checkpoint does not match frozen native context time'
+  assert.ok(witness, 'independent carrier provenance missing');
+  assert.equal(
+    witness.gateInitialFrame,
+    witness.frozenAnchor,
+    'gate initial origin differs from independent frozen-context origin'
   );
   const messages = trace.events
     .filter((event) => event.kind === 'transport-message')
@@ -9775,7 +9951,6 @@ function assertGateClockEvidence(
     1,
     'gate and tap callback sequence cannot be uniquely aligned'
   );
-  let sawStale = false;
   for (let r = 0; r < records.length; r++) {
     const record = records[r]!,
       quantum = quanta[candidates[0]! + r]!;
@@ -9878,16 +10053,278 @@ function assertGateClockEvidence(
         );
       }
     }
-    if (
-      r > 0 &&
-      records[r - 1]!['cachedCurrentFrame'] === record['cachedCurrentFrame']
-    )
-      sawStale = true;
+  }
+}
+
+// A rare cached-global duplicate is evidence only when the real production
+// gate observed it and both quanta agree with the separately scheduled carrier
+// and source PCM. This is deliberately separate from the steady trace window.
+function assertNaturalStaleWitness(
+  trace: MovingTrace['trace'],
+  f0: number,
+  expected: readonly [Float32Array, Float32Array]
+): void {
+  const witness = trace.witness;
+  assert.ok(witness, 'independent stale-event carrier unavailable');
+  const messages = trace.events
+    .filter((event) => event.kind === 'transport-message')
+    .map((event) => event.value as Record<string, unknown>);
+  assert.ok(
+    !messages.some((message) => message?.['type'] === 'clock-stale-overflow'),
+    'stale-pair recorder overflow'
+  );
+  const pairs = messages.filter(
+    (message) => message?.['type'] === 'clock-stale-pair'
+  );
+  assert.ok(
+    pairs.length > 0,
+    'no actual cached-global duplicate observed by the production gate'
+  );
+  const quanta: Array<{
+    label: number;
+    count: number;
+    chunk: MovingTrace['trace']['audio'][number];
+    offset: number;
+  }> = [];
+  for (const chunk of trace.audio) {
+    assert.ok(
+      chunk.quantumFrames && chunk.quantumLengths,
+      'tap callback provenance missing'
+    );
+    let offset = 0;
+    for (let i = 0; i < chunk.quantumFrames.length; i++) {
+      quanta.push({
+        label: chunk.quantumFrames[i]!,
+        count: chunk.quantumLengths[i]!,
+        chunk,
+        offset,
+      });
+      offset += chunk.quantumLengths[i]!;
+    }
+  }
+  let audiblePairs = 0;
+  for (const pair of pairs) {
+    const previous = pair['previous'] as Record<string, unknown> | undefined;
+    const current = pair['current'] as Record<string, unknown> | undefined;
+    assert.ok(
+      previous &&
+        current &&
+        pair['clockEpoch'] === witness.clockEpoch &&
+        previous['cachedCurrentFrame'] === current['cachedCurrentFrame'] &&
+        Number(current['callbackOrdinal']) ===
+          Number(previous['callbackOrdinal']) + 1 &&
+        Number(current['sampleCount']) ===
+          Number(previous['sampleCount']) + Number(previous['quantumLength']),
+      'stale recorder did not retain adjacent actual gate callbacks'
+    );
+    const label = previous['cachedCurrentFrame'];
+    const indices = quanta.flatMap((quantum, index) =>
+      quantum.label === label &&
+      quanta[index + 1]?.label === label &&
+      quantum.count === previous['quantumLength'] &&
+      quanta[index + 1]?.count === current['quantumLength']
+        ? [index]
+        : []
+    );
+    assert.equal(
+      indices.length,
+      1,
+      'stale gate callbacks cannot be uniquely correlated with independent tap'
+    );
+    let precedingEnd: number | null = null,
+      inside = true,
+      energy = 0;
+    for (const [record, index] of [
+      [previous, indices[0]!],
+      [current, indices[0]! + 1],
+    ] as const) {
+      const quantum = quanta[index]!;
+      const active = record['active'] as {
+        bank: 0 | 1;
+        serial: number;
+        startFrame: number;
+        endFrame: number;
+        clockEpoch: number;
+      };
+      assert.ok(
+        active &&
+          (active.bank === 0 || active.bank === 1) &&
+          active.clockEpoch === witness.clockEpoch &&
+          Number.isSafeInteger(active.serial) &&
+          Number.isSafeInteger(active.startFrame) &&
+          Number.isSafeInteger(active.endFrame),
+        'stale-pair bank descriptor invalid'
+      );
+      const suffix = active.bank === 0 ? 'A' : 'B';
+      const frames = record['clockFrame' + suffix],
+        tags = record['clockTag' + suffix];
+      assert.ok(
+        Array.isArray(frames) &&
+          frames.length === quantum.count &&
+          Array.isArray(tags) &&
+          (tags.length === 1 || tags.length === quantum.count),
+        'stale-pair native parameter samples unavailable'
+      );
+      for (let i = 0; i < quantum.count; i++) {
+        const sourceFrame = carrierFrame(
+            quantum.chunk,
+            quantum.offset + i,
+            witness
+          ),
+          value: number = frames[i];
+        assert.ok(
+          sourceFrame !== null &&
+            Number.isFinite(value) &&
+            Math.abs(value - Math.round(value)) < 1 / 16 &&
+            tags[tags.length === 1 ? 0 : i] === active.serial &&
+            active.startFrame + Math.round(value) === sourceFrame &&
+            sourceFrame < active.endFrame,
+          'stale-pair bank disagrees with independent source carrier'
+        );
+        if (i === 0) {
+          assert.equal(
+            record['certifiedFrame'],
+            sourceFrame,
+            'stale-pair certified frame mismatch'
+          );
+        }
+        if (precedingEnd !== null)
+          assert.equal(
+            sourceFrame,
+            precedingEnd,
+            'stale-pair repeated or omitted source samples'
+          );
+        precedingEnd = sourceFrame + 1;
+        const n = sourceFrame - f0;
+        if (n < 0 || n >= expected[0].length || n >= expected[1].length) {
+          inside = false;
+          continue;
+        }
+        for (let ch = 0; ch < 2; ch++) {
+          const actual = quantum.chunk.channels[ch]![quantum.offset + i]!,
+            reference = expected[ch]![n]!;
+          assert.ok(
+            Number.isFinite(actual) &&
+              Number.isFinite(reference) &&
+              Math.abs(actual - reference) <= 0.003,
+            'stale-pair source PCM mismatch'
+          );
+          energy += reference * reference;
+        }
+      }
+    }
+    if (inside && energy > 1e-8) audiblePairs++;
   }
   assert.ok(
-    sawStale,
-    'no actual cached-global duplicate in gate parameter capture'
+    audiblePairs > 0,
+    'no stale-pair covered audible independently referenced player PCM'
   );
+}
+
+function assertStaleWitnessControls(
+  trace: MovingTrace['trace'],
+  f0: number,
+  expected: readonly [Float32Array, Float32Array]
+): void {
+  const witness = trace.witness;
+  assert.ok(witness, 'independent stale-control witness missing');
+  const chosen = trace.events.find((event) => {
+    if (
+      event.kind !== 'transport-message' ||
+      !event.value ||
+      typeof event.value !== 'object' ||
+      !('type' in event.value) ||
+      event.value.type !== 'clock-stale-pair' ||
+      !('current' in event.value) ||
+      !event.value.current ||
+      typeof event.value.current !== 'object' ||
+      !('certifiedFrame' in event.value.current) ||
+      !('quantumLength' in event.value.current) ||
+      !('previous' in event.value) ||
+      !event.value.previous ||
+      typeof event.value.previous !== 'object' ||
+      !('certifiedFrame' in event.value.previous)
+    )
+      return false;
+    const frame = Number(event.value.current.certifiedFrame);
+    return (
+      Number(event.value.previous.certifiedFrame) >= f0 &&
+      frame + Number(event.value.current.quantumLength) <=
+        f0 + expected[0].length
+    );
+  });
+  assert.ok(chosen, 'no actual source-bound stale event for negative controls');
+  const pair = chosen.value as { current: { certifiedFrame: number } };
+  const targetFrame = pair.current.certifiedFrame;
+  for (const kind of [
+    'missing-pair',
+    'overflow',
+    'shifted-bank',
+    'corrupt-carrier',
+    'corrupt-pcm',
+  ] as const) {
+    const corrupt = structuredClone(trace);
+    if (kind === 'missing-pair') {
+      corrupt.events = corrupt.events.filter(
+        (event) =>
+          !(
+            event.kind === 'transport-message' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'type' in event.value &&
+            event.value.type === 'clock-stale-pair'
+          )
+      );
+    } else if (kind === 'overflow') {
+      corrupt.events.push({
+        kind: 'transport-message',
+        timestamp: chosen.timestamp,
+        value: { type: 'clock-stale-overflow' },
+      });
+    } else if (kind === 'shifted-bank') {
+      const event = corrupt.events.find(
+        (entry) =>
+          entry.kind === 'transport-message' &&
+          entry.value &&
+          typeof entry.value === 'object' &&
+          'type' in entry.value &&
+          entry.value.type === 'clock-stale-pair'
+      );
+      assert.ok(
+        event?.value &&
+          typeof event.value === 'object' &&
+          'current' in event.value,
+        'bank corruption did not reach a stale event'
+      );
+      const current = event.value.current as Record<string, unknown>;
+      const active = current['active'] as { bank: number };
+      const frames = current[active.bank === 0 ? 'clockFrameA' : 'clockFrameB'];
+      assert.ok(
+        Array.isArray(frames) && frames.length > 0,
+        'stale bank samples missing'
+      );
+      frames[0] = Number(frames[0]) + 1;
+    } else {
+      let injected = false;
+      for (const chunk of corrupt.audio) {
+        for (let i = 0; i < chunk.channels[0]!.length; i++) {
+          if (carrierFrame(chunk, i, witness) !== targetFrame) continue;
+          if (kind === 'corrupt-carrier') {
+            assert.ok(chunk.witness?.[1], 'stale carrier channel missing');
+            chunk.witness[1][i] = (chunk.witness[1][i]! + 1) % 65536;
+          } else chunk.channels[0]![i] = chunk.channels[0]![i]! + 0.1;
+          injected = true;
+          break;
+        }
+        if (injected) break;
+      }
+      assert.ok(injected, `${kind} did not reach the stale callback`);
+    }
+    assert.throws(
+      () => assertNaturalStaleWitness(corrupt, f0, expected),
+      `${kind} stale-event corruption passed admission`
+    );
+  }
 }
 interface ScheduledPcmComparison {
   sampleCount: number;
@@ -9905,7 +10342,7 @@ function compareScheduledPcm(
   expected: readonly [Float32Array, Float32Array],
   first: number,
   end: number,
-  witness?: { anchor: number; length: number }
+  witness: MovingTrace['trace']['witness']
 ): ScheduledPcmComparison {
   assert.ok(
     Number.isSafeInteger(f0) &&
@@ -9922,13 +10359,8 @@ function compareScheduledPcm(
     chunks.length > 0 && chunks[chunks.length - 1]!.channels[0],
     'scheduled PCM capture is empty'
   );
-  assertPcmCoverage(
-    chunks[0]!.sampleFrame,
-    chunks[chunks.length - 1]!.sampleFrame +
-      chunks[chunks.length - 1]!.channels[0]!.length,
-    chunks,
-    witness === undefined
-  );
+  assertPcmCoverage(f0 + first, f0 + end, chunks, witness);
+  assert.ok(witness, 'independent native carrier unavailable');
   const sums = [0, 0],
     shifted = [0, 0],
     mutedPrefix = [0, 0],
@@ -9947,9 +10379,7 @@ function compareScheduledPcm(
       'stereo capture length mismatch'
     );
     for (let i = 0; i < chunk.channels[0]!.length; i++) {
-      const frame = witness
-        ? carrierFrame(chunk, i, witness)
-        : chunk.sampleFrame + i;
+      const frame = carrierFrame(chunk, i, witness);
       if (frame === null) continue;
       const index = frame - f0;
       if (index < first || index >= end) continue;
@@ -10007,7 +10437,7 @@ async function comparePostGainPcm(
   repeatedCeiling: number | null;
 }> {
   const trace = capture.trace;
-  assertPcmCoverage(capture.start.sampleFrame, trace.sampleFrame, trace.audio);
+  assertPcmSequence(capture.start.sampleFrame, trace.sampleFrame, trace.audio);
   const rate = trace.sampleRate;
   assert.ok(Number.isFinite(rate) && rate > 0, 'invalid PCM sample rate');
   let reference = referenceCache.get(rate);
@@ -10347,7 +10777,7 @@ async function proofProvenance(
       canvasGrid: [64, 36],
       screencast: { format: 'jpeg', quality: 90, everyNthFrame: 1 },
       audio:
-        'post-master-gain stereo with independent frozen-checkpoint carrier; raw currentFrame labels retained',
+        'post-master-gain stereo with independent frozen-origin carrier; raw currentFrame labels retained',
       maxSamples: 3000,
     },
   };
@@ -11780,19 +12210,10 @@ async function assertVideoReservationInvalidation(
       ),
     'loss of committed pixels silently resumed without reacquiring them'
   );
-  const afterGate = capture.trace.audio
-    .flatMap((chunk) =>
-      chunk.channels.map((channel) =>
-        channel.slice(Math.max(0, gateFrame - chunk.sampleFrame))
-      )
-    )
-    .flat();
-  assert.ok(
-    afterGate.length > 0,
-    'no PCM captured after invalidated video frontier'
-  );
-  assert.ok(
-    afterGate.every((value) => Math.abs(value) < 0.001),
+  assertPcmSilence(
+    capture.trace,
+    gateFrame,
+    lastCarrierEnd(capture.trace),
     'audio continued past invalidated video frontier'
   );
   pass('scheduled-video-reservation-invalidation');
@@ -11892,16 +12313,10 @@ async function assertVideoReservationInvalidation(
       Math.abs(committedSeconds - stop.value / stop.rate) <= 1 / sampleRate,
     'future video recovery did not preserve the independently calculated committed sample'
   );
-  const silent = future.trace.audio.flatMap((chunk) =>
-    chunk.channels.flatMap((channel) =>
-      channel.slice(
-        Math.max(0, closeFrame - chunk.sampleFrame),
-        Math.max(0, resumeFrame - chunk.sampleFrame)
-      )
-    )
-  );
-  assert.ok(
-    silent.length > 0 && silent.every((value) => Math.abs(value) < 0.001),
+  assertPcmSilence(
+    future.trace,
+    closeFrame,
+    resumeFrame,
     'audio crossed the closed future-video gate'
   );
   assert.ok(
@@ -11958,7 +12373,8 @@ async function assertVideoReservationInvalidation(
   assertPcmCoverage(
     resumeFrame,
     resumeFrame + compareFrames,
-    future.trace.audio
+    future.trace.audio,
+    future.trace.witness
   );
   const planes: [Float32Array, Float32Array] = [
     new Float32Array(committedSample + compareFrames),
@@ -11977,7 +12393,8 @@ async function assertVideoReservationInvalidation(
       resumeFrame - committedSample,
       planes,
       first,
-      first + windowFrames
+      first + windowFrames,
+      future.trace.witness
     );
     assert.ok(
       comparison.rmse.every((value) => value <= 0.003),
@@ -12201,7 +12618,7 @@ async function calibratePostGainTap(
         'canvas trace unavailable'
       );
       const chunks = capture.trace.audio;
-      assertPcmCoverage(
+      assertPcmSequence(
         capture.start.sampleFrame,
         capture.trace.sampleFrame,
         chunks
@@ -12763,23 +13180,36 @@ async function runScheduledPcmProof(
     await waitReady(browser);
     const provenance = await proofProvenance(browser);
     let longEpoch: number | undefined;
+    let warmAnchor: Record<string, unknown> | undefined;
     if (clockProofMode === 'long') {
-      const initial = await browser.evaluate<{
-        clockEpoch: number;
-        contextState: string;
-        sampleFrame: number;
-        sampleRate: number;
+      const warmup = await browser.evaluate<{
+        identity: {
+          clockEpoch: number;
+          contextState: string;
+          sampleFrame: number;
+          sampleRate: number;
+        };
+        trace: MovingTrace['trace'];
       }>(`(async () => {
         const {promise, resolve} = Promise.withResolvers();
         const button = document.querySelector('button.otio-play');
         if (!(button instanceof HTMLButtonElement)) throw new Error('long proof play button missing');
+        await globalThis.__otioProofTrace.start();
+        globalThis.__otioProofTrace.playRequest();
         button.click();
         setTimeout(resolve, 700);
         await promise;
         const identity = globalThis.__otioProofTrace.clockIdentity();
+        const trace = await globalThis.__otioProofTrace.stop();
         if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
-        return identity;
+        return {identity,trace};
       })()`);
+      await writeFile(
+        join(shotDir, 'scheduled-clock-long-bootstrap.json'),
+        JSON.stringify({ provenance, capture: warmup })
+      );
+      warmAnchor = assertAnchorEvidence(warmup.trace);
+      const initial = warmup.identity;
       assert.equal(
         initial.contextState,
         'running',
@@ -12942,24 +13372,11 @@ async function runScheduledPcmProof(
       .filter((entry) => entry.kind === 'transport-message')
       .map((entry) => entry.value as Record<string, unknown>)
       .filter(Boolean);
-    const checkpoints = gateMessages.filter(
-      (message) => message['type'] === 'checkpoint'
-    );
-    assert.ok(
-      checkpoints.some(
-        (checkpoint) =>
-          Number.isSafeInteger(checkpoint['lastCertifiedEnd']) &&
-          Number.isSafeInteger(checkpoint['sampleCount']) &&
-          Number(checkpoint['lastCertifiedEnd']) ===
-            (capture.trace.witness?.frozenAnchor ?? Infinity) +
-              Number(checkpoint['sampleCount']) &&
-          capture.trace.witness?.gateInitialFrame ===
-            capture.trace.witness?.frozenAnchor &&
-          checkpoint['fault'] === false &&
-          checkpoint['clockEpoch'] === capture.trace.witness?.clockEpoch
-      ),
-      'native gate checkpoint missing or not anchored'
-    );
+    const anchor =
+      clockProofMode === 'long'
+        ? warmAnchor
+        : assertAnchorEvidence(capture.trace);
+    assert.ok(anchor, 'initial native anchor evidence unavailable');
     const promotions = gateMessages.filter(
       (message) => message['type'] === 'clock-promoted'
     );
@@ -12970,7 +13387,7 @@ async function runScheduledPcmProof(
     assert.ok(
       promotions.every(
         (message) =>
-          message['clockEpoch'] === checkpoints[0]?.['clockEpoch'] &&
+          message['clockEpoch'] === anchor['clockEpoch'] &&
           Number.isSafeInteger(message['boundary']) &&
           Number.isSafeInteger(message['clockCoverageEnd'])
       ),
@@ -12978,6 +13395,8 @@ async function runScheduledPcmProof(
     );
     assertIndependentCarrier(capture.trace, f0, f0 + length);
     assertGateClockEvidence(capture.trace, clockProofMode === 'long');
+    assertNaturalStaleWitness(capture.trace, f0, expected);
+    assertStaleWitnessControls(capture.trace, f0, expected);
     const nativeWitness = capture.trace.witness;
     assert.ok(nativeWitness, 'native carrier metadata missing');
     const carrierControl = {
@@ -13079,8 +13498,6 @@ async function runScheduledPcmProof(
         `scheduled 20ms PCM window failed at ${first}: ${window.rmse}`
       );
     }
-    const firstCaptured = capture.trace.audio[0]!;
-    const lastCaptured = capture.trace.audio.at(-1)!;
     assert.ok(
       capture.trace.audio.length > 2,
       'not enough PCM records for sequence controls'
@@ -13109,14 +13526,100 @@ async function runScheduledPcmProof(
         corrupt[1]!.quantumOffsets![0]!++;
       }
       assert.throws(
-        () =>
-          assertPcmCoverage(
-            firstCaptured.sampleFrame,
-            lastCaptured.sampleFrame + lastCaptured.channels[0]!.length,
-            corrupt,
-            false
-          ),
+        () => assertPcmCoverage(f0, f0 + length, corrupt, nativeWitness),
         `${control} PCM provenance passed admission`
+      );
+    }
+    {
+      const labeled = capture.trace.audio.map((chunk) => ({
+        ...chunk,
+        ...(chunk.quantumFrames
+          ? { quantumFrames: chunk.quantumFrames.slice() }
+          : {}),
+      }));
+      const target = labeled.find(
+        (chunk) =>
+          (chunk.quantumFrames?.length ?? 0) >= 2 &&
+          (carrierFrame(chunk, 0, nativeWitness) ?? -1) >= f0
+      );
+      assert.ok(
+        target?.quantumFrames,
+        'raw-label negative control lacks two callbacks'
+      );
+      target.quantumFrames[1] = target.quantumFrames[0]!;
+      const boundaryIndex = labeled.findIndex(
+        (chunk, index) =>
+          index > 0 &&
+          (chunk.quantumFrames?.length ?? 0) > 0 &&
+          (labeled[index - 1]!.quantumFrames?.length ?? 0) > 0 &&
+          (carrierFrame(chunk, 0, nativeWitness) ?? -1) >= f0
+      );
+      assert.ok(
+        boundaryIndex > 0,
+        'raw cross-chunk label control has no boundary'
+      );
+      const prior = labeled[boundaryIndex - 1]!.quantumFrames!;
+      const boundary = labeled[boundaryIndex]!;
+      boundary.sampleFrame = prior[prior.length - 1]!;
+      boundary.quantumFrames![0] = boundary.sampleFrame;
+      assertPcmCoverage(f0, f0 + length, labeled, nativeWitness);
+      const result = compareScheduledPcm(
+        labeled,
+        f0,
+        expected,
+        0,
+        length,
+        nativeWitness
+      );
+      assert.ok(
+        result.rmse.every((value) => value <= 0.003),
+        'cached-label repetition changed source-bound PCM qualification'
+      );
+    }
+    {
+      const missing = capture.trace.audio.map((chunk) => ({
+        ...chunk,
+        channels: chunk.channels.map((channel) => channel.slice()),
+        ...(chunk.witness
+          ? { witness: chunk.witness.map((channel) => channel.slice()) }
+          : {}),
+        ...(chunk.quantumFrames
+          ? { quantumFrames: chunk.quantumFrames.slice() }
+          : {}),
+        ...(chunk.quantumLengths
+          ? { quantumLengths: chunk.quantumLengths.slice() }
+          : {}),
+        ...(chunk.quantumOrdinals
+          ? { quantumOrdinals: chunk.quantumOrdinals.slice() }
+          : {}),
+        ...(chunk.quantumOffsets
+          ? { quantumOffsets: chunk.quantumOffsets.slice() }
+          : {}),
+      }));
+      const target = missing.find(
+        (chunk) =>
+          (chunk.quantumLengths?.length ?? 0) >= 2 &&
+          (carrierFrame(chunk, 0, nativeWitness) ?? -1) >= f0
+      );
+      assert.ok(
+        target?.quantumLengths &&
+          target.quantumFrames &&
+          target.quantumOrdinals &&
+          target.quantumOffsets &&
+          target.witness,
+        'single-quantum control lacks provenance'
+      );
+      const begin = target.quantumLengths[0]!,
+        size = target.quantumLengths[1]!;
+      for (const channel of [...target.channels, ...target.witness])
+        channel.splice(begin, size);
+      target.quantumFrames.splice(1, 1);
+      target.quantumLengths.splice(1, 1);
+      target.quantumOrdinals.splice(1, 1);
+      target.quantumOffsets.splice(1, 1);
+      assert.throws(
+        () => assertPcmCoverage(f0, f0 + length, missing, nativeWitness),
+        'missing single captured quantum passed carrier/offset admission'
       );
     }
     // Corrupt the captured output, then invoke the same source comparison used
@@ -13221,7 +13724,136 @@ async function runScheduledPcmProof(
       'scheduled proof attempted a non-loopback request'
     );
     pass('scheduled-pcm-playback');
-    if (clockProofMode === 'long' || rate === 44100) return;
+    if (clockProofMode === 'long') return;
+    async function runAnchorControls(): Promise<void> {
+      for (const kind of [
+        'source-offset',
+        'start-time',
+        'missing-first-quantum',
+        'missing',
+        'truncated',
+        'held-bank',
+        'shift-bank',
+        'stale-epoch',
+      ] as const) {
+        const isolated = await openBrowser(url, sessionToken, {
+          label: `scheduled-anchor-${rate}-${kind}`,
+          recordProofTrace: true,
+          proofSampleRate: rate,
+        });
+        try {
+          await waitReady(isolated);
+          const outcome = await isolated.evaluate<
+            MovingTrace & {
+              credits: {
+                carrierReservations: number;
+                bytes: number;
+                nodes: number;
+              };
+            }
+          >(`(async () => {
+          const sleep = ms => {const {promise,resolve}=Promise.withResolvers(); setTimeout(resolve,ms); return promise;};
+          const button=document.querySelector('button.otio-play');
+          if (!(button instanceof HTMLButtonElement)) throw new Error('anchor proof play button missing');
+          const start=await globalThis.__otioProofTrace.start();
+          globalThis.__otioProofTrace.nextAnchorControl(${JSON.stringify(kind)});
+          const playEdge=globalThis.__otioProofTrace.playRequest();
+          button.click(); await sleep(1200);
+          const trace=await globalThis.__otioProofTrace.stop();
+          if(document.querySelector('.otio-view')?.dataset.playing==='true') button.click();
+          const credits=globalThis.__otioProofPcmSnapshot();
+          return {start,playEdge,trace,credits};
+        })()`);
+          await writeFile(
+            join(shotDir, `scheduled-anchor-${rate}-${kind}.json`),
+            JSON.stringify({ provenance, capture: outcome })
+          );
+          assert.ok(
+            !outcome.trace.audioOverflow && !outcome.trace.eventsOverflow,
+            `${kind} anchor control capture overflow`
+          );
+          const injectionKind =
+            kind === 'stale-epoch'
+              ? 'anchor-stale-epoch-injected'
+              : kind === 'held-bank' || kind === 'shift-bank'
+                ? 'anchor-bank-control-injected'
+                : 'anchor-carrier-control-injected';
+          assert.ok(
+            outcome.trace.events.some((event) => event.kind === injectionKind),
+            `${kind} control did not reach the actual anchor boundary`
+          );
+          assert.ok(
+            !outcome.trace.events.some(
+              (event) =>
+                event.kind === 'scheduled-pcm' &&
+                event.value &&
+                typeof event.value === 'object' &&
+                'event' in event.value &&
+                event.value.event === 'epoch'
+            ),
+            `${kind} admitted a media epoch`
+          );
+          assert.ok(
+            !outcome.trace.events.some(
+              (event) =>
+                event.kind === 'transport-message' &&
+                event.value &&
+                typeof event.value === 'object' &&
+                'type' in event.value &&
+                event.value.type === 'anchor-certified'
+            ),
+            `${kind} unexpectedly certified an anchor`
+          );
+          if (kind === 'stale-epoch') {
+            assert.ok(
+              outcome.trace.events.some(
+                (event) =>
+                  event.kind === 'scheduled-pcm' &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'event' in event.value &&
+                  event.value.event === 'error'
+              ),
+              'stale anchor epoch was not rejected by the client'
+            );
+          } else {
+            assert.ok(
+              outcome.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-message' &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'type' in event.value &&
+                  event.value.type === 'clock-fault'
+              ),
+              `${kind} never reached native render-clock rejection`
+            );
+          }
+          for (const chunk of outcome.trace.audio)
+            for (const channel of chunk.channels)
+              assert.ok(
+                channel.every(
+                  (sample) =>
+                    Number.isFinite(sample) && Math.abs(sample) < 0.001
+                ),
+                `${kind} emitted authored PCM before anchor`
+              );
+          if (kind === 'missing' && outcome.trace.contextState !== 'closed')
+            assert.ok(
+              outcome.credits.carrierReservations >= 1 &&
+                outcome.credits.bytes >= 65536 &&
+                outcome.credits.nodes >= 1,
+              'unended native anchor carrier released its budget'
+            );
+        } finally {
+          await isolated.close();
+        }
+      }
+    }
+    if (rate === 44100) {
+      await runAnchorControls();
+      return;
+    }
     await seekTo(browser, 0);
     const tracks = await browser.evaluate<
       MovingTrace & { edges: number[] }
@@ -13259,15 +13891,20 @@ async function runScheduledPcmProof(
       'track controls restarted the scheduled epoch'
     );
     const trackF0 = Number(trackEpochs[0]!['f0']);
+    const trackWitness = tracks.trace.witness;
+    assert.ok(trackWitness, 'track controls lack independent carrier');
     for (let phase = 0; phase < 4; phase++) {
       const from = tracks.edges[phase]! + 4800;
-      const to = (tracks.edges[phase + 1] ?? tracks.trace.sampleFrame) - 2400;
+      const to =
+        (tracks.edges[phase + 1] ?? lastCarrierEnd(tracks.trace)) - 2400;
+      assertPcmCoverage(from, to, tracks.trace.audio, trackWitness);
       let count = 0;
       const errors = [0, 0];
       for (const chunk of tracks.trace.audio)
         for (let i = 0; i < (chunk.channels[0]?.length ?? 0); i++) {
-          const frame = chunk.sampleFrame + i,
-            n = frame - trackF0;
+          const frame = carrierFrame(chunk, i, trackWitness);
+          if (frame === null) continue;
+          const n = frame - trackF0;
           if (frame < from || frame >= to || n < 0 || n >= length) continue;
           const t = n / unit;
           for (let ch = 0; ch < 2; ch++) {
@@ -13384,16 +14021,10 @@ async function runScheduledPcmProof(
         ) <= 1,
       'replacement epoch skipped the independently calculated committed sample'
     );
-    const quiet = recovery.trace.audio.flatMap((chunk) =>
-      chunk.channels.flatMap((channel) =>
-        channel.slice(
-          Math.max(0, stopFrame - chunk.sampleFrame),
-          Math.max(0, resumeFrame - chunk.sampleFrame)
-        )
-      )
-    );
-    assert.ok(
-      quiet.length > 0 && quiet.every((value) => Math.abs(value) < 0.001),
+    assertPcmSilence(
+      recovery.trace,
+      stopFrame,
+      resumeFrame,
       'audio crossed the closed gate'
     );
     const recovered = compareScheduledPcm(
@@ -13401,7 +14032,8 @@ async function runScheduledPcmProof(
       resumeFrame - resumeSample,
       expected,
       resumeSample,
-      resumeSample + 960
+      resumeSample + 960,
+      recovery.trace.witness
     );
     assert.ok(
       recovered.rmse.every((value) => value <= 0.003),
@@ -13456,21 +14088,10 @@ async function runScheduledPcmProof(
       ),
       'starvation did not cancel the active generation'
     );
-    const afterRelease = interrupted.trace.audio
-      .flatMap((chunk) =>
-        chunk.channels.map((channel) =>
-          channel.slice(
-            Math.max(0, interrupted.releaseFrame + 256 - chunk.sampleFrame)
-          )
-        )
-      )
-      .flat();
-    assert.ok(
-      afterRelease.length > 0,
-      'late-result observation window has no PCM'
-    );
-    assert.ok(
-      afterRelease.every((value) => Math.abs(value) < 0.001),
+    assertPcmSilence(
+      interrupted.trace,
+      interrupted.releaseFrame + 256,
+      lastCarrierEnd(interrupted.trace),
       'released stale PCM produced sound after cancellation'
     );
     pass('scheduled-pcm-starvation-cancel');
@@ -13560,28 +14181,20 @@ async function runScheduledPcmProof(
         );
       const nextFrame = nextEpoch
         ? Number(nextEpoch['f0'])
-        : outcome.trace.sampleFrame;
+        : lastCarrierEnd(outcome.trace);
       assert.ok(
         Number.isSafeInteger(nextFrame),
         `${action} has no integral observation boundary`
       );
       const quietStart = outcome.releaseFrame + 256;
-      const staleOutput = outcome.trace.audio
-        .flatMap((chunk) =>
-          chunk.channels.map((channel) =>
-            channel.slice(
-              Math.max(0, quietStart - chunk.sampleFrame),
-              Math.max(0, nextFrame - chunk.sampleFrame)
-            )
-          )
-        )
-        .flat();
       assert.ok(
-        nextFrame > quietStart && staleOutput.length > 0,
+        nextFrame > quietStart,
         `${action} left no observation window for stale output`
       );
-      assert.ok(
-        staleOutput.every((value) => Math.abs(value) < 0.001),
+      assertPcmSilence(
+        outcome.trace,
+        quietStart,
+        nextFrame,
         `${action} stale response produced audible PCM`
       );
       if (action === 'scope') await leaveFocus(browser);
@@ -13645,28 +14258,17 @@ async function runScheduledPcmProof(
       finalProviderChunk?.channels[0] && finalProviderChunk.channels[1],
       'provider capture lacks stereo PCM'
     );
-    const providerEnd =
-      finalProviderChunk.sampleFrame + finalProviderChunk.channels[0].length;
+    const providerEnd = lastCarrierEnd(failure.trace);
     assert.ok(
       providerEnd > providerBoundary,
       'provider capture ends before the gate boundary'
     );
-    assertPcmCoverage(providerBoundary, providerEnd, failure.trace.audio);
-    for (const chunk of failure.trace.audio) {
-      assert.equal(
-        chunk.channels.length,
-        2,
-        'provider capture lost a stereo channel'
-      );
-      assert.equal(chunk.channels[0]!.length, chunk.channels[1]!.length);
-      for (const channel of chunk.channels)
-        assert.ok(
-          channel
-            .slice(Math.max(0, providerBoundary - chunk.sampleFrame))
-            .every((sample) => Math.abs(sample) < 0.001),
-          'provider emitted PCM after gate closure'
-        );
-    }
+    assertPcmSilence(
+      failure.trace,
+      providerBoundary,
+      providerEnd,
+      'provider emitted PCM after gate closure'
+    );
     assert.equal(
       failure.playing,
       'false',
@@ -13755,27 +14357,17 @@ async function runScheduledPcmProof(
         end?.channels[0] && end.channels[1],
         `${stage} capture lacks stereo PCM`
       );
-      const endFrame = end.sampleFrame + end.channels[0].length;
+      const endFrame = lastCarrierEnd(fault.trace);
       assert.ok(
         endFrame > boundary,
         `${stage} capture ends before the gate boundary`
       );
-      assertPcmCoverage(boundary, endFrame, fault.trace.audio);
-      for (const chunk of fault.trace.audio) {
-        assert.equal(
-          chunk.channels.length,
-          2,
-          `${stage} capture lost a stereo channel`
-        );
-        assert.equal(chunk.channels[0]!.length, chunk.channels[1]!.length);
-        for (const channel of chunk.channels)
-          assert.ok(
-            channel
-              .slice(Math.max(0, boundary - chunk.sampleFrame))
-              .every((sample) => Math.abs(sample) < 0.001),
-            `${stage} emitted PCM after gate closure`
-          );
-      }
+      assertPcmSilence(
+        fault.trace,
+        boundary,
+        endFrame,
+        `${stage} emitted PCM after gate closure`
+      );
       assert.equal(
         fault.playing,
         'false',
@@ -13794,6 +14386,7 @@ async function runScheduledPcmProof(
         `${stage} failure silently switched backend`
       );
     }
+    await runAnchorControls();
     for (const kind of ['hold', 'wrong-tag'] as const) {
       const isolated = await openBrowser(url, sessionToken, {
         label: `scheduled-clock-${kind}`,
@@ -14152,126 +14745,6 @@ async function runScheduledPcmProof(
               active.startFrame + Math.round(a[0]) !==
                 warming.startFrame + Math.round(b[0]),
             'late-origin control lacked locally advancing, wrong-origin native evidence'
-          );
-        }
-      } finally {
-        await isolated.close();
-      }
-    }
-    for (const count of [1, 2] as const) {
-      const isolated = await openBrowser(url, sessionToken, {
-        label: `scheduled-checkpoint-mismatch-${count}`,
-        recordProofTrace: true,
-      });
-      try {
-        await waitReady(isolated);
-        const outcome = await isolated.evaluate<MovingTrace>(`(async () => {
-          const sleep = ms => {const {promise,resolve} = Promise.withResolvers(); setTimeout(resolve,ms); return promise;};
-          const button = document.querySelector('button.otio-play');
-          if (!(button instanceof HTMLButtonElement)) throw new Error('checkpoint proof play button missing');
-          const start = await globalThis.__otioProofTrace.start();
-          globalThis.__otioProofTrace.nextCheckpointMismatches(${count});
-          const playEdge = globalThis.__otioProofTrace.playRequest();
-          button.click();
-          await sleep(1200);
-          const trace = await globalThis.__otioProofTrace.stop();
-          if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
-          return {start, playEdge, trace};
-        })()`);
-        await writeFile(
-          join(shotDir, `scheduled-checkpoint-mismatch-${count}.json`),
-          JSON.stringify({ provenance, capture: outcome })
-        );
-        assert.ok(
-          !outcome.trace.audioOverflow && !outcome.trace.eventsOverflow,
-          'checkpoint retry proof overflowed'
-        );
-        const injected = outcome.trace.events.filter(
-          (event) => event.kind === 'checkpoint-mismatch-injected'
-        );
-        assert.equal(
-          injected.length,
-          count,
-          'checkpoint mismatch did not reach both intended attempts'
-        );
-        const epochs = outcome.trace.events.filter(
-          (event) =>
-            event.kind === 'scheduled-pcm' &&
-            event.value &&
-            typeof event.value === 'object' &&
-            'event' in event.value &&
-            event.value.event === 'epoch'
-        );
-        if (count === 2) {
-          assert.equal(
-            epochs.length,
-            0,
-            'exhausted checkpoint retries produced an audio epoch'
-          );
-          for (const chunk of outcome.trace.audio)
-            for (const channel of chunk.channels)
-              assert.ok(
-                channel.every(
-                  (sample) =>
-                    Number.isFinite(sample) && Math.abs(sample) < 0.001
-                ),
-                'exhausted checkpoint retry emitted audio'
-              );
-        } else {
-          assert.equal(
-            epochs.length,
-            1,
-            'checkpoint retry did not produce one fresh accepted epoch'
-          );
-          const data = epochs[0]!.value as Record<string, unknown>;
-          const startFrame = Number(data['f0']),
-            startTime = Number(data['c0']);
-          const bridge = data['bridge'] as {
-            contextTime: number;
-            performanceTime: number;
-          };
-          assert.ok(
-            outcome.playEdge &&
-              Number.isSafeInteger(startFrame) &&
-              outcome.trace.witness,
-            'checkpoint retry lacks epoch or independent carrier'
-          );
-          const audibleAt =
-            bridge.performanceTime + (startTime - bridge.contextTime) * 1000;
-          assert.ok(
-            audibleAt >= outcome.playEdge.timestamp &&
-              audibleAt - outcome.playEdge.timestamp <= 350,
-            'checkpoint retry exceeded original request deadline'
-          );
-          const prefix = compareScheduledPcm(
-            outcome.trace.audio,
-            startFrame,
-            expected,
-            0,
-            960,
-            outcome.trace.witness
-          );
-          assert.ok(
-            prefix.rmse.every((value) => value <= 0.003),
-            'checkpoint retry changed source prefix'
-          );
-          const attempted = injected[0]!.value as {
-            actual: { clockEpoch: number };
-          };
-          const accepted = outcome.trace.events.find(
-            (event) =>
-              event.kind === 'transport-message' &&
-              event.value &&
-              typeof event.value === 'object' &&
-              'type' in event.value &&
-              event.value.type === 'checkpoint'
-          );
-          assert.ok(
-            accepted?.value &&
-              typeof accepted.value === 'object' &&
-              'clockEpoch' in accepted.value &&
-              accepted.value.clockEpoch !== attempted.actual.clockEpoch,
-            'checkpoint retry reused the rejected clock session'
           );
         }
       } finally {

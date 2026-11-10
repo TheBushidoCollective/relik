@@ -60,12 +60,29 @@ export const otioProofTracePrelude = String.raw`(() => {
   let failNextPcm = false;
   let failNextSourceStart = false;
   let invalidControllerClock = false;
+  const anchorSourceFaults = new WeakMap();
+  const productionAnchorSources = new WeakMap();
   const originalSourceStart = AudioBufferSourceNode.prototype.start;
   AudioBufferSourceNode.prototype.start = function(...args) {
     if (failNextSourceStart) {
       failNextSourceStart = false;
       recordEvent('source-start-fault', null, null);
       throw new Error('proof-injected-source-start-failure');
+    }
+    const anchorSource = productionAnchorSources.get(this);
+    if (anchorSource) recordEvent('production-anchor-start-request', null,
+      {clockEpoch:anchorSource.clockEpoch, when:args[0], offset:args[1] ?? 0,
+        playbackRate:this.playbackRate.value, detune:this.detune.value, loop:this.loop});
+    const fault = anchorSourceFaults.get(this);
+    if (fault) {
+      anchorSourceFaults.delete(this);
+      const rate = this.context.sampleRate;
+      if (!Number.isFinite(args[0])) throw new Error('anchor carrier has no explicit native start time');
+      recordEvent('anchor-carrier-control-injected', null, {kind:fault, args});
+      if (fault === 'missing') return;
+      if (fault === 'source-offset') return originalSourceStart.call(this, args[0], 1 / rate);
+      if (fault === 'start-time') return originalSourceStart.call(this, args[0] + 1 / rate);
+      if (fault === 'missing-first-quantum') return originalSourceStart.call(this, args[0] + 128 / rate);
     }
     return originalSourceStart.apply(this, args);
   };
@@ -216,13 +233,13 @@ export const otioProofTracePrelude = String.raw`(() => {
   const proofGates = new WeakMap();
   const observedContexts = new WeakSet();
   let nextBankControl = null;
-  let checkpointFailures = 0;
-  const syntheticCheckpoints = new WeakSet();
+  let nextAnchorControl = null;
+  const syntheticAnchors = new WeakSet();
   function attachWitness(context) {
     const witness = witnesses.get(context);
     const graph = graphs.find(item => item.context === context);
     if (witness && graph?.node && !witness.attached) {
-      originalConnect.call(witness.source, graph.node, 0, 1);
+      for (const source of witness.sources) originalConnect.call(source, graph.node, 0, 1);
       witness.attached = true;
     }
   }
@@ -230,12 +247,16 @@ export const otioProofTracePrelude = String.raw`(() => {
   if (typeof NativeAudioWorkletNode === 'function') {
     globalThis.AudioWorkletNode = class extends NativeAudioWorkletNode {
       constructor(context, name, options) {
-        super(context, name, name === 'otio-transport-gate' ? {...options, processorOptions:{...options?.processorOptions, traceMaxCallbacks:512}} : options);
+        super(context, name, name === 'otio-transport-gate' ? {...options, processorOptions:{...options?.processorOptions, traceMaxCallbacks:512, proofStaleMaxPairs:16}} : options);
         if (name === 'otio-transport-gate') {
           transportNodes.add(this);
-          const proofGate = {node:this, epoch:null, active:null, checkpoint:null, checkpointContext:null,
-            control:nextBankControl, bootstrapTrace:true, bootstrapTimer:null, bootstrapSettled:false, traceOverlap:false};
-          nextBankControl = null;
+          recordEvent('transport-layout', null, {inputs:this.numberOfInputs, outputs:this.numberOfOutputs,
+            channelCount:this.channelCount, channelCountMode:this.channelCountMode,
+            channelInterpretation:this.channelInterpretation, outputChannels:options?.outputChannelCount});
+          const proofGate = {node:this, epoch:null, active:null, anchor:null, initialFrame:options?.processorOptions?.initialFrame,
+            initialEpoch:options?.processorOptions?.clockEpoch,
+            anchorControl:nextAnchorControl, control:nextBankControl, bootstrapTrace:true, bootstrapTimer:null, bootstrapSettled:false, traceOverlap:false};
+          nextAnchorControl = null; nextBankControl = null;
           proofGates.set(context, proofGate);
           if (!observedContexts.has(context)) {
             observedContexts.add(context);
@@ -247,7 +268,7 @@ export const otioProofTracePrelude = String.raw`(() => {
           this.port.postMessage = (...args) => {
             recordEvent('transport-command', null, args[0]);
             const message = args[0];
-            if (['accept-anchor', 'install-bank', 'checkpoint'].includes(message?.type))
+            if (message?.type === 'install-bank')
               recordEvent('audio-context-gate-observation', null, {direction:'send', type:message.type,
                 state:context.state, contextTime:context.currentTime, clockEpoch:message.clockEpoch});
             if (message?.type === 'dispose' && proofGate.dropDispose) {
@@ -294,47 +315,47 @@ export const otioProofTracePrelude = String.raw`(() => {
           // context time is frozen, never from a production bank descriptor.
           if (context.state === 'suspended') {
             const prior = witnesses.get(context);
-            if (prior) prior.source.disconnect();
+            if (prior) for (const source of prior.sources) source.disconnect();
             const exact = context.currentTime * context.sampleRate;
             const frozenAnchor = Math.round(exact);
             if (!Number.isSafeInteger(frozenAnchor) || Math.abs(exact - frozenAnchor) > 1 / 1024)
-              throw new Error('proof witness has no integral frozen checkpoint');
-            const anchor = globalThis.__otioProofClockMode === 'long'
-              ? Math.max(frozenAnchor, 2 ** 24 - context.sampleRate) : frozenAnchor;
-            if (Math.abs((anchor / context.sampleRate) * context.sampleRate - anchor) > 1 / 1024)
-              throw new Error('proof witness start cannot round-trip to a frame');
+              throw new Error('proof witness has no integral frozen origin');
+            const laterAnchor = globalThis.__otioProofClockMode === 'long'
+              ? Math.max(frozenAnchor + context.sampleRate * 21, 2 ** 24 - context.sampleRate) : null;
             const length = Math.ceil(context.sampleRate * 20);
-            const buffer = context.createBuffer(2, length, context.sampleRate);
-            const high = buffer.getChannelData(0), low = buffer.getChannelData(1);
-            for (let i = 0; i < length; i++) { const frame = anchor + i; high[i] = 1 + Math.floor(frame / 65536); low[i] = frame % 65536; }
-            const source = context.createBufferSource();
-            source.buffer = buffer;
-            source.channelCount = 2;
-            source.channelCountMode = 'explicit';
-            source.channelInterpretation = 'discrete';
-            const witness = {source, anchor, frozenAnchor, length, attached:false,
+            const starts = laterAnchor === null ? [frozenAnchor] : [frozenAnchor,laterAnchor];
+            const sources = starts.map(anchor => {
+              if (!Number.isSafeInteger(anchor) || Math.abs((anchor / context.sampleRate) * context.sampleRate - anchor) > 1 / 1024)
+                throw new Error('proof witness start cannot round-trip to a frame');
+              const buffer = context.createBuffer(2, length, context.sampleRate);
+              const high = buffer.getChannelData(0), low = buffer.getChannelData(1);
+              for (let i = 0; i < length; i++) { const frame = anchor + i; high[i] = 1 + Math.floor(frame / 65536); low[i] = frame % 65536; }
+              const source = context.createBufferSource();
+              source.buffer = buffer; source.channelCount = 2;
+              source.channelCountMode = 'explicit'; source.channelInterpretation = 'discrete';
+              return source;
+            });
+            const witness = {sources, anchor:frozenAnchor, laterAnchor, frozenAnchor, length, attached:false,
               gateInitialFrame:options?.processorOptions?.initialFrame, clockEpoch:options?.processorOptions?.clockEpoch};
             witnesses.set(context, witness);
             attachWitness(context);
-            source.start(anchor / context.sampleRate);
+            for(let i=0;i<sources.length;i++) sources[i].start(starts[i] / context.sampleRate);
           }
           this.port.addEventListener('message', event => {
-            if (syntheticCheckpoints.has(event)) return;
-            if (event.data?.type === 'checkpoint' && checkpointFailures > 0) {
-              checkpointFailures--;
+            if (syntheticAnchors.has(event)) return;
+            if (event.data?.type === 'anchor-certified' && proofGate.anchorControl === 'stale-epoch') {
+              proofGate.anchorControl = null;
               event.stopImmediatePropagation();
-              const altered = {...event.data, lastCertifiedEnd:event.data.lastCertifiedEnd + 128};
-              recordEvent('checkpoint-mismatch-injected', null, {actual:event.data, altered});
+              const altered = {...event.data, clockEpoch:event.data.clockEpoch - 1};
+              recordEvent('anchor-stale-epoch-injected', null, {actual:event.data, altered});
               const replay = new MessageEvent('message', {data:altered});
-              syntheticCheckpoints.add(replay);
-              this.port.dispatchEvent(replay);
-              return;
+              syntheticAnchors.add(replay); this.port.dispatchEvent(replay); return;
             }
             recordEvent(event.data?.type === 'clock-trace'
               ? (proofGate.traceOverlap ? 'transport-overlap-clock' : proofGate.bootstrapTrace
                 ? 'transport-bootstrap-clock' : 'transport-message') : 'transport-message', null, event.data);
             if (event.data?.type === 'clock-trace-stopped' && proofGate.bootstrapTrace) proofGate.bootstrapSettled = true;
-            if (['anchor-accepted', 'bank-installed', 'bank-rejected', 'clock-promoted'].includes(event.data?.type))
+            if (['anchor-certified', 'bank-installed', 'bank-rejected', 'clock-promoted'].includes(event.data?.type))
               recordEvent('audio-context-gate-observation', null, {direction:'receive', type:event.data.type,
                 state:context.state, contextTime:context.currentTime, clockEpoch:event.data.clockEpoch});
             if (event.data?.type === 'clock-trace') proofGate.active = event.data.active;
@@ -351,12 +372,9 @@ export const otioProofTracePrelude = String.raw`(() => {
               return;
             }
             if (event.data?.type === 'clock-promoted') proofGate.active = event.data.active;
-            if (event.data?.type === 'checkpoint') {
+            if (event.data?.type === 'anchor-certified') {
               proofGate.epoch = event.data.clockEpoch;
-              proofGate.checkpoint = event.data;
-              proofGate.checkpointContext = {clockEpoch:event.data.clockEpoch, state:context.state,
-                currentTime:context.currentTime, sampleRate:context.sampleRate, lastCertifiedEnd:event.data.lastCertifiedEnd};
-              recordEvent('transport-checkpoint-context', null, proofGate.checkpointContext);
+              proofGate.anchor = event.data;
             }
             if (event.data?.type === 'clock-fault')
               recordEvent('transport-render-clock-fault', null, {
@@ -385,6 +403,34 @@ export const otioProofTracePrelude = String.raw`(() => {
     return promise;
   }
   AudioNode.prototype.connect = function(destination, ...rest) {
+    if (this instanceof AudioBufferSourceNode && transportNodes.has(destination) && rest[1] === 1) {
+      const gate = proofGates.get(this.context), kind = gate?.anchorControl;
+      if (gate?.node !== destination) throw new Error('anchor carrier belongs to another gate');
+      productionAnchorSources.set(this,{clockEpoch:gate.initialEpoch});
+      if (!this.buffer || this.buffer.numberOfChannels !== 2 || this.buffer.sampleRate !== this.context.sampleRate)
+        throw new Error('production anchor carrier layout unavailable');
+      recordEvent('production-anchor-carrier-connected', null,
+        {clockEpoch:gate.initialEpoch, frames:this.buffer.length,
+          channels:this.buffer.numberOfChannels, rate:this.buffer.sampleRate, input:1,
+          channelCount:this.channelCount, channelCountMode:this.channelCountMode,
+          channelInterpretation:this.channelInterpretation});
+      if (kind === 'truncated') {
+        const original=this.buffer, shortened=this.context.createBuffer(2,128,this.context.sampleRate);
+        for(let ch=0;ch<2;ch++) shortened.copyToChannel(original.getChannelData(ch).subarray(0,128),ch);
+        this.buffer=shortened; gate.anchorControl=null;
+        recordEvent('anchor-carrier-control-injected', null, {kind, originalFrames:original.length, frames:128});
+      } else if (['source-offset','start-time','missing-first-quantum','missing'].includes(kind)) {
+        anchorSourceFaults.set(this,kind); gate.anchorControl=null;
+      } else if (kind === 'held-bank' || kind === 'shift-bank') {
+        const param=destination.parameters.get('clockFrameA'), start=gate.initialFrame/this.context.sampleRate;
+        if (!param || !Number.isFinite(start)) throw new Error('anchor bank parameter unavailable');
+        param.cancelScheduledValues(0);
+        param.setValueAtTime(kind === 'held-bank' ? 0 : 1, start);
+        if (kind === 'shift-bank') param.linearRampToValueAtTime(65537,(gate.initialFrame+65536)/this.context.sampleRate);
+        gate.anchorControl=null;
+        recordEvent('anchor-bank-control-injected', null, {kind, initialFrame:gate.initialFrame});
+      }
+    }
     const result = originalConnect.call(this, destination, ...rest);
     // The clock session keeps a zero-gain route alive from construction,
     // not only after detachment. Never classify the discovered master as it.
@@ -569,9 +615,10 @@ export const otioProofTracePrelude = String.raw`(() => {
       return {state:context.state, before, after:context.currentTime,
         events:borrowedProof.events.slice()};
     },
-    nextCheckpointMismatches(count) {
-      if (count !== 1 && count !== 2) throw new Error('invalid checkpoint mismatch count');
-      checkpointFailures = count;
+    nextAnchorControl(kind) {
+      if (!['source-offset', 'start-time', 'missing-first-quantum', 'missing', 'truncated', 'held-bank', 'shift-bank', 'stale-epoch'].includes(kind))
+        throw new Error('unknown anchor control');
+      nextAnchorControl = kind;
     },
     nextClockBankControl(kind) {
       if (!['withhold', 'late-install', 'late-origin', 'late-arm', 'stale-serial', 'delay-ack'].includes(kind)) throw new Error('unknown clock control');
@@ -584,7 +631,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (action !== 'start' && action !== 'stop') throw new Error('invalid clock trace action');
       if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
       const gate = proofGates.get(graphs[0].context);
-      if (!gate || gate.epoch == null) throw new Error('native gate checkpoint unavailable');
+      if (!gate || gate.epoch == null) throw new Error('native gate anchor unavailable');
       if (action === 'start') {
         clearTimeout(gate.bootstrapTimer);
         if (gate.bootstrapTrace && !gate.bootstrapSettled) {
@@ -625,7 +672,7 @@ export const otioProofTracePrelude = String.raw`(() => {
     clockIdentity() {
       if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
       const graph = graphs[0], gate = proofGates.get(graph.context);
-      if (!gate || gate.epoch == null) throw new Error('native gate checkpoint unavailable');
+      if (!gate || gate.epoch == null) throw new Error('native gate anchor unavailable');
       return {clockEpoch:gate.epoch, contextState:graph.context.state,
         sampleFrame:Math.round(graph.context.currentTime * graph.context.sampleRate),
         sampleRate:graph.context.sampleRate};
@@ -698,8 +745,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       visual.samples = []; visual.overflow = false; visual.active = true;
       events.length = 0; eventsOverflow = false;
       const currentGate = proofGates.get(graph.context);
-      if (currentGate?.checkpoint) recordEvent('transport-message', null, currentGate.checkpoint);
-      if (currentGate?.checkpointContext) recordEvent('transport-checkpoint-context', null, currentGate.checkpointContext);
+      if (currentGate?.anchor) recordEvent('transport-message', null, currentGate.anchor);
       const root = document.querySelector('.otio-view');
       if (lastPcmBackend) recordEvent('scheduled-pcm', null, lastPcmBackend);
       if (!(root instanceof HTMLElement)) throw new Error('proof view missing');
@@ -756,7 +802,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const sampleFrame = await command(graph, 'stop');
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
         timestamp, frame, sampleFrame, bridge,
-        audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, frozenAnchor:item.frozenAnchor, length:item.length, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
+        audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, laterAnchor:item.laterAnchor, frozenAnchor:item.frozenAnchor, length:item.length, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
         visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow};
     },
   };

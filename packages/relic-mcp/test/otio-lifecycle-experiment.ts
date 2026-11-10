@@ -173,6 +173,10 @@ export async function runLifecycleExperiment() {
         2500,
         'gate construction'
       );
+      gate.node.port.addEventListener('message', ({ data }) => {
+        if (data?.type === 'anchor-certified')
+          observe('anchor-certified', data);
+      });
       source.connect(gate.node);
       if (graph === 'gate') gate.node.connect(sink);
       else {
@@ -231,23 +235,12 @@ export async function runLifecycleExperiment() {
       observe('gate-ready');
     }
     await progress('resume-1');
-    if (two || gate) {
+    if (two) {
+      // This is a lifecycle stress contrast, not production session reuse:
+      // the real controller invalidates its session around suspension.
+      if (gate) observe('deliberate-uncoordinated-gate-suspend');
       await suspend();
-      if (gate) {
-        const exact = context.currentTime * context.sampleRate,
-          before = Math.round(exact);
-        if (Math.abs(exact - before) > 1 / 1024)
-          throw new Error('checkpoint conversion');
-        const snapshot = await timeout(gate.checkpoint(1), 2500, 'checkpoint');
-        const after = context.currentTime * context.sampleRate;
-        observe('checkpoint', { before, after, snapshot });
-        if (after !== exact || snapshot.lastCertifiedEnd !== before)
-          throw new Error('checkpoint mismatch');
-        const accepted = gate.acceptAnchor(snapshot);
-        await resume('resume-2');
-        await timeout(accepted, 2500, 'anchor');
-        observe('anchor-accepted');
-      } else await resume('resume-2');
+      await resume('resume-2');
       await progress('resume-2');
     }
     if (tap) {
