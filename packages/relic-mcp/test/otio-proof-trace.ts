@@ -908,6 +908,8 @@ export const otioProofTracePrelude = String.raw`(() => {
       const graph = graphs[0], captureId = activeStaleCaptureId, currentGate = proofGates.get(graph.context);
       if (currentGate && !currentGate.terminated && captureId !== null && currentGate.staleCaptureId === captureId)
         await staleControl(currentGate,'stop',captureId);
+      else recordEvent('clock-stale-stop-skipped', null, {captureId, gate: Boolean(currentGate),
+        terminated: Boolean(currentGate?.terminated), gateCaptureId: currentGate?.staleCaptureId ?? null});
       activeStaleCaptureId = null;
       visual.active = false;
       clearInterval(startupMonitor); startupMonitor = null;

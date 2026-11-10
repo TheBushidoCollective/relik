@@ -754,3 +754,82 @@ describe('stereo retained PCM and unstarted handles', () => {
     expect(budget.usedBytes).toBe(0);
   });
 });
+
+describe('descriptor churn across handoffs', () => {
+  test('1000 restages, half cancelled and half ended late after handoff, return the budget to baseline exactly', () => {
+    const { context, budget, make } = harness();
+    let active = make(0);
+    const initial = active.prepare({
+      generation: 0,
+      planes: [ramp(4096, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    });
+    initial.commit();
+    initial.cancel();
+    const baseline = budget.usedBytes;
+    expect(baseline).toBe(4096 * 4);
+    expect(budget.usedNodes).toBe(0);
+
+    for (let generation = 1; generation <= 1000; generation++) {
+      const next = make(generation);
+      const descriptor = active.restage({
+        target: active,
+        generation: active.generation,
+        ledgerKey: 'k',
+        compositionStartFrame: 1024,
+        frameCount: 2048,
+        gainFactorCount: 0,
+      });
+      expect(budget.usedBytes).toBe(baseline + 2048 * 4);
+      if (generation % 2 === 1) {
+        // An unstarted descriptor cancelled before handoff returns at once.
+        descriptor.cancel();
+        expect(budget.usedBytes).toBe(baseline);
+        expect(budget.usedNodes).toBe(0);
+        active.seal();
+        active.handOffLedger(next);
+        active.dispose();
+      } else {
+        // A started descriptor stays charged while audible, then its onended
+        // lands after the ledger moved to the successor.
+        descriptor.start(48200, []);
+        descriptor.cancel();
+        expect(budget.usedBytes).toBe(baseline + 2048 * 4);
+        active.seal();
+        active.handOffLedger(next);
+        context.sources.at(-1)!.end();
+        expect(budget.usedBytes).toBe(baseline);
+        expect(budget.usedNodes).toBe(0);
+        active.dispose();
+      }
+      expect(budget.usedBytes).toBe(baseline);
+      active = next;
+    }
+    expect(budget.usedNodes).toBe(0);
+    active.dispose();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+  });
+});
+
+describe('sealed start', () => {
+  test('starting a descriptor after seal releases its nodes, keeping only the committed block', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    const handle = scheduler.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    });
+    handle.commit();
+    scheduler.seal();
+    expect(() => handle.start(48200, [])).toThrow('closed');
+    expect(budget.usedNodes).toBe(0);
+    expect(budget.usedBytes).toBe(1920);
+    expect(scheduler.coveredThrough('k', 0)).toBe(480);
+    scheduler.dispose();
+    expect(budget.usedBytes).toBe(0);
+  });
+});

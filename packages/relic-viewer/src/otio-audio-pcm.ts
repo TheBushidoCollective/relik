@@ -335,8 +335,10 @@ export interface OtioPcmPrepared {
     gainFactors: readonly OtioPcmGainFactor[]
   ): number;
   /**
-   * Makes this source's retained PCM permanent. Throws if the source retained
-   * nothing or its retention is gone. Idempotent for a committed block.
+   * Makes this source's retained block permanent: retirement will then free it
+   * once no source or unstarted descriptor still holds it. commit() does not
+   * remove a block. Throws if the source retained nothing or its retention is
+   * gone. Idempotent.
    */
   commit(): void;
   /**
@@ -425,7 +427,8 @@ function blocksOverlap(
  * occurrence: overlap is rejected only within a key, so distinct plans may share
  * composition frames. Blocks outlive the sources that played them, so a
  * successor restages from audio already decoded rather than decoding it again.
- * Every block's byte charge has exactly one owner, the ledger.
+ * Each block's byte charge is shared with any source playing the same buffer,
+ * and is freed only when the last holder releases it.
  */
 class OtioPcmLedger {
   private lanes = new Map<string, RetainedLane>();
@@ -556,7 +559,11 @@ class OtioPcmLedger {
     this.lanes = new Map();
   }
 
-  /** Frees one key's blocks that end at or before `frame`. */
+  /**
+   * Frees this key's COMMITTED blocks that end at or before `frame`. Uncommitted
+   * blocks are skipped; they are withdrawn only by their handle's cancel() or by
+   * rollbackRetained(), or when the holding ledger is released.
+   */
   retireBefore(ledgerKey: string, frame: number): void {
     const lane = this.lanes.get(ledgerKey);
     if (this.closed || lane === undefined) return;
@@ -722,8 +729,11 @@ export class OtioPcmScheduler {
 
   /**
    * Moves this scheduler's retained PCM and byte charges, for every ledger key,
-   * to `successor`. Requires this scheduler closed by seal or stopAtFrame. A
-   * cancelled ledger is already released and cannot be handed off.
+   * to `successor`. Requires this scheduler closed by seal or stopAtFrame. Blocks
+   * move in whatever state they are: uncommitted blocks stay uncommitted and are
+   * withdrawn only through their original handle's cancel(), by rollbackRetained()
+   * on the successor, or when the successor's ledger is released. A cancelled
+   * ledger is already released and cannot be handed off.
    */
   handOffLedger(successor: OtioPcmScheduler): void {
     if (
@@ -745,7 +755,10 @@ export class OtioPcmScheduler {
     this.closed = true;
   }
 
-  /** Frees one key's retained PCM that ends at or before `compositionFrame`. */
+  /**
+   * Frees this key's COMMITTED retained PCM that ends at or before
+   * `compositionFrame`. Uncommitted blocks are never freed here.
+   */
   retireRetainedBefore(ledgerKey: string, compositionFrame: number): void {
     this.ledger.retireBefore(ledgerKey, compositionFrame);
   }
@@ -842,8 +855,14 @@ export class OtioPcmScheduler {
     }
     return {
       start: (firstContextFrame, factors) => {
-        if (!this.sources.has(owned) || owned.started || this.closed)
+        if (!this.sources.has(owned) || owned.started)
           throw new Error('PCM prepared source is closed');
+        if (this.closed) {
+          // A sealed scheduler never plays this descriptor. Release its nodes and
+          // this source's hold; bytes stay charged while a ledger still holds the block.
+          this.release(owned);
+          throw new Error('PCM prepared source is closed');
+        }
         try {
           if (
             !Number.isSafeInteger(firstContextFrame) ||
