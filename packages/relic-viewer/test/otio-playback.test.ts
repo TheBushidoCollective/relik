@@ -30,7 +30,6 @@ import {
   SNAPSHOT_SLOTS_PER_DECODER,
 } from '../src/otio-playback.ts';
 import { OtioPcmBudget, OtioPcmScheduler } from '../src/otio-audio-pcm.ts';
-import { OTIO_PCM_MAX_BYTES } from '../src/otio-audio-pcm-protocol.ts';
 import { OtioTransportGateState } from '../src/otio-transport-gate-state.ts';
 import {
   certifiedWindowIndex,
@@ -1808,7 +1807,6 @@ describe('otio playback controller', () => {
       'clearTimeout',
       '__otioProofPcm',
       '__otioProofPcmSnapshot',
-      '__otioProofReservePcmBytes',
       '__otioProofPcmFault',
       '__otioProofHoldOldDrain',
       'HTMLVideoElement',
@@ -1947,10 +1945,27 @@ describe('otio playback controller', () => {
       createGain() {
         return new FakeGain();
       }
-      createBuffer(_channels: number, frames: number) {
-        const planes = [new Float32Array(frames), new Float32Array(frames)];
+      createBuffer(channels: number, frames: number) {
+        const planes = Array.from(
+          { length: channels },
+          () => new Float32Array(frames)
+        );
         return {
-          copyToChannel() {},
+          numberOfChannels: channels,
+          length: frames,
+          sampleRate,
+          copyToChannel(source: Float32Array, channel: number, start = 0) {
+            planes[channel]!.set(source, start);
+          },
+          copyFromChannel(
+            destination: Float32Array,
+            channel: number,
+            start = 0
+          ) {
+            destination.set(
+              planes[channel]!.subarray(start, start + destination.length)
+            );
+          },
           getChannelData: (channel: number) => planes[channel]!,
         };
       }
@@ -2057,9 +2072,11 @@ describe('otio playback controller', () => {
           const firstFrame = message.firstFrame as number;
           const frameCount = message.frameCount as number;
           pulls.push(firstFrame);
-          const planes = Array.from(
-            { length: this.channels },
-            () => new Float32Array(frameCount)
+          const planes = Array.from({ length: this.channels }, (_, channel) =>
+            Float32Array.from(
+              { length: frameCount },
+              (_, index) => ((firstFrame + index + channel * 7) % 997) / 997
+            )
           );
           const deliver = () =>
             this.onmessage?.({
@@ -2905,18 +2922,13 @@ describe('otio playback controller', () => {
   });
 
   test.each([
-    ['shared', 44100, false, false, false],
-    ['shared', 48000, false, false, false],
-    ['disjoint', 44100, false, false, false],
-    ['disjoint', 48000, false, false, false],
-    ['disjoint', 44100, true, false, false],
-    ['disjoint', 48000, true, false, false],
-    ['disjoint', 44100, false, true, false],
-    ['disjoint', 48000, false, true, false],
-    ['disjoint', 48000, false, false, true],
+    ['shared', 44100],
+    ['shared', 48000],
+    ['disjoint', 44100],
+    ['disjoint', 48000],
   ] as const)(
-    'eight voices with %s identities at %i Hz, cancel=%s, victim closes=%s, budget full=%s',
-    async (identity, sampleRate, cancel, victimCloses, budgetFull) => {
+    'eight %s voices stage exact decoded samples at %i Hz without a second decoder',
+    async (identity, sampleRate) => {
       const time = (value: number) => ({
         OTIO_SCHEMA: 'RationalTime.1',
         value,
@@ -2981,142 +2993,38 @@ describe('otio playback controller', () => {
         { proofBudget: true, sampleRate }
       );
       try {
-        if (identity === 'disjoint') fixture.holdCloseResponses(true);
         await fixture.start();
-        if (identity === 'disjoint') {
-          for (let i = 0; i < 20 && !fixture.heldCloseCount; i++)
-            await fixture.flush();
-          expect(fixture.heldCloseCount).toBeGreaterThan(0);
-          const opens = fixture.workerEvents.filter(
-            (event) => event.kind === 'open'
-          ).length;
-          expect(fixture.liveStreams).toBe(10);
-          await fixture.flush();
-          expect(
-            fixture.workerEvents.filter((event) => event.kind === 'open')
-          ).toHaveLength(opens);
-          expect(
-            fixture.audioContext.sources.some(
-              (source) => source.started && !source.carrier
-            )
-          ).toBe(true);
-          const oldGeneration = fixture.workerEvents.find(
-            (event) => event.kind === 'open'
-          )!.generation;
-          const evicted = fixture.workerEvents.find(
-            (event) =>
-              event.kind === 'close' && event.generation === oldGeneration
-          )!;
-          expect(evicted).toBeDefined();
-          const advanceFrames = 128;
-          await fixture.advance(
-            fixture.wall + (advanceFrames * 1000) / sampleRate,
-            fixture.renderFrame + advanceFrames,
-            fixture.outputFrame + advanceFrames
-          );
-          raf?.(fixture.wall);
-          await fixture.flush();
-          expect(
-            fixture.workerEvents.filter((event) => event.kind === 'open')
-          ).toHaveLength(opens);
-          if (cancel) {
-            fixture.playback.dispose();
-            fixture.holdCloseResponses(false);
-            for (let i = 0; i < 20; i++) await fixture.flush();
-            expect(
-              fixture.workerEvents.filter((event) => event.kind === 'open')
-            ).toHaveLength(opens);
-            expect(fixture.liveStreams).toBe(0);
-            expect(fixture.peakStreams).toBeLessThanOrEqual(10);
-            return;
-          }
-          if (budgetFull) {
-            const proof = globalThis as typeof globalThis & {
-              __otioProofPcmSnapshot: () => { bytes: number };
-              __otioProofReservePcmBytes: (bytes: number) => () => void;
-            };
-            const release = proof.__otioProofReservePcmBytes(
-              OTIO_PCM_MAX_BYTES - proof.__otioProofPcmSnapshot().bytes
-            );
-            try {
-              expect(proof.__otioProofPcmSnapshot().bytes).toBe(
-                OTIO_PCM_MAX_BYTES
-              );
-              fixture.holdCloseResponses(false);
-              for (let i = 0; i < 30; i++) await fixture.flush();
-              const arm = fixture.commands.find(
-                (event) => event.type === 'arm'
-              )!;
-              const boundary = Number(arm.throughFrame);
-              await fixture.advanceSmooth(
-                1000 + (boundary * 1000) / sampleRate,
-                boundary + 128,
-                boundary - Math.floor(sampleRate * 0.01)
-              );
-              for (let i = 0; i < 20; i++) await fixture.flush();
-              expect(
-                fixture.commands.filter((event) => event.type === 'arm')
-              ).toHaveLength(1);
-            } finally {
-              release();
-            }
-            return;
-          }
-          if (victimCloses) {
-            const arm = fixture.commands.find((event) => event.type === 'arm')!;
-            const boundary = Number(arm.throughFrame);
-            await fixture.advanceSmooth(
-              1000 + (boundary * 1000) / sampleRate,
-              boundary + 128,
-              boundary - Math.floor(sampleRate * 0.01)
-            );
-            for (let i = 0; i < 20; i++)
-              await fixture.advance(
-                fixture.wall + 1,
-                fixture.renderFrame + Math.round(sampleRate / 1000),
-                fixture.outputFrame + Math.round(sampleRate / 1000)
-              );
-            const arms = fixture.commands.filter(
-              (event) => event.type === 'arm'
-            );
-            expect(arms).toHaveLength(2);
-            expect(Number(arms[1]!.f0) - boundary).toBeLessThanOrEqual(
-              Math.floor(sampleRate * 0.02)
-            );
-            expect(fixture.peakStreams).toBeLessThanOrEqual(10);
-            expect(fixture.playback.getState().playing).toBe(true);
-            fixture.holdCloseResponses(false);
-            return;
-          }
-          fixture.holdCloseResponses(false);
-        }
         for (let i = 0; i < 20; i++) await fixture.flush();
-        if (identity === 'disjoint') {
-          const oldGeneration = fixture.workerEvents.find(
-            (event) => event.kind === 'open'
-          )!.generation;
-          const closed = new Set(
-            fixture.workerEvents
-              .filter(
-                (event) =>
-                  event.kind === 'close' && event.generation === oldGeneration
-              )
-              .map((event) => event.streamId)
-          );
-          const reopened = fixture.workerEvents
-            .filter(
-              (event) =>
-                event.kind === 'open' &&
-                event.generation === oldGeneration &&
-                !closed.has(event.streamId)
-            )
-            .slice(8 - closed.size);
-          const resumed = fixture.workerEvents.find(
-            (event) =>
-              event.kind === 'pull' &&
-              reopened.some((item) => item.streamId === event.streamId)
-          );
-          expect(resumed?.firstFrame).toBe(Math.floor(sampleRate * 0.4));
+        const arm = fixture.commands.find((item) => item.type === 'arm')!;
+        const boundary = Number(arm.throughFrame) - Number(arm.f0);
+        expect(boundary).toBeLessThanOrEqual(
+          Math.floor(sampleRate * 0.4) - 4096
+        );
+        expect(
+          fixture.workerEvents.filter((event) => event.kind === 'open')
+        ).toHaveLength(identity === 'shared' ? 1 : 8);
+        const generation = fixture.workerEvents.find(
+          (event) => event.kind === 'open'
+        )!.generation;
+        expect(
+          fixture.workerEvents.every((event) => event.generation === generation)
+        ).toBe(true);
+        const staged = fixture.audioContext.sources.filter(
+          (source) => !source.carrier && !source.started
+        );
+        expect(staged).toHaveLength(8);
+        for (const source of staged) {
+          const buffer = source.buffer as {
+            length: number;
+            getChannelData(channel: number): Float32Array;
+          };
+          expect(buffer.length).toBe(4096);
+          const data = buffer.getChannelData(0);
+          for (const offset of [0, 1, 2047, 4095])
+            expect(data[offset]).toBeCloseTo(
+              ((boundary + offset) % 997) / 997,
+              6
+            );
         }
         const proof = globalThis as typeof globalThis & {
           __otioProofPcmSnapshot: () => {
@@ -3144,40 +3052,177 @@ describe('otio playback controller', () => {
     }
   );
 
-  test('a stalled candidate decode cannot block the active refill', async () => {
+  test.each([44100, 48000] as const)(
+    'eight disjoint voices turn over inside a refill at %i Hz without exceeding the stream cap',
+    async (sampleRate) => {
+      const time = (value: number) => ({
+        OTIO_SCHEMA: 'RationalTime.1',
+        value,
+        rate: 30,
+      });
+      const span = {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: time(0),
+        duration: time(15),
+      };
+      const document = readOtioDocument(
+        JSON.stringify({
+          OTIO_SCHEMA: 'Timeline.1',
+          metadata: { relic: { id: 'timeline_1' } },
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: Array.from({ length: 8 }, (_, voice) => ({
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Audio',
+              children: [0, 1].map((side) => ({
+                OTIO_SCHEMA: 'Clip.1',
+                source_range: span,
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: `media/${side}-${voice}.wav`,
+                  available_range: span,
+                },
+              })),
+            })),
+          },
+        })
+      );
+      const bytes = new Uint8Array(44 + sampleRate * 2);
+      const view = new DataView(bytes.buffer);
+      for (const [offset, text] of [
+        [0, 'RIFF'],
+        [8, 'WAVE'],
+        [12, 'fmt '],
+        [36, 'data'],
+      ] as const)
+        for (let i = 0; i < text.length; i++)
+          bytes[offset + i] = text.charCodeAt(i);
+      view.setUint32(4, bytes.length - 8, true);
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      view.setUint32(40, bytes.length - 44, true);
+      const fixture = independentPcmFixture(
+        false,
+        false,
+        { document, audio: new Blob([bytes]) },
+        { sampleRate }
+      );
+      try {
+        await fixture.start();
+        const first = fixture.commands.find((item) => item.type === 'arm')!;
+        const firstFrame = Number(first.f0);
+        for (let tick = 1; tick <= 25; tick++) {
+          const output = firstFrame + Math.round((tick * sampleRate) / 60);
+          const now = 1000 + (output * 1000) / sampleRate;
+          await fixture.advanceSmooth(now, output + 128, output);
+          raf?.(now);
+          await fixture.flush();
+        }
+        expect(
+          fixture.workerEvents.filter((event) => event.kind === 'open').length
+        ).toBeGreaterThanOrEqual(16);
+        expect(fixture.peakStreams).toBeLessThanOrEqual(10);
+        expect(fixture.playback.getState().playing).toBe(true);
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
+
+  test('exhausted descriptor budget refuses the successor before arm', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      proofBudget: true,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcmFault?: string;
+      __otioProofPcmSnapshot: () => {
+        bytes: number;
+        candidatePrepared: boolean;
+      };
+    };
+    try {
+      proof.__otioProofPcmFault = 'descriptor-budget';
+      await fixture.start();
+      expect(proof.__otioProofPcmSnapshot().candidatePrepared).toBe(false);
+      const first = fixture.commands.find((item) => item.type === 'arm')!;
+      const boundary = Number(first.throughFrame);
+      await fixture.advanceSmooth(
+        1000 + boundary / 48,
+        boundary + 128,
+        boundary - 480
+      );
+      for (let i = 0; i < 20; i++) await fixture.flush();
+      expect(
+        fixture.commands.filter((item) => item.type === 'arm')
+      ).toHaveLength(1);
+      expect(fixture.playback.getState().playing).toBe(false);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) =>
+            item.message.includes('descriptor-budget-exhausted')
+          )
+      ).toBe(true);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('held active decode still permits the predecoded boundary handoff', async () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       proofBudget: true,
     });
     try {
-      fixture.holdCandidatePcmResponses(true);
       await fixture.start();
-      for (let i = 0; i < 20 && !fixture.heldCandidatePcmCount; i++)
-        await fixture.flush();
-      expect(fixture.heldCandidatePcmCount).toBeGreaterThan(0);
+      const oldArm = fixture.commands.find((item) => item.type === 'arm')!;
       const oldGeneration = fixture.workerEvents.find(
         (event) => event.kind === 'open'
       )!.generation;
-      const before = fixture.workerEvents.filter(
-        (event) => event.kind === 'pull' && event.generation === oldGeneration
-      ).length;
+      fixture.holdPcmResponses(true);
+      for (let i = 0; i < 20 && fixture.heldPcmCount === 0; i++) {
+        await fixture.advanceSmooth(
+          fixture.wall + 16,
+          fixture.renderFrame + 768,
+          fixture.outputFrame + 768
+        );
+        raf?.(fixture.wall);
+        await fixture.flush();
+      }
+      expect(fixture.heldPcmCount).toBeGreaterThan(0);
+      const boundary = Number(oldArm.throughFrame);
       await fixture.advanceSmooth(
-        fixture.wall + 16,
-        fixture.renderFrame + 768,
-        fixture.outputFrame + 768
+        1000 + boundary / 48,
+        boundary + 128,
+        boundary - 480
       );
-      raf?.(fixture.wall);
-      for (let i = 0; i < 20; i++) await fixture.flush();
-      const oldPulls = fixture.workerEvents.filter(
-        (event) => event.kind === 'pull' && event.generation === oldGeneration
-      );
-      expect(oldPulls.length).toBeGreaterThan(before);
-      expect(oldPulls[before]!.firstFrame).toBe(19200);
-      expect(fixture.playback.getState().playing).toBe(true);
+      for (
+        let i = 0;
+        i < 20 &&
+        fixture.commands.filter((item) => item.type === 'arm').length < 2;
+        i++
+      )
+        await fixture.advance(
+          fixture.wall + 1,
+          fixture.renderFrame + 48,
+          fixture.outputFrame + 48
+        );
+      const arms = fixture.commands.filter((item) => item.type === 'arm');
+      expect(arms).toHaveLength(2);
+      expect(Number(arms[1]!.f0) - boundary).toBeLessThanOrEqual(960);
+      expect(
+        fixture.workerEvents.every(
+          (event) => event.generation === oldGeneration
+        )
+      ).toBe(true);
       expect(fixture.peakStreams).toBeLessThanOrEqual(10);
-      fixture.holdCandidatePcmResponses(false);
-      for (let i = 0; i < 20; i++) await fixture.flush();
+      expect(fixture.playback.getState().playing).toBe(true);
     } finally {
-      fixture.holdCandidatePcmResponses(false);
+      fixture.holdPcmResponses(false);
       fixture.restore();
     }
   });

@@ -38,6 +38,7 @@ import {
   OtioPcmBudget,
   OtioPcmProvider,
   OtioPcmScheduler,
+  OTIO_PCM_BOUNDARY_COPY_FRAMES as OTIO_PCM_HANDOFF_RESERVE_FRAMES,
   type OtioPcmGainFactor,
   type OtioPcmPrepared,
 } from './otio-audio-pcm.ts';
@@ -944,7 +945,6 @@ export function createOtioPlayback(
       candidateBoundaryFrame: number | null;
       otherGateReservations: number;
     };
-    __otioProofReservePcmBytes?: (bytes: number) => () => void;
   };
   const proofHost = typeof location === 'undefined' ? '' : location.hostname;
   const proofBorrowed =
@@ -1104,7 +1104,8 @@ export function createOtioPlayback(
       | 'recovery-phase-mismatch'
       | 'recovery-impossible-guard'
       | 'recovery-earlier-feasible'
-      | 'recovery-delayed-staging';
+      | 'recovery-delayed-staging'
+      | 'descriptor-budget';
   };
   function coldProof(
     event: string,
@@ -1157,6 +1158,8 @@ export function createOtioPlayback(
     routeVersion: number;
     admission: PcmAdmission;
     provider: OtioPcmProvider;
+    providerOwned: boolean;
+    handoffTransfer: Promise<void> | null;
     scheduler: OtioPcmScheduler;
     outputClock: OutputClock;
     clockCalibration: Promise<boolean> | null;
@@ -1169,6 +1172,7 @@ export function createOtioPlayback(
     startFrame: number;
     startTime: OtioRationalTime;
     preparedThrough: number;
+    materializedThrough: number;
     scheduledThrough: number;
     contextFrame: number | null;
     phaseSamples: readonly DecoderPhaseSample[];
@@ -1217,7 +1221,6 @@ export function createOtioPlayback(
     renderGeneration: number;
     run: PcmRun | null;
     cancelled: boolean;
-    ready: Promise<void> | null;
     prepared: boolean;
     failure: string | null;
     armPromise: Promise<OtioGateAck> | null;
@@ -1235,9 +1238,7 @@ export function createOtioPlayback(
   let audioBackend: 'native' | 'pcm' = 'native';
   let pcmGeneration = 0;
   let pcmStreamCredits = 0;
-  let pcmDecodeChain: Promise<void> = Promise.resolve();
   let pcmStreamSerial = 0;
-  const pcmStreamOwners = new Set<PcmRun>();
   const pcmSlotWaiters = new Set<() => void>();
   const pcmBudget = new OtioPcmBudget();
   const pcmGateRetirements = new OtioPcmGateRetirements(pcmBudget);
@@ -3277,6 +3278,7 @@ export function createOtioPlayback(
       return;
     run.session.slots[run.slot] = null;
     for (const wake of pcmSlotWaiters) queueMicrotask(wake);
+    if (pcmCandidate?.run === run) return;
     queueMicrotask(() => {
       const active = pcmRun;
       if (
@@ -3297,14 +3299,21 @@ export function createOtioPlayback(
   }
 
   function closePcmProvider(run: PcmRun): void {
+    if (!run.providerOwned) return;
+    run.providerOwned = false;
     run.provider.dispose();
     for (const streamId of run.streamCredits) releasePcmStream(run, streamId);
     run.streams.clear();
-    pcmStreamOwners.delete(run);
   }
 
   function releasePcmResources(run: PcmRun): void {
     if (run.resourcesReleased) return;
+    if (run.handoffTransfer) {
+      void run.handoffTransfer
+        .finally(() => releasePcmResources(run))
+        .catch(() => undefined);
+      return;
+    }
     run.resourcesReleased = true;
     run.stopped = true;
     clearTimeout(run.stopWatchdog ?? undefined);
@@ -3434,158 +3443,132 @@ export function createOtioPlayback(
     if (run.stopping || run.stopped)
       throw new Error('PCM generation is draining');
     if (run.loading) return run.loading;
-    const work = pcmDecodeChain.then(async () => {
+    const work = (async () => {
       if (run.stopping || run.stopped)
         throw new Error('PCM generation is draining');
-      const from = run.preparedThrough;
-      if (target <= from) return;
-      const pending: PcmChunk[] = [];
-      try {
-        const needed = new Set<OtioBundleEntryName>();
+      while (run.preparedThrough < target) {
+        const from = run.preparedThrough;
+        let segmentTarget = target;
         for (const plan of run.admission.spans) {
-          if (
-            plan.lattice.timeline_end > from &&
-            plan.lattice.timeline_start < target &&
-            plan.span.bundle_path
-          )
-            needed.add(plan.span.bundle_path);
+          for (const boundary of [
+            plan.lattice.timeline_start,
+            plan.lattice.timeline_end,
+          ])
+            if (boundary > from && boundary < segmentTarget)
+              segmentTarget = boundary;
         }
-        if (needed.size > OTIO_PCM_MAX_STREAMS)
-          throw new Error('PCM stream budget exceeded');
-        for (const [path, streamId] of run.streams) {
-          if (!needed.has(path)) {
-            await run.provider.close(streamId);
-            releasePcmStream(run, streamId);
-            run.streams.delete(path);
+        const pending: PcmChunk[] = [];
+        try {
+          const needed = new Set<OtioBundleEntryName>();
+          for (const plan of run.admission.spans) {
+            if (
+              plan.lattice.timeline_end > from &&
+              plan.lattice.timeline_start < segmentTarget &&
+              plan.span.bundle_path
+            )
+              needed.add(plan.span.bundle_path);
           }
-        }
-        for (const plan of run.admission.spans) {
-          const path = plan.span.bundle_path;
-          if (!path) continue;
-          const start = Math.max(from, plan.lattice.timeline_start);
-          const end = Math.min(target, plan.lattice.timeline_end);
-          if (end <= start) continue;
-          let streamId = run.streams.get(path);
-          if (!streamId) {
-            const asset = run.admission.assets.get(path);
-            if (!asset || run.stopped) throw new Error('PCM asset unavailable');
-            streamId = `stream-${run.generation}-${++pcmStreamSerial}`;
-            while (pcmStreamCredits >= OTIO_PCM_MAX_STREAMS) {
+          if (needed.size > OTIO_PCM_MAX_STREAMS)
+            throw new Error('PCM stream budget exceeded');
+          for (const [path, streamId] of run.streams) {
+            if (!needed.has(path)) {
+              await run.provider.close(streamId);
+              releasePcmStream(run, streamId);
+              run.streams.delete(path);
+            }
+          }
+          for (const plan of run.admission.spans) {
+            const path = plan.span.bundle_path;
+            if (!path) continue;
+            const start = Math.max(from, plan.lattice.timeline_start);
+            const end = Math.min(segmentTarget, plan.lattice.timeline_end);
+            if (end <= start) continue;
+            let streamId = run.streams.get(path);
+            if (!streamId) {
+              const asset = run.admission.assets.get(path);
+              if (!asset || run.stopped)
+                throw new Error('PCM asset unavailable');
+              streamId = `stream-${run.generation}-${++pcmStreamSerial}`;
+              if (pcmStreamCredits >= OTIO_PCM_MAX_STREAMS)
+                throw new Error('PCM stream budget exceeded');
               if (run.stopped || run.stopping)
                 throw new Error('PCM generation cancelled');
-              let evicted = false;
-              for (const other of pcmStreamOwners) {
-                if (other === run) continue;
-                const lookaheadEnd =
-                  other.preparedThrough +
-                  Math.floor(
-                    other.admission.rate * OTIO_PCM_TARGET_LEAD_SECONDS
-                  );
-                let entry: [OtioBundleEntryName, string] | undefined;
-                for (const candidate of other.streams) {
-                  entry ??= candidate;
-                  const neededSoon = other.admission.spans.some(
-                    (plan) =>
-                      plan.span.bundle_path === candidate[0] &&
-                      plan.lattice.timeline_end > other.preparedThrough &&
-                      plan.lattice.timeline_start < lookaheadEnd
-                  );
-                  if (!neededSoon) {
-                    entry = candidate;
-                    break;
-                  }
-                }
-                if (!entry) continue;
-                const [otherPath, otherStream] = entry;
-                other.streams.delete(otherPath);
-                try {
-                  await other.provider.close(otherStream);
-                } catch (error) {
-                  const retired =
-                    other.stopped ||
-                    other.resourcesReleased ||
-                    !pcmStreamOwners.has(other);
-                  closePcmProvider(other);
-                  if (!retired) throw error;
-                }
-                releasePcmStream(other, otherStream);
-                evicted = true;
-                break;
+              pcmStreamCredits++;
+              run.streamCredits.add(streamId);
+              try {
+                await run.provider.open(streamId, asset.blob, asset.header);
+              } catch (error) {
+                releasePcmStream(run, streamId);
+                throw error;
               }
-              if (!evicted) throw new Error('PCM stream budget unavailable');
+              run.streams.set(path, streamId);
+              if (run.stopped || run.stopping)
+                throw new Error('PCM generation cancelled');
             }
-            if (run.stopped || run.stopping)
-              throw new Error('PCM generation cancelled');
-            pcmStreamCredits++;
-            run.streamCredits.add(streamId);
-            try {
-              await run.provider.open(streamId, asset.blob, asset.header);
-            } catch (error) {
-              releasePcmStream(run, streamId);
-              throw error;
+            for (let frame = start; frame < end; ) {
+              const count = Math.min(blockLimit, end - frame);
+              const source =
+                plan.lattice.source_start + frame - plan.lattice.timeline_start;
+              const block = await run.provider.pull(streamId, source, count);
+              if (run.stopped || run.stopping) {
+                run.provider.release(block.planes);
+                throw new Error('PCM generation cancelled');
+              }
+              try {
+                const gainFactors = plan.span.gain_factors.map((factor) => ({
+                  startFrame:
+                    rescaleTime(factor.range.start_time, run.admission.rate)
+                      .value - run.startFrame,
+                  endFrame:
+                    rescaleTime(
+                      addRationalTimes(
+                        factor.range.start_time,
+                        factor.range.duration
+                      ),
+                      run.admission.rate
+                    ).value - run.startFrame,
+                  startGain: factor.direction === 'in' ? 0 : 1,
+                  endGain: factor.direction === 'in' ? 1 : 0,
+                }));
+                const prepared = run.scheduler.prepare({
+                  generation: run.generation,
+                  planes: block.planes,
+                  gainFactorCount: plan.span.gain_factors.length,
+                  retain: {
+                    ledgerKey: plan.span.occurrence,
+                    compositionStartFrame: frame,
+                  },
+                  destination: pcmTrack(run, plan.span.track_id),
+                });
+                pending.push({
+                  plan,
+                  timelineStart: frame,
+                  sourceStart: source,
+                  prepared,
+                  count,
+                  gainFactors,
+                  absoluteGainFactors: gainFactors.map((factor) => ({
+                    ...factor,
+                  })),
+                });
+              } finally {
+                run.provider.release(block.planes);
+              }
+              frame += count;
             }
-            if (run.stopped || run.stopping)
-              throw new Error('PCM generation cancelled');
-            run.streams.set(path, streamId);
           }
-          for (let frame = start; frame < end; ) {
-            const count = Math.min(blockLimit, end - frame);
-            const source =
-              plan.lattice.source_start + frame - plan.lattice.timeline_start;
-            const block = await run.provider.pull(streamId, source, count);
-            if (run.stopped || run.stopping) {
-              run.provider.release(block.planes);
-              throw new Error('PCM generation cancelled');
-            }
-            try {
-              const gainFactors = plan.span.gain_factors.map((factor) => ({
-                startFrame:
-                  rescaleTime(factor.range.start_time, run.admission.rate)
-                    .value - run.startFrame,
-                endFrame:
-                  rescaleTime(
-                    addRationalTimes(
-                      factor.range.start_time,
-                      factor.range.duration
-                    ),
-                    run.admission.rate
-                  ).value - run.startFrame,
-                startGain: factor.direction === 'in' ? 0 : 1,
-                endGain: factor.direction === 'in' ? 1 : 0,
-              }));
-              const prepared = run.scheduler.prepare({
-                generation: run.generation,
-                planes: block.planes,
-                gainFactorCount: plan.span.gain_factors.length,
-                destination: pcmTrack(run, plan.span.track_id),
-              });
-              pending.push({
-                plan,
-                timelineStart: frame,
-                sourceStart: source,
-                prepared,
-                count,
-                gainFactors,
-                absoluteGainFactors: gainFactors.map((factor) => ({
-                  ...factor,
-                })),
-              });
-            } finally {
-              run.provider.release(block.planes);
-            }
-            frame += count;
-          }
+          if (run.stopped || run.stopping)
+            throw new Error('PCM generation cancelled');
+          for (const chunk of pending) chunk.prepared.commit();
+          run.chunks.push(...pending);
+          pending.length = 0;
+          run.preparedThrough = segmentTarget;
+          run.materializedThrough = segmentTarget;
+        } finally {
+          for (const chunk of pending) chunk.prepared.cancel();
         }
-        if (run.stopped || run.stopping)
-          throw new Error('PCM generation cancelled');
-        run.chunks.push(...pending);
-        pending.length = 0;
-        run.preparedThrough = target;
-      } finally {
-        for (const chunk of pending) chunk.prepared.cancel();
       }
-    });
-    pcmDecodeChain = work.catch(() => undefined);
+    })();
     run.loading = work;
     try {
       await work;
@@ -3597,13 +3580,7 @@ export function createOtioPlayback(
   async function preparePcmRun(
     context: AudioContext,
     admission: PcmAdmission,
-    start: OtioRationalTime,
-    inheritedClock?: OutputClock,
-    staged?: {
-      old: PcmRun;
-      created: (run: PcmRun) => void;
-      valid: () => boolean;
-    }
+    start: OtioRationalTime
   ): Promise<PcmRun> {
     const rate = admission.rate;
     const frame = Math.round((start.value * rate) / start.rate);
@@ -3617,32 +3594,21 @@ export function createOtioPlayback(
     const generation = ++pcmGeneration;
     const budget = pcmBudget;
     const previousSession = pcmClockSession;
-    const session = staged
-      ? staged.old.session
-      : await acquirePcmClockSession(context);
+    const session = await acquirePcmClockSession(context);
     const gate = session.gate;
     if (
       isDisposed ||
       !isPlaying ||
-      (staged ? !staged.valid() : generation !== pcmGeneration) ||
+      generation !== pcmGeneration ||
       renderGeneration !== preparationGeneration
     ) {
-      if (!staged && session !== previousSession && pcmClockSession === session)
+      if (session !== previousSession && pcmClockSession === session)
         retirePcmClockSession();
       throw new Error('PCM generation cancelled');
     }
-    let slot: 0 | 1 | null = staged
-      ? staged.old.slot === 0
-        ? 1
-        : 0
-      : session.slots[0] === null
-        ? 0
-        : session.slots[1] === null
-          ? 1
-          : null;
-    if (staged && slot !== null && session.slots[slot] !== null)
-      throw new Error('PCM input slot is still owned by an earlier generation');
-    while (!staged && slot === null) {
+    let slot: 0 | 1 | null =
+      session.slots[0] === null ? 0 : session.slots[1] === null ? 1 : null;
+    while (slot === null) {
       const pending = Promise.withResolvers<void>();
       const wake = () => pending.resolve();
       pcmSlotWaiters.add(wake);
@@ -3673,7 +3639,7 @@ export function createOtioPlayback(
       // The long-lived session is already connected to the output graph.
     } catch (error) {
       provider?.dispose();
-      if (!staged) retirePcmClockSession();
+      retirePcmClockSession();
       throw error;
     }
     let run: PcmRun | undefined;
@@ -3701,13 +3667,12 @@ export function createOtioPlayback(
       routeVersion: pcmRouteVersion,
       admission,
       provider,
+      providerOwned: true,
+      handoffTransfer: null,
       scheduler,
       gate,
       session,
-      outputClock:
-        session === previousSession && inheritedClock
-          ? inheritedClock
-          : new OutputClock(pcmRequestWall),
+      outputClock: new OutputClock(pcmRequestWall),
       clockCalibration: null,
       tracks: new Map(),
       streams: new Map(),
@@ -3716,6 +3681,7 @@ export function createOtioPlayback(
       startFrame: frame,
       startTime: start,
       preparedThrough: frame,
+      materializedThrough: frame,
       scheduledThrough: frame,
       contextFrame: null,
       phaseSamples: [],
@@ -3750,18 +3716,9 @@ export function createOtioPlayback(
       stopped: false,
     };
     session.slots[slot] = run;
-    pcmStreamOwners.add(run);
-    if (staged) {
-      staged.created(run);
-      if (!staged.valid()) {
-        releasePcmResources(run);
-        throw new Error('PCM candidate cancelled');
-      }
-    } else {
-      pcmRun = run;
-      context.addEventListener('statechange', run.onContextState);
-      run.clockCalibration = calibratePcmClock(run);
-    }
+    pcmRun = run;
+    context.addEventListener('statechange', run.onContextState);
+    run.clockCalibration = calibratePcmClock(run);
     const end = Math.floor((scopeEnd().value * rate) / scopeEnd().rate);
     await fillPcm(
       run,
@@ -3801,64 +3758,221 @@ export function createOtioPlayback(
       renderGeneration,
       run: null,
       cancelled: false,
-      ready: null,
       prepared: false,
       failure: null,
       armPromise: null,
     };
     pcmCandidate = candidate;
-    const valid = () =>
-      pcmCandidate === candidate &&
-      !candidate.cancelled &&
-      !isDisposed &&
-      pcmPlayIntent &&
-      pcmRun === old &&
-      old.frontierFrame === boundaryFrame &&
-      candidate.request === playRequestEpoch &&
-      candidate.scope === scopeEpoch &&
-      candidate.renderGeneration === renderGeneration &&
-      old.routeVersion === pcmRouteVersion &&
-      audioContext === old.context;
-    candidate.ready = preparePcmRun(
-      old.context,
-      old.admission,
-      { value: startFrame, rate: old.admission.rate },
-      old.outputClock,
-      {
-        old,
-        valid,
-        created: (run) => {
-          candidate.run = run;
+    let run: PcmRun | null = null;
+    let proofReservedBytes = 0;
+    try {
+      const slot = old.slot === 0 ? 1 : 0;
+      if (old.session.slots[slot] !== null)
+        throw new Error(
+          'PCM input slot is still owned by an earlier generation'
+        );
+      const generation = ++pcmGeneration;
+      let scheduler: OtioPcmScheduler;
+      scheduler = new OtioPcmScheduler(
+        old.context,
+        old.gate.node,
+        generation,
+        pcmBudget,
+        () => {
+          pcmSchedulers.delete(scheduler);
+          if (run) {
+            run.schedulerRetired = true;
+            releasePcmSlotIfRetired(run);
+          }
+        }
+      );
+      pcmSchedulers.add(scheduler);
+      const drain = Promise.withResolvers<void>();
+      void drain.promise.catch(() => undefined);
+      const descriptorEnd = Math.min(
+        endFrame,
+        startFrame + OTIO_PCM_HANDOFF_RESERVE_FRAMES
+      );
+      run = {
+        ...old,
+        generation,
+        slot,
+        providerOwned: false,
+        handoffTransfer: null,
+        scheduler,
+        tracks: new Map(),
+        streams: new Map(),
+        streamCredits: new Set(),
+        chunks: [],
+        startFrame,
+        startTime: { value: startFrame, rate: old.admission.rate },
+        preparedThrough: descriptorEnd,
+        materializedThrough: descriptorEnd,
+        scheduledThrough: startFrame,
+        contextFrame: null,
+        phaseSamples: [],
+        frontierFrame: null,
+        frontierCrossedAt: null,
+        bridge: null,
+        holds: [],
+        loading: null,
+        stopping: false,
+        command: null,
+        stopWatchdog: null,
+        clockSampleTimer: null,
+        closeReason: 'frontier',
+        closedFrame: null,
+        drain: drain.promise,
+        resolveDrain: drain.resolve,
+        rejectDrain: drain.reject,
+        drainObserved: false,
+        handoffStarted: false,
+        resourcesReleased: false,
+        schedulerRetired: false,
+        nodesDisconnected: false,
+        stopped: false,
+        onContextState: () => {
+          if (
+            pcmRun?.generation === generation &&
+            old.context.state !== 'running'
+          )
+            failScheduledAudio('audio context interrupted');
         },
+      };
+      candidate.run = run;
+      old.session.slots[slot] = run;
+      if (
+        coldProofGlobal.__otioProofPcm === true &&
+        coldProofGlobal.__otioProofPcmFault === 'descriptor-budget' &&
+        (proofHost === 'localhost' ||
+          proofHost === '127.0.0.1' ||
+          proofHost.endsWith('.localhost') ||
+          proofHost === '[::1]')
+      ) {
+        proofReservedBytes = OTIO_PCM_MAX_BYTES - pcmBudget.usedBytes;
+        pcmBudget.reserveBytes(proofReservedBytes);
       }
-    ).then(
-      (run) => {
-        if (!valid()) {
-          releasePcmResources(run);
-          return;
-        }
-        candidate.prepared = true;
-        pcmRecoveryWake?.();
-        pcmProof('recovery-candidate-ready', run.generation, {
-          oldGeneration: old.generation,
-          boundaryFrame,
-          compositionStart: startFrame,
-          slot: run.slot,
+      for (const plan of old.admission.spans) {
+        if (!plan.span.bundle_path) continue;
+        const from = Math.max(startFrame, plan.lattice.timeline_start);
+        const to = Math.min(descriptorEnd, plan.lattice.timeline_end);
+        if (to <= from) continue;
+        if (old.scheduler.coveredThrough(plan.span.occurrence, from) < to)
+          throw new Error('PCM handoff descriptor is not fully decoded');
+        const gainFactors = plan.span.gain_factors.map((factor) => ({
+          startFrame:
+            rescaleTime(factor.range.start_time, old.admission.rate).value -
+            startFrame,
+          endFrame:
+            rescaleTime(
+              addRationalTimes(factor.range.start_time, factor.range.duration),
+              old.admission.rate
+            ).value - startFrame,
+          startGain: factor.direction === 'in' ? 0 : 1,
+          endGain: factor.direction === 'in' ? 1 : 0,
+        }));
+        const prepared = old.scheduler.restage({
+          target: scheduler,
+          generation,
+          ledgerKey: plan.span.occurrence,
+          compositionStartFrame: from,
+          frameCount: to - from,
+          gainFactorCount: gainFactors.length,
+          destination: pcmTrack(run, plan.span.track_id),
         });
-      },
-      (error: unknown) => {
-        candidate.failure =
-          error instanceof Error ? error.message : String(error);
-        pcmRecoveryWake?.();
-        if (candidate.run) releasePcmResources(candidate.run);
-        if (valid()) {
-          pcmProof('recovery-candidate-failed', old.generation, {
-            boundaryFrame,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-        }
+        run.chunks.push({
+          plan,
+          timelineStart: from,
+          sourceStart:
+            plan.lattice.source_start + from - plan.lattice.timeline_start,
+          prepared,
+          count: to - from,
+          gainFactors,
+          absoluteGainFactors: gainFactors.map((factor) => ({ ...factor })),
+        });
       }
+      candidate.prepared = true;
+      for (const plan of old.admission.spans)
+        old.scheduler.retireRetainedBefore(plan.span.occurrence, startFrame);
+      pcmProof('recovery-candidate-ready', generation, {
+        oldGeneration: old.generation,
+        boundaryFrame,
+        compositionStart: startFrame,
+        descriptorCoverageEnd: descriptorEnd,
+        slot,
+      });
+    } catch (error) {
+      candidate.failure =
+        error instanceof Error ? error.message : String(error);
+      if (run) releasePcmResources(run);
+      pcmProof('recovery-candidate-failed', old.generation, {
+        boundaryFrame,
+        code: candidate.failure.includes('budget')
+          ? 'descriptor-budget-exhausted'
+          : candidate.failure,
+        reason: candidate.failure,
+      });
+    } finally {
+      if (proofReservedBytes) pcmBudget.releaseBytes(proofReservedBytes);
+    }
+    pcmRecoveryWake?.();
+  }
+
+  function materializePcmLedger(run: PcmRun): void {
+    if (run.materializedThrough >= run.preparedThrough || !run.providerOwned)
+      return;
+    const from = run.materializedThrough;
+    const to = Math.min(
+      run.preparedThrough,
+      from + OTIO_PCM_HANDOFF_RESERVE_FRAMES
     );
+    const pending: PcmChunk[] = [];
+    try {
+      for (const plan of run.admission.spans) {
+        if (!plan.span.bundle_path) continue;
+        const start = Math.max(from, plan.lattice.timeline_start);
+        const end = Math.min(to, plan.lattice.timeline_end);
+        if (end <= start) continue;
+        if (run.scheduler.coveredThrough(plan.span.occurrence, start) < end)
+          throw new Error('PCM inherited ledger has a gap');
+        const gainFactors = plan.span.gain_factors.map((factor) => ({
+          startFrame:
+            rescaleTime(factor.range.start_time, run.admission.rate).value -
+            run.startFrame,
+          endFrame:
+            rescaleTime(
+              addRationalTimes(factor.range.start_time, factor.range.duration),
+              run.admission.rate
+            ).value - run.startFrame,
+          startGain: factor.direction === 'in' ? 0 : 1,
+          endGain: factor.direction === 'in' ? 1 : 0,
+        }));
+        const prepared = run.scheduler.restage({
+          target: run.scheduler,
+          generation: run.generation,
+          ledgerKey: plan.span.occurrence,
+          compositionStartFrame: start,
+          frameCount: end - start,
+          gainFactorCount: gainFactors.length,
+          destination: pcmTrack(run, plan.span.track_id),
+        });
+        pending.push({
+          plan,
+          timelineStart: start,
+          sourceStart:
+            plan.lattice.source_start + start - plan.lattice.timeline_start,
+          prepared,
+          count: end - start,
+          gainFactors,
+          absoluteGainFactors: gainFactors.map((factor) => ({ ...factor })),
+        });
+      }
+      run.chunks.push(...pending);
+      pending.length = 0;
+      run.materializedThrough = to;
+    } finally {
+      for (const chunk of pending) chunk.prepared.cancel();
+    }
   }
 
   function schedulePreparedPcm(run: PcmRun): void {
@@ -3967,8 +4081,27 @@ export function createOtioPlayback(
       boundaryFrame: closedFrame,
       oldSlot: run.slot,
       compositionStop,
+      preparedThrough: run.preparedThrough,
+      descriptorCoverageEnd:
+        pcmCandidate?.run?.materializedThrough ?? compositionStop.value,
+      descriptorReady: pcmCandidate?.prepared ?? false,
       clockEpoch: run.gate.clockEpoch,
     });
+    if (
+      !pcmCandidate?.prepared ||
+      pcmCandidate.old !== run ||
+      pcmCandidate.boundaryFrame !== closedFrame
+    ) {
+      const code = pcmCandidate?.failure?.includes('budget')
+        ? 'descriptor-budget-exhausted'
+        : 'descriptor-not-ready';
+      pcmProof('recovery-candidate-failed', run.generation, {
+        boundaryFrame: closedFrame,
+        code,
+      });
+      failScheduledAudio(code);
+      return;
+    }
     notify();
     void recoverPcmAt(
       compositionStop,
@@ -4036,7 +4169,6 @@ export function createOtioPlayback(
     run.stopping = true;
     const closedFrame = ack.closedFrame;
     run.closedFrame = closedFrame;
-    closePcmProvider(run);
     const compositionStop = {
       value: run.startFrame + ack.closedFrame - run.contextFrame,
       rate: run.admission.rate,
@@ -4202,7 +4334,6 @@ export function createOtioPlayback(
   function armPcmStop(run: PcmRun, stopFrame: number, reason: string): void {
     if (run.stopped || run.stopping) return;
     run.stopping = true;
-    closePcmProvider(run);
     watchPcmClosure(run);
     run.closeReason =
       reason === 'pause'
@@ -4367,10 +4498,28 @@ export function createOtioPlayback(
       return false;
     }
     if (old !== null && nowFrame + OTIO_PCM_MIN_LEAD_FRAMES >= old) return true;
+    try {
+      materializePcmLedger(run);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === 'PCM byte budget exceeded' ||
+          error.message === 'PCM graph node limit exceeded')
+      )
+        return old !== null;
+      throw error;
+    }
     schedulePreparedPcm(run);
     const fromFrame =
       old === null ? run.startFrame : run.startFrame + old - run.contextFrame;
-    const limitFrame = run.scheduledThrough;
+    const scopeEndFrame = Math.floor(
+      (scopeEnd().value * rate) / scopeEnd().rate
+    );
+    const decodedCap =
+      run.preparedThrough === scopeEndFrame
+        ? scopeEndFrame
+        : run.preparedThrough - OTIO_PCM_HANDOFF_RESERVE_FRAMES;
+    const limitFrame = Math.min(run.scheduledThrough, decodedCap);
     if (limitFrame <= fromFrame) return old !== null;
     const hold = reserveVisualPrefix(
       { value: fromFrame, rate },
@@ -4396,7 +4545,6 @@ export function createOtioPlayback(
       hold.release();
       if (old !== null) {
         run.stopping = true;
-        closePcmProvider(run);
         watchPcmClosure(run);
         return true;
       }
@@ -4500,6 +4648,20 @@ export function createOtioPlayback(
       compositionThrough: compositionStop,
       contextFrameThrough: next,
       gateFrame: next,
+      preparedThrough: run.preparedThrough,
+      scopeEndFrame,
+      reserveFrames:
+        run.preparedThrough === scopeEndFrame
+          ? 0
+          : OTIO_PCM_HANDOFF_RESERVE_FRAMES,
+      decodedCap,
+      descriptorCoverageEnd:
+        pcmCandidate?.run?.preparedThrough ?? compositionStop.value,
+      descriptorReady:
+        compositionStop.value === scopeEndFrame ||
+        (pcmCandidate?.prepared ?? false),
+      slot: run.slot,
+      frontierKind: old === null ? 'initial' : 'extension',
     });
     return true;
   }
@@ -5273,6 +5435,39 @@ export function createOtioPlayback(
           candidate.rings.delete(key);
         }
       }
+      run.providerOwned = true;
+      oldRun.providerOwned = false;
+      run.streams = oldRun.streams;
+      run.streamCredits = oldRun.streamCredits;
+      const transfer = (async () => {
+        await Promise.resolve();
+        try {
+          if (oldRun.loading) await oldRun.loading.catch(() => undefined);
+          if (runCandidate.stopped || runCandidate.resourcesReleased) return;
+          oldRun.scheduler.seal();
+          oldRun.scheduler.handOffLedger(runCandidate.scheduler);
+          runCandidate.preparedThrough = oldRun.preparedThrough;
+          for (const plan of runCandidate.admission.spans)
+            runCandidate.scheduler.retireRetainedBefore(
+              plan.span.occurrence,
+              runCandidate.startFrame
+            );
+        } finally {
+          if (runCandidate.loading === oldRun.handoffTransfer)
+            runCandidate.loading = null;
+          oldRun.handoffTransfer = null;
+          if (oldRun.drainObserved || runCandidate.stopped)
+            releasePcmResources(oldRun);
+        }
+      })();
+      oldRun.handoffTransfer = transfer;
+      run.loading = transfer;
+      void transfer.catch((error: unknown) => {
+        if (pcmRun === runCandidate && !runCandidate.stopped)
+          failScheduledAudio(
+            error instanceof Error ? error.message : String(error)
+          );
+      });
       pcmCandidate = null;
       pcmRun = run;
       context.addEventListener('statechange', run.onContextState);
@@ -5297,6 +5492,24 @@ export function createOtioPlayback(
         },
         contextFrameThrough: through,
         gateFrame: through,
+        preparedThrough: oldRun.preparedThrough,
+        scopeEndFrame: Math.floor(
+          (scopeEnd().value * admission.rate) / scopeEnd().rate
+        ),
+        reserveFrames:
+          oldRun.preparedThrough ===
+          Math.floor((scopeEnd().value * admission.rate) / scopeEnd().rate)
+            ? 0
+            : OTIO_PCM_HANDOFF_RESERVE_FRAMES,
+        decodedCap:
+          oldRun.preparedThrough ===
+          Math.floor((scopeEnd().value * admission.rate) / scopeEnd().rate)
+            ? oldRun.preparedThrough
+            : oldRun.preparedThrough - OTIO_PCM_HANDOFF_RESERVE_FRAMES,
+        descriptorCoverageEnd: run.materializedThrough,
+        descriptorReady: true,
+        slot: run.slot,
+        frontierKind: 'handoff',
       });
       pcmProof('recovery-handoff', run.generation, {
         oldGeneration: oldRun.generation,
@@ -5308,7 +5521,17 @@ export function createOtioPlayback(
       });
       if (candidate && preparedBoundary === candidate) cancelPreparedBoundary();
       if (oldRun.drainObserved) releasePcmResources(oldRun);
-      stagePcmCandidate(run, through);
+      void transfer.then(
+        () => {
+          if (
+            pcmRun === runCandidate &&
+            !runCandidate.stopped &&
+            runCandidate.frontierFrame === through
+          )
+            stagePcmCandidate(runCandidate, through);
+        },
+        () => undefined
+      );
       isStarting = false;
       isBuffering = false;
       nativeLastPresentMs = null;
@@ -8561,15 +8784,6 @@ export function createOtioPlayback(
       proofHost.endsWith('.localhost') ||
       proofHost === '[::1]')
   ) {
-    proofGlobal.__otioProofReservePcmBytes = (bytes) => {
-      pcmBudget.reserveBytes(bytes);
-      let released = false;
-      return () => {
-        if (released) return;
-        released = true;
-        pcmBudget.releaseBytes(bytes);
-      };
-    };
     proofGlobal.__otioProofPcmSnapshot = () => {
       const gateReservations = pcmGateRetirements.reservedGates;
       const activeSession =
