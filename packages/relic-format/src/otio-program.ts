@@ -12,6 +12,30 @@
  *   relic/program/timeline-<i>.mp4   STORED, one per rendered timeline
  */
 
+/**
+ * Bounds. Every limit a reader enforces, and why it exists.
+ * - Archive: the archive and the program MP4s it carries expand to at most
+ *   MAX_EXPANDED_ZIP_BYTES (100 MiB), the same cap every archive uses. The
+ *   manifest is capped at the same figure.
+ * - Representability: every integer is a safe integer (|n| <= 2^53 - 1), and
+ *   every rational time is finite and positive in rate. Frame and sample
+ *   counts are checked against the exact duration in floating point, with
+ *   FRAME_EPSILON for frames and AUDIO_SAMPLE_TOLERANCE for AAC priming.
+ * - Timing: range.start_time.value is 0. The duration covers at least one frame
+ *   period. Frame and audio-sample counts agree with the duration.
+ * - Frame rate: num >= den, so the rate is at least 1 fps.
+ * - Media: manifest.media keys equal document.media_paths exactly. The caller
+ *   derives that set with otioDocumentMediaPaths.
+ *
+ * No duration cap is enforced; none is authorized.
+ *
+ * Still enforced as format ceilings, pending a ruling: MAX_OTIO_PROGRAM_FPS
+ * (240), MAX_OTIO_PROGRAM_DIMENSION (4096), MAX_OTIO_PROGRAM_VIDEO_BITRATE,
+ * MAX_OTIO_RATIONAL_RATE, and the timeline, reason, and string limits. No
+ * decoder limit has been proved for them, and they are not representability
+ * limits.
+ */
+
 import { RelicFormatError } from './errors.ts';
 import { isRecord } from './guards.ts';
 import { parseOtioJson, stringifyOtioJson } from './otio-json.ts';
@@ -41,7 +65,7 @@ const ZIP_DEFLATE = 8;
 
 export const MAX_OTIO_PROGRAM_TIMELINES = 256;
 export const MAX_OTIO_PROGRAM_REASONS = 64;
-export const MAX_OTIO_PROGRAM_MANIFEST_BYTES = 1024 * 1024;
+export const MAX_OTIO_PROGRAM_MANIFEST_BYTES = MAX_EXPANDED_ZIP_BYTES;
 export const MAX_OTIO_PROGRAM_DIMENSION = 4096;
 export const MAX_OTIO_PROGRAM_FPS = 240;
 export const MAX_OTIO_PROGRAM_VIDEO_BITRATE = 100_000_000;
@@ -49,10 +73,16 @@ export const MAX_OTIO_RATIONAL_RATE = 1_000_000;
 
 const MAX_STRING = 512;
 const MAX_MEDIA_PATH = 1024;
-const MAX_FRAMES = 2 ** 31 - 1;
-const MAX_AUDIO_SAMPLES = 2 ** 40;
+const MAX_FRAMES = Number.MAX_SAFE_INTEGER;
+const MAX_AUDIO_SAMPLES = Number.MAX_SAFE_INTEGER;
 /** One AAC frame of priming and padding is the allowed drift in sample count. */
 const AUDIO_SAMPLE_TOLERANCE = 2048;
+/** Lowest frame rate a program may declare: one frame per second. */
+export const MIN_OTIO_PROGRAM_FPS = 1;
+/** Slack for frame counts computed from rational seconds in floating point. */
+const FRAME_EPSILON = 1e-6;
+/** Longest manifest-supplied string quoted back in an error message. */
+const MAX_ERROR_EXCERPT = 64;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const AVC_CODEC = /^avc1\.[0-9a-fA-F]{6}$/;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
@@ -178,6 +208,33 @@ function mismatch(message: string): never {
   throw new OtioProgramError('archive-mismatch', message);
 }
 
+/** Quotes a manifest-supplied string for an error message, bounded in length. */
+function excerpt(value: string): string {
+  const shown =
+    value.length > MAX_ERROR_EXCERPT
+      ? `${value.slice(0, MAX_ERROR_EXCERPT)}...`
+      : value;
+  return JSON.stringify(shown);
+}
+
+/** Caller-supplied document media paths: canonical, unique, and bounded. */
+function expectedMediaPaths(paths: readonly string[]): Set<string> {
+  if (paths.length > MAX_OTIO_BUNDLE_MEDIA_ENTRIES) {
+    mismatch(
+      `document references more than ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} media paths`
+    );
+  }
+  const expected = new Set<string>();
+  for (const path of paths) {
+    expectMediaPath(path);
+    if (expected.has(path)) {
+      mismatch(`document lists media path ${excerpt(path)} twice`);
+    }
+    expected.add(path);
+  }
+  return expected;
+}
+
 function expectRecord(
   value: unknown,
   where: string,
@@ -185,8 +242,7 @@ function expectRecord(
 ): Record<string, unknown> {
   if (!isRecord(value)) fail(`${where} must be an object`);
   for (const key of Object.keys(value)) {
-    if (!keys.includes(key))
-      fail(`${where} has unknown key ${JSON.stringify(key)}`);
+    if (!keys.includes(key)) fail(`${where} has unknown key ${excerpt(key)}`);
   }
   return value;
 }
@@ -272,6 +328,7 @@ function expectRange(value: unknown, where: string): OtioTimeRange {
     `${where}.duration`
   );
   if (duration.value <= 0) fail(`${where}.duration must be positive`);
+  if (start_time.value !== 0) fail(`${where}.start_time must be zero`);
   return { start_time, duration };
 }
 
@@ -289,6 +346,9 @@ function expectFrameRate(value: unknown, where: string): OtioProgramFrameRate {
     1,
     MAX_OTIO_RATIONAL_RATE
   );
+  if (num < den * MIN_OTIO_PROGRAM_FPS) {
+    fail(`${where} is below ${MIN_OTIO_PROGRAM_FPS} frame per second`);
+  }
   if (num > MAX_OTIO_PROGRAM_FPS * den) {
     fail(`${where} exceeds ${MAX_OTIO_PROGRAM_FPS} frames per second`);
   }
@@ -303,16 +363,20 @@ function expectEvenDimension(value: unknown, where: string): number {
 
 function expectMediaPath(key: string): void {
   if (key.length > MAX_MEDIA_PATH || !key.startsWith('media/')) {
-    unsafe(`media path must start with media/: ${JSON.stringify(key)}`);
+    unsafe(`media path must start with media/: ${excerpt(key)}`);
   }
-  if (key.includes('\\')) unsafe(`media path contains a backslash: ${key}`);
+  if (key.includes('\\')) {
+    unsafe(`media path contains a backslash: ${excerpt(key)}`);
+  }
   let canonical: string;
   try {
     canonical = sanitizeOtioBundlePath(key);
   } catch {
-    unsafe(`media path is not a safe bundle path: ${key}`);
+    unsafe(`media path is not a safe bundle path: ${excerpt(key)}`);
   }
-  if (canonical !== key) unsafe(`media path is not canonical: ${key}`);
+  if (canonical !== key) {
+    unsafe(`media path is not canonical: ${excerpt(key)}`);
+  }
 }
 
 function expectMedia(value: unknown): Record<string, string> {
@@ -324,10 +388,7 @@ function expectMedia(value: unknown): Record<string, string> {
   const media: Record<string, string> = Object.create(null);
   for (const key of keys) {
     expectMediaPath(key);
-    media[key] = expectSha(
-      value[key],
-      `manifest.media[${JSON.stringify(key)}]`
-    );
+    media[key] = expectSha(value[key], `manifest.media[${excerpt(key)}]`);
   }
   return media;
 }
@@ -401,7 +462,13 @@ function expectDescriptor(
   );
 
   const seconds = range.duration.value / range.duration.rate;
+  if (!Number.isFinite(seconds)) {
+    fail(`${where}.range.duration is not finite`);
+  }
   const frameExact = (seconds * frame_rate.num) / frame_rate.den;
+  if (frameExact < 1 - FRAME_EPSILON) {
+    fail(`${where}.range.duration is shorter than one frame`);
+  }
   if (!(Math.abs(frameExact - frames) < 1)) {
     fail(`${where}.frames disagrees with range.duration at frame_rate`);
   }
@@ -635,8 +702,8 @@ export function parseOtioProgramManifest(
   let parsed: unknown;
   try {
     parsed = parseOtioJson(bytes);
-  } catch (err) {
-    fail(`manifest is not valid JSON: ${(err as Error).message}`);
+  } catch {
+    fail('manifest is not valid JSON');
   }
   return expectManifest(parsed);
 }
@@ -678,16 +745,24 @@ async function digestHex(bytes: Uint8Array): Promise<string> {
  * - its document and timeline ids match the OTIO document and content.otio;
  * - no `relic/program` entry exists beyond the manifest and the rendered MP4s;
  * - each rendered MP4 is STORED, matches its size, and matches its sha256;
- * - each media entry is present and matches its sha256;
+ * - the manifest's media map is exactly `document.media_paths`, and each of
+ *   those media entries is present and matches its sha256;
  * - the expanded total stays within the archive cap.
  *
- * `document` comes from `readOtioDocument(zip.contentOtioBytes)`.
+ * `document` comes from `readOtioDocument(zip.contentOtioBytes)`. `media_paths`
+ * is derived from that same document's media references, never from the manifest.
  */
 export async function readOtioProgramArchive(
   zip: OtioZipIndex,
   document: {
     readonly document_sha256: string;
     readonly timeline_ids: readonly string[];
+    /**
+     * Archive paths (`media/...`) that the OTIO document references, in the
+     * canonical form `sanitizeOtioBundlePath` returns. The manifest must list
+     * exactly these paths.
+     */
+    readonly media_paths: readonly string[];
   }
 ): Promise<OtioProgramArchive | null> {
   const reserved = [...zip.entries.values()].filter(
@@ -721,6 +796,14 @@ export async function readOtioProgramArchive(
   }
   if (manifest.timelines.length !== document.timeline_ids.length) {
     mismatch('manifest timeline count differs from the document');
+  }
+  const expectedMedia = expectedMediaPaths(document.media_paths);
+  const manifestMedia = Object.keys(manifest.media);
+  if (
+    manifestMedia.length !== expectedMedia.size ||
+    manifestMedia.some((path) => !expectedMedia.has(path))
+  ) {
+    mismatch('manifest media does not match the document references');
   }
 
   const expectedEntries = new Set<string>();

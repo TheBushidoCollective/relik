@@ -29,7 +29,11 @@ const CONTENT_SHA = await sha256Hex(CONTENT);
 const PROGRAM_SHA = await sha256Hex(PROGRAM);
 const MEDIA_SHA = await sha256Hex(MEDIA);
 const TIMELINE_IDS = ['timeline-a', 'timeline-b'];
-const DOCUMENT = { document_sha256: CONTENT_SHA, timeline_ids: TIMELINE_IDS };
+const DOCUMENT = {
+  document_sha256: CONTENT_SHA,
+  timeline_ids: TIMELINE_IDS,
+  media_paths: ['media/clip.mp4'],
+};
 
 /** A valid descriptor for 2 s at 24 fps, with 48000 Hz stereo audio. */
 function descriptor(
@@ -565,6 +569,7 @@ describe('readOtioProgramArchive', () => {
       readOtioProgramArchive(await open(baseEntries()), {
         document_sha256: CONTENT_SHA,
         timeline_ids: ['timeline-a', 'other'],
+        media_paths: ['media/clip.mp4'],
       })
     ).rejects.toMatchObject({ code: 'archive-mismatch' });
   });
@@ -666,5 +671,158 @@ describe('readOtioProgramArchive legacy and partial archives', () => {
     const result = await readOtioProgramArchive(await open(entries), DOCUMENT);
     expect(result).not.toBeNull();
     expect(result?.programs.size).toBe(0);
+  });
+});
+
+describe('frame rate, duration, and start-time bounds', () => {
+  test('refuses a frame rate below one frame per second', () => {
+    for (const frame_rate of [
+      { num: 1, den: 2 },
+      { num: 1, den: 1_000_000 },
+    ]) {
+      expect(
+        parseFailure(
+          manifestBytes({
+            timelines: [rendered(0, { frame_rate }), unavailable()],
+          })
+        ).code
+      ).toBe('malformed-manifest');
+    }
+  });
+
+  test('accepts exactly one frame per second', () => {
+    const manifest = parseOtioProgramManifest(
+      manifestBytes({
+        timelines: [
+          rendered(0, { frame_rate: { num: 1, den: 1 }, frames: 2 }),
+          unavailable(),
+        ],
+      })
+    );
+    expect(manifest.timelines[0]?.status).toBe('rendered');
+  });
+
+  test('refuses a duration shorter than one frame', () => {
+    // 0.0208 s at 24 fps is half a frame: the frame count matches, the span does not.
+    expect(
+      parseFailure(
+        manifestBytes({
+          timelines: [
+            rendered(0, {
+              range: {
+                start_time: { value: 0, rate: 24 },
+                duration: { value: 1, rate: 48 },
+              },
+              frames: 1,
+              audio_samples: 1000,
+            }),
+            unavailable(),
+          ],
+        })
+      ).code
+    ).toBe('malformed-manifest');
+  });
+
+  test('refuses a nonzero start_time', () => {
+    expect(
+      parseFailure(
+        manifestBytes({
+          timelines: [
+            rendered(0, {
+              range: {
+                start_time: { value: 1, rate: 24 },
+                duration: { value: 48, rate: 24 },
+              },
+            }),
+            unavailable(),
+          ],
+        })
+      ).code
+    ).toBe('malformed-manifest');
+  });
+});
+
+describe('bounded error text', () => {
+  test('a JSON parse error does not echo the manifest text', () => {
+    const failure = parseFailure(encoder.encode('{"secret":SECRETVALUE-xyz'));
+    expect(failure.code).toBe('malformed-manifest');
+    expect(failure.message).not.toContain('SECRETVALUE');
+  });
+
+  test('an oversized key is quoted in a bounded message', () => {
+    const failure = parseFailure(manifestBytes({ ['k'.repeat(5000)]: true }));
+    expect(failure.code).toBe('malformed-manifest');
+    expect(failure.message.length).toBeLessThan(200);
+  });
+
+  test('an oversized media path is refused with a bounded message', () => {
+    const failure = parseFailure(
+      manifestBytes({ media: { [`media/${'a'.repeat(2000)}`]: MEDIA_SHA } })
+    );
+    expect(failure.code).toBe('unsafe-path');
+    expect(failure.message.length).toBeLessThan(200);
+  });
+});
+
+describe('manifest media must match the document references', () => {
+  test('refuses an empty media map when the document references media', async () => {
+    const manifest = manifestBytes({ media: {} });
+    await expect(
+      readOtioProgramArchive(await open(baseEntries({ manifest })), DOCUMENT)
+    ).rejects.toMatchObject({ code: 'archive-mismatch' });
+  });
+
+  test('refuses an extra media entry the document does not reference', async () => {
+    const manifest = manifestBytes({
+      media: { 'media/clip.mp4': MEDIA_SHA, 'media/extra.mp4': MEDIA_SHA },
+    });
+    await expect(
+      readOtioProgramArchive(await open(baseEntries({ manifest })), DOCUMENT)
+    ).rejects.toMatchObject({ code: 'archive-mismatch' });
+  });
+
+  test('refuses a referenced media entry the manifest omits', async () => {
+    await expect(
+      readOtioProgramArchive(await open(baseEntries()), {
+        ...DOCUMENT,
+        media_paths: ['media/clip.mp4', 'media/other.mp4'],
+      })
+    ).rejects.toMatchObject({ code: 'archive-mismatch' });
+  });
+
+  test('accepts an empty reference set with an empty media map', async () => {
+    const manifest = manifestBytes({ media: {} });
+    const result = await readOtioProgramArchive(
+      await open(baseEntries({ manifest })),
+      { ...DOCUMENT, media_paths: [] }
+    );
+    expect(result?.programs.get(0)).toEqual(PROGRAM);
+  });
+
+  test('refuses an unsafe caller-supplied reference path', async () => {
+    await expect(
+      readOtioProgramArchive(await open(baseEntries()), {
+        ...DOCUMENT,
+        media_paths: ['media/../secret.mp4'],
+      })
+    ).rejects.toMatchObject({ code: 'unsafe-path' });
+  });
+
+  test('refuses a reference path outside media/', async () => {
+    await expect(
+      readOtioProgramArchive(await open(baseEntries()), {
+        ...DOCUMENT,
+        media_paths: ['relic/program/timeline-0.mp4'],
+      })
+    ).rejects.toMatchObject({ code: 'unsafe-path' });
+  });
+
+  test('refuses a duplicated caller-supplied reference path', async () => {
+    await expect(
+      readOtioProgramArchive(await open(baseEntries()), {
+        ...DOCUMENT,
+        media_paths: ['media/clip.mp4', 'media/clip.mp4'],
+      })
+    ).rejects.toMatchObject({ code: 'archive-mismatch' });
   });
 });

@@ -1234,6 +1234,7 @@ interface MediaWitness {
   readonly facts: readonly string[];
   readonly complete: boolean;
   readonly allDigestsPresent: boolean;
+  readonly entries: readonly string[];
 }
 
 const mediaWitnessCache = new WeakMap<
@@ -1243,6 +1244,7 @@ const mediaWitnessCache = new WeakMap<
 
 function mediaWitness(document: OtioDocumentV1, node: OtioNode): MediaWitness {
   const facts = new Set<string>();
+  const names = new Set<string>();
   const seen = new WeakSet<object>();
   let sequenceImages = 0;
   let complete = true;
@@ -1258,6 +1260,7 @@ function mediaWitness(document: OtioDocumentV1, node: OtioNode): MediaWitness {
     const digest = entry?.sha256 || null;
     if (digest === null) allDigestsPresent = false;
     entries.push([name, digest]);
+    names.add(name);
   };
 
   const visit = (value: unknown): void => {
@@ -1309,6 +1312,7 @@ function mediaWitness(document: OtioDocumentV1, node: OtioNode): MediaWitness {
     facts: [...facts].sort(),
     complete,
     allDigestsPresent,
+    entries: [...names].sort(),
   };
 }
 
@@ -1326,6 +1330,37 @@ function mediaWitnessFor(
   const witness = mediaWitness(document, node);
   byNode.set(node, witness);
   return witness;
+}
+
+/**
+ * The canonical `media/...` entries the document's media references resolve
+ * to, sorted and without duplicates. Only entries present in `document.media`
+ * are listed. A reference naming no such entry is omitted, so a timeline that
+ * depends on it must be reported as missing-media. This is the set an OTIO
+ * program manifest's media map must equal. It comes from the same walk the
+ * media-equivalence check uses.
+ *
+ * Throws RangeError when an image sequence exceeds the archive entry limit.
+ */
+export function otioDocumentMediaPaths(
+  document: OtioDocumentV1
+): readonly string[] {
+  const names = new Set<string>();
+  for (const node of Object.values(document.nodes)) {
+    const witness = mediaWitnessFor(document, node);
+    if (!witness.complete) {
+      throw new RangeError(
+        `image sequences exceed the ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} entry limit`
+      );
+    }
+    for (const name of witness.entries) names.add(name);
+  }
+  if (names.size > MAX_OTIO_BUNDLE_MEDIA_ENTRIES) {
+    throw new RangeError(
+      `document references more than ${MAX_OTIO_BUNDLE_MEDIA_ENTRIES} media entries`
+    );
+  }
+  return [...names].sort();
 }
 
 function mediaContinuous(
