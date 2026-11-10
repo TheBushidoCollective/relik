@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import type * as PdfJsModule from 'pdfjs-dist';
 import {
   contentFromBlob,
   contentFromBytes,
@@ -7,6 +8,7 @@ import {
 } from '../src/content.ts';
 import type * as PdfModule from '../src/pdf.ts';
 
+let pdfjs: typeof PdfJsModule;
 let pdf: typeof PdfModule;
 let originalDOMMatrix: PropertyDescriptor | undefined;
 
@@ -19,7 +21,8 @@ beforeAll(async () => {
       value: class DOMMatrix {},
     });
   }
-  // PDF.js needs DOMMatrix before this module can load in the test runtime.
+  // PDF.js needs DOMMatrix before either module can load in the test runtime.
+  pdfjs = await import('pdfjs-dist');
   pdf = await import('../src/pdf.ts');
 });
 
@@ -98,6 +101,152 @@ function pdfWithWhitespaceRun(size: number): Uint8Array {
   bytes.set(encoder.encode(head), 0);
   bytes.set(encoder.encode(tail(start)), start);
   return bytes;
+}
+
+type PdfWorkerHandler = {
+  initializeFromPort(port: MessagePort): void;
+};
+
+type ParserWorkers = {
+  patched: PdfWorkerHandler;
+  original: PdfWorkerHandler;
+};
+
+type ParserFixtureTarget =
+  | 'annotation-array'
+  | 'annotation'
+  | 'resources'
+  | 'content';
+
+function parserFixture(
+  object: string,
+  target: ParserFixtureTarget,
+  truncateAtEof = false,
+  afterObject = ''
+): Uint8Array {
+  const operators = '0 0 100 100 re f\n';
+  const annotations =
+    target === 'annotation-array'
+      ? '5 0 R'
+      : target === 'annotation'
+        ? '[5 0 R]'
+        : '[]';
+  const resources = target === 'resources' ? '5 0 R' : '<< >>';
+  const contents = target === 'content' ? '5 0 R' : '4 0 R';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents ${contents} /Annots ${annotations} /Resources ${resources} >>`,
+    `<< /Length ${operators.length} >>\nstream\n${operators}endstream`,
+    object,
+    '<< /Type /Annot /Subtype /Text /Rect [10 10 40 40] /Contents (after closer) >>',
+  ];
+  let body = '%PDF-1.4\n';
+  const offsets = Array<number>(objects.length).fill(0);
+  for (const [index, value] of objects.entries()) {
+    if (truncateAtEof && index === 4) continue;
+    offsets[index] = body.length;
+    body += `${index + 1} 0 obj\n${value}\nendobj\n`;
+    if (index === 4) body += afterObject;
+  }
+  const xrefOffset = body.length;
+  const xref = (lastObjectOffset: number): string => {
+    let result = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const [index, offset] of offsets.entries()) {
+      const position = truncateAtEof && index === 4 ? lastObjectOffset : offset;
+      result += `${String(position).padStart(10, '0')} 00000 n \n`;
+    }
+    return `${result}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  };
+  if (truncateAtEof) {
+    // Put the referenced, incomplete object after the trailer so its parser
+    // reaches the physical EOF rather than consuming the xref as object data.
+    const lastObjectOffset = body.length + xref(0).length;
+    body += `${xref(lastObjectOffset)}5 0 obj\n${object}`;
+  } else {
+    body += xref(0);
+  }
+  return new TextEncoder().encode(body);
+}
+
+async function parserWorkers(): Promise<ParserWorkers> {
+  const workerUrl = new URL(
+    '../node_modules/pdfjs-dist/build/pdf.worker.mjs',
+    import.meta.url
+  );
+  const source = await Bun.file(workerUrl).text();
+  const lexerCall = 'new IndirectObjectLexer(stream)';
+  expect(source.split(lexerCall).length - 1).toBe(3);
+  // This restores the three parser call sites to the upstream Lexer. The
+  // baseline and patched workers otherwise execute the same installed code.
+  const originalSource = source.replaceAll(lexerCall, 'new Lexer(stream)');
+  const originalUrl = `data:text/javascript;base64,${Buffer.from(originalSource).toString('base64')}`;
+  const globalWorker = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'pdfjsWorker'
+  );
+  // The worker URLs are constructed at runtime so each parser can have its
+  // own worker message handler without changing the installed module.
+  try {
+    const patchedModule = (await import(workerUrl.href)) as {
+      WorkerMessageHandler: PdfWorkerHandler;
+    };
+    const originalModule = (await import(originalUrl)) as {
+      WorkerMessageHandler: PdfWorkerHandler;
+    };
+    return {
+      patched: patchedModule.WorkerMessageHandler,
+      original: originalModule.WorkerMessageHandler,
+    };
+  } finally {
+    if (globalWorker) {
+      Object.defineProperty(globalThis, 'pdfjsWorker', globalWorker);
+    } else {
+      Reflect.deleteProperty(globalThis, 'pdfjsWorker');
+    }
+  }
+}
+
+async function inspectWithWorker(
+  handler: PdfWorkerHandler,
+  original: Uint8Array
+): Promise<{ view: number[]; operators: number[]; annotations: string[] }> {
+  const channel = new MessageChannel();
+  handler.initializeFromPort(channel.port2);
+  const worker = pdfjs.PDFWorker.create({
+    port: channel.port1 as unknown as Worker,
+  });
+  // PDF.js transfers its input buffer. Keep the caller's bytes for comparison.
+  const task = pdfjs.getDocument({ data: original.slice(), worker });
+  try {
+    const document = await task.promise;
+    expect(document.numPages).toBe(1);
+    const downloaded = await document.getData();
+    expect(Buffer.compare(Buffer.from(downloaded), Buffer.from(original))).toBe(
+      0
+    );
+    const page = await document.getPage(1);
+    const annotations = await page.getAnnotations();
+    const operators = await page.getOperatorList({
+      annotationMode: pdfjs.AnnotationMode.DISABLE,
+    });
+    const pathIndex = operators.fnArray.indexOf(pdfjs.OPS.constructPath);
+    expect(pathIndex).toBeGreaterThanOrEqual(0);
+    expect(operators.argsArray[pathIndex]?.[0]).toBe(pdfjs.OPS.fill);
+    return {
+      view: page.view,
+      operators: operators.fnArray,
+      annotations: annotations.map((annotation) => annotation.contentsObj.str),
+    };
+  } finally {
+    try {
+      await task.destroy();
+    } finally {
+      worker.destroy();
+      channel.port1.close();
+      channel.port2.close();
+    }
+  }
 }
 
 describe('PDF Blob range access', () => {
@@ -300,4 +449,182 @@ describe('PDF Blob range access', () => {
     second.requestDataRange(-1, 1);
     await expect(invalid.promise).rejects.toBeInstanceOf(RangeError);
   });
+});
+
+describe('PDF.js indirect-object parser compatibility', () => {
+  let workers: ParserWorkers;
+
+  beforeAll(async () => {
+    workers = await parserWorkers();
+  });
+
+  const annotation =
+    '/Type /Annot /Subtype /Text /Rect [10 10 40 40] /Contents (after closer)';
+  const cases: Array<{
+    name: string;
+    object: string;
+    target: ParserFixtureTarget;
+    annotations: string[];
+    truncateAtEof?: boolean;
+  }> = [
+    {
+      name: 'dictionary closer inside an array',
+      object: '[ >> endobj ]',
+      target: 'annotation-array',
+      annotations: [],
+    },
+    {
+      name: 'array closer inside a dictionary',
+      object: '<< /A ] /B endobj >>',
+      target: 'resources',
+      annotations: [],
+    },
+    {
+      name: 'dictionary closer used as a dictionary value',
+      object: '<< /A >> /B endobj >>',
+      target: 'resources',
+      annotations: [],
+    },
+    {
+      name: 'an array keeps entries after a mismatched closer',
+      object: '[ >> endobj 6 0 R ]',
+      target: 'annotation-array',
+      annotations: ['after closer'],
+    },
+    {
+      name: 'a dictionary keeps entries after a mismatched closer',
+      object: `<< /A ] /B endobj ${annotation} >>`,
+      target: 'annotation',
+      annotations: ['after closer'],
+    },
+    {
+      name: 'dictionary closer used as a value before annotation fields',
+      object: `<< /A >> /B endobj ${annotation} >>`,
+      target: 'annotation',
+      annotations: ['after closer'],
+    },
+    {
+      name: 'nested array retains a dictionary and following annotation',
+      object: '[ << /A ] ] endobj >> 6 0 R ]',
+      target: 'annotation-array',
+      annotations: ['', 'after closer'],
+    },
+    {
+      name: 'nested dictionary retains an array and following keys',
+      object: `<< /A [ >> >> endobj ] ${annotation} >>`,
+      target: 'annotation',
+      annotations: ['after closer'],
+    },
+    {
+      name: 'strings, names, hex strings and comments containing delimiters',
+      object:
+        '[ (endobj \\) ] >>) /endobj <656e646f626a> % ] >> endobj\n << /Unused [(endobj) /endobj] >> 6 0 R ]',
+      target: 'annotation-array',
+      annotations: ['', 'after closer'],
+    },
+    {
+      name: 'a top-level inline image containing an endobj value',
+      // If endobj is misread as the object boundary, q becomes a spurious
+      // graphics operator instead of remaining an inline-image header value.
+      object: 'BI /W endobj /H q ID\n0 0 100 100 re f\nEI',
+      target: 'content',
+      annotations: [],
+    },
+    {
+      name: 'a dictionary whose endobj terminates at physical EOF',
+      object: '<< >>\nendobj',
+      target: 'resources',
+      annotations: [],
+      truncateAtEof: true,
+    },
+    {
+      name: 'an array whose endobj terminates at physical EOF',
+      object: '[ ]\nendobj',
+      target: 'annotation-array',
+      annotations: [],
+      truncateAtEof: true,
+    },
+    ...[1023, 1024, 1025].map((depth) => ({
+      name: `nested resource arrays at depth ${depth}`,
+      object: `<< /A ${'['.repeat(depth)} (endobj) ${']'.repeat(depth)} /B endobj >>`,
+      target: 'resources' as const,
+      annotations: [],
+    })),
+  ];
+
+  for (const fixture of cases) {
+    test(`matches the original worker for ${fixture.name}`, async () => {
+      const bytes = parserFixture(
+        fixture.object,
+        fixture.target,
+        fixture.truncateAtEof
+      );
+      const expected = await inspectWithWorker(workers.original, bytes);
+      expect(expected.view).toEqual([0, 0, 200, 200]);
+      expect(expected.annotations).toEqual(fixture.annotations);
+      const actual = await inspectWithWorker(workers.patched, bytes);
+      expect(actual).toEqual(expected);
+    }, 15_000);
+  }
+
+  test('falls back to original lookahead above the nesting limit', async () => {
+    const depth = 1025;
+    const object = `<< /A ${'['.repeat(depth)} (endobj) ${']'.repeat(depth)} >>`;
+    // Upstream looks past endobj and encounters this illegal token. The
+    // bounded tracker must also defer to upstream after exceeding its limit.
+    // /Annots forces the object to be parsed by getAnnotations(), whose
+    // rejection preserves the worker error. PDF.js can resolve an empty
+    // operator list after a resource-parsing error instead of rejecting.
+    const bytes = parserFixture(object, 'annotation-array', false, ')\n');
+    await expect(inspectWithWorker(workers.original, bytes)).rejects.toThrow(
+      'Illegal character: 41'
+    );
+    await expect(inspectWithWorker(workers.patched, bytes)).rejects.toThrow(
+      'Illegal character: 41'
+    );
+  }, 15_000);
+
+  const eofCases: Array<{
+    name: string;
+    object: string;
+    target: ParserFixtureTarget;
+    error: string;
+  }> = [
+    {
+      name: 'array with a mismatched closer',
+      object: '[ >> endobj',
+      target: 'annotation-array',
+      error: 'End of file inside array.',
+    },
+    {
+      name: 'dictionary with a mismatched closer',
+      object: '<< /A ] /B endobj',
+      target: 'annotation-array',
+      error: 'End of file inside dictionary.',
+    },
+    {
+      name: 'array containing an unterminated dictionary',
+      object: '[ << /A ] /B endobj',
+      target: 'annotation-array',
+      error: 'End of file inside dictionary.',
+    },
+    {
+      name: 'dictionary containing an unterminated array',
+      object: '<< /A [ >> endobj',
+      target: 'annotation-array',
+      error: 'End of file inside array.',
+    },
+  ];
+
+  for (const fixture of eofCases) {
+    test(`matches the original worker at physical EOF in ${fixture.name}`, async () => {
+      const bytes = parserFixture(fixture.object, fixture.target, true);
+      await expect(inspectWithWorker(workers.original, bytes)).rejects.toThrow(
+        fixture.error
+      );
+      await expect(inspectWithWorker(workers.patched, bytes)).rejects.toThrow(
+        fixture.error
+      );
+    }, 15_000);
+  }
 });
