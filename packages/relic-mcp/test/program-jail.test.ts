@@ -16,9 +16,45 @@ import {
   plainPath,
 } from '../src/program/confine.ts';
 import { resolveProgramBrowser } from '../src/program/browser.ts';
-import { programProfileSourceFrom } from '../src/program/policy.ts';
+import {
+  programAssetDir,
+  programProfileSourceFrom,
+} from '../src/program/policy.ts';
+import { sanitizePageReasons } from '../src/program/render.ts';
 
 describe('program confinement', () => {
+  test('finds source-tree program assets and honors the explicit override', () => {
+    expect(programAssetDir({})).toBe(
+      new URL('../dist/program/', import.meta.url).pathname
+    );
+    expect(programAssetDir({ RELIC_MCP_PROGRAM_DIR: '/custom/program' })).toBe(
+      '/custom/program'
+    );
+  });
+  test('never returns browser-controlled reason text or fields', () => {
+    const secret = 'confidential source effect name';
+    const reasons = sanitizePageReasons([
+      {
+        code: 'unsupported-effect',
+        message: secret,
+        node_id: secret,
+        time: { value: 1, rate: 1 },
+      },
+      { code: 'unsupported-effect', message: secret },
+      { code: secret, message: secret },
+      { code: '__proto__', message: secret },
+    ]);
+    expect(reasons).toEqual([
+      {
+        code: 'unsupported-effect',
+        message: 'the timeline contains an unsupported effect',
+      },
+    ]);
+    expect(JSON.stringify(reasons)).not.toContain(secret);
+    expect(
+      sanitizePageReasons([{ code: 'not-a-code', message: secret }])
+    ).toEqual([]);
+  });
   test('denies by default and narrows writes to mounted subdirectory', () => {
     const profile = macosJailProfile({
       shell: '/opt/shell/chrome-headless-shell',
@@ -68,6 +104,13 @@ describe('program confinement', () => {
       const shell = join(root, 'chrome-headless-shell');
       await writeFile(shell, '');
       await chmod(shell, 0o700);
+      for (const name of [
+        'headless_command_resources.pak',
+        'headless_lib_strings.pak',
+        'headless_lib_data.pak',
+      ]) {
+        await writeFile(join(root, name), '');
+      }
       expect((await resolveProgramBrowser(shell)).ok).toBe(true);
       await writeFile(join(root, 'extra'), '');
       expect((await resolveProgramBrowser(shell)).ok).toBe(false);

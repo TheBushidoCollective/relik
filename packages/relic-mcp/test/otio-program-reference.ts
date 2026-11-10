@@ -94,14 +94,18 @@ export function expectedBackground(
   return a.map((value, channel) => (1 - u) * value + u * (b[channel] ?? 0));
 }
 
-/** Audio source formulas. These match the ffmpeg aevalsrc expressions verbatim. */
+/** Per-channel source amplitudes after ffmpeg's mono-to-stereo (-ac 2) upmix.
+ * Its default coefficient is 1/sqrt(2) for each channel; PCM16 quantization is
+ * left to the comparison tolerance. The phases are the aevalsrc formulas.
+ */
 export function chirp(seconds: number): number {
   return (
-    0.5 * Math.sin(2 * Math.PI * (200 * seconds + 300 * seconds * seconds))
+    (0.5 / Math.SQRT2) *
+    Math.sin(2 * Math.PI * (200 * seconds + 300 * seconds * seconds))
   );
 }
 export function tone(seconds: number): number {
-  return 0.3 * Math.sin(2 * Math.PI * 1000 * seconds);
+  return (0.3 / Math.SQRT2) * Math.sin(2 * Math.PI * 1000 * seconds);
 }
 
 /**

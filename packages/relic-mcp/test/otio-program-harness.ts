@@ -346,7 +346,9 @@ export async function createProofHarness(label: string): Promise<ProofHarness> {
     async close() {
       handler = undefined;
       await service.stop(true);
-      await rm(scratch, { recursive: true, force: true }).catch(() => {});
+      if (process.env['RELIC_KEEP_PROGRAM_PROOF'] === '1')
+        console.error(`PROGRAM_PROOF_SCRATCH ${scratch}`);
+      else await rm(scratch, { recursive: true, force: true }).catch(() => {});
     },
   };
   return harness;

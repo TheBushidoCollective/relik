@@ -7,6 +7,9 @@
 
 import { fileURLToPath } from 'node:url';
 
+// build.ts substitutes this for the single-file dist bundle.
+declare const __RELIC_PROGRAM_ASSET_BASE__: string | undefined;
+
 /** Frame size requested for every timeline. Inside the page's bounds. */
 export const PROGRAM_WIDTH = 1280;
 export const PROGRAM_HEIGHT = 720;
@@ -80,5 +83,9 @@ export function programAssetDir(
 ): string {
   const override = env['RELIC_MCP_PROGRAM_DIR'];
   if (override !== undefined) return override;
-  return fileURLToPath(new URL('../../dist/program/', import.meta.url));
+  const base =
+    typeof __RELIC_PROGRAM_ASSET_BASE__ === 'string'
+      ? __RELIC_PROGRAM_ASSET_BASE__
+      : '../../dist/program/';
+  return fileURLToPath(new URL(base, import.meta.url));
 }

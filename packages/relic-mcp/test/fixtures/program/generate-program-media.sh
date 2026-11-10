@@ -10,8 +10,8 @@
 # The bar is drawn with geq, which exposes the frame number as N and the pixel coordinates as X
 # and Y. (drawbox has no frame-number variable, so it cannot be used.) The frame-index check in
 # the proof verifies the encoding; this comment is not a claim about any particular build.
-# Audio formulas are duplicated verbatim in test/otio-program-reference.ts; the reference uses
-# the same formulas analytically, so the audio check does not depend on this encoder.
+# The analytic reference uses the same phases and accounts for ffmpeg's default mono-to-stereo
+# upmix coefficient (1/sqrt(2) per channel). PCM16 quantization is checked with tolerance.
 set -euo pipefail
 
 out="${1:?usage: generate-program-media.sh OUT_DIR}"
@@ -26,15 +26,15 @@ bars() {
 }
 
 ffmpeg -y -v error -f lavfi -i "$(bars 0xC82828 4)" \
-  -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 16 -g 30 -an -movflags +faststart \
+  -c:v libx264 -pix_fmt yuv420p -color_range tv -colorspace smpte170m -color_primaries smpte170m -color_trc smpte170m -preset veryfast -crf 16 -g 30 -an -movflags +faststart \
   "$media/plate_a.mp4"
 
 ffmpeg -y -v error -f lavfi -i "$(bars 0x2828C8 6)" \
-  -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 16 -g 30 -an -movflags +faststart \
+  -c:v libx264 -pix_fmt yuv420p -color_range tv -colorspace smpte170m -color_primaries smpte170m -color_trc smpte170m -preset veryfast -crf 16 -g 30 -an -movflags +faststart \
   "$media/plate_b.mp4"
 
 ffmpeg -y -v error -f lavfi -i "$(bars 0x1EC81E 3)" \
-  -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 16 -g 30 -an -movflags +faststart \
+  -c:v libx264 -pix_fmt yuv420p -color_range tv -colorspace smpte170m -color_primaries smpte170m -color_trc smpte170m -preset veryfast -crf 16 -g 30 -an -movflags +faststart \
   "$media/plate_c.mp4"
 
 ffmpeg -y -v error -f lavfi -i "aevalsrc=0.5*sin(2*PI*(200*t+300*t*t)):s=48000:d=6" \

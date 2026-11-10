@@ -87,6 +87,38 @@ export const RENDER_MESSAGES = {
   noOutcome: 'the renderer returned no outcome for this timeline',
 } as const;
 
+const PAGE_REASON_MESSAGES: Record<OtioProgramReasonCode, string> = {
+  'unsupported-effect': 'the timeline contains an unsupported effect',
+  'unsupported-schema': 'the timeline contains an unsupported schema',
+  'unsupported-codec': 'the timeline uses an unsupported codec',
+  'unsupported-transition': 'the timeline contains an unsupported transition',
+  'missing-media': 'the timeline references unavailable media',
+  'unsupported-browser': 'the browser cannot render this timeline',
+  'invalid-timing': 'the timeline contains unsupported or invalid timing',
+  'encoder-unavailable': 'the required encoder is unavailable',
+  'render-failed': 'the timeline could not be rendered',
+  'size-cap-exceeded': 'the program exceeds the permitted size',
+};
+
+/** Browser output is untrusted and must not introduce plaintext diagnostics. */
+export function sanitizePageReasons(input: unknown): ProgramReason[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<OtioProgramReasonCode>();
+  for (const item of input) {
+    if (typeof item !== 'object' || item === null || !('code' in item))
+      continue;
+    const code = item.code;
+    if (typeof code !== 'string' || !Object.hasOwn(PAGE_REASON_MESSAGES, code))
+      continue;
+    seen.add(code as OtioProgramReasonCode);
+    if (seen.size === Object.keys(PAGE_REASON_MESSAGES).length) break;
+  }
+  return [...seen].map((code) => ({
+    code,
+    message: PAGE_REASON_MESSAGES[code],
+  }));
+}
+
 /** Served only with the page. Nothing from the page may reach the network. */
 const PAGE_CSP =
   "default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; " +
@@ -435,6 +467,7 @@ async function renderWithProfile(
     try {
       await running.close();
     } catch {
+      // biome-ignore lint/correctness/noUnsafeFinally: cleanup failure must override a successful render.
       throw new BrowserStillRunning();
     }
     signal.removeEventListener('abort', abortBrowser);
@@ -611,12 +644,13 @@ async function renderInBrowser(
     await cdp.send('Runtime.enable', {}, sessionId);
     await cdp.send('Runtime.addBinding', { name: CHUNK_BINDING }, sessionId);
 
-    const loaded = cdp.waitForEvent('Page.loadEventFired', {
-      sessionId,
-      timeoutMs: PAGE_LOAD_TIMEOUT_MS,
-    });
-    await cdp.send('Page.navigate', { url: PAGE_URL }, sessionId);
-    await loaded;
+    await Promise.all([
+      cdp.waitForEvent('Page.loadEventFired', {
+        sessionId,
+        timeoutMs: PAGE_LOAD_TIMEOUT_MS,
+      }),
+      cdp.send('Page.navigate', { url: PAGE_URL }, sessionId),
+    ]);
 
     const protoRes = (await cdp.send(
       'Runtime.evaluate',
@@ -713,9 +747,7 @@ async function settleTimeline(
     return unavailable('render-failed', RENDER_MESSAGES.pageFailed);
   }
   if (result['ok'] !== true) {
-    const reasons = Array.isArray(result['reasons'])
-      ? (result['reasons'] as ProgramReason[])
-      : [];
+    const reasons = sanitizePageReasons(result['reasons']);
     if (reasons.length === 0) {
       return unavailable('render-failed', RENDER_MESSAGES.noReason);
     }

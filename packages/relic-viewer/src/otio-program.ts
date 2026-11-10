@@ -37,6 +37,7 @@ import {
   compareRationalTimes,
   MAX_OTIO_PROGRAM_FPS,
   OTIO_PROGRAM_AUDIO_CODEC,
+  OTIO_PROGRAM_MANIFEST_ENTRY,
   readOtioProgramArchive,
   timeToSeconds,
   type OtioProgramErrorCode,

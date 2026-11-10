@@ -321,6 +321,8 @@ async function publishAndUnpack(
   ) as RawManifest;
   const contentOtio = await harness.readEntry(archive, 'content.otio');
   const files = new Map<string, Uint8Array>([['content.otio', contentOtio]]);
+  for (const path of Object.keys(manifest.media))
+    files.set(path, await harness.readEntry(archive, path));
   for (const timeline of manifest.timelines)
     if (timeline.program)
       files.set(

@@ -757,7 +757,7 @@ describe('bounded error text', () => {
 
   test('an oversized media path is refused with a bounded message', () => {
     const failure = parseFailure(
-      manifestBytes({ media: { [`media/${'a'.repeat(2000)}`]: MEDIA_SHA } })
+      manifestBytes({ media: { [`media/${'a'.repeat(65536)}`]: MEDIA_SHA } })
     );
     expect(failure.code).toBe('unsafe-path');
     expect(failure.message.length).toBeLessThan(200);

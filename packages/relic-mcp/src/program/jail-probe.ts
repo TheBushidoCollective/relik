@@ -72,8 +72,10 @@ export async function verifyJail({
   profile: string;
   ramRoot: string;
   runtime?: string;
-}): Promise<{ ok: boolean }> {
-  if (process.platform !== 'darwin') return { ok: false };
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (process.platform !== 'darwin')
+    return { ok: false, reason: 'unsupported platform' };
+  let stage = 'locating Node runtime';
   let outside: string | undefined;
   let inside: string | undefined;
   const tcp = createServer((s) => s.destroy());
@@ -85,10 +87,13 @@ export async function verifyJail({
   try {
     const which =
       runtime === undefined ? await run('/usr/bin/which', ['node']) : undefined;
-    if (which && which.code !== 0) return { ok: false };
+    if (which && which.code !== 0)
+      return { ok: false, reason: 'Node runtime not found on PATH' };
     const node = plainPath(await realpath(runtime ?? which!.stdout.trim()));
     outside = await mkdtemp(join(tmpdir(), 'relic-jail-probe-'));
+    stage = 'creating inside probe directory';
     inside = await mkdtemp(join(ramRoot, 'w', 'probe-'));
+    stage = 'starting loopback listeners';
     await Promise.all([
       new Promise<void>((resolve, reject) => {
         tcp.once('error', reject);
@@ -108,6 +113,7 @@ export async function verifyJail({
       tcp: (tcp.address() as { port: number }).port,
       udp: udp.address().port,
     };
+    stage = 'running unsandboxed positive controls';
     const control = await child(node, ['-e', PROBE], config);
     await new Promise((resolve) => setTimeout(resolve, 100));
     const keys = [
@@ -122,21 +128,25 @@ export async function verifyJail({
       'udp',
       'listen',
     ];
-    if (
-      !keys.every((k) => control[k] === 'ok') ||
-      connections < 1 ||
-      datagrams < 1
-    )
-      return { ok: false };
+    const failedControl = keys.find((k) => control[k] !== 'ok');
+    if (failedControl)
+      return { ok: false, reason: `positive control failed: ${failedControl}` };
+    if (connections < 1 || datagrams < 1)
+      return {
+        ok: false,
+        reason: 'positive loopback listener did not receive traffic',
+      };
     await Promise.all([stat(config.outside), stat(config.grand)]);
     await rm(config.outside);
     await rm(config.grand);
     connections = 0;
     datagrams = 0;
+    stage = 'constructing probe appendix';
     const ancestors: string[] = [];
     for (let p = dirname(node); p !== '/'; p = dirname(p))
       ancestors.push(`(literal "${plainPath(p)}")`);
     const appendix = `\n(allow process-exec (literal "${node}"))\n(allow file-read* file-map-executable (literal "${node}") (literal "/System/Volumes/Data${node}"))\n(allow file-read-metadata ${ancestors.join(' ')})`;
+    stage = 'running sandboxed negative controls';
     const jailed = await child(
       SANDBOX_EXEC,
       ['-p', profile + appendix, node, '-e', PROBE],
@@ -151,19 +161,26 @@ export async function verifyJail({
         return (e as NodeJS.ErrnoException).code === 'ENOENT';
       }
     };
-    return {
-      ok:
-        jailed.inside === 'ok' &&
-        keys
-          .filter((k) => k !== 'inside')
-          .every((k) => jailed[k] === 'EPERM') &&
-        connections === 0 &&
-        datagrams === 0 &&
-        (await absent(config.outside)) &&
-        (await absent(config.grand)),
-    };
+    if (jailed.inside !== 'ok')
+      return { ok: false, reason: 'sandboxed inside write/read failed' };
+    const failedJail = keys
+      .filter((k) => k !== 'inside')
+      .find((k) => jailed[k] !== 'EPERM');
+    if (failedJail)
+      return {
+        ok: false,
+        reason: `sandboxed negative control failed: ${failedJail}`,
+      };
+    if (connections !== 0 || datagrams !== 0)
+      return {
+        ok: false,
+        reason: 'sandboxed loopback traffic reached listener',
+      };
+    if (!(await absent(config.outside)) || !(await absent(config.grand)))
+      return { ok: false, reason: 'sandboxed outside file exists' };
+    return { ok: true };
   } catch {
-    return { ok: false };
+    return { ok: false, reason: `probe error while ${stage}` };
   } finally {
     if (tcp.listening) tcp.close();
     try {

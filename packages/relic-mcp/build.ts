@@ -48,6 +48,7 @@ const built = await Bun.build({
   define: {
     'process.env.RELIC_MCP_VERSION': JSON.stringify(pkg.version),
     'process.env.RELIC_MCP_COVER_DIR': JSON.stringify('./cover/'),
+    __RELIC_PROGRAM_ASSET_BASE__: JSON.stringify('./program/'),
   },
   // No banner: Bun preserves the entrypoint's own shebang, and adding a
   // second one puts `#!` on line 2, which is a syntax error rather than a

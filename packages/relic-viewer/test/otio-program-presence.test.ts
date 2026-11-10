@@ -37,7 +37,7 @@ const entry = (
 
 const zipWith = (rawNames: readonly string[]): OtioZipIndex =>
   ({
-    entries: new Map(rawNames.map(entry)),
+    entries: new Map(rawNames.map((name) => entry(name))),
     versionText: '1.0.0',
     contentOtioBytes: new Uint8Array(),
     contentSha256: 'a'.repeat(64),

@@ -561,12 +561,6 @@ export async function launchChrome(
     }
 
     closePromise = (async () => {
-      try {
-        await cdp.send('Browser.close').catch(() => {});
-      } catch {
-        // Best effort
-      }
-
       if (child.exitCode === null && child.signalCode === null) {
         await new Promise<void>((resolve, reject) => {
           let killTimer: NodeJS.Timeout | number | undefined;
@@ -588,6 +582,8 @@ export async function launchChrome(
               reject(new Error('Browser did not exit after SIGKILL'));
             }, 5000);
           }, 5000);
+          // Arm the watchdog before asking the browser to close.
+          void cdp.send('Browser.close').catch(() => {});
         });
       }
 
