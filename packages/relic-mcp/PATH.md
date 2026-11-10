@@ -475,6 +475,43 @@ The proof must check each of these before this section's status changes.
 
 No command for this section exists yet. When one exists, add it here with its exact success line. Change this section's status only after that command has passed at the revision being shipped.
 
+## Primer for the rendered program's first Play
+
+Run from the repository root with an owned headless shell. The proof never falls back to an installed Chrome, so the variable is required:
+
+```bash
+RELIC_OTIO_CHROME_PATH=<path to chrome-headless-shell> \
+  mise exec -- bun packages/relic-mcp/test/otio-program-path.ts
+```
+
+Success ends with `OTIO_PROGRAM_PATH_OK` and no `OTIO_PROGRAM_DEFERRED_FAILURES`. Each trial is a fresh browser and waits `RELIC_OTIO_PRIMER_TRIAL_GAP_MS` (default 12000) before it starts, so the trials run in sequence. Every trial runs with Chrome's `--mute-audio`, so nothing reaches a speaker. The proof runs on this Mac only and is not in CI.
+
+The primer groups measure what the browser itself reports. Presented frames come from `requestVideoFrameCallback`, with the element clock beside each frame. Stream starts (`AudioOutputDevice::Start`, `CreateStream`, `OutputController::Play`) and device callbacks (`AUHALStream::Render`) come from Chrome's trace. Device callbacks are telemetry: they show when the output thread ran and never prove an audio gap. A trusted pointerdown writes a `performance.mark`, which ties the page clock to the trace clock. No audio tap is attached to any video measurement.
+
+The budgets are the user's acceptance and are not loosened:
+- First new frame within 350 ms of a trusted Play, including the first-click Play.
+- No presented-frame gap over 100 ms, and p95 within 50 ms, over the 4 s after Play.
+- Audio is not judged from callbacks. The 20 ms audio budget is proven only by the sampled audio arms below.
+- Zero stream starts after a prepared or unmute Play, because the primer's stream is reused.
+
+Control arms must fail the way the hypothesis predicts, or the pass means nothing. Bare `none` and the viewer `sham` build (the primer muted, so it cannot share the stream) must show a gap over 100 ms in every cold trial. Each of those groups needs at least three cold trials, and fewer is inconclusive, which fails.
+
+The arms:
+- **Bare controls:** `none`, `sham`, `av` (real primer), `av-blob` (the same program loaded through a Blob URL whose SHA-256 is checked first), `audio-only`, `context` and `video-only`. The last three are reported only. `video-only` is a lossless remux of the program's video track with audio stripped; the proof first checks that its video packets are identical to the source's, and fails the stage otherwise. Each arm runs Prepare, waits 1500 ms, then Play.
+- **Viewer prepared:** a trusted click on the Markers inspector tab, the primer running within 3 s, then a trusted Play.
+- **Viewer sham:** the same script on a build where the primer's `element.muted = false;` is `true`. The proof checks that the two builds differ on exactly that line.
+- **Viewer first-click:** a trusted Play only. Buffering must show before the first frame, and exactly one stream start, the primer's, must occur.
+- **Viewer unmute:** Mute, primer running, Play, then Unmute after 1.5 s. Presented gaps must stay within 100 ms from 500 ms before to 2000 ms after Unmute, and `muted` must be false within 1 s.
+- **Wrap checks:** the primer alone for 12 s, with and without `AudioRendererMixerImmediatePause`. Exactly one `OutputController::Play` must occur.
+
+Every trial also checks that the primer is `idle`, that no stream starts before the first trusted event, and that the program stays paused and unmoved until Play. The hidden-tab leg opens a second tab that this proof owns. If headless keeps the viewer visible, the proof prints `OTIO_PRIMER_VISIBILITY` with `unproven` and does not pass that leg.
+
+Each video trial writes a `clockDeficit` summary to its receipt: the wall gap between presented frames minus how far the element clock advanced. A frozen element clock over a long wall gap is marked as an element-clock stall. This is diagnostic and never gates.
+
+**Sampled audio arms (stages 19 and 20):** the production viewer build with no emit recorder, separate from every video arm. A trusted Play starts a tap on the program element, and samples are kept only from that trusted pointerdown. The samples are aligned to the independent analytic reference, and tested blocks are 1 ms long. The gate fails when the longest silent run over loud reference audio is over 20 ms, when the onset is over 20 ms, when the SNR is under the composition bound, or when a 20 ms window fault appears. A tap is a changed condition, so these stages prove the audio budget under a tap and say so.
+
+Not measured here: slower outputs such as Bluetooth or HDMI. On such a device the first-click start may exceed 350 ms, and the proof then fails. That is a result to report, not a bound to relax.
+
 ## Passkey-confirmed decisions
 
 Run the full loopback proof from the repository root:

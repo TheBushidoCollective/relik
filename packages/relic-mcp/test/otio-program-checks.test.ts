@@ -1,3 +1,18 @@
+import {
+  classifyStart,
+  DEVICE_CALLBACK_EVENT,
+  deviceExcessMs,
+  firstStart,
+  gatePrimerWindow,
+  markTs,
+  p95,
+  type PrimerWindow,
+  PREPARE_MARK,
+  stalls,
+  streamStarts,
+  streamStartCounts,
+  type TraceEvent,
+} from './otio-program-trace.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   alignAudio,
@@ -7,6 +22,7 @@ import {
   findAudioFaults,
   type RgbFrame,
 } from './otio-program-checks.ts';
+import { framePsnrDb, PROGRAM_MIN_PSNR_DB } from './otio-program-media.ts';
 import {
   EXPECTED_PLACEMENTS,
   expectedAudio,
@@ -155,6 +171,49 @@ describe('frame checks fail on wrong media', () => {
   });
 });
 
+describe('lossy video quality and frame identity guards', () => {
+  function psnr(a: RgbFrame, b: RgbFrame): number {
+    expect(a.data.length).toBe(b.data.length);
+    let squared = 0;
+    for (let i = 0; i < a.data.length; i++) {
+      const delta = a.data[i]! - b.data[i]!;
+      squared += delta * delta;
+    }
+    return framePsnrDb(squared, a.data.length);
+  }
+
+  test('one wrong source frame fails identity even if full-frame PSNR passes', () => {
+    const expected = syntheticFrame(PROGRAM.plates.a, barFor(10));
+    const wrongFrame = syntheticFrame(PROGRAM.plates.a, barFor(10) + 1);
+    // The bar is small, so PSNR alone cannot prove frame identity.
+    expect(psnr(expected, wrongFrame)).toBeGreaterThanOrEqual(
+      PROGRAM_MIN_PSNR_DB
+    );
+    expect(
+      checkFrame(wrongFrame, expectedFrame(10)).some((failure) =>
+        failure.includes('bar index')
+      )
+    ).toBe(true);
+  });
+
+  test('substantially degraded color fails the per-frame 35 dB quality floor', () => {
+    const expected = syntheticFrame(PROGRAM.plates.a, barFor(10));
+    const degraded = syntheticFrame([150, 90, 90], barFor(10));
+    expect(psnr(expected, degraded)).toBeLessThan(PROGRAM_MIN_PSNR_DB);
+    expect(
+      checkFrame(degraded, expectedFrame(10)).some((failure) =>
+        failure.includes('background')
+      )
+    ).toBe(true);
+  });
+
+  test('identical frames have infinite PSNR and invalid populations are refused', () => {
+    expect(framePsnrDb(0, 3)).toBe(Number.POSITIVE_INFINITY);
+    expect(() => framePsnrDb(-1, 3)).toThrow();
+    expect(() => framePsnrDb(0, 0)).toThrow();
+  });
+});
+
 describe('timestamp checks', () => {
   const pts = Array.from({ length: PROGRAM.frames }, (_, k) => k / PROGRAM.fps);
 
@@ -230,5 +289,163 @@ describe('audio checks fail on wrong audio', () => {
         alignment.lagSamples
       )
     ).toEqual([]);
+  });
+});
+
+/** Trace fixtures on the trace clock (microseconds). */
+const traced = (name: string, ts: number, cat = 'audio'): TraceEvent => ({
+  name,
+  cat,
+  ts,
+});
+const mark = (name: string, ts: number): TraceEvent =>
+  traced(name, ts, 'blink.user_timing');
+/** Device callbacks at the 1024-frame, 48 kHz period (21.33 ms). */
+const callbacks = (fromUs: number, count: number, periodUs = 21_333) =>
+  Array.from({ length: count }, (_, i) =>
+    traced(DEVICE_CALLBACK_EVENT, fromUs + i * periodUs)
+  );
+/** 24 fps presented frames: 41.7 ms gaps, which is the steady budget case. */
+const steadyGaps = (n = 95) => Array.from({ length: n }, () => 41.7);
+
+const passingWindow = (over: Partial<PrimerWindow> = {}): PrimerWindow => ({
+  startupMs: 120,
+  gapsMs: steadyGaps(),
+  bufferingBeforeFirstFrame: null,
+  streamStarts: 0,
+  expectedStreamStarts: 0,
+  firstCallbackMs: null,
+  deviceExcessMs: 0.4,
+  deviceCallbacks: 180,
+  firstClick: false,
+  ...over,
+});
+
+describe('primer trace: marks and stream starts', () => {
+  test('a mark is found only on the user-timing category', () => {
+    const events = [traced(PREPARE_MARK, 5), mark(PREPARE_MARK, 900)];
+    expect(markTs(events, PREPARE_MARK)).toBe(900);
+    expect(markTs(events, 'relic-play-pointerdown')).toBeNull();
+  });
+
+  test('a stream start is the largest per-name count, not their sum', () => {
+    const events = [
+      traced('AudioOutputDevice::Start', 100),
+      traced('CreateStream', 101),
+      traced('OutputController::Play', 102),
+    ];
+    expect(streamStarts(events, 0)).toBe(1);
+    expect(streamStartCounts(events, 0)['OutputController::Play']).toBe(1);
+  });
+
+  test('stream starts before the window are not counted', () => {
+    const events = [
+      traced('OutputController::Play', 50),
+      traced('OutputController::Play', 500),
+    ];
+    expect(streamStarts(events, 100)).toBe(1);
+    expect(streamStarts(events, 100, 400)).toBe(0);
+  });
+});
+
+describe('primer trace: D and cold classification', () => {
+  test('D runs from the first buffer render to the first device callback', () => {
+    const events = [
+      traced('OutputController::Play', 1_000),
+      traced(DEVICE_CALLBACK_EVENT, 1_000 + 250_000),
+    ];
+    const first = firstStart(events, 0);
+    expect(first?.dMs).toBe(250);
+    expect(classifyStart(first?.dMs ?? null)).toBe('cold');
+  });
+
+  test('the cold, warm and ambiguous bands are the measured thresholds', () => {
+    expect(classifyStart(100)).toBe('cold');
+    expect(classifyStart(60)).toBe('warm');
+    expect(classifyStart(80)).toBe('ambiguous');
+    expect(classifyStart(null)).toBe('absent');
+  });
+});
+
+describe('primer trace: device excess and frame percentiles', () => {
+  test('a steady device has no excess; one late callback shows as excess', () => {
+    const steady = callbacks(0, 180).map((e) => e.ts);
+    expect(deviceExcessMs(steady)!).toBeLessThan(0.01);
+    // Push every callback from index 31 onward back by 24 ms: one 45 ms interval.
+    const late = callbacks(0, 60).map((e) => e.ts);
+    for (let i = 31; i < late.length; i++) late[i] = late[i]! + 24_000;
+    expect(deviceExcessMs(late)!).toBeGreaterThan(20);
+  });
+
+  test('too few callbacks is no measurement', () => {
+    expect(deviceExcessMs(callbacks(0, 3).map((e) => e.ts))).toBeNull();
+  });
+
+  test('p95 is the floor(n * 0.95) rank, matching the steady gate', () => {
+    const values = Array.from({ length: 100 }, (_, i) => i);
+    expect(p95(values)).toBe(95);
+    expect(p95([])).toBeNull();
+  });
+});
+
+describe('primer gates: passing evidence and negative controls', () => {
+  test('evidence within every budget passes', () => {
+    expect(gatePrimerWindow(passingWindow())).toEqual([]);
+  });
+
+  test('a first-frame-only plateau fails the gap gate (the stall the primer removes)', () => {
+    const plateau = [...steadyGaps(60), 291.8, ...steadyGaps(34)];
+    const failures = gatePrimerWindow(passingWindow({ gapsMs: plateau }));
+    expect(failures.some((f) => f.includes('max gap 291.8'))).toBe(true);
+    expect(stalls(plateau)).toBe(true);
+    expect(stalls(steadyGaps())).toBe(false);
+  });
+
+  test('a first frame over 350 ms fails the first-frame budget', () => {
+    const failures = gatePrimerWindow(passingWindow({ startupMs: 351 }));
+    expect(
+      failures.some((f) => f.includes('first frame 351.0 ms > 350 ms'))
+    ).toBe(true);
+  });
+
+  test('a p95 over 50 ms fails even with no single gap over 100', () => {
+    const gaps = Array.from({ length: 95 }, (_, i) => (i < 10 ? 70 : 41.7));
+    const failures = gatePrimerWindow(passingWindow({ gapsMs: gaps }));
+    expect(failures.some((f) => f.includes('p95 gap'))).toBe(true);
+    expect(failures.some((f) => f.includes('max gap'))).toBe(false);
+  });
+
+  test('a stream start the primer should have shared fails the zero-start gate', () => {
+    const failures = gatePrimerWindow(passingWindow({ streamStarts: 1 }));
+    expect(failures).toEqual(['1 stream start(s) after Play, expected 0']);
+  });
+
+  test('first-click needs Buffering before the first frame and exactly one start', () => {
+    const failures = gatePrimerWindow(
+      passingWindow({
+        firstClick: true,
+        expectedStreamStarts: 1,
+        streamStarts: 1,
+        bufferingBeforeFirstFrame: false,
+        firstCallbackMs: 60,
+        startupMs: 120,
+      })
+    );
+    expect(failures).toEqual([
+      'Buffering was not shown before the first frame',
+      'first frame 120.0 ms is later than the first device callback 60.0 ms + 50 ms',
+    ]);
+  });
+
+  test('an audio gap over 20 ms fails the audio budget', () => {
+    const failures = gatePrimerWindow(passingWindow({ deviceExcessMs: 25 }));
+    expect(failures).toEqual(['audio gap 25.0 ms > 20 ms']);
+  });
+
+  test('a window with too few presented frames fails rather than passing empty', () => {
+    const failures = gatePrimerWindow(
+      passingWindow({ gapsMs: steadyGaps(10) })
+    );
+    expect(failures.some((f) => f.includes('presented frames'))).toBe(true);
   });
 });

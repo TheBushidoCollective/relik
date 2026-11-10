@@ -21,7 +21,7 @@ mkdir -p "$media"
 bars() {
   # $1 = background colour (0xRRGGBB), $2 = duration in seconds
   local inside='between(X,4*N,4*N+3)*between(Y,600,619)'
-  printf "color=c=%s:s=1280x720:r=30:d=%s,format=rgb24,geq=r='if(%s,255,r(X,Y))':g='if(%s,255,g(X,Y))':b='if(%s,255,b(X,Y))'" \
+  printf "color=c=%s:s=1280x720:r=30:d=%s,format=rgb24,geq=r='if(%s,255,r(X,Y))':g='if(%s,255,g(X,Y))':b='if(%s,255,b(X,Y))',setparams=range=limited:color_primaries=smpte170m:color_trc=smpte170m:colorspace=smpte170m" \
     "$1" "$2" "$inside" "$inside" "$inside"
 }
 

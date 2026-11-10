@@ -147,7 +147,10 @@ export interface PublishResult {
   readonly structured: Record<string, unknown>;
 }
 
-export async function createProofHarness(label: string): Promise<ProofHarness> {
+export async function createProofHarness(
+  label: string,
+  options: { viewerDist?: string } = {}
+): Promise<ProofHarness> {
   const scratch = await mkdtemp(
     join(await realpath(tmpdir()), `relic-${label}-`)
   );
@@ -171,7 +174,7 @@ export async function createProofHarness(label: string): Promise<ProofHarness> {
     storage,
     now: () => Date.now(),
     operatorTokens: new Map([['operator-token', 'test-operator-secret']]),
-    assets: diskAssets(VIEWER_DIST),
+    assets: diskAssets(options.viewerDist ?? VIEWER_DIST),
     mailer: {
       send: async () => {},
       sendMail: async () => {},

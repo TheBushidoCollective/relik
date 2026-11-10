@@ -346,7 +346,11 @@ await variantControl('unknown-effect', 'unsupported-effect');
       try { await window.${VIEWER_CONTRACT.hook}.play(); return 'played'; }
       catch (error) { return String(error && error.name); }
     })()`);
-    assert.notEqual(playOutcome, 'played', 'viewer played a tampered program');
+    assert.equal(
+      playOutcome,
+      'CompositionPlaybackDisabled',
+      `tampered program rejected by wrong mechanism: ${playOutcome}`
+    );
     pass('control-tamper-viewer');
   } finally {
     await page.close();

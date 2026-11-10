@@ -3,8 +3,8 @@
  *
  * Two anchors name the same instant, 4.5 s on the composition:
  *  - composition: track and item null, range in composition time (135 / 30 s).
- *  - focused: track V2 and item plate_c_2x, range in the item's local time (15 / 30 s). The clip
- *    starts at 4.0 s on the composition, so local 0.5 s = composition 4.5 s.
+ *  - focused: track V2 and item plate_c_2x; its anchor range is still composition time 4.5 s.
+ *    The item begins at 4.0 s, so this corresponds to 0.5 s within its timeline placement.
  * Both are sealed with the relic's comment key, posted with POST /api/relics/<id>/comments, read
  * back with GET, decrypted, and compared field by field with what was written. The returned ids
  * and bodies let the UI stage find the same comments in the viewer.
@@ -22,7 +22,6 @@ import { sha256Text, type ProofHarness } from './otio-program-harness.ts';
 import { PROGRAM } from './otio-program-reference.ts';
 
 export const COMMENT_INSTANT_SECONDS = 4.5;
-const CLIP_START_SECONDS = 4.0;
 
 export interface CommentRecord {
   readonly id: string;
@@ -41,7 +40,7 @@ export interface CommentReadback {
 }
 
 interface ListedComment {
-  readonly id: string;
+  readonly comment_id: string;
   readonly ciphertext: string;
 }
 
@@ -52,6 +51,7 @@ function rationalOf(seconds: number) {
 export async function commentRoundTrip(
   harness: ProofHarness,
   relicId: string,
+  sessionToken: string,
   relicKey: Uint8Array,
   contentOtio: Uint8Array,
   timelineName: string
@@ -88,7 +88,10 @@ export async function commentRoundTrip(
       snapshot: { timeline: timelineName, track: null, item: null },
     },
   };
-  const focusedLocal = COMMENT_INSTANT_SECONDS - CLIP_START_SECONDS;
+  assert.ok(item.timeline_range, 'focused item has no timeline placement');
+  const itemStart =
+    item.timeline_range.start_time.value / item.timeline_range.start_time.rate;
+  assert.equal(itemStart, 4, 'focused fixture item timeline start changed');
   const focusedPlain: CommentPlaintext = {
     body: `${tag} focused`,
     display_name: 'Proof Reader',
@@ -101,27 +104,51 @@ export async function commentRoundTrip(
       track_id: track.id,
       item_id: item.id,
       range: {
-        start_time: rationalOf(focusedLocal),
+        start_time: rationalOf(COMMENT_INSTANT_SECONDS),
         duration: rationalOf(1 / PROGRAM.fps),
       },
       snapshot: { timeline: timelineName, track: 'V2', item: 'plate_c_2x' },
     },
   };
 
+  const created = new Map<string, string>();
   for (const plaintext of [compositionPlain, focusedPlain]) {
     const ciphertext = await encryptComment(commentKey, plaintext);
     const response = await fetch(
       `${harness.origin}/api/relics/${relicId}/comments`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          cookie: `relic_session=${sessionToken}`,
+        },
         body: JSON.stringify({ ciphertext }),
       }
     );
+    const responseText = await response.text();
     assert.ok(
       response.ok,
-      `comment POST refused: ${response.status} ${await response.text()}`
+      `comment POST refused: ${response.status} ${responseText}`
     );
+    const result = JSON.parse(responseText) as {
+      comment_id?: unknown;
+      author?: unknown;
+    };
+    assert.ok(
+      typeof result.comment_id === 'string',
+      'comment POST omitted comment_id'
+    );
+    assert.match(
+      result.comment_id,
+      /^[A-Za-z0-9_-]{22}$/,
+      'comment POST returned malformed comment_id'
+    );
+    assert.equal(
+      result.author,
+      'reader@example.test',
+      'comment author is not the verified reader'
+    );
+    created.set(plaintext.body, result.comment_id);
   }
 
   const listing = await fetch(
@@ -136,9 +163,19 @@ export async function commentRoundTrip(
 
   const readBack: CommentRecord[] = [];
   for (const row of rows) {
+    assert.equal(
+      typeof row.comment_id,
+      'string',
+      'comment listing omitted comment_id'
+    );
+    assert.match(
+      row.comment_id,
+      /^[A-Za-z0-9_-]{22}$/,
+      'comment listing returned malformed comment_id'
+    );
     const plaintext = await decryptComment(commentKey, row.ciphertext);
     readBack.push({
-      id: row.id,
+      id: row.comment_id,
       body: plaintext.body,
       anchor: plaintext.anchor,
     });
@@ -149,6 +186,17 @@ export async function commentRoundTrip(
   const focused = readBack.find((r) => r.body === focusedWritten);
   assert.ok(composition, `comment ${compositionWritten} not read back`);
   assert.ok(focused, `comment ${focusedWritten} not read back`);
+  assert.equal(
+    composition.id,
+    created.get(compositionWritten),
+    'composition comment id differs from POST response'
+  );
+  assert.equal(
+    focused.id,
+    created.get(focusedWritten),
+    'focused comment id differs from POST response'
+  );
+  assert.notEqual(composition.id, focused.id, 'distinct comments share an id');
   assert.deepEqual(
     composition.anchor,
     compositionPlain.anchor,
@@ -169,9 +217,9 @@ export async function commentRoundTrip(
   const compositionSeconds =
     compositionAnchor.range.start_time.value /
     compositionAnchor.range.start_time.rate;
-  const focusedLocalRead =
+  const focusedCompositionSeconds =
     focusedAnchor.range.start_time.value / focusedAnchor.range.start_time.rate;
-  const focusedCompositionSeconds = CLIP_START_SECONDS + focusedLocalRead;
+  const focusedLocalRead = focusedCompositionSeconds - itemStart;
   assert.equal(
     compositionSeconds,
     COMMENT_INSTANT_SECONDS,
