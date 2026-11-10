@@ -558,7 +558,13 @@ test('native render clock certifies promotions and silences a held ramp', async 
       );
       expect(alive).toBe(false);
       expect(Array.from(output[0]!)).toEqual([0, 0, 0, 0]);
-      expect(instance.port.messages.at(-1)?.type).toBe('clock-fault');
+      if (scenario === 'skipped')
+        expect(instance.port.messages.at(-1)).toMatchObject({
+          type: 'anchor-late',
+          firstFrame: 0,
+          observedFrame: 4,
+        });
+      else expect(instance.port.messages.at(-1)?.type).toBe('clock-fault');
     }
     const carryOrigin = 65534;
     const carry = new ProcessorClass({

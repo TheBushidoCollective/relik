@@ -45,6 +45,19 @@ import type {
 
 // Captured before fixtures stub setTimeout: fake statechange delivery must use a real task.
 const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+const liveFixtures = new Set<() => void>();
+// A test that never settles skips its own finally, so restore every fixture it left open.
+afterEach(() => {
+  const errors: unknown[] = [];
+  for (const restore of [...liveFixtures]) {
+    try {
+      restore();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) throw errors[0];
+});
 
 type ReadVideoTiming = typeof readOtioVideoTiming;
 const OTIO_GRAPHICS_RESTORE_MS = 3000;
@@ -2558,13 +2571,18 @@ describe('otio playback controller', () => {
         })
       ).toBe(true);
     }
+    let restored = false;
     function restore() {
+      if (restored) return;
+      restored = true;
+      liveFixtures.delete(restore);
       document.createElement = originalCreateElement;
       playback.dispose();
       for (const [key, descriptor] of descriptors)
         restoreProperty(globalThis, key, descriptor);
       restoreProperty(performance, 'now', originalNow);
     }
+    liveFixtures.add(restore);
     return {
       get audioContext() {
         return audioContext;
@@ -4945,11 +4963,20 @@ describe('otio playback controller', () => {
   });
 
   test('preconstruction context changes release gate credits repeatedly', async () => {
-    const fixture = independentPcmFixture();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      proofBudget: true,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcmSnapshot: () => {
+        gateReservations: number;
+        carrierReservations: number;
+      };
+    };
     let attempts = 0;
     fixture.audioContext.audioWorklet.addModule = async () => {
       attempts++;
-      fixture.audioContext.state = 'running';
+      // Running-mode anchors require a running context during module load, so a change must leave it suspended.
+      fixture.audioContext.state = 'suspended';
     };
     try {
       for (let i = 0; i < 70; i++) {
@@ -4957,9 +4984,15 @@ describe('otio playback controller', () => {
         await fixture.flush();
         await play;
         expect(fixture.playback.getState().playing).toBe(false);
+        // Module loaded (attempts advanced) and failed before any AudioWorkletNode existed.
+        expect(attempts).toBe(i + 1);
+        expect(fixture.gates).toHaveLength(0);
+        // Both the gate and carrier credits are returned before play settles.
+        const snapshot = proof.__otioProofPcmSnapshot();
+        expect(snapshot.gateReservations).toBe(0);
+        expect(snapshot.carrierReservations).toBe(0);
       }
       expect(attempts).toBe(70);
-      expect(fixture.gates).toHaveLength(0);
     } finally {
       fixture.restore();
     }
