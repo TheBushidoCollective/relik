@@ -35,6 +35,7 @@ import {
   addRationalTimes,
   compareRationalTimes,
   OTIO_PROGRAM_AUDIO_CODEC,
+  MAX_OTIO_PROGRAM_FPS,
   readOtioProgramArchive,
   rescaleTime,
   timeToSeconds,
@@ -72,8 +73,37 @@ export interface OtioProgramReason {
 
 const VIDEO_CODEC = /^avc1\.[0-9a-fA-F]{6}$/;
 const FRAME_EPSILON = 1e-6;
-/** Longest allowed difference between the element's duration and the manifest's. */
-const DURATION_TOLERANCE_SECONDS = 0.1;
+/** Lowest frame rate the viewer accepts. The format accepts far lower rates. */
+const MIN_VIEWER_FPS = 1;
+/** Duration tolerance floor and cap, in seconds. The cap stops a frame rate from widening the check. */
+const DURATION_TOLERANCE_MIN_SECONDS = 0.1;
+const DURATION_TOLERANCE_MAX_SECONDS = 1;
+
+export function frameRateAllowed(frameRate: {
+  readonly num: number;
+  readonly den: number;
+}): boolean {
+  const fps = frameRate.num / frameRate.den;
+  return (
+    Number.isFinite(fps) && fps >= MIN_VIEWER_FPS && fps <= MAX_OTIO_PROGRAM_FPS
+  );
+}
+
+/**
+ * Allowed difference between a loaded element's duration and the manifest's.
+ * Always within [0.1 s, 1 s], whatever the frame rate.
+ */
+export function durationToleranceSeconds(frameRate: {
+  readonly num: number;
+  readonly den: number;
+}): number {
+  const frameSeconds = frameRate.den / frameRate.num;
+  if (!Number.isFinite(frameSeconds)) return DURATION_TOLERANCE_MIN_SECONDS;
+  return Math.min(
+    DURATION_TOLERANCE_MAX_SECONDS,
+    Math.max(DURATION_TOLERANCE_MIN_SECONDS, frameSeconds)
+  );
+}
 
 export interface ValidatedProgram {
   readonly timelineId: string;
@@ -211,6 +241,12 @@ export async function resolveOtioProgram(
       throw new ProgramRejection(
         'unsupported-codec',
         'Program video codec is not H.264.'
+      );
+    }
+    if (!frameRateAllowed(descriptor.frame_rate)) {
+      throw new ProgramRejection(
+        'invalid-timing',
+        'Program frame rate is outside the supported range.'
       );
     }
     const mimeType = `video/mp4; codecs="${descriptor.video_codec}, ${OTIO_PROGRAM_AUDIO_CODEC}"`;
@@ -433,14 +469,10 @@ export function createOtioProgramPlayer(
   });
 
   const verifyMetadata = (): void => {
-    const frameSecondsTolerance = Math.max(
-      DURATION_TOLERANCE_SECONDS,
-      frameSeconds
-    );
+    const tolerance = durationToleranceSeconds(program.frameRate);
     if (
       !Number.isFinite(video.duration) ||
-      Math.abs(video.duration - timeToSeconds(program.duration)) >
-        frameSecondsTolerance
+      Math.abs(video.duration - timeToSeconds(program.duration)) > tolerance
     ) {
       throw new ProgramRejection(
         'load-mismatch',
