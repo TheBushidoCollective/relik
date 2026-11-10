@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 /**
  * Controlled parent-history probe for the real built Node MCP bundle.
  *
@@ -1248,6 +1249,7 @@ async function createFixture(ordinal: number): Promise<Fixture> {
     relicOrigin: origin,
     files: nodeFiles,
     fetch: globalThis.fetch,
+    upload: fetchUpload,
     clientName: 'relic-mcp/stdio-mcp-boundary-path',
     renderCover: async () => ({
       status: 'skipped',

@@ -58,7 +58,8 @@ export const nodeFiles: FileReader = {
   },
 
   async read(path) {
-    return new Uint8Array(await readFile(path));
+    const bytes = await readFile(path);
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   },
 
   async openBundleRoot(path) {

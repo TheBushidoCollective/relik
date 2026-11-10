@@ -11,7 +11,9 @@ import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import {
   crc32,
   indexOtioZip,
-  MAX_EXPANDED_ZIP_BYTES,
+  MAX_INFLATED_ZIP_BYTES,
+  OTIO_DOCUMENT_MAX_BYTES,
+  PLAINTEXT_CAP_BYTES,
   MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
   type OtioBundleEntryName,
   otioBundleEntryName,
@@ -62,8 +64,13 @@ function sizeRefusal(message: string): never {
 }
 
 function inflateRawBounded(compressed: Uint8Array, budget: number): Uint8Array {
+  const result = inflateRawSync(compressed, {
+    maxOutputLength: Math.max(1, budget),
+  });
   const inflated = new Uint8Array(
-    inflateRawSync(compressed, { maxOutputLength: Math.max(1, budget) })
+    result.buffer,
+    result.byteOffset,
+    result.byteLength
   );
   if (inflated.length > budget) {
     throw new Error(`Inflated ZIP entry exceeds byte budget of ${budget}`);
@@ -92,9 +99,12 @@ function assertSafeLimit(value: number, name: string): number {
 }
 
 function effectiveBundleLimit(options?: BundleOtiodOptions): number {
-  const expanded = assertSafeLimit(
-    options?.maxExpandedBytes ?? MAX_EXPANDED_ZIP_BYTES,
-    'maxExpandedBytes'
+  const expanded = Math.min(
+    PLAINTEXT_CAP_BYTES,
+    assertSafeLimit(
+      options?.maxExpandedBytes ?? PLAINTEXT_CAP_BYTES,
+      'maxExpandedBytes'
+    )
   );
   if (options?.sizeLimitBytes === undefined) return expanded;
   return Math.min(
@@ -129,7 +139,7 @@ function checkedAdd(left: number, right: number, where: string): number {
  */
 export function buildZipArchive(
   entries: readonly ZipFileEntry[],
-  maxArchiveBytes = MAX_EXPANDED_ZIP_BYTES
+  maxArchiveBytes = PLAINTEXT_CAP_BYTES
 ): Uint8Array {
   if (entries.length >= MAX_ZIP_ENTRY_COUNT) {
     bundleRefusal(
@@ -160,7 +170,7 @@ export function buildZipArchive(
     const nameBytes = TEXT_ENCODER.encode(entry.name);
     const compressed =
       entry.method === 8
-        ? new Uint8Array(deflateRawSync(entry.data, { level: 9 }))
+        ? deflateRawSync(entry.data, { level: 9 })
         : entry.data;
     if (compressed.length > 0xffffffff) {
       bundleRefusal(
@@ -458,7 +468,7 @@ export function collectReferencedMedia(
   const schema = schemaAt(root, 'content.otio');
   const collector = new MediaCollector(
     options?.maxCandidateWork ?? MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
-    options?.maxHeaderBytes ?? MAX_EXPANDED_ZIP_BYTES
+    options?.maxHeaderBytes ?? OTIO_DOCUMENT_MAX_BYTES
   );
 
   if (schema === 'Timeline.1') {
@@ -589,7 +599,7 @@ export async function bundleOtiod(
       contentOtioBytes = await readRegular(
         root,
         'content.otio',
-        limit - aggregateUncompressed
+        Math.min(limit - aggregateUncompressed, OTIO_DOCUMENT_MAX_BYTES)
       );
     } catch (error) {
       if (error instanceof PublishError) throw error;
@@ -613,7 +623,10 @@ export async function bundleOtiod(
     const mediaRefMap = new Map<OtioBundleEntryName, CollectedMedia>();
     collectReferencedMedia(otioJson, mediaRefMap, {
       maxCandidateWork: MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
-      maxHeaderBytes: limit - baseZipHeaderBytes(),
+      maxHeaderBytes: Math.min(
+        limit - baseZipHeaderBytes(),
+        OTIO_DOCUMENT_MAX_BYTES
+      ),
     });
 
     const mediaEntries: Array<{
@@ -655,6 +668,7 @@ export async function bundleOtiod(
     try {
       await indexOtioZip(zipBytes, {
         maxExpandedBytes: limit,
+        maxInflatedBytes: MAX_INFLATED_ZIP_BYTES,
         inflater: async (compressed, _uncompressedSize, maxBytes) =>
           inflateRawBounded(compressed, maxBytes),
       });

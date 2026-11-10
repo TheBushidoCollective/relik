@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 /**
  * The agent's comment round trip, as a repeatable command.
  *
@@ -148,6 +149,7 @@ try {
     relicOrigin: origin(),
     files: nodeFiles,
     fetch: globalThis.fetch,
+    upload: fetchUpload,
     clientName: 'relic-mcp/comment-path',
     renderCover: async () => ({
       status: 'skipped',

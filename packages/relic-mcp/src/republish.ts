@@ -10,6 +10,7 @@
  * boundary the state file draws and this flow enforces before any network.
  */
 
+import { createHash } from 'node:crypto';
 import {
   decodeKey,
   deriveRendererClass,
@@ -20,7 +21,6 @@ import {
   normalizeTitle,
   type RendererClass,
   shareVerifierFor,
-  versionDigest,
 } from '@relic/format';
 import type { CoverOutcome, CoverReport } from '@relic/format/cover';
 import { keyToMnemonic } from '@relic/format/mnemonic';
@@ -409,7 +409,9 @@ export async function republish(
     mimetype: guessMimetype(filename, rendererClass),
     key: decodeKey(state.key),
   });
-  const localVersionDigest = await versionDigest(container);
+  const localVersionDigest = createHash('sha256')
+    .update(container)
+    .digest('hex');
 
   // 1. The republish grant: same shape as a first grant, authorized by the
   //    publish token instead of a challenge nonce, aiming the upload at the

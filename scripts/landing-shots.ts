@@ -39,6 +39,7 @@ import {
   type PublishDeps,
   publish,
 } from '../packages/relic-mcp/src/publish.ts';
+import { nodeUploader } from '../packages/relic-mcp/src/upload.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -179,6 +180,7 @@ const publishDeps: PublishDeps = {
   relicOrigin: origin,
   files: nodeFiles,
   fetch: globalThis.fetch,
+  upload: nodeUploader,
   clientName: 'relic-mcp/landing-shots',
   renderCover: async () => ({
     status: 'skipped',

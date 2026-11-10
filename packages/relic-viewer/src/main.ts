@@ -1504,13 +1504,25 @@ export function renderPdfView(view: ReadyView): HTMLElement {
     'Loading the PDF renderer. It is loaded on demand so other documents do not pay for it.';
   loading.append(headline, detail);
   wrapper.appendChild(loading);
+  let cleanedUp = false;
+  let disposePdf: (() => void) | undefined;
+  wrapper.addEventListener(
+    'cleanup',
+    () => {
+      cleanedUp = true;
+      disposePdf?.();
+    },
+    { once: true }
+  );
 
   void import('./pdf.ts')
     .then(async ({ mountPdf }) => {
-      const dispose = await mountPdf(wrapper, view.content, view.filename);
-      wrapper.addEventListener('cleanup', dispose, { once: true });
+      if (cleanedUp || wrapper.isConnected === false) return;
+      disposePdf = await mountPdf(wrapper, view.content, view.filename);
+      if (cleanedUp || wrapper.isConnected === false) disposePdf();
     })
     .catch(() => {
+      if (cleanedUp || wrapper.isConnected === false) return;
       const win =
         wrapper.ownerDocument?.defaultView ??
         (typeof window !== 'undefined' ? window : undefined);
@@ -5925,20 +5937,18 @@ export function buildThread(
       }
       projectionAttempts.add(entry.id);
       const anchor = entry.anchor;
+      versionStore.pin(anchor.relic_version);
       try {
         const original = await versionStore.get(anchor.relic_version, {
           maxBytes: AUTO_PROJECTION_MAX_BYTES,
         });
         if (original.kind !== 'ready')
           throw new Error('Original context unavailable');
-        versionStore.pin(anchor.relic_version);
-        try {
-          await controller.project(anchor, original.view.content);
-        } finally {
-          versionStore.unpin(anchor.relic_version);
-        }
+        await controller.project(anchor, original.view.content);
       } catch {
         projectionFailures.add(entry.id);
+      } finally {
+        versionStore.unpin(anchor.relic_version);
       }
       changed = true;
     }
@@ -9114,14 +9124,19 @@ export function renderReady(
     if (decisionPanel !== undefined && decide) decisionPanel.setOpener(decide);
     return built;
   }
-  const showSingle = (viewToShow: ReadyView): void => {
+  let pinnedView: number | undefined;
+  const showSingle = (viewToShow: ReadyView, alreadyPinned = false): void => {
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
       refreshDecisionTally(viewToShow);
     }
-    if (activeView.version !== viewToShow.version)
-      versionStore.unpin(activeView.version);
-    versionStore.pin(viewToShow.version);
+    if (pinnedView !== viewToShow.version) {
+      if (pinnedView !== undefined) versionStore.unpin(pinnedView);
+      if (!alreadyPinned) versionStore.pin(viewToShow.version);
+      pinnedView = viewToShow.version;
+    } else if (alreadyPinned) {
+      versionStore.unpin(viewToShow.version);
+    }
     activeView = viewToShow;
     if (viewToShow.route !== 'download') {
       thread = buildThread(
@@ -9157,11 +9172,11 @@ export function renderReady(
   let versionRequest = 0;
 
   const showVersion = async (v: number): Promise<void> => {
+    const requestedVersion = ++versionRequest;
     if (v === activeView.version) {
       showSingle(activeView);
       return;
     }
-    const requestedVersion = ++versionRequest;
 
     let versionPill = document.querySelector
       ? (document.querySelector(
@@ -9189,9 +9204,11 @@ export function renderReady(
         versionPill.querySelector?.('.render-status-label') ?? versionPill;
       label.textContent = `Opening version ${v}`;
     }
+    versionStore.pin(v);
 
     const res = await versionStore.get(v, {
       onProgress: (p) => {
+        if (requestedVersion !== versionRequest) return;
         if (versionPill) {
           const label =
             versionPill.querySelector?.('.render-status-label') ?? versionPill;
@@ -9210,19 +9227,25 @@ export function renderReady(
       },
     });
 
-    versionPill?.remove?.();
+    if (requestedVersion === versionRequest) versionPill?.remove?.();
 
+    if (requestedVersion !== versionRequest) {
+      versionStore.unpin(v);
+      return;
+    }
     if (res.kind === 'ready') {
-      if (requestedVersion !== versionRequest) return;
-      showSingle(res.view);
-    } else if (res.kind === 'unavailable') {
+      showSingle(res.view, true);
+    } else {
+      versionStore.unpin(v);
       toast(res.detail);
     }
   };
 
   const showComparison = (left?: number, right?: number): void => {
     decisionPanel?.close();
-    versionStore.unpin(activeView.version);
+    versionRequest++;
+    if (pinnedView !== undefined) versionStore.unpin(pinnedView);
+    pinnedView = undefined;
     renderComparison(
       activeView,
       relicId,

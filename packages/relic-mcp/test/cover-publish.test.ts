@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -328,6 +329,7 @@ describe('publish flow with cover options', () => {
       relicOrigin: SERVICE,
       files: nodeFiles,
       fetch: fetchFn,
+      upload: fetchUpload,
       clientName: 'test',
       renderCover: async () => {
         renderCoverCalls++;
@@ -368,6 +370,24 @@ describe('publish flow with cover options', () => {
 
     const state = await loadPublishState(result.relic_id);
     expect(state).toBeDefined();
+    expect(state?.cover_uploaded).toBe(false);
+  });
+
+  test('a large-source fallback is reported without uploading a cover', async () => {
+    const filePath = join(scratch, 'doc.md');
+    await writeFile(filePath, '# Document\n\nContent.\n');
+    const outcome: CoverOutcome = {
+      status: 'skipped',
+      reason: 'over_render_ceiling',
+      detail: 'Cover source exceeds the limit; using the generic cover',
+    };
+    const deps = makeTestDeps(fakeFetch(), outcome);
+    const result = await publish({ path: filePath }, deps);
+
+    expect(renderCoverCalls).toBe(1);
+    expect(coverRequests).toHaveLength(0);
+    expect(result.cover).toEqual(outcome);
+    const state = await loadPublishState(result.relic_id);
     expect(state?.cover_uploaded).toBe(false);
   });
 
@@ -462,6 +482,7 @@ describe('republish duplicate gate table (five rows)', () => {
       relicOrigin: SERVICE,
       files: nodeFiles,
       fetch: fakeFetch(),
+      upload: fetchUpload,
       clientName: 'test',
       renderCover: async () => {
         renderCoverCalls++;
@@ -767,6 +788,7 @@ describe('server result text formatting for cover', () => {
         }
         return new Response('not found', { status: 404 });
       }) as typeof globalThis.fetch,
+      upload: fetchUpload,
       clientName: 'test',
       renderCover: async () => outcome,
     };

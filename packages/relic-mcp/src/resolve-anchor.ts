@@ -31,7 +31,6 @@ import {
   type AnchorRect,
   decodeKey,
   deriveRendererClass,
-  FORMAT_VERSION,
   type InflaterFn,
   indexOtioZip,
   isOtioz,
@@ -45,7 +44,8 @@ import {
   type OtioRationalTime,
   type OtioSourceSpan,
   type OtioTimeRange,
-  openRelic,
+  openRelicStream,
+  PLAINTEXT_CAP_BYTES,
   otioBundleMediaIndex,
   type RendererClass,
   readOtioDocument,
@@ -810,11 +810,14 @@ async function fetchAndDecryptRelic(
         error: `Failed to fetch relic ciphertext: HTTP status ${containerResponse.status}.`,
       };
     }
-    const containerBytes = new Uint8Array(
-      await containerResponse.arrayBuffer()
-    );
+    if (containerResponse.body === null) {
+      throw new Error('ciphertext response has no body');
+    }
     const key = decodeKey(state.key);
-    const opened = await openRelic(containerBytes, key, FORMAT_VERSION);
+    const opened = await openRelicStream(containerResponse.body, key, {
+      objectLength: mint.object_length,
+      maxContentBytes: PLAINTEXT_CAP_BYTES,
+    });
     return {
       ok: true,
       opened,

@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { createApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -69,6 +70,7 @@ beforeEach(() => {
     files: files(),
     fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
       app.fetch(new Request(String(input), init))) as typeof globalThis.fetch,
+    upload: fetchUpload,
     clientName: 'test',
     renderCover: async () => ({
       status: 'skipped',
