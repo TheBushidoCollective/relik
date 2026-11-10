@@ -3516,17 +3516,17 @@ try {
         () =>
           isTrue(
             run.sessionId,
-            `Boolean(document.querySelector('#share-addresses'))`
+            `Boolean(document.querySelector('.share-panel input[type="email"]'))`
           ),
         15_000,
-        '3f: share draft box'
+        '3f: sign-in draft field'
       );
       const draft = 'reader@example.com';
       await evalMain(
         run.sessionId,
         `(() => {
-          const box = document.querySelector('#share-addresses');
-          if (!box) throw new Error('share draft box missing');
+          const box = document.querySelector('.share-panel input[type="email"]');
+          if (!box) throw new Error('sign-in draft field missing');
           box.value = ${JSON.stringify(draft)};
           box.dispatchEvent(new Event('input', { bubbles: true }));
           return true;
@@ -3549,7 +3549,7 @@ try {
       assert.equal(
         await evalMain<string>(
           run.sessionId,
-          `document.querySelector('#share-addresses')?.value ?? ''`
+          `document.querySelector('.share-panel input[type="email"]')?.value ?? ''`
         ),
         draft,
         '3f: the draft did not survive the stale reply'
@@ -3632,17 +3632,17 @@ try {
         () =>
           isTrue(
             run.sessionId,
-            `Boolean(document.querySelector('#share-addresses'))`
+            `Boolean(document.querySelector('.share-panel input[type="email"]'))`
           ),
         15_000,
-        '3g: share draft box'
+        '3g: sign-in draft field'
       );
       const draft = 'reader@example.com';
       await evalMain(
         run.sessionId,
         `(() => {
-          const box = document.querySelector('#share-addresses');
-          if (!box) throw new Error('share draft box missing');
+          const box = document.querySelector('.share-panel input[type="email"]');
+          if (!box) throw new Error('sign-in draft field missing');
           box.value = ${JSON.stringify(draft)};
           box.dispatchEvent(new Event('input', { bubbles: true }));
           return true;
@@ -3671,7 +3671,7 @@ try {
       assert.equal(
         await evalMain<string>(
           run.sessionId,
-          `document.querySelector('#share-addresses')?.value ?? ''`
+          `document.querySelector('.share-panel input[type="email"]')?.value ?? ''`
         ),
         draft,
         '3g: the draft did not survive the stale reply'
@@ -3682,6 +3682,140 @@ try {
       );
       await savePng(run.sessionId, '10-3g-stale-switch-kept-draft.png');
       console.log('JSX_STEP_3G_STALE_SWITCH_OK reloads=0 draft=kept');
+      await run.close();
+    }
+
+    // 3h: the reader stays in the same comparison view, opens Share and types an
+    // unsent sign-in address while the historical compiler reply is held. When the
+    // reply fails, the page must not reload, the draft must remain, and the reader
+    // must see the comparison failure instead of a silent blank.
+    {
+      const sameJsxPath = join(compareDir, 'SameView.jsx');
+      await writeFile(
+        sameJsxPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const sameRes = await callMcp('relic_publish', {
+        path: sameJsxPath,
+        cover: false,
+        title: '',
+      });
+      const sameId = String(sameRes['relic_id'] ?? '');
+      const sameUrl = String(sameRes['url'] ?? sameRes['share_url'] ?? '');
+      assert.ok(
+        sameId !== '' && sameUrl.includes('#'),
+        '3h: publish must return an id and key'
+      );
+      const sameHtmlPath = join(compareDir, 'SameView.html');
+      await writeFile(
+        sameHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>SameView</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const sameRepub = await callMcp('relic_republish', {
+        path: sameHtmlPath,
+        relic_id: sameId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        sameRepub['version'],
+        2,
+        '3h: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(sameUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3h: current HTML version rendered'
+      );
+      run.setBlocks([{ urlPattern: compilerPattern, times: 1, hold: true }]);
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3h: compiler request held'
+      );
+      const stillComparing = await evalMain<string>(
+        run.sessionId,
+        `document.querySelector('.action-history')?.getAttribute('aria-pressed') ?? ''`
+      );
+      assert.equal(
+        stillComparing,
+        'true',
+        '3h: the reader must still be in the comparison view'
+      );
+      await clickSelector(run.sessionId, '.action-share');
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('.share-panel input[type="email"]'))`
+          ),
+        15_000,
+        '3h: sign-in draft field in the comparison view'
+      );
+      const draft = 'reader@example.com';
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const box = document.querySelector('.share-panel input[type="email"]');
+          if (!box) throw new Error('sign-in draft field missing');
+          box.value = ${JSON.stringify(draft)};
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`
+      );
+      run.releaseHeld();
+      // Watch for the failure text for the whole window a stale reload needs.
+      const errorText = 'could not be loaded for comparison';
+      let errorSeen = false;
+      const watchEnd = Date.now() + 6_000;
+      while (Date.now() < watchEnd) {
+        if (!errorSeen) {
+          errorSeen = await isTrue(
+            run.sessionId,
+            `document.body?.textContent?.includes(${JSON.stringify(errorText)}) === true`
+          );
+        }
+        await Bun.sleep(100);
+      }
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        0,
+        `3h: the pending compare failure reloaded the page over a live draft (${reloads} reloads)`
+      );
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3h: expected the held compiler fetch to be intercepted once, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.ok(
+        errorSeen,
+        `3h: the reader was never told the comparison failed ("${errorText}")`
+      );
+      assert.equal(
+        await evalMain<string>(
+          run.sessionId,
+          `document.querySelector('.share-panel input[type="email"]')?.value ?? ''`
+        ),
+        draft,
+        '3h: the unsent draft did not survive the pending failure'
+      );
+      await savePng(run.sessionId, '10-3h-same-view-draft-kept.png');
+      console.log(
+        'JSX_STEP_3H_SAME_VIEW_DRAFT_OK reloads=0 draft=kept error=shown'
+      );
       await run.close();
     }
 
