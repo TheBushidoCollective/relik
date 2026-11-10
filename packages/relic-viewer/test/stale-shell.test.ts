@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  createLifecycle,
   healStaleShell,
   markJsxCompilerLoaded,
   SERVER_CHECK_TIMEOUT_MS,
@@ -265,5 +266,96 @@ describe('the stale-shell heal decision', () => {
     const global = globalThis as { sessionStorage?: Storage };
     delete global.sessionStorage;
     expect(() => markJsxCompilerLoaded()).not.toThrow();
+  });
+});
+
+describe('late heals after the reader has moved on', () => {
+  test('an exit taken before the probe means no probe and no reload', async () => {
+    // Compare exit and version selection both advance the lifecycle before any
+    // await, so a late compiler failure from the old state finds it stale.
+    const life = createLifecycle();
+    const token = life.token();
+    life.advance();
+    const { storage, map } = sessionShim();
+    const { fetch, calls } = answering(200);
+    let reloads = 0;
+
+    const reloaded = await healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => life.isCurrent(token),
+    });
+
+    expect(reloaded).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(reloads).toBe(0);
+    expect(map.has(STALE_SHELL_MARK)).toBe(false);
+  });
+
+  test('an exit while the probe is held means no reload when it answers', async () => {
+    // The draft case: the reader leaves compare, types somewhere else, and only
+    // then the held probe resolves with a healthy server.
+    const life = createLifecycle();
+    const token = life.token();
+    const { storage, map } = sessionShim();
+    const held = Promise.withResolvers<Response>();
+    const fetch = (async () =>
+      held.promise) as unknown as typeof globalThis.fetch;
+    let reloads = 0;
+
+    const pending = healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => life.isCurrent(token),
+    });
+    life.advance();
+    held.resolve(new Response(null, { status: 200 }));
+
+    expect(await pending).toBe(false);
+    expect(reloads).toBe(0);
+    expect(map.has(STALE_SHELL_MARK)).toBe(false);
+  });
+
+  test('a version selection made while the probe is held cancels its reload', async () => {
+    const life = createLifecycle();
+    const selection = life.token();
+    const { storage } = sessionShim();
+    const held = Promise.withResolvers<Response>();
+    const fetch = (async () =>
+      held.promise) as unknown as typeof globalThis.fetch;
+    let reloads = 0;
+
+    const pending = healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => life.isCurrent(selection),
+    });
+    // The reader picks another version: a new selection, so a new state.
+    life.advance();
+    held.resolve(new Response(null, { status: 200 }));
+
+    expect(await pending).toBe(false);
+    expect(reloads).toBe(0);
+  });
+
+  test('a reader who stays on the same state still heals', async () => {
+    const life = createLifecycle();
+    const token = life.token();
+    const { storage } = sessionShim();
+    const { fetch } = answering(200);
+    let reloads = 0;
+
+    const reloaded = await healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => life.isCurrent(token),
+    });
+
+    expect(reloaded).toBe(true);
+    expect(reloads).toBe(1);
   });
 });

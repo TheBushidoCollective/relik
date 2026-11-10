@@ -1023,11 +1023,6 @@ class JsxCompilerUnavailableError extends Error {
 
 let jsxCompiler: JsxCompiler | undefined;
 
-/** Whether this page has loaded the compiler chunk successfully. */
-export function hasLoadedJsxCompiler(): boolean {
-  return jsxCompiler !== undefined;
-}
-
 /**
  * Loads the JSX compiler on first use, never at startup.
  *

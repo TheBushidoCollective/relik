@@ -10,6 +10,9 @@
  * A reload is only worth taking when it can succeed, and it must not loop, so
  * it is gated on all of these:
  *
+ * - the reader is still on the screen that asked (checked before the probe
+ *   and again after it, immediately before the reload, because a probe takes
+ *   time and the reader may have left, or drafted something, meanwhile);
  * - no reload has happened in this tab since the compiler last loaded (a
  *   sessionStorage mark, which must be readable and writable);
  * - the vault holds this relic's key, so the reloaded page can reopen it;
@@ -24,11 +27,37 @@
 export const STALE_SHELL_MARK = 'relic:stale-shell-reloaded';
 export const SERVER_CHECK_TIMEOUT_MS = 5_000;
 
+/**
+ * A screen's lifecycle. Taking a token marks the state the reader is in.
+ * Every exit and every selection calls `advance`, which invalidates every
+ * token taken before it, so a late result can tell that the reader has moved
+ * on and must not act.
+ */
+export interface Lifecycle {
+  /** The token for the state the reader is in now. */
+  readonly token: () => number;
+  /** Starts a new state. Every earlier token becomes stale. */
+  readonly advance: () => void;
+  /** True while no `advance` has happened since `token` was taken. */
+  readonly isCurrent: (token: number) => boolean;
+}
+
+export function createLifecycle(): Lifecycle {
+  let generation = 0;
+  return {
+    token: () => generation,
+    advance: () => {
+      generation += 1;
+    },
+    isCurrent: (token) => token === generation,
+  };
+}
+
 export interface StaleShellOptions {
   readonly serviceOrigin: string;
   /** The vault's key for this relic, or undefined when none is stored. */
   readonly recallKey: () => string | undefined;
-  /** False once the reader has moved on, so a late answer does nothing. */
+  /** False once the reader has moved on, so a late result does nothing. */
   readonly isCurrent: () => boolean;
   readonly fetch: typeof globalThis.fetch;
   /** Defaults to the page's sessionStorage. Overridden in tests. */
@@ -45,9 +74,12 @@ export interface StaleShellOptions {
 export async function healStaleShell(
   options: StaleShellOptions
 ): Promise<boolean> {
+  if (!options.isCurrent()) return false;
   if (!markIsFree(options)) return false;
   if (options.recallKey() === undefined) return false;
   if (!(await serverAnswers(options))) return false;
+  // Checked after the probe, with no await between this check and the
+  // reload: the reader may have left while the probe was in flight.
   if (!options.isCurrent()) return false;
   if (!setMark(options)) return false;
   (options.reload ?? defaultReload)();

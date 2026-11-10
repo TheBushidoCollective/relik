@@ -245,7 +245,7 @@ import {
   sharedSummary,
   shareRefusal,
 } from './share.ts';
-import { healStaleShell } from './stale-shell.ts';
+import { createLifecycle, healStaleShell } from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
   type CachedPrefix,
@@ -411,6 +411,12 @@ export function sniffImageType(content: Uint8Array): string {
   }
   return 'application/octet-stream';
 }
+
+/**
+ * Counts opens in this page. A result from an earlier open may not act once a
+ * newer one has started.
+ */
+let openGeneration = 0;
 
 /**
  * Reloads the page once when a JSX compile failed because this page is a
@@ -3141,6 +3147,12 @@ export function renderComparison(
 
   let request = 0;
 
+  /** Leaving the comparison invalidates any result still in flight. */
+  const closeComparison = (): void => {
+    request += 1;
+    onClose();
+  };
+
   const scaffold = buildComparisonScaffold(
     current.currentVersion,
     leftVersion,
@@ -3319,7 +3331,7 @@ export function renderComparison(
 
   document.body.replaceChildren(
     buildBar(current, relicId, {
-      onCompare: onClose,
+      onCompare: closeComparison,
       comparisonOpen: true,
       selectedVersion: rightVersion,
       onShare: (opener) => {
@@ -9334,6 +9346,7 @@ export function renderReady(
   usercontentOrigin: string,
   deps: ViewerDeps
 ): void {
+  const lifecycle = createLifecycle();
   /** The attached taskbar, so a count arriving can replace just that row. */
   let bar: HTMLElement | undefined;
   let commentCount: number | undefined;
@@ -9461,6 +9474,7 @@ export function renderReady(
     return built;
   }
   const showSingle = (viewToShow: ReadyView): void => {
+    lifecycle.advance();
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
       refreshDecisionTally(viewToShow);
@@ -9497,9 +9511,11 @@ export function renderReady(
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
-  let versionRequest = 0;
-
   const showVersion = async (v: number): Promise<void> => {
+    // Every selection starts a new state. A result still in flight for an
+    // earlier selection, or for a screen the reader has left, may not act.
+    lifecycle.advance();
+    const selection = lifecycle.token();
     if (v === activeView.version) {
       showSingle(activeView);
       return;
@@ -9537,7 +9553,6 @@ export function renderReady(
       label.textContent = `Opening version ${v}`;
     }
 
-    const thisVersion = ++versionRequest;
     const res = await loadHistoricalVersion(relicId, v, view, deps, (p) => {
       if (versionPill) {
         const label =
@@ -9564,19 +9579,18 @@ export function renderReady(
     } else if (res.kind === 'unavailable') {
       if (
         res.jsxCompilerUnavailable === true &&
-        (await healForRelic(
-          relicId,
-          deps,
-          () => thisVersion === versionRequest
+        (await healForRelic(relicId, deps, () =>
+          lifecycle.isCurrent(selection)
         ))
       ) {
         return;
       }
-      if (thisVersion === versionRequest) toast(res.detail);
+      if (lifecycle.isCurrent(selection)) toast(res.detail);
     }
   };
 
   const showComparison = (left?: number, right?: number): void => {
+    lifecycle.advance();
     decisionPanel?.close();
     renderComparison(
       activeView,
@@ -10176,6 +10190,7 @@ export function renderDead(
       const enteredValue = input.value;
       if (enteredValue.trim().length === 0) return;
       const submitted = ++keySubmissions;
+      const openAtSubmit = openGeneration;
 
       submit.disabled = true;
       feedback.replaceChildren();
@@ -10207,14 +10222,12 @@ export function renderDead(
           } else if (result.kind === 'dead') {
             const detail = result.dead.detail;
             if (result.jsxCompilerUnavailable === true) {
-              // A stale deploy may heal by reloading. Only the latest submission
-              // may decide, and it keeps its error copy when no reload starts.
-              void healForRelic(
-                relicId,
-                deps,
-                () => submitted === keySubmissions
-              ).then((reloading) => {
-                if (!reloading && submitted === keySubmissions) {
+              // A stale deploy may heal by reloading. Only this submission,
+              // while it is still on screen, may decide.
+              const stillHere = (): boolean =>
+                submitted === keySubmissions && openAtSubmit === openGeneration;
+              void healForRelic(relicId, deps, stillHere).then((reloading) => {
+                if (!reloading && stillHere()) {
                   feedback.textContent = detail;
                 }
               });
@@ -10797,8 +10810,6 @@ export async function boot(
     await renderDocument(deps, root?.dataset['document'] ?? '');
     return;
   }
-
-  let openGeneration = 0;
 
   const runOpen = async (resume?: LoadResume): Promise<void> => {
     const thisOpen = ++openGeneration;
