@@ -23,6 +23,8 @@ import {
 import {
   classifyOtioTransition,
   evaluateOtioAt,
+  otioBundleEntry,
+  readOtioImageSequence,
   type OtioDiagnostic,
   type OtioDocumentV1,
   type OtioEffect,
@@ -172,10 +174,100 @@ export function frameTime(
   frame: number,
   rate: { num: number; den: number }
 ): OtioRationalTime {
-  return {
-    value: origin.value * rate.num + frame * rate.den * origin.rate,
-    rate: origin.rate * rate.num,
+  const fps = rate.num / rate.den;
+  if (origin.value === 0) return { value: frame, rate: fps };
+  return { value: (origin.value * fps) / origin.rate + frame, rate: fps };
+}
+
+/** Refuse ambiguous or mixed video grids rather than silently decimating. */
+export async function compositionFrameRate(
+  document: OtioDocumentV1,
+  timelineId: string,
+  media: Pick<ProgramMedia, 'videoFrameRate' | 'isImage'>
+): Promise<{ num: number; den: number }> {
+  const clips: { id: string; path: string | null; authored: number }[] = [];
+  const visit = (id: string, video: boolean): void => {
+    const node = document.nodes[id];
+    if (!node || !node.enabled) return;
+    const inVideo =
+      node.schema === 'Track.1' ? node.track_kind !== 'Audio' : video;
+    if (inVideo && (node.schema === 'Clip.1' || node.schema === 'Clip.2')) {
+      const ref =
+        node.media_references?.[node.active_media_reference_key ?? ''];
+      const authored = node.source_range?.duration.rate;
+      if (!ref || !authored || authored <= 1) {
+        throw failure(
+          'invalid-timing',
+          `Video cadence on ${id} is ambiguous`,
+          id
+        );
+      }
+      if (ref.schema === 'ImageSequenceReference.1') {
+        const sequence = readOtioImageSequence(ref.raw ?? ref);
+        if (
+          !sequence.ok ||
+          ref.rate !== authored ||
+          sequence.sequence.frameStep !== 1 ||
+          !ref.available_range ||
+          (ref.missing_frame_policy && ref.missing_frame_policy !== 'error')
+        ) {
+          throw failure(
+            'invalid-timing',
+            `Sequence cadence on ${id} cannot be certified`,
+            id
+          );
+        }
+        clips.push({ id, path: null, authored });
+      } else {
+        const path = ref.target_url && otioBundleEntry(ref.target_url);
+        if (!path)
+          throw failure('missing-media', `Video media on ${id} is missing`, id);
+        if (!media.isImage(path)) clips.push({ id, path, authored });
+      }
+    }
+    for (const child of node.children_ids) visit(child, inVideo);
   };
+  visit(timelineId, false);
+  if (clips.length === 0)
+    throw failure('invalid-timing', 'Timeline has no certified video cadence');
+  const fps = clips[0]!.authored;
+  for (const clip of clips) {
+    const measured =
+      clip.path === null
+        ? clip.authored
+        : await media.videoFrameRate(clip.path);
+    if (clip.authored !== fps || Math.abs(measured - fps) > fps * 1e-5) {
+      throw failure(
+        'invalid-timing',
+        `Source cadence on ${clip.id} differs from its composition grid`,
+        clip.id
+      );
+    }
+  }
+  return frameRateOf(fps);
+}
+
+export function isDisabled(document: OtioDocumentV1, nodeId: string): boolean {
+  const seen = new Set<string>();
+  let id: string | null = nodeId;
+  while (id !== null && !seen.has(id)) {
+    seen.add(id);
+    const node = document.nodes[id];
+    if (!node) break;
+    if (!node.enabled) return true;
+    id = node.parent_id;
+  }
+  return false;
+}
+
+export function assertCanvasAvailable(canvas: HTMLCanvasElement): void {
+  const context = canvas.getContext('2d');
+  const target = canvas as HTMLCanvasElement & {
+    isContextLost?: () => boolean;
+  };
+  if (!context || target.isContextLost?.() || context.isContextLost?.()) {
+    throw failure('render-failed', 'Canvas context was lost');
+  }
 }
 
 function effectReason(
@@ -213,7 +305,7 @@ function effectReason(
  * fail the whole timeline, even where a feature never reaches a frame, so an
  * unsupported item is never silently omitted.
  */
-function staticReasons(
+export function staticReasons(
   document: OtioDocumentV1,
   timelineId: string
 ): ProgramRenderReason[] {
@@ -232,7 +324,14 @@ function staticReasons(
     }
     for (const effect of node.effects ?? []) {
       if (!effect.enabled) continue;
-      const reason = effectReason(effect, id);
+      const reason =
+        node.schema === 'Clip.1' || node.schema === 'Clip.2'
+          ? effectReason(effect, id)
+          : {
+              code: 'unsupported-effect' as const,
+              message: `Effect on ${id} is not applied to its children`,
+              node_id: id,
+            };
       if (reason) reasons.push(reason);
     }
     if (
@@ -338,17 +437,58 @@ function checkoutPool(
       canvas.height = height;
       pool.push(canvas);
     }
-    return pool[depth]!;
+    const canvas = pool[depth]!;
+    assertCanvasAvailable(canvas);
+    return canvas;
   };
+}
+
+/** Reject a sequence selection that fell across a floating-point frame boundary. */
+export function assertSequenceFrame(
+  offset: number,
+  startFrame: number,
+  frameStep: number,
+  actual: number | undefined
+): void {
+  if (!Number.isFinite(offset)) {
+    throw failure('invalid-timing', 'Invalid sequence frame offset');
+  }
+  const nearest = Math.round(offset);
+  const index = Math.floor(
+    Math.abs(offset - nearest) < 1e-7 ? nearest : offset
+  );
+  if (actual !== startFrame + index * frameStep) {
+    throw failure('invalid-timing', 'Unreliable sequence frame selection');
+  }
 }
 
 async function prepareLeaves(
   media: ProgramMedia,
+  document: OtioDocumentV1,
   evaluation: OtioEvaluationResult,
   opened: VideoFrame[]
 ): Promise<OtioPreparedLeaf[]> {
   const leaves: OtioPreparedLeaf[] = [];
   for (const contribution of evaluation.video_contributions) {
+    const node = document.nodes[contribution.node_id];
+    const ref = node?.media_references?.[node.active_media_reference_key ?? ''];
+    if (ref?.schema === 'ImageSequenceReference.1') {
+      const parsed = readOtioImageSequence(ref.raw ?? ref);
+      if (!parsed.ok || !ref.rate)
+        throw failure(
+          'invalid-timing',
+          `Invalid sequence on ${contribution.node_id}`
+        );
+      const offset =
+        (contribution.source_time.value * ref.rate) /
+        contribution.source_time.rate;
+      assertSequenceFrame(
+        offset,
+        parsed.sequence.startFrame,
+        parsed.sequence.frameStep,
+        contribution.source_frame
+      );
+    }
     if (contribution.sample_kind === 'black') {
       leaves.push({ kind: 'black' });
       continue;
@@ -394,11 +534,11 @@ export async function renderProgramTimeline(
 ): Promise<ProgramRenderedFile> {
   const { document, timelineId, width, height, maxBytes, media } = input;
   const { origin, duration } = timelineRange(document, timelineId);
-  const rate = frameRateOf(duration.rate);
   const structural = staticReasons(document, timelineId);
   if (structural.length > 0) {
     throw new ProgramRenderFailure(structural.slice(0, MAX_REASONS));
   }
+  const rate = await compositionFrameRate(document, timelineId, media);
   const frameSeconds = rate.den / rate.num;
   const frameCount = Math.ceil(seconds(duration) / frameSeconds - 1e-6);
   if (frameCount < 1) {
@@ -491,7 +631,7 @@ export async function renderProgramTimeline(
       assertFrameFaithful(evaluation);
       const opened: VideoFrame[] = [];
       try {
-        const leaves = await prepareLeaves(media, evaluation, opened);
+        const leaves = await prepareLeaves(media, document, evaluation, opened);
         if (!evaluation.video_composition && leaves.length > 0) {
           throw failure(
             'render-failed',
@@ -504,14 +644,19 @@ export async function renderProgramTimeline(
           height,
           evaluation.video_composition,
           leaves,
-          checkout
+          checkout,
+          (id, ancestry) =>
+            isDisabled(document, id) ||
+            ancestry.some((ancestor) => isDisabled(document, ancestor))
         );
+        assertCanvasAvailable(outputCanvas);
         if (outcome === 'failed') {
           throw failure('render-failed', `Compositing failed at frame ${n}`);
         }
       } finally {
         for (const frame of opened) frame.close();
       }
+      assertCanvasAvailable(outputCanvas);
       await videoSource.add(start, frameSeconds);
       await feedAudio(start + frameSeconds);
     }

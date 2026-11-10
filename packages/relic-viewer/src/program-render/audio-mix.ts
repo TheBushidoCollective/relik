@@ -96,6 +96,20 @@ export function planProgramAudio(
   const spans: ProgramAudioSpan[] = [];
   for (const span of schedule) {
     if (span.disposition === 'silence') continue;
+    let id: string | null = span.node_id;
+    const seen = new Set<string>();
+    let disabled = false;
+    while (id !== null && !seen.has(id)) {
+      seen.add(id);
+      const node = document.nodes[id];
+      if (!node) break;
+      if (!node.enabled) {
+        disabled = true;
+        break;
+      }
+      id = node.parent_id;
+    }
+    if (disabled) continue;
     if (span.disposition === 'unavailable' || !span.bundle_path) {
       throw failure(
         reasonFromDiagnostics(

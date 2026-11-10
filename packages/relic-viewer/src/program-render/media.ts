@@ -15,6 +15,7 @@ import {
   BlobSource,
   Input,
   VideoSampleSink,
+  type AudioSample,
   type VideoSample,
 } from 'mediabunny';
 import { failure } from './failure.ts';
@@ -29,6 +30,8 @@ const IMAGE_CACHE_LIMIT = 8;
 interface VideoState {
   readonly sink: VideoSampleSink;
   last: VideoSample | null;
+  readonly frameRate: number;
+  iterator: AsyncGenerator<VideoSample, void, unknown> | null;
 }
 
 interface AudioState {
@@ -36,6 +39,10 @@ interface AudioState {
   /** Native sample rate of the track, in hertz. */
   readonly rate: number;
   readonly channels: 1 | 2;
+  iterator: AsyncGenerator<AudioSample, void, unknown> | null;
+  samples: AudioSample[];
+  discardedBefore: number;
+  ended: boolean;
 }
 
 export interface AudioInfo {
@@ -73,6 +80,10 @@ export class ProgramMedia {
     return IMAGE_PATH.test(path);
   }
 
+  async videoFrameRate(path: string): Promise<number> {
+    return (await this.video(path)).frameRate;
+  }
+
   /** The frame whose presentation interval contains `seconds` in file time. */
   async videoSample(path: string, seconds: number): Promise<VideoSample> {
     const state = await this.video(path);
@@ -85,15 +96,46 @@ export class ProgramMedia {
     ) {
       return last;
     }
-    const next = await state.sink.getSample(target);
-    if (!next) {
+    if (!Number.isFinite(target) || seconds < 0) {
+      throw failure(
+        'invalid-timing',
+        `Invalid source time in ${path}: ${seconds}`
+      );
+    }
+    if (
+      !state.iterator ||
+      (last && (target < last.timestamp || target - last.timestamp > 1))
+    ) {
+      await state.iterator?.return();
+      state.iterator = state.sink.samples(target);
+      const first = await state.sink.getSample(target);
+      state.last?.close();
+      state.last = first;
+    }
+    while (state.last && target >= state.last.timestamp + state.last.duration) {
+      const item = await state.iterator!.next();
+      if (item.done) break;
+      state.last.close();
+      state.last = item.value;
+    }
+    const next = state.last;
+    if (
+      !next ||
+      next.duration <= 0 ||
+      target < next.timestamp ||
+      target >= next.timestamp + next.duration
+    ) {
       throw failure(
         'invalid-timing',
         `No source frame in ${path} at ${seconds} seconds`
       );
     }
-    state.last?.close();
-    state.last = next;
+    if (next.rotation !== 0 || next.flip) {
+      throw failure(
+        'unsupported-codec',
+        `Rotation or flip in ${path} is not rendered`
+      );
+    }
     return next;
   }
 
@@ -134,34 +176,65 @@ export class ProgramMedia {
     let begin = Number.POSITIVE_INFINITY;
     let end = start;
     let covered = 0;
-    for await (const sample of state.sink.samples(
-      start / state.rate,
-      stop / state.rate
-    )) {
-      try {
-        const first = Math.round(sample.timestamp * state.rate);
-        const from = Math.max(start, first);
-        const to = Math.min(stop, first + sample.numberOfFrames);
-        if (to <= from) continue;
-        const frames = to - from;
-        const offset = from - first;
-        const view = scratch.subarray(0, frames);
-        for (let channel = 0; channel < 2; channel++) {
-          // Mono reads plane 0 into both outputs: the viewer's mono-to-stereo up-mix.
-          sample.copyTo(view, {
-            planeIndex: state.channels === 1 ? 0 : channel,
-            format: 'f32-planar',
-            frameOffset: offset,
-            frameCount: frames,
-          });
-          planes[channel]!.set(view, from - start);
-        }
-        begin = Math.min(begin, from);
-        end = Math.max(end, to);
-        covered += frames;
-      } finally {
-        sample.close();
+    if (start < state.discardedBefore) {
+      await state.iterator?.return();
+      for (const sample of state.samples) sample.close();
+      state.samples = [];
+      state.iterator = null;
+      state.discardedBefore = 0;
+      state.ended = false;
+    }
+    state.iterator ??= state.sink.samples();
+    while (!state.ended) {
+      const last = state.samples[state.samples.length - 1];
+      if (
+        last &&
+        Math.round(last.timestamp * state.rate) + last.numberOfFrames >= stop
+      )
+        break;
+      const result = await state.iterator.next();
+      if (result.done) {
+        state.ended = true;
+        break;
       }
+      const sample = result.value;
+      const sampleEnd =
+        Math.round(sample.timestamp * state.rate) + sample.numberOfFrames;
+      if (sampleEnd <= start - state.rate) {
+        state.discardedBefore = Math.max(state.discardedBefore, sampleEnd);
+        sample.close();
+      } else {
+        state.samples.push(sample);
+      }
+    }
+    while (state.samples.length > 0) {
+      const first = state.samples[0]!;
+      const sampleEnd =
+        Math.round(first.timestamp * state.rate) + first.numberOfFrames;
+      if (sampleEnd > start - state.rate) break;
+      state.discardedBefore = Math.max(state.discardedBefore, sampleEnd);
+      state.samples.shift()!.close();
+    }
+    for (const sample of state.samples) {
+      const first = Math.round(sample.timestamp * state.rate);
+      const from = Math.max(start, first);
+      const to = Math.min(stop, first + sample.numberOfFrames);
+      if (to <= from) continue;
+      const frames = to - from;
+      const offset = from - first;
+      const view = scratch.subarray(0, frames);
+      for (let channel = 0; channel < 2; channel++) {
+        sample.copyTo(view, {
+          planeIndex: state.channels === 1 ? 0 : channel,
+          format: 'f32-planar',
+          frameOffset: offset,
+          frameCount: frames,
+        });
+        planes[channel]!.set(view, from - start);
+      }
+      begin = Math.min(begin, from);
+      end = Math.max(end, to);
+      covered += frames;
     }
     if (covered === 0) {
       return { left: planes[0]!, right: planes[1]!, begin: start, end: start };
@@ -178,7 +251,19 @@ export class ProgramMedia {
   dispose(): void {
     for (const entry of this.videos.values()) {
       void entry.then(
-        (state) => state.last?.close(),
+        (state) => {
+          state.last?.close();
+          void state.iterator?.return();
+        },
+        () => {}
+      );
+    }
+    for (const entry of this.audios.values()) {
+      void entry.then(
+        (state) => {
+          for (const sample of state.samples) sample.close();
+          void state.iterator?.return();
+        },
         () => {}
       );
     }
@@ -223,7 +308,21 @@ export class ProgramMedia {
         `The video codec in ${path} cannot be decoded by this browser`
       );
     }
-    return { sink: new VideoSampleSink(track), last: null };
+    const metrics = await track.computeFrameRateMetrics({
+      targetPacketCount: Infinity,
+    });
+    if (!metrics.frameRateIsConstant || !metrics.underlyingFrameRate) {
+      throw failure(
+        'invalid-timing',
+        `${path} has no certified constant video cadence`
+      );
+    }
+    return {
+      sink: new VideoSampleSink(track),
+      frameRate: metrics.underlyingFrameRate,
+      last: null,
+      iterator: null,
+    };
   }
 
   private async openAudio(path: string): Promise<AudioState> {
@@ -252,6 +351,10 @@ export class ProgramMedia {
       sink: new AudioSampleSink(track),
       rate: track.sampleRate,
       channels,
+      iterator: null,
+      samples: [],
+      discardedBefore: 0,
+      ended: false,
     };
   }
 
