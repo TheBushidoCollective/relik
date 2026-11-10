@@ -6,7 +6,8 @@
   "main": "./src/viewer.ts",
   "exports": {
     ".": "./src/viewer.ts",
-    "./build": "./build.ts"
+    "./build": "./build.ts",
+    "./program-render/build": "./src/program-render/build.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
