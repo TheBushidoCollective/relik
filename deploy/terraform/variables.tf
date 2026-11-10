@@ -4,6 +4,28 @@ variable "project_id" {
   nullable    = false
 }
 
+variable "wif_provider" {
+  description = "Workload Identity Federation provider resource name used by GitHub Actions."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$", var.wif_provider))
+    error_message = "wif_provider must be a full Workload Identity Federation provider resource name with a numeric project number."
+  }
+}
+
+variable "github_repository_id" {
+  description = "Immutable numeric GitHub repository ID allowed to impersonate the GCS proof identity."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_repository_id))
+    error_message = "github_repository_id must contain digits only."
+  }
+}
+
 variable "region" {
   description = "Cloud Run region for both origins."
   type        = string

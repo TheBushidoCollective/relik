@@ -68,3 +68,8 @@ output "app_service_account" {
   description = "Identity both Cloud Run services run as."
   value       = module.relic.app_service_account
 }
+
+output "gcs_proof_service_account" {
+  description = "Identity used for GCS proof runs."
+  value       = google_service_account.gcs_proof.email
+}
