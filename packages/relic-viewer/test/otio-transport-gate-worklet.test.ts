@@ -1,44 +1,59 @@
 import { expect, test } from 'bun:test';
 import type { OtioGateDecodeDiagnostic } from '../src/otio-transport-gate-state';
+
+type Message = Record<string, unknown>;
+type Processor = {
+  port: {
+    onmessage: ((event: { data: Message }) => void) | null;
+    messages: Message[];
+  };
+  process(
+    inputs: Float32Array[][],
+    outputs: Float32Array[][],
+    params: Record<string, Float32Array>
+  ): boolean;
+};
+type ProcessorClass = new (options: unknown) => Processor;
+
+let worklet: Promise<ProcessorClass> | null = null;
+/** Imports the worklet once. The module registers itself on import, and Bun caches the import. */
+const loadProcessor = (): Promise<ProcessorClass> => {
+  worklet ??= (async () => {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const originalProcessor = globals.AudioWorkletProcessor;
+    const originalRegister = globals.registerProcessor;
+    const registry: { processor?: ProcessorClass } = {};
+    globals.AudioWorkletProcessor = class {
+      port = {
+        onmessage: null,
+        messages: [] as Message[],
+        postMessage(value: Message) {
+          this.messages.push(value);
+        },
+      };
+    };
+    globals.registerProcessor = (_name: string, processor: ProcessorClass) => {
+      registry.processor = processor;
+    };
+    try {
+      // The worklet registers against the globals installed here; a static import runs too early.
+      await import('../src/otio-transport-gate-worklet');
+    } finally {
+      globals.AudioWorkletProcessor = originalProcessor;
+      globals.registerProcessor = originalRegister;
+    }
+    if (!registry.processor) throw new Error('processor was not registered');
+    return registry.processor;
+  })();
+  return worklet;
+};
+
 test('native render clock certifies promotions and silences a held ramp', async () => {
   const globals = globalThis as unknown as Record<string, unknown>;
-  const originalProcessor = globals.AudioWorkletProcessor;
-  const originalRegister = globals.registerProcessor;
   const originalFrame = globals.currentFrame;
   globals.currentFrame = 0;
-  type Message = Record<string, unknown>;
-  type Processor = {
-    port: {
-      onmessage: ((event: { data: Message }) => void) | null;
-      messages: Message[];
-    };
-    process(
-      inputs: Float32Array[][],
-      outputs: Float32Array[][],
-      params: Record<string, Float32Array>
-    ): boolean;
-  };
-  const registry: { processor?: new (options: unknown) => Processor } = {};
-  globals.AudioWorkletProcessor = class {
-    port = {
-      onmessage: null,
-      messages: [] as Message[],
-      postMessage(value: Message) {
-        this.messages.push(value);
-      },
-    };
-  };
-  globals.registerProcessor = (
-    _name: string,
-    processor: new (options: unknown) => Processor
-  ) => {
-    registry.processor = processor;
-  };
   try {
-    // The worklet registers against globals installed by this test; a static import runs too early.
-    await import('../src/otio-transport-gate-worklet');
-    const ProcessorClass = registry.processor;
-    if (!ProcessorClass) throw new Error('processor was not registered');
+    const ProcessorClass = await loadProcessor();
     const processor = new ProcessorClass({
       processorOptions: {
         clockEpoch: 1,
@@ -952,8 +967,249 @@ test('native render clock certifies promotions and silences a held ramp', async 
       observedFrame: RUNNING_START + 128,
     });
   } finally {
-    globals.AudioWorkletProcessor = originalProcessor;
-    globals.registerProcessor = originalRegister;
+    globals.currentFrame = originalFrame;
+  }
+});
+
+const FAULTS = ['clock-fault', 'protocol-fault', 'anchor-late'];
+const START = 256;
+const zeros = (length = 128) => new Float32Array(length);
+const source = (): Float32Array[] => [zeros().fill(0.5), zeros().fill(0.5)];
+/** Absolute carrier frames: the reference an anchored quantum is checked against. */
+const carrier = (start: number): Float32Array[] => [
+  Float32Array.from(
+    { length: 128 },
+    (_, i) => 1 + Math.floor((start + i) / 65536)
+  ),
+  Float32Array.from({ length: 128 }, (_, i) => (start + i) % 65536),
+];
+/** Clock lanes for one quantum. Frames are offsets from the bank's start frame, as the worklet decodes them. */
+const lanes = (bankStart: number, start: number, serial = 1) => ({
+  clockFrameA: Float32Array.from(
+    { length: 128 },
+    (_, i) => start + i - bankStart
+  ),
+  clockTagA: Float32Array.of(serial),
+  clockFrameB: zeros(),
+  clockTagB: Float32Array.of(0),
+});
+const silentLanes = () => ({
+  clockFrameA: zeros(),
+  clockTagA: zeros(1),
+  clockFrameB: zeros(),
+  clockTagB: zeros(1),
+});
+const step = (
+  instance: Processor,
+  inputs: Float32Array[][],
+  params: Record<string, Float32Array>
+) => {
+  const output = [zeros().fill(9), zeros().fill(9)];
+  return { alive: instance.process(inputs, [output], params), output };
+};
+const send = (instance: Processor, clockEpoch: number, message: Message) =>
+  instance.port.onmessage?.({
+    data: {
+      clockEpoch,
+      ...(message.type === 'arm' ? { slot: 0 } : {}),
+      ...message,
+    },
+  });
+const faults = (instance: Processor) =>
+  instance.port.messages.filter((message) =>
+    FAULTS.includes(String(message.type))
+  );
+
+test('a frozen start without a prestart budget anchors on its exact first quantum', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const originalFrame = globals.currentFrame;
+  globals.currentFrame = 0;
+  try {
+    const ProcessorClass = await loadProcessor();
+    const frozen = new ProcessorClass({
+      processorOptions: { clockEpoch: 11, initialFrame: 0 },
+    });
+    expect(step(frozen, [source(), carrier(0)], lanes(0, 0)).alive).toBe(true);
+    expect(step(frozen, [source(), carrier(128)], lanes(0, 128)).alive).toBe(
+      true
+    );
+    expect(
+      frozen.port.messages.find(
+        (message) => message.type === 'anchor-certified'
+      )
+    ).toMatchObject({ firstFrame: 0, lastCertifiedEnd: 256 });
+    expect(faults(frozen)).toEqual([]);
+
+    // A frozen start grants no prestart silence: silence before A is a late start.
+    const late = new ProcessorClass({
+      processorOptions: { clockEpoch: 12, initialFrame: 0 },
+    });
+    expect(step(late, [source(), []], silentLanes()).alive).toBe(false);
+    expect(
+      late.port.messages.find((message) => message.type === 'anchor-late')
+    ).toMatchObject({ budget: 0, prestartSamples: 128 });
+
+    // A budget that is present but malformed is still a protocol fault.
+    const malformed = new ProcessorClass({
+      processorOptions: {
+        clockEpoch: 13,
+        initialFrame: 0,
+        prestartBudgetFrames: -1,
+      },
+    });
+    expect(step(malformed, [source(), carrier(0)], lanes(0, 0)).alive).toBe(
+      false
+    );
+    expect(
+      malformed.port.messages.some(
+        (message) => message.type === 'protocol-fault'
+      )
+    ).toBe(true);
+  } finally {
+    globals.currentFrame = originalFrame;
+  }
+});
+
+test('a running start accepts absent or empty carrier silence before its exact anchor', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const originalFrame = globals.currentFrame;
+  globals.currentFrame = 0;
+  try {
+    const ProcessorClass = await loadProcessor();
+    const running = (clockEpoch: number) =>
+      new ProcessorClass({
+        processorOptions: {
+          clockEpoch,
+          initialFrame: START,
+          prestartBudgetFrames: 512,
+        },
+      });
+
+    // Four silent quanta, each with a different absent or empty carrier, spend the whole budget.
+    const silent = running(21);
+    const before: Float32Array[][][] = [
+      [source(), []],
+      [source()],
+      [source(), [zeros(0), zeros(0)]],
+      [source(), []],
+    ];
+    for (const inputs of before) {
+      const block = step(silent, inputs, silentLanes());
+      expect(block.alive).toBe(true);
+      expect(block.output).toEqual([zeros(), zeros()]);
+    }
+    expect(
+      step(silent, [source(), carrier(START)], lanes(START, START)).alive
+    ).toBe(true);
+    expect(
+      step(silent, [source(), carrier(START + 128)], lanes(START, START + 128))
+        .alive
+    ).toBe(true);
+    expect(
+      silent.port.messages.find(
+        (message) => message.type === 'anchor-certified'
+      )
+    ).toMatchObject({ firstFrame: START, lastCertifiedEnd: START + 256 });
+    expect(faults(silent)).toEqual([]);
+
+    // Late and corrupt controls after the anchor are still rejected.
+    send(silent, 21, {
+      type: 'arm',
+      generation: 1,
+      sequence: 1,
+      f0: START + 40,
+      throughFrame: START + 4096,
+    });
+    expect(
+      step(silent, [source(), carrier(START + 256)], lanes(START, START + 256))
+        .alive
+    ).toBe(true);
+    expect(
+      silent.port.messages.find(
+        (message) => message.type === 'arm' && message.accepted === false
+      )
+    ).toMatchObject({ reason: 'invalid or late arm' });
+    send(silent, 21, {
+      type: 'stop',
+      generation: 1,
+      sequence: 2,
+      stopFrame: START + 300,
+    });
+    send(silent, 21, {
+      type: 'stop',
+      generation: 1,
+      sequence: 3,
+      stopFrame: START + 300,
+    });
+    expect(
+      step(silent, [source(), carrier(START + 384)], lanes(START, START + 384))
+        .alive
+    ).toBe(false);
+    expect(
+      silent.port.messages.some((message) => message.type === 'protocol-fault')
+    ).toBe(true);
+
+    // Nonzero carrier before A is energy the anchor never permitted.
+    const loud = running(22);
+    expect(step(loud, [source(), carrier(0)], silentLanes()).alive).toBe(false);
+    const loudFault = loud.port.messages.find(
+      (message) => message.type === 'clock-fault'
+    );
+    expect(
+      (loudFault?.diagnostic as OtioGateDecodeDiagnostic | undefined)?.reason
+    ).toBe('carrier-before-anchor');
+
+    // A malformed carrier shape before A is a fault, not silence.
+    const shaped = running(23);
+    expect(step(shaped, [source(), [zeros()]], silentLanes()).alive).toBe(
+      false
+    );
+    expect(
+      shaped.port.messages.some((message) => message.type === 'clock-fault')
+    ).toBe(true);
+
+    // An anchor tag with no carrier at all is a fault, even though the carrier was empty before it.
+    const untagged = running(24);
+    expect(
+      step(untagged, [source(), []], {
+        ...silentLanes(),
+        clockTagA: Float32Array.of(1),
+      }).alive
+    ).toBe(false);
+    expect(
+      untagged.port.messages.some((message) => message.type === 'clock-fault')
+    ).toBe(true);
+
+    // A tagged quantum that starts past A after silence is a late start.
+    const late = running(25);
+    expect(step(late, [source(), []], silentLanes()).alive).toBe(true);
+    expect(
+      step(late, [source(), carrier(START + 128)], lanes(START, START + 128))
+        .alive
+    ).toBe(false);
+    expect(
+      late.port.messages.find((message) => message.type === 'anchor-late')
+    ).toMatchObject({ firstFrame: START, observedFrame: START + 128 });
+
+    // Empty silence spends the budget: the fifth quantum is over 512 prestart frames.
+    const over = running(26);
+    for (let i = 0; i < 4; i++)
+      expect(step(over, [source(), []], silentLanes()).alive).toBe(true);
+    expect(step(over, [source(), []], silentLanes()).alive).toBe(false);
+    expect(
+      over.port.messages.find((message) => message.type === 'anchor-late')
+    ).toMatchObject({ prestartSamples: 640, budget: 512 });
+
+    // The exact anchor still checks the carrier after empty prestart: an off-by-one carrier faults.
+    const off = running(27);
+    expect(step(off, [source(), []], silentLanes()).alive).toBe(true);
+    expect(
+      step(off, [source(), carrier(START + 1)], lanes(START, START)).alive
+    ).toBe(false);
+    expect(
+      off.port.messages.some((message) => message.type === 'clock-fault')
+    ).toBe(true);
+  } finally {
     globals.currentFrame = originalFrame;
   }
 });

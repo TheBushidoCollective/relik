@@ -136,6 +136,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
     const start = 'initialFrame' in config ? config.initialFrame : undefined;
     const proofSerial =
       'proofInitialSerial' in config ? config.proofInitialSerial : undefined;
+    // Only a running start carries a prestart budget. A frozen start omits it: no silence precedes it, so the budget is 0.
     const budget =
       'prestartBudgetFrames' in config
         ? config.prestartBudgetFrames
@@ -184,7 +185,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       !integer(start) ||
       initial + SPAN > 2 ** 40 ||
       (proofSerial !== undefined && proofSerial !== 2 ** 24 - 1) ||
-      !integer(budget)
+      (budget !== undefined && !integer(budget))
     )
       this.overflow = true;
     this.port.onmessage = (event: MessageEvent<unknown>) => {
@@ -458,8 +459,9 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
   }
 
   /**
-   * Classifies a block before the first tagged quantum. `silent` means every bank lane and both
-   * carrier channels are exactly zero. Anything else goes through the strict tagged decode.
+   * Classifies a block before the first tagged quantum. `silent` means every bank lane is exactly
+   * zero and the carrier is absent, empty, or exactly zero on both channels. Anything else goes
+   * through the strict tagged decode.
    */
   private prestartKind(
     inputs: Float32Array[][],
@@ -476,10 +478,12 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       if (!lane || lane.some((value) => value !== 0)) return 'tagged';
     }
     const carrier = inputs[1];
-    const left = carrier?.[0];
-    const right = carrier?.[1];
+    // An unconnected or not-yet-started source reaches the worklet as an absent or empty input.
+    if (!carrier || carrier.every((channel) => channel.length === 0))
+      return 'silent';
+    const left = carrier[0];
+    const right = carrier[1];
     if (
-      !carrier ||
       carrier.length !== 2 ||
       !left ||
       !right ||
