@@ -10664,6 +10664,12 @@ function assertLookaheadFrontiers(
         typeof event['descriptorReady'] === 'boolean',
       'frontier lacks independent lookahead evidence'
     );
+    // Successor handoff frontiers are governed by assertSuccessorPolicy (planner
+    // decision): they are exempt from the ordinary I1 gap, not from its window.
+    if (event['frontierKind'] === 'handoff') {
+      checked++;
+      continue;
+    }
     const terminal = P === S;
     if (!terminal)
       assert.ok(
@@ -10695,6 +10701,60 @@ function assertLookaheadFrontiers(
       );
     }
     checked++;
+  }
+  return checked;
+}
+
+// Successor policy (planner decision). A successor's first arm may only follow a
+// predecessor closure that reported descriptorReady, and it must land inside that
+// predecessor's descriptor window (B_old, min(B_old+K, E)]. In a healthy-decode run it
+// must additionally keep the full reserve P-B >= K. A closure that was not ready
+// must never be followed by a successor epoch.
+function assertSuccessorPolicy(
+  events: readonly Record<string, unknown>[],
+  healthy: boolean
+): number {
+  let closure: Record<string, unknown> | null = null;
+  let checked = 0;
+  for (const event of events) {
+    if (event['event'] === 'recovery-render-closed') {
+      const stop = event['compositionStop'] as { value?: unknown } | undefined;
+      assert.ok(
+        typeof event['descriptorReady'] === 'boolean' &&
+          Number.isSafeInteger(Number(event['preparedThrough'])) &&
+          Number.isSafeInteger(Number(event['descriptorCoverageEnd'])) &&
+          Number.isSafeInteger(Number(stop?.value)),
+        'closure lacks the P, B and readiness receipt'
+      );
+      closure = event;
+      continue;
+    }
+    if (event['event'] === 'frontier' && event['frontierKind'] === 'handoff') {
+      assert.ok(closure, 'successor handoff has no predecessor closure');
+      assert.equal(
+        closure['descriptorReady'],
+        true,
+        'successor emitted after a non-ready closure'
+      );
+      const Bold = Number(
+        (closure['compositionStop'] as { value: number }).value
+      );
+      const E = Number(closure['descriptorCoverageEnd']);
+      const composition = event['compositionThrough'] as { value: number };
+      const Bnew = Number(composition.value);
+      const P = Number(event['preparedThrough']);
+      assert.ok(
+        Bnew > Bold && Bnew <= Math.min(Bold + LOOKAHEAD_FRAMES, E),
+        `successor ${Bnew} outside predecessor window (${Bold}, ${Math.min(Bold + LOOKAHEAD_FRAMES, E)}]`
+      );
+      if (healthy)
+        assert.ok(
+          P - Bnew >= LOOKAHEAD_FRAMES,
+          `healthy successor ${Bnew} lacks its reserve below P=${P}`
+        );
+      closure = null;
+      checked++;
+    }
   }
   return checked;
 }
@@ -12749,6 +12809,10 @@ async function assertVideoReservationInvalidation(
     closeFrame,
     sampleRate
   );
+  assert.ok(
+    assertSuccessorPolicy(futureEvents, true) > 0,
+    'healthy video recovery produced no checked successor handoff'
+  );
   const heldDrain = futureEvents.find(
     (event) =>
       event['event'] === 'recovery-old-drain-held' &&
@@ -14330,6 +14394,96 @@ async function runScheduledPcmProof(
       /composition-coordinate/,
       'checker accepted a frontier in another sample rate'
     );
+    // Successor-policy controls (synthetic, deterministic). The planner rule is
+    // exercised on every polarity: a valid successor, one beyond B_old+K, one after
+    // a non-ready closure, a healthy successor without reserve, and an ordinary
+    // extension below K.
+    const syntheticB = 100000;
+    const syntheticClosure = (ready: boolean): Record<string, unknown> => ({
+      event: 'recovery-render-closed',
+      compositionStop: { value: syntheticB, rate },
+      preparedThrough: syntheticB + LOOKAHEAD_FRAMES + 500,
+      descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES + 200,
+      descriptorReady: ready,
+    });
+    const syntheticHandoff = (
+      offset: number,
+      reserve: number
+    ): Record<string, unknown> => ({
+      event: 'frontier',
+      frontierKind: 'handoff',
+      compositionThrough: { value: syntheticB + offset, rate },
+      contextFrameThrough: syntheticB + offset,
+      preparedThrough: syntheticB + offset + reserve,
+      scopeEndFrame: syntheticB + 10 * LOOKAHEAD_FRAMES,
+      reserveFrames: LOOKAHEAD_FRAMES,
+      decodedCap: syntheticB + offset + reserve - LOOKAHEAD_FRAMES,
+      descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES + 200,
+      descriptorReady: true,
+    });
+    assert.equal(
+      assertSuccessorPolicy(
+        [syntheticClosure(true), syntheticHandoff(100, LOOKAHEAD_FRAMES + 50)],
+        true
+      ),
+      1,
+      'valid successor rejected'
+    );
+    assert.throws(
+      () =>
+        assertSuccessorPolicy(
+          [
+            syntheticClosure(true),
+            syntheticHandoff(LOOKAHEAD_FRAMES + 1, LOOKAHEAD_FRAMES + 50),
+          ],
+          false
+        ),
+      /predecessor window/,
+      'successor beyond B_old+K was accepted'
+    );
+    assert.throws(
+      () =>
+        assertSuccessorPolicy(
+          [
+            syntheticClosure(false),
+            syntheticHandoff(100, LOOKAHEAD_FRAMES + 50),
+          ],
+          false
+        ),
+      /non-ready closure/,
+      'successor after a non-ready closure was accepted'
+    );
+    assert.throws(
+      () =>
+        assertSuccessorPolicy(
+          [syntheticClosure(true), syntheticHandoff(100, LOOKAHEAD_FRAMES - 1)],
+          true
+        ),
+      /lacks its reserve/,
+      'healthy successor without reserve was accepted'
+    );
+    assert.throws(
+      () =>
+        assertLookaheadFrontiers(
+          [
+            {
+              event: 'frontier',
+              frontierKind: 'extension',
+              compositionThrough: { value: syntheticB, rate },
+              contextFrameThrough: syntheticB,
+              preparedThrough: syntheticB + LOOKAHEAD_FRAMES - 1,
+              scopeEndFrame: syntheticB + 10 * LOOKAHEAD_FRAMES,
+              reserveFrames: LOOKAHEAD_FRAMES,
+              decodedCap: syntheticB - 1,
+              descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES,
+              descriptorReady: true,
+            },
+          ],
+          rate
+        ),
+      /below K=/,
+      'ordinary extension below K was accepted'
+    );
     assert.ok(
       pcmEvents.filter((event) => event['event'] === 'scheduled').length > 1,
       'scheduled queue did not replenish'
@@ -14434,6 +14588,10 @@ async function runScheduledPcmProof(
       assert.ok(
         assertLookaheadFrontiers(recoveryEvents, rate) > 0,
         'recovery run committed no lookahead-checked frontier'
+      );
+      assert.ok(
+        assertSuccessorPolicy(recoveryEvents, false) > 0,
+        'audio recovery produced no checked successor handoff'
       );
       const firstEpoch = recoveryEvents.find(
         (event) => event['event'] === 'epoch'
@@ -15360,6 +15518,190 @@ async function runScheduledPcmProof(
         }
       }
     }
+    async function runHeldPullSequences(): Promise<void> {
+      const runHeld = async (label: string, releaseAfterClosure: boolean) => {
+        const isolated = await openBrowser(url, sessionToken, {
+          label: `${label}-${rate}`,
+          recordProofTrace: true,
+          proofSampleRate: rate,
+        });
+        try {
+          await waitReady(isolated);
+          const result = await isolated.evaluate<
+            MovingTrace & {
+              held: number;
+              released: number;
+              releaseAt: number;
+              playing: string;
+              buffering: string;
+              diagnostic: string;
+            }
+          >(`(async()=>{
+            const sleep=ms=>{const {promise,resolve}=Promise.withResolvers();setTimeout(resolve,ms);return promise;};
+            const root=document.querySelector('.otio-view'),button=document.querySelector('button.otio-play');
+            if(!(root instanceof HTMLElement)||!(button instanceof HTMLButtonElement)) throw new Error('held-pull controls missing');
+            const proof=globalThis.__otioProofTrace;
+            const start=await proof.start(),playEdge=proof.playRequest();
+            button.click(); await sleep(600);
+            proof.holdPcmResponses(true);
+            const until=performance.now()+4000;
+            while(!proof.hasPcmEvent('recovery-render-closed') && performance.now()<until) await sleep(10);
+            const held=proof.heldPcmCount();
+            ${releaseAfterClosure ? '' : 'await sleep(2500);'}
+            const releaseAt=performance.now();
+            const released=proof.holdPcmResponses(false);
+            await sleep(${releaseAfterClosure ? 1500 : 400});
+            const playing=root.dataset.playing ?? '', buffering=root.dataset.buffering ?? '';
+            const diagnostic=Array.from(document.querySelectorAll('.otio-diagnostic'))
+              .filter(node=>{const style=getComputedStyle(node); return node.getClientRects().length>0 &&
+                style.visibility!=='hidden' && style.display!=='none' && Number(style.opacity)>0;})
+              .map(node=>node.textContent ?? '').join(' ');
+            const captured=await proof.stop();
+            if(root.dataset.playing==='true') button.click();
+            return {start,playEdge,trace:captured,held,released,releaseAt,playing,buffering,diagnostic};
+          })()`);
+          await writeFile(
+            join(shotDir, `${label}-${rate}.json`),
+            JSON.stringify({ provenance, capture: result })
+          );
+          assert.ok(
+            result.held > 0 &&
+              !result.trace.audioOverflow &&
+              !result.trace.eventsOverflow,
+            `${label} did not hold real PCM responses`
+          );
+          assert.ok(
+            result.trace.witness,
+            `${label} lacks the independent carrier witness`
+          );
+          const events = result.trace.events
+            .filter((entry) => entry.kind === 'scheduled-pcm')
+            .map((entry) => ({
+              ...(entry.value as Record<string, unknown>),
+              timestamp: entry.timestamp,
+            }));
+          const closures = events
+            .map((event, index) => ({ event, index }))
+            .filter(({ event }) => event['event'] === 'recovery-render-closed');
+          assert.ok(
+            closures.length >= 1,
+            `${label} never acknowledged a render closure`
+          );
+          const first = closures[0]!;
+          assert.equal(
+            first.event['descriptorReady'],
+            true,
+            `${label} first closure was not ready`
+          );
+          const handoffAt = events.findIndex(
+            (event, index) =>
+              index > first.index &&
+              event['event'] === 'frontier' &&
+              event['frontierKind'] === 'handoff'
+          );
+          assert.ok(
+            handoffAt > first.index,
+            `${label} produced no successor handoff`
+          );
+          assertSuccessorPolicy(events, false);
+          assertLookaheadFrontiers(events, rate);
+          if (!releaseAfterClosure) {
+            assert.ok(
+              closures.length >= 2,
+              'continued hold did not reach a second closure'
+            );
+            const second = closures[1]!;
+            assert.ok(
+              events
+                .slice(first.index + 1, second.index)
+                .filter((event) => event['event'] === 'epoch').length === 1,
+              'first ready recovery did not admit exactly one successor epoch'
+            );
+            assert.equal(
+              second.event['descriptorReady'],
+              false,
+              'second closure claimed a ready descriptor'
+            );
+            const refusal = events.findIndex(
+              (event, index) =>
+                index > second.index &&
+                event['event'] === 'recovery-candidate-failed' &&
+                event['code'] === 'descriptor-not-ready'
+            );
+            assert.ok(
+              refusal > second.index,
+              'no-reserve closure was not visibly refused'
+            );
+            assert.ok(
+              !events
+                .slice(second.index + 1)
+                .some((event) => event['event'] === 'epoch'),
+              'no-reserve closure admitted a second epoch'
+            );
+            assert.ok(
+              events
+                .slice(refusal + 1)
+                .some((event) => event['event'] === 'error'),
+              'no-reserve refusal did not stop playback visibly'
+            );
+            assert.equal(
+              result.playing,
+              'false',
+              'no-reserve refusal left playback active'
+            );
+            assert.match(
+              result.diagnostic,
+              /Scheduled audio stopped:/,
+              'no-reserve refusal was not rendered'
+            );
+            assertPcmSilence(
+              result.trace,
+              Number(second.event['boundaryFrame']),
+              lastCarrierEnd(result.trace),
+              `${label} emitted PCM after the no-reserve refusal`
+            );
+          } else {
+            const releaseTime = result.releaseAt;
+            const handoff = events[handoffAt]!;
+            assert.ok(
+              releaseTime <= Number(handoff['timestamp']),
+              'pulls were not released before the successor frontier; ordering not reached'
+            );
+            assert.ok(
+              !events.some(
+                (event) =>
+                  event['event'] === 'recovery-candidate-failed' &&
+                  event['code'] === 'descriptor-not-ready'
+              ),
+              'released run still refused a descriptor'
+            );
+            assert.ok(
+              !events.some((event) => event['event'] === 'error'),
+              'released run stopped playback'
+            );
+            assert.equal(
+              result.playing,
+              'true',
+              'released run did not keep playing'
+            );
+            assert.ok(
+              events
+                .slice(handoffAt + 1)
+                .some(
+                  (event) =>
+                    event['event'] === 'frontier' &&
+                    event['frontierKind'] === 'extension'
+                ),
+              'no ordinary I1 extension followed the released successor'
+            );
+          }
+        } finally {
+          await isolated.close();
+        }
+      };
+      await runHeld('held-first-ready-then-no-reserve', false);
+      await runHeld('held-released-before-successor', true);
+    }
     async function runAnchorControls(): Promise<void> {
       for (const kind of [
         'source-offset',
@@ -15488,6 +15830,7 @@ async function runScheduledPcmProof(
     if (rate === 44100) {
       await runRecoveryProof();
       await runRecoveryFaults();
+      await runHeldPullSequences();
       await runAnchorControls();
       return;
     }
@@ -15993,6 +16336,7 @@ async function runScheduledPcmProof(
       );
     }
     await runRecoveryFaults();
+    await runHeldPullSequences();
     await runAnchorControls();
     for (const kind of ['hold', 'wrong-tag'] as const) {
       const isolated = await openBrowser(url, sessionToken, {
