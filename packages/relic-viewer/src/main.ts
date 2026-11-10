@@ -1519,7 +1519,7 @@ export function renderPdfView(view: ReadyView): HTMLElement {
     .then(async ({ mountPdf }) => {
       if (cleanedUp || wrapper.isConnected === false) return;
       disposePdf = await mountPdf(wrapper, view.content, view.filename);
-      if (cleanedUp || wrapper.isConnected === false) disposePdf();
+      if (cleanedUp || !wrapper.isConnected) disposePdf();
     })
     .catch(() => {
       if (cleanedUp || wrapper.isConnected === false) return;

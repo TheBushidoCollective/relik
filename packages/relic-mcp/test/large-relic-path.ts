@@ -249,7 +249,7 @@ async function callMcp(
     RELIC_CHROME_PATH: 'none',
     RELIC_MCP_HTTP: '0',
   };
-  const child = Bun.spawn([clientNode, clientBundle], {
+  const child = Bun.spawn([clientNode!, clientBundle], {
     cwd: scratch,
     env,
     stdin: 'pipe',
@@ -486,8 +486,8 @@ try {
 
   browser = await ProofBrowser.start(
     scratch,
-    service.port,
-    contentService.port
+    service.port!,
+    contentService.port!
   );
   const canceled = await browser.page(media.url);
   await browser.waitFor(

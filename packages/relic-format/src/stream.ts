@@ -121,7 +121,9 @@ export async function readRelicEnvelope(
     key,
     {
       objectLength: options.objectLength,
-      fragmentVersion: options.fragmentVersion,
+      ...(options.fragmentVersion === undefined
+        ? {}
+        : { fragmentVersion: options.fragmentVersion }),
       maxContentBytes: PLAINTEXT_CAP_BYTES,
       onPrefix(value) {
         prefix = value;
