@@ -323,7 +323,7 @@ export interface OtioPcmScheduleRequest {
 interface PcmOwnedSource {
   source: AudioBufferSourceNode;
   nodes: GainNode[];
-  bytes: number;
+  charge: PcmByteCharge;
   started: boolean;
   firstFrame: number;
   naturalEnd: number;
@@ -337,8 +337,210 @@ export interface OtioPcmPrepared {
   cancel(): void;
 }
 
+/** Frames copied exactly at one composition boundary by restage. */
+export const OTIO_PCM_BOUNDARY_COPY_FRAMES = 4096;
+
+/**
+ * Byte credit with one owner at a time. Only the current owner can release it,
+ * so a holder that has been superseded (a source ending late, for instance)
+ * changes nothing.
+ */
+class PcmByteCharge {
+  private owner: object | null;
+  private held: number;
+
+  constructor(
+    private readonly budget: OtioPcmBudget,
+    bytes: number,
+    owner: object
+  ) {
+    this.owner = owner;
+    this.held = bytes;
+  }
+
+  move(from: object, to: object): void {
+    if (this.owner !== from) throw new Error('PCM byte charge owner mismatch');
+    this.owner = to;
+  }
+
+  release(by: object): void {
+    if (this.owner !== by) return;
+    this.owner = null;
+    const bytes = this.held;
+    this.held = 0;
+    this.budget.releaseBytes(bytes);
+  }
+}
+
+interface RetainedPcm {
+  readonly start: number;
+  readonly end: number;
+  readonly planes: readonly Float32Array[];
+  readonly charge: PcmByteCharge;
+}
+
+interface RetainedLane {
+  blocks: RetainedPcm[];
+  channels: number;
+}
+
+function blocksOverlap(
+  blocks: readonly RetainedPcm[],
+  start: number,
+  end: number
+): boolean {
+  return blocks.some((block) => start < block.end && block.start < end);
+}
+
+/**
+ * Decoded PCM kept per ledger key and composition frame. A key is one plan
+ * occurrence: overlap is rejected only within a key, so distinct plans may share
+ * composition frames. Blocks outlive the sources that played them, so a
+ * successor restages from audio already decoded rather than decoding it again.
+ * Every block's byte charge has exactly one owner, the ledger.
+ */
+class OtioPcmLedger {
+  private lanes = new Map<string, RetainedLane>();
+  private closed = false;
+
+  get released(): boolean {
+    return this.closed;
+  }
+
+  channelCount(ledgerKey: string): number {
+    return this.lanes.get(ledgerKey)?.channels ?? 0;
+  }
+
+  retain(
+    ledgerKey: string,
+    start: number,
+    planes: readonly Float32Array[],
+    from: object,
+    charge: PcmByteCharge
+  ): void {
+    const count = planes[0]?.length ?? 0;
+    const end = start + count;
+    const existing = this.lanes.get(ledgerKey);
+    if (
+      this.closed ||
+      ledgerKey === '' ||
+      !Number.isSafeInteger(start) ||
+      start < 0 ||
+      !Number.isSafeInteger(end) ||
+      count <= 0 ||
+      planes.length < 1 ||
+      (existing !== undefined && planes.length !== existing.channels) ||
+      (existing !== undefined && blocksOverlap(existing.blocks, start, end))
+    )
+      throw new Error('Invalid PCM ledger block');
+    charge.move(from, this);
+    const lane = existing ?? { blocks: [], channels: planes.length };
+    const at = lane.blocks.findIndex((other) => other.start > start);
+    lane.blocks.splice(at === -1 ? lane.blocks.length : at, 0, {
+      start,
+      end,
+      planes,
+      charge,
+    });
+    this.lanes.set(ledgerKey, lane);
+  }
+
+  /** Exclusive end of contiguous retained coverage for a key, from `from`. */
+  coveredThrough(ledgerKey: string, from: number): number {
+    const lane = this.lanes.get(ledgerKey);
+    if (this.closed || lane === undefined) return from;
+    let cursor = from;
+    for (const block of lane.blocks) {
+      if (block.end <= cursor) continue;
+      if (block.start > cursor) break;
+      cursor = block.end;
+    }
+    return cursor;
+  }
+
+  covers(ledgerKey: string, start: number, end: number): boolean {
+    return this.coveredThrough(ledgerKey, start) >= end;
+  }
+
+  /** Exact frame-for-frame copy of a window that must be fully retained. */
+  copy(ledgerKey: string, start: number, frameCount: number): Float32Array[] {
+    if (this.closed) throw new Error('PCM ledger released');
+    const lane = this.lanes.get(ledgerKey);
+    const end = start + frameCount;
+    if (lane === undefined || !this.covers(ledgerKey, start, end))
+      throw new Error('PCM ledger coverage short');
+    const out = Array.from(
+      { length: lane.channels },
+      () => new Float32Array(frameCount)
+    );
+    let cursor = start;
+    for (const block of lane.blocks) {
+      if (cursor === end) break;
+      if (block.end <= cursor) continue;
+      const take = Math.min(block.end, end) - cursor;
+      const from = cursor - block.start;
+      out.forEach((plane, channel) => {
+        plane.set(
+          block.planes[channel]!.subarray(from, from + take),
+          cursor - start
+        );
+      });
+      cursor += take;
+    }
+    return out;
+  }
+
+  /** Moves every key's blocks and charges to `next` in one step. */
+  handOffTo(next: OtioPcmLedger): void {
+    if (this.closed || next.closed)
+      throw new Error('PCM ledger handoff on a released ledger');
+    for (const [key, lane] of this.lanes) {
+      const target = next.lanes.get(key);
+      if (target === undefined) continue;
+      if (target.channels !== lane.channels)
+        throw new Error('PCM ledger channel mismatch');
+      for (const block of lane.blocks)
+        if (blocksOverlap(target.blocks, block.start, block.end))
+          throw new Error('PCM ledger overlap on handoff');
+    }
+    for (const lane of this.lanes.values())
+      for (const block of lane.blocks) block.charge.move(this, next);
+    for (const [key, lane] of this.lanes) {
+      const target = next.lanes.get(key);
+      if (target === undefined) next.lanes.set(key, lane);
+      else
+        target.blocks = [...target.blocks, ...lane.blocks].sort(
+          (a, b) => a.start - b.start
+        );
+    }
+    this.lanes = new Map();
+    this.closed = true;
+  }
+
+  release(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const lane of this.lanes.values())
+      for (const block of lane.blocks) block.charge.release(this);
+    this.lanes = new Map();
+  }
+
+  /** Frees one key's blocks that end at or before `frame`. */
+  retireBefore(ledgerKey: string, frame: number): void {
+    const lane = this.lanes.get(ledgerKey);
+    if (this.closed || lane === undefined) return;
+    const kept: RetainedPcm[] = [];
+    for (const block of lane.blocks) {
+      if (block.end <= frame) block.charge.release(this);
+      else kept.push(block);
+    }
+    lane.blocks = kept;
+  }
+}
+
 export class OtioPcmScheduler {
   private readonly sources = new Set<PcmOwnedSource>();
+  private readonly ledger = new OtioPcmLedger();
   private closed = false;
   private retirementNotified = false;
   private drain: {
@@ -365,8 +567,10 @@ export class OtioPcmScheduler {
     planes: Float32Array[];
     gainFactorCount: number;
     destination?: AudioNode;
+    /** When set, the decoded planes are retained under this key and range. */
+    retain?: { ledgerKey: string; compositionStartFrame: number };
   }): OtioPcmPrepared {
-    const { planes, gainFactorCount } = request;
+    const { planes, gainFactorCount, retain } = request;
     const count = planes[0]?.length ?? 0,
       rate = this.context.sampleRate;
     if (
@@ -374,6 +578,10 @@ export class OtioPcmScheduler {
       request.generation !== this.generation ||
       !Number.isSafeInteger(gainFactorCount) ||
       gainFactorCount < 0 ||
+      (retain !== undefined &&
+        (retain.ledgerKey === '' ||
+          !Number.isSafeInteger(retain.compositionStartFrame) ||
+          retain.compositionStartFrame < 0)) ||
       count <= 0 ||
       count > Math.floor(rate * OTIO_PCM_MAX_HORIZON_SECONDS) ||
       planes.length < 1 ||
@@ -388,23 +596,137 @@ export class OtioPcmScheduler {
     )
       throw new Error('Invalid PCM preparation request');
     const bytes = count * planes.length * 4;
-    this.budget.reserveNodes(1 + gainFactorCount);
+    this.budget.reserveBytes(bytes);
+    return this.admit({
+      planes,
+      bytes,
+      gainFactorCount,
+      destination: request.destination,
+      retain,
+    });
+  }
+
+  /**
+   * Copies an exact window of one key's retained PCM into an unstarted source
+   * owned by `target`. This scheduler may be the predecessor, so a successor can
+   * restage from a ledger it has not yet inherited. Throws, with no budget
+   * change, if the window is not fully retained or the budgets differ.
+   */
+  restage(request: {
+    target: OtioPcmScheduler;
+    generation: number;
+    ledgerKey: string;
+    compositionStartFrame: number;
+    frameCount: number;
+    gainFactorCount: number;
+    destination?: AudioNode;
+  }): OtioPcmPrepared {
+    const {
+      target,
+      ledgerKey,
+      compositionStartFrame: start,
+      frameCount,
+      gainFactorCount,
+    } = request;
+    if (
+      target.closed ||
+      request.generation !== target.generation ||
+      target.budget !== this.budget ||
+      ledgerKey === '' ||
+      !Number.isSafeInteger(start) ||
+      start < 0 ||
+      !Number.isSafeInteger(frameCount) ||
+      frameCount <= 0 ||
+      frameCount > OTIO_PCM_BOUNDARY_COPY_FRAMES ||
+      !Number.isSafeInteger(gainFactorCount) ||
+      gainFactorCount < 0
+    )
+      throw new Error('Invalid PCM restage request');
+    if (this.ledger.released) throw new Error('PCM ledger released');
+    if (!this.ledger.covers(ledgerKey, start, start + frameCount))
+      throw new Error('PCM ledger coverage short');
+    const bytes = frameCount * this.ledger.channelCount(ledgerKey) * 4;
+    this.budget.reserveBytes(bytes);
+    let planes: Float32Array[];
     try {
-      this.budget.reserveBytes(bytes);
+      planes = this.ledger.copy(ledgerKey, start, frameCount);
     } catch (error) {
-      this.budget.releaseNodes(1 + gainFactorCount);
+      this.budget.releaseBytes(bytes);
       throw error;
     }
+    return target.admit({
+      planes,
+      bytes,
+      gainFactorCount,
+      destination: request.destination,
+      retain: undefined,
+    });
+  }
+
+  /**
+   * Moves this scheduler's retained PCM and byte charges, for every ledger key,
+   * to `successor`. Requires this scheduler closed by seal or stopAtFrame. A
+   * cancelled ledger is already released and cannot be handed off.
+   */
+  handOffLedger(successor: OtioPcmScheduler): void {
+    if (
+      successor === this ||
+      successor.closed ||
+      successor.generation <= this.generation
+    )
+      throw new Error('Invalid PCM ledger successor');
+    if (!this.closed)
+      throw new Error('PCM ledger handoff before predecessor closure');
+    this.ledger.handOffTo(successor.ledger);
+  }
+
+  /**
+   * Closes admission without scheduling a stop. Live sources keep playing to
+   * their natural end, and their charges stay owned by whoever holds them.
+   */
+  seal(): void {
+    this.closed = true;
+  }
+
+  /** Frees one key's retained PCM that ends at or before `compositionFrame`. */
+  retireRetainedBefore(ledgerKey: string, compositionFrame: number): void {
+    this.ledger.retireBefore(ledgerKey, compositionFrame);
+  }
+
+  /** Exclusive end of contiguous retained PCM for `ledgerKey` from `startFrame`. */
+  coveredThrough(ledgerKey: string, startFrame: number): number {
+    return this.ledger.coveredThrough(ledgerKey, startFrame);
+  }
+
+  /**
+   * Builds the audio graph for planes whose bytes were already reserved by the
+   * caller. On failure the caller's reservation is returned.
+   */
+  private admit(args: {
+    planes: readonly Float32Array[];
+    bytes: number;
+    gainFactorCount: number;
+    destination: AudioNode | undefined;
+    retain: { ledgerKey: string; compositionStartFrame: number } | undefined;
+  }): OtioPcmPrepared {
+    const { planes, bytes, gainFactorCount, destination } = args;
+    const count = planes[0]?.length ?? 0,
+      rate = this.context.sampleRate;
+    let nodesReserved = false;
     let source: AudioBufferSourceNode | undefined;
+    let charge: PcmByteCharge | undefined;
     const nodes: GainNode[] = [];
     let owned: PcmOwnedSource;
     try {
+      this.budget.reserveNodes(1 + gainFactorCount);
+      nodesReserved = true;
       const buffer = this.context.createBuffer(planes.length, count, rate);
       planes.forEach((plane, channel) => {
         buffer.copyToChannel(plane as Float32Array<ArrayBuffer>, channel);
       });
       source = this.context.createBufferSource();
       source.buffer = buffer;
+      charge = new PcmByteCharge(this.budget, bytes, source);
       let previous: AudioNode = source;
       for (let i = 0; i < gainFactorCount; i++) {
         const gain = this.context.createGain();
@@ -412,22 +734,32 @@ export class OtioPcmScheduler {
         previous.connect(gain);
         previous = gain;
       }
-      previous.connect(request.destination ?? this.masterGain);
+      previous.connect(destination ?? this.masterGain);
       owned = {
         source,
         nodes,
-        bytes,
+        charge,
         started: false,
         firstFrame: 0,
         naturalEnd: 0,
       };
+      if (args.retain !== undefined)
+        this.ledger.retain(
+          args.retain.ledgerKey,
+          args.retain.compositionStartFrame,
+          planes,
+          source,
+          charge
+        );
       this.sources.add(owned);
-      source.onended = () => this.release(owned);
+      const record = owned;
+      source.onended = () => this.release(record);
     } catch (error) {
       source?.disconnect();
       for (const node of nodes) node.disconnect();
-      this.budget.releaseBytes(bytes);
-      this.budget.releaseNodes(1 + gainFactorCount);
+      if (charge && source) charge.release(source);
+      else this.budget.releaseBytes(bytes);
+      if (nodesReserved) this.budget.releaseNodes(1 + gainFactorCount);
       throw error;
     }
     return {
@@ -538,7 +870,7 @@ export class OtioPcmScheduler {
     owned.source.onended = null;
     owned.source.disconnect();
     for (const node of owned.nodes) node.disconnect();
-    this.budget.releaseBytes(owned.bytes);
+    owned.charge.release(owned.source);
     this.budget.releaseNodes(1 + owned.nodes.length);
     if (this.sources.size === 0) {
       this.drain?.resolve();
@@ -589,6 +921,7 @@ export class OtioPcmScheduler {
 
   cancel(): void {
     this.closed = true;
+    this.ledger.release();
     for (const owned of this.sources) {
       if (!owned.started) this.release(owned);
       else {
@@ -602,6 +935,7 @@ export class OtioPcmScheduler {
   /** Caller must have observed successful closure of this scheduler's owned context. */
   contextClosed(): void {
     this.closed = true;
+    this.ledger.release();
     for (const owned of this.sources) this.release(owned);
     this.notifyRetired();
   }
