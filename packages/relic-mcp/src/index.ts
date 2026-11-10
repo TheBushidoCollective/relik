@@ -31,7 +31,10 @@ import {
   programPolicyFrom,
   programProfileSourceFrom,
 } from './program/policy.ts';
-import { chromeProgramRenderer } from './program/render.ts';
+import {
+  chromeProgramRenderer,
+  installProgramSignalCleanup,
+} from './program/render.ts';
 
 // Node 18 exposes Web Crypto through node:crypto without a global binding.
 if (typeof globalThis.crypto === 'undefined') {
@@ -51,6 +54,7 @@ process.on('unhandledRejection', (err) => {
   process.stderr.write(`UNHANDLED REJECTION IN RELIC-MCP: ${stack}\n`);
   process.exit(1);
 });
+installProgramSignalCleanup();
 
 // Subcommands are handled before anything that needs configuration, so
 // `--help` works on a machine that has never set an origin.

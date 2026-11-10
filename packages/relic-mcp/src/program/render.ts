@@ -1,18 +1,14 @@
 /**
- * Local program rendering in the publisher's own Chrome.
+ * Local program rendering with an owned Chromium headless shell.
  *
- * Node owns everything the page must not: the browser process, the only
- * network the page may reach, the chunk transport, and the deadline. The page
- * (built from relic-viewer) owns the timeline evaluation and the encoding.
- * Nothing is sent to a service, and a Chrome or encoder that is missing is
- * reported per timeline, never replaced by a remote renderer.
+ * Node owns the browser process, chunk transport, and deadline. The page
+ * (built from relic-viewer) owns timeline evaluation and encoding. A missing
+ * browser or encoder is reported per timeline, never sent to a remote renderer.
  *
  * Plaintext stays in memory (docs/spec/publish.md §4.8), fail closed:
  * - the browser's profile and all its writes go to a private RAM volume on
- *   macOS, and the browser runs under a sandbox-exec profile that refuses any
- *   write outside that volume. A write probe must pass before any browser
- *   starts. Where that cannot be enforced (every platform but macOS today), no
- *   browser starts and every timeline is focus-only with the reason;
+ *   macOS, under a deny-default sandbox-exec profile. Paired controls must pass
+ *   before the browser starts. Other platforms return focus-only.
  * - the browser is closed before the volume is released; a failure to release
  *   is a refusal, never a quiet success;
  * - every render runs in a CDP browser context created with disposeOnDetach,
@@ -30,20 +26,18 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { OtioMediaEntry, OtioProgramReasonCode } from '@relic/format';
 import type { CdpEvent } from '../cover/cdp.ts';
-import {
-  discoverChrome,
-  launchChrome,
-  type RunningChrome,
-} from '../cover/chrome.ts';
+import { launchChrome, type RunningChrome } from '../cover/chrome.ts';
+import { resolveProgramBrowser } from './browser.ts';
 import {
   confinedEnv,
   confinementFlags,
   createConfinedPaths,
   launcherFor,
   verifyArguments,
-  verifyLauncher,
+  JAIL_FLAGS,
+  macosJailProfile,
 } from './confine.ts';
-import { acquireLinuxStorage } from './linux.ts';
+import { verifyJail } from './jail-probe.ts';
 import {
   PROGRAM_HEIGHT,
   PROGRAM_WIDTH,
@@ -53,6 +47,8 @@ import {
   createPrivateRamVolume,
   ProgramStorageError,
   releasePrivateRamVolume,
+  verifyPrivateRamVolume,
+  type PrivateRamVolume,
 } from './ramdisk.ts';
 import type { ProgramReason } from './report.ts';
 
@@ -185,8 +181,10 @@ function allUnavailable(
 const DEADLINE_HIT = 'program-deadline-hit';
 
 function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
-  const { promise: deadline, reject } = Promise.withResolvers<never>();
-  const timer = setTimeout(() => reject(new Error(DEADLINE_HIT)), ms);
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(DEADLINE_HIT)), ms);
+  });
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
 }
 
@@ -194,6 +192,7 @@ interface AcquiredProfile {
   readonly ok: true;
   /** Directory the browser and its confined writes live in. */
   readonly parent: string;
+  readonly volume: PrivateRamVolume;
   /** Releases the storage. Throws a cleanupFailed ProgramStorageError on failure. */
   readonly release: () => Promise<void>;
 }
@@ -210,18 +209,19 @@ type ProfileAcquisition =
 async function acquireProfile(
   source: ProgramProfileSource
 ): Promise<ProfileAcquisition> {
-  if (source.kind === 'directory') {
-    const storage = await acquireLinuxStorage(source.dir);
-    if (storage === undefined) {
-      return { ok: false, message: RENDER_MESSAGES.storageUnverified };
-    }
-    return { ok: true, parent: storage.parent, release: storage.release };
+  if (source.kind === 'unsupported') {
+    return {
+      ok: false,
+      message:
+        'program rendering is confined only on macOS in this version, so this timeline has no program',
+    };
   }
   try {
     const volume = await createPrivateRamVolume(source.sizeMiB);
     return {
       ok: true,
       parent: volume.mountPoint,
+      volume,
       release: () => releasePrivateRamVolume(volume),
     };
   } catch (error) {
@@ -232,65 +232,149 @@ async function acquireProfile(
   }
 }
 
+class BrowserStillRunning extends ProgramStorageError {
+  constructor() {
+    super('the confined browser did not exit', true);
+  }
+}
+const activeRenders = new Map<AbortController, Promise<void>>();
+let shuttingDown = false;
+
+/** Called only by the executable entry point, never by library imports. */
+export function installProgramSignalCleanup(): void {
+  const handleSignal = (signal: 'SIGINT' | 'SIGTERM') => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const active = [...activeRenders.entries()];
+    for (const [controller] of active) controller.abort();
+    void Promise.allSettled(active.map(([, done]) => done)).then(() => {
+      process.exit(signal === 'SIGINT' ? 130 : 143);
+    });
+  };
+  process.on('SIGINT', () => handleSignal('SIGINT'));
+  process.on('SIGTERM', () => handleSignal('SIGTERM'));
+}
+
+async function trackedRender<T>(
+  fn: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  let finish!: () => void;
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  activeRenders.set(controller, done);
+  if (shuttingDown) controller.abort();
+  try {
+    return await fn(controller.signal);
+  } finally {
+    activeRenders.delete(controller);
+    finish();
+  }
+}
+
 export function chromeProgramRenderer(
   options: ChromeProgramOptions
 ): ProgramRenderer {
-  return async (job: ProgramRenderJob): Promise<ProgramRenderOutput> => {
-    const deadline = Date.now() + options.deadlineMs;
-    const ids = job.timelineIds;
+  return (job: ProgramRenderJob): Promise<ProgramRenderOutput> =>
+    trackedRender(async (signal) => {
+      const deadline = Date.now() + options.deadlineMs;
+      const ids = job.timelineIds;
+      if (signal.aborted)
+        return allUnavailable(
+          ids,
+          'render-failed',
+          RENDER_MESSAGES.renderFailed
+        );
+      if (
+        process.platform !== 'darwin' ||
+        options.profile.kind === 'unsupported'
+      ) {
+        return allUnavailable(
+          ids,
+          'unsupported-browser',
+          'program rendering is confined only on macOS in this version, so this timeline has no program'
+        );
+      }
+      let pages: { readonly html: Uint8Array; readonly js: Uint8Array };
+      try {
+        pages = {
+          html: new Uint8Array(
+            await readFile(join(options.assetDir, 'index.html'))
+          ),
+          js: new Uint8Array(
+            await readFile(join(options.assetDir, 'index.js'))
+          ),
+        };
+      } catch {
+        return allUnavailable(
+          ids,
+          'render-failed',
+          RENDER_MESSAGES.pageMissing
+        );
+      }
+      const browser = await resolveProgramBrowser(options.chromePath);
+      if (!browser.ok) {
+        const message =
+          browser.reason === 'browser-disabled'
+            ? 'program rendering is turned off for this publisher'
+            : browser.reason === 'not-headless-shell'
+              ? 'the configured program browser is not a headless shell, so programs do not render'
+              : 'no isolated headless shell is installed for program rendering';
+        return allUnavailable(ids, 'unsupported-browser', message);
+      }
+      if (signal.aborted)
+        return allUnavailable(
+          ids,
+          'render-failed',
+          RENDER_MESSAGES.renderFailed
+        );
 
-    // Fail closed before any browser exists: no confined storage, no render.
-    const profile = await acquireProfile(options.profile);
-    if (!profile.ok) {
-      return allUnavailable(ids, 'unsupported-browser', profile.message);
-    }
+      // Fail closed before any browser exists: no confined storage, no render.
+      const profile = await acquireProfile(options.profile);
+      if (!profile.ok) {
+        return allUnavailable(ids, 'unsupported-browser', profile.message);
+      }
 
-    let output: ProgramRenderOutput;
-    try {
-      output = await renderWithProfile(options, job, profile.parent, deadline);
-    } finally {
-      // Runs after renderWithProfile has closed the browser. A failure here is
-      // a ProgramStorageError that propagates, so the publish refuses.
-      await profile.release();
-    }
-    return output;
-  };
+      let safeToRelease = true;
+      try {
+        return await renderWithProfile(
+          pages,
+          browser.path,
+          job,
+          profile.volume,
+          deadline,
+          signal
+        );
+      } catch (error) {
+        if (error instanceof BrowserStillRunning) safeToRelease = false;
+        throw error;
+      } finally {
+        if (safeToRelease) await profile.release();
+      }
+    });
 }
 
 async function renderWithProfile(
-  options: ChromeProgramOptions,
+  pages: { readonly html: Uint8Array; readonly js: Uint8Array },
+  browserPath: string,
   job: ProgramRenderJob,
-  profileParent: string,
-  deadline: number
+  volume: PrivateRamVolume,
+  deadline: number,
+  signal: AbortSignal
 ): Promise<ProgramRenderOutput> {
   const ids = job.timelineIds;
+  const profileParent = volume.mountPoint;
 
-  let pages: { readonly html: Uint8Array; readonly js: Uint8Array };
-  try {
-    pages = {
-      html: new Uint8Array(
-        await readFile(join(options.assetDir, 'index.html'))
-      ),
-      js: new Uint8Array(await readFile(join(options.assetDir, 'index.js'))),
-    };
-  } catch {
-    return allUnavailable(ids, 'render-failed', RENDER_MESSAGES.pageMissing);
-  }
-
-  const discovery = await discoverChrome(options.chromePath);
-  if (discovery.kind !== 'found') {
-    return allUnavailable(
-      ids,
-      'unsupported-browser',
-      RENDER_MESSAGES.noBrowser
-    );
-  }
-
-  // The launcher's write probe must pass before the browser starts under it.
-  const launcher = launcherFor(profileParent);
+  const paths = await createConfinedPaths(profileParent);
+  const jail = macosJailProfile({
+    shell: browserPath,
+    ramRoot: profileParent,
+  });
+  const launcher = launcherFor(jail);
   if (
     launcher === undefined ||
-    !(await verifyLauncher(launcher, profileParent)).ok
+    !(await verifyJail({ profile: jail, ramRoot: profileParent })).ok
   ) {
     return allUnavailable(
       ids,
@@ -299,14 +383,16 @@ async function renderWithProfile(
     );
   }
 
-  const paths = await createConfinedPaths(profileParent);
+  await verifyPrivateRamVolume(volume);
+  if (signal.aborted)
+    return allUnavailable(ids, 'render-failed', RENDER_MESSAGES.renderFailed);
   let running: RunningChrome;
   try {
-    running = await launchChrome(discovery.path, {
+    running = await launchChrome(browserPath, {
       startupTimeoutMs: CHROME_STARTUP_TIMEOUT_MS,
-      profileParent,
+      profileParent: paths.root,
       launcher,
-      extraArgs: confinementFlags(paths),
+      extraArgs: [...JAIL_FLAGS, ...confinementFlags(paths)],
       env: confinedEnv(paths),
     });
   } catch {
@@ -316,12 +402,23 @@ async function renderWithProfile(
       RENDER_MESSAGES.browserStartFailed
     );
   }
+  const abortBrowser = () => {
+    void running.close().catch(() => {});
+  };
+  signal.addEventListener('abort', abortBrowser, { once: true });
+  if (signal.aborted) abortBrowser();
 
   // The browser's arguments must carry the confinement flags. Otherwise it is
   // not the browser we configured, and it is closed without rendering.
-  const argv = await verifyArguments(running.pid, paths);
+  const argv = await verifyArguments(running.pid, paths, browserPath);
   if (!argv.ok) {
-    await running.close().catch(() => {});
+    try {
+      await running.close();
+    } catch {
+      throw new BrowserStillRunning();
+    }
+    signal.removeEventListener('abort', abortBrowser);
+    await verifyPrivateRamVolume(volume);
     return allUnavailable(
       ids,
       'unsupported-browser',
@@ -335,7 +432,13 @@ async function renderWithProfile(
     return allUnavailable(ids, 'render-failed', RENDER_MESSAGES.renderFailed);
   } finally {
     // Awaited, so the browser has exited before its profile storage is released.
-    await running.close().catch(() => {});
+    try {
+      await running.close();
+    } catch {
+      throw new BrowserStillRunning();
+    }
+    signal.removeEventListener('abort', abortBrowser);
+    await verifyPrivateRamVolume(volume);
   }
 }
 
@@ -371,6 +474,8 @@ async function renderInBrowser(
 
   // Chunk buffer for the timeline currently rendering.
   let chunks: Array<{ seq: number; data: Buffer }> = [];
+  let chunkBytes = 0;
+  let chunkOverflow = false;
 
   const respond = (
     requestId: string,
@@ -469,10 +574,23 @@ async function renderInBrowser(
       if (colon <= 0) return;
       const seq = Number(payload.slice(0, colon));
       if (!Number.isSafeInteger(seq) || seq < 0) return;
-      chunks.push({
-        seq,
-        data: Buffer.from(payload.slice(colon + 1), 'base64'),
-      });
+      const encoded = payload.slice(colon + 1);
+      if (
+        chunkOverflow ||
+        chunks.length >= 65536 ||
+        encoded.length > Math.ceil(job.maxBytes / 3) * 4 ||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
+      ) {
+        chunkOverflow = true;
+        return;
+      }
+      const data = Buffer.from(encoded, 'base64');
+      chunkBytes += data.length;
+      if (data.length === 0 || chunkBytes > job.maxBytes) {
+        chunkOverflow = true;
+        return;
+      }
+      chunks.push({ seq, data });
     }
   });
 
@@ -525,6 +643,8 @@ async function renderInBrowser(
         continue;
       }
       chunks = [];
+      chunkBytes = 0;
+      chunkOverflow = false;
       const request = {
         protocol: 1,
         timeline_index: i,
@@ -567,7 +687,11 @@ async function renderInBrowser(
         outcomes.push(unavailable('render-failed', RENDER_MESSAGES.pageFailed));
         continue;
       }
-      outcomes.push(await settleTimeline(evaluated, ids[i]!, job, chunks));
+      outcomes.push(
+        chunkOverflow
+          ? unavailable('render-failed', RENDER_MESSAGES.lengthMismatch)
+          : await settleTimeline(evaluated, ids[i]!, job, chunks)
+      );
     }
     return { browser, outcomes };
   } finally {

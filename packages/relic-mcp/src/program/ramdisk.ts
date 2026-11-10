@@ -15,7 +15,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, realpath, rmdir } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,7 +58,12 @@ export function run(
   args: readonly string[],
   input = ''
 ): Promise<ToolResult> {
-  const { promise, resolve, reject } = Promise.withResolvers<ToolResult>();
+  let resolve!: (result: ToolResult) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<ToolResult>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
   const child = spawn(command, [...args], { stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
@@ -85,7 +90,7 @@ type Json = Record<string, unknown>;
 
 async function plistToJson(plist: string): Promise<unknown> {
   const converted = await run(
-    'plutil',
+    '/usr/bin/plutil',
     ['-convert', 'json', '-o', '-', '-'],
     plist
   );
@@ -99,7 +104,7 @@ async function plistToJson(plist: string): Promise<unknown> {
 
 /** The hdiutil record for a device node, or undefined when it is not attached. */
 async function imageFor(device: string): Promise<Json | undefined> {
-  const info = await run('hdiutil', ['info', '-plist']);
+  const info = await run('/usr/bin/hdiutil', ['info', '-plist']);
   if (info.code !== 0) {
     throw new ProgramStorageError(`hdiutil info failed: ${info.stderr.trim()}`);
   }
@@ -111,7 +116,7 @@ async function imageFor(device: string): Promise<Json | undefined> {
 }
 
 async function diskInfo(device: string): Promise<Json> {
-  const info = await run('diskutil', ['info', '-plist', device]);
+  const info = await run('/usr/sbin/diskutil', ['info', '-plist', device]);
   if (info.code !== 0) {
     throw new ProgramStorageError(
       `diskutil info ${device} failed: ${info.stderr.trim()}`
@@ -142,11 +147,21 @@ async function assertOurImage(device: string, sectors: number): Promise<void> {
 }
 
 /** Detaches one device node. Retries once, because a just-unmounted volume can still be busy. */
-async function detach(device: string): Promise<void> {
-  let result = await run('hdiutil', ['detach', device]);
+async function detach(
+  device: string,
+  sectors: number,
+  volumeName?: string
+): Promise<void> {
+  await assertOurImage(device, sectors);
+  if (volumeName && (await diskInfo(device))['VolumeName'] !== volumeName)
+    throw new ProgramStorageError('volume identity changed', true);
+  let result = await run('/usr/bin/hdiutil', ['detach', device]);
   if (result.code !== 0) {
     await new Promise((resolve) => setTimeout(resolve, DETACH_RETRY_DELAY_MS));
-    result = await run('hdiutil', ['detach', device]);
+    await assertOurImage(device, sectors);
+    if (volumeName && (await diskInfo(device))['VolumeName'] !== volumeName)
+      throw new ProgramStorageError('volume identity changed', true);
+    result = await run('/usr/bin/hdiutil', ['detach', device]);
   }
   if (result.code !== 0) {
     throw new ProgramStorageError(
@@ -170,9 +185,15 @@ async function detach(device: string): Promise<void> {
 async function releaseOwned(
   device: string,
   sectors: number,
-  mountPoint: string | undefined
+  mountPoint: string | undefined,
+  volumeName?: string
 ): Promise<void> {
   if ((await imageFor(device)) === undefined) {
+    if (volumeName)
+      throw new ProgramStorageError(
+        'owned RAM image is no longer attached',
+        true
+      );
     if (mountPoint !== undefined) await rmdir(mountPoint);
     return;
   }
@@ -183,6 +204,8 @@ async function releaseOwned(
       ? undefined
       : await realpath(mountPoint).catch(() => mountPoint);
   const info = await diskInfo(device);
+  if (volumeName && info['VolumeName'] !== volumeName)
+    throw new ProgramStorageError('volume identity changed', true);
   const mountedAt = info['MountPoint'];
   if (typeof mountedAt === 'string' && mountedAt !== '') {
     if (expected === undefined || mountedAt !== expected) {
@@ -191,7 +214,7 @@ async function releaseOwned(
         true
       );
     }
-    const unmount = await run('diskutil', ['unmount', expected]);
+    const unmount = await run('/usr/sbin/diskutil', ['unmount', expected]);
     if (unmount.code !== 0) {
       throw new ProgramStorageError(
         `could not unmount ${mountPoint}: ${unmount.stderr.trim()}`,
@@ -199,7 +222,7 @@ async function releaseOwned(
       );
     }
   }
-  await detach(device);
+  await detach(device, sectors, volumeName);
   if (mountPoint !== undefined) await rmdir(mountPoint);
 }
 
@@ -217,15 +240,18 @@ export async function createPrivateRamVolume(
     );
   }
   const sectors = sizeMiB * 2048;
-  const attach = await run('hdiutil', [
+  const attach = await run('/usr/bin/hdiutil', [
     'attach',
     '-nomount',
+    '-nobrowse',
     `ram://${sectors}`,
   ]);
-  const device = /^\/dev\/disk\d+$/m.exec(attach.stdout)?.[0];
+  // hdiutil pads the device name with spaces and tabs, so match it without an end anchor.
+  const device = /\/dev\/disk\d+/.exec(attach.stdout)?.[0];
   if (attach.code !== 0 || device === undefined) {
     throw new ProgramStorageError(
-      `could not attach a RAM disk: ${(attach.stderr || attach.stdout).trim()}`
+      `could not attach a RAM disk: ${(attach.stderr || attach.stdout).trim()}`,
+      device !== undefined
     );
   }
 
@@ -235,7 +261,7 @@ export async function createPrivateRamVolume(
   try {
     await assertOurImage(device, sectors);
 
-    const format = await run('newfs_hfs', ['-v', volumeName, device]);
+    const format = await run('/sbin/newfs_hfs', ['-v', volumeName, device]);
     if (format.code !== 0) {
       throw new ProgramStorageError(
         `could not format the RAM disk: ${format.stderr.trim()}`
@@ -243,7 +269,8 @@ export async function createPrivateRamVolume(
     }
 
     mountPoint = await mkdtemp(join(tmpdir(), 'relic-prof-'));
-    const mounted = await run('diskutil', [
+    await chmod(mountPoint, 0o500);
+    const mounted = await run('/usr/sbin/diskutil', [
       'mount',
       '-mountPoint',
       mountPoint,
@@ -268,10 +295,11 @@ export async function createPrivateRamVolume(
       );
     }
     await assertOurImage(device, sectors);
+    await mkdir(join(canonicalMount, 'w'), { mode: 0o700 });
     return { device, volumeName, sectors, mountPoint: canonicalMount };
   } catch (error) {
     try {
-      await releaseOwned(device, sectors, mountPoint);
+      await releaseOwned(device, sectors, mountPoint, volumeName);
     } catch (cleanupError) {
       throw new ProgramStorageError(
         `${(error as Error).message}; the cleanup also failed: ${(cleanupError as Error).message}`,
@@ -290,5 +318,38 @@ export async function createPrivateRamVolume(
 export async function releasePrivateRamVolume(
   volume: PrivateRamVolume
 ): Promise<void> {
-  await releaseOwned(volume.device, volume.sectors, volume.mountPoint);
+  try {
+    await releaseOwned(
+      volume.device,
+      volume.sectors,
+      volume.mountPoint,
+      volume.volumeName
+    );
+  } catch {
+    throw new ProgramStorageError(
+      'the private RAM volume could not be released',
+      true
+    );
+  }
+}
+
+export async function verifyPrivateRamVolume(
+  volume: PrivateRamVolume
+): Promise<void> {
+  try {
+    await assertOurImage(volume.device, volume.sectors);
+    const info = await diskInfo(volume.device);
+    if (
+      info['MountPoint'] !== volume.mountPoint ||
+      info['VolumeName'] !== volume.volumeName ||
+      info['FilesystemType'] !== 'hfs' ||
+      info['Writable'] !== true
+    )
+      throw new Error('volume changed');
+  } catch {
+    throw new ProgramStorageError(
+      'the private RAM volume could not be verified',
+      true
+    );
+  }
 }

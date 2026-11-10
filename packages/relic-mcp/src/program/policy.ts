@@ -49,43 +49,29 @@ export function programPolicyFrom(
 }
 
 /**
- * The browser for program rendering: RELIC_OTIO_CHROME_PATH, then the cover's
- * RELIC_CHROME_PATH, then per-platform discovery. `none` or `disabled` turns
- * program rendering off.
+ * The browser for program rendering: RELIC_OTIO_CHROME_PATH only, which must
+ * name an isolated headless shell. Unset, the owned headless shell is used.
+ * Never the cover's RELIC_CHROME_PATH, which can name full Chrome. `none` or
+ * `disabled` turns program rendering off.
  */
 export function programChromePathFrom(
   env: Readonly<Record<string, string | undefined>>
 ): string | undefined {
-  return env['RELIC_OTIO_CHROME_PATH'] ?? env['RELIC_CHROME_PATH'];
+  return env['RELIC_OTIO_CHROME_PATH'];
 }
 
-/**
- * The Linux directory that must be a verified tmpfs mount. A per-publish
- * directory is created inside it and removed afterwards.
- */
-export function programProfileDirFrom(
-  env: Readonly<Record<string, string | undefined>>
-): string {
-  return env['RELIC_PROGRAM_PROFILE_DIR'] ?? env['XDG_RUNTIME_DIR'] ?? '';
-}
-
-/**
- * Where the browser's confined storage comes from. On macOS, a private RAM
- * volume this process creates and releases. On Linux, a per-publish directory
- * inside a verified tmpfs mount. Anywhere else, there is no source.
- */
+/** Only macOS has a verified operating-system jail for program rendering. */
 export type ProgramProfileSource =
-  | { readonly kind: 'directory'; readonly dir: string }
+  | { readonly kind: 'unsupported' }
   | { readonly kind: 'private-ram-volume'; readonly sizeMiB: number };
 
 export function programProfileSourceFrom(
-  env: Readonly<Record<string, string | undefined>>,
+  _env: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform
 ): ProgramProfileSource {
-  if (platform === 'darwin') {
-    return { kind: 'private-ram-volume', sizeMiB: PRIVATE_RAM_VOLUME_MIB };
-  }
-  return { kind: 'directory', dir: programProfileDirFrom(env) };
+  return platform === 'darwin'
+    ? { kind: 'private-ram-volume', sizeMiB: PRIVATE_RAM_VOLUME_MIB }
+    : { kind: 'unsupported' };
 }
 
 /** Built page files (index.html, index.js). RELIC_MCP_PROGRAM_DIR overrides. */

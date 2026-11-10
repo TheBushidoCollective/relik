@@ -1,41 +1,18 @@
-/**
- * Write confinement for the browser, per platform. Each platform has one
- * launcher that wraps the browser so the OS refuses writes outside the private
- * storage this publish owns, and a probe that must pass before any browser
- * starts.
- *
- * - macOS: /usr/bin/sandbox-exec with a profile that denies every file write
- *   except inside the private RAM volume (and /dev).
- * - Linux: bubblewrap (bwrap), with the root filesystem read-only and a
- *   read-write bind of the per-publish directory inside a verified tmpfs. /tmp
- *   and /dev/shm are memory filesystems, and the network is unshared.
- *
- * Where the launcher tool, the probe, or the storage is missing, no browser
- * starts. That is a fail-closed outcome, not a fallback.
- *
- * Belt and braces: the browser's temp, home, cache, config, and data paths are
- * set inside the private storage, and its disk-cache and crash-dump flags point
- * there too. The process arguments are read back and must carry those flags.
- * The environment cannot be read back on macOS, so it is set by construction.
- *
- * Reads are not confined. Only writes are.
- */
-
-import { randomBytes } from 'node:crypto';
-import { mkdir, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { ProgramStorageError, run } from './ramdisk.ts';
 
 export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
-export const BWRAP = 'bwrap';
-const PS = '/bin/ps';
-
-/** A command and the arguments that go before the browser binary. */
+export const JAIL_FLAGS = [
+  '--no-sandbox',
+  '--disable-gpu',
+  '--disable-accelerated-video-decode',
+  '--disable-accelerated-video-encode',
+] as const;
 export interface Launcher {
   readonly command: string;
   readonly prefixArgs: readonly string[];
 }
-
 export interface ConfinedPaths {
   readonly root: string;
   readonly tmp: string;
@@ -45,73 +22,78 @@ export interface ConfinedPaths {
   readonly data: string;
   readonly crash: string;
 }
-
-/** Paths go into profiles and argument lists, so each must be plain. */
-function plainPath(path: string): string {
-  if (!/^\/[A-Za-z0-9._/-]+$/.test(path) || path.includes('..')) {
-    throw new ProgramStorageError('the private storage path is not plain');
-  }
+export function plainPath(path: string): string {
+  if (!/^\/[A-Za-z0-9._/-]+$/.test(path) || path.includes('..'))
+    throw new ProgramStorageError('the confinement path is not plain');
   return path;
 }
-
-/** Denies every write, then allows writes only under the given directories and /dev. */
-export function sandboxProfile(writable: readonly string[]): string {
-  const allows = writable
-    .map((path) => `(allow file-write* (subpath "${plainPath(path)}"))`)
-    .join('');
-  return `(version 1)(allow default)(deny file-write*)${allows}(allow file-write* (subpath "/dev"))`;
+function ancestors(path: string): string[] {
+  const result: string[] = [];
+  for (let p = dirname(path); p !== '/'; p = dirname(p)) result.push(p);
+  return result;
 }
-
-/** bubblewrap: read-only root, one read-write bind for the publish's directory, memory /tmp, no network. */
-export function bwrapPrefixArgs(root: string): string[] {
-  const base = plainPath(root);
-  return [
-    '--ro-bind',
-    '/',
-    '/',
-    '--dev',
-    '/dev',
-    '--proc',
-    '/proc',
-    '--tmpfs',
-    '/tmp',
-    '--bind',
-    base,
-    base,
-    '--unshare-net',
-    '--unshare-pid',
-    '--unshare-ipc',
-    '--unshare-uts',
-    '--unshare-cgroup-try',
-    '--cap-drop',
-    'ALL',
-    '--new-session',
-    '--die-with-parent',
-  ];
+export function macosJailProfile({
+  shell,
+  ramRoot,
+}: {
+  shell: string;
+  ramRoot: string;
+}): string {
+  plainPath(shell);
+  plainPath(ramRoot);
+  const shellDir = plainPath(dirname(shell));
+  const dirs = [...new Set([...ancestors(shellDir), ...ancestors(ramRoot)])]
+    .map((p) => `(literal "${plainPath(p)}")`)
+    .join(' ');
+  return `(version 1)
+(deny default (with no-log))
+(allow file-read* (literal "/"))
+(allow file-read* file-map-executable
+  (subpath "/System/Volumes/Preboot/Cryptexes/OS") (subpath "/System/Cryptexes/OS")
+  (subpath "/usr/lib") (subpath "/System/Library/Frameworks")
+  (subpath "/System/Library/PrivateFrameworks") (subpath "/System/Library/Components/AudioCodecs.component"))
+(allow file-read*
+  (subpath "/Library/Apple/System/Library/Frameworks") (subpath "/Library/Apple/System/Library/PrivateFrameworks")
+  (subpath "/System/Library/CoreServices/SystemAppearance.bundle") (subpath "/System/Library/CoreServices/CoreTypes.bundle")
+  (subpath "/System/Library/CoreServices/SystemVersion.bundle") (literal "/System/Library/CoreServices/SystemVersion.plist")
+  (literal "/System/Library/CoreServices/SystemVersionCompat.plist") (subpath "/System/Library/Fonts") (subpath "/Library/Fonts")
+  (subpath "/usr/share/icu") (subpath "/usr/share/locale") (subpath "/private/var/db/timezone") (subpath "/System/Library/ColorSync/Profiles"))
+(allow file-read-metadata ${dirs} (literal "/private") (literal "/var") (literal "/tmp") (literal "/etc") (literal "/dev") (literal "/System/Volumes/Data"))
+(allow sysctl-read
+  (sysctl-name "hw.activecpu") (sysctl-name "hw.busfrequency_compat") (sysctl-name "hw.byteorder") (sysctl-name "hw.cacheconfig")
+  (sysctl-name "hw.cachelinesize_compat") (sysctl-name "hw.cpufamily") (sysctl-name "hw.cpufrequency_compat") (sysctl-name "hw.cputype")
+  (sysctl-name "hw.l1dcachesize_compat") (sysctl-name "hw.l1icachesize_compat") (sysctl-name "hw.l2cachesize_compat") (sysctl-name "hw.l3cachesize_compat")
+  (sysctl-name "hw.logicalcpu_max") (sysctl-name "hw.machine") (sysctl-name "hw.memsize") (sysctl-name "hw.ncpu") (sysctl-name "hw.nperflevels")
+  (sysctl-name "hw.packages") (sysctl-name "hw.pagesize_compat") (sysctl-name "hw.physicalcpu_max") (sysctl-name "hw.tbfrequency_compat")
+  (sysctl-name "hw.vectorunit") (sysctl-name "kern.hostname") (sysctl-name "kern.hv_vmm_present") (sysctl-name "kern.maxfilesperproc")
+  (sysctl-name "kern.osproductversion") (sysctl-name "kern.osrelease") (sysctl-name "kern.ostype") (sysctl-name "kern.osvariant_status")
+  (sysctl-name "kern.osversion") (sysctl-name "kern.secure_kernel") (sysctl-name "kern.usrstack64") (sysctl-name "kern.version")
+  (sysctl-name "sysctl.proc_cputype") (sysctl-name-prefix "hw.optional.") (sysctl-name-prefix "hw.perflevel"))
+(allow process-exec (literal "${shell}"))
+(allow file-read* file-map-executable (subpath "${shellDir}") (subpath "/System/Volumes/Data${shellDir}"))
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow mach-register (global-name-regex #"\\.MachPortRendezvousServer\\.[0-9]+$"))
+(allow mach-lookup (global-name-regex #"\\.MachPortRendezvousServer\\.[0-9]+$") (global-name "com.apple.audio.AudioComponentRegistrar"))
+(allow iokit-open (iokit-registry-entry-class "RootDomainUserClient"))
+(allow file-read* (subpath "${ramRoot}") (subpath "/System/Volumes/Data${ramRoot}"))
+(allow file-write* (subpath "${ramRoot}/w") (subpath "/System/Volumes/Data${ramRoot}/w"))
+(allow file-read-data file-write-data (literal "/dev/null"))
+(allow file-read-data (literal "/dev/random") (literal "/dev/urandom"))`;
 }
-
-/** The launcher for this platform, or undefined where no confinement exists. */
 export function launcherFor(
-  root: string,
+  profile: string,
   platform: NodeJS.Platform = process.platform
 ): Launcher | undefined {
-  if (platform === 'darwin') {
-    return {
-      command: SANDBOX_EXEC,
-      prefixArgs: ['-p', sandboxProfile([root])],
-    };
-  }
-  if (platform === 'linux') {
-    return { command: BWRAP, prefixArgs: bwrapPrefixArgs(root) };
-  }
-  return undefined;
+  return platform === 'darwin'
+    ? { command: SANDBOX_EXEC, prefixArgs: ['-p', profile] }
+    : undefined;
 }
-
-/** Makes the browser's temp, home, cache, config, data, and crash directories inside the storage. */
 export async function createConfinedPaths(
   root: string
 ): Promise<ConfinedPaths> {
-  const base = plainPath(root);
+  const base = plainPath(join(root, 'w'));
   const paths = {
     root: base,
     tmp: join(base, 'confine', 'tmp'),
@@ -121,101 +103,59 @@ export async function createConfinedPaths(
     data: join(base, 'confine', 'data'),
     crash: join(base, 'confine', 'crash'),
   };
-  for (const dir of Object.values(paths)) {
+  for (const dir of Object.values(paths))
     await mkdir(dir, { recursive: true, mode: 0o700 });
-  }
   return paths;
 }
-
 export function confinedEnv(paths: ConfinedPaths): NodeJS.ProcessEnv {
   return {
-    ...process.env,
+    HOME: paths.home,
+    CFFIXED_USER_HOME: paths.home,
     TMPDIR: paths.tmp,
     TMP: paths.tmp,
     TEMP: paths.tmp,
-    HOME: paths.home,
     XDG_CACHE_HOME: paths.cache,
     XDG_CONFIG_HOME: paths.config,
     XDG_DATA_HOME: paths.data,
+    PATH: '/usr/bin:/bin',
   };
 }
-
 export function confinementFlags(paths: ConfinedPaths): string[] {
   return [
     `--disk-cache-dir=${paths.cache}`,
     `--crash-dumps-dir=${paths.crash}`,
   ];
 }
-
-export type LauncherCheck = { readonly ok: true } | { readonly ok: false };
-
-/**
- * Runs the write probe through the launcher before any browser starts. Inside
- * the storage a write must succeed; outside it must fail. A missing launcher
- * tool, or any other result, fails closed with no detail recorded.
- */
-export async function verifyLauncher(
-  launcher: Launcher,
-  root: string
-): Promise<LauncherCheck> {
-  const token = randomBytes(8).toString('hex');
-  const inside = join(root, `.launcher-probe-${token}`);
-  // Outside every writable path on both platforms: the filesystem root.
-  const outside = `/relic-launcher-probe-${token}`;
-  try {
-    const writeInside = await run(launcher.command, [
-      ...launcher.prefixArgs,
-      '/bin/sh',
-      '-c',
-      'echo ok > "$1"',
-      'sh',
-      inside,
-    ]);
-    await unlink(inside).catch(() => {});
-    if (writeInside.code !== 0) return { ok: false };
-
-    // Writes that must never reach the host: the filesystem root, and on Linux
-    // the routes /proc would offer a sandboxed process back to the host root.
-    const escapes =
-      launcher.command === BWRAP
-        ? [`/proc/1/root${outside}`, `/proc/self/root${outside}`]
-        : [];
-    let reached = false;
-    for (const target of [outside, ...escapes]) {
-      const write = await run(launcher.command, [
-        ...launcher.prefixArgs,
-        '/bin/sh',
-        '-c',
-        'echo x > "$1"',
-        'sh',
-        target,
-      ]);
-      if (write.code === 0) reached = true;
-    }
-    // A write that got through has put a file on the host at the one shared path. Remove it.
-    await unlink(outside).catch(() => {});
-    return reached ? { ok: false } : { ok: true };
-  } catch {
-    return { ok: false };
-  }
-}
-
-/**
- * Reads the browser process's arguments back from the OS and checks that the
- * confinement flags are present.
- */
 export async function verifyArguments(
   pid: number | undefined,
-  paths: ConfinedPaths
-): Promise<LauncherCheck> {
+  paths: ConfinedPaths,
+  shell: string
+): Promise<{ ok: boolean }> {
   if (pid === undefined) return { ok: false };
   try {
-    const listed = await run(PS, ['-wwo', 'command=', '-p', String(pid)]);
-    if (listed.code !== 0) return { ok: false };
-    for (const flag of confinementFlags(paths)) {
-      if (!listed.stdout.includes(flag)) return { ok: false };
-    }
-    return { ok: true };
+    const result = await run('/bin/ps', [
+      '-ww',
+      '-p',
+      String(pid),
+      '-o',
+      'uid=',
+      '-o',
+      'ppid=',
+      '-o',
+      'command=',
+    ]);
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/s.exec(result.stdout);
+    return {
+      ok:
+        result.code === 0 &&
+        !!match &&
+        Number(match[1]) === process.getuid?.() &&
+        Number(match[2]) === process.pid &&
+        match[3]!.startsWith(`${shell} `) &&
+        [...JAIL_FLAGS, ...confinementFlags(paths)].every((flag) =>
+          match[3]!.split(/\s+/).includes(flag)
+        ),
+    };
   } catch {
     return { ok: false };
   }

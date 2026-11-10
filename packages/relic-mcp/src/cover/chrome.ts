@@ -568,24 +568,25 @@ export async function launchChrome(
       }
 
       if (child.exitCode === null && child.signalCode === null) {
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
           let killTimer: NodeJS.Timeout | number | undefined;
+          let exitTimer: NodeJS.Timeout | number | undefined;
           const onExit = () => {
-            if (killTimer !== undefined) {
-              clearTimeout(killTimer);
-              killTimer = undefined;
-            }
+            clearTimeout(killTimer);
+            clearTimeout(exitTimer);
             resolve();
           };
           child.once('exit', onExit);
           killTimer = setTimeout(() => {
-            child.removeListener('exit', onExit);
             try {
               child.kill('SIGKILL');
             } catch {
-              // Best effort
+              // Wait for exit or report that cleanup could not be established.
             }
-            resolve();
+            exitTimer = setTimeout(() => {
+              child.removeListener('exit', onExit);
+              reject(new Error('Browser did not exit after SIGKILL'));
+            }, 5000);
           }, 5000);
         });
       }
