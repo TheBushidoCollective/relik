@@ -4797,12 +4797,16 @@ canvas.relic-page {
   .otio-resize-handle { flex-basis: 24px; }
 }
 .otio-preview { position: relative; background: #080a0b; min-width: 0; min-height: 0; display: grid; place-items: center; overflow: hidden; }
-.otio-canvas { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
+.otio-canvas, .otio-program-video { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
 .otio-preview-scope { position: absolute; top: .7rem; left: .7rem; max-width: calc(100% - 1.4rem); padding: .2rem .35rem; color: #e6e9e7; background: #080a0bd9; font: .6rem/1.5 var(--mono); }
 .otio-preview-status { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .65rem; padding: 1.25rem; overflow-y: auto; background: #080a0bf0; color: #e6e9e7; text-align: center; }
 .otio-preview-status > * { flex: none; }
 .otio-preview-status p { max-width: 38rem; margin: 0; font: .75rem/1.6 var(--mono); color: #d2b49f; overflow-wrap: anywhere; }
 .otio-preview-status .otio-buffering { color: #e6e9e7; }
+/* No rendered program: the title names the state, reasons keep the
+   diagnostic colour, and the hint points at the timeline below. */
+.otio-preview-status .otio-program-status-title { color: #e6e9e7; font: 600 .82rem/1.5 var(--sans); }
+.otio-preview-status .otio-program-hint { color: #e6e9e7; }
 /* OTIO accent controls use --surface on --patina: 6.06:1 light, 6.89:1 dark. */
 .otio-preview-base { max-width: min(30rem, 100%); padding: .5rem .7rem; color: var(--surface); background: var(--patina); border: 1px solid var(--patina); font-size: .75rem; overflow-wrap: anywhere; cursor: pointer; }
 .otio-preview-scope { z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .5rem; }
@@ -4813,7 +4817,8 @@ canvas.relic-page {
   grid-template-rows: fit-content(40%) minmax(0, 1fr);
   place-items: stretch;
 }
-.otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-canvas {
+.otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-canvas,
+.otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-program-video {
   grid-area: 1 / 1 / 3 / 2;
   align-self: center;
   justify-self: center;
@@ -4865,6 +4870,8 @@ canvas.relic-page {
 .otio-transport { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; min-height: 46px; padding: .55rem .75rem; border-bottom: 1px solid var(--rule-strong); background: var(--surface); }
 .otio-transport button { padding: .3rem .45rem; border: 1px solid var(--rule-strong); background: transparent; color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-transport .otio-play { background: var(--patina); border-color: var(--patina); color: var(--surface); min-width: 44px; }
+.otio-transport button:disabled, .otio-seek:disabled { cursor: default; opacity: .5; }
+.otio-transport .otio-program-mute[aria-pressed="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
 .otio-focus-context { display: flex; align-items: center; gap: .35rem .65rem; flex: 1 0 100%; min-width: 0; padding-bottom: .35rem; border-bottom: 1px solid var(--rule); }
 .otio-focus-title { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; color: var(--patina-ink); font: 600 .68rem/1.5 var(--sans); }
 .otio-transport .otio-back-composition { flex: none; color: var(--patina-ink); }
@@ -4900,6 +4907,7 @@ canvas.relic-page {
 .otio-track-row:not([data-depth="0"]) .otio-track-label { padding-left: calc(.45rem + min(var(--otio-depth, 0), 4) * .35rem); background: var(--ground); }
 .otio-track-toggle, .otio-disclosure { flex: 0 0 auto; border: 0; background: transparent; color: var(--ink-soft); padding: .2rem; font: .53rem var(--sans); cursor: pointer; }
 .otio-track-toggle[aria-pressed="true"] { text-decoration: line-through; color: var(--oxide); }
+.otio-track-toggle:disabled { cursor: default; opacity: .5; }
 .otio-track-solo[aria-pressed="true"] { text-decoration: none; color: var(--patina-ink); background: var(--diff-added); }
 .otio-disclosure svg { width: 11px; height: 11px; display: block; fill: none; stroke: currentColor; }
 .otio-disclosure[aria-expanded="false"] svg { transform: rotate(-90deg); }

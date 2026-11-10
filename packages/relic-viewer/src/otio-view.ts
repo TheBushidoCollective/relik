@@ -15,6 +15,7 @@ import {
   type OtioTimeRange,
   type OtioZipIndex,
   otioBundleMediaIndex,
+  otioDocumentMediaPaths,
   rangeEndTime,
   readOtioDocument,
   rescaleTime,
@@ -30,11 +31,15 @@ import {
   type OtioUiController,
 } from './otio-bridge.ts';
 import { createOtioMediaResolver } from './otio-media.ts';
+import { createOtioPlayback, type OtioPlaybackState } from './otio-playback.ts';
 import {
-  createOtioPlayback,
-  type OtioPlaybackController,
-  type OtioPlaybackState,
-} from './otio-playback.ts';
+  CompositionPlaybackDisabled,
+  createOtioPlaybackSession,
+  type OtioPlaybackSession,
+  type OtioProgramAvailability,
+  type OtioProgramReason,
+  resolveOtioProgram,
+} from './otio-program.ts';
 import {
   otioCompositionTime,
   otioDomainFrames,
@@ -308,8 +313,13 @@ export async function mountOtioView(
   if (root.dataset['disposed'] === 'true') return;
   const doc = parsed.document;
   const resolver = parsed.zip ? createOtioMediaResolver(parsed.zip) : undefined;
-  let playback: OtioPlaybackController | undefined;
+  let playback: OtioPlaybackSession | undefined;
   let unsubscribe: (() => void) | undefined;
+  // Sessions open asynchronously; a newer timeline makes an older open stale.
+  let sessionGeneration = 0;
+  // A focus requested before the session opens is applied once it does.
+  let deferredFocusTime: OtioRationalTime | undefined;
+  let programMuted = false;
   let timelineId =
     doc.timeline_ids.length === 1 ? doc.timeline_ids[0] : undefined;
   let timeline: OtioNode | undefined;
@@ -328,7 +338,13 @@ export async function mountOtioView(
   let focusedRange: OtioTimeRange | undefined;
   let focusUnavailable: string | null = null;
   let focusNotice: string | null = null;
+  // Why the session refused the last focus; shown until the next focus.
+  let focusError: string | null = null;
   let scopeGeneration = 0;
+  // The latest scope sent to the session, and the latest one it has answered.
+  let scopeRequest = 0;
+  let scopeSettled = 0;
+  let paintedFocusError: string | null = null;
   let cancelRailGesture: (() => void) | undefined;
   let domain: OtioTimelineDomain = {
     origin: { value: 0, rate: 24 },
@@ -352,12 +368,14 @@ export async function mountOtioView(
       }
     | undefined;
   let paintedTracks: OtioPlaybackState['tracks'] | undefined;
+  let paintedTrackControls = true;
   let paintedDiagnostics: OtioPlaybackState['diagnostics'] | undefined;
   let paintedStatus: OtioPlaybackState | undefined;
   let paintedStatusScope: OtioNode | undefined;
   let paintedStatusUnavailable: string | null = null;
   let paintedStatusNotice: string | null = null;
   let paintedStatusSettled = false;
+  let paintedStatusProgram = '';
   let viewportKey = '';
   let pendingTimelineScroll: { key: string; top: number } | undefined;
   let pendingCommentReveal: { key: string; id: string } | undefined;
@@ -388,8 +406,19 @@ export async function mountOtioView(
   canvas.width = 960;
   canvas.height = 540;
   canvas.setAttribute('aria-label', 'OTIO composition preview');
+  // The rendered program plays in this element. Each timeline gets a fresh
+  // one, so a stale session disposing its player cannot clear a newer source.
+  const createProgramVideo = (): HTMLVideoElement => {
+    const video = element('video', 'otio-program-video');
+    video.playsInline = true;
+    video.hidden = true;
+    video.setAttribute('aria-label', 'OTIO composition preview');
+    return video;
+  };
+  let programVideo = createProgramVideo();
   const previewStatus = element('div', 'otio-preview-status');
   previewStatus.setAttribute('role', 'status');
+  const programStatusId = `${monitor.id}-program-status`;
   const sdr = element('span', 'otio-preview-scope');
   const scopeText = element('span', '', 'Composition · browser-managed SDR');
   const blockBase = button(
@@ -399,7 +428,7 @@ export async function mountOtioView(
   );
   blockBase.hidden = true;
   sdr.append(scopeText, blockBase);
-  preview.append(canvas, sdr, previewStatus);
+  preview.append(canvas, programVideo, sdr, previewStatus);
   const inspector = element('aside', 'otio-inspector');
   inspector.setAttribute('aria-label', 'OTIO source context');
   const tabs = element('div', 'otio-inspector-tabs');
@@ -457,12 +486,31 @@ export async function mountOtioView(
     seekFrame(currentFrame() - 1)
   );
   const play = button('Play', 'otio-play', () => {
-    if (playback?.getState().playing) playback.pause();
-    else void playback?.play().catch(reportPlaybackError);
+    const current = playback;
+    if (!current) return;
+    if (current.getState().playing) current.pause();
+    else
+      void current.play().catch((error) => {
+        // Without a rendered program the session refuses composition play.
+        // The disabled control already explains why, so repaint, not report.
+        if (error instanceof CompositionPlaybackDisabled) {
+          if (playback === current) paintState(current.getState());
+        } else reportPlaybackError(error);
+      });
   });
   const next = button('Next frame', 'otio-next-frame', () =>
     seekFrame(currentFrame() + 1)
   );
+  // The rendered program is one mixed track, so it mutes as a whole. Track
+  // mutes return when a track is focused on its original media.
+  const programMute = button('Mute', 'otio-program-mute', () => {
+    programMuted = !programMuted;
+    programMute.setAttribute('aria-pressed', String(programMuted));
+    playback?.setMuted(programMuted);
+  });
+  programMute.setAttribute('aria-label', 'Mute composition');
+  programMute.setAttribute('aria-pressed', 'false');
+  programMute.hidden = true;
   for (const [control, pathData] of [
     [previous, 'M4 3v10M12 4l-6 4 6 4'],
     [next, 'M12 3v10M4 4l6 4-6 4'],
@@ -504,6 +552,7 @@ export async function mountOtioView(
     previous,
     play,
     next,
+    programMute,
     clock,
     seek,
     inspectToggle
@@ -524,7 +573,7 @@ export async function mountOtioView(
   timelineSelect.addEventListener('change', () => {
     if (doc.timeline_ids.includes(timelineSelect.value)) {
       timelineId = timelineSelect.value;
-      initializeTimeline();
+      void initializeTimeline();
     }
   });
   const tools = element('div', 'otio-selection-tools');
@@ -1303,12 +1352,11 @@ export async function mountOtioView(
     focusTitle.textContent = focusedNode
       ? focusedNode.name || focusedNode.schema
       : '';
-    canvas.setAttribute(
-      'aria-label',
-      focusedNode
-        ? `${focusedNode.name || focusedNode.schema} · OTIO preview`
-        : 'OTIO composition preview'
-    );
+    const previewLabel = focusedNode
+      ? `${focusedNode.name || focusedNode.schema} · OTIO preview`
+      : 'OTIO composition preview';
+    canvas.setAttribute('aria-label', previewLabel);
+    programVideo.setAttribute('aria-label', previewLabel);
     for (const control of trackRows.querySelectorAll<HTMLButtonElement>(
       '[data-focus-node-id]'
     ))
@@ -1357,23 +1405,80 @@ export async function mountOtioView(
     }
     paintFocus();
     updateTimelineDomain();
+    focusError = null;
     const current = playback;
-    if (!current) return;
-    void current
-      .setScope(
-        node && focusedRange && !focusUnavailable
-          ? { nodeId: node.id, range: focusedRange }
-          : null
-      )
-      .then(async () => {
-        if (disposed || playback !== current || generation !== scopeGeneration)
-          return;
-        if (time && !focusUnavailable) await current.seek(time);
-      })
-      .catch((error) => {
-        if (!disposed && playback === current && generation === scopeGeneration)
-          reportPlaybackError(error);
-      });
+    if (!current) {
+      // The session is still opening and applies this focus when it does.
+      deferredFocusTime = time;
+      return;
+    }
+    void requestScope(current, generation, time);
+  }
+  /**
+   * Sends the view's focus to the session and waits for its answer. A track
+   * or item plays its original media. A stack or timeline needs the
+   * composite: it bounds the rendered program, or without one it stays
+   * unavailable and is never composited live. Legacy archives keep the live
+   * player for every scope. Transport controls stay disabled until the latest
+   * request settles, and a refused scope hands the view back to the scope
+   * the session actually holds.
+   */
+  async function requestScope(
+    current: OtioPlaybackSession,
+    generation: number,
+    time: OtioRationalTime | undefined
+  ): Promise<void> {
+    const node = focusedNode;
+    const program = current.availability().program;
+    const composite =
+      node !== undefined &&
+      program !== 'legacy' &&
+      (schemaIs(node, 'Stack') || schemaIs(node, 'Timeline'));
+    const requested =
+      node &&
+      focusedRange &&
+      !focusUnavailable &&
+      !(composite && program !== 'available')
+        ? { nodeId: node.id, range: focusedRange }
+        : null;
+    const request = ++scopeRequest;
+    paintState(current.getState());
+    let failure: unknown;
+    try {
+      if (composite && program === 'available')
+        await current.setScope(requested, { source: 'program' });
+      else await current.setScope(requested);
+    } catch (error) {
+      failure = error;
+    }
+    if (disposed || playback !== current || request !== scopeRequest) return;
+    scopeSettled = request;
+    const held = current.getState().scope;
+    if (
+      failure === undefined &&
+      (held?.nodeId ?? null) === (requested?.nodeId ?? null)
+    ) {
+      paintState(current.getState());
+      if (time && !focusUnavailable && generation === scopeGeneration)
+        await current.seek(time).catch((error) => {
+          if (!disposed && playback === current) reportPlaybackError(error);
+        });
+      return;
+    }
+    if (
+      failure instanceof CompositionPlaybackDisabled &&
+      current.availability().program !== 'available'
+    ) {
+      // The program failed after it loaded: the same focus, now unavailable.
+      void requestScope(current, generation, time);
+      return;
+    }
+    const refused = node ? node.name || node.schema : 'Composition';
+    if ((held?.nodeId ?? null) !== (requested?.nodeId ?? null))
+      setPlaybackFocus(held ? doc.nodes[held.nodeId] : undefined);
+    focusError = `${refused} · ${
+      failure instanceof Error ? failure.message : 'Playback focus unavailable.'
+    }`;
     paintState(current.getState());
   }
   function activateNode(node: OtioNode): void {
@@ -2563,7 +2668,17 @@ export async function mountOtioView(
     if (root.dataset['buffering'] !== bufferingValue)
       root.dataset['buffering'] = bufferingValue;
     const bounds = playbackFrames();
-    const unavailable = focusUnavailable !== null || bounds.end <= bounds.start;
+    // Until the session answers the latest focus, transport would act on the
+    // previous scope.
+    const unavailable =
+      focusUnavailable !== null ||
+      bounds.end <= bounds.start ||
+      scopeRequest !== scopeSettled;
+    const availability = playback?.availability();
+    // A composition or stack whose archive has no usable program: the
+    // playhead still moves for selection and comments, but nothing plays.
+    const compositeUnavailable = availability?.state === 'unavailable';
+    paintProgram(availability, compositeUnavailable);
     const localFrame = otioLocalTime(domain, state.time).value;
     const minimum = String(bounds.start);
     const maximum = String(bounds.last);
@@ -2589,8 +2704,16 @@ export async function mountOtioView(
     const playLabel = state.playing ? 'Pause' : 'Play';
     if (play.textContent !== playLabel) play.textContent = playLabel;
     const playDisabled =
-      unavailable || state.previewBlocked || frameCount() === 0;
+      unavailable ||
+      state.previewBlocked ||
+      frameCount() === 0 ||
+      compositeUnavailable;
     if (play.disabled !== playDisabled) play.disabled = playDisabled;
+    const describedBy = compositeUnavailable ? programStatusId : null;
+    if (play.getAttribute('aria-describedby') !== describedBy) {
+      if (describedBy) play.setAttribute('aria-describedby', describedBy);
+      else play.removeAttribute('aria-describedby');
+    }
     const clockLabel = formatOtioTime(
       focusedNode ? otioLocalTime(domain, state.time) : state.time,
       !focusedNode && timelineId
@@ -2618,8 +2741,12 @@ export async function mountOtioView(
       const position = `calc(var(--otio-label-width) + (100% - var(--otio-label-width)) * ${fraction})`;
       if (playhead.style.left !== position) playhead.style.left = position;
     }
+    // A rendered program has no separate tracks: hide, mute and solo act on
+    // original media only, so they are available in legacy and track focus.
+    const trackControls = availability?.trackControls ?? true;
     const tracksChanged =
       !paintedTracks ||
+      paintedTrackControls !== trackControls ||
       lanes.some(
         (lane) => paintedTracks?.[lane.node.id] !== state.tracks[lane.node.id]
       );
@@ -2628,7 +2755,7 @@ export async function mountOtioView(
         '[data-track-toggle]'
       )) {
         const track = state.tracks[toggle.dataset['trackToggle'] ?? ''];
-        toggle.disabled = !track;
+        toggle.disabled = !track || !trackControls;
         if (track)
           toggle.setAttribute(
             'aria-pressed',
@@ -2639,14 +2766,16 @@ export async function mountOtioView(
         '[data-track-solo]'
       )) {
         const track = state.tracks[toggle.dataset['trackSolo'] ?? ''];
-        toggle.disabled = !track;
+        toggle.disabled = !track || !trackControls;
         if (track) toggle.setAttribute('aria-pressed', String(track.solo));
       }
       paintedTracks = state.tracks;
+      paintedTrackControls = trackControls;
     }
     const previousDiagnostics = paintedDiagnostics;
     const diagnosticsChanged =
       !previousDiagnostics ||
+      paintedFocusError !== focusError ||
       previousDiagnostics.length !== state.diagnostics.length ||
       state.diagnostics.some((issue, index) => {
         const before = previousDiagnostics[index]!;
@@ -2667,12 +2796,20 @@ export async function mountOtioView(
         ])
       );
       diagnostics.replaceChildren(
+        ...(focusError ? [element('p', 'otio-diagnostic', focusError)] : []),
         ...[...unique.values()].map((issue) =>
           element('p', 'otio-diagnostic', `${issue.code} · ${issue.message}`)
         )
       );
       paintedDiagnostics = state.diagnostics;
+      paintedFocusError = focusError;
     }
+    const programKey = [
+      availability?.state ?? '',
+      ...(availability?.reasons ?? []).map(
+        (reason) => `${reason.code}:${reason.node_id ?? ''}:${reason.message}`
+      ),
+    ].join('|');
     // Native transport emits multiple snapshots for the same presented frame.
     // Keep genuine buffering/diagnostic changes immediate, but retain unchanged
     // status nodes and controls instead of rebuilding them on every snapshot.
@@ -2682,6 +2819,7 @@ export async function mountOtioView(
       paintedStatusUnavailable === focusUnavailable &&
       paintedStatusNotice === focusNotice &&
       paintedStatusSettled === timelineSettled &&
+      paintedStatusProgram === programKey &&
       paintedStatus.buffering === state.buffering &&
       paintedStatus.previewBlocked === state.previewBlocked &&
       paintedStatus.baseMediaPreviewAllowed === state.baseMediaPreviewAllowed &&
@@ -2729,11 +2867,16 @@ export async function mountOtioView(
             state.baseMediaPreviewAllowed
           ? 'diagnostic'
           : 'true';
+    const scopeName = focusedNode
+      ? focusedNode.name || focusedNode.schema
+      : 'Composition';
     scopeText.textContent = state.baseMediaPreviewAllowed
       ? 'Incomplete preview · base media without unsupported effects · browser-managed SDR'
       : state.previewBlocked
         ? 'Incomplete preview · affected playback blocked · browser-managed SDR'
-        : `${focusedNode ? focusedNode.name || focusedNode.schema : 'Composition'} · browser-managed SDR`;
+        : compositeUnavailable
+          ? scopeName
+          : `${scopeName} · browser-managed SDR`;
     blockBase.hidden = !state.baseMediaPreviewAllowed;
     previewStatus.replaceChildren();
     previewStatus.hidden =
@@ -2753,11 +2896,19 @@ export async function mountOtioView(
           () => playback?.setBaseMediaPreviewAllowed(true)
         )
       );
-    if (focusedNode && (focusUnavailable || focusNotice)) {
+    if (compositeUnavailable && availability) {
       previewStatus.hidden = false;
-      previewStatus.append(
-        element('p', 'otio-focus-status', focusUnavailable || focusNotice || '')
-      );
+      previewStatus.append(...programStatusLines(availability.reasons));
+      root.dataset['previewState'] = 'unavailable';
+      if (timelineSettled) root.dataset['ready'] = 'diagnostic';
+    }
+    // Black/silence notices describe output, and an unavailable composite has
+    // none; an unplayable focus range still blocks selection, so it stays.
+    const focusStatus =
+      focusUnavailable ?? (compositeUnavailable ? null : focusNotice);
+    if (focusedNode && focusStatus) {
+      previewStatus.hidden = false;
+      previewStatus.append(element('p', 'otio-focus-status', focusStatus));
       if (focusUnavailable) {
         root.dataset['ready'] = 'diagnostic';
         root.dataset['previewState'] = 'unavailable';
@@ -2768,8 +2919,66 @@ export async function mountOtioView(
     paintedStatusUnavailable = focusUnavailable;
     paintedStatusNotice = focusNotice;
     paintedStatusSettled = timelineSettled;
+    paintedStatusProgram = programKey;
   }
-  function initializeTimeline(): void {
+  /** Which preview surface is live, and the observable program state. */
+  function paintProgram(
+    availability: OtioProgramAvailability | undefined,
+    compositeUnavailable: boolean
+  ): void {
+    const programState = availability?.state;
+    if (programState === undefined) delete root.dataset['otioProgramState'];
+    else if (root.dataset['otioProgramState'] !== programState)
+      root.dataset['otioProgramState'] = programState;
+    const reason = availability?.reasons[0]?.code;
+    if (reason === undefined) delete root.dataset['otioProgramReason'];
+    else if (root.dataset['otioProgramReason'] !== reason)
+      root.dataset['otioProgramReason'] = reason;
+    const programHidden = programState !== 'program';
+    if (programVideo.hidden !== programHidden)
+      programVideo.hidden = programHidden;
+    // The canvas carries legacy playback and focused original media only. It
+    // never stands in for a composite the archive could not render.
+    const canvasHidden = !programHidden || compositeUnavailable;
+    if (canvas.hidden !== canvasHidden) canvas.hidden = canvasHidden;
+    const muteHidden = availability?.muteAll !== true;
+    if (programMute.hidden !== muteHidden) programMute.hidden = muteHidden;
+  }
+  function programStatusLines(
+    reasons: readonly OtioProgramReason[]
+  ): HTMLElement[] {
+    const title = element(
+      'p',
+      'otio-program-status-title',
+      'Composite playback unavailable'
+    );
+    title.id = programStatusId;
+    const global = timelineId
+      ? doc.global_start_times?.[timelineId]
+      : undefined;
+    return [
+      title,
+      ...reasons.map((reason) => {
+        const node = reason.node_id ? doc.nodes[reason.node_id] : undefined;
+        return element(
+          'p',
+          'otio-diagnostic',
+          [
+            reason.code,
+            ...(node ? [node.name || node.schema] : []),
+            ...(reason.time ? [formatOtioTime(reason.time, global)] : []),
+            reason.message,
+          ].join(' · ')
+        );
+      }),
+      element(
+        'p',
+        'otio-program-hint',
+        'Select a track or clip in the timeline to play its original media.'
+      ),
+    ];
+  }
+  function initializeTimeline(): Promise<void> {
     const initialMarkBatch = ++markBatchGeneration;
     markBatchComplete = false;
     pendingCommentReveal = undefined;
@@ -2785,8 +2994,22 @@ export async function mountOtioView(
     focusNotice = null;
     paintFocus();
     unsubscribe?.();
+    unsubscribe = undefined;
     playback?.dispose();
     playback = undefined;
+    ++sessionGeneration;
+    deferredFocusTime = undefined;
+    programVideo = createProgramVideo();
+    preview.replaceChildren(canvas, programVideo, sdr, previewStatus);
+    canvas.hidden = false;
+    programMute.hidden = true;
+    play.disabled = true;
+    play.removeAttribute('aria-describedby');
+    delete root.dataset['otioProgramState'];
+    delete root.dataset['otioProgramReason'];
+    paintedStatusProgram = '';
+    scopeSettled = scopeRequest;
+    focusError = null;
     timelineSettled = false;
     selected = null;
     projectedSelection = null;
@@ -2825,7 +3048,7 @@ export async function mountOtioView(
       root.dispatchEvent(
         new CustomEvent('relic:otio-ready', { bubbles: true })
       );
-      return;
+      return Promise.resolve();
     }
     transport.hidden = false;
     resizeHandle.hidden = false;
@@ -2834,60 +3057,92 @@ export async function mountOtioView(
     selectionBar.hidden = false;
     grid.hidden = false;
     lanes = otioLanes(doc, timelineId);
-    const current = createOtioPlayback({
-      document: doc,
-      timelineId,
-      canvas,
-      resolveMedia: resolver ?? (() => null),
-    });
-    playback = current;
-    const initial = current.getState();
-    duration = timeline.timeline_range?.duration ?? {
-      value: 0,
-      rate: initial.rate,
-    };
+    const id = timelineId;
+    const range = timeline.timeline_range;
+    duration = range?.duration ?? { value: 0, rate };
     rate = duration.rate;
-    domain = {
-      origin: timeline.timeline_range?.start_time ?? { value: 0, rate },
-      range: timeline.timeline_range ?? {
-        start_time: { value: 0, rate },
-        duration,
-      },
-      rate,
+    const timelineRange = range ?? {
+      start_time: { value: 0, rate },
+      duration,
     };
+    domain = { origin: timelineRange.start_time, range: timelineRange, rate };
     restoreTimelineViewport(true);
     paintMarkers();
     paintInspector();
     paintModes();
-    unsubscribe = current.subscribe((state) => {
-      if (playback === current) paintState(state);
-    });
-    void current
-      .seek({ value: 0, rate })
-      .then(() => {
-        if (disposed || playback !== current) return;
-        timelineSettled = true;
-        paintState(current.getState());
-        root.dispatchEvent(
-          new CustomEvent('relic:otio-ready', { bubbles: true })
-        );
-        if (markBatchGeneration === initialMarkBatch) {
-          markBatchComplete = true;
-          queueCommentRepack();
-        }
-      })
-      .catch((error) => {
-        if (disposed || playback !== current) return;
-        timelineSettled = true;
+    const generation = sessionGeneration;
+    const video = programVideo;
+    const stale = (): boolean => disposed || generation !== sessionGeneration;
+    const settle = (current: OtioPlaybackSession | undefined): void => {
+      timelineSettled = true;
+      if (current) paintState(current.getState());
+      root.dispatchEvent(
+        new CustomEvent('relic:otio-ready', { bubbles: true })
+      );
+      if (markBatchGeneration === initialMarkBatch) {
+        markBatchComplete = true;
+        queueCommentRepack();
+      }
+    };
+    // Resolves once the session is open; the first seek continues after it.
+    return (async () => {
+      let current: OtioPlaybackSession;
+      try {
+        const resolution = await resolveOtioProgram({
+          zip: parsed.zip,
+          timelineId: id,
+          timelineIds: doc.timeline_ids,
+          mediaPaths: otioDocumentMediaPaths(doc),
+          timelineRange,
+        });
+        if (stale()) return;
+        current = await createOtioPlaybackSession({
+          resolution,
+          timelineRange,
+          video: resolution.status === 'available' ? video : undefined,
+          createController: () =>
+            createOtioPlayback({
+              document: doc,
+              timelineId: id,
+              canvas,
+              resolveMedia: resolver ?? (() => null),
+            }),
+        });
+      } catch (error) {
+        if (stale()) return;
         reportPlaybackError(error);
-        root.dispatchEvent(
-          new CustomEvent('relic:otio-ready', { bubbles: true })
-        );
-        if (markBatchGeneration === initialMarkBatch) {
-          markBatchComplete = true;
-          queueCommentRepack();
-        }
+        settle(undefined);
+        return;
+      }
+      if (stale()) {
+        current.dispose();
+        return;
+      }
+      playback = current;
+      current.setMuted(programMuted);
+      unsubscribe = current.subscribe((state) => {
+        if (playback === current) paintState(state);
       });
+      // The first position is the composition start, or a focus requested
+      // while the session was opening.
+      const focusTime = deferredFocusTime;
+      deferredFocusTime = undefined;
+      void (
+        focusedNode
+          ? requestScope(current, scopeGeneration, focusTime)
+          : current.seek({ value: 0, rate })
+      ).then(
+        () => {
+          if (!disposed && playback === current) settle(current);
+        },
+        (error) => {
+          if (disposed || playback !== current) return;
+          reportPlaybackError(error);
+          settle(undefined);
+        }
+      );
+      paintState(current.getState());
+    })();
   }
   const controller: OtioUiController = {
     document: doc,
@@ -2956,7 +3211,7 @@ export async function mountOtioView(
       ) {
         timelineId = mappedTimeline;
         timelineSelect.value = mappedTimeline;
-        initializeTimeline();
+        void initializeTimeline();
         target = projectionOf(anchor);
       }
       const first = target?.ranges[0];
@@ -3073,6 +3328,45 @@ export async function mountOtioView(
     },
   };
   attachOtioController(root, controller);
+  // The loopback proof drives playback through the same session the controls
+  // use. A deployed host never installs it.
+  const host = typeof location === 'undefined' ? '' : location.hostname;
+  if (
+    host === '127.0.0.1' ||
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host === '[::1]'
+  ) {
+    const probe = {
+      snapshot: () => playback?.snapshot(),
+      play: async (): Promise<void> => {
+        if (!playback) throw new Error('OTIO playback is not open.');
+        await playback.play();
+      },
+      pause: (): void => playback?.pause(),
+      seek: async (seconds: number): Promise<void> => {
+        const current = playback;
+        if (!current) throw new Error('OTIO playback is not open.');
+        current.pause();
+        await current.seek({ value: seconds * rate, rate });
+      },
+      focusTrack: (name: string): void => {
+        const lane =
+          lanes.find((value) => value.node.name === name) ??
+          lanes.find((value) => value.code === name);
+        if (!lane) throw new Error(`No OTIO track named ${name}.`);
+        activateNode(lane.node);
+      },
+    };
+    const proofWindow = window as typeof window & {
+      __relicOtioPlayback?: typeof probe;
+    };
+    proofWindow.__relicOtioPlayback = probe;
+    cleanup.push(() => {
+      if (proofWindow.__relicOtioPlayback === probe)
+        delete proofWindow.__relicOtioPlayback;
+    });
+  }
   const pagehide = (): void => controller.dispose();
   window.addEventListener('pagehide', pagehide);
   cleanup.push(() => window.removeEventListener('pagehide', pagehide));
@@ -3097,6 +3391,7 @@ export async function mountOtioView(
     observer.observe(document.body, { childList: true, subtree: true });
     cleanup.push(() => observer.disconnect());
   }
-  initializeTimeline();
+  const opening = initializeTimeline();
   refreshSplit();
+  await opening;
 }
