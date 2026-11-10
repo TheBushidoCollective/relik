@@ -25,6 +25,7 @@ import {
   audioScheduleForOtioRange,
   type OtioDiagnostic,
   type OtioDocumentV1,
+  type OtioNode,
   type OtioRationalTime,
   type OtioTimeRange,
 } from '@relic/format';
@@ -101,7 +102,7 @@ export function planProgramAudio(
     let disabled = false;
     while (id !== null && !seen.has(id)) {
       seen.add(id);
-      const node = document.nodes[id];
+      const node: OtioNode | undefined = document.nodes[id];
       if (!node) break;
       if (!node.enabled) {
         disabled = true;

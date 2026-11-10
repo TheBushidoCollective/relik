@@ -5,10 +5,14 @@ import {
   type ProgramAudioSpan,
 } from '../src/program-render/audio-mix.ts';
 import { ProgramRenderFailure } from '../src/program-render/failure.ts';
-import { ProgramMedia } from '../src/program-render/media.ts';
+import {
+  assertKnownVideoColorSpace,
+  ProgramMedia,
+} from '../src/program-render/media.ts';
 import {
   assertCanvasAvailable,
   assertSequenceFrame,
+  calibrateAacDelay,
   compositionFrameRate,
   frameRateOf,
   frameTime,
@@ -299,17 +303,30 @@ describe('program fidelity guards', () => {
   });
 
   test('disabled ancestor hides a clip', () => {
-    const doc = documentWithRates([30]);
-    (doc.nodes.video as { enabled: boolean }).enabled = false;
+    const original = documentWithRates([30]);
+    const doc = {
+      ...original,
+      nodes: {
+        ...original.nodes,
+        video: { ...original.nodes.video!, enabled: false },
+      },
+    };
     expect(isDisabled(doc, 'clip0')).toBe(true);
     expect(isDisabled(doc, 'timeline')).toBe(false);
   });
 
   test('ancestor time effects are rejected', () => {
-    const doc = documentWithRates([30]);
-    (doc.nodes.video as { effects: unknown[] }).effects = [
-      { enabled: true, schema: 'FreezeFrame.1' },
-    ];
+    const original = documentWithRates([30]);
+    const doc = {
+      ...original,
+      nodes: {
+        ...original.nodes,
+        video: {
+          ...original.nodes.video!,
+          effects: [{ enabled: true, schema: 'FreezeFrame.1' }],
+        },
+      },
+    };
     expect(staticReasons(doc, 'timeline')[0]?.code).toBe('unsupported-effect');
   });
 
@@ -318,6 +335,23 @@ describe('program fidelity guards', () => {
       getContext: () => ({ isContextLost: () => true }),
     } as unknown as HTMLCanvasElement;
     expect(() => assertCanvasAvailable(canvas)).toThrow(ProgramRenderFailure);
+  });
+
+  test('untagged video color is rejected instead of guessed', () => {
+    expect(() => assertKnownVideoColorSpace({}, 'source.mp4')).toThrow(
+      ProgramRenderFailure
+    );
+    expect(() =>
+      assertKnownVideoColorSpace(
+        {
+          matrix: 'smpte170m',
+          primaries: 'smpte170m',
+          transfer: 'smpte170m',
+          fullRange: false,
+        },
+        'source.mp4'
+      )
+    ).not.toThrow();
   });
 
   test('video cursor rejects rotated and uncovered frames and decodes sequentially', async () => {
@@ -414,4 +448,113 @@ describe('program fidelity guards', () => {
     expect(opens).toBe(2);
     media.dispose();
   });
+});
+
+describe('AAC calibration failures', () => {
+  for (const mode of ['encoder', 'decoder', 'gap', 'overlap'] as const) {
+    test(`fails closed on ${mode}`, async () => {
+      const names = ['AudioEncoder', 'AudioDecoder', 'AudioData'] as const;
+      const previous = names.map((name) =>
+        Object.getOwnPropertyDescriptor(globalThis, name)
+      );
+      class FakeData {
+        close() {}
+      }
+      class FakeEncoder {
+        state = 'unconfigured';
+        constructor(
+          private readonly callbacks: {
+            output: (packet: unknown, metadata: unknown) => void;
+          }
+        ) {}
+        configure() {
+          this.state = 'configured';
+        }
+        encode() {}
+        async flush() {
+          if (mode === 'encoder') {
+            this.state = 'closed';
+            throw new Error('asynchronous encoder failure');
+          }
+          this.callbacks.output(
+            {},
+            {
+              decoderConfig: {
+                codec: 'mp4a.40.2',
+                sampleRate: 48000,
+                numberOfChannels: 2,
+              },
+            }
+          );
+        }
+        close() {
+          if (this.state === 'closed') throw new Error('already closed');
+          this.state = 'closed';
+        }
+      }
+      class FakeDecoder {
+        state = 'unconfigured';
+        constructor(
+          private readonly callbacks: { output: (data: unknown) => void }
+        ) {}
+        configure() {
+          this.state = 'configured';
+        }
+        decode() {}
+        async flush() {
+          if (mode === 'decoder') {
+            this.state = 'closed';
+            throw new Error('asynchronous decoder failure');
+          }
+          const frame = (timestamp: number, first: boolean) => ({
+            timestamp,
+            sampleRate: 48000,
+            numberOfChannels: 2,
+            numberOfFrames: 8192,
+            copyTo(out: Float32Array) {
+              if (first) out[4096] = 1;
+            },
+            close() {},
+          });
+          this.callbacks.output(frame(0, true));
+          const shift = mode === 'gap' ? 100 : -100;
+          this.callbacks.output(
+            frame(Math.round(((8192 + shift) * 1_000_000) / 48000), false)
+          );
+        }
+        close() {
+          if (this.state === 'closed') throw new Error('already closed');
+          this.state = 'closed';
+        }
+      }
+      try {
+        for (const [index, value] of [
+          FakeEncoder,
+          FakeDecoder,
+          FakeData,
+        ].entries()) {
+          Object.defineProperty(globalThis, names[index]!, {
+            configurable: true,
+            writable: true,
+            value,
+          });
+        }
+        try {
+          await calibrateAacDelay();
+          throw new Error('calibration unexpectedly succeeded');
+        } catch (error) {
+          expect(error).toBeInstanceOf(ProgramRenderFailure);
+          if (error instanceof ProgramRenderFailure) {
+            expect(error.reasons[0]?.code).toBe('encoder-unavailable');
+          }
+        }
+      } finally {
+        for (const [index, name] of names.entries()) {
+          const descriptor = previous[index];
+          if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+          else Reflect.deleteProperty(globalThis, name);
+        }
+      }
+    });
+  }
 });

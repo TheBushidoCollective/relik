@@ -27,6 +27,24 @@ const IMAGE_PATH = /\.(png|jpe?g|webp|gif|bmp)$/i;
 /** Unpinned decoded images kept between frames. Pinned ones are never evicted. */
 const IMAGE_CACHE_LIMIT = 8;
 
+/** Ambiguous source color metadata cannot be reproduced deterministically. */
+export function assertKnownVideoColorSpace(
+  color: VideoColorSpaceInit,
+  path: string
+): void {
+  if (
+    color.matrix == null ||
+    color.primaries == null ||
+    color.transfer == null ||
+    color.fullRange == null
+  ) {
+    throw failure(
+      'unsupported-codec',
+      `Video color space in ${path} is unspecified`
+    );
+  }
+}
+
 interface VideoState {
   readonly sink: VideoSampleSink;
   last: VideoSample | null;
@@ -308,6 +326,7 @@ export class ProgramMedia {
         `The video codec in ${path} cannot be decoded by this browser`
       );
     }
+    assertKnownVideoColorSpace(await track.getColorSpace(), path);
     const metrics = await track.computeFrameRateMetrics({
       targetPacketCount: Infinity,
     });

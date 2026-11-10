@@ -28,6 +28,7 @@ import {
   type OtioDiagnostic,
   type OtioDocumentV1,
   type OtioEffect,
+  type OtioNode,
   type OtioEvaluationResult,
   type OtioRationalTime,
 } from '@relic/format';
@@ -53,6 +54,7 @@ import {
   type ProgramRenderProgram,
   type ProgramRenderReason,
 } from './protocol.ts';
+import { trimProgramAudio } from './mp4-audio-trim.ts';
 
 const AUDIO_BITRATE = 128_000;
 const VIDEO_BITS_PER_PIXEL_SECOND = 0.1;
@@ -252,7 +254,7 @@ export function isDisabled(document: OtioDocumentV1, nodeId: string): boolean {
   let id: string | null = nodeId;
   while (id !== null && !seen.has(id)) {
     seen.add(id);
-    const node = document.nodes[id];
+    const node: OtioNode | undefined = document.nodes[id];
     if (!node) break;
     if (!node.enabled) return true;
     id = node.parent_id;
@@ -388,6 +390,149 @@ function assertFrameFaithful(evaluation: OtioEvaluationResult): void {
   const first = reasons[0];
   if (first) {
     throw new ProgramRenderFailure([first]);
+  }
+}
+
+/**
+ * Measure the AAC encoder/decoder delay for this browser and configuration.
+ * The signal is synthesized locally; no ambient audio is captured.
+ */
+export async function calibrateAacDelay(): Promise<number> {
+  if (
+    typeof AudioEncoder !== 'function' ||
+    typeof AudioDecoder !== 'function' ||
+    typeof AudioData !== 'function'
+  ) {
+    throw failure(
+      'encoder-unavailable',
+      'AAC calibration requires WebCodecs audio encoding and decoding'
+    );
+  }
+  const length = 16384;
+  const impulse = 4096;
+  const signal = new Float32Array(length * PROGRAM_AUDIO_CHANNELS);
+  signal[impulse] = 1;
+  signal[length + impulse] = 1;
+  const packets: EncodedAudioChunk[] = [];
+  let config: AudioDecoderConfig | undefined;
+  let encoderError: unknown;
+  const encoder = new AudioEncoder({
+    output: (chunk, metadata) => {
+      packets.push(chunk);
+      if (metadata?.decoderConfig) config = metadata.decoderConfig;
+    },
+    error: (error) => {
+      encoderError = error;
+    },
+  });
+  try {
+    const encoderConfig: AudioEncoderConfig & { aac: { format: 'aac' } } = {
+      codec: PROGRAM_AUDIO_CODEC,
+      numberOfChannels: PROGRAM_AUDIO_CHANNELS,
+      sampleRate: PROGRAM_AUDIO_RATE,
+      bitrate: AUDIO_BITRATE,
+      aac: { format: 'aac' },
+    };
+    encoder.configure(encoderConfig);
+    const input = new AudioData({
+      data: signal,
+      format: 'f32-planar',
+      numberOfChannels: PROGRAM_AUDIO_CHANNELS,
+      numberOfFrames: length,
+      sampleRate: PROGRAM_AUDIO_RATE,
+      timestamp: 0,
+    });
+    try {
+      encoder.encode(input);
+      await encoder.flush();
+    } finally {
+      input.close();
+    }
+    if (encoderError || !config || packets.length === 0)
+      throw new Error('AAC calibration encoder produced no decodable packets');
+  } catch (error) {
+    throw failure(
+      'encoder-unavailable',
+      `AAC calibration encoding failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  } finally {
+    if (encoder.state !== 'closed') encoder.close();
+  }
+
+  let decodedFrames = 0;
+  let peak = 0;
+  let peakIndex = -1;
+  let firstDecodedTimestamp: number | undefined;
+  let decoderError: unknown;
+  const decoder = new AudioDecoder({
+    output: (data) => {
+      try {
+        if (
+          data.sampleRate !== PROGRAM_AUDIO_RATE ||
+          data.numberOfChannels !== PROGRAM_AUDIO_CHANNELS ||
+          !Number.isFinite(data.timestamp)
+        ) {
+          decoderError = new Error(
+            'AAC calibration returned an unexpected audio format'
+          );
+          return;
+        }
+        firstDecodedTimestamp ??= data.timestamp;
+        const timestampFrame = Math.round(
+          ((data.timestamp - firstDecodedTimestamp) * PROGRAM_AUDIO_RATE) /
+            1_000_000
+        );
+        if (Math.abs(timestampFrame - decodedFrames) > 1) {
+          decoderError = new Error(
+            'AAC calibration decoder returned a timestamp gap or overlap'
+          );
+          return;
+        }
+        const plane = new Float32Array(data.numberOfFrames);
+        data.copyTo(plane, { planeIndex: 0, format: 'f32-planar' });
+        for (let i = 0; i < plane.length; i++) {
+          const value = Math.abs(plane[i]!);
+          if (value > peak) {
+            peak = value;
+            peakIndex = decodedFrames + i;
+          }
+        }
+        decodedFrames += data.numberOfFrames;
+      } catch (error) {
+        decoderError = error;
+      } finally {
+        data.close();
+      }
+    },
+    error: (error) => {
+      decoderError = error;
+    },
+  });
+  try {
+    decoder.configure(config!);
+    for (const packet of packets) decoder.decode(packet);
+    await decoder.flush();
+    const delay = peakIndex - impulse;
+    if (
+      decoderError ||
+      peak < 0.05 ||
+      !Number.isSafeInteger(delay) ||
+      delay < 0 ||
+      delay > 8192 ||
+      decodedFrames < length + delay
+    ) {
+      throw new Error(
+        'AAC calibration did not identify a bounded, complete impulse'
+      );
+    }
+    return delay;
+  } catch (error) {
+    throw failure(
+      'encoder-unavailable',
+      `AAC calibration decoding failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  } finally {
+    if (decoder.state !== 'closed') decoder.close();
   }
 }
 
@@ -550,6 +695,7 @@ export async function renderProgramTimeline(
     )
   );
   await probeEncoders(width, height, videoBitrate);
+  const audioDelay = await calibrateAacDelay();
   const audio: ProgramAudioPlan = planProgramAudio(
     document,
     timelineId,
@@ -682,8 +828,20 @@ export async function renderProgramTimeline(
       'The encoder reported no AVC codec string'
     );
   }
+  const trimmed = trimProgramAudio(
+    sink.bytes(),
+    audioDelay,
+    audio.sampleCount,
+    PROGRAM_AUDIO_RATE
+  );
+  if (trimmed.byteLength > maxBytes) {
+    throw failure(
+      'size-cap-exceeded',
+      `Output exceeds ${maxBytes} bytes after audio trimming`
+    );
+  }
   return {
-    bytes: sink.bytes(),
+    bytes: Uint8Array.from(trimmed),
     program: {
       frame_rate: { num: rate.num, den: rate.den },
       frames: frameCount,
