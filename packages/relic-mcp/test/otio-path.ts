@@ -60,6 +60,7 @@ import { diskAssets } from '@relic/server/src/assets.ts';
 import type { OutboundMail } from '@relic/server/src/mail.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import { DEFAULT_CLOCK_POLICY } from '../../relic-viewer/src/otio-output-clock';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { loadPublishState } from '../src/state.ts';
@@ -9476,6 +9477,7 @@ interface MovingTrace {
       sampleFrame: number;
       channels: number[][];
       witness?: number[][];
+      marker?: number[];
       sequence?: number;
       quantumFrames?: number[];
       quantumLengths?: number[];
@@ -9753,7 +9755,7 @@ function assertAnchorEvidence(
     (event) => event.kind === 'production-anchor-carrier-connected'
   )?.value as Record<string, unknown> | undefined;
   assert.ok(
-    layout?.['inputs'] === 2 &&
+    layout?.['inputs'] === 3 &&
       layout['outputs'] === 1 &&
       layout['channelCount'] === 2 &&
       layout['channelCountMode'] === 'explicit' &&
@@ -10414,8 +10416,54 @@ interface ScheduledPcmComparison {
   mutedPrefixRmse: [number, number];
 }
 
-// The expected planes are produced independently of the player. No offset or
-// gain is fitted: context frame F0 owns expected sample zero in both channels.
+// Compare each sample against independent source planes without fitting offsets.
+function assertSourcePcmSamples(
+  trace: MovingTrace['trace'],
+  f0: number,
+  expected: readonly [Float32Array, Float32Array],
+  first: number,
+  end: number
+): void {
+  const witness = trace.witness;
+  assert.ok(
+    witness &&
+      Number.isSafeInteger(f0) &&
+      Number.isSafeInteger(first) &&
+      Number.isSafeInteger(end) &&
+      first >= 0 &&
+      end > first &&
+      end <= expected[0].length &&
+      end <= expected[1].length,
+    'invalid pointwise PCM reference'
+  );
+  assertPcmCoverage(f0 + first, f0 + end, trace.audio, witness);
+  let seen = 0;
+  for (const chunk of trace.audio)
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null) continue;
+      const index = frame - f0;
+      if (index < first || index >= end) continue;
+      for (let ch = 0; ch < 2; ch++) {
+        const actual = chunk.channels[ch]![i]!,
+          reference = expected[ch]![index]!;
+        assert.ok(
+          Number.isFinite(actual) &&
+            Number.isFinite(reference) &&
+            Math.abs(actual - reference) <= 0.003,
+          `source-bound PCM sample mismatch at ${index}, channel ${ch}`
+        );
+      }
+      seen++;
+    }
+  assert.equal(
+    seen,
+    end - first,
+    'pointwise PCM reference interval incomplete'
+  );
+}
+
+// Context frame F0 owns expected sample zero in both channels.
 function compareScheduledPcm(
   chunks: MovingTrace['trace']['audio'],
   f0: number,
@@ -12299,13 +12347,19 @@ async function assertVideoReservationInvalidation(
   pass('scheduled-video-reservation-invalidation');
   await seekTo(browser, 0);
   const future = await browser.evaluate<
-    MovingTrace & { sawBuffering: boolean }
+    MovingTrace & {
+      sawBuffering: boolean;
+      sawHeld: boolean;
+      handoffBeforeRelease: boolean;
+    }
   >(`(async () => {
     const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
     const root = document.querySelector('.otio-view');
     const button = document.querySelector('button.otio-play');
     if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('future-video controls missing');
     const start = await globalThis.__otioProofTrace.start();
+    globalThis.__otioProofTrace.enableRecoveryMarker();
+    globalThis.__otioProofHoldOldDrain = true;
     const playEdge = globalThis.__otioProofTrace.playRequest();
     button.click();
     await sleep(500);
@@ -12314,10 +12368,17 @@ async function assertVideoReservationInvalidation(
     while (root.dataset.buffering !== 'true' && performance.now() < deadline) await sleep(20);
     const sawBuffering = root.dataset.buffering === 'true';
     globalThis.__otioProofPcmFault = null;
-    await sleep(1500);
+    const handoffDeadline=performance.now()+500;
+    while ((!globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff') ||
+            !globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held')) &&
+           performance.now()<handoffDeadline) await sleep(10);
+    const sawHeld=globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held');
+    const handoffBeforeRelease=globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff');
+    globalThis.__otioProofHoldOldDrain = false;
+    await sleep(700);
     const trace = await globalThis.__otioProofTrace.stop();
     if (root.dataset.playing === 'true') button.click();
-    return {start, playEdge, trace, sawBuffering};
+    return {start, playEdge, trace, sawBuffering, sawHeld, handoffBeforeRelease};
   })()`);
   await writeFile(
     join(shotDir, 'video-future-starvation.json'),
@@ -12385,20 +12446,73 @@ async function assertVideoReservationInvalidation(
   assert.ok(
     Number.isSafeInteger(closeFrame) &&
       Number.isSafeInteger(resumeFrame) &&
-      resumeFrame > closeFrame
+      resumeFrame >= closeFrame &&
+      resumeFrame - closeFrame <= Math.floor(sampleRate * 0.02),
+    'future-video recovery gap exceeds the 20ms sample bound'
+  );
+  const heldDrain = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-old-drain-held' &&
+      event['boundaryFrame'] === closeFrame
+  );
+  const releasedDrain = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-old-drain-released' &&
+      event['boundaryFrame'] === closeFrame
+  );
+  const videoHandoff = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-handoff' &&
+      event['boundaryFrame'] === closeFrame
   );
   assert.ok(
-    Math.abs(committedSeconds - restart.value / restart.rate) <=
-      1 / sampleRate &&
-      Math.abs(committedSeconds - stop.value / stop.rate) <= 1 / sampleRate,
+    future.sawHeld &&
+      future.handoffBeforeRelease &&
+      heldDrain &&
+      releasedDrain &&
+      videoHandoff &&
+      videoHandoff['oldDrainObserved'] === false &&
+      Number(videoHandoff['wallMs']) <= Number(releasedDrain['wallMs']),
+    'video successor did not start before releasing held old drain'
+  );
+  const videoArmClock = future.trace.events.find(
+    (event) =>
+      event.kind === 'audio-arm-native-output' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'generation' in event.value &&
+      event.value.generation === resumed['generation']
+  );
+  assert.ok(
+    videoArmClock?.value &&
+      typeof videoArmClock.value === 'object' &&
+      'output' in videoArmClock.value &&
+      videoArmClock.value.output &&
+      typeof videoArmClock.value.output === 'object' &&
+      'contextTime' in videoArmClock.value.output &&
+      'performanceTime' in videoArmClock.value.output &&
+      Number(videoArmClock.value.output.contextTime) * sampleRate <
+        closeFrame &&
+      Number(videoArmClock.value.output.performanceTime) > 0,
+    'video successor was not armed with real output still before D'
+  );
+  const exactCommittedSample =
+    (originalStart.value * sampleRate) / originalStart.rate +
+    closeFrame -
+    originalFrame;
+  assert.ok(
+    Number.isSafeInteger(exactCommittedSample) &&
+      (restart.value * sampleRate) / restart.rate === exactCommittedSample &&
+      (stop.value * sampleRate) / stop.rate === exactCommittedSample,
     'future video recovery did not preserve the independently calculated committed sample'
   );
-  assertPcmSilence(
-    future.trace,
-    closeFrame,
-    resumeFrame,
-    'audio crossed the closed future-video gate'
-  );
+  if (resumeFrame > closeFrame)
+    assertPcmSilence(
+      future.trace,
+      closeFrame,
+      resumeFrame,
+      'audio crossed the closed future-video gate'
+    );
   assert.ok(
     !futureEvents.some(
       (event) => event['event'] === 'error' && event['stage'] === 'visual'
@@ -12463,6 +12577,83 @@ async function assertVideoReservationInvalidation(
   for (let n = committedSample; n < committedSample + compareFrames; n++)
     for (let channel = 0; channel < 2; channel++)
       planes[channel]![n] = sourceAudio.stdout.readFloatLE(n * 8 + channel * 4);
+  const videoOldArm = future.trace.events.find(
+    (event) =>
+      event.kind === 'transport-command' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'type' in event.value &&
+      event.value.type === 'arm' &&
+      'generation' in event.value &&
+      event.value.generation === firstEpoch['generation']
+  );
+  const videoNewArm = future.trace.events.find(
+    (event) =>
+      event.kind === 'transport-command' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'type' in event.value &&
+      event.value.type === 'arm' &&
+      'generation' in event.value &&
+      event.value.generation === resumed['generation']
+  );
+  assert.ok(
+    videoOldArm?.value &&
+      videoNewArm?.value &&
+      typeof videoOldArm.value === 'object' &&
+      typeof videoNewArm.value === 'object' &&
+      'slot' in videoOldArm.value &&
+      'slot' in videoNewArm.value &&
+      (videoOldArm.value.slot === 0 || videoOldArm.value.slot === 1) &&
+      (videoNewArm.value.slot === 0 || videoNewArm.value.slot === 1) &&
+      videoOldArm.value.slot !== videoNewArm.value.slot,
+    'video recovery did not use isolated old and successor slots'
+  );
+  assert.ok(
+    future.trace.events.some(
+      (event) =>
+        event.kind === 'recovery-old-marker-scheduled' &&
+        event.value &&
+        typeof event.value === 'object' &&
+        'frame' in event.value &&
+        event.value.frame === closeFrame &&
+        'late' in event.value &&
+        event.value.late === false
+    ),
+    'video recovery old-slot marker was not armed before closure'
+  );
+  const videoWitness = future.trace.witness;
+  assert.ok(videoWitness, 'video recovery independent carrier missing');
+  let videoMarkerSamples = 0;
+  for (const chunk of future.trace.audio) {
+    assert.ok(
+      chunk.marker && chunk.marker.length === chunk.channels[0]!.length,
+      'video recovery old-slot marker capture missing'
+    );
+    for (let i = 0; i < chunk.marker.length; i++) {
+      const frame = carrierFrame(chunk, i, videoWitness);
+      if (frame === null || frame < resumeFrame || frame >= resumeFrame + 128)
+        continue;
+      assert.ok(
+        Math.abs(chunk.marker[i]! - 0.375) < 0.00001,
+        'old-slot marker not present during video recovery'
+      );
+      for (let ch = 0; ch < 2; ch++)
+        assert.ok(
+          Math.abs(
+            chunk.channels[ch]![i]! -
+              planes[ch]![committedSample + frame - resumeFrame]!
+          ) <= 0.003,
+          'old-slot marker leaked into video recovery PCM'
+        );
+      videoMarkerSamples++;
+    }
+  }
+  assert.equal(
+    videoMarkerSamples,
+    128,
+    'video recovery marker overlap not captured'
+  );
   for (
     let first = committedSample;
     first < committedSample + compareFrames;
@@ -13805,6 +13996,823 @@ async function runScheduledPcmProof(
     );
     pass('scheduled-pcm-playback');
     if (clockProofMode === 'long') return;
+    async function runRecoveryProof(): Promise<void> {
+      const recoveryWindowFrames = Math.floor(oracle.sample_rate * 0.02);
+      assert.ok(recoveryWindowFrames > 0, 'invalid recovery sample rate');
+      await seekTo(browser, 0);
+      const recovery = await browser.evaluate<
+        MovingTrace & {
+          held: number;
+          released: number;
+          sawHeld: boolean;
+          handoffBeforeRelease: boolean;
+        }
+      >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('recovery controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      globalThis.__otioProofTrace.enableRecoveryMarker();
+      globalThis.__otioProofHoldOldDrain = true;
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(600);
+      globalThis.__otioProofTrace.holdPcmResponses(true);
+      const deadline = performance.now() + 4000;
+      while ((!globalThis.__otioProofTrace.heldPcmCount() || root.dataset.buffering !== 'true') && performance.now() < deadline) await sleep(20);
+      const held = globalThis.__otioProofTrace.heldPcmCount();
+      const released = globalThis.__otioProofTrace.holdPcmResponses(false);
+      const handoffDeadline=performance.now()+500;
+      while ((!globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff') ||
+              !globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held')) &&
+             performance.now()<handoffDeadline) await sleep(10);
+      const sawHeld=globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held');
+      const handoffBeforeRelease=globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff');
+      globalThis.__otioProofHoldOldDrain = false;
+      await sleep(700);
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (root.dataset.playing === 'true') button.click();
+      return { start, playEdge, trace, held, released, sawHeld, handoffBeforeRelease };
+    })()`);
+      await writeFile(
+        join(shotDir, `scheduled-pcm-starvation-recovery-${rate}.json`),
+        JSON.stringify({ provenance, capture: recovery })
+      );
+      assert.ok(
+        recovery.held > 0 && recovery.released === recovery.held,
+        'recovery did not withhold and release future PCM'
+      );
+      const recoveryEvents = recovery.trace.events
+        .filter((entry) => entry.kind === 'scheduled-pcm')
+        .map((entry) => entry.value as Record<string, unknown>);
+      const firstEpoch = recoveryEvents.find(
+        (event) => event['event'] === 'epoch'
+      );
+      const gateIndex = recoveryEvents.findIndex(
+        (event) => event['event'] === 'gate-close'
+      );
+      assert.ok(
+        firstEpoch && gateIndex >= 0,
+        'starvation lacks original epoch or actual gate closure'
+      );
+      const gate = recoveryEvents[gateIndex]!;
+      const resumed = recoveryEvents
+        .slice(gateIndex + 1)
+        .find((event) => event['event'] === 'epoch');
+      assert.ok(resumed, 'starvation did not produce a replacement epoch');
+      assert.notEqual(
+        resumed['generation'],
+        firstEpoch['generation'],
+        'starvation reused expired generation'
+      );
+      const stopFrame = Number(gate['contextStopFrame']);
+      const resumeFrame = Number(resumed['f0']);
+      const stop = gate['compositionStop'] as { value: number; rate: number };
+      const resume = resumed['compositionT0'] as {
+        value: number;
+        rate: number;
+      };
+      const originalStart = firstEpoch['compositionT0'] as {
+        value: number;
+        rate: number;
+      };
+      const originalFrame = Number(firstEpoch['f0']);
+      assert.equal(
+        gate['generation'],
+        firstEpoch['generation'],
+        'PCM closure belongs to another generation'
+      );
+      assert.equal(Number(firstEpoch['contextSampleRate']), oracle.sample_rate);
+      assert.ok(originalStart?.rate > 0 && Number.isSafeInteger(originalFrame));
+      const committedSample =
+        (originalStart.value * oracle.sample_rate) / originalStart.rate +
+        stopFrame -
+        originalFrame;
+      assert.ok(
+        Number.isSafeInteger(stopFrame) &&
+          Number.isSafeInteger(resumeFrame) &&
+          resumeFrame >= stopFrame &&
+          resumeFrame - stopFrame <= recoveryWindowFrames,
+        'recovery gap exceeds the 20ms sample bound'
+      );
+      const traceEvents = recovery.trace.events;
+      const findArm = (generation: unknown) =>
+        traceEvents.find(
+          (event) =>
+            event.kind === 'transport-command' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'type' in event.value &&
+            event.value.type === 'arm' &&
+            'generation' in event.value &&
+            event.value.generation === generation
+        );
+      const oldArm = findArm(firstEpoch['generation']),
+        newArm = findArm(resumed['generation']);
+      assert.ok(
+        oldArm?.value &&
+          newArm?.value &&
+          typeof oldArm.value === 'object' &&
+          typeof newArm.value === 'object' &&
+          'slot' in oldArm.value &&
+          'slot' in newArm.value &&
+          (oldArm.value.slot === 0 || oldArm.value.slot === 1) &&
+          (newArm.value.slot === 0 || newArm.value.slot === 1) &&
+          oldArm.value.slot !== newArm.value.slot,
+        'old and replacement generations did not occupy separate authored gate slots'
+      );
+      const markerConnection = traceEvents.find(
+        (event) => event.kind === 'recovery-old-marker-connected'
+      );
+      assert.ok(
+        markerConnection?.value &&
+          typeof markerConnection.value === 'object' &&
+          'generation' in markerConnection.value &&
+          'slot' in markerConnection.value &&
+          markerConnection.value.generation === firstEpoch['generation'] &&
+          markerConnection.value.slot === oldArm.value.slot,
+        'old-generation marker was not attached to the old physical slot'
+      );
+      assert.ok(
+        traceEvents.some(
+          (event) =>
+            event.kind === 'recovery-old-marker-scheduled' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'frame' in event.value &&
+            event.value.frame === stopFrame &&
+            'late' in event.value &&
+            event.value.late === false
+        ),
+        'old-slot marker was not armed before the real closure boundary'
+      );
+      const closure = traceEvents.find(
+        (event) =>
+          event.kind === 'transport-message' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'generation' in event.value &&
+          event.value.generation === firstEpoch['generation'] &&
+          'closedFrame' in event.value &&
+          event.value.closedFrame === stopFrame &&
+          'accepted' in event.value &&
+          event.value.accepted === true
+      );
+      assert.ok(
+        closure && closure.timestamp <= newArm.timestamp,
+        'successor arm was submitted before acknowledged old render closure'
+      );
+      const startedSources = traceEvents.filter(
+        (event) =>
+          event.kind === 'scheduled-pcm' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'event' in event.value &&
+          event.value.event === 'scheduled' &&
+          'generation' in event.value &&
+          event.value.generation === resumed['generation']
+      );
+      assert.ok(
+        startedSources.length > 0 &&
+          startedSources.some(
+            (event) =>
+              event.value &&
+              typeof event.value === 'object' &&
+              'contextStartFrame' in event.value &&
+              event.value.contextStartFrame === resumeFrame
+          ),
+        'no actually started successor source begins at selected F1'
+      );
+      for (const event of startedSources) {
+        assert.ok(
+          event.value &&
+            typeof event.value === 'object' &&
+            'contextStartFrame' in event.value &&
+            Number.isSafeInteger(event.value.contextStartFrame) &&
+            Number(event.value.contextStartFrame) >= resumeFrame &&
+            event.timestamp >= closure.timestamp,
+          'successor source started before closure or was rebased after scheduling'
+        );
+      }
+      const actualArm = traceEvents.find(
+        (event) =>
+          event.kind === 'audio-arm-native-output' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'generation' in event.value &&
+          event.value.generation === resumed['generation']
+      );
+      assert.ok(
+        actualArm?.value &&
+          typeof actualArm.value === 'object' &&
+          'output' in actualArm.value &&
+          actualArm.value.output &&
+          typeof actualArm.value.output === 'object' &&
+          'contextTime' in actualArm.value.output &&
+          'performanceTime' in actualArm.value.output &&
+          'contextBefore' in actualArm.value &&
+          'contextAfter' in actualArm.value &&
+          'before' in actualArm.value &&
+          'after' in actualArm.value &&
+          'state' in actualArm.value,
+        'successor arm lacks a real output-timestamp observation'
+      );
+      const outputContext = Number(actualArm.value.output.contextTime);
+      const outputPerformance = Number(actualArm.value.output.performanceTime);
+      assert.ok(
+        Number.isFinite(outputContext) &&
+          outputContext > 0 &&
+          Number.isFinite(outputPerformance) &&
+          outputPerformance > 0 &&
+          actualArm.value.state === 'running' &&
+          Number(actualArm.value.before) <= Number(actualArm.value.after) &&
+          Number(actualArm.value.contextBefore) <=
+            Number(actualArm.value.contextAfter) &&
+          outputPerformance <=
+            Number(actualArm.value.after) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+          Number(actualArm.value.after) - outputPerformance <=
+            DEFAULT_CLOCK_POLICY.freshnessMs &&
+          outputContext <=
+            Number(actualArm.value.contextAfter) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs / 1000 &&
+          outputContext * rate < stopFrame,
+        'successor arm was not observed while real output remained before D'
+      );
+      const stamps = traceEvents
+        .filter(
+          (event) =>
+            event.kind === 'audio-output-timestamp-observed' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'output' in event.value &&
+            event.value.output &&
+            typeof event.value.output === 'object' &&
+            'contextTime' in event.value.output &&
+            'performanceTime' in event.value.output &&
+            'injected' in event.value &&
+            event.value.injected === false
+        )
+        .map((event) => ({
+          timestamp: event.timestamp,
+          value: event.value as {
+            output: { contextTime: number; performanceTime: number };
+          },
+        }))
+        .filter(
+          (entry) =>
+            Number.isFinite(entry.value.output.contextTime) &&
+            Number.isFinite(entry.value.output.performanceTime) &&
+            entry.value.output.contextTime > 0 &&
+            entry.value.output.performanceTime > 0
+        );
+      const prior = stamps
+        .filter((entry) => entry.timestamp <= actualArm.timestamp)
+        .at(-1);
+      const after = stamps.find(
+        (entry) =>
+          entry.timestamp > actualArm.timestamp &&
+          entry.value.output.contextTime > outputContext &&
+          entry.value.output.performanceTime > outputPerformance
+      );
+      assert.ok(
+        prior &&
+          after &&
+          prior.value.output.contextTime <= outputContext &&
+          prior.value.output.performanceTime <= outputPerformance,
+        'real output timestamp was not continuously advancing across handoff'
+      );
+      const bracket = traceEvents.filter(
+        (event) =>
+          event.kind === 'audio-output-timestamp-observed' &&
+          event.timestamp >= prior.timestamp &&
+          event.timestamp <= after.timestamp
+      );
+      let lastContext = 0,
+        lastPerformance = 0;
+      for (const observed of bracket) {
+        const value = observed.value as {
+          injected?: boolean;
+          output?: { contextTime?: number; performanceTime?: number };
+        };
+        const contextTime = Number(value?.output?.contextTime),
+          performanceTime = Number(value?.output?.performanceTime);
+        assert.ok(
+          value?.injected === false &&
+            Number.isFinite(contextTime) &&
+            Number.isFinite(performanceTime) &&
+            contextTime > 0 &&
+            performanceTime > 0 &&
+            contextTime >= lastContext &&
+            performanceTime >= lastPerformance &&
+            performanceTime <=
+              observed.timestamp + DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+            observed.timestamp - performanceTime <=
+              DEFAULT_CLOCK_POLICY.freshnessMs,
+          'output mapping was invalid or regressed inside the handoff bracket'
+        );
+        lastContext = contextTime;
+        lastPerformance = performanceTime;
+      }
+      assert.ok(stop?.rate > 0 && resume?.rate > 0);
+      const resumeSample = committedSample;
+      assert.ok(
+        Number.isSafeInteger(resumeSample) &&
+          resumeSample >= recoveryWindowFrames &&
+          resumeSample + recoveryWindowFrames <= length,
+        'replacement epoch lacks a comparable sample interval'
+      );
+      assert.equal(
+        (stop.value * oracle.sample_rate) / stop.rate,
+        committedSample,
+        'closure changed the exact committed composition sample'
+      );
+      assert.equal(
+        (resume.value * oracle.sample_rate) / resume.rate,
+        committedSample,
+        'replacement skipped or replayed a committed source sample'
+      );
+      const candidate = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-candidate-ready' &&
+          event['oldGeneration'] === firstEpoch['generation'] &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const renderClosed = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-render-closed' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const selection = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-selection' &&
+          event['oldGeneration'] === firstEpoch['generation']
+      );
+      const finalGuard = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-final-guard' &&
+          event['oldGeneration'] === firstEpoch['generation']
+      );
+      const handoff = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-handoff' &&
+          event['oldGeneration'] === firstEpoch['generation']
+      );
+      assert.ok(
+        candidate && renderClosed && selection && finalGuard && handoff,
+        'two-phase handoff provenance incomplete'
+      );
+      const heldDrain = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-old-drain-held' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const releasedDrain = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-old-drain-released' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      assert.ok(
+        recovery.sawHeld &&
+          recovery.handoffBeforeRelease &&
+          heldDrain &&
+          releasedDrain &&
+          Number(handoff['wallMs']) <= Number(releasedDrain['wallMs']) &&
+          Number(heldDrain['wallMs']) <= Number(releasedDrain['wallMs']),
+        'successor was not armed before release of an actually held old drain'
+      );
+      assert.ok(
+        Number(candidate['wallMs']) <= Number(renderClosed['wallMs']) &&
+          Number(renderClosed['wallMs']) <= Number(selection['wallMs']) &&
+          Number(selection['wallMs']) <= Number(finalGuard['wallMs']) &&
+          Number(finalGuard['wallMs']) <= Number(handoff['wallMs']),
+        'handoff phases are not ordered around render closure'
+      );
+      assert.equal(
+        candidate['boundaryFrame'],
+        stopFrame,
+        'staged candidate targets another closure'
+      );
+      assert.equal(
+        candidate['compositionStart'],
+        committedSample,
+        'staged candidate did not reserve the exact committed sample'
+      );
+      assert.equal(
+        candidate['slot'],
+        newArm.value.slot,
+        'staged candidate used wrong successor slot'
+      );
+      assert.ok(
+        candidate['generation'] === resumed['generation'] &&
+          selection['generation'] === resumed['generation'] &&
+          finalGuard['generation'] === resumed['generation'] &&
+          handoff['generation'] === resumed['generation'],
+        'staged or committed handoff provenance belongs to another generation'
+      );
+      assert.equal(
+        renderClosed['oldSlot'],
+        oldArm.value.slot,
+        'render closure identified wrong old slot'
+      );
+      assert.equal(
+        renderClosed['clockEpoch'],
+        selection['clockEpoch'],
+        'handoff crossed clock sessions'
+      );
+      assert.equal(
+        selection['boundaryFrame'],
+        stopFrame,
+        'handoff selection targets another closure'
+      );
+      assert.equal(
+        selection['compositionStartFrame'],
+        committedSample,
+        'handoff source origin changed'
+      );
+      assert.equal(
+        selection['f0'],
+        resumeFrame,
+        'handoff selection was rebased'
+      );
+      assert.equal(
+        selection['slot'],
+        newArm.value.slot,
+        'handoff selected the wrong input slot'
+      );
+      assert.ok(
+        Number.isSafeInteger(selection['feasibleLower']) &&
+          Number.isSafeInteger(selection['feasibleUpper']) &&
+          Number(selection['feasibleLower']) <= resumeFrame &&
+          selection['feasibleUpper'] === resumeFrame &&
+          resumeFrame <= stopFrame + recoveryWindowFrames &&
+          (selection['phaseLower'] === null ||
+            (Number.isSafeInteger(selection['phaseLower']) &&
+              Number(selection['phaseLower']) <= resumeFrame)) &&
+          (selection['phaseUpper'] === null ||
+            (Number.isSafeInteger(selection['phaseUpper']) &&
+              resumeFrame <= Number(selection['phaseUpper']))),
+        'F1 was not the latest feasible in-band sample'
+      );
+      const recoveryBridge = resumed['bridge'] as {
+        contextTime: number;
+        performanceTime: number;
+      };
+      const mappedF1 =
+        recoveryBridge.performanceTime +
+        (resumeFrame / rate - recoveryBridge.contextTime) * 1000;
+      assert.ok(
+        Number.isFinite(selection['requestWall']) &&
+          Number.isFinite(selection['deadline']) &&
+          Number(selection['deadline']) ===
+            Number(selection['requestWall']) + 350 &&
+          Number.isFinite(selection['epochWall']) &&
+          Math.abs(Number(selection['epochWall']) - mappedF1) <= 1e-6 &&
+          mappedF1 <= Number(selection['deadline']),
+        'handoff reset its original deadline or changed the selected output mapping'
+      );
+      assert.ok(
+        Number(selection['guardFrames']) === 512 &&
+          resumeFrame - Number(selection['contextFrame']) >= 512,
+        'handoff selection violated the 512-frame guard'
+      );
+      assert.ok(
+        finalGuard['boundaryFrame'] === stopFrame &&
+          finalGuard['f0'] === resumeFrame &&
+          finalGuard['slot'] === newArm.value.slot &&
+          finalGuard['guardFrames'] === 512 &&
+          Number.isSafeInteger(finalGuard['contextFrame']) &&
+          resumeFrame - Number(finalGuard['contextFrame']) >= 512 &&
+          finalGuard['clockEpoch'] === selection['clockEpoch'] &&
+          Number(finalGuard['wallMs']) >=
+            Math.min(...startedSources.map((event) => event.timestamp)),
+        'post-start handoff guard or epoch did not remain valid'
+      );
+      assert.ok(
+        handoff['f0'] === resumeFrame &&
+          handoff['boundaryFrame'] === stopFrame &&
+          handoff['slot'] === newArm.value.slot &&
+          handoff['clockEpoch'] === selection['clockEpoch'] &&
+          handoff['oldDrainObserved'] === false,
+        'handoff waited for old output drain or changed the staged epoch'
+      );
+      const originalSample =
+        (originalStart.value * oracle.sample_rate) / originalStart.rate;
+      assert.ok(
+        Number.isSafeInteger(originalSample),
+        'old epoch origin is not a sample'
+      );
+      const oldPrefix = compareScheduledPcm(
+        recovery.trace.audio,
+        originalFrame - originalSample,
+        expected,
+        committedSample - recoveryWindowFrames,
+        committedSample,
+        recovery.trace.witness
+      );
+      assert.ok(
+        oldPrefix.rmse.every((value) => value <= 0.003),
+        'old generation lost or mixed source PCM before render closure'
+      );
+      assertSourcePcmSamples(
+        recovery.trace,
+        originalFrame - originalSample,
+        expected,
+        committedSample - recoveryWindowFrames,
+        committedSample
+      );
+      if (resumeFrame > stopFrame)
+        assertPcmSilence(
+          recovery.trace,
+          stopFrame,
+          resumeFrame,
+          'new or stale PCM crossed the closed gate before successor F1'
+        );
+      const recovered = compareScheduledPcm(
+        recovery.trace.audio,
+        resumeFrame - resumeSample,
+        expected,
+        resumeSample,
+        resumeSample + recoveryWindowFrames,
+        recovery.trace.witness
+      );
+      assert.ok(
+        recovered.rmse.every((value) => value <= 0.003),
+        'replacement epoch did not restart at the exact post-gain stereo sample'
+      );
+      assertSourcePcmSamples(
+        recovery.trace,
+        resumeFrame - resumeSample,
+        expected,
+        resumeSample,
+        resumeSample + recoveryWindowFrames
+      );
+      const witness = recovery.trace.witness;
+      assert.ok(witness, 'recovery marker lacks independent carrier');
+      const probeCount = Math.min(128, recoveryWindowFrames);
+      let markerSamples = 0;
+      for (const chunk of recovery.trace.audio) {
+        assert.ok(
+          chunk.marker && chunk.marker.length === chunk.channels[0]!.length,
+          'old-slot marker capture unavailable'
+        );
+        for (let i = 0; i < chunk.marker.length; i++) {
+          const frame = carrierFrame(chunk, i, witness);
+          if (
+            frame === null ||
+            frame < resumeFrame ||
+            frame >= resumeFrame + probeCount
+          )
+            continue;
+          assert.ok(
+            Math.abs(chunk.marker[i]! - 0.375) < 0.00001,
+            'delayed old-slot marker was not present during replacement PCM'
+          );
+          const sample = resumeSample + (frame - resumeFrame);
+          for (let ch = 0; ch < 2; ch++)
+            assert.ok(
+              Math.abs(chunk.channels[ch]![i]! - expected[ch]![sample]!) <=
+                0.003,
+              'old-slot marker leaked into replacement PCM'
+            );
+          markerSamples++;
+        }
+      }
+      assert.equal(
+        markerSamples,
+        probeCount,
+        'old-slot marker overlap was not fully captured'
+      );
+      const drained = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-old-drained' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const drainRead = traceEvents.find(
+        (event) =>
+          event.kind === 'recovery-old-drain-native-read' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'boundaryFrame' in event.value &&
+          event.value.boundaryFrame === stopFrame
+      );
+      assert.ok(
+        drained &&
+          drainRead?.value &&
+          typeof drainRead.value === 'object' &&
+          'contextTime' in drainRead.value &&
+          'state' in drainRead.value &&
+          drainRead.value.state === 'running' &&
+          Number(drained['wallMs']) >= Number(handoff['wallMs']),
+        'old output drain did not occur after successor handoff'
+      );
+      const postDrainFrame = Math.max(
+        resumeFrame,
+        Math.ceil(Number(drainRead.value.contextTime) * rate) + 128
+      );
+      const postDrainSample = resumeSample + postDrainFrame - resumeFrame;
+      assert.ok(
+        Number.isSafeInteger(postDrainFrame) &&
+          Number.isSafeInteger(postDrainSample) &&
+          postDrainSample >= 0 &&
+          postDrainSample + recoveryWindowFrames <= length,
+        'no source-bound post-drain observation window'
+      );
+      const afterOldDrain = compareScheduledPcm(
+        recovery.trace.audio,
+        resumeFrame - resumeSample,
+        expected,
+        postDrainSample,
+        postDrainSample + recoveryWindowFrames,
+        recovery.trace.witness
+      );
+      assert.ok(
+        afterOldDrain.rmse.every((value) => value <= 0.003),
+        'late old-drain completion altered successor PCM'
+      );
+      assertSourcePcmSamples(
+        recovery.trace,
+        resumeFrame - resumeSample,
+        expected,
+        postDrainSample,
+        postDrainSample + recoveryWindowFrames
+      );
+      assert.ok(
+        !recoveryEvents.some(
+          (event) =>
+            Number(event['wallMs']) > Number(handoff['wallMs']) &&
+            event['generation'] === resumed['generation'] &&
+            (event['event'] === 'cancel' || event['event'] === 'error')
+        ),
+        'late old-drain completion canceled the successor generation'
+      );
+      pass('scheduled-pcm-starvation-recovery');
+    }
+    async function runRecoveryFaults(): Promise<void> {
+      for (const fault of [
+        'recovery-phase-mismatch',
+        'recovery-impossible-guard',
+        'recovery-excess-work',
+      ] as const) {
+        const isolated = await openBrowser(url, sessionToken, {
+          label: `${fault}-${rate}`,
+          recordProofTrace: true,
+          proofSampleRate: rate,
+        });
+        try {
+          await waitReady(isolated);
+          const result = await isolated.evaluate<
+            MovingTrace & { held: number; released: number }
+          >(`(async()=>{
+            const sleep=ms=>{const {promise,resolve}=Promise.withResolvers();setTimeout(resolve,ms);return promise;};
+            const root=document.querySelector('.otio-view'),button=document.querySelector('button.otio-play');
+            if(!(root instanceof HTMLElement)||!(button instanceof HTMLButtonElement)) throw new Error('recovery fault controls missing');
+            const start=await globalThis.__otioProofTrace.start(),playEdge=globalThis.__otioProofTrace.playRequest();
+            button.click(); await sleep(600);
+            if (${JSON.stringify(fault)}==='recovery-excess-work') globalThis.__otioProofTrace.injectRecoveryOverrun();
+            else globalThis.__otioProofPcmFault=${JSON.stringify(fault)};
+            globalThis.__otioProofTrace.holdPcmResponses(true);
+            const waitUntil=performance.now()+4000;
+            while((!globalThis.__otioProofTrace.heldPcmCount()||root.dataset.buffering!=='true')&&performance.now()<waitUntil) await sleep(10);
+            const held=globalThis.__otioProofTrace.heldPcmCount();
+            const released=globalThis.__otioProofTrace.holdPcmResponses(false);
+            const faultDeadline=performance.now()+1000;
+            while(!globalThis.__otioProofTrace.hasPcmEvent('recovery-fault') &&
+              !globalThis.__otioProofTrace.hasTraceEvent('recovery-overrun-injected') &&
+              performance.now()<faultDeadline) await sleep(10);
+            await sleep(300); globalThis.__otioProofPcmFault=null;
+            const trace=await globalThis.__otioProofTrace.stop();
+            if(root.dataset.playing==='true') button.click();
+            return {start,playEdge,trace,held,released};
+          })()`);
+          await writeFile(
+            join(shotDir, `${fault}-${rate}.json`),
+            JSON.stringify({ provenance, capture: result })
+          );
+          assert.ok(
+            result.held > 0 &&
+              result.held === result.released &&
+              !result.trace.audioOverflow &&
+              !result.trace.eventsOverflow,
+            `${fault} control did not hold and release real PCM cleanly`
+          );
+          const events = result.trace.events
+            .filter((event) => event.kind === 'scheduled-pcm')
+            .map((event) => event.value as Record<string, unknown>);
+          const closedIndex = events.findIndex(
+            (event) => event['event'] === 'gate-close'
+          );
+          assert.ok(
+            closedIndex >= 0,
+            `${fault} never acknowledged the old render closure`
+          );
+          const boundary = Number(events[closedIndex]!['contextStopFrame']);
+          assert.ok(
+            events
+              .slice(0, closedIndex)
+              .some((event) => event['event'] === 'epoch'),
+            `${fault} never established an old media epoch`
+          );
+          if (fault === 'recovery-excess-work') {
+            const injection = result.trace.events.find(
+              (event) => event.kind === 'recovery-overrun-injected'
+            );
+            assert.ok(
+              injection?.value &&
+                typeof injection.value === 'object' &&
+                'sourceStarted' in injection.value &&
+                injection.value.sourceStarted === true &&
+                'crossedBeforeDeadline' in injection.value &&
+                injection.value.crossedBeforeDeadline === true &&
+                'f1' in injection.value &&
+                'contextFrame' in injection.value &&
+                Number(injection.value.contextFrame) + 512 >
+                  Number(injection.value.f1),
+              'post-start work did not actually consume the unchanged guard within the original deadline'
+            );
+            assert.ok(
+              events.some(
+                (event) =>
+                  event['event'] === 'scheduled' &&
+                  Number(event['wallMs']) >= injection.timestamp
+              ),
+              'overrun control did not start a real successor source'
+            );
+            assert.ok(
+              !result.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-command' &&
+                  event.timestamp >= injection.timestamp &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'type' in event.value &&
+                  event.value.type === 'arm'
+              ),
+              'overrun started or rebased a successor after the guard was consumed'
+            );
+            assert.ok(
+              events.some(
+                (event) =>
+                  event['event'] === 'error' &&
+                  Number(event['wallMs']) >= injection.timestamp &&
+                  (event['code'] === 'PCM scheduling deadline missed' ||
+                    event['code'] === 'recovery final guard exceeded' ||
+                    event['code'] ===
+                      'recovery final clock or visual guard failed')
+              ),
+              'post-start guard overrun did not interrupt'
+            );
+          } else {
+            const injectionIndex = events.findIndex(
+              (event, index) =>
+                index > closedIndex &&
+                event['event'] === 'recovery-fault' &&
+                event['code'] === fault &&
+                event['boundaryFrame'] === boundary
+            );
+            assert.ok(
+              injectionIndex > closedIndex,
+              `${fault} did not reach the real post-closure solver`
+            );
+            assert.ok(
+              events
+                .slice(injectionIndex + 1)
+                .some(
+                  (event) =>
+                    event['event'] === 'error' &&
+                    event['code'] ===
+                      (fault === 'recovery-phase-mismatch'
+                        ? 'video recovery phase has no causal audio epoch'
+                        : 'recovery render handoff has no feasible frame')
+                ),
+              `${fault} did not produce a visible interruption`
+            );
+          }
+          assert.ok(
+            !events
+              .slice(closedIndex + 1)
+              .some((event) => event['event'] === 'epoch'),
+            `${fault} admitted a successor epoch`
+          );
+          assert.ok(
+            !events.some(
+              (event) =>
+                event['event'] === 'backend' && event['backend'] === 'native'
+            ),
+            `${fault} silently switched backend`
+          );
+          assertPcmSilence(
+            result.trace,
+            boundary,
+            lastCarrierEnd(result.trace),
+            `${fault} emitted PCM after the rejected handoff`
+          );
+        } finally {
+          await isolated.close();
+        }
+      }
+    }
     async function runAnchorControls(): Promise<void> {
       for (const kind of [
         'source-offset',
@@ -13931,6 +14939,8 @@ async function runScheduledPcmProof(
       }
     }
     if (rate === 44100) {
+      await runRecoveryProof();
+      await runRecoveryFaults();
       await runAnchorControls();
       return;
     }
@@ -14008,118 +15018,7 @@ async function runScheduledPcmProof(
       );
     }
     pass('scheduled-pcm-mute-solo');
-    await seekTo(browser, 0);
-    const recovery = await browser.evaluate<
-      MovingTrace & { held: number; released: number }
-    >(`(async () => {
-      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
-      const root = document.querySelector('.otio-view');
-      const button = document.querySelector('button.otio-play');
-      if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('recovery controls missing');
-      const start = await globalThis.__otioProofTrace.start();
-      const playEdge = globalThis.__otioProofTrace.playRequest();
-      button.click();
-      await sleep(600);
-      globalThis.__otioProofTrace.holdPcmResponses(true);
-      const deadline = performance.now() + 4000;
-      while ((!globalThis.__otioProofTrace.heldPcmCount() || root.dataset.buffering !== 'true') && performance.now() < deadline) await sleep(20);
-      const held = globalThis.__otioProofTrace.heldPcmCount();
-      const released = globalThis.__otioProofTrace.holdPcmResponses(false);
-      await sleep(1500);
-      const trace = await globalThis.__otioProofTrace.stop();
-      if (root.dataset.playing === 'true') button.click();
-      return { start, playEdge, trace, held, released };
-    })()`);
-    await writeFile(
-      join(shotDir, 'scheduled-pcm-starvation-recovery.json'),
-      JSON.stringify({ provenance, capture: recovery })
-    );
-    assert.ok(
-      recovery.held > 0 && recovery.released === recovery.held,
-      'recovery did not withhold and release future PCM'
-    );
-    const recoveryEvents = recovery.trace.events
-      .filter((entry) => entry.kind === 'scheduled-pcm')
-      .map((entry) => entry.value as Record<string, unknown>);
-    const firstEpoch = recoveryEvents.find(
-      (event) => event['event'] === 'epoch'
-    );
-    const gateIndex = recoveryEvents.findIndex(
-      (event) => event['event'] === 'gate-close'
-    );
-    assert.ok(
-      firstEpoch && gateIndex >= 0,
-      'starvation lacks original epoch or actual gate closure'
-    );
-    const gate = recoveryEvents[gateIndex]!;
-    const resumed = recoveryEvents
-      .slice(gateIndex + 1)
-      .find((event) => event['event'] === 'epoch');
-    assert.ok(resumed, 'starvation did not produce a replacement epoch');
-    assert.notEqual(
-      resumed['generation'],
-      firstEpoch['generation'],
-      'starvation reused expired generation'
-    );
-    const stopFrame = Number(gate['contextStopFrame']);
-    const resumeFrame = Number(resumed['f0']);
-    const stop = gate['compositionStop'] as { value: number; rate: number };
-    const resume = resumed['compositionT0'] as { value: number; rate: number };
-    const originalStart = firstEpoch['compositionT0'] as {
-      value: number;
-      rate: number;
-    };
-    const originalFrame = Number(firstEpoch['f0']);
-    assert.equal(
-      gate['generation'],
-      firstEpoch['generation'],
-      'PCM closure belongs to another generation'
-    );
-    assert.equal(Number(firstEpoch['contextSampleRate']), oracle.sample_rate);
-    assert.ok(originalStart?.rate > 0 && Number.isSafeInteger(originalFrame));
-    const committedSample =
-      (originalStart.value * oracle.sample_rate) / originalStart.rate +
-      stopFrame -
-      originalFrame;
-    assert.ok(
-      Number.isSafeInteger(stopFrame) &&
-        Number.isSafeInteger(resumeFrame) &&
-        resumeFrame > stopFrame
-    );
-    assert.ok(stop?.rate > 0 && resume?.rate > 0);
-    const resumeSample = committedSample;
-    assert.ok(
-      Number.isSafeInteger(resumeSample) && resumeSample + 960 <= length,
-      'replacement epoch lacks a comparable sample interval'
-    );
-    assert.ok(
-      Math.abs(
-        (stop.value * oracle.sample_rate) / stop.rate - committedSample
-      ) <= 1 &&
-        Math.abs(
-          (resume.value * oracle.sample_rate) / resume.rate - committedSample
-        ) <= 1,
-      'replacement epoch skipped the independently calculated committed sample'
-    );
-    assertPcmSilence(
-      recovery.trace,
-      stopFrame,
-      resumeFrame,
-      'audio crossed the closed gate'
-    );
-    const recovered = compareScheduledPcm(
-      recovery.trace.audio,
-      resumeFrame - resumeSample,
-      expected,
-      resumeSample,
-      resumeSample + 960,
-      recovery.trace.witness
-    );
-    assert.ok(
-      recovered.rmse.every((value) => value <= 0.003),
-      'replacement epoch did not restart at the exact post-gain stereo sample'
-    );
-    pass('scheduled-pcm-starvation-recovery');
+    await runRecoveryProof();
     await seekTo(browser, 0);
     const interrupted = await browser.evaluate<
       MovingTrace & { held: number; released: number; releaseFrame: number }
@@ -14546,6 +15445,7 @@ async function runScheduledPcmProof(
         `${stage} failure silently switched backend`
       );
     }
+    await runRecoveryFaults();
     await runAnchorControls();
     for (const kind of ['hold', 'wrong-tag'] as const) {
       const isolated = await openBrowser(url, sessionToken, {

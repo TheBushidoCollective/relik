@@ -3,11 +3,11 @@
 // comparisons must qualify it before a trace can support a playback claim.
 export const otioProofWorkletSource = `
 class RelicProofTap extends AudioWorkletProcessor {
- constructor() { super(); this.active = false; this.used = 0; this.first = 0; this.sequence = 0; this.ordinal = 0; this.offset = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; this.left = new Float32Array(2048); this.right = new Float32Array(2048); this.witness = [new Float32Array(2048),new Float32Array(2048)];
+ constructor() { super(); this.active = false; this.used = 0; this.first = 0; this.sequence = 0; this.ordinal = 0; this.offset = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; this.left = new Float32Array(2048); this.right = new Float32Array(2048); this.marker = new Float32Array(2048); this.witness = [new Float32Array(2048),new Float32Array(2048)];
   this.port.onmessage = ({data}) => { if (data === 'start') { this.active = true; this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; this.sequence = 0; this.ordinal = 0; this.offset = 0; this.port.postMessage({kind:'started', frame:currentFrame}); }
    if (data === 'stop') { this.flush(); this.active = false; this.port.postMessage({kind:'stopped', frame:currentFrame}); }
    if (data?.kind === 'observe-resume') { if (this.resumeNonce !== undefined) this.port.postMessage({kind:'resume-observer-overwritten', previous:this.resumeNonce, next:data.nonce}); this.resumeNonce = data.nonce; } }; }
- flush() { if (!this.used) return; this.port.postMessage({kind:'pcm', frame:this.first, sequence:this.sequence++, quantumFrames:this.quantumFrames, quantumTimes:this.quantumTimes, quantumLengths:this.quantumLengths, quantumOrdinals:this.quantumOrdinals, quantumOffsets:this.quantumOffsets, channels:[this.left.slice(0,this.used),this.right.slice(0,this.used)], witness:this.witness.map(channel => channel.slice(0,this.used))}); this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; }
+ flush() { if (!this.used) return; this.port.postMessage({kind:'pcm', frame:this.first, sequence:this.sequence++, quantumFrames:this.quantumFrames, quantumTimes:this.quantumTimes, quantumLengths:this.quantumLengths, quantumOrdinals:this.quantumOrdinals, quantumOffsets:this.quantumOffsets, channels:[this.left.slice(0,this.used),this.right.slice(0,this.used)], marker:this.marker.slice(0,this.used), witness:this.witness.map(channel => channel.slice(0,this.used))}); this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; }
  process(inputs, outputs) { const output=outputs[0]; for (const channel of output) channel.fill(0);
   if (this.resumeNonce !== undefined) { this.port.postMessage({kind:'resume-render', nonce:this.resumeNonce, frame:currentFrame, contextTime:currentTime, renderWall:typeof performance === 'object' && typeof performance.now === 'function' ? performance.now() : null}); this.resumeNonce = undefined; }
   if (!this.active) return true;
@@ -16,7 +16,7 @@ class RelicProofTap extends AudioWorkletProcessor {
   if (this.used + count > this.left.length) this.flush(); if (!this.used) this.first=currentFrame;
   this.quantumFrames.push(currentFrame); this.quantumTimes.push(currentTime); this.quantumLengths.push(count); this.quantumOrdinals.push(this.ordinal++); this.quantumOffsets.push(this.offset); this.offset += count;
   const witness=inputs[1] || [];
-  for (let i=0; i<count; i++) { const left=channels[0][i], right=channels[1][i]; if (!Number.isFinite(left) || !Number.isFinite(right)) { this.port.postMessage({kind:'capture-fault', reason:'non-finite PCM', frame:currentFrame}); this.active=false; return true; } this.left[this.used+i]=left; this.right[this.used+i]=right; for(let ch=0; ch<2; ch++) this.witness[ch][this.used+i]=witness[ch]?.[i] ?? NaN; }
+  for (let i=0; i<count; i++) { const left=channels[0][i], right=channels[1][i], marker=inputs[2]?.[0]?.[i] ?? 0; if (!Number.isFinite(left) || !Number.isFinite(right) || !Number.isFinite(marker)) { this.port.postMessage({kind:'capture-fault', reason:'non-finite PCM', frame:currentFrame}); this.active=false; return true; } this.left[this.used+i]=left; this.right[this.used+i]=right; this.marker[this.used+i]=marker; for(let ch=0; ch<2; ch++) this.witness[ch][this.used+i]=witness[ch]?.[i] ?? NaN; }
   this.used += count; if (this.used === this.left.length) this.flush(); return true; }
 }
 registerProcessor('relic-proof-pcm', RelicProofTap);`;
@@ -62,6 +62,9 @@ export const otioProofTracePrelude = String.raw`(() => {
   let invalidControllerClock = false;
   const anchorSourceFaults = new WeakMap();
   const productionAnchorSources = new WeakMap();
+  let recoveryOverrunRequested = false;
+  let recoveryClosureSeen = false;
+  let recoverySelection = null;
   const originalSourceStart = AudioBufferSourceNode.prototype.start;
   AudioBufferSourceNode.prototype.start = function(...args) {
     if (failNextSourceStart) {
@@ -84,7 +87,20 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (fault === 'start-time') return originalSourceStart.call(this, args[0] + 1 / rate);
       if (fault === 'missing-first-quantum') return originalSourceStart.call(this, args[0] + 128 / rate);
     }
-    return originalSourceStart.apply(this, args);
+    const result=originalSourceStart.apply(this, args);
+    if (recoveryOverrunRequested && recoveryClosureSeen && !anchorSource && Number.isFinite(args[0])) {
+      recoveryOverrunRequested=false;
+      const rate=this.context.sampleRate, f1=Math.round(args[0]*rate), start=performance.now();
+      const deadline=Number(recoverySelection?.deadline);
+      if (!Number.isFinite(deadline) || recoverySelection?.f0!==f1)
+        throw new Error('recovery overrun lacks the actual selected F1/deadline');
+      while (Math.ceil(this.context.currentTime*rate)+512<=f1 && performance.now()<deadline) {}
+      const observedAt=performance.now(), contextFrame=Math.ceil(this.context.currentTime*rate);
+      recordEvent('recovery-overrun-injected',null,{f1,contextFrame,observedAt,
+        crossedBeforeDeadline:contextFrame+512>f1 && observedAt<=deadline,
+        elapsed:observedAt-start,deadline,sourceStarted:true});
+    }
+    return result;
   };
   const originalOutputTimestamp = AudioContext.prototype.getOutputTimestamp;
   if (typeof originalOutputTimestamp === 'function') {
@@ -124,7 +140,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       });
     }
   };
-  const MAX_AUDIO_SAMPLES = 48000 * 20 * 4;
+  const MAX_AUDIO_SAMPLES = 48000 * 20 * 5;
   const MAX_VISUAL_SAMPLES = 3000;
   let fault = 'none';
   let lastStall = 0;
@@ -173,6 +189,14 @@ export const otioProofTracePrelude = String.raw`(() => {
     if (args[0] === 'OTIO_PROOF_PCM') {
       if (args[1]?.event === 'backend') lastPcmBackend = args[1];
       recordEvent('scheduled-pcm', null, args[1]);
+      if (args[1]?.event === 'recovery-render-closed') recoveryClosureSeen=true;
+      if (args[1]?.event === 'recovery-selection') recoverySelection=args[1];
+      if (args[1]?.event === 'recovery-old-drained') {
+        const graph=graphs.length===1 ? graphs[0] : null;
+        if (graph) recordEvent('recovery-old-drain-native-read',null,
+          {boundaryFrame:args[1].boundaryFrame, contextTime:graph.context.currentTime,
+            state:graph.context.state});
+      }
     }
     return originalConsoleLog.apply(this, args);
   };
@@ -248,6 +272,7 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   const observedContexts = new WeakSet();
   let nextBankControl = null;
+  let nextRecoveryMarker = false;
   let nextAnchorControl = null;
   const syntheticAnchors = new WeakSet();
   function attachWitness(context) {
@@ -283,6 +308,31 @@ export const otioProofTracePrelude = String.raw`(() => {
           this.port.postMessage = (...args) => {
             recordEvent('transport-command', null, args[0]);
             const message = args[0];
+            if (message?.type === 'arm' && nextRecoveryMarker) {
+              if ((message.slot !== 0 && message.slot !== 1) || !Number.isSafeInteger(message.generation))
+                throw new Error('old recovery slot unavailable');
+              const graph=graphs.find(item=>item.context===context);
+              if (!graph?.node) throw new Error('independent marker tap unavailable');
+              const source=context.createConstantSource(), gain=context.createGain();
+              source.offset.value=0.375; gain.gain.value=0;
+              originalConnect.call(source,gain);
+              originalConnect.call(gain,this,0,message.slot===0?0:2);
+              originalConnect.call(gain,graph.node,0,2);
+              source.start();
+              proofGate.marker={source,gain,generation:message.generation,slot:message.slot};
+              nextRecoveryMarker=false;
+              recordEvent('recovery-old-marker-connected',null,{generation:message.generation,
+                slot:message.slot,physicalInput:message.slot===0?0:2,value:0.375});
+            }
+            if (message?.type === 'arm') {
+              const before=performance.now(), contextBefore=context.currentTime;
+              const output=typeof originalOutputTimestamp==='function' ? originalOutputTimestamp.call(context) : null;
+              const contextAfter=context.currentTime, after=performance.now();
+              recordEvent('audio-arm-native-output', null, {clockEpoch:message.clockEpoch,
+                generation:message.generation, sequence:message.sequence, f0:message.f0, slot:message.slot,
+                before,after,contextBefore,contextAfter, state:context.state,
+                output:output ? {contextTime:output.contextTime,performanceTime:output.performanceTime} : null});
+            }
             if (message?.type === 'install-bank')
               recordEvent('audio-context-gate-observation', null, {direction:'send', type:message.type,
                 state:context.state, contextTime:context.currentTime, clockEpoch:message.clockEpoch});
@@ -369,6 +419,16 @@ export const otioProofTracePrelude = String.raw`(() => {
             recordEvent(event.data?.type === 'clock-trace'
               ? (proofGate.traceOverlap ? 'transport-overlap-clock' : proofGate.bootstrapTrace
                 ? 'transport-bootstrap-clock' : 'transport-message') : 'transport-message', null, event.data);
+            const marker=proofGate.marker, ack=event.data;
+            if (marker && ack?.accepted === true && ack.generation === marker.generation &&
+                ['arm','extend','stop'].includes(ack.type) && Number.isSafeInteger(ack.throughFrame)) {
+              const now=context.currentTime, at=ack.throughFrame/context.sampleRate;
+              marker.gain.gain.cancelScheduledValues(now);
+              marker.gain.gain.setValueAtTime(0,now);
+              marker.gain.gain.setValueAtTime(1,at);
+              recordEvent('recovery-old-marker-scheduled',null,{generation:marker.generation,
+                slot:marker.slot,frame:ack.throughFrame,scheduledAt:now,late:at<now});
+            }
             if (event.data?.type === 'clock-stale-started' || event.data?.type === 'clock-stale-stopped') {
               const key=event.data.clockEpoch+':'+event.data.captureId+':'+event.data.type;
               staleWaiters.get(key)?.();
@@ -484,7 +544,7 @@ export const otioProofTracePrelude = String.raw`(() => {
           throw new Error('AudioWorklet addModule failed: ' + String(error) + '; CSP=' + JSON.stringify(violations));
         }
         const node = new AudioWorkletNode(context, 'relic-proof-pcm',
-          {numberOfInputs:2, numberOfOutputs:1, channelCount:2,
+          {numberOfInputs:3, numberOfOutputs:1, channelCount:2,
             channelCountMode:'explicit', channelInterpretation:'discrete', outputChannelCount:[1]});
         graph.node = node;
         attachWitness(context);
@@ -492,14 +552,14 @@ export const otioProofTracePrelude = String.raw`(() => {
           if (data.kind === 'pcm') {
             const receivedAt = performance.now();
             const channels = data.channels.map(channel => Array.from(channel));
-            const size = channels.reduce((sum, channel) => sum + channel.length, 0) + data.witness.reduce((sum, channel) => sum + channel.length, 0);
+            const size = channels.reduce((sum, channel) => sum + channel.length, 0) + data.witness.reduce((sum, channel) => sum + channel.length, 0) + data.marker.length;
             const carrierAt = i => { const high=data.witness[0]?.[i], low=data.witness[1]?.[i]; return Number.isSafeInteger(high) && high >= 1 && Number.isSafeInteger(low) && low >= 0 && low < 65536 ? (high-1)*65536+low : null; };
             recordEvent('audio-pcm-batch-received', null, {receivedAt, sequence:data.sequence,
               quantumFrames:data.quantumFrames, quantumOrdinals:data.quantumOrdinals,
               quantumOffsets:data.quantumOffsets, quantumLengths:data.quantumLengths,
               carrierFirst:carrierAt(0), carrierLast:carrierAt(channels[0].length-1)});
             if (graph.samples + size > MAX_AUDIO_SAMPLES) graph.overflow = true;
-            else { graph.chunks.push({receivedAt, sampleFrame:data.frame, sequence:data.sequence, quantumFrames:data.quantumFrames, quantumTimes:data.quantumTimes, quantumLengths:data.quantumLengths, quantumOrdinals:data.quantumOrdinals, quantumOffsets:data.quantumOffsets, channels, witness:data.witness.map(channel => Array.from(channel))}); graph.samples += size; }
+            else { graph.chunks.push({receivedAt, sampleFrame:data.frame, sequence:data.sequence, quantumFrames:data.quantumFrames, quantumTimes:data.quantumTimes, quantumLengths:data.quantumLengths, quantumOrdinals:data.quantumOrdinals, quantumOffsets:data.quantumOffsets, channels, marker:Array.from(data.marker), witness:data.witness.map(channel => Array.from(channel))}); graph.samples += size; }
           } else if (data.kind === 'capture-fault') { graph.overflow = true; recordEvent('audio-capture-fault', null, data); }
           else if (data.kind === 'resume-render') recordEvent('audio-resume-first-render', null, data);
           else if (data.kind === 'resume-observer-overwritten') recordEvent('audio-resume-observer-overwritten', null, data);
@@ -640,6 +700,13 @@ export const otioProofTracePrelude = String.raw`(() => {
       return {state:context.state, before, after:context.currentTime,
         events:borrowedProof.events.slice()};
     },
+    enableRecoveryMarker() {
+      if (nextRecoveryMarker) throw new Error('recovery marker already requested');
+      nextRecoveryMarker=true;
+    },
+    injectRecoveryOverrun() {
+      recoveryClosureSeen=false; recoverySelection=null; recoveryOverrunRequested=true;
+    },
     nextAnchorControl(kind) {
       if (!['source-offset', 'start-time', 'missing-first-quantum', 'missing', 'truncated', 'held-bank', 'shift-bank', 'stale-epoch'].includes(kind))
         throw new Error('unknown anchor control');
@@ -706,6 +773,10 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
       return Math.ceil(graphs[0].context.currentTime * graphs[0].context.sampleRate);
     },
+    hasPcmEvent(name) {
+      return events.some(entry => entry.kind === 'scheduled-pcm' && entry.value?.event === name);
+    },
+    hasTraceEvent(name) { return events.some(entry=>entry.kind===name); },
     hasPcmCancel(reason) {
       return events.some(entry => entry.kind === 'scheduled-pcm' &&
         entry.value?.event === 'cancel' && entry.value?.reason === reason);
@@ -838,6 +909,13 @@ export const otioProofTracePrelude = String.raw`(() => {
       const frame = Number(document.querySelector('.otio-view')?.dataset.frame);
       const bridge = audioBridge(graph);
       const sampleFrame = await command(graph, 'stop');
+      nextRecoveryMarker=false;
+      recoveryOverrunRequested=false; recoveryClosureSeen=false; recoverySelection=null;
+      if (currentGate?.marker) {
+        const marker=currentGate.marker; currentGate.marker=null;
+        try { marker.source.stop(); } catch {}
+        marker.source.disconnect(); marker.gain.disconnect();
+      }
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
         timestamp, frame, sampleFrame, bridge, staleCaptureId:captureId,
         audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, laterAnchor:item.laterAnchor, frozenAnchor:item.frozenAnchor, length:item.length, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
