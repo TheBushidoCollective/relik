@@ -19,7 +19,13 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeKey, encryptRelic, openRelic } from '@relic/format';
+import {
+  decodeKey,
+  encryptRelic,
+  openRelic,
+  otioDocumentMediaPaths,
+  readOtioDocument,
+} from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -89,7 +95,7 @@ elif mode == "rewrite":
             name = info.filename
             path = os.path.join(replacements, name.replace("/", "__"))
             data = open(path, "rb").read() if os.path.exists(path) else zin.read(name)
-            zout.writestr(name, data)
+            zout.writestr(name, data, compress_type=info.compress_type)
 `;
 
 export interface ProofHarness {
@@ -342,4 +348,25 @@ export async function createProofHarness(label: string): Promise<ProofHarness> {
     },
   };
   return harness;
+}
+
+/**
+ * The document arguments readOtioProgramArchive needs. Every value is derived from content.otio
+ * through the format's own reading of it, never from the manifest under test.
+ */
+export async function programValidatorArgs(
+  zip: OtioZipIndex,
+  contentOtio: Uint8Array
+): Promise<{
+  readonly document_sha256: string;
+  readonly timeline_ids: readonly string[];
+  readonly media_paths: readonly string[];
+}> {
+  const mediaIndex = await otioBundleMediaIndex(zip);
+  const document = readOtioDocument(contentOtio, { mediaIndex });
+  return {
+    document_sha256: sha256Text(contentOtio),
+    timeline_ids: document.timeline_ids,
+    media_paths: otioDocumentMediaPaths(document),
+  };
 }

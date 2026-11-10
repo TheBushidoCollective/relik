@@ -1,24 +1,26 @@
 /**
- * Negative controls for the rendered-program proof. Each control must fail safe: the source
- * archive still publishes, and the program is absent with the exact reason.
+ * Negative controls for the rendered-program proof. Each control must fail safe, and each
+ * refusal must come from the stated cause, not from a side effect of the rewrite.
  *
- *   mise exec -- bun packages/relic-mcp/test/otio-program-controls.ts
+ *   OTIO_PYTHON=/path/to/python mise exec -- bun packages/relic-mcp/test/otio-program-controls.ts
  *
- * Prints OTIO_PROGRAM_CONTROLS_OK only when every control produced its exact reason.
+ * Prints OTIO_PROGRAM_CONTROLS_OK only when every control produced its exact outcome.
  */
 
 import assert from 'node:assert/strict';
-import { readOtioProgramArchive, indexOtioZip } from '@relic/format';
-import {
-  createProofHarness,
-  sha256Text,
-  type ProgramSummary,
-  PublishRefusedError,
-} from './otio-program-harness.ts';
+import { indexOtioZip, readOtioProgramArchive } from '@relic/format';
 import {
   buildProgramFixture,
   type ProgramVariant,
 } from './otio-program-fixture.ts';
+import {
+  createProofHarness,
+  PublishRefusedError,
+  programValidatorArgs,
+  type ProgramSummary,
+  type PublishResult,
+  sha256Text,
+} from './otio-program-harness.ts';
 import { openViewer, VIEWER_CONTRACT } from './otio-program-viewer.ts';
 
 const harness = await createProofHarness('otio-program-controls');
@@ -26,10 +28,6 @@ const passed: string[] = [];
 function pass(stage: string): void {
   passed.push(stage);
   console.log(`STAGE ${stage}`);
-}
-
-function reasonCodes(program: ProgramSummary): string[] {
-  return (program.timelines ?? []).flatMap((t) => t.reasons.map((r) => r.code));
 }
 
 function expectUnavailable(
@@ -42,9 +40,12 @@ function expectUnavailable(
     'unavailable',
     `${label}: program status ${program.status}`
   );
+  const codes = (program.timelines ?? []).flatMap((t) =>
+    t.reasons.map((r) => r.code)
+  );
   assert.ok(
-    reasonCodes(program).includes(code),
-    `${label}: reasons ${JSON.stringify(reasonCodes(program))}, expected ${code}`
+    codes.includes(code),
+    `${label}: reasons ${JSON.stringify(codes)}, expected ${code}`
   );
   pass(`control-${label}`);
 }
@@ -62,7 +63,7 @@ async function assertSourceOnly(relicId: string, label: string): Promise<void> {
   );
 }
 
-// Variants whose failure is a genuine property of the input, not a synthetic flag.
+/** Genuine unsupported-feature inputs: the failure is a property of the document. */
 async function variantControl(
   variant: ProgramVariant,
   code: string
@@ -73,28 +74,152 @@ async function variantControl(
   await assertSourceOnly(published.relicId, variant);
 }
 
+/** The validator's verdict on an archive: accepted, or the error code it threw. */
+async function validatorRefusal(
+  archive: Uint8Array,
+  contentOtio: Uint8Array
+): Promise<string> {
+  try {
+    const zip = await indexOtioZip(archive);
+    const program = await readOtioProgramArchive(
+      zip,
+      await programValidatorArgs(zip, contentOtio)
+    );
+    return program ? 'accepted' : 'no-program';
+  } catch (error) {
+    return error instanceof Error && 'code' in error
+      ? String(error.code)
+      : `unlabelled:${String(error)}`;
+  }
+}
+
+interface MutableProgram {
+  sha256: string;
+  frame_rate: { num: number; den: number };
+  range: {
+    start_time: { value: number; rate: number };
+    duration: { value: number; rate: number };
+  };
+}
+interface MutableManifest {
+  media: Record<string, string>;
+  timelines: Array<{ program?: MutableProgram }>;
+}
+
+function renderedProgram(manifest: MutableManifest): MutableProgram {
+  const program = manifest.timelines[0]?.program;
+  if (!program)
+    throw new Error('control manifest has no rendered program to mutate');
+  return program;
+}
+
+/**
+ * Each case changes one field of a valid manifest. The expected code is the format's own: parse
+ * refusals are malformed-manifest, and a media key that does not match the document is
+ * archive-mismatch. A different code is a failure of the control, not a pass.
+ */
+const VALIDATOR_CASES: ReadonlyArray<{
+  readonly name: string;
+  readonly expect: string;
+  readonly mutate: (manifest: MutableManifest) => void;
+  readonly raw?: (text: string) => string;
+}> = [
+  {
+    name: 'frame-rate-below-1fps',
+    expect: 'malformed-manifest',
+    mutate: (m) => {
+      renderedProgram(m).frame_rate = { num: 1, den: 2 };
+    },
+  },
+  {
+    name: 'duration-under-one-frame',
+    expect: 'malformed-manifest',
+    mutate: (m) => {
+      renderedProgram(m).range.duration = { value: 0, rate: 30 };
+    },
+  },
+  {
+    name: 'duration-unsafe-integer',
+    expect: 'malformed-manifest',
+    mutate: (m) => {
+      renderedProgram(m).range.duration = { value: 0, rate: 30 };
+    },
+    // 2^53 + 1 is not a safe integer and JSON.stringify cannot write it, so the literal is spliced.
+    raw: (text) => {
+      const from = '"duration":{"value":0,"rate":30}';
+      if (text.split(from).length !== 2)
+        throw new Error(
+          'unsafe-integer control: the duration literal is not unique'
+        );
+      return text.replace(
+        from,
+        '"duration":{"value":9007199254740993,"rate":30}'
+      );
+    },
+  },
+  {
+    name: 'nonzero-start-time',
+    expect: 'malformed-manifest',
+    mutate: (m) => {
+      renderedProgram(m).range.start_time = { value: 1, rate: 30 };
+    },
+  },
+  {
+    name: 'extra-media-key',
+    expect: 'archive-mismatch',
+    mutate: (m) => {
+      m.media['media/extra.wav'] = sha256Text(
+        new TextEncoder().encode('extra')
+      );
+    },
+  },
+  {
+    name: 'missing-media-key',
+    expect: 'archive-mismatch',
+    mutate: (m) => {
+      const [first] = Object.keys(m.media);
+      if (!first)
+        throw new Error('control manifest has no media key to remove');
+      delete m.media[first];
+    },
+  },
+];
+
+// Variants whose failure is a genuine property of the input.
 await variantControl('custom-wipe', 'unsupported-transition');
 await variantControl('unknown-effect', 'unsupported-effect');
 
 {
   const fixture = await buildProgramFixture(harness.scratch, 'positive');
 
-  const overCapOutcome = await harness
-    .publish(fixture.bundleDir, { RELIC_PROGRAM_MAX_BYTES: '1000' })
-    .then(
-      (published) => published,
-      (error: unknown) => error
-    );
-  if (overCapOutcome instanceof PublishRefusedError) {
-    const payload = JSON.stringify(overCapOutcome.payload);
+  let overCapPublished: PublishResult | undefined;
+  let overCapRefused: PublishRefusedError | undefined;
+  try {
+    overCapPublished = await harness.publish(fixture.bundleDir, {
+      RELIC_PROGRAM_MAX_BYTES: '1000',
+    });
+  } catch (error) {
+    if (!(error instanceof PublishRefusedError)) throw error;
+    overCapRefused = error;
+  }
+  if (overCapRefused) {
+    const payload = JSON.stringify(overCapRefused.payload);
     assert.ok(
       payload.includes('manifest-unfit'),
       `over-cap refusal is not manifest-unfit: ${payload}`
     );
     pass('control-over-cap');
   } else {
-    expectUnavailable(overCapOutcome.program, 'size-cap-exceeded', 'over-cap');
-    await assertSourceOnly(overCapOutcome.relicId, 'over-cap');
+    assert.ok(
+      overCapPublished,
+      'over-cap produced neither a result nor a refusal'
+    );
+    expectUnavailable(
+      overCapPublished.program,
+      'size-cap-exceeded',
+      'over-cap'
+    );
+    await assertSourceOnly(overCapPublished.relicId, 'over-cap');
   }
 
   const noBrowser = await harness.publish(fixture.bundleDir, {
@@ -115,17 +240,17 @@ await variantControl('unknown-effect', 'unsupported-effect');
   await assertSourceOnly(noEncoder.relicId, 'encoder-off');
 
   for (const value of ['0', '-5', 'abc']) {
-    const outcome = await harness
-      .publish(fixture.bundleDir, { RELIC_PROGRAM_MAX_BYTES: value })
-      .then(
-        () => 'published',
-        (error: unknown) => error
-      );
-    assert.ok(
-      outcome instanceof PublishRefusedError,
-      `RELIC_PROGRAM_MAX_BYTES=${value} was not refused (${String(outcome)})`
-    );
-    const payload = JSON.stringify(outcome.payload);
+    let refusal: PublishRefusedError | undefined;
+    try {
+      await harness.publish(fixture.bundleDir, {
+        RELIC_PROGRAM_MAX_BYTES: value,
+      });
+    } catch (error) {
+      if (error instanceof PublishRefusedError) refusal = error;
+      else throw error;
+    }
+    assert.ok(refusal, `RELIC_PROGRAM_MAX_BYTES=${value} was not refused`);
+    const payload = JSON.stringify(refusal.payload);
     assert.ok(
       payload.includes('program_refused') && payload.includes('invalid-config'),
       `RELIC_PROGRAM_MAX_BYTES=${value} refusal payload ${payload}`
@@ -135,41 +260,60 @@ await variantControl('unknown-effect', 'unsupported-effect');
 }
 
 {
-  // Tamper: the stored program digest is rewritten, sealed with the same relic key, and must be
-  // refused by the validator and by the viewer, which must show unavailable and refuse play().
+  // The validator must refuse each manifest mutation with the stated code. The baseline is a
+  // valid positive archive, so every refusal below comes from its one mutated field.
   const fixture = await buildProgramFixture(harness.scratch, 'positive');
   const published = await harness.publish(fixture.bundleDir);
   assert.equal(
     published.program.status,
     'rendered',
-    'tamper baseline must render'
+    'validator baseline must render'
   );
   const { archive, relicKey } = await harness.openStored(published.relicId);
-  const manifestBytes = await harness.readEntry(archive, 'relic/program.json');
-  const manifest = JSON.parse(Buffer.from(manifestBytes).toString('utf8')) as {
-    document_sha256: string;
-    timelines: Array<{ timeline_id: string; program?: { sha256: string } }>;
-  };
-  const rendered = manifest.timelines.find((t) => t.program);
+  const contentOtio = await harness.readEntry(archive, 'content.otio');
+  const baseline = JSON.parse(
+    Buffer.from(
+      await harness.readEntry(archive, 'relic/program.json')
+    ).toString('utf8')
+  ) as MutableManifest;
+  const baselineVerdict = await validatorRefusal(archive, contentOtio);
+  assert.equal(
+    baselineVerdict,
+    'accepted',
+    `the unmodified archive must be accepted, got ${baselineVerdict}`
+  );
+
+  for (const kase of VALIDATOR_CASES) {
+    const manifest = structuredClone(baseline);
+    kase.mutate(manifest);
+    const text = JSON.stringify(manifest);
+    const rewritten = await harness.rewriteEntries(archive, {
+      'relic/program.json': new TextEncoder().encode(
+        kase.raw ? kase.raw(text) : text
+      ),
+    });
+    const verdict = await validatorRefusal(rewritten, contentOtio);
+    assert.equal(
+      verdict,
+      kase.expect,
+      `${kase.name}: refused as ${verdict}, expected ${kase.expect}`
+    );
+    pass(`control-validator-${kase.name}`);
+  }
+  // Digest tamper: the stored program digest is wrong, sealed with the same relic key. The
+  // validator must refuse it, and the viewer must show unavailable and refuse play().
+  const tamperedManifest = structuredClone(baseline);
+  const rendered = tamperedManifest.timelines.find((t) => t.program);
   assert.ok(rendered?.program, 'tamper: no rendered timeline');
   rendered.program.sha256 = sha256Text(
     new TextEncoder().encode('not the program')
   );
   const tampered = await harness.rewriteEntries(archive, {
-    'relic/program.json': new TextEncoder().encode(JSON.stringify(manifest)),
+    'relic/program.json': new TextEncoder().encode(
+      JSON.stringify(tamperedManifest)
+    ),
   });
-
-  const contentOtio = await harness.readEntry(archive, 'content.otio');
-  const refusal = await readOtioProgramArchive(indexOtioZip(tampered), {
-    document_sha256: sha256Text(contentOtio),
-    timeline_ids: manifest.timelines.map((t) => t.timeline_id),
-  }).then(
-    () => 'accepted',
-    (error: unknown) =>
-      error instanceof Error && 'code' in error
-        ? String(error.code)
-        : `unlabelled:${String(error)}`
-  );
+  const refusal = await validatorRefusal(tampered, contentOtio);
   assert.equal(
     refusal,
     'digest-mismatch',
@@ -178,11 +322,10 @@ await variantControl('unknown-effect', 'unsupported-effect');
   pass('control-tamper-validator');
 
   await harness.storeArchive(published.relicId, tampered, relicKey);
-  const token = await harness.createSession();
   const page = await openViewer({
     url: published.shareUrl,
     origin: harness.origin,
-    sessionToken: token,
+    sessionToken: await harness.createSession(),
   });
   try {
     const state = await page.waitFor(
@@ -199,11 +342,11 @@ await variantControl('unknown-effect', 'unsupported-effect');
       `document.querySelector('.otio-view')?.getAttribute('${VIEWER_CONTRACT.reasonAttribute}') ?? null`
     );
     assert.equal(reason, 'digest-mismatch', `tampered viewer reason ${reason}`);
-    const refused = await page.evaluate<string>(`(async () => {
+    const playOutcome = await page.evaluate<string>(`(async () => {
       try { await window.${VIEWER_CONTRACT.hook}.play(); return 'played'; }
       catch (error) { return String(error && error.name); }
     })()`);
-    assert.notEqual(refused, 'played', 'viewer played a tampered program');
+    assert.notEqual(playOutcome, 'played', 'viewer played a tampered program');
     pass('control-tamper-viewer');
   } finally {
     await page.close();
@@ -213,7 +356,7 @@ await variantControl('unknown-effect', 'unsupported-effect');
 await harness.close();
 assert.equal(
   passed.length,
-  8,
-  `expected 8 control stages, ran ${passed.length}`
+  14,
+  `expected 14 control stages, ran ${passed.length}`
 );
 console.log('OTIO_PROGRAM_CONTROLS_OK');

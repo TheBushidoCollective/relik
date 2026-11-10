@@ -60,9 +60,9 @@ export async function acquireLinuxStorage(
     release: async () => {
       try {
         await fsp.rm(parent, { recursive: true, force: false });
-      } catch (error) {
+      } catch {
         throw new ProgramStorageError(
-          `the program storage directory could not be removed: ${(error as Error).code ?? 'unknown'}`,
+          'the program storage directory could not be removed',
           true
         );
       }

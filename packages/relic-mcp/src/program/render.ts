@@ -121,9 +121,9 @@ export type ProgramTimelineOutcome =
         readonly height: number;
         readonly video_codec: string;
         readonly video_bitrate: number;
-        readonly audio_codec: string;
-        readonly audio_rate: number;
-        readonly channels: number;
+        readonly audio_codec: 'mp4a.40.2';
+        readonly audio_rate: 48000;
+        readonly channels: 2;
         readonly audio_samples: number;
         readonly range: {
           readonly start_time: {

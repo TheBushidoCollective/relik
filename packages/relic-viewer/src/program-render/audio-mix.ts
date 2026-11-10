@@ -290,8 +290,8 @@ export async function mixProgramAudio(
       if (fc === 1 && Math.abs(position - nearest) < INTEGER_POSITION_EPSILON) {
         const index = nearest - readStart;
         if (index >= 0 && index < read.left.length) {
-          out[slot] += read.left[index]! * gain;
-          out[count + slot] += read.right[index]! * gain;
+          out[slot]! += read.left[index]! * gain;
+          out[count + slot]! += read.right[index]! * gain;
         }
         continue;
       }
@@ -304,8 +304,8 @@ export async function mixProgramAudio(
         left += weights[i]! * read.left[index]!;
         right += weights[i]! * read.right[index]!;
       }
-      out[slot] += left * gain;
-      out[count + slot] += right * gain;
+      out[slot]! += left * gain;
+      out[count + slot]! += right * gain;
     }
   }
   for (let i = 0; i < out.length; i++) {

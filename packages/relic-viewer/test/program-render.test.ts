@@ -57,6 +57,10 @@ describe('frameRateOf', () => {
   test('rates above 240 fps fail with invalid-timing', () => {
     expect(() => frameRateOf(240.5)).toThrow(ProgramRenderFailure);
   });
+
+  test('rates below 1 fps fail with invalid-timing', () => {
+    expect(() => frameRateOf(0.5)).toThrow(ProgramRenderFailure);
+  });
 });
 
 describe('frameTime', () => {

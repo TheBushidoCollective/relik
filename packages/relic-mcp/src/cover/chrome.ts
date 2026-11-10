@@ -33,7 +33,7 @@ export interface RunningChrome {
   close(): Promise<void>;
   kill?: () => void;
   /** The browser process id, when it could be read. */
-  readonly pid?: number;
+  readonly pid?: number | undefined;
 }
 
 export function defaultDiscoverySystem(): DiscoverySystem {

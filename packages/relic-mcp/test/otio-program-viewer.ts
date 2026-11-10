@@ -187,7 +187,7 @@ export async function captureElementAudio(
     right: number[];
   }>(`(async () => {
     const hook = window.${VIEWER_CONTRACT.hook};
-    const video = document.querySelector('video');
+    const video = document.querySelector('video.otio-program-video');
     if (!video) throw new Error('no native program video to capture');
     if (typeof video.captureStream !== 'function') throw new Error('captureStream unavailable');
     const ctx = new AudioContext({ sampleRate: 48000 });

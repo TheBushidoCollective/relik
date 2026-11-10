@@ -47,6 +47,7 @@ import { buildProgramFixture } from './otio-program-fixture.ts';
 import {
   createProofHarness,
   type ProofHarness,
+  programValidatorArgs,
   sha256Text,
 } from './otio-program-harness.ts';
 import {
@@ -378,12 +379,10 @@ try {
   );
   pass('manifest-independent');
 
+  const positiveZip = await indexOtioZip(positive.archive);
   const validated = await readOtioProgramArchive(
-    indexOtioZip(positive.archive),
-    {
-      document_sha256: positive.manifest.document_sha256,
-      timeline_ids: positive.manifest.timelines.map((t) => t.timeline_id),
-    }
+    positiveZip,
+    await programValidatorArgs(positiveZip, positive.contentOtio)
   );
   assert.ok(
     validated,
@@ -476,7 +475,7 @@ try {
     assert.equal(state, 'program', `viewer state ${state}, expected program`);
 
     const cold = await page.evaluate<number>(`(async () => {
-      const video = document.querySelector('video');
+      const video = document.querySelector('video.otio-program-video');
       if (!video) throw new Error('no native program video');
       const hook = window.${VIEWER_CONTRACT.hook};
       const start = performance.now();
@@ -491,7 +490,7 @@ try {
     pass('viewer-cold-startup');
 
     const intervals = await page.evaluate<number[]>(`(async () => {
-      const video = document.querySelector('video');
+      const video = document.querySelector('video.otio-program-video');
       const hook = window.${VIEWER_CONTRACT.hook};
       const times = [];
       let running = true;

@@ -3099,7 +3099,7 @@ export async function mountOtioView(
         current = await createOtioPlaybackSession({
           resolution,
           timelineRange,
-          video: resolution.status === 'available' ? video : undefined,
+          ...(resolution.status === 'available' ? { video } : {}),
           createController: () =>
             createOtioPlayback({
               document: doc,

@@ -3425,8 +3425,8 @@ try {
         `document.body?.textContent ?? ''`
       );
       assert.ok(
-        /reload/i.test(errorText),
-        '3e: the error must tell the reader to reload the page'
+        errorText.includes('Reload this page to try again.'),
+        '3e: the failure must end with the instruction "Reload this page to try again."'
       );
       await savePng(run.sessionId, '10-3e-error-no-auto-reload.png');
 

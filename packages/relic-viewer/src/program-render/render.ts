@@ -75,13 +75,13 @@ export interface ProgramRenderInput {
 }
 
 export interface ProgramRenderedFile {
-  readonly bytes: Uint8Array;
+  readonly bytes: Uint8Array<ArrayBuffer>;
   readonly program: ProgramRenderProgram;
 }
 
 /** Collects Mediabunny's writes and enforces the byte cap during writing. */
 class ByteSink {
-  private buffer = new Uint8Array(0);
+  private buffer: Uint8Array<ArrayBuffer> = new Uint8Array(0);
   private length = 0;
   exceeded = false;
 
@@ -107,7 +107,7 @@ class ByteSink {
     this.length = Math.max(this.length, end);
   }
 
-  bytes(): Uint8Array {
+  bytes(): Uint8Array<ArrayBuffer> {
     return this.buffer.subarray(0, this.length);
   }
 }
@@ -128,9 +128,7 @@ function timelineRange(
     !Number.isFinite(duration.value) ||
     !Number.isFinite(duration.rate) ||
     !(duration.value > 0) ||
-    !(duration.rate > 0) ||
-    !Number.isFinite(range.start_time.value) ||
-    !(range.start_time.rate > 0)
+    !(duration.rate > 0)
   ) {
     throw failure(
       'invalid-timing',
@@ -138,15 +136,26 @@ function timelineRange(
       timelineId
     );
   }
+  if (range.start_time.value !== 0) {
+    throw failure(
+      'invalid-timing',
+      `Timeline ${timelineId} starts at a non-zero origin; only origin 0 is rendered`,
+      timelineId
+    );
+  }
   return { origin: range.start_time, duration };
 }
-
 /** Exact rational frame rate for a timeline rate, or a failure. */
 export function frameRateOf(rate: number): { num: number; den: number } {
   for (let den = 1; den <= MAX_FRAME_RATE_DENOMINATOR; den++) {
     const num = Math.round(rate * den);
     if (num <= 0 || Math.abs(num / den - rate) > 1e-9 * rate) continue;
-    if (num / den > MAX_FRAME_RATE) break;
+    if (num < den || num / den > MAX_FRAME_RATE) {
+      throw failure(
+        'invalid-timing',
+        `Timeline rate ${rate} fps is outside 1 to ${MAX_FRAME_RATE} fps`
+      );
+    }
     return { num, den };
   }
   throw failure(
@@ -392,6 +401,9 @@ export async function renderProgramTimeline(
   }
   const frameSeconds = rate.den / rate.num;
   const frameCount = Math.ceil(seconds(duration) / frameSeconds - 1e-6);
+  if (frameCount < 1) {
+    throw failure('invalid-timing', 'Timeline is shorter than one frame');
+  }
   const videoBitrate = clampBitrate(
     Math.round(
       width * height * (rate.num / rate.den) * VIDEO_BITS_PER_PIXEL_SECOND
