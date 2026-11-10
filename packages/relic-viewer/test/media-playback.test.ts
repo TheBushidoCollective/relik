@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import { buildCurrentStage, renderMediaView } from '../src/main.ts';
 import { type ReadyView, routeForClass } from '../src/viewer.ts';
 
@@ -139,7 +140,10 @@ function makeMediaView(options: {
   return {
     filename: options.filename,
     declaredMimetype: options.declaredMimetype,
-    content: options.content ?? new Uint8Array([0, 1, 2, 3, 4]),
+    content: contentFromBytes(
+      options.content ?? new Uint8Array([0, 1, 2, 3, 4])
+    ),
+    document: undefined,
     route: 'media',
     downgradeNotice: undefined,
     shareUrl: 'https://relik.example/test#key',

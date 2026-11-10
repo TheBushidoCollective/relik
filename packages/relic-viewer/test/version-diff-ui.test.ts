@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   deriveCommentKey,
   encodeFragment,
@@ -157,7 +158,8 @@ function view(
     filename: route === 'download' ? 'archive.zip' : 'notes.ts',
     declaredMimetype:
       route === 'download' ? 'application/zip' : 'text/typescript',
-    content,
+    content: contentFromBytes(content),
+    document: { bytes: content, truncated: false },
     route,
     downgradeNotice: undefined,
     shareUrl,

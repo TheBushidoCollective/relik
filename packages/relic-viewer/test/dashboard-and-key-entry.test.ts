@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   encodeFragment,
   encryptRelic,
@@ -1512,7 +1513,8 @@ describe('Dashboard rendering (DOM)', () => {
     const dummyView: ReadyView = {
       filename: 'test.md',
       declaredMimetype: 'text/markdown',
-      content: new TextEncoder().encode('# Test'),
+      content: contentFromBytes(new TextEncoder().encode('# Test')),
+      document: { bytes: new TextEncoder().encode('# Test'), truncated: false },
       route: 'markdown',
       downgradeNotice: undefined,
       shareUrl: 'https://relic.example/r1#key',

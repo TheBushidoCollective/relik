@@ -258,9 +258,11 @@ describe('remembering the key', () => {
     const reloaded = await load(id, deps('', `${SERVICE}/x`, vault));
     expect(reloaded.kind).toBe('ready');
     if (reloaded.kind !== 'ready') return;
-    expect(new TextDecoder().decode(reloaded.view.content)).toBe(
-      '# Still here\n'
-    );
+    expect(
+      new TextDecoder().decode(
+        await reloaded.view.content.blob('').arrayBuffer()
+      )
+    ).toBe('# Still here\n');
   });
 
   test('a relic with no lifetime is remembered as never expiring', async () => {
@@ -413,7 +415,9 @@ describe('remembering the key', () => {
 
     expect(fresh.kind).toBe('ready');
     if (fresh.kind !== 'ready') return;
-    expect(new TextDecoder().decode(fresh.view.content)).toBe('# Round trip\n');
+    expect(
+      new TextDecoder().decode(await fresh.view.content.blob('').arrayBuffer())
+    ).toBe('# Round trip\n');
   });
 });
 
@@ -459,7 +463,9 @@ describe('rendering', () => {
     if (state.kind !== 'ready') return;
     expect(state.view.route).toBe('markdown');
     expect(state.view.filename).toBe('report.md');
-    expect(new TextDecoder().decode(state.view.content)).toBe(body);
+    expect(
+      new TextDecoder().decode(await state.view.content.blob('').arrayBuffer())
+    ).toBe(body);
   });
 
   test('routes code to the code view', async () => {

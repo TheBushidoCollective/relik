@@ -5,12 +5,12 @@ import {
   generateKey,
   generateRelicId,
 } from '@relic/format';
+import { contentFromBytes } from '../src/content.ts';
 import { MAX_DIFF_BYTES } from '../src/diff.ts';
 import {
   type KeyVault,
   load,
   loadHistoricalVersion,
-  MAX_RENDER_BYTES,
   type MintResponse,
   type ViewerDeps,
 } from '../src/viewer.ts';
@@ -137,7 +137,11 @@ describe('loading a historical version', () => {
     if (history.kind !== 'ready') return;
     expect(history.view.version).toBe(2);
     expect(history.view.currentVersion).toBe(3);
-    expect(new TextDecoder().decode(history.view.content)).toBe('before\n');
+    expect(
+      new TextDecoder().decode(
+        await history.view.content.blob('').arrayBuffer()
+      )
+    ).toBe('before\n');
     const explicitMint = requests.find(
       (request) =>
         request.url.endsWith('/mint') && request.init?.body !== undefined
@@ -151,10 +155,12 @@ describe('loading a historical version', () => {
 
   /** A `code` current version, three revisions deep. */
   function currentCode() {
+    const bytes = new TextEncoder().encode('current\n');
     return {
       filename: 'notes.txt',
       declaredMimetype: 'text/plain',
-      content: new TextEncoder().encode('current\n'),
+      content: contentFromBytes(bytes),
+      document: { bytes, truncated: false },
       route: 'code' as const,
       downgradeNotice: undefined,
       shareUrl: `${SERVICE}/aaaaaaaaaaaaaaaaaaaaaaaaaa#${encodeFragment(generateKey())}`,
@@ -213,10 +219,7 @@ describe('loading a historical version', () => {
     expect(result.code).toBe('version_truncated');
   });
 
-  test('a version past what the viewer will allocate is refused before fetching', async () => {
-    // The limit that does still stop a version being opened, and it is the
-    // same one `load` applies to the current version rather than a second
-    // number invented for history.
+  test('a requested comparison limit refuses before fetching', async () => {
     const current = currentCode();
     const requests: string[] = [];
     const fetch = (async (input) => {
@@ -224,7 +227,7 @@ describe('loading a historical version', () => {
       return Response.json(
         mint(
           'https://storage.example/v2',
-          MAX_RENDER_BYTES * 2,
+          MAX_DIFF_BYTES * 2,
           2,
           current.currentVersion
         )
@@ -235,15 +238,17 @@ describe('loading a historical version', () => {
       generateRelicId(),
       2,
       current,
-      deps('', fetch)
+      deps('', fetch),
+      undefined,
+      { maxBytes: MAX_DIFF_BYTES }
     );
-
     expect(result.kind).toBe('unavailable');
     if (result.kind !== 'unavailable') return;
     expect(result.code).toBe('version_too_large');
-    // Refused on the declared length, so the bytes are never downloaded.
     expect(requests).toHaveLength(1);
     expect(current.route).toBe('code');
-    expect(new TextDecoder().decode(current.content)).toBe('current\n');
+    expect(
+      new TextDecoder().decode(await current.content.blob('').arrayBuffer())
+    ).toBe('current\n');
   });
 });

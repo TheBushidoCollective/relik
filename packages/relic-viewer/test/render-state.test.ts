@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   trackRenderState,
   renderReady,
@@ -693,7 +694,8 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     const dummyPdfView: ReadyView = {
       filename: 'doc.pdf',
       declaredMimetype: 'application/pdf',
-      content: new Uint8Array([1, 2, 3]),
+      content: contentFromBytes(new Uint8Array([1, 2, 3])),
+      document: undefined,
       route: 'pdf',
       downgradeNotice: undefined,
       shareUrl: 'https://relic.example/r1#key',
@@ -875,7 +877,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     const viewV1: ReadyView = {
       filename: 'v1.txt',
       declaredMimetype: 'text/plain',
-      content: new TextEncoder().encode('Version 1 content'),
+      content: contentFromBytes(new TextEncoder().encode('Version 1 content')),
+      document: {
+        bytes: new TextEncoder().encode('Version 1 content'),
+        truncated: false,
+      },
       route: 'markdown',
       downgradeNotice: undefined,
       shareUrl: 'https://relic.example/r1#key1',
@@ -973,7 +979,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     const currentView: ReadyView = {
       filename: 'current.txt',
       declaredMimetype: 'text/plain',
-      content: new TextEncoder().encode('Current content'),
+      content: contentFromBytes(new TextEncoder().encode('Current content')),
+      document: {
+        bytes: new TextEncoder().encode('Current content'),
+        truncated: false,
+      },
       route: 'markdown',
       downgradeNotice: undefined,
       shareUrl: 'https://relic.example/r1#key',
