@@ -3,21 +3,56 @@
 // comparisons must qualify it before a trace can support a playback claim.
 export const otioProofWorkletSource = `
 class RelicProofTap extends AudioWorkletProcessor {
- constructor() { super(); this.active = false; this.used = 0; this.first = 0; this.sequence = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.left = new Float32Array(1024); this.right = new Float32Array(1024);
-  this.port.onmessage = ({data}) => { if (data === 'start') { this.active = true; this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.sequence = 0; this.port.postMessage({kind:'started', frame:currentFrame}); }
-   if (data === 'stop') { this.flush(); this.active = false; this.port.postMessage({kind:'stopped', frame:currentFrame}); } }; }
- flush() { if (!this.used) return; this.port.postMessage({kind:'pcm', frame:this.first, sequence:this.sequence++, quantumFrames:this.quantumFrames, quantumTimes:this.quantumTimes, quantumLengths:this.quantumLengths, channels:[this.left.slice(0,this.used),this.right.slice(0,this.used)]}); this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; }
- process(inputs, outputs) { const output=outputs[0]; for (const channel of output) channel.fill(0); if (!this.active) return true;
-  const channels=inputs[0] || []; const count=output[0].length; if (!this.used) this.first=currentFrame;
-  this.quantumFrames.push(currentFrame); this.quantumTimes.push(currentTime); this.quantumLengths.push(count);
-  for (let i=0; i<count; i++) { this.left[this.used+i]=channels[0]?.[i] || 0; this.right[this.used+i]=channels[1]?.[i] ?? channels[0]?.[i] ?? 0; }
-  this.used += count; if (this.used === 1024) this.flush(); return true; }
+ constructor() { super(); this.active = false; this.used = 0; this.first = 0; this.sequence = 0; this.ordinal = 0; this.offset = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; this.left = new Float32Array(2048); this.right = new Float32Array(2048); this.witness = [new Float32Array(2048),new Float32Array(2048)];
+  this.port.onmessage = ({data}) => { if (data === 'start') { this.active = true; this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; this.sequence = 0; this.ordinal = 0; this.offset = 0; this.port.postMessage({kind:'started', frame:currentFrame}); }
+   if (data === 'stop') { this.flush(); this.active = false; this.port.postMessage({kind:'stopped', frame:currentFrame}); }
+   if (data?.kind === 'observe-resume') { if (this.resumeNonce !== undefined) this.port.postMessage({kind:'resume-observer-overwritten', previous:this.resumeNonce, next:data.nonce}); this.resumeNonce = data.nonce; } }; }
+ flush() { if (!this.used) return; this.port.postMessage({kind:'pcm', frame:this.first, sequence:this.sequence++, quantumFrames:this.quantumFrames, quantumTimes:this.quantumTimes, quantumLengths:this.quantumLengths, quantumOrdinals:this.quantumOrdinals, quantumOffsets:this.quantumOffsets, channels:[this.left.slice(0,this.used),this.right.slice(0,this.used)], witness:this.witness.map(channel => channel.slice(0,this.used))}); this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.quantumOrdinals = []; this.quantumOffsets = []; }
+ process(inputs, outputs) { const output=outputs[0]; for (const channel of output) channel.fill(0);
+  if (this.resumeNonce !== undefined) { this.port.postMessage({kind:'resume-render', nonce:this.resumeNonce, frame:currentFrame, contextTime:currentTime, renderWall:typeof performance === 'object' && typeof performance.now === 'function' ? performance.now() : null}); this.resumeNonce = undefined; }
+  if (!this.active) return true;
+  const channels=inputs[0] || []; const count=output[0].length;
+  if (count < 2 || count > this.left.length || channels.length !== 2 || channels[0].length !== count || channels[1].length !== count) { this.port.postMessage({kind:'capture-fault', reason:'invalid PCM layout or quantum', frame:currentFrame}); this.active=false; return true; }
+  if (this.used + count > this.left.length) this.flush(); if (!this.used) this.first=currentFrame;
+  this.quantumFrames.push(currentFrame); this.quantumTimes.push(currentTime); this.quantumLengths.push(count); this.quantumOrdinals.push(this.ordinal++); this.quantumOffsets.push(this.offset); this.offset += count;
+  const witness=inputs[1] || [];
+  for (let i=0; i<count; i++) { const left=channels[0][i], right=channels[1][i]; if (!Number.isFinite(left) || !Number.isFinite(right)) { this.port.postMessage({kind:'capture-fault', reason:'non-finite PCM', frame:currentFrame}); this.active=false; return true; } this.left[this.used+i]=left; this.right[this.used+i]=right; for(let ch=0; ch<2; ch++) this.witness[ch][this.used+i]=witness[ch]?.[i] ?? NaN; }
+  this.used += count; if (this.used === this.left.length) this.flush(); return true; }
 }
 registerProcessor('relic-proof-pcm', RelicProofTap);`;
 
 export const otioProofTracePrelude = String.raw`(() => {
   globalThis.__otioProofCold = true;
   globalThis.__otioProofPcm = true;
+  if (globalThis.__otioProofSampleRate != null) {
+    const NativeAudioContext = globalThis.AudioContext;
+    globalThis.AudioContext = class extends NativeAudioContext {
+      constructor(options) { super({...options, sampleRate:globalThis.__otioProofSampleRate}); }
+    };
+  }
+  let borrowedProof = null;
+  if (globalThis.__otioProofBorrowedMode) {
+    const context = new AudioContext();
+    const events = [];
+    let actor = 'controller';
+    const call = async (name, as) => {
+      const previous = actor; actor = as;
+      try { return await context[name](); } finally { actor = previous; }
+    };
+    for (const name of ['suspend', 'resume', 'close']) {
+      const native = context[name].bind(context);
+      context[name] = (...args) => { events.push({name, actor, state:context.state}); return native(...args); };
+    }
+    const acquireLease = async signal => {
+      events.push({name:'acquire', actor:'lease', state:context.state});
+      return {context, signal,
+        suspend:() => call('suspend', 'lease'), resume:() => call('resume', 'lease'),
+        release:async () => { events.push({name:'release', actor:'lease', state:context.state}); }};
+    };
+    borrowedProof = {context, events, call};
+    globalThis.__otioProofBorrowedAudio = globalThis.__otioProofBorrowedMode === 'lease'
+      ? {context, acquireLease} : {context};
+  }
   // Hold worker responses, not requests, so cancellation preserves the
   // worker port's ordering while late results can be replayed to the client.
   const NativeWorker = globalThis.Worker;
@@ -37,8 +72,15 @@ export const otioProofTracePrelude = String.raw`(() => {
   const originalOutputTimestamp = AudioContext.prototype.getOutputTimestamp;
   if (typeof originalOutputTimestamp === 'function') {
     AudioContext.prototype.getOutputTimestamp = function() {
-      if (invalidControllerClock) return {contextTime: NaN, performanceTime: NaN};
-      return originalOutputTimestamp.call(this);
+      const before = performance.now(), currentBefore = this.currentTime;
+      const result = invalidControllerClock
+        ? {contextTime: NaN, performanceTime: NaN}
+        : originalOutputTimestamp.call(this);
+      const currentAfter = this.currentTime, after = performance.now();
+      recordEvent('audio-output-timestamp-observed', null, {before, after, currentBefore, currentAfter,
+        state:this.state, injected:invalidControllerClock,
+        output:{contextTime:result.contextTime, performanceTime:result.performanceTime}});
+      return result;
     };
   }
   const heldPcmResponses = [];
@@ -65,7 +107,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       });
     }
   };
-  const MAX_AUDIO_SAMPLES = 48000 * 20 * 2;
+  const MAX_AUDIO_SAMPLES = 48000 * 20 * 4;
   const MAX_VISUAL_SAMPLES = 3000;
   let fault = 'none';
   let lastStall = 0;
@@ -166,19 +208,156 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   let bufferingObserver = null;
   const originalConnect = AudioNode.prototype.connect;
-  // Only the transport worklet's detached, zero-gain retirement route is
-  // exempt from master discovery. Other destination gains remain ambiguous.
+  // Only transport-owned zero-gain routes are exempt from master discovery.
+  // Other destination gains remain ambiguous.
   const transportNodes = new WeakSet();
-  const detachedTransports = new WeakSet();
   const retirementSinks = new Set();
+  const witnesses = new WeakMap();
+  const proofGates = new WeakMap();
+  const observedContexts = new WeakSet();
+  let nextBankControl = null;
+  let checkpointFailures = 0;
+  const syntheticCheckpoints = new WeakSet();
+  function attachWitness(context) {
+    const witness = witnesses.get(context);
+    const graph = graphs.find(item => item.context === context);
+    if (witness && graph?.node && !witness.attached) {
+      originalConnect.call(witness.source, graph.node, 0, 1);
+      witness.attached = true;
+    }
+  }
   const NativeAudioWorkletNode = globalThis.AudioWorkletNode;
   if (typeof NativeAudioWorkletNode === 'function') {
     globalThis.AudioWorkletNode = class extends NativeAudioWorkletNode {
       constructor(context, name, options) {
-        super(context, name, options);
+        super(context, name, name === 'otio-transport-gate' ? {...options, processorOptions:{...options?.processorOptions, traceMaxCallbacks:512}} : options);
         if (name === 'otio-transport-gate') {
           transportNodes.add(this);
+          const proofGate = {node:this, epoch:null, active:null, checkpoint:null, checkpointContext:null,
+            control:nextBankControl, bootstrapTrace:true, bootstrapTimer:null, bootstrapSettled:false, traceOverlap:false};
+          nextBankControl = null;
+          proofGates.set(context, proofGate);
+          if (!observedContexts.has(context)) {
+            observedContexts.add(context);
+            context.addEventListener('statechange', () =>
+              recordEvent('audio-context-statechange', null,
+                {state:context.state, contextTime:context.currentTime}));
+          }
+          const send = this.port.postMessage.bind(this.port);
+          this.port.postMessage = (...args) => {
+            recordEvent('transport-command', null, args[0]);
+            const message = args[0];
+            if (['accept-anchor', 'install-bank', 'checkpoint'].includes(message?.type))
+              recordEvent('audio-context-gate-observation', null, {direction:'send', type:message.type,
+                state:context.state, contextTime:context.currentTime, clockEpoch:message.clockEpoch});
+            if (message?.type === 'dispose' && proofGate.dropDispose) {
+              recordEvent('clock-dispose-withheld', null, message);
+              return;
+            }
+            if (message?.type === 'arm' && proofGate.control === 'late-arm') {
+              proofGate.control = null;
+              recordEvent('clock-late-arm-injected', null, message);
+              const delay = Math.max(0, ((message.f0 + 256) / context.sampleRate - context.currentTime) * 1000);
+              setTimeout(() => { recordEvent('clock-late-arm-submitted', null, {sequence:message.sequence, contextTime:context.currentTime}); send(message); }, delay);
+              return;
+            }
+            if (message?.type === 'install-bank' && proofGate.control && proofGate.control !== 'late-arm' && proofGate.control !== 'delay-ack') {
+              const kind = proofGate.control, bank = message.descriptor;
+              proofGate.control = null;
+              if (!bank || (bank.bank !== 0 && bank.bank !== 1)) throw new Error('invalid intercepted bank');
+              recordEvent('clock-bank-control-injected', null, {kind, descriptor:bank, requestId:message.requestId});
+              if (kind === 'withhold') return;
+              if (kind === 'late-install') {
+                const delay = Math.max(0, ((bank.startFrame - 256) / context.sampleRate - context.currentTime) * 1000);
+                setTimeout(() => { recordEvent('clock-bank-late-submitted', null, {requestId:message.requestId, contextTime:context.currentTime}); send(message); }, delay);
+                return;
+              }
+              if (kind === 'stale-serial') {
+                const stale = {...message, descriptor:{...bank, serial:bank.serial - 1}};
+                recordEvent('clock-stale-serial-submitted', null, stale);
+                send(stale);
+                return;
+              }
+              if (kind === 'late-origin') {
+                const param = this.parameters.get(bank.bank === 0 ? 'clockFrameA' : 'clockFrameB');
+                if (!param) throw new Error('warming bank parameter unavailable');
+                const origin = bank.startFrame - 256;
+                param.cancelScheduledValues(origin / context.sampleRate);
+                param.setValueAtTime(-384, origin / context.sampleRate);
+                param.linearRampToValueAtTime(65536, (bank.endFrame + 128) / context.sampleRate);
+              }
+            }
+            return send(...args);
+          };
+          // This source is not connected to the destination or to the gate.
+          // Its non-looping position carrier is anchored only while native
+          // context time is frozen, never from a production bank descriptor.
+          if (context.state === 'suspended') {
+            const prior = witnesses.get(context);
+            if (prior) prior.source.disconnect();
+            const exact = context.currentTime * context.sampleRate;
+            const frozenAnchor = Math.round(exact);
+            if (!Number.isSafeInteger(frozenAnchor) || Math.abs(exact - frozenAnchor) > 1 / 1024)
+              throw new Error('proof witness has no integral frozen checkpoint');
+            const anchor = globalThis.__otioProofClockMode === 'long'
+              ? Math.max(frozenAnchor, 2 ** 24 - context.sampleRate) : frozenAnchor;
+            if (Math.abs((anchor / context.sampleRate) * context.sampleRate - anchor) > 1 / 1024)
+              throw new Error('proof witness start cannot round-trip to a frame');
+            const length = Math.ceil(context.sampleRate * 20);
+            const buffer = context.createBuffer(2, length, context.sampleRate);
+            const high = buffer.getChannelData(0), low = buffer.getChannelData(1);
+            for (let i = 0; i < length; i++) { const frame = anchor + i; high[i] = 1 + Math.floor(frame / 65536); low[i] = frame % 65536; }
+            const source = context.createBufferSource();
+            source.buffer = buffer;
+            source.channelCount = 2;
+            source.channelCountMode = 'explicit';
+            source.channelInterpretation = 'discrete';
+            const witness = {source, anchor, frozenAnchor, length, attached:false,
+              gateInitialFrame:options?.processorOptions?.initialFrame, clockEpoch:options?.processorOptions?.clockEpoch};
+            witnesses.set(context, witness);
+            attachWitness(context);
+            source.start(anchor / context.sampleRate);
+          }
           this.port.addEventListener('message', event => {
+            if (syntheticCheckpoints.has(event)) return;
+            if (event.data?.type === 'checkpoint' && checkpointFailures > 0) {
+              checkpointFailures--;
+              event.stopImmediatePropagation();
+              const altered = {...event.data, lastCertifiedEnd:event.data.lastCertifiedEnd + 128};
+              recordEvent('checkpoint-mismatch-injected', null, {actual:event.data, altered});
+              const replay = new MessageEvent('message', {data:altered});
+              syntheticCheckpoints.add(replay);
+              this.port.dispatchEvent(replay);
+              return;
+            }
+            recordEvent(event.data?.type === 'clock-trace'
+              ? (proofGate.traceOverlap ? 'transport-overlap-clock' : proofGate.bootstrapTrace
+                ? 'transport-bootstrap-clock' : 'transport-message') : 'transport-message', null, event.data);
+            if (event.data?.type === 'clock-trace-stopped' && proofGate.bootstrapTrace) proofGate.bootstrapSettled = true;
+            if (['anchor-accepted', 'bank-installed', 'bank-rejected', 'clock-promoted'].includes(event.data?.type))
+              recordEvent('audio-context-gate-observation', null, {direction:'receive', type:event.data.type,
+                state:context.state, contextTime:context.currentTime, clockEpoch:event.data.clockEpoch});
+            if (event.data?.type === 'clock-trace') proofGate.active = event.data.active;
+            if (event.data?.type === 'clock-promoted' && proofGate.control === 'delay-ack') {
+              proofGate.control = null;
+              event.stopImmediatePropagation();
+              proofGate.active = event.data.active;
+              recordEvent('clock-promotion-ack-held', null, event.data);
+              const held = event.data;
+              setTimeout(() => {
+                recordEvent('clock-promotion-ack-released', null, held);
+                this.port.dispatchEvent(new MessageEvent('message', {data:held}));
+              }, 250);
+              return;
+            }
+            if (event.data?.type === 'clock-promoted') proofGate.active = event.data.active;
+            if (event.data?.type === 'checkpoint') {
+              proofGate.epoch = event.data.clockEpoch;
+              proofGate.checkpoint = event.data;
+              proofGate.checkpointContext = {clockEpoch:event.data.clockEpoch, state:context.state,
+                currentTime:context.currentTime, sampleRate:context.sampleRate, lastCertifiedEnd:event.data.lastCertifiedEnd};
+              recordEvent('transport-checkpoint-context', null, proofGate.checkpointContext);
+            }
             if (event.data?.type === 'clock-fault')
               recordEvent('transport-render-clock-fault', null, {
                 expectedFrame:event.data.expectedFrame,
@@ -186,16 +365,17 @@ export const otioProofTracePrelude = String.raw`(() => {
               });
           });
           this.port.start();
+          const bootstrapEpoch = options?.processorOptions?.clockEpoch;
+          if (Number.isSafeInteger(bootstrapEpoch)) {
+            send({type:'proof-trace-start', clockEpoch:bootstrapEpoch});
+            proofGate.bootstrapTimer = setTimeout(() => {
+              if (proofGate.bootstrapTrace) send({type:'proof-trace-stop', clockEpoch:bootstrapEpoch});
+            }, 500);
+          }
         }
       }
     };
   }
-  const originalDisconnect = AudioNode.prototype.disconnect;
-  AudioNode.prototype.disconnect = function(...args) {
-    const result = originalDisconnect.apply(this, args);
-    if (transportNodes.has(this) && args.length === 0) detachedTransports.add(this);
-    return result;
-  };
   function command(graph, name) {
     const {promise, resolve, reject} = Promise.withResolvers();
     const timer = setTimeout(() => { graph.pending = null; reject(new Error('audio worklet ' + name + ' timed out')); }, 5000);
@@ -206,8 +386,11 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   AudioNode.prototype.connect = function(destination, ...rest) {
     const result = originalConnect.call(this, destination, ...rest);
-    if (detachedTransports.has(this) && destination instanceof GainNode &&
-        destination.gain.value === 0) retirementSinks.add(destination);
+    // The clock session keeps a zero-gain route alive from construction,
+    // not only after detachment. Never classify the discovered master as it.
+    if (transportNodes.has(this) && destination instanceof GainNode &&
+        destination.gain.value === 0 && !graphs.some(graph => graph.master === destination))
+      retirementSinks.add(destination);
     if (retirementSinks.has(this) && destination === this.context.destination) {
       if (this.gain.value !== 0) throw new Error('transport retirement sink is audible');
       recordEvent('transport-retirement-sink', null, {gain:this.gain.value});
@@ -230,16 +413,26 @@ export const otioProofTracePrelude = String.raw`(() => {
           throw new Error('AudioWorklet addModule failed: ' + String(error) + '; CSP=' + JSON.stringify(violations));
         }
         const node = new AudioWorkletNode(context, 'relic-proof-pcm',
-          {numberOfInputs:1, numberOfOutputs:1, channelCount:2,
-            channelCountMode:'explicit', outputChannelCount:[1]});
+          {numberOfInputs:2, numberOfOutputs:1, channelCount:2,
+            channelCountMode:'explicit', channelInterpretation:'discrete', outputChannelCount:[1]});
         graph.node = node;
+        attachWitness(context);
         node.port.onmessage = ({data}) => {
           if (data.kind === 'pcm') {
+            const receivedAt = performance.now();
             const channels = data.channels.map(channel => Array.from(channel));
-            const size = channels.reduce((sum, channel) => sum + channel.length, 0);
+            const size = channels.reduce((sum, channel) => sum + channel.length, 0) + data.witness.reduce((sum, channel) => sum + channel.length, 0);
+            const carrierAt = i => { const high=data.witness[0]?.[i], low=data.witness[1]?.[i]; return Number.isSafeInteger(high) && high >= 1 && Number.isSafeInteger(low) && low >= 0 && low < 65536 ? (high-1)*65536+low : null; };
+            recordEvent('audio-pcm-batch-received', null, {receivedAt, sequence:data.sequence,
+              quantumFrames:data.quantumFrames, quantumOrdinals:data.quantumOrdinals,
+              quantumOffsets:data.quantumOffsets, quantumLengths:data.quantumLengths,
+              carrierFirst:carrierAt(0), carrierLast:carrierAt(channels[0].length-1)});
             if (graph.samples + size > MAX_AUDIO_SAMPLES) graph.overflow = true;
-            else { graph.chunks.push({sampleFrame:data.frame, sequence:data.sequence, quantumFrames:data.quantumFrames, quantumTimes:data.quantumTimes, quantumLengths:data.quantumLengths, channels}); graph.samples += size; }
-          } else if (graph.pending?.kind === data.kind) graph.pending.resolve(data.frame);
+            else { graph.chunks.push({receivedAt, sampleFrame:data.frame, sequence:data.sequence, quantumFrames:data.quantumFrames, quantumTimes:data.quantumTimes, quantumLengths:data.quantumLengths, quantumOrdinals:data.quantumOrdinals, quantumOffsets:data.quantumOffsets, channels, witness:data.witness.map(channel => Array.from(channel))}); graph.samples += size; }
+          } else if (data.kind === 'capture-fault') { graph.overflow = true; recordEvent('audio-capture-fault', null, data); }
+          else if (data.kind === 'resume-render') recordEvent('audio-resume-first-render', null, data);
+          else if (data.kind === 'resume-observer-overwritten') recordEvent('audio-resume-observer-overwritten', null, data);
+          else if (graph.pending?.kind === data.kind) graph.pending.resolve(data.frame);
         };
         originalConnect.call(master, node);
         originalConnect.call(node, destination);
@@ -249,6 +442,37 @@ export const otioProofTracePrelude = String.raw`(() => {
       graph.ready.catch(() => {});
     }
     return result;
+  };
+  const originalContextResume = AudioContext.prototype.resume;
+  let resumeNonce = 0;
+  AudioContext.prototype.resume = function(...args) {
+    const nonce = ++resumeNonce, context = this;
+    const graph = graphs.find(item => item.context === context);
+    const initialState = context.state;
+    if (initialState === 'suspended' && graph?.node)
+      graph.node.port.postMessage({kind:'observe-resume', nonce});
+    recordEvent('audio-resume-request', null, {nonce, state:initialState,
+      contextTime:context.currentTime, observedTap:!!graph?.node});
+    return originalContextResume.apply(context, args).then(value => {
+      recordEvent('audio-resume-resolved', null, {nonce, state:context.state, contextTime:context.currentTime});
+      return value;
+    }, error => {
+      recordEvent('audio-resume-rejected', null, {nonce, error:String(error)});
+      throw error;
+    });
+  };
+  const originalContextSuspend = AudioContext.prototype.suspend;
+  let suspendNonce = 0;
+  AudioContext.prototype.suspend = function(...args) {
+    const nonce = ++suspendNonce, context = this;
+    recordEvent('audio-suspend-request', null, {nonce, state:context.state, contextTime:context.currentTime});
+    return originalContextSuspend.apply(context, args).then(value => {
+      recordEvent('audio-suspend-resolved', null, {nonce, state:context.state, contextTime:context.currentTime});
+      return value;
+    }, error => {
+      recordEvent('audio-suspend-rejected', null, {nonce, error:String(error)});
+      throw error;
+    });
   };
   function audioBridge(graph) {
     const before = performance.now();
@@ -265,6 +489,7 @@ export const otioProofTracePrelude = String.raw`(() => {
   let lightweightEvents = [];
   let lightweightOverflow = false;
   let clockRaf = null;
+  let startupMonitor = null;
   let clockRafOverflow = false;
   function tick(now) {
     if (clockRaf) {
@@ -321,6 +546,90 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   requestAnimationFrame(tick);
   globalThis.__otioProofTrace = {
+    async resumeBorrowed() {
+      if (!borrowedProof) throw new Error('borrowed context unavailable');
+      await borrowedProof.call('resume', 'owner');
+    },
+    async disposeBorrowed() {
+      if (!borrowedProof || !globalThis.__otioProofBorrowedAudio?.controller)
+        throw new Error('borrowed controller unavailable');
+      const controller = globalThis.__otioProofBorrowedAudio.controller;
+      await controller.prepareAudioContextChange();
+      controller.dispose();
+      const context = borrowedProof.context, before = context.currentTime;
+      const oscillator = context.createOscillator(), silent = context.createGain();
+      silent.gain.value = 0;
+      originalConnect.call(oscillator, silent);
+      originalConnect.call(silent, context.destination);
+      oscillator.start();
+      const {promise,resolve} = Promise.withResolvers();
+      setTimeout(resolve, 100);
+      await promise;
+      oscillator.stop(); oscillator.disconnect(); silent.disconnect();
+      return {state:context.state, before, after:context.currentTime,
+        events:borrowedProof.events.slice()};
+    },
+    nextCheckpointMismatches(count) {
+      if (count !== 1 && count !== 2) throw new Error('invalid checkpoint mismatch count');
+      checkpointFailures = count;
+    },
+    nextClockBankControl(kind) {
+      if (!['withhold', 'late-install', 'late-origin', 'late-arm', 'stale-serial', 'delay-ack'].includes(kind)) throw new Error('unknown clock control');
+      nextBankControl = kind;
+    },
+    clockTraceReady() {
+      return graphs.length === 1 && proofGates.get(graphs[0].context)?.epoch != null;
+    },
+    clockTrace(action) {
+      if (action !== 'start' && action !== 'stop') throw new Error('invalid clock trace action');
+      if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
+      const gate = proofGates.get(graphs[0].context);
+      if (!gate || gate.epoch == null) throw new Error('native gate checkpoint unavailable');
+      if (action === 'start') {
+        clearTimeout(gate.bootstrapTimer);
+        if (gate.bootstrapTrace && !gate.bootstrapSettled) {
+          gate.traceOverlap = true;
+          recordEvent('clock-trace-phase-overlap', null, {clockEpoch:gate.epoch});
+          gate.node.port.postMessage({type:'proof-trace-stop', clockEpoch:gate.epoch});
+        }
+        gate.bootstrapTrace = false;
+      }
+      gate.node.port.postMessage({type:'proof-trace-' + action, clockEpoch:gate.epoch});
+    },
+    corruptClock(kind) {
+      if (kind !== 'hold' && kind !== 'wrong-tag') throw new Error('unknown native clock corruption');
+      if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
+      const graph = graphs[0], gate = proofGates.get(graph.context), active = gate?.active;
+      if (!active || (active.bank !== 0 && active.bank !== 1)) throw new Error('active native clock bank unavailable');
+      const suffix = active.bank === 0 ? 'A' : 'B';
+      const parameter = gate.node.parameters.get((kind === 'hold' ? 'clockFrame' : 'clockTag') + suffix);
+      if (!parameter) throw new Error('native clock parameter unavailable');
+      const time = graph.context.currentTime;
+      if (kind === 'hold') {
+        if (typeof parameter.cancelAndHoldAtTime !== 'function') throw new Error('native parameter hold unavailable');
+        parameter.cancelAndHoldAtTime(time);
+      } else {
+        parameter.cancelScheduledValues(time);
+        parameter.setValueAtTime(active.serial + 1, time);
+      }
+      const receipt = {kind, clockEpoch:gate.epoch, bank:active.bank, serial:active.serial, contextTime:time};
+      recordEvent('clock-corruption-injected', null, receipt);
+      return receipt;
+    },
+    withholdRetirement() {
+      if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
+      const gate = proofGates.get(graphs[0].context);
+      if (!gate) throw new Error('native gate unavailable');
+      gate.dropDispose = true;
+    },
+    clockIdentity() {
+      if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
+      const graph = graphs[0], gate = proofGates.get(graph.context);
+      if (!gate || gate.epoch == null) throw new Error('native gate checkpoint unavailable');
+      return {clockEpoch:gate.epoch, contextState:graph.context.state,
+        sampleFrame:Math.round(graph.context.currentTime * graph.context.sampleRate),
+        sampleRate:graph.context.sampleRate};
+    },
     audioFrame() {
       if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
       return Math.ceil(graphs[0].context.currentTime * graphs[0].context.sampleRate);
@@ -388,6 +697,9 @@ export const otioProofTracePrelude = String.raw`(() => {
       const sampleFrame = await command(graph, 'start');
       visual.samples = []; visual.overflow = false; visual.active = true;
       events.length = 0; eventsOverflow = false;
+      const currentGate = proofGates.get(graph.context);
+      if (currentGate?.checkpoint) recordEvent('transport-message', null, currentGate.checkpoint);
+      if (currentGate?.checkpointContext) recordEvent('transport-checkpoint-context', null, currentGate.checkpointContext);
       const root = document.querySelector('.otio-view');
       if (lastPcmBackend) recordEvent('scheduled-pcm', null, lastPcmBackend);
       if (!(root instanceof HTMLElement)) throw new Error('proof view missing');
@@ -408,6 +720,14 @@ export const otioProofTracePrelude = String.raw`(() => {
       const edge = {timestamp:performance.now(), bridge:audioBridge(graphs[0]),
         frame:Number(document.querySelector('.otio-view')?.dataset.frame)};
       recordEvent('play-request', null, edge);
+      clearInterval(startupMonitor);
+      startupMonitor = setInterval(() => {
+        if (performance.now() - edge.timestamp > 1000) {
+          clearInterval(startupMonitor); startupMonitor = null; return;
+        }
+        const graph = graphs[0];
+        recordEvent('audio-startup-monitor', null, {state:graph.context.state, bridge:audioBridge(graph)});
+      }, 20);
       return edge;
     },
     mute() {
@@ -428,6 +748,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       for (const sink of retirementSinks)
         if (sink.gain.value !== 0) throw new Error('transport retirement sink became audible');
       const graph = graphs[0]; visual.active = false;
+      clearInterval(startupMonitor); startupMonitor = null;
       bufferingObserver?.disconnect();
       const timestamp = performance.now();
       const frame = Number(document.querySelector('.otio-view')?.dataset.frame);
@@ -435,7 +756,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const sampleFrame = await command(graph, 'stop');
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
         timestamp, frame, sampleFrame, bridge,
-        audio: graph.chunks, audioOverflow: graph.overflow,
+        audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, frozenAnchor:item.frozenAnchor, length:item.length, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
         visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow};
     },
   };
