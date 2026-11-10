@@ -282,6 +282,7 @@ export class OtioPcmProvider {
     }
   }
   close(streamId: string): Promise<void> {
+    if (!streamId) return Promise.reject(new Error('Invalid PCM stream'));
     if (this.closed) {
       this.headers.delete(streamId);
       return Promise.resolve();

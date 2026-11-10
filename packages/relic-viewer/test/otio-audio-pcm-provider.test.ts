@@ -31,6 +31,45 @@ class FakeWorker {
     this.onmessage?.({ data: message } as MessageEvent);
   }
 }
+
+test('empty close rejects without blocking a subsequent open and pull', async () => {
+  const worker = new FakeWorker();
+  const provider = new OtioPcmProvider(
+    4,
+    new OtioPcmBudget(),
+    worker as unknown as Worker
+  );
+  await expect(provider.close('')).rejects.toThrow('Invalid PCM stream');
+  expect(worker.messages).toHaveLength(0);
+  const opening = provider.open('a', new Blob([]), header);
+  await Promise.resolve();
+  worker.reply({
+    protocol: 1,
+    generation: 4,
+    streamId: 'a',
+    requestId: worker.messages[0]!.requestId,
+    kind: 'ready',
+    header,
+  });
+  await opening;
+  const pulling = provider.pull('a', 0, 1);
+  await Promise.resolve();
+  worker.reply({
+    protocol: 1,
+    generation: 4,
+    streamId: 'a',
+    requestId: worker.messages[1]!.requestId,
+    kind: 'pcm',
+    firstFrame: 0,
+    frameCount: 1,
+    planes: [new Float32Array(1)],
+  });
+  const block = await pulling;
+  expect(block.firstFrame).toBe(0);
+  expect(block.frameCount).toBe(1);
+  provider.release(block.planes);
+  provider.dispose();
+});
 test('close waits for its acknowledgement and ignores stale acknowledgements on reuse', async () => {
   const worker = new FakeWorker();
   const provider = new OtioPcmProvider(
