@@ -20,6 +20,8 @@
 import { describe, expect, test } from 'bun:test';
 import { unlink } from 'node:fs/promises';
 
+import { PDF_WORKER_PATCH_MARKER } from '../build.ts';
+
 const pkgDir = new URL('..', import.meta.url).pathname;
 
 /**
@@ -204,6 +206,7 @@ describe('the app shell', () => {
     const worker = Bun.file(`${pkgDir}dist/pdf.worker.js`);
     expect(await worker.exists()).toBe(true);
     expect(worker.size).toBeGreaterThan(0);
+    expect(await worker.text()).toContain(PDF_WORKER_PATCH_MARKER);
   });
 
   test('ships the OTIO demuxer as a licensed worker asset outside shell requests', async () => {

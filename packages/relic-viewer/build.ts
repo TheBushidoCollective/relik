@@ -54,6 +54,38 @@ async function readMediabunnyDistribution(): Promise<MediabunnyDistribution> {
   };
 }
 
+/** Present only in a pdf.js worker that carries patches/pdfjs-dist@5.4.149.patch. */
+export const PDF_WORKER_PATCH_MARKER =
+  'class IndirectObjectLexer extends Lexer';
+
+/**
+ * The pdf.js worker both builds ship, refused unless it carries
+ * patches/pdfjs-dist@5.4.149.patch.
+ *
+ * pdf.js parses one token past every object's `endobj`. When an object is
+ * followed by a long whitespace run, which PDF allows, that lookahead lexes the
+ * run through range requests, restarting the object's parse at each missing
+ * 64 KiB chunk and keeping every chunk in the worker. The patch ends an object
+ * at its top-level `endobj`. Only the readable build is patched, so the viewer
+ * ships it rather than `pdf.worker.min.mjs` (376 KB gzipped rather than 292 KB).
+ *
+ * Bun installs a package without its patch, and without an error, when the
+ * patch's version key no longer matches (oven-sh/bun#40106) or a cached copy
+ * was linked unpatched (oven-sh/bun#33520), so the build checks the file.
+ */
+async function patchedPdfWorkerPath(): Promise<string> {
+  const path = new URL(
+    './node_modules/pdfjs-dist/build/pdf.worker.mjs',
+    import.meta.url
+  ).pathname;
+  if (!(await Bun.file(path).text()).includes(PDF_WORKER_PATCH_MARKER)) {
+    throw new Error(
+      'pdfjs-dist is installed without patches/pdfjs-dist@5.4.149.patch. Run bun install; if pdfjs-dist changed version, regenerate the patch with bun patch.'
+    );
+  }
+  return path;
+}
+
 /**
  * Computes a deterministic content hash over the shell assets that sw.ts precaches.
  * Any change to viewer.js, styles.css, or manifest.webmanifest alters this hash,
@@ -191,11 +223,7 @@ export async function buildViewer(options?: {
     await copyFile(`${pkgDir}public/${name}`, `${out}${name}`);
   }
 
-  const workerPath = new URL(
-    './node_modules/pdfjs-dist/build/pdf.worker.min.mjs',
-    import.meta.url
-  ).pathname;
-  await copyFile(workerPath, `${out}pdf.worker.js`);
+  await copyFile(await patchedPdfWorkerPath(), `${out}pdf.worker.js`);
   const timingWorkerPath = `${out}otio-video-timing-worker.js`;
   if (!(await Bun.file(timingWorkerPath).exists())) {
     throw new Error('Timing worker build did not emit its fixed worker asset');
@@ -406,11 +434,7 @@ export async function buildCover(options?: { outdir?: string }): Promise<void> {
 `;
   await Bun.write(`${out}index.html`, indexHtml);
 
-  const workerPath = new URL(
-    './node_modules/pdfjs-dist/build/pdf.worker.mjs',
-    import.meta.url
-  ).pathname;
-  await copyFile(workerPath, `${out}pdf.worker.mjs`);
+  await copyFile(await patchedPdfWorkerPath(), `${out}pdf.worker.mjs`);
 }
 
 if (import.meta.main) {

@@ -55,6 +55,51 @@ function fixturePdf(padding: number): Uint8Array {
   return new TextEncoder().encode(body);
 }
 
+/**
+ * Two pages either side of a run of NUL bytes, which PDF treats as whitespace.
+ * Page 1's objects sit in the initial read; page 2's objects and the
+ * cross-reference table sit in the final 64 KiB.
+ */
+function pdfWithWhitespaceRun(size: number): Uint8Array {
+  const operators = '0 0 100 100 re f\n';
+  const contentStream = `<< /Length ${operators.length} >>\nstream\n${operators}endstream`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>',
+    contentStream,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>',
+    contentStream,
+  ];
+  const offsets: number[] = [];
+  let head = '%PDF-1.4\n';
+  for (const [index, object] of objects.slice(0, 4).entries()) {
+    offsets.push(head.length);
+    head += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  // Every number in the tail is padded, so its length does not depend on where it starts.
+  const tail = (start: number): string => {
+    let text = '';
+    const tailOffsets: number[] = [];
+    for (const [index, object] of objects.slice(4).entries()) {
+      tailOffsets.push(start + text.length);
+      text += `${index + 5} 0 obj\n${object}\nendobj\n`;
+    }
+    const xref = start + text.length;
+    text += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const offset of [...offsets, ...tailOffsets]) {
+      text += `${String(offset).padStart(10, '0')} 00000 n \n`;
+    }
+    return `${text}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${String(xref).padStart(10, '0')}\n%%EOF\n`;
+  };
+  const start = size - tail(0).length;
+  const encoder = new TextEncoder();
+  const bytes = new Uint8Array(size);
+  bytes.set(encoder.encode(head), 0);
+  bytes.set(encoder.encode(tail(start)), start);
+  return bytes;
+}
+
 describe('PDF Blob range access', () => {
   test('splits coalesced ranges and preserves the downloadable bytes after transfer', async () => {
     const piece = new Uint8Array(new ArrayBuffer(1024 * 1024));
@@ -149,6 +194,47 @@ describe('PDF Blob range access', () => {
       await task.destroy();
     }
   });
+
+  test('renders the pages either side of a whitespace run without fetching the run', async () => {
+    const size = 5 * 1024 * 1024;
+    const original = pdfWithWhitespaceRun(size);
+    const base = contentFromBytes(original);
+    const reads: Array<[number, number]> = [];
+    const content: RelicContent = {
+      ...base,
+      async read(start, end) {
+        reads.push([start, end]);
+        return base.read(start, end);
+      },
+    };
+    const { task, failure } = await pdf.createPdfLoadingTask(content);
+    try {
+      const document = await Promise.race([task.promise, failure]);
+      expect(document.numPages).toBe(2);
+      for (const pageNumber of [1, 2]) {
+        const page = await document.getPage(pageNumber);
+        const operators = await Promise.race([page.getOperatorList(), failure]);
+        expect(operators.fnArray.length).toBeGreaterThan(0);
+      }
+      // Unpatched pdf.js lexes one token past page 1's content object, which
+      // walks the run one 64 KiB range request at a time.
+      const initialBytes = 1024 * 1024;
+      const lastChunk = size - 65_536;
+      expect(reads[0]).toEqual([0, initialBytes]);
+      expect(reads).toContainEqual([lastChunk, size]);
+      expect(
+        reads.filter(([start, end]) => start < lastChunk && end > initialBytes)
+      ).toEqual([]);
+      const downloaded = new Uint8Array(
+        await content.blob('application/pdf').arrayBuffer()
+      );
+      expect(
+        Buffer.compare(Buffer.from(downloaded), Buffer.from(original))
+      ).toBe(0);
+    } finally {
+      await task.destroy();
+    }
+  }, 30_000);
 
   test('reports a failed range rather than leaving the PDF load pending', async () => {
     const base = contentFromBytes(fixturePdf(1024 * 1024 + 1024));

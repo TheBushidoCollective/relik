@@ -53,6 +53,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "pdfjs-dist@5.4.149": "patches/pdfjs-dist@5.4.149.patch",
+  },
   "packages": {
     "@dimforge/rapier3d-compat": ["@dimforge/rapier3d-compat@0.12.0", "", {}, "sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow=="],
 

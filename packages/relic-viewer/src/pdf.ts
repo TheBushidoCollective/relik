@@ -104,6 +104,9 @@ export async function createPdfLoadingTask(
     range,
     length: content.size,
     rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
+    // The worker fetches only what parsing reaches. With
+    // patches/pdfjs-dist@5.4.149.patch parsing stops at each object's endobj, so
+    // a whitespace run between objects is never requested.
     disableAutoFetch: true,
     disableStream: true,
   });

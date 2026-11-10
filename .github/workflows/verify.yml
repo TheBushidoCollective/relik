@@ -416,6 +416,7 @@ jobs:
 
           for P in \
             /assets/viewer.js \
+            /assets/pdf.worker.js \
             /assets/landing-html.png \
             /assets/landing-markdown.png \
             /assets/landing-code-dark.png \
@@ -432,6 +433,7 @@ jobs:
               exit 1
             fi
           done
+          grep -q 'class IndirectObjectLexer extends Lexer' "$SMOKE_DIR/assets_pdf.worker.js"
 
       - name: Collect image logs and remove the container
         if: always()

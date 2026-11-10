@@ -135,5 +135,7 @@ Node, Bun, ffmpeg with `libvpx-vp9`, an explicit headless Chromium executable, a
 
 Before the browser memory gates, a calibration must detect a touched 512 MiB allocation and a retained 96 MiB allocation, then show less than 64 MiB growth after those allocations are released and churned. The gates compare post-pressure per-process snapshots using `phys_footprint` on macOS or `RssAnon + VmSwap` on Linux. They retain the 64 MiB media pre-playback, 128 MiB media after-release, and 128 MiB OTIO and PDF limits. Receipts also report RSS growth and added or exited process IDs. The PDF gate includes utility processes; the others cover renderers.
 
+During either page pixel check, the PDF step fails if the worker has requested a range beginning before the file's final MiB. A range assertion also requires at least one recorded worker request. The first page renders from the first MiB supplied at open, and the second from the last 64 KiB, so earlier worker requests enter the intervening whitespace. The `LARGE_STEP_6_PDF_PAGES` receipt includes `worker_ranges`.
+
 These are post-pressure growth gates, not bounds on transient renderer peaks or browser-process storage. The proof creates and removes local scratch data and makes no production writes. Cross-engine, real-device and version-cache measurements are separate proofs.
 

@@ -428,6 +428,25 @@ const timingPrelude = `(() => {
   };
 })()`;
 
+/**
+ * Record each range the pdf.js worker requests. Page 1 uses the first MiB,
+ * supplied at open, and page 2 uses the final 64 KiB. Earlier requests read
+ * the whitespace run between them.
+ */
+const pdfRangePrelude = `(() => {
+  globalThis.__pdfRanges = [];
+  const NativeWorker = globalThis.Worker;
+  globalThis.Worker = class extends NativeWorker {
+    constructor(url, options) {
+      super(url, options);
+      if (String(url).includes('pdf.worker')) this.addEventListener('message', (event) => {
+        if (event.data?.action === 'GetRangeReader') globalThis.__pdfRanges.push([event.data.data.begin, event.data.data.end]);
+      });
+    }
+  };
+})()`;
+const pdfRunGuard = `if ((globalThis.__pdfRanges ?? []).some(([begin]) => begin < ${PDF_BYTES - MIB})) throw new Error('PDF preview requested the whitespace run: ' + JSON.stringify(globalThis.__pdfRanges.filter(([begin]) => begin < ${PDF_BYTES - MIB}).slice(0, 3)));`;
+
 function rendererMemoryReceipt(growth: MemoryGrowth): string {
   return `renderer_growth=${growth.footprint} renderer_rss_growth=${growth.rss} measurement=${memoryMeasurement()} added=${JSON.stringify(growth.added)} exited=${JSON.stringify(growth.exited)}`;
 }
@@ -963,7 +982,7 @@ try {
   await makeLargePdf(pdfPath);
   const pdf = await publish(pdfPath);
   assert.equal(pdf.plaintextBytes, PDF_BYTES);
-  const pdfPage = await browser.page(pdf.url);
+  const pdfPage = await browser.page(pdf.url, undefined, pdfRangePrelude);
   await browser.waitFor(
     pdfPage,
     `!!document.querySelector('[data-large-open][open]')`,
@@ -975,6 +994,7 @@ try {
   await browser.waitFor(
     pdfPage,
     `(() => {
+    ${pdfRunGuard}
     const c=document.querySelector('canvas.relic-page');
     if (!(c instanceof HTMLCanvasElement) || c.dataset.pageNumber !== '1' || !c.width || !c.height) return false;
     const p=c.getContext('2d')?.getImageData(Math.floor(c.width/2),Math.floor(c.height/2),1,1).data;
@@ -994,12 +1014,22 @@ try {
   await browser.waitFor(
     pdfPage,
     `(() => {
+    ${pdfRunGuard}
     const c=document.querySelector('canvas.relic-page');
     if (!(c instanceof HTMLCanvasElement) || c.dataset.pageNumber !== '2' || !c.width || !c.height) return false;
     const p=c.getContext('2d')?.getImageData(Math.floor(c.width/2),Math.floor(c.height/2),1,1).data;
     return !!p && p[2]>200 && p[0]<40;
   })()`,
     'last rendered PDF page'
+  );
+  const pdfRanges = await browser.evaluate<Array<[number, number]> | undefined>(
+    pdfPage,
+    'globalThis.__pdfRanges'
+  );
+  assert.ok(pdfRanges?.length, 'PDF range instrumentation recorded nothing');
+  assert.ok(
+    pdfRanges.every(([begin]) => begin >= PDF_BYTES - MIB),
+    `PDF preview requested the whitespace run: ${JSON.stringify(pdfRanges)}`
   );
   await browser.pressure(pdfPage);
   const pdfGrowth = memoryGrowth(
@@ -1017,7 +1047,7 @@ try {
     'PDF download differs after rendering'
   );
   console.log(
-    `LARGE_STEP_6_PDF_PAGES rendered=first,last bytes=${PDF_BYTES} renderer_utility_growth=${pdfGrowth.footprint} ${rendererMemoryReceipt(pdfGrowth)} sha256_match=true`
+    `LARGE_STEP_6_PDF_PAGES rendered=first,last bytes=${PDF_BYTES} worker_ranges=${pdfRanges.length} renderer_utility_growth=${pdfGrowth.footprint} ${rendererMemoryReceipt(pdfGrowth)} sha256_match=true`
   );
   await browser.closePage(pdfPage);
   await release(pdf);

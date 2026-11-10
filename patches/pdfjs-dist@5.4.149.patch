@@ -1,0 +1,67 @@
+diff --git a/build/pdf.worker.mjs b/build/pdf.worker.mjs
+index 10a244a1cc1b4a5288efbe1520baf3defe3000e1..299d6edc7e38a816e56fadf4268a0597f7e58caa 100644
+--- a/build/pdf.worker.mjs
++++ b/build/pdf.worker.mjs
+@@ -11481,6 +11481,35 @@ class Lexer {
+     }
+   }
+ }
++class IndirectObjectLexer extends Lexer {
++  // Ends an indirect object at its top-level endobj. Parser keeps one token of
++  // lookahead, which otherwise lexes whatever follows the object and, on a
++  // range-loaded document, fetches all of it first.
++  #depth = 0;
++  #ended = false;
++  getObj() {
++    if (this.#ended) {
++      return EOF;
++    }
++    const obj = super.getObj();
++    if (obj instanceof Cmd) {
++      switch (obj.cmd) {
++        case "<<":
++        case "[":
++          this.#depth++;
++          break;
++        case ">>":
++        case "]":
++          this.#depth--;
++          break;
++        case "endobj":
++          this.#ended = this.#depth === 0;
++          break;
++      }
++    }
++    return obj;
++  }
++}
+ class Linearization {
+   static create(stream) {
+     function getInt(linDict, name, allowZeroValue = false) {
+@@ -11505,7 +11534,7 @@ class Linearization {
+       throw new Error("Hint array in the linearization dictionary is invalid.");
+     }
+     const parser = new Parser({
+-      lexer: new Lexer(stream),
++      lexer: new IndirectObjectLexer(stream),
+       xref: null
+     });
+     const obj1 = parser.getObj();
+@@ -54884,7 +54913,7 @@ class XRef {
+         startXRefParsedCache.add(startXRef);
+         stream.pos = startXRef + stream.start;
+         const parser = new Parser({
+-          lexer: new Lexer(stream),
++          lexer: new IndirectObjectLexer(stream),
+           xref: this,
+           allowStreams: true
+         });
+@@ -55002,7 +55031,7 @@ class XRef {
+     }
+     const stream = this.stream.makeSubStream(xrefEntry.offset + this.stream.start);
+     const parser = new Parser({
+-      lexer: new Lexer(stream),
++      lexer: new IndirectObjectLexer(stream),
+       xref: this,
+       allowStreams: true
+     });
