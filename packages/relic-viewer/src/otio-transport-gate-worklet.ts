@@ -70,6 +70,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
   private staleCount = 0;
   private staleStopped = false;
   private staleLimit = 0;
+  private staleCaptureId: number | null = null;
 
   constructor(options?: unknown) {
     super(options);
@@ -151,6 +152,47 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         });
         return;
       }
+      if (msg.type === 'proof-stale-start' || msg.type === 'proof-stale-stop') {
+        if (!this.stalePrevious) return;
+        if (
+          !integer(msg.captureId) ||
+          msg.captureId === 0 ||
+          (msg.type === 'proof-stale-start'
+            ? this.staleCaptureId !== null
+            : this.staleCaptureId !== msg.captureId)
+        ) {
+          this.port.postMessage({
+            type: 'clock-stale-control-error',
+            clockEpoch: this.epoch,
+            captureId: msg.captureId,
+          });
+          return;
+        }
+        if (msg.type === 'proof-stale-start') {
+          this.staleCaptureId = msg.captureId;
+          this.stalePrevious.callbackOrdinal = 0;
+          this.staleCount = 0;
+          this.staleStopped = false;
+          this.port.postMessage({
+            type: 'clock-stale-started',
+            clockEpoch: this.epoch,
+            captureId: msg.captureId,
+            afterCallbackOrdinal: this.ordinal,
+          });
+        } else {
+          this.port.postMessage({
+            type: 'clock-stale-stopped',
+            clockEpoch: this.epoch,
+            captureId: msg.captureId,
+            lastCallbackOrdinal: this.ordinal,
+            pairs: this.staleCount,
+            overflow: this.staleStopped,
+          });
+          this.staleCaptureId = null;
+          this.stalePrevious.callbackOrdinal = 0;
+        }
+        return;
+      }
       if (msg.type === 'dispose') {
         this.terminal = true;
         return;
@@ -210,7 +252,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
     length: number
   ): void {
     const previous = this.stalePrevious;
-    if (!previous || this.staleStopped) return;
+    if (!previous || this.staleCaptureId === null || this.staleStopped) return;
     const frameA = parameters.clockFrameA ?? EMPTY;
     const tagA = parameters.clockTagA ?? EMPTY;
     const frameB = parameters.clockFrameB ?? EMPTY;
@@ -225,6 +267,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       this.port.postMessage({
         type: 'clock-stale-overflow',
         clockEpoch: this.epoch,
+        captureId: this.staleCaptureId,
       });
       return;
     }
@@ -237,6 +280,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         this.port.postMessage({
           type: 'clock-stale-overflow',
           clockEpoch: this.epoch,
+          captureId: this.staleCaptureId,
         });
         return;
       }
@@ -244,6 +288,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       this.port.postMessage({
         type: 'clock-stale-pair',
         clockEpoch: this.epoch,
+        captureId: this.staleCaptureId,
         previous: {
           callbackOrdinal: previous.callbackOrdinal,
           sampleCount: previous.sampleCount,

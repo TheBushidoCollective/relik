@@ -114,6 +114,75 @@ test('session correlates anchor certification, commands and retirement', async (
   }
 });
 
+test('certified quantum is the maximum of both validated anchor quanta', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const original = globals.AudioWorkletNode;
+  globals.AudioWorkletNode = FakeGateNode;
+  try {
+    for (const sampleRate of [44100, 48000]) {
+      for (const [first, last] of [
+        [128, 128],
+        [256, 256],
+        [512, 512],
+        [2048, 2048],
+        [256, 128],
+      ] as const) {
+        const gate = await createOtioTransportGate(
+          { ...fakeGateContext(), sampleRate } as AudioContext,
+          () => {},
+          undefined,
+          0
+        );
+        const node = gate.node as unknown as FakeGateNode;
+        expect(gate.certifiedQuantum).toBeNull();
+        node.emit({
+          type: 'anchor-certified',
+          clockEpoch: gate.clockEpoch,
+          firstFrame: 0,
+          lastCertifiedEnd: first + last,
+          sampleCount: first + last,
+          callbackOrdinal: 2,
+          quantumLength: last,
+          bankSerial: 1,
+          clockCoverageEnd: 63488,
+        });
+        await gate.ready();
+        expect(gate.certifiedQuantum).toBe(Math.max(first, last));
+        const retired = gate.dispose();
+        node.emit({ type: 'disposed', clockEpoch: gate.clockEpoch });
+        await retired;
+      }
+    }
+    for (const first of [1, 2049]) {
+      const gate = await createOtioTransportGate(
+        fakeGateContext(),
+        () => {},
+        undefined,
+        0
+      );
+      const node = gate.node as unknown as FakeGateNode;
+      node.emit({
+        type: 'anchor-certified',
+        clockEpoch: gate.clockEpoch,
+        firstFrame: 0,
+        lastCertifiedEnd: first + 128,
+        sampleCount: first + 128,
+        callbackOrdinal: 2,
+        quantumLength: 128,
+        bankSerial: 1,
+        clockCoverageEnd: 63488,
+      });
+      await expect(gate.ready()).rejects.toThrow('Malformed clock anchor');
+      expect(gate.certifiedQuantum).toBeNull();
+      const retired = gate.dispose();
+      node.emit({ type: 'disposed', clockEpoch: gate.clockEpoch });
+      await retired;
+    }
+  } finally {
+    globals.AudioWorkletNode = original;
+  }
+});
+
 test('serial exhaustion is proof-only, refuses renewal and does not wrap', async () => {
   const globals = globalThis as unknown as Record<string, unknown>;
   const originalNode = globals.AudioWorkletNode;

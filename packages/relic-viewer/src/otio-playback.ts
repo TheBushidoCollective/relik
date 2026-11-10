@@ -179,7 +179,6 @@ export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
 const HAVE_CURRENT_DATA = 2;
 // Operational candidate; integrated startup qualification must measure this guard.
 const OTIO_PCM_EPOCH_GUARD_FRAMES = 512;
-const OTIO_PCM_SELECTION_RESERVE_FRAMES = 704;
 const OTIO_PCM_TARGET_LEAD_SECONDS = 0.4;
 // Chromium can quantize an assigned midpoint twice: the loopback proof saw
 // 4.020833333333334 report 4.020832 on seeked. Two microseconds cover that
@@ -3801,6 +3800,9 @@ export function createOtioPlayback(
         contextFrame: run.contextFrame,
         deadline: run.outputClock.deadline,
         guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+        certifiedQuantum: run.gate.certifiedQuantum,
+        remainingLeadFrames:
+          run.contextFrame - Math.ceil(contextAfter * run.admission.rate),
       });
       return false;
     }
@@ -3845,6 +3847,16 @@ export function createOtioPlayback(
         return false;
       }
     }
+    pcmProof('clock-commit', run.generation, {
+      contextFrame: run.contextFrame,
+      contextAfter,
+      remainingLeadFrames:
+        run.contextFrame - Math.ceil(contextAfter * run.admission.rate),
+      guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+      certifiedQuantum: run.gate.certifiedQuantum,
+      deadline: run.outputClock.deadline,
+      readEnd,
+    });
     return true;
   }
 
@@ -4114,16 +4126,41 @@ export function createOtioPlayback(
       performanceTime: stamp.performanceTime,
       mappingAllowanceMs,
     };
+    const quantum = run.gate.certifiedQuantum;
+    if (quantum === null) {
+      pcmProof('error', run.generation, {
+        stage: 'clock',
+        code: 'missing-certified-quantum',
+      });
+      return null;
+    }
+    const selectionReserve =
+      OTIO_PCM_EPOCH_GUARD_FRAMES +
+      Math.max(OTIO_PCM_EPOCH_GUARD_FRAMES, 2 * quantum);
+    const selectionContext = run.context.currentTime;
     const epoch = selectOtioCausalEpoch(
       samples,
       vsyncTracker.medianSeconds,
       bridge,
       run.admission.rate,
-      run.context.currentTime,
+      selectionContext,
       pcmRequestWall,
       after,
-      OTIO_PCM_SELECTION_RESERVE_FRAMES
+      selectionReserve
     );
+    pcmProof('clock-selection', run.generation, {
+      certifiedQuantum: quantum,
+      guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+      selectionReserve,
+      contextNow: selectionContext,
+      requestWall: pcmRequestWall,
+      observedWall: after,
+      deadline: run.outputClock.deadline,
+      contextFrame: epoch?.contextFrame ?? null,
+      epochWall: epoch?.performanceTime ?? null,
+      intervalLower: epoch?.intervalLower ?? null,
+      intervalUpper: epoch?.intervalUpper ?? null,
+    });
     if (!epoch || epoch.performanceTime > run.outputClock.deadline) return null;
     run.contextFrame = epoch.contextFrame;
     run.phaseSamples = samples;

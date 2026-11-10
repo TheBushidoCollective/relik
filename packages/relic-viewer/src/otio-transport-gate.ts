@@ -59,6 +59,7 @@ export interface OtioTransportGate {
   readonly node: AudioWorkletNode;
   readonly clockEpoch: number;
   readonly clockCoverageEnd: number | null;
+  readonly certifiedQuantum: number | null;
   ready(): Promise<void>;
   prepareNextBank(): Promise<void>;
   arm(
@@ -344,7 +345,10 @@ export async function createOtioTransportGate(
       message.type === 'clock-trace-started' ||
       message.type === 'clock-trace-stopped' ||
       message.type === 'clock-stale-pair' ||
-      message.type === 'clock-stale-overflow'
+      message.type === 'clock-stale-overflow' ||
+      message.type === 'clock-stale-started' ||
+      message.type === 'clock-stale-stopped' ||
+      message.type === 'clock-stale-control-error'
     )
       return;
     if (message.type === 'anchor-certified') {
@@ -360,6 +364,7 @@ export async function createOtioTransportGate(
         message.quantumLength < 2 ||
         message.quantumLength > MAX_QUANTUM ||
         message.sampleCount < message.quantumLength + 2 ||
+        message.sampleCount - message.quantumLength > MAX_QUANTUM ||
         message.sampleCount > 8192 ||
         message.bankSerial !== active.serial ||
         message.clockCoverageEnd !== active.endFrame - MAX_QUANTUM
@@ -368,7 +373,10 @@ export async function createOtioTransportGate(
         return;
       }
       readySeen = true;
-      observedQuantum = message.quantumLength;
+      observedQuantum = Math.max(
+        message.quantumLength,
+        message.sampleCount - message.quantumLength
+      );
       coverage = active.endFrame - MAX_QUANTUM;
       stopCarrier();
       readyResolve();
@@ -527,6 +535,9 @@ export async function createOtioTransportGate(
     clockEpoch,
     get clockCoverageEnd() {
       return coverage;
+    },
+    get certifiedQuantum() {
+      return readySeen ? observedQuantum : null;
     },
     ready: () => readyPromise,
     prepareNextBank: () => {

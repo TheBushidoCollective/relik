@@ -1767,6 +1767,9 @@ describe('otio playback controller', () => {
     custom?: { document: OtioDocumentV1; audio: Blob },
     clockOptions?: {
       anchorOffset?: number;
+      anchorQuanta?: readonly [number, number];
+      scheduleAdvanceFrames?: number;
+      anchorDelayMs?: number;
       noLease?: boolean;
       leaseGate?: Promise<void>;
       ownedContext?: boolean;
@@ -1787,6 +1790,8 @@ describe('otio playback controller', () => {
     let resumes = 0;
     let closes = 0;
     let contextConstructions = 0;
+    let firstScheduleLead: number | null = null;
+    let scheduleAdvanceApplied = false;
     let leaseReleases = 0;
     let timerId = 0;
     const timers = new Map<number, { at: number; callback: () => void }>();
@@ -1871,7 +1876,19 @@ describe('otio playback controller', () => {
         this.carrier = input === 1;
         return super.connect(node, output, input);
       }
-      start(_time: number) {}
+      start(time: number) {
+        if (
+          !this.carrier &&
+          !scheduleAdvanceApplied &&
+          clockOptions?.scheduleAdvanceFrames
+        ) {
+          scheduleAdvanceApplied = true;
+          renderFrame += clockOptions.scheduleAdvanceFrames;
+          outputFrame += clockOptions.scheduleAdvanceFrames;
+          wall += clockOptions.scheduleAdvanceFrames / 48;
+          firstScheduleLead = Math.round(time * 48000) - renderFrame;
+        }
+      }
       stop(_time?: number) {
         if (this.carrier) queueMicrotask(() => this.onended?.());
       }
@@ -1933,9 +1950,18 @@ describe('otio playback controller', () => {
         resumes++;
         await clockOptions?.resumeGate;
         if (this.state === 'suspended') {
-          renderFrame += 256;
-          outputFrame += 256;
-          wall += 256 / 48;
+          const quantumSamples = clockOptions?.anchorQuanta
+            ? clockOptions.anchorQuanta[0] + clockOptions.anchorQuanta[1]
+            : 256;
+          renderFrame += quantumSamples;
+          outputFrame += quantumSamples;
+          wall += quantumSamples / 48;
+          if (clockOptions?.anchorDelayMs) {
+            const delayFrames = clockOptions.anchorDelayMs * 48;
+            renderFrame += delayFrames;
+            outputFrame += delayFrames;
+            wall += clockOptions.anchorDelayMs;
+          }
           if (clockOptions?.suspendGate || clockOptions?.resumeGate)
             outputWallOffset = wall - outputFrame / 48;
         }
@@ -2039,10 +2065,16 @@ describe('otio playback controller', () => {
           emit({
             type: 'anchor-certified',
             firstFrame: this.initialFrame + (clockOptions?.anchorOffset ?? 0),
-            lastCertifiedEnd: this.initialFrame + 256,
-            sampleCount: 256,
+            lastCertifiedEnd:
+              this.initialFrame +
+              (clockOptions?.anchorQuanta
+                ? clockOptions.anchorQuanta[0] + clockOptions.anchorQuanta[1]
+                : 256),
+            sampleCount: clockOptions?.anchorQuanta
+              ? clockOptions.anchorQuanta[0] + clockOptions.anchorQuanta[1]
+              : 256,
             callbackOrdinal: 2,
-            quantumLength: 128,
+            quantumLength: clockOptions?.anchorQuanta?.[1] ?? 128,
             bankSerial: 1,
             clockCoverageEnd: this.initialFrame + 65536 - 2048,
           });
@@ -2355,6 +2387,9 @@ describe('otio playback controller', () => {
       get heldPcmCount() {
         return heldPcm.length;
       },
+      get firstScheduleLead() {
+        return firstScheduleLead;
+      },
       start,
       advance,
       flush,
@@ -2392,6 +2427,106 @@ describe('otio playback controller', () => {
           .getState()
           .diagnostics.some((item) =>
             item.message.includes('Scheduled audio stopped')
+          )
+      ).toBe(true);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test.each([
+    [128, 128],
+    [256, 256],
+    [512, 512],
+    [2048, 2048],
+    [256, 128],
+  ] as const)(
+    'selection reserve follows certified anchor quanta %s / %s',
+    async (first, last) => {
+      const fixture = independentPcmFixture(false, false, undefined, {
+        anchorQuanta: [first, last],
+        scheduleAdvanceFrames: 256,
+      });
+      try {
+        await fixture.start();
+        const expectedReserve = 512 + Math.max(512, 2 * Math.max(first, last));
+        expect(fixture.firstScheduleLead).toBeGreaterThanOrEqual(
+          expectedReserve - 256
+        );
+        expect(fixture.firstScheduleLead).toBeGreaterThanOrEqual(512);
+        expect(fixture.pulls[0]).toBe(0);
+        expect(fixture.commands.some((item) => item.type === 'arm')).toBe(true);
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
+
+  test('a scheduling overrun rejects before arm and retains started source credits', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorQuanta: [128, 128],
+      scheduleAdvanceFrames: 513,
+      proofBudget: true,
+    });
+    try {
+      const pending = fixture.playback.play();
+      for (let i = 0; i < 45; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await pending;
+      expect(fixture.firstScheduleLead).toBe(511);
+      expect(fixture.commands.some((item) => item.type === 'arm')).toBe(false);
+      expect(fixture.playback.getState().playing).toBe(false);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) =>
+            item.message.includes('no certified initial audiovisual frontier')
+          )
+      ).toBe(true);
+      const proof = globalThis as typeof globalThis & {
+        __otioProofPcmSnapshot: () => { nodes: number; bytes: number };
+      };
+      const before = proof.__otioProofPcmSnapshot();
+      const ended = fixture.audioContext.sources.filter(
+        (source) => !source.carrier && source.onended
+      );
+      expect(ended.length).toBeGreaterThan(0);
+      expect(before.nodes).toBeGreaterThanOrEqual(1);
+      expect(before.bytes).toBeGreaterThan(0);
+      for (const source of ended) source.onended?.();
+      expect(proof.__otioProofPcmSnapshot().nodes).toBeLessThan(before.nodes);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('a later epoch beyond the original startup deadline is rejected', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorQuanta: [2048, 2048],
+      anchorDelayMs: 260,
+    });
+    try {
+      const pending = fixture.playback.play();
+      for (let i = 0; i < 45; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await pending;
+      expect(fixture.commands.some((item) => item.type === 'arm')).toBe(false);
+      expect(fixture.playback.getState().playing).toBe(false);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some(
+            (item) =>
+              item.message.includes('audio output clock bridge unavailable') ||
+              item.message.includes('startup deadline expired')
           )
       ).toBe(true);
     } finally {
@@ -7194,6 +7329,40 @@ describe('otio native video playback S-C and S-B', () => {
         100,
         128
       )
+    ).toBeNull();
+  });
+
+  test('a larger lead never widens a narrow video phase intersection', () => {
+    const samples = [
+      {
+        dL: 100,
+        iL0Plus1Start: 1 / 30,
+        sourceT0Seconds: 0,
+        rL: 1,
+        wMinSeconds: 1 / 30,
+      },
+    ];
+    const bridge = {
+      contextTime: 1,
+      performanceTime: 100,
+      mappingAllowanceMs: 0.2,
+    };
+    const inside = selectOtioCausalEpoch(
+      samples,
+      1 / 60,
+      bridge,
+      48000,
+      1,
+      100,
+      100,
+      1024
+    );
+    expect(inside).not.toBeNull();
+    expect(
+      inside!.performanceTime + bridge.mappingAllowanceMs
+    ).toBeLessThanOrEqual(inside!.intervalUpper);
+    expect(
+      selectOtioCausalEpoch(samples, 1 / 60, bridge, 48000, 1, 100, 100, 2560)
     ).toBeNull();
   });
 

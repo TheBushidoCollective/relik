@@ -210,11 +210,23 @@ test('native render clock certifies promotions and silences a held ramp', async 
         proofStaleMaxPairs: 16,
       },
     });
-    block(stale, 0);
+    for (let i = 0; i < 20; i++) block(stale, i * 4);
+    expect(
+      stale.port.messages.some(
+        (message) => message.type === 'clock-stale-overflow'
+      )
+    ).toBe(false);
+    command(stale, { type: 'proof-stale-start', captureId: 1 });
+    expect(stale.port.messages.at(-1)).toMatchObject({
+      type: 'clock-stale-started',
+      captureId: 1,
+      afterCallbackOrdinal: 20,
+    });
+    block(stale, 80);
     expect(
       stale.port.messages.some((message) => message.type === 'clock-stale-pair')
     ).toBe(false);
-    block(stale, 4);
+    block(stale, 84);
     const pair = stale.port.messages.find(
       (message) => message.type === 'clock-stale-pair'
     ) as {
@@ -232,18 +244,18 @@ test('native render clock certifies promotions and silences a held ramp', async 
       };
     };
     expect(pair.previous).toMatchObject({
-      callbackOrdinal: 1,
-      certifiedFrame: 0,
-      clockFrameA: [0, 1, 2, 3],
+      callbackOrdinal: 21,
+      certifiedFrame: 80,
+      clockFrameA: [80, 81, 82, 83],
       clockTagA: [1],
     });
     expect(pair.current).toMatchObject({
-      callbackOrdinal: 2,
-      certifiedFrame: 4,
-      clockFrameA: [4, 5, 6, 7],
+      callbackOrdinal: 22,
+      certifiedFrame: 84,
+      clockFrameA: [84, 85, 86, 87],
       clockTagA: [1],
     });
-    for (let i = 2; i < 19; i++) block(stale, i * 4);
+    for (let i = 22; i < 39; i++) block(stale, i * 4);
     expect(
       stale.port.messages.filter(
         (message) => message.type === 'clock-stale-pair'
@@ -254,6 +266,38 @@ test('native render clock certifies promotions and silences a held ramp', async 
         (message) => message.type === 'clock-stale-overflow'
       )
     ).toHaveLength(1);
+    command(stale, { type: 'proof-stale-stop', captureId: 1 });
+    expect(stale.port.messages.at(-1)).toMatchObject({
+      type: 'clock-stale-stopped',
+      captureId: 1,
+      pairs: 16,
+      overflow: true,
+    });
+    block(stale, 156);
+    command(stale, { type: 'proof-stale-start', captureId: 2 });
+    block(stale, 160);
+    expect(
+      stale.port.messages.filter(
+        (message) => message.type === 'clock-stale-pair'
+      )
+    ).toHaveLength(16);
+    block(stale, 164);
+    expect(
+      stale.port.messages.filter(
+        (message) => message.type === 'clock-stale-pair'
+      )
+    ).toHaveLength(17);
+    command(stale, { type: 'proof-stale-start', captureId: 2 });
+    expect(stale.port.messages.at(-1)?.type).toBe('clock-stale-control-error');
+    command(stale, { type: 'proof-stale-stop', captureId: 99 });
+    expect(stale.port.messages.at(-1)?.type).toBe('clock-stale-control-error');
+    command(stale, { type: 'proof-stale-stop', captureId: 2 });
+    expect(stale.port.messages.at(-1)).toMatchObject({
+      type: 'clock-stale-stopped',
+      captureId: 2,
+      pairs: 1,
+      overflow: false,
+    });
     const invalidStale = new ProcessorClass({
       processorOptions: {
         clockEpoch: 2,
@@ -261,6 +305,7 @@ test('native render clock certifies promotions and silences a held ramp', async 
         proofStaleMaxPairs: 16,
       },
     });
+    command(invalidStale, { type: 'proof-stale-start', captureId: 1 });
     block(invalidStale, 0);
     block(invalidStale, 4, Float32Array.of(4, 4, 4, 4));
     expect(

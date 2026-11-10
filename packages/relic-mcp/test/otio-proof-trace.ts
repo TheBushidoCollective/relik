@@ -231,6 +231,21 @@ export const otioProofTracePrelude = String.raw`(() => {
   const retirementSinks = new Set();
   const witnesses = new WeakMap();
   const proofGates = new WeakMap();
+  let staleCaptureSerial = 0;
+  let activeStaleCaptureId = null;
+  const staleWaiters = new Map();
+  function staleControl(gate, action, captureId) {
+    const epoch=gate.initialEpoch, type='clock-stale-'+(action==='start'?'started':'stopped');
+    if (!Number.isSafeInteger(epoch) || !Number.isSafeInteger(captureId)) return Promise.resolve(false);
+    const key=epoch+':'+captureId+':'+type;
+    if (staleWaiters.has(key)) throw new Error('duplicate stale capture operation');
+    const {promise,resolve}=Promise.withResolvers();
+    const timer=setTimeout(()=>{staleWaiters.delete(key); recordEvent('clock-stale-control-timeout', null,
+      {clockEpoch:epoch,captureId,action}); resolve(false);},500);
+    staleWaiters.set(key,()=>{clearTimeout(timer); staleWaiters.delete(key); resolve(true);});
+    gate.node.port.postMessage({type:'proof-stale-'+action,clockEpoch:epoch,captureId});
+    return promise;
+  }
   const observedContexts = new WeakSet();
   let nextBankControl = null;
   let nextAnchorControl = null;
@@ -255,7 +270,7 @@ export const otioProofTracePrelude = String.raw`(() => {
             channelInterpretation:this.channelInterpretation, outputChannels:options?.outputChannelCount});
           const proofGate = {node:this, epoch:null, active:null, anchor:null, initialFrame:options?.processorOptions?.initialFrame,
             initialEpoch:options?.processorOptions?.clockEpoch,
-            anchorControl:nextAnchorControl, control:nextBankControl, bootstrapTrace:true, bootstrapTimer:null, bootstrapSettled:false, traceOverlap:false};
+            anchorControl:nextAnchorControl, control:nextBankControl, bootstrapTrace:true, bootstrapTimer:null, bootstrapSettled:false, traceOverlap:false, terminated:false, staleCaptureId:null};
           nextAnchorControl = null; nextBankControl = null;
           proofGates.set(context, proofGate);
           if (!observedContexts.has(context)) {
@@ -354,6 +369,12 @@ export const otioProofTracePrelude = String.raw`(() => {
             recordEvent(event.data?.type === 'clock-trace'
               ? (proofGate.traceOverlap ? 'transport-overlap-clock' : proofGate.bootstrapTrace
                 ? 'transport-bootstrap-clock' : 'transport-message') : 'transport-message', null, event.data);
+            if (event.data?.type === 'clock-stale-started' || event.data?.type === 'clock-stale-stopped') {
+              const key=event.data.clockEpoch+':'+event.data.captureId+':'+event.data.type;
+              staleWaiters.get(key)?.();
+            }
+            if (event.data?.type === 'clock-fault' || event.data?.type === 'protocol-fault' || event.data?.type === 'disposed')
+              proofGate.terminated = true;
             if (event.data?.type === 'clock-trace-stopped' && proofGate.bootstrapTrace) proofGate.bootstrapSettled = true;
             if (['anchor-certified', 'bank-installed', 'bank-rejected', 'clock-promoted'].includes(event.data?.type))
               recordEvent('audio-context-gate-observation', null, {direction:'receive', type:event.data.type,
@@ -383,6 +404,10 @@ export const otioProofTracePrelude = String.raw`(() => {
               });
           });
           this.port.start();
+          if (activeStaleCaptureId !== null) {
+            proofGate.staleCaptureId=activeStaleCaptureId;
+            void staleControl(proofGate,'start',activeStaleCaptureId);
+          }
           const bootstrapEpoch = options?.processorOptions?.clockEpoch;
           if (Number.isSafeInteger(bootstrapEpoch)) {
             send({type:'proof-trace-start', clockEpoch:bootstrapEpoch});
@@ -737,6 +762,7 @@ export const otioProofTracePrelude = String.raw`(() => {
         samples:lightweightEvents, overflow:lightweightOverflow};
     },
     async start() {
+      if (activeStaleCaptureId !== null) throw new Error('stale capture already active');
       if (graphs.length !== 1) throw new Error('expected exactly one controller destination gain, got ' + graphs.length);
       const graph = graphs[0];
       await graph.ready;
@@ -744,8 +770,15 @@ export const otioProofTracePrelude = String.raw`(() => {
       const sampleFrame = await command(graph, 'start');
       visual.samples = []; visual.overflow = false; visual.active = true;
       events.length = 0; eventsOverflow = false;
+      if (!Number.isSafeInteger(++staleCaptureSerial)) throw new Error('stale capture id exhausted');
+      activeStaleCaptureId = staleCaptureSerial;
+      recordEvent('clock-stale-window-requested', null, {captureId:activeStaleCaptureId});
       const currentGate = proofGates.get(graph.context);
       if (currentGate?.anchor) recordEvent('transport-message', null, currentGate.anchor);
+      if (currentGate && !currentGate.terminated) {
+        currentGate.staleCaptureId=activeStaleCaptureId;
+        await staleControl(currentGate,'start',activeStaleCaptureId);
+      }
       const root = document.querySelector('.otio-view');
       if (lastPcmBackend) recordEvent('scheduled-pcm', null, lastPcmBackend);
       if (!(root instanceof HTMLElement)) throw new Error('proof view missing');
@@ -790,10 +823,15 @@ export const otioProofTracePrelude = String.raw`(() => {
       return Math.round(graph.context.currentTime * graph.context.sampleRate);
     },
     async stop() {
+      if (activeStaleCaptureId === null) throw new Error('stale capture is not active');
       if (graphs.length !== 1) throw new Error('controller destination gain ambiguous');
       for (const sink of retirementSinks)
         if (sink.gain.value !== 0) throw new Error('transport retirement sink became audible');
-      const graph = graphs[0]; visual.active = false;
+      const graph = graphs[0], captureId = activeStaleCaptureId, currentGate = proofGates.get(graph.context);
+      if (currentGate && !currentGate.terminated && captureId !== null && currentGate.staleCaptureId === captureId)
+        await staleControl(currentGate,'stop',captureId);
+      activeStaleCaptureId = null;
+      visual.active = false;
       clearInterval(startupMonitor); startupMonitor = null;
       bufferingObserver?.disconnect();
       const timestamp = performance.now();
@@ -801,7 +839,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const bridge = audioBridge(graph);
       const sampleFrame = await command(graph, 'stop');
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
-        timestamp, frame, sampleFrame, bridge,
+        timestamp, frame, sampleFrame, bridge, staleCaptureId:captureId,
         audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, laterAnchor:item.laterAnchor, frozenAnchor:item.frozenAnchor, length:item.length, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
         visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow};
     },

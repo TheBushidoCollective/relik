@@ -9455,6 +9455,7 @@ interface MovingTrace {
     frame: number;
     sampleFrame: number;
     contextState: string;
+    staleCaptureId: number | null;
     bridge: AudioClockBridge;
     audioOverflow: boolean;
     visualOverflow: boolean;
@@ -10069,12 +10070,70 @@ function assertNaturalStaleWitness(
   const messages = trace.events
     .filter((event) => event.kind === 'transport-message')
     .map((event) => event.value as Record<string, unknown>);
+  const captureId = trace.staleCaptureId;
   assert.ok(
-    !messages.some((message) => message?.['type'] === 'clock-stale-overflow'),
-    'stale-pair recorder overflow'
+    Number.isSafeInteger(captureId) && Number(captureId) > 0,
+    'stale capture id missing'
+  );
+  assert.ok(
+    !messages.some(
+      (message) =>
+        message?.['type'] === 'clock-stale-overflow' ||
+        message?.['type'] === 'clock-stale-control-error'
+    ) &&
+      !trace.events.some(
+        (event) => event.kind === 'clock-stale-control-timeout'
+      ),
+    'stale-pair recorder overflow or control failure'
+  );
+  const starts = messages.filter(
+    (message) =>
+      message?.['type'] === 'clock-stale-started' &&
+      message['clockEpoch'] === witness.clockEpoch &&
+      message['captureId'] === captureId
+  );
+  const stops = messages.filter(
+    (message) =>
+      message?.['type'] === 'clock-stale-stopped' &&
+      message['clockEpoch'] === witness.clockEpoch &&
+      message['captureId'] === captureId
+  );
+  assert.equal(
+    starts.length,
+    1,
+    'stale capture start acknowledgment missing or duplicated'
+  );
+  assert.equal(
+    stops.length,
+    1,
+    'stale capture stop acknowledgment missing or duplicated'
+  );
+  assert.ok(
+    Number.isSafeInteger(starts[0]!['afterCallbackOrdinal']) &&
+      Number.isSafeInteger(stops[0]!['lastCallbackOrdinal']) &&
+      stops[0]!['overflow'] === false,
+    'stale capture boundary or overflow invalid'
   );
   const pairs = messages.filter(
-    (message) => message?.['type'] === 'clock-stale-pair'
+    (message) =>
+      message?.['type'] === 'clock-stale-pair' &&
+      message['clockEpoch'] === witness.clockEpoch &&
+      message['captureId'] === captureId
+  );
+  assert.equal(
+    pairs.length,
+    stops[0]!['pairs'],
+    'stale capture pair count mismatch'
+  );
+  const startIndex = messages.indexOf(starts[0]!),
+    stopIndex = messages.indexOf(stops[0]!);
+  assert.ok(
+    startIndex < stopIndex &&
+      pairs.every((pair) => {
+        const index = messages.indexOf(pair);
+        return index > startIndex && index < stopIndex;
+      }),
+    'stale-pair messages are outside their acknowledged capture window'
   );
   assert.ok(
     pairs.length > 0,
@@ -10114,7 +10173,11 @@ function assertNaturalStaleWitness(
         Number(current['callbackOrdinal']) ===
           Number(previous['callbackOrdinal']) + 1 &&
         Number(current['sampleCount']) ===
-          Number(previous['sampleCount']) + Number(previous['quantumLength']),
+          Number(previous['sampleCount']) + Number(previous['quantumLength']) &&
+        Number(previous['callbackOrdinal']) >
+          Number(starts[0]!['afterCallbackOrdinal']) &&
+        Number(current['callbackOrdinal']) <=
+          Number(stops[0]!['lastCallbackOrdinal']),
       'stale recorder did not retain adjacent actual gate callbacks'
     );
     const label = previous['cachedCurrentFrame'];
@@ -10259,6 +10322,7 @@ function assertStaleWitnessControls(
   for (const kind of [
     'missing-pair',
     'overflow',
+    'foreign-capture',
     'shifted-bank',
     'corrupt-carrier',
     'corrupt-pcm',
@@ -10281,6 +10345,22 @@ function assertStaleWitnessControls(
         timestamp: chosen.timestamp,
         value: { type: 'clock-stale-overflow' },
       });
+    } else if (kind === 'foreign-capture') {
+      const event = corrupt.events.find(
+        (entry) =>
+          entry.kind === 'transport-message' &&
+          entry.value &&
+          typeof entry.value === 'object' &&
+          'type' in entry.value &&
+          entry.value.type === 'clock-stale-pair'
+      );
+      assert.ok(
+        event?.value &&
+          typeof event.value === 'object' &&
+          'captureId' in event.value,
+        'stale pair capture id unavailable'
+      );
+      event.value.captureId = Number(event.value.captureId) + 1;
     } else if (kind === 'shifted-bank') {
       const event = corrupt.events.find(
         (entry) =>
