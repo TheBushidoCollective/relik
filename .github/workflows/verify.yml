@@ -251,6 +251,10 @@ jobs:
           set -euo pipefail
           printf 'Candidate revision: %s\n' "$(git rev-parse HEAD)" | tee "$LARGE_RELIC_PROOF_DIR/large-relic-path.log"
           df -h "$RUNNER_TEMP" | tee -a "$LARGE_RELIC_PROOF_DIR/large-relic-path.log"
+          # Resolve the installed binaries before env -i removes mise's trust settings.
+          bun_bin="$(mise which bun)"
+          node_bin="$(mise which node)"
+          proof_path="$(dirname "$node_bin"):$(dirname "$bun_bin"):/usr/local/bin:/usr/bin:/bin"
           # The test and its browser inherit a fresh network namespace with
           # only loopback, and no inherited credentials or proxy settings.
           sudo unshare --net -- bash -c '
@@ -265,8 +269,8 @@ jobs:
               HOME="$2" PATH="$3" TMPDIR="$4" \
               RELIC_PROOF_CHROME_PATH="$5" \
               "$6" packages/relic-mcp/test/large-relic-path.ts
-          ' _ "$USER" "$HOME" "$PATH" "$RUNNER_TEMP" \
-            "$(command -v google-chrome)" "$(command -v bun)" \
+          ' _ "$USER" "$HOME" "$proof_path" "$RUNNER_TEMP" \
+            "$(command -v google-chrome)" "$bun_bin" \
             2>&1 | tee -a "$LARGE_RELIC_PROOF_DIR/large-relic-path.log"
 
       - name: Upload large relic proof
