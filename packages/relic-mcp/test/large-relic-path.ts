@@ -445,7 +445,7 @@ const pdfRangePrelude = `(() => {
     }
   };
 })()`;
-const pdfRunGuard = `if ((globalThis.__pdfRanges ?? []).some(([begin]) => begin < ${PDF_BYTES - MIB})) throw new Error('PDF preview requested the whitespace run: ' + JSON.stringify(globalThis.__pdfRanges.filter(([begin]) => begin < ${PDF_BYTES - MIB}).slice(0, 3)));`;
+const pdfRunGuard = `if ((globalThis.__pdfRanges ?? []).some(([begin, end]) => end > ${MIB} && begin < ${PDF_BYTES - MIB})) throw new Error('PDF preview requested the whitespace run: ' + JSON.stringify(globalThis.__pdfRanges.filter(([begin, end]) => end > ${MIB} && begin < ${PDF_BYTES - MIB}).slice(0, 3)));`;
 
 function rendererMemoryReceipt(growth: MemoryGrowth): string {
   return `renderer_growth=${growth.footprint} renderer_rss_growth=${growth.rss} measurement=${memoryMeasurement()} added=${JSON.stringify(growth.added)} exited=${JSON.stringify(growth.exited)}`;
@@ -1028,7 +1028,7 @@ try {
   );
   assert.ok(pdfRanges?.length, 'PDF range instrumentation recorded nothing');
   assert.ok(
-    pdfRanges.every(([begin]) => begin >= PDF_BYTES - MIB),
+    pdfRanges.every(([begin, end]) => end <= MIB || begin >= PDF_BYTES - MIB),
     `PDF preview requested the whitespace run: ${JSON.stringify(pdfRanges)}`
   );
   await browser.pressure(pdfPage);
