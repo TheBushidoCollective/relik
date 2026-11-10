@@ -5,14 +5,17 @@
  * This module never reads a callback, a trace, or a stream start. Those are telemetry. Only the
  * samples the element actually output can prove an audio gap, so the 20 ms audio budget is proven
  * here and nowhere else.
+ *
+ * The gap is measured per sample. An earlier per-block measure rounded each silent run down to whole
+ * blocks, so a 25 ms silence measured as 24 ms. A rounding error near the budget can turn a failure
+ * into a pass, so the run length is counted in samples.
  */
 
 import {
-  type AudioFault,
-  alignAudio,
   AUDIO_MIN_SNR_DB,
+  alignAudio,
+  type AudioFault,
   DROPOUT_EXPECTED_RMS,
-  DROPOUT_RENDERED_RMS,
   findAudioFaults,
   rms,
 } from './otio-program-checks.ts';
@@ -21,11 +24,18 @@ import {
 export const AUDIO_GAP_BUDGET_MS = 20;
 /** Start offset bound, the same 20 ms the composition stage enforces. */
 export const AUDIO_ONSET_BUDGET_MS = 20;
+/** Block length used only to decide where the reference is loud enough to test. */
 export const AUDIO_BLOCK_MS = 1;
-/** The reference must be loud this far either side of a tested block, so edges are not scored. */
+/** A tested sample must have loud reference audio this far either side, so edges are not scored. */
 export const AUDIO_GUARD_MS = 30;
 /** Fewer tested milliseconds means the reference was not loud enough to judge. That fails. */
 export const AUDIO_MIN_TESTED_MS = 3000;
+/**
+ * A rendered sample at or below this magnitude counts as silent (about -60 dBFS). The program's
+ * tone is 0.3 in amplitude, so a real dropout is exact zero or near it, while a zero crossing of a
+ * loud signal stays silent for only a sample or two.
+ */
+export const AUDIO_SILENCE_AMPLITUDE = 1e-3;
 /** Program audio boundaries in samples (1 s, 3 s, 4.5 s, 5 s), as the composition stage uses them. */
 export const PROGRAM_AUDIO_BOUNDARIES: readonly number[] = [
   48000, 144000, 216000, 240000,
@@ -39,7 +49,9 @@ export interface SignalEvidence {
   readonly onsetMs: number;
   readonly snrDb: number;
   readonly testedMs: number;
-  /** Longest run of tested blocks where the rendered audio is silent. */
+  /** Longest run of tested samples where the rendered audio is silent, in samples. */
+  readonly longestGapSamples: number;
+  /** The same run in milliseconds, computed from the samples, not from blocks. */
   readonly longestGapMs: number;
   /** Reference time at which the longest gap starts, or null when there is none. */
   readonly gapStartSeconds: number | null;
@@ -58,8 +70,8 @@ function testedBlocks(loud: readonly boolean[], guard: number): boolean[] {
 }
 
 /**
- * Aligns one rendered channel to the reference, then measures every tested 1 ms block. The
- * reference is cut to the captured span so nothing is scored past what was recorded.
+ * Aligns one rendered channel to the reference, then measures silence over every tested sample.
+ * The reference is cut to the captured span so nothing is scored past what was recorded.
  */
 export function measureSignal(
   rendered: Float32Array,
@@ -75,30 +87,29 @@ export function measureSignal(
   const block = Math.round((AUDIO_BLOCK_MS * rate) / 1000);
   const blocks = Math.floor((expected.length - 2 * MARGIN_SAMPLES) / block);
   const loud: boolean[] = [];
-  const silent: boolean[] = [];
   for (let b = 0; b < blocks; b++) {
     const start = MARGIN_SAMPLES + b * block;
     loud.push(rms(expected, start, start + block) >= DROPOUT_EXPECTED_RMS);
-    silent.push(
-      rms(rendered, start + lag, start + lag + block) < DROPOUT_RENDERED_RMS
-    );
   }
   const guard = Math.round(AUDIO_GUARD_MS / AUDIO_BLOCK_MS);
   const tested = testedBlocks(loud, guard);
 
-  let testedCount = 0;
+  const end = MARGIN_SAMPLES + blocks * block;
+  let testedSamples = 0;
   let run = 0;
   let longest = 0;
-  let longestStart = -1;
-  let runStart = -1;
-  for (let b = 0; b < blocks; b++) {
-    if (tested[b]) testedCount++;
-    if (tested[b] && silent[b]) {
-      if (run === 0) runStart = b;
+  let longestEnd = -1;
+  for (let n = MARGIN_SAMPLES; n < end; n++) {
+    if (!tested[Math.floor((n - MARGIN_SAMPLES) / block)]) {
+      run = 0;
+      continue;
+    }
+    testedSamples++;
+    if (Math.abs(rendered[n + lag] ?? 0) <= AUDIO_SILENCE_AMPLITUDE) {
       run++;
       if (run > longest) {
         longest = run;
-        longestStart = runStart;
+        longestEnd = n;
       }
     } else {
       run = 0;
@@ -116,10 +127,10 @@ export function measureSignal(
     lagSamples: lag,
     onsetMs: (lag * 1000) / rate,
     snrDb: alignment.snrDb,
-    testedMs: testedCount * AUDIO_BLOCK_MS,
-    longestGapMs: longest * AUDIO_BLOCK_MS,
-    gapStartSeconds:
-      longestStart < 0 ? null : (MARGIN_SAMPLES + longestStart * block) / rate,
+    testedMs: (testedSamples * 1000) / rate,
+    longestGapSamples: longest,
+    longestGapMs: (longest * 1000) / rate,
+    gapStartSeconds: longestEnd < 0 ? null : (longestEnd - longest + 1) / rate,
     windowFaults,
   };
 }
@@ -137,11 +148,11 @@ export function gateSignal(evidence: SignalEvidence, label: string): string[] {
     );
   if (evidence.testedMs < AUDIO_MIN_TESTED_MS)
     failures.push(
-      `${label}: only ${evidence.testedMs} ms of loud reference was tested, need ${AUDIO_MIN_TESTED_MS} ms`
+      `${label}: only ${evidence.testedMs.toFixed(0)} ms of loud reference was tested, need ${AUDIO_MIN_TESTED_MS} ms`
     );
   if (evidence.longestGapMs > AUDIO_GAP_BUDGET_MS)
     failures.push(
-      `${label}: audio gap ${evidence.longestGapMs} ms at ${(evidence.gapStartSeconds ?? 0).toFixed(3)} s > ${AUDIO_GAP_BUDGET_MS} ms`
+      `${label}: audio gap ${evidence.longestGapMs.toFixed(1)} ms at ${(evidence.gapStartSeconds ?? 0).toFixed(3)} s > ${AUDIO_GAP_BUDGET_MS} ms`
     );
   for (const fault of evidence.windowFaults)
     failures.push(

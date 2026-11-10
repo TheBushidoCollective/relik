@@ -783,7 +783,7 @@ try {
         const text = await page.evaluate<string | null>(
           `document.querySelector('#comment-thread [data-comment-id="${record.id}"] .comment-body')?.textContent ?? null`
         );
-        return text !== null && text.includes(record.body) ? text : undefined;
+        return text?.includes(record.body) ? text : undefined;
       });
       await page.click(
         `#comment-thread [data-comment-id="${record.id}"] .comment-body`

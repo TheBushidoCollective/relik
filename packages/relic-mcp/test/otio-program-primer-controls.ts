@@ -379,6 +379,16 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Copies bytes into a fresh ArrayBuffer. The copy is typed Uint8Array<ArrayBuffer>, which is what
+ * Response bodies accept. A copy, not a cast: the bytes are unchanged and the buffer is owned.
+ */
+function ownedBytes(source: Uint8Array): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(new ArrayBuffer(source.byteLength));
+  copy.set(source);
+  return copy;
+}
+
 interface Analysis {
   readonly coldness: StartClass;
   readonly dMs: number | null;
@@ -508,7 +518,6 @@ async function runBareTrial(
   arm: BareArm,
   round: number,
   origin: string,
-  programSha256: string,
   scratch: string
 ): Promise<PrimerTrial> {
   const page = await openViewer({
@@ -826,7 +835,7 @@ export async function runPrimerProof(
     'RELIC_OTIO_CHROME_PATH must name the owned chrome-headless-shell; the primer proof never falls back to an installed Chrome'
   );
   await assertShamDiffers(input.productionEntry, input.shamEntry);
-  const primer = otioAudioPrimerBytes();
+  const primer = ownedBytes(otioAudioPrimerBytes());
   assert.equal(
     primer.byteLength,
     OTIO_AUDIO_PRIMER_BYTE_LENGTH,
@@ -842,12 +851,12 @@ export async function runPrimerProof(
 
   // The video-only control is valid only when its packets are identical to the source's.
   const noAudioPath = join(input.scratch, 'native-control-video-only.mp4');
-  let videoOnly: Uint8Array | null = null;
+  let videoOnly: Uint8Array<ArrayBuffer> | null = null;
   let remuxFailure: string | null = null;
   try {
     await videoOnlyRemux(input.programMp4, noAudioPath);
     await assertVideoPacketsIdentical(input.programMp4, noAudioPath);
-    videoOnly = await readFile(noAudioPath);
+    videoOnly = ownedBytes(await readFile(noAudioPath));
   } catch (error) {
     remuxFailure = `video-only control is not a fair control: ${messageOf(error)}`;
   }
@@ -934,7 +943,7 @@ export async function runPrimerProof(
         try {
           record(
             bareGroup(arm),
-            await runBareTrial(arm, round, origin, programSha256, input.scratch)
+            await runBareTrial(arm, round, origin, input.scratch)
           );
         } catch (error) {
           recordError(bareGroup(arm), round, arm, error);

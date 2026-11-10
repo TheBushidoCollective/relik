@@ -25,10 +25,11 @@ describe('otio audio primer asset', () => {
 
   test('returns a fresh copy on each call', () => {
     const first = otioAudioPrimerBytes();
-    first[0] = first[0] ^ 0xff;
+    const original = first[0] ?? 0;
+    first[0] = original ^ 0xff;
     const second = otioAudioPrimerBytes();
     expect(second).not.toBe(first);
-    expect(second[0]).not.toBe(first[0]);
+    expect(second[0]).toBe(original);
     expect(createHash('sha256').update(second).digest('hex')).toBe(
       OTIO_AUDIO_PRIMER_SHA256
     );

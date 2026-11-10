@@ -950,3 +950,142 @@ describe('lifetime', () => {
     expect(seen).toEqual(['starting']);
   });
 });
+
+describe('stall, pending frames, hidden gestures and park', () => {
+  test('after a stall, one 21 ms step does not re-assert running', () => {
+    const s = ready();
+    s.gesture();
+    s.run(300, (e) => e / 1000);
+    expect(s.out.state).toBe('running');
+    s.clock.advance(1000);
+    expect(s.out.state).toBe('rendering');
+    s.frameAt(0.288 + 0.0213);
+    expect(s.out.state).toBe('rendering');
+    expect(s.states.filter((x) => x === 'running')).toHaveLength(1);
+  });
+
+  test('a trusted gesture on a hidden page creates and plays nothing', () => {
+    const s = ready();
+    s.doc.hidden = true;
+    s.doc.visibilityState = 'hidden';
+    s.gesture();
+    expect(s.video().playCalls).toBe(0);
+    expect(s.out.state).toBe('idle');
+    s.doc.hidden = false;
+    s.doc.visibilityState = 'visible';
+    s.gesture();
+    expect(s.video().playCalls).toBe(1);
+  });
+
+  test('a hidden gesture after release creates no new element', () => {
+    const s = ready();
+    s.gesture();
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    s.doc.hidden = true;
+    s.doc.visibilityState = 'hidden';
+    s.gesture();
+    expect(s.videos).toHaveLength(1);
+    expect(s.out.state).toBe('idle');
+  });
+
+  test('a restart from a browser pause cancels the old frame and keeps the sampler running', () => {
+    const s = ready();
+    s.gesture();
+    expect(s.frames.size).toBe(1);
+    // A browser pause sets paused without its queued event reaching the module.
+    s.video().paused = true;
+    s.gesture();
+    expect(s.frames.size).toBe(1);
+    s.flush();
+    expect(s.frames.size).toBe(1);
+    s.flush();
+    expect(s.frames.size).toBe(1);
+    expect(s.video().playCalls).toBe(2);
+  });
+
+  test('losing the program cancels a pending frame before running', () => {
+    const s = ready();
+    s.gesture();
+    expect(s.frames.size).toBe(1);
+    s.out.setProgramAvailable(false);
+    expect(s.frames.size).toBe(0);
+  });
+
+  test('the idle cap cancels a pending frame before running', () => {
+    const s = ready();
+    s.gesture();
+    expect(s.frames.size).toBe(1);
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    expect(s.frames.size).toBe(0);
+  });
+
+  test('dispose cancels a pending frame before running', () => {
+    const s = ready();
+    s.gesture();
+    expect(s.frames.size).toBe(1);
+    s.out.dispose();
+    expect(s.frames.size).toBe(0);
+  });
+
+  test('park releases a running primer at once, and a system resume afterwards cannot reach it', () => {
+    const s = ready();
+    s.gesture();
+    s.run(300, (e) => e / 1000);
+    const v = s.video();
+    const url = v.src;
+    s.out.park();
+    expect(s.out.state).toBe('idle');
+    expect(v.paused).toBe(true);
+    expect(v.src).toBe('');
+    expect(v.listenerCount()).toBe(0);
+    expect(revoked).toEqual([url]);
+    expect(s.frames.size).toBe(0);
+    expect(s.clock.timers()).toBe(0);
+    expect(s.doc.listenerCount()).toBe(5);
+    const logLength = v.log.length;
+    v.systemPlay();
+    expect(v.log.slice(logLength)).toEqual([]);
+    expect(v.playCalls).toBe(1);
+    expect(s.videos).toHaveLength(1);
+  });
+
+  test('park on a preloaded idle primer releases it; the next gesture plays a fresh element', () => {
+    const s = ready();
+    const first = s.video();
+    s.out.park();
+    expect(first.src).toBe('');
+    expect(s.out.state).toBe('idle');
+    s.gesture();
+    expect(s.videos).toHaveLength(2);
+    expect(s.video().playCalls).toBe(1);
+    expect(s.out.state).toBe('starting');
+  });
+
+  test('park keeps a failed primer failed', async () => {
+    const s = ready();
+    s.gesture();
+    s.video().rejectPlay('NotAllowedError');
+    await settle();
+    expect(s.out.state).toBe('failed');
+    s.out.park();
+    expect(s.out.state).toBe('failed');
+  });
+
+  test('park does nothing without an available program, or after dispose', () => {
+    const closed = setup({ supported: false });
+    closed.out.setProgramAvailable(true);
+    closed.out.park();
+    expect(closed.out.state).toBe('unsupported');
+    expect(closed.videos).toHaveLength(0);
+
+    const gone = ready();
+    gone.out.setProgramAvailable(false);
+    gone.out.park();
+    expect(gone.out.state).toBe('unsupported');
+
+    const done = ready();
+    done.out.dispose();
+    done.out.park();
+    expect(done.out.state).toBe('unsupported');
+  });
+});

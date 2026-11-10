@@ -1,9 +1,18 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { OtioRationalTime, OtioTimeRange } from '@relic/format';
+import {
+  OTIO_AUDIO_OUTPUT_RUNNING_ADVANCE_MS,
+  type OtioAudioOutputState,
+} from '../src/otio-audio-output.ts';
 import {
   CompositionPlaybackDisabled,
   createOtioPlaybackSession,
+  OTIO_PROGRAM_OUTPUT_HOLD_MS,
+  OTIO_PROGRAM_UNMUTE_HOLD_MS,
+  type OtioPlaybackSession,
+  type OtioProgramAudioOutput,
   type OtioProgramResolution,
+  type ValidatedProgram,
 } from '../src/otio-program.ts';
 import type {
   OtioPlaybackController,
@@ -220,5 +229,540 @@ describe('legacy composition', () => {
     expect(session.availability().compositionPlayable).toBe(true);
     await session.play();
     expect(log).toContain('play');
+  });
+});
+
+/** The program's native element: events, play and pause, and a media clock the test moves. */
+class FakeVideo extends EventTarget {
+  paused = true;
+  ended = false;
+  muted = false;
+  duration = 10;
+  videoWidth = 16;
+  videoHeight = 16;
+  playbackRate = 1;
+  preload = '';
+  src = '';
+  /** Element calls in order: each play with the mute state it started under, pauses and seeks. */
+  readonly calls: string[] = [];
+  private time = 0;
+
+  get currentTime(): number {
+    return this.time;
+  }
+
+  set currentTime(seconds: number) {
+    this.time = seconds;
+    this.calls.push('seek');
+    queueMicrotask(() => this.dispatchEvent(new Event('seeked')));
+  }
+
+  /** The media clock moves, as audio from a running output drives it. */
+  advance(seconds: number): void {
+    this.time += seconds;
+  }
+
+  load(): void {
+    if (this.src !== '')
+      queueMicrotask(() => this.dispatchEvent(new Event('loadedmetadata')));
+  }
+
+  removeAttribute(name: string): void {
+    if (name === 'src') this.src = '';
+  }
+
+  play(): Promise<void> {
+    this.calls.push(this.muted ? 'play:muted' : 'play');
+    this.paused = false;
+    this.dispatchEvent(new Event('play'));
+    this.dispatchEvent(new Event('playing'));
+    return Promise.resolve();
+  }
+
+  pause(): void {
+    if (this.paused) return;
+    this.paused = true;
+    this.calls.push('pause');
+    this.dispatchEvent(new Event('pause'));
+  }
+}
+
+interface PendingWait {
+  readonly target: 'rendering' | 'running';
+  readonly finish: () => void;
+}
+
+interface FakeOutput extends OtioProgramAudioOutput {
+  /** Every wait the player started, in order, with the promise it got back. */
+  readonly waits: {
+    readonly target: 'rendering' | 'running';
+    readonly timeoutMs: number;
+    readonly signal: AbortSignal;
+    readonly settled: Promise<OtioAudioOutputState>;
+  }[];
+  /** How many times the player parked the primer. */
+  readonly parks: number;
+  /** Resolves when the player starts its next wait. */
+  nextWait(): Promise<void>;
+  /** Moves the primer to `next`; ends waits that reach their target, and every wait on idle, failed or unsupported. */
+  reach(next: OtioAudioOutputState): void;
+  /** Ends every pending wait as its timeout would. */
+  timeOut(): void;
+}
+
+/** The primer's contract: a wait ends on reach, timeout or abort and never rejects; park goes idle. */
+function fakeOutput(initial: OtioAudioOutputState): FakeOutput {
+  let state = initial;
+  let parks = 0;
+  const pending = new Set<PendingWait>();
+  const waits: FakeOutput['waits'] = [];
+  const watchers: (() => void)[] = [];
+  return {
+    get state() {
+      return state;
+    },
+    get parks() {
+      return parks;
+    },
+    waits,
+    nextWait() {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      watchers.push(resolve);
+      return promise;
+    },
+    whenReached(target, { signal, timeoutMs }) {
+      const { promise, resolve } =
+        Promise.withResolvers<OtioAudioOutputState>();
+      const wait: PendingWait = {
+        target,
+        finish: () => {
+          if (pending.delete(wait)) resolve(state);
+        },
+      };
+      pending.add(wait);
+      signal.addEventListener('abort', wait.finish, { once: true });
+      waits.push({ target, timeoutMs, signal, settled: promise });
+      for (const watcher of watchers.splice(0)) watcher();
+      return promise;
+    },
+    reach(next) {
+      state = next;
+      for (const wait of [...pending]) {
+        const settles =
+          wait.target === next ||
+          (wait.target === 'rendering' && next === 'running') ||
+          next === 'idle' ||
+          next === 'failed' ||
+          next === 'unsupported';
+        if (settles) wait.finish();
+      }
+    },
+    timeOut() {
+      for (const wait of [...pending]) wait.finish();
+    },
+    park() {
+      // As the primer does: stop, release, go idle. A failed primer stays failed.
+      parks += 1;
+      if (state !== 'failed') state = 'idle';
+      for (const wait of [...pending]) wait.finish();
+    },
+  };
+}
+
+interface ProgramGlobals {
+  /** Runs the animation frames requested so far. */
+  runFrames(): void;
+  restore(): void;
+}
+
+/** Animation frames the test runs by hand, and blob URLs for the program bytes. */
+function installProgramGlobals(): ProgramGlobals {
+  const frames = new Map<number, FrameRequestCallback>();
+  let lastFrame = 0;
+  const replaced: [object, string, unknown][] = [
+    [
+      globalThis,
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback): number => {
+        lastFrame += 1;
+        frames.set(lastFrame, callback);
+        return lastFrame;
+      },
+    ],
+    [
+      globalThis,
+      'cancelAnimationFrame',
+      (id: number): void => {
+        frames.delete(id);
+      },
+    ],
+    [URL, 'createObjectURL', (): string => 'blob:otio-program-test'],
+    [URL, 'revokeObjectURL', (): void => {}],
+  ];
+  const previous = replaced.map(([target, name]) =>
+    Object.getOwnPropertyDescriptor(target, name)
+  );
+  for (const [target, name, value] of replaced) {
+    Object.defineProperty(target, name, {
+      configurable: true,
+      writable: true,
+      value,
+    });
+  }
+  return {
+    runFrames() {
+      const due = [...frames.values()];
+      frames.clear();
+      for (const callback of due) callback(0);
+    },
+    restore() {
+      for (const [index, [target, name]] of replaced.entries()) {
+        const descriptor = previous[index];
+        if (descriptor) Object.defineProperty(target, name, descriptor);
+        else Reflect.deleteProperty(target, name);
+      }
+    },
+  };
+}
+
+const program: ValidatedProgram = {
+  timelineId: 'timeline',
+  bytes: new Uint8Array(1),
+  mimeType: 'video/mp4',
+  start: at(0),
+  duration: at(240),
+  frameRate: { num: rate, den: 1 },
+  frames: 240,
+  width: 16,
+  height: 16,
+};
+
+async function openProgram(
+  audioOutput?: OtioProgramAudioOutput,
+  log: string[] = []
+): Promise<{ video: FakeVideo; session: OtioPlaybackSession }> {
+  const video = new FakeVideo();
+  const session = await createOtioPlaybackSession({
+    resolution: { status: 'available', program },
+    timelineRange,
+    video: video as unknown as HTMLVideoElement,
+    ...(audioOutput === undefined ? {} : { audioOutput }),
+    createController: () => fakeController(log),
+  });
+  return { video, session };
+}
+
+describe('native program and the audio output primer', () => {
+  let globals: ProgramGlobals;
+  beforeEach(() => {
+    globals = installProgramGlobals();
+  });
+  afterEach(() => {
+    globals.restore();
+  });
+
+  /** Opens a program on a starting primer and presses Play; resolves once play holds. */
+  async function holdPlay(log: string[] = []): Promise<{
+    output: FakeOutput;
+    video: FakeVideo;
+    session: OtioPlaybackSession;
+    playing: Promise<void>;
+  }> {
+    const output = fakeOutput('starting');
+    const { video, session } = await openProgram(output, log);
+    const held = output.nextWait();
+    const playing = session.play();
+    await held;
+    return { output, video, session, playing };
+  }
+
+  test('an unmuted play waits for a starting output to render, then buffers until the clock moves', async () => {
+    const { output, video, session, playing } = await holdPlay();
+    // Held: the element has not started, and the transport shows Pause and Buffering.
+    expect(video.calls).toEqual([]);
+    expect(output.waits).toEqual([
+      expect.objectContaining({
+        target: 'rendering',
+        timeoutMs: OTIO_PROGRAM_OUTPUT_HOLD_MS,
+      }),
+    ]);
+    expect(session.getState()).toMatchObject({
+      playing: true,
+      buffering: true,
+    });
+    output.reach('rendering');
+    await playing;
+    expect(video.calls).toEqual(['play']);
+    // The element fired playing, but no audio has moved its clock yet.
+    expect(session.getState()).toMatchObject({
+      playing: true,
+      buffering: true,
+    });
+    globals.runFrames();
+    expect(session.getState().buffering).toBe(true);
+    video.advance(0.02);
+    globals.runFrames();
+    expect(session.getState()).toMatchObject({
+      playing: true,
+      buffering: false,
+    });
+  });
+
+  test('a held play that times out stays buffering through a first-buffer plateau until the clock runs', async () => {
+    const { output, video, session, playing } = await holdPlay();
+    output.timeOut();
+    await playing;
+    // Neither the timeout nor the element's playing event ends start-up.
+    expect(video.calls).toEqual(['play']);
+    expect(session.getState()).toMatchObject({
+      playing: true,
+      buffering: true,
+    });
+    // The stream's first buffer moves the clock, which then stalls until the device runs.
+    video.advance(0.0213);
+    globals.runFrames();
+    expect(session.getState().buffering).toBe(true);
+    video.advance(0.064);
+    globals.runFrames();
+    globals.runFrames();
+    expect(session.getState().buffering).toBe(true);
+    // The device runs, and the clock moves on past any first buffer.
+    video.advance(OTIO_AUDIO_OUTPUT_RUNNING_ADVANCE_MS / 1000);
+    globals.runFrames();
+    expect(session.getState()).toMatchObject({
+      playing: true,
+      buffering: false,
+    });
+  });
+
+  test('a hold that ends with the primer failed also waits out a first-buffer plateau', async () => {
+    const { output, video, session, playing } = await holdPlay();
+    output.reach('failed');
+    await playing;
+    expect(video.calls).toEqual(['play']);
+    // Without the primer, the element opens its own stream and takes its first buffer.
+    video.advance(0.0853);
+    globals.runFrames();
+    expect(session.getState().buffering).toBe(true);
+    video.advance(OTIO_AUDIO_OUTPUT_RUNNING_ADVANCE_MS / 1000);
+    globals.runFrames();
+    expect(session.getState().buffering).toBe(false);
+  });
+
+  test('a pause during the hold cancels the play', async () => {
+    const output = fakeOutput('starting');
+    const { video, session } = await openProgram(output);
+    const reported: boolean[] = [];
+    session.subscribe((state) => reported.push(state.playing));
+    const held = output.nextWait();
+    const playing = session.play();
+    await held;
+    session.pause();
+    await playing;
+    expect(output.waits[0]?.signal.aborted).toBe(true);
+    expect(session.getState()).toMatchObject({
+      playing: false,
+      buffering: false,
+    });
+    // An output that arrives late never starts the cancelled play.
+    output.reach('running');
+    expect(video.calls).toEqual([]);
+    expect(output.parks).toBe(1);
+    expect(reported).toEqual([false, true, false]);
+  });
+
+  test('dispose during the hold settles the play without starting the element', async () => {
+    const { output, video, session, playing } = await holdPlay();
+    session.dispose();
+    await playing;
+    expect(output.waits[0]?.signal.aborted).toBe(true);
+    expect(video.calls).toEqual([]);
+  });
+
+  test('a seek during the hold starts the play, then seeks, and the wait for the clock restarts there', async () => {
+    const { video, session, playing } = await holdPlay();
+    const seeking = session.seek(at(48));
+    await Promise.all([playing, seeking]);
+    expect(video.calls).toEqual(['play', 'seek']);
+    expect(session.getState().time).toEqual(at(48));
+    expect(session.getState().buffering).toBe(true);
+    // The primer was still starting, so one first-buffer step from the new time is not enough.
+    video.advance(0.02);
+    globals.runFrames();
+    expect(session.getState().buffering).toBe(true);
+    video.advance(OTIO_AUDIO_OUTPUT_RUNNING_ADVANCE_MS / 1000);
+    globals.runFrames();
+    expect(session.getState().buffering).toBe(false);
+  });
+
+  test('a focus during the hold starts the play, then focuses on original media and keeps the primer', async () => {
+    const log: string[] = [];
+    const { output, video, session, playing } = await holdPlay(log);
+    const focusing = session.setScope(clip('clip-a', 24, 48));
+    await Promise.all([playing, focusing]);
+    expect(video.calls).toEqual(['play', 'pause']);
+    expect(log).toContain('setScope:clip-a:end');
+    expect(session.availability().state).toBe('focus-track');
+    expect(output.parks).toBe(0);
+  });
+
+  test('a page pause parks the primer before the element pauses', async () => {
+    const output = fakeOutput('running');
+    const { video, session } = await openProgram(output);
+    await session.play();
+    const primerAtPause: string[] = [];
+    video.addEventListener('pause', () => primerAtPause.push(output.state));
+    session.pause();
+    expect(primerAtPause).toEqual(['idle']);
+    expect(output.parks).toBe(1);
+    expect(video.calls).toEqual(['play', 'pause']);
+  });
+
+  test('pausing a paused program leaves the primer prepared', async () => {
+    const output = fakeOutput('running');
+    const { session } = await openProgram(output);
+    session.pause();
+    expect(output.parks).toBe(0);
+    expect(output.state).toBe('running');
+  });
+
+  test('the end of a bounded range parks the primer before the element pauses', async () => {
+    const output = fakeOutput('running');
+    const { video, session } = await openProgram(output);
+    await session.setScope(clip('stack', 0, 24), { source: 'program' });
+    await session.play();
+    const primerAtPause: string[] = [];
+    video.addEventListener('pause', () => primerAtPause.push(output.state));
+    video.advance(1);
+    globals.runFrames();
+    expect(primerAtPause).toEqual(['idle']);
+    expect(output.parks).toBe(1);
+    expect(video.calls).toEqual(['play', 'pause', 'seek']);
+  });
+
+  test('a muted play never waits for the output', async () => {
+    const output = fakeOutput('starting');
+    const { video, session } = await openProgram(output);
+    session.setMuted(true);
+    await session.play();
+    expect(video.calls).toEqual(['play:muted']);
+    expect(output.waits).toEqual([]);
+    expect(session.getState()).toMatchObject({
+      playing: true,
+      buffering: false,
+    });
+  });
+
+  test('a mute during the hold starts the play muted', async () => {
+    const { video, session, playing } = await holdPlay();
+    session.setMuted(true);
+    await playing;
+    expect(video.calls).toEqual(['play:muted']);
+    expect(session.getState()).toMatchObject({
+      playing: true,
+      buffering: false,
+    });
+  });
+
+  for (const initial of [
+    undefined,
+    'unsupported',
+    'idle',
+    'failed',
+    'running',
+  ] as const) {
+    test(`with ${initial ?? 'no'} primer, play starts at once and never buffers`, async () => {
+      const output = initial === undefined ? undefined : fakeOutput(initial);
+      const { video, session } = await openProgram(output);
+      const buffering: boolean[] = [];
+      session.subscribe((state) => buffering.push(state.buffering));
+      await session.play();
+      expect(video.calls).toEqual(['play']);
+      expect(output?.waits ?? []).toEqual([]);
+      expect(session.getState()).toMatchObject({
+        playing: true,
+        buffering: false,
+      });
+      expect(buffering).not.toContain(true);
+    });
+  }
+
+  test('a rendering output starts at once and buffers until the clock moves, and a pause clears it', async () => {
+    const output = fakeOutput('rendering');
+    const { video, session } = await openProgram(output);
+    await session.play();
+    expect(video.calls).toEqual(['play']);
+    expect(output.waits).toEqual([]);
+    expect(session.getState().buffering).toBe(true);
+    session.pause();
+    expect(session.getState()).toMatchObject({
+      playing: false,
+      buffering: false,
+    });
+  });
+
+  /** Plays muted, then unmutes while the primer is starting. */
+  async function unmuteWhileStarting(): Promise<{
+    output: FakeOutput;
+    video: FakeVideo;
+    session: OtioPlaybackSession;
+  }> {
+    const output = fakeOutput('idle');
+    const { video, session } = await openProgram(output);
+    session.setMuted(true);
+    await session.play();
+    // The Unmute press arms the primer before its click unmutes.
+    output.reach('starting');
+    session.setMuted(false);
+    return { output, video, session };
+  }
+
+  test('an unmute while playing keeps the element muted until the output runs', async () => {
+    const { output, video } = await unmuteWhileStarting();
+    expect(video.muted).toBe(true);
+    expect(output.waits).toEqual([
+      expect.objectContaining({
+        target: 'running',
+        timeoutMs: OTIO_PROGRAM_UNMUTE_HOLD_MS,
+      }),
+    ]);
+    output.reach('rendering');
+    expect(video.muted).toBe(true);
+    output.reach('running');
+    await output.waits[0]?.settled;
+    expect(video.muted).toBe(false);
+  });
+
+  test('an unmute that times out unmutes anyway', async () => {
+    const { output, video } = await unmuteWhileStarting();
+    output.timeOut();
+    await output.waits[0]?.settled;
+    expect(video.muted).toBe(false);
+  });
+
+  test('a mute cancels a waiting unmute', async () => {
+    const { output, video, session } = await unmuteWhileStarting();
+    session.setMuted(true);
+    expect(output.waits[0]?.signal.aborted).toBe(true);
+    await output.waits[0]?.settled;
+    output.reach('running');
+    expect(video.muted).toBe(true);
+  });
+
+  test('a pause applies a waiting unmute at once', async () => {
+    const { output, video, session } = await unmuteWhileStarting();
+    session.pause();
+    expect(video.muted).toBe(false);
+    expect(output.waits[0]?.signal.aborted).toBe(true);
+  });
+
+  test('an unmute on a running output acts at once', async () => {
+    const output = fakeOutput('running');
+    const { video, session } = await openProgram(output);
+    session.setMuted(true);
+    await session.play();
+    session.setMuted(false);
+    expect(video.muted).toBe(false);
+    expect(output.waits).toEqual([]);
   });
 });

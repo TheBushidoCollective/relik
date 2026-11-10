@@ -26,6 +26,11 @@ import {
 } from '@relic/format';
 import { otioTargetLabel } from './annotate-otio.ts';
 import {
+  createOtioAudioOutput,
+  OTIO_AUDIO_OUTPUT_ATTRIBUTE,
+  otioAudioOutputSupported,
+} from './otio-audio-output.ts';
+import {
   attachOtioController,
   type OtioAimDetail,
   type OtioUiController,
@@ -398,6 +403,24 @@ export async function mountOtioView(
   let currentProjectionDocument: Promise<OtioDocumentV1> | undefined;
   const marks = new Map<string, readonly HTMLElement[]>();
   const cleanup: (() => void)[] = [];
+  // One audio output primer per view. After a genuine interaction it keeps a
+  // silent element playing, so the program's unmuted play joins a running
+  // output instead of starting one mid-play (otio-audio-output.ts).
+  const audioOutput = createOtioAudioOutput({
+    document,
+    supported: otioAudioOutputSupported(),
+    isBusy: () => {
+      const current = playback;
+      return (
+        current?.availability().state === 'program' &&
+        current.getState().playing
+      );
+    },
+  });
+  root.setAttribute(OTIO_AUDIO_OUTPUT_ATTRIBUTE, audioOutput.state);
+  audioOutput.subscribe((state) =>
+    root.setAttribute(OTIO_AUDIO_OUTPUT_ATTRIBUTE, state)
+  );
 
   const monitor = element('div', 'otio-monitor-row');
   monitor.id = `otio-monitor-${++nextMonitorId}`;
@@ -2674,6 +2697,8 @@ export async function mountOtioView(
     const unavailable =
       focusUnavailable !== null || bounds.end <= bounds.start || pending;
     const availability = playback?.availability();
+    // The primer prepares output only while this timeline has a program.
+    audioOutput.setProgramAvailable(availability?.program === 'available');
     // Legacy archives, and a session still opening, keep the canvas as before.
     const legacy =
       availability === undefined || availability.program === 'legacy';
@@ -3022,6 +3047,7 @@ export async function mountOtioView(
     unsubscribe = undefined;
     playback?.dispose();
     playback = undefined;
+    audioOutput.setProgramAvailable(false);
     ++sessionGeneration;
     deferredFocusTime = undefined;
     programVideo = createProgramVideo();
@@ -3125,6 +3151,7 @@ export async function mountOtioView(
           resolution,
           timelineRange,
           ...(resolution.status === 'available' ? { video } : {}),
+          audioOutput,
           createController: () =>
             createOtioPlayback({
               document: doc,
@@ -3348,6 +3375,7 @@ export async function mountOtioView(
       root.dataset['disposed'] = 'true';
       unsubscribe?.();
       playback?.dispose();
+      audioOutput.dispose();
       resolver?.dispose();
       for (const dispose of cleanup) dispose();
     },

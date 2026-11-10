@@ -437,9 +437,10 @@ describe('primer gates: passing evidence and negative controls', () => {
     ]);
   });
 
-  test('an audio gap over 20 ms fails the audio budget', () => {
-    const failures = gatePrimerWindow(passingWindow({ deviceExcessMs: 25 }));
-    expect(failures).toEqual(['audio gap 25.0 ms > 20 ms']);
+  test('callback excess is telemetry: a 25 ms excess does not fail the video gate', () => {
+    // Audio is judged only from sampled signal (otio-program-audio-signal.test.ts). Callback
+    // spacing never proves an audio gap, so a large excess must leave the video gate passing.
+    expect(gatePrimerWindow(passingWindow({ deviceExcessMs: 25 }))).toEqual([]);
   });
 
   test('a window with too few presented frames fails rather than passing empty', () => {

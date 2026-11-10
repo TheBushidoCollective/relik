@@ -30,6 +30,20 @@
  * a superseded seek resolves without touching the element. A pause cancels any
  * play that has not started. A scope is committed only after the existing
  * controller accepts it, and a failed transition restores the previous state.
+ *
+ * Audio output: Chrome opens an element's audio output stream at its first
+ * unmuted play, and the device start then stalls the program mid-play. The
+ * view's primer (otio-audio-output.ts) keeps a silent element playing in the
+ * same mixer after a genuine interaction, so the program joins a running
+ * output. While the primer is still starting, an unmuted play waits a bounded
+ * time for it to render and an unmute waits a bounded time for it to run.
+ * Play reports buffering until the program's own clock moves: any advance
+ * once the primer has rendered, and an advance past a first-buffer plateau
+ * when it had not. A pause or dispose cancels a wait; a seek, a scope or a
+ * mute ends it early and the play starts. A page pause parks the primer first,
+ * so a media key resumes the program, not the silent primer; a scope switch
+ * keeps it. Without a primer, or with one idle, unsupported or failed, play
+ * and mute act at once.
  */
 
 import {
@@ -52,6 +66,10 @@ import type {
   OtioPlaybackScope,
   OtioPlaybackState,
 } from './otio-playback.ts';
+import {
+  OTIO_AUDIO_OUTPUT_RUNNING_ADVANCE_MS,
+  type OtioAudioOutput,
+} from './otio-audio-output.ts';
 
 /** Every code a program reason can carry. Both sets are spec names; no viewer-only codes exist. */
 export type OtioProgramReasonCodeAll =
@@ -356,20 +374,49 @@ export interface OtioProgramPlayer {
   /** The native element's media time in seconds. */
   mediaTimeSeconds(): number;
   play(): Promise<void>;
-  pause(): void;
+  /**
+   * Pauses the element. A pause that stops playback parks the audio output
+   * primer first, so a media key resumes the program rather than the silent
+   * primer. A scope switch passes `keepOutput`, so focus playback still finds
+   * the device running.
+   */
+  pause(options?: { readonly keepOutput?: boolean }): void;
   seek(time: OtioRationalTime): Promise<void>;
   setMuted(muted: boolean): void;
+  /** Ends a play's wait on the audio output early: the play starts now. */
+  releaseOutputHold(): void;
   /** Limits playback to `range`; null lifts the limit. Seeks and play stay inside it. */
   setBounds(range: OtioTimeRange | null): void;
   subscribe(listener: OtioPlaybackListener): () => void;
   dispose(): void;
 }
 
+/** What the player uses of the view's audio output primer. */
+export type OtioProgramAudioOutput = Pick<
+  OtioAudioOutput,
+  'state' | 'whenReached' | 'park'
+>;
+
+/** Longest an unmuted play waits for a starting audio output to render. */
+export const OTIO_PROGRAM_OUTPUT_HOLD_MS = 250;
+/** Longest an unmute keeps a playing element muted while the output starts. */
+export const OTIO_PROGRAM_UNMUTE_HOLD_MS = 1000;
+
+/**
+ * Clock advance, in seconds, that proves a play started on a still-starting
+ * output is running. The stream's first buffer can move the clock by up to a
+ * buffer and stall until the device runs; the primer's running threshold
+ * clears every such plateau.
+ */
+const STARTUP_RUNNING_ADVANCE_S = OTIO_AUDIO_OUTPUT_RUNNING_ADVANCE_MS / 1000;
+
 export interface OtioProgramPlayerOptions {
   readonly video: HTMLVideoElement;
   readonly program: ValidatedProgram;
   /** Called when playback fails after a successful load-time check. */
   readonly onFailure: (reason: OtioProgramReason) => void;
+  /** The view's primer. Without one, play and mute act on the element at once. */
+  readonly audioOutput?: OtioProgramAudioOutput;
 }
 
 interface FrameBounds {
@@ -385,7 +432,7 @@ const isAbortError = (error: unknown): boolean =>
 export function createOtioProgramPlayer(
   options: OtioProgramPlayerOptions
 ): OtioProgramPlayer {
-  const { video, program, onFailure } = options;
+  const { video, program, onFailure, audioOutput } = options;
   const fps = program.frameRate.num / program.frameRate.den;
   const frameSeconds = program.frameRate.den / program.frameRate.num;
   const lastFrame = program.frames - 1;
@@ -402,6 +449,22 @@ export function createOtioProgramPlayer(
   /** Settles the pending seek with `false` when it errored or the player was disposed. */
   let settlePendingSeek: ((seeked: boolean) => void) | undefined;
   let settlePendingPlay: (() => void) | undefined;
+  /**
+   * An unmuted play waiting for a starting output to render. It reports
+   * playing and buffering; a pause or dispose cancels it, and the play never
+   * starts.
+   */
+  let outputHold:
+    | { readonly controller: AbortController; cancelled: boolean }
+    | undefined;
+  /**
+   * An unmuted play that started before its output ran. The element reports
+   * playing before audio moves its clock, so the player reports buffering
+   * until the clock passes `from` by more than `margin` seconds.
+   */
+  let startup: { from: number; readonly margin: number } | undefined;
+  /** An unmute waiting for the output to run; the element stays muted until it ends. */
+  let unmuteHold: AbortController | undefined;
 
   const clampFrame = (index: number): number =>
     Math.min(Math.max(index, 0), lastFrame);
@@ -439,8 +502,11 @@ export function createOtioProgramPlayer(
   const state = (): OtioPlaybackState => ({
     time: timeForFrame(frame),
     scope: null,
-    playing: !video.paused && !video.ended,
-    buffering,
+    playing: outputHold !== undefined || (!video.paused && !video.ended),
+    buffering:
+      buffering ||
+      outputHold !== undefined ||
+      (startup !== undefined && !video.paused),
     duration: program.duration,
     rate: video.playbackRate,
     diagnostics: [],
@@ -469,16 +535,67 @@ export function createOtioProgramPlayer(
     frameRequest = 0;
   };
 
+  /**
+   * An unmuted play while the primer is starting waits for it to render, so
+   * the element joins its output after the first buffer instead of stalling
+   * mid-play while the device starts. Resolves true when the play should
+   * start: the output rendered or stopped, the wait timed out, or it was
+   * released. Resolves false when a pause or dispose cancelled the play.
+   */
+  const holdForOutput = (): Promise<boolean> | undefined => {
+    if (audioOutput?.state !== 'starting' || video.muted || !video.paused)
+      return undefined;
+    const hold = { controller: new AbortController(), cancelled: false };
+    outputHold = hold;
+    emit();
+    const rendered = audioOutput.whenReached('rendering', {
+      signal: hold.controller.signal,
+      timeoutMs: OTIO_PROGRAM_OUTPUT_HOLD_MS,
+    });
+    return rendered.then(() => !hold.cancelled);
+  };
+
+  /** A pause or dispose: the held play never starts. */
+  const cancelOutputHold = (): void => {
+    const hold = outputHold;
+    if (hold === undefined) return;
+    outputHold = undefined;
+    hold.cancelled = true;
+    hold.controller.abort();
+    emit();
+  };
+
+  /** A seek, scope or mute: the held play starts now. */
+  const releaseOutputHold = (): void => {
+    outputHold?.controller.abort();
+  };
+
+  /** The element stopped, so a waiting unmute can no longer stall it. */
+  const settleUnmuteHold = (): void => {
+    if (unmuteHold === undefined) return;
+    unmuteHold.abort();
+    unmuteHold = undefined;
+    video.muted = false;
+  };
+
   const tick = (): void => {
     frameRequest = 0;
     if (disposed) return;
     // Check the bound before emitting, so no frame past the range end is reported.
     if (bounds !== null && frameAtElement() >= bounds.end) {
+      // Playback stops here, so the primer parks before the element pauses.
+      audioOutput?.park();
       video.pause();
       video.currentTime = (bounds.end - 1 + 0.5) * frameSeconds;
       return;
     }
-    if (syncFrame()) emit();
+    // The clock moved past anything the output's first buffer explains:
+    // start-up is over.
+    const started =
+      startup !== undefined &&
+      video.currentTime > startup.from + startup.margin;
+    if (started) startup = undefined;
+    if (syncFrame() || started) emit();
     if (!video.paused && !video.ended)
       frameRequest = requestAnimationFrame(tick);
   };
@@ -496,16 +613,22 @@ export function createOtioProgramPlayer(
     emit();
   });
   listen('pause', () => {
+    startup = undefined;
+    settleUnmuteHold();
     stopFrameLoop();
     syncFrame();
     emit();
   });
   listen('ended', () => {
+    startup = undefined;
+    settleUnmuteHold();
     stopFrameLoop();
     syncFrame();
     emit();
   });
   listen('seeked', () => {
+    // A seek before the clock moved waits for it from the new time.
+    if (startup !== undefined) startup.from = video.currentTime;
     syncFrame();
     emit();
   });
@@ -649,6 +772,7 @@ export function createOtioProgramPlayer(
     mediaTimeSeconds: () => video.currentTime,
     async play() {
       if (disposed) return;
+      const hold = holdForOutput();
       if (bounds !== null) {
         const current = frameAtElement();
         // Outside the range, or on its last frame: play starts the range again.
@@ -656,10 +780,40 @@ export function createOtioProgramPlayer(
           await seekToFrame(bounds.start);
         }
       }
+      if (hold !== undefined && !(await hold)) return;
+      const output = audioOutput?.state;
+      outputHold = undefined;
+      if (video.paused) {
+        // Before the output runs, the element plays ahead of any audio that
+        // moves its clock. Once the primer has rendered, the element joins
+        // after the stream's first buffer, so any advance is the device
+        // running. If the primer is still starting, or the hold ended with it
+        // stopped, the element can take that buffer itself: its clock moves
+        // that far, then stalls until the device runs. A running output, a
+        // muted element and a play that never held start as before.
+        const awaitsOutput =
+          !video.muted &&
+          output !== 'running' &&
+          (hold !== undefined ||
+            output === 'starting' ||
+            output === 'rendering');
+        startup = awaitsOutput
+          ? {
+              from: video.currentTime,
+              margin: output === 'rendering' ? 0 : STARTUP_RUNNING_ADVANCE_S,
+            }
+          : undefined;
+      }
       await startElement();
     },
-    pause() {
+    pause(options) {
       if (disposed) return;
+      // Only a pause that stops playback, held or running, parks the primer:
+      // pausing a paused program leaves the preparation in place.
+      const stopping = outputHold !== undefined || !video.paused;
+      cancelOutputHold();
+      settleUnmuteHold();
+      if (stopping && options?.keepOutput !== true) audioOutput?.park();
       video.pause();
     },
     async seek(time) {
@@ -667,8 +821,41 @@ export function createOtioProgramPlayer(
       await seekToFrame(boundedFrame(frameFor(time)));
     },
     setMuted(muted) {
-      video.muted = muted;
+      if (muted) {
+        // A muted element never opens the output, so nothing waits for it.
+        unmuteHold?.abort();
+        unmuteHold = undefined;
+        releaseOutputHold();
+        video.muted = true;
+        return;
+      }
+      if (unmuteHold !== undefined) return;
+      const output = audioOutput?.state;
+      if (
+        audioOutput === undefined ||
+        !video.muted ||
+        video.paused ||
+        video.ended ||
+        (output !== 'starting' && output !== 'rendering')
+      ) {
+        video.muted = false;
+        return;
+      }
+      // Unmuting a playing element before the output runs stalls it while
+      // the device starts, so it stays muted until the primer runs.
+      const hold = new AbortController();
+      unmuteHold = hold;
+      const running = audioOutput.whenReached('running', {
+        signal: hold.signal,
+        timeoutMs: OTIO_PROGRAM_UNMUTE_HOLD_MS,
+      });
+      void running.then(() => {
+        if (unmuteHold !== hold) return;
+        unmuteHold = undefined;
+        video.muted = false;
+      });
     },
+    releaseOutputHold,
     setBounds(range) {
       bounds = range === null ? null : frameBounds(range);
     },
@@ -681,6 +868,9 @@ export function createOtioProgramPlayer(
     dispose() {
       if (disposed) return;
       disposed = true;
+      cancelOutputHold();
+      unmuteHold?.abort();
+      unmuteHold = undefined;
       settlePendingSeek?.(false);
       settlePendingPlay?.();
       stopFrameLoop();
@@ -751,6 +941,8 @@ export interface OtioPlaybackSessionOptions {
   readonly timelineRange: OtioTimeRange;
   /** The native element that plays the program. Required when the resolution is `available`. */
   readonly video?: HTMLVideoElement;
+  /** The view's audio output primer, handed to the native program player. */
+  readonly audioOutput?: OtioProgramAudioOutput;
   /** Builds the existing controller. Legacy plays the composition with it; every state uses it for focus. */
   readonly createController: () => OtioPlaybackController;
 }
@@ -849,6 +1041,7 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
           message: 'No video element is available for the program.',
         });
       } else {
+        const { audioOutput } = this.options;
         const player: OtioProgramPlayer = createOtioProgramPlayer({
           video,
           program,
@@ -856,6 +1049,7 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
             // Not queued: a failure must take effect even while a transition waits on this element.
             this.failProgram(player, reason);
           },
+          ...(audioOutput === undefined ? {} : { audioOutput }),
         });
         try {
           await player.ready;
@@ -977,6 +1171,8 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
       return this.controller.seek(time);
     }
     const serial = ++this.seekSerial;
+    // A play waiting on the audio output starts now, so no seek waits behind it.
+    this.player?.releaseOutputHold();
     return this.serialize(async () => {
       // A newer seek arrived before this one ran: the newest seek does the work.
       if (this.disposed || serial !== this.seekSerial) return;
@@ -1005,6 +1201,8 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
   ): Promise<void> {
     // Legacy has no queue: the existing controller receives the scope directly.
     if (this.status === 'legacy') return this.applyScope(scope, options);
+    // A play waiting on the audio output starts now, so no scope waits behind it.
+    this.player?.releaseOutputHold();
     return this.serialize(() => this.applyScope(scope, options));
   }
 
@@ -1090,7 +1288,8 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
     }
     const time = this.compositionTime();
     const previousBound = this.programScope;
-    this.player?.pause();
+    // A scope switch keeps the primer, so focus playback finds the device running.
+    this.player?.pause({ keepOutput: true });
     this.setProgramBound(null);
     const controller = this.options.createController();
     controller.setBaseMediaPreviewAllowed(this.baseMediaPreviewAllowed);

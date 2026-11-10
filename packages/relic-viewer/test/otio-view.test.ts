@@ -3591,3 +3591,31 @@ describe('OTIO media and timeline divider', () => {
     expect(root.querySelector('.otio-transport')!.hidden).toBe(false);
   });
 });
+
+describe('OTIO audio output primer', () => {
+  test('a legacy archive leaves the primer unarmed on a desktop browser and mirrors its state', async () => {
+    const restoreDom = installProjectionDom();
+    const gate = Object.getOwnPropertyDescriptor(navigator, 'userAgentData');
+    // The desktop gate passes, so only the archive keeps the primer unarmed.
+    Object.defineProperty(navigator, 'userAgentData', {
+      configurable: true,
+      value: { mobile: false },
+    });
+    try {
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: focusedSelectionContent(),
+        revision: 2,
+      });
+      // The document stub has no addEventListener: an armed primer would throw.
+      expect(root.dataset['otioProgramState']).toBe('legacy');
+      expect(root.getAttribute('data-otio-audio-output')).toBe('unsupported');
+      otioControllerFor(root as unknown as HTMLElement)!.dispose();
+      expect(root.getAttribute('data-otio-audio-output')).toBe('unsupported');
+    } finally {
+      if (gate) Object.defineProperty(navigator, 'userAgentData', gate);
+      else Reflect.deleteProperty(navigator, 'userAgentData');
+      restoreDom();
+    }
+  });
+});

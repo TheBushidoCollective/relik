@@ -56,6 +56,9 @@ export interface OtioAudioOutput {
   ): Promise<OtioAudioOutputState>;
   setProgramAvailable(available: boolean): void;
   subscribe(l: (s: OtioAudioOutputState) => void): () => void;
+  // Releases the primer at once: stops playback, drops the element and its blob
+  // URL, and goes idle (a failed primer stays failed). A no-op without an available program.
+  park(): void;
   dispose(): void;
 }
 
@@ -186,8 +189,12 @@ export function createOtioAudioOutput(o: {
       at - lastAdvanceAt <= RUNNING_RECENT_MS
     )
       setState('running');
-    if (state === 'running' && at - lastAdvanceAt >= RUNNING_STALL_MS)
+    if (state === 'running' && at - lastAdvanceAt >= RUNNING_STALL_MS) {
+      // The stalled advance no longer counts. Otherwise one step after the stall
+      // re-asserts running without the 150 ms check.
+      advanceS = 0;
       setState('rendering');
+    }
     // A subscriber may have disposed or parked the primer during the transitions.
     if (!wanted || element !== el) return;
     if (state === 'running') {
@@ -315,6 +322,7 @@ export function createOtioAudioOutput(o: {
     advanceS = 0;
     lastAdvanceAt = now();
     setState('starting');
+    cancelFrameLoop();
     scheduleFrame();
     let pending: Promise<void> | undefined;
     try {
@@ -332,6 +340,7 @@ export function createOtioAudioOutput(o: {
 
   const onGesture = (event: Event): void => {
     if (!event.isTrusted) return;
+    if (doc.hidden || doc.visibilityState === 'hidden') return;
     const nav = (doc.defaultView?.navigator ?? globalThis.navigator) as
       | NavigatorLike
       | undefined;
@@ -403,6 +412,11 @@ export function createOtioAudioOutput(o: {
         detachDocument();
         setState('unsupported');
       }
+    },
+
+    park() {
+      if (disposed || !programAvailable || !o.supported) return;
+      parkIdle();
     },
 
     subscribe(l) {
