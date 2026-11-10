@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { Crc32c } from '@relic/format';
 import {
   buildSignedRequest,
   encodeObjectPath,
@@ -13,6 +14,7 @@ import {
   toDatestamp,
   toTimestamp,
 } from '../src/gcs.ts';
+import { MemoryStorage } from '../src/storage.ts';
 
 const NOW = Date.parse('2026-08-04T09:15:30.000Z');
 const EMAIL = 'relic@relic-prod.iam.gserviceaccount.com';
@@ -202,6 +204,22 @@ describe('the storage adapter', () => {
     expect(upload.expiresAt).toBe(NOW + 900_000);
   });
 
+  test('signs a cap-sized upload for the configured 4,500-second window', async () => {
+    const upload = await storage().signUpload(
+      'abc123',
+      524_489_608,
+      4_500,
+      NOW
+    );
+    const url = new URL(upload.url);
+    expect(upload.headers['content-length']).toBe('524489608');
+    expect(upload.expiresAt).toBe(NOW + 4_500_000);
+    expect(url.searchParams.get('X-Goog-Expires')).toBe('4500');
+    expect(url.searchParams.get('X-Goog-SignedHeaders')).toBe(
+      'content-length;host'
+    );
+  });
+
   test('signs no x-goog-meta header, because nothing needs object metadata', async () => {
     const upload = await storage().signUpload('abc123', 4096, 900, NOW);
     for (const name of Object.keys(upload.headers)) {
@@ -246,14 +264,26 @@ describe('the storage adapter', () => {
           controller.close();
         },
       });
-      globalThis.fetch = (async () => {
-        return new Response(stream, {
+      globalThis.fetch = (async (
+        _input: string | URL | Request,
+        init?: RequestInit
+      ) => {
+        if (init?.method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: { 'content-length': '11', 'x-goog-generation': '12345' },
+          });
+        }
+        const response = new Response(stream, {
           status: 200,
-          headers: {
-            'content-length': '11',
-            'x-goog-generation': '12345',
+          headers: { 'content-length': '11' },
+        });
+        Object.defineProperty(response, 'arrayBuffer', {
+          value: () => {
+            throw new Error('digest must not buffer the response');
           },
         });
+        return response;
       }) as unknown as typeof fetch;
 
       const digest = await storage().digest('abc123');
@@ -286,6 +316,27 @@ describe('the storage adapter', () => {
       }) as unknown as typeof fetch;
 
       await expect(storage().digest('error')).rejects.toThrow(/500/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('digest throws on a failed GET after a successful stat', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (
+        _input: string | URL | Request,
+        init?: RequestInit
+      ) =>
+        init?.method === 'HEAD'
+          ? new Response(null, {
+              status: 200,
+              headers: { 'content-length': '5' },
+            })
+          : new Response('server error', {
+              status: 503,
+            })) as unknown as typeof fetch;
+      await expect(storage().digest('error')).rejects.toThrow(/503/);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -352,7 +403,7 @@ describe('the storage adapter', () => {
     }
   });
 
-  test('digest returns undefined if generation match returns 412', async () => {
+  test('digest throws if generation match returns 412', async () => {
     const originalFetch = globalThis.fetch;
     try {
       globalThis.fetch = (async (
@@ -373,10 +424,41 @@ describe('the storage adapter', () => {
         return new Response('precondition failed', { status: 412 });
       }) as unknown as typeof fetch;
 
-      const digest = await storage().digest('abc123');
-      expect(digest).toBeUndefined();
+      await expect(storage().digest('abc123')).rejects.toThrow(/412/);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('in-memory storage', () => {
+  test('caches CRC32C at put and refreshes it on replacement', async () => {
+    const storage = new MemoryStorage();
+    const update = spyOn(Crc32c.prototype, 'update');
+    try {
+      const bytes = new TextEncoder().encode('123456789');
+      storage.put('object', bytes);
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(await storage.stat('object')).toEqual({
+        length: 9,
+        crc32c: '4waSgw==',
+      });
+      expect(await storage.stat('object')).toEqual({
+        length: 9,
+        crc32c: '4waSgw==',
+      });
+      expect(update).toHaveBeenCalledTimes(1);
+
+      storage.put('object', new TextEncoder().encode('hello'));
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(await storage.stat('object')).toEqual({
+        length: 5,
+        crc32c: 'mnG7TA==',
+      });
+      await storage.delete('object');
+      expect(await storage.stat('object')).toBeUndefined();
+    } finally {
+      update.mockRestore();
     }
   });
 });

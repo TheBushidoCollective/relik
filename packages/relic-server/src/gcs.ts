@@ -1,11 +1,10 @@
 /**
  * Google Cloud Storage, through V4 signed URLs only.
  *
- * The app server never handles relic bytes on either leg. The publishing
- * client PUTs ciphertext straight to GCS under a signed grant, and the
- * recipient GETs it straight from GCS under a signed URL. That is what makes
- * the zero-knowledge claim structural rather than a promise: the server has
- * no opportunity to observe anything, because the bytes never cross it.
+ * Publishing clients PUT ciphertext straight to GCS and recipients GET it
+ * from GCS under signed URLs. The app server is outside both of those data
+ * paths. Control-plane operations can stream stored ciphertext for hashing,
+ * but never receive the decryption key.
  *
  * Everything here is signed URLs rather than the JSON API with an access
  * token, including `stat`. One credential path, one signing routine, and no
@@ -441,16 +440,6 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       return { length, crc32c, generation };
     },
 
-    async read(relicId: string): Promise<Uint8Array | undefined> {
-      // The delete path's hash, and nothing else. This is the operator
-      // handling inert ciphertext through the control plane, never the
-      // serving data path.
-      const url = await sign('GET', relicId, 60, Date.now());
-      const response = await fetch(url);
-      if (!response.ok) return undefined;
-      return new Uint8Array(await response.arrayBuffer());
-    },
-
     async delete(relicId: string): Promise<void> {
       const url = await sign('DELETE', relicId, 60, Date.now());
       const response = await fetch(url, { method: 'DELETE' });
@@ -471,7 +460,9 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       }
       const url = await sign('GET', relicId, 60, Date.now(), headers);
       const response = await fetch(url, { headers });
-      if (response.status === 404 || response.status === 412) return undefined;
+      if (response.status === 404) return undefined;
+      // A generation mismatch is not absence: refusing deletion avoids
+      // skipping a replaced version without recording its blocklist hash.
       if (!response.ok) {
         throw new Error(`digest failed with ${response.status}`);
       }
