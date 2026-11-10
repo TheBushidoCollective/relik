@@ -15,10 +15,12 @@
 
 import { chmod, mkdir } from 'node:fs/promises';
 import { buildCover } from '@relic/viewer/build';
+import { buildProgramPage } from '@relic/viewer/program-render/build';
 
 const out = new URL('./dist/', import.meta.url).pathname;
 await mkdir(out, { recursive: true });
 await buildCover({ outdir: `${out}cover/` });
+await buildProgramPage(`${out}program/`);
 
 // Read before the build, not after, because the bundle is stamped with this
 // version and the manifests are generated from the same value. The release

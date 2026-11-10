@@ -41,6 +41,9 @@ import {
   readSource,
   reportComplete,
 } from './publish.ts';
+import type { ProgramPolicy } from './program/policy.ts';
+import type { ProgramReport } from './program/report.ts';
+import { buildProgramArchive } from './program/build.ts';
 import {
   loadPublishState,
   type PublishState,
@@ -122,6 +125,8 @@ export interface RepublishResult {
    * counts.
    */
   readonly cover: CoverReport;
+  /** The program: rendered per timeline, or focus-only with the reasons. */
+  readonly program: ProgramReport;
   readonly notify: boolean;
 }
 
@@ -399,12 +404,39 @@ export async function republish(
     );
   }
 
+  // The program and the server's cap are read after the comment gate, so a
+  // refused republish never reaches the network for them. The program goes in
+  // before encryption, so the grant pins the exact bytes that get encrypted.
+  const challenge = await postJson(
+    deps,
+    `${deps.serviceOrigin}/api/challenge`,
+    {}
+  );
+  const sizeLimit = Number(challenge['size_limit_bytes']);
+  const programBuild = await buildProgramArchive({
+    archive: source.bytes,
+    sourceName: source.basename,
+    sizeLimit,
+    policy: deps.programPolicy ?? { forceEncoderAbsent: false },
+    renderer: deps.renderProgram,
+    clientName: deps.clientName,
+  });
+  const payload = programBuild.bytes;
+  if (payload.length > sizeLimit) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${source.basename} with its program is ${payload.length} bytes, over the ` +
+        `${sizeLimit}-byte cap`,
+      { size_limit_bytes: sizeLimit, declared_size_bytes: payload.length }
+    );
+  }
+
   // The stored key, not a fresh one. This is the line that keeps the
   // existing share URL decrypting the new version; a fresh key here would
   // silently cut every recipient off from content they were told this link
   // carries.
   const container = await encryptRelic({
-    content: source.bytes,
+    content: payload,
     filename,
     mimetype: guessMimetype(filename, rendererClass),
     key: decodeKey(state.key),
@@ -423,7 +455,7 @@ export async function republish(
     {
       publish_token: state.publish_token,
       renderer_class: rendererClass,
-      declared_size_bytes: source.bytes.length,
+      declared_size_bytes: payload.length,
       declared_ciphertext_bytes: container.length,
       title: normalizedTitle,
       ...(input.ttl_days === undefined ? {} : { ttl_days: input.ttl_days }),
@@ -558,5 +590,6 @@ export async function republish(
     ...(acknowledgements.length > 0 ? { acknowledgements } : {}),
     cover: coverReport,
     notify: input.notify !== false,
+    program: programBuild.report,
   };
 }

@@ -65,6 +65,7 @@ import {
 import { type RepublishAddressEntry, republish } from './republish.ts';
 import { readDecisions } from './decisions.ts';
 import { shareRelic } from './share.ts';
+import { type ProgramReport, programText } from './program/report.ts';
 
 export type { JsonRpcRequest, JsonRpcResponse };
 export {
@@ -262,6 +263,12 @@ export function formatCoverText(cover: CoverReport): string {
   return `Cover image: none. ${cover.detail} Link previews show the generic Relic card.`;
 }
 
+/** The program paragraph for a transcript, with its own trailing break, or nothing. */
+export function programParagraph(report: ProgramReport): string {
+  const text = programText(report);
+  return text === '' ? '' : `${text}\n\n`;
+}
+
 export const TOOL_DEFINITION = {
   name: TOOL_NAME,
   title: 'Publish a relic',
@@ -287,10 +294,12 @@ export const TOOL_DEFINITION = {
     'held-descriptor behavior, and replacement behavior are verified by the CI ' +
     'probe on the listed versions. A target or kernel that cannot satisfy that ' +
     'requirement refuses it rather than using a pathname fallback. A raw .otio ' +
-    'file or an existing .otioz archive is published ' +
-    'as given. OTIO covers use only the public title and format label; media ' +
-    'frames stay out of the unencrypted preview. Takes a filesystem path, never ' +
-    'inline content.',
+    'file is published as given, with no program. An .otioz archive or a packaged ' +
+    '.otiod gets a playable program per timeline: each is rendered here in a ' +
+    'local browser, packed in before encryption, and focus-only with a stated ' +
+    'reason where it cannot be rendered. OTIO covers use only the public title ' +
+    'and format label; media frames stay out of the unencrypted preview. Takes a ' +
+    'filesystem path, never inline content.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -2137,6 +2146,7 @@ async function callTool(
                   : 'Published without a title, so a link preview shows only that it is a relic.'
               }\n\n` +
               `${formatCoverText(result.cover)}\n\n` +
+              programParagraph(result.program) +
               // No lifetime is the default, so the agent relaying this needs
               // a sentence that says so, not a date-shaped hole.
               (result.relic_expires_at === null
@@ -2590,6 +2600,7 @@ async function callRepublish(
                   : 'Published without a title, so a link preview shows only that it is a relic.'
               }\n\n` +
               `${formatCoverText(result.cover)}\n\n` +
+              programParagraph(result.program) +
               (result.relic_expires_at === null
                 ? 'The relic does not expire; it is kept until it is deleted.'
                 : `Expires ${result.relic_expires_at}.`) +
@@ -3379,6 +3390,30 @@ to the relic id. The share email carrying the full link is composed here on
 this machine for you to send from your own mailbox, so the key never reaches
 the service. Readers holding the link can also share from the viewer once the
 relic was published or republished by this client version.
+
+What the program adds: for an OpenTimelineIO bundle (.otioz, or a .otiod that
+is packaged first), this process renders each timeline to an H.264/AAC MP4 in
+your local Chrome, Chromium, or Edge, with networking closed. On macOS each
+publish makes a private RAM volume and runs the browser under a sandbox profile
+that refuses every write outside it; the browser's temporary, cache, and crash
+paths are set inside that volume, and a write probe must pass before any browser
+starts. The volume is unmounted and detached afterwards, and only what this
+process created is removed. On Linux the browser runs with bubblewrap, a read-only
+root, and one writable directory inside a verified tmpfs; without bubblewrap or
+that tmpfs, no browser is started. Where confinement or storage cannot be verified,
+every timeline is focus-only with the reason stated.
+Within that volume the context is
+off-the-record, the HTTP cache is disabled, and no decoded media is written to a
+disk by this process. No claim is made about the operating system's own swap. The
+MP4 is packed into the bundle before
+encryption, so it is encrypted like the source. A timeline that cannot be
+rendered here (no browser, no encoder, an unsupported effect, missing media,
+or the size cap) is published focus-only, and the reason is written in the
+publish result and in the bundle's manifest. A publish that cannot deliver its
+manifest, or that finds relic/ entries already in the archive, is refused with
+the reason rather than degraded. Nothing is sent to a remote renderer, and no
+browser or encoder is installed or downloaded. Set RELIC_OTIO_CHROME_PATH to
+choose the browser, or to none to turn programs off.
 
 What this does NOT protect against: the key is returned to your agent in the
 URL, so it enters the model's context and your session transcript. That is

@@ -24,6 +24,14 @@ import { runInstall, USAGE } from './installer.ts';
 import { requiredOrigin, resolveOrigin } from './origin.ts';
 import type { PublishDeps } from './publish.ts';
 import { serveStdio } from './server.ts';
+import {
+  PROGRAM_DEADLINE_MS,
+  programAssetDir,
+  programChromePathFrom,
+  programPolicyFrom,
+  programProfileSourceFrom,
+} from './program/policy.ts';
+import { chromeProgramRenderer } from './program/render.ts';
 
 // Node 18 exposes Web Crypto through node:crypto without a global binding.
 if (typeof globalThis.crypto === 'undefined') {
@@ -90,6 +98,15 @@ const deps: PublishDeps = {
     assetDir: coverAssetDir(),
     deadlineMs: DEFAULT_DEADLINE_MS,
   }),
+  // The program renders in this publisher's own Chrome, in memory, with
+  // networking closed. Absent or unusable means focus-only, with the reason.
+  renderProgram: chromeProgramRenderer({
+    chromePath: programChromePathFrom(process.env),
+    assetDir: programAssetDir(),
+    profile: programProfileSourceFrom(process.env),
+    deadlineMs: PROGRAM_DEADLINE_MS,
+  }),
+  programPolicy: programPolicyFrom(process.env),
 };
 
 if (process.env['RELIC_MCP_HTTP'] === '1') {

@@ -210,6 +210,45 @@ flags (`--host-resolver-rules=MAP * ~NOTFOUND`,
 `--webrtc-ip-handling-policy=disable_non_proxied_udp`, `--disable-quic`) so no
 relic plaintext leaves the machine during rendering.
 
+### OTIO programs
+
+Publishing or republishing an `.otioz` archive, or a `.otiod` directory packaged
+into one, also renders each OpenTimelineIO timeline to an H.264/AAC MP4 in the
+same local browser. The render runs in memory: the browser context is
+off-the-record, the HTTP cache is disabled, and the page can reach only the
+archive's own media through the virtual origin
+(`https://program.relic.invalid`). The MP4s and a `relic/program.json` manifest
+go into the archive before encryption, so the program is encrypted like the
+source. `content.otio` and every media entry keep their bytes.
+
+A timeline that cannot be rendered is published focus-only, and the publish
+result says why for each one: no browser, no H.264/AAC encoder, an unsupported
+effect, codec, transition, schema, or timing, missing media, or the size cap.
+The result's `program` field reports the status and every timeline. A bare
+`.otio` file has no archive to carry a program and publishes as given. No
+browser or encoder is installed or downloaded, and nothing is sent to a remote
+renderer.
+
+Programs render only where the browser can be confined. On Linux that needs
+bubblewrap (`bwrap`) and a verified tmpfs directory, `RELIC_PROGRAM_PROFILE_DIR`
+or else `$XDG_RUNTIME_DIR`, which must not be under `/dev`. The browser then runs
+with a read-only root, one read-write bind for a directory this process makes in
+that tmpfs, memory `/tmp`, and no network. When either is missing, no browser
+starts and every OTIO timeline is published focus-only, with that reason.
+On macOS each publish creates a private RAM volume
+and runs the browser under a sandbox profile that refuses every write outside
+that volume. The browser's temporary, cache, and crash paths are set inside the
+volume too, and a write probe must pass before any browser starts. Afterwards the
+volume is unmounted and detached, and only the device and directory this process
+created are removed. If confinement or storage cannot be verified, programs do
+not render and every timeline is focus-only with that reason. If storage this
+process made cannot be released, the publish is refused. Reasons in the archive
+are fixed sentences, never local paths or environment values. The archive always
+carries its manifest, so a reader never falls back to a full composite the
+publisher did not select. An archive that already contains `relic/` entries, a
+bad `RELIC_PROGRAM_MAX_BYTES`, an unsafe entry name, or a manifest that cannot
+fit the cap is refused with an exact reason rather than published without one.
+
 ## Tools
 
 | Tool | Input | Notes |
@@ -238,6 +277,10 @@ relic plaintext leaves the machine during rendering.
 | `RELIC_MCP_PORT`, `RELIC_MCP_HOST` | HTTP bind. Defaults to `127.0.0.1:7333`. |
 | `RELIC_MCP_ALLOWED_ORIGINS` | Comma-separated `Origin` allowlist for HTTP. |
 | `RELIC_CHROME_PATH` | Explicit path to Chrome, Chromium, or Edge binary for cover rendering. Set to `none` or `disabled` to skip covers. |
+| `RELIC_OTIO_CHROME_PATH` | Browser for OTIO program rendering. Falls back to `RELIC_CHROME_PATH`. Set to `none` or `disabled` to publish OTIO without programs. |
+| `RELIC_PROGRAM_MAX_BYTES` | Lowers the program budget for the whole archive, never raises it. Must be a positive integer. A timeline that does not fit is focus-only with the reason `size-cap-exceeded`. |
+| `RELIC_PROGRAM_ENCODER_OFF` | `1` makes the page report its H.264/AAC encoder as absent. Used by proofs, to exercise the focus-only path. |
+| `RELIC_PROGRAM_PROFILE_DIR` | Linux only: a tmpfs mount for the browser's temporary profile. Defaults to `/dev/shm`. macOS ignores it and uses a private RAM volume. |
 | `RELIC_FFMPEG_PATH` | Path to ffmpeg binary for generating video frame and audio waveform/artwork cover images. |
 
 ## Protocol

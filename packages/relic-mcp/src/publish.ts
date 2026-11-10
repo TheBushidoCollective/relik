@@ -38,6 +38,10 @@ import type {
 import { keyToMnemonic } from '@relic/format/mnemonic';
 import { uploadCover } from './cover/upload.ts';
 import { bundleOtiod } from './otio-bundle.ts';
+import type { ProgramPolicy } from './program/policy.ts';
+import type { ProgramRenderer } from './program/render.ts';
+import type { ProgramReport } from './program/report.ts';
+import { buildProgramArchive } from './program/build.ts';
 import {
   loadPublishedSource,
   resolveSourceIdentity,
@@ -113,7 +117,8 @@ export type ClientCode =
   | 'local_comment_unreadable'
   | 'app_response_unusable'
   | 'otio_bundle_invalid'
-  | 'version_digest_mismatch';
+  | 'version_digest_mismatch'
+  | 'program_refused';
 export class PublishError extends Error {
   override readonly name = 'PublishError';
   constructor(
@@ -229,6 +234,8 @@ export interface PublishResult {
   readonly disclosure_url: string;
   readonly key_phrase: string;
   readonly cover: CoverReport;
+  /** The program: rendered per timeline, or focus-only with the reasons. */
+  readonly program: ProgramReport;
 }
 
 export interface PublishDeps {
@@ -244,6 +251,13 @@ export interface PublishDeps {
   /** Path to ffmpeg binary, or null to simulate ffmpeg being absent. */
   readonly ffmpegPath?: string | null;
   readonly renderCover: (source: CoverSource) => Promise<CoverOutcome>;
+  /**
+   * Local program rendering in the publisher's own Chrome. Absent is reported
+   * as status not_run, never skipped silently.
+   */
+  readonly renderProgram?: ProgramRenderer | undefined;
+  /** Lowers the program cap, and turns on proof-only knobs. Never raises a cap. */
+  readonly programPolicy?: ProgramPolicy | undefined;
 }
 
 export interface RepublishToolCall {
@@ -424,6 +438,31 @@ export async function publish(
     }
   }
 
+  // The program goes into the archive before encryption, so the grant pins the
+  // exact bytes that get encrypted. Whatever cannot be delivered is focus-only,
+  // and the result says why; nothing here is skipped silently.
+  const programBuild = await buildProgramArchive({
+    archive: source.bytes,
+    sourceName: source.basename,
+    sizeLimit,
+    policy: deps.programPolicy ?? { forceEncoderAbsent: false },
+    renderer: deps.renderProgram,
+    clientName: deps.clientName,
+  });
+  const payload = programBuild.bytes;
+  if (payload.length > sizeLimit) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${source.basename} with its program is ${payload.length} bytes, over the ` +
+        `${sizeLimit}-byte cap`,
+      {
+        size_limit_bytes: sizeLimit,
+        declared_size_bytes: payload.length,
+        size_basis: sizeBasis,
+      }
+    );
+  }
+
   const retries = deps.maxCollisionRetries ?? 3;
   let lastCollision: ServerRefusal | undefined;
 
@@ -439,7 +478,7 @@ export async function publish(
     // exact byte length. A fresh salt is drawn per attempt, so this has to sit
     // inside the retry loop alongside the id and the key.
     const container = await encryptRelic({
-      content: source.bytes,
+      content: payload,
       filename,
       mimetype: guessMimetype(filename, rendererClass),
       key,
@@ -453,7 +492,7 @@ export async function publish(
         relic_id: relicId,
         renderer_class: rendererClass,
         publishing_client: deps.clientName,
-        declared_size_bytes: source.bytes.length,
+        declared_size_bytes: payload.length,
         declared_ciphertext_bytes: container.length,
         title: normalizedTitle,
         // Omitted rather than sent as anything, so an unset lifetime is the
@@ -614,6 +653,7 @@ export async function publish(
       disclosure_url: String(grant['disclosure_url']),
       key_phrase: keyToMnemonic(key).join(' '),
       cover: coverReport,
+      program: programBuild.report,
     };
   }
 

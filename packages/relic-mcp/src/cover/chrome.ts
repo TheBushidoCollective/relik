@@ -32,6 +32,8 @@ export interface RunningChrome {
   readonly product: string;
   close(): Promise<void>;
   kill?: () => void;
+  /** The browser process id, when it could be read. */
+  readonly pid?: number;
 }
 
 export function defaultDiscoverySystem(): DiscoverySystem {
@@ -320,12 +322,39 @@ export function chromeArgs(
 
 export async function launchChrome(
   binaryPath: string,
-  options: { readonly startupTimeoutMs: number }
+  options: {
+    readonly startupTimeoutMs: number;
+    /** Directory the temporary profile is created in. Defaults to the OS temp dir. */
+    readonly profileParent?: string;
+    /** Wrap the browser in this launcher: its command, then the arguments before the binary. */
+    readonly launcher?: {
+      readonly command: string;
+      readonly prefixArgs: readonly string[];
+    };
+    /** Extra arguments placed before the trailing about:blank. */
+    readonly extraArgs?: readonly string[];
+    /** The environment for the browser process. Defaults to inheriting this process's. */
+    readonly env?: NodeJS.ProcessEnv;
+  }
 ): Promise<RunningChrome> {
-  const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'relic-chrome-'));
+  const profileDir = await fs.mkdtemp(
+    path.join(options.profileParent ?? os.tmpdir(), 'relic-chrome-')
+  );
   await fs.chmod(profileDir, 0o700);
 
-  const args = chromeArgs(binaryPath, profileDir);
+  const base = chromeArgs(binaryPath, profileDir);
+  const args = [
+    ...base.slice(0, -1),
+    ...(options.extraArgs ?? []),
+    base[base.length - 1]!,
+  ];
+  const launch =
+    options.launcher === undefined
+      ? { command: binaryPath, commandArgs: args }
+      : {
+          command: options.launcher.command,
+          commandArgs: [...options.launcher.prefixArgs, binaryPath, ...args],
+        };
 
   const MAX_STDERR = 2048;
   const stderrChunks: Buffer[] = [];
@@ -360,8 +389,9 @@ export async function launchChrome(
 
   let child: ChildProcess;
   try {
-    child = spawn(binaryPath, [...args], {
+    child = spawn(launch.command, [...launch.commandArgs], {
       stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
+      env: options.env,
     });
   } catch (err: unknown) {
     await fs.rm(profileDir, { recursive: true, force: true }).catch(() => {});
@@ -587,5 +617,6 @@ export async function launchChrome(
     product,
     close,
     kill,
+    pid: child.pid,
   };
 }
