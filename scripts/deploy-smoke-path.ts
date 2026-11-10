@@ -3,10 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp, type RelicApp } from '@relic/server/src/app.ts';
-import { diskAssets } from '@relic/server/src/assets.ts';
-import { MemoryStorage } from '@relic/server/src/storage.ts';
-import { MemoryStore } from '@relic/server/src/store.ts';
+import { createApp, type RelicApp } from '../packages/relic-server/src/app.ts';
+import { diskAssets } from '../packages/relic-server/src/assets.ts';
+import { MemoryStorage } from '../packages/relic-server/src/storage.ts';
+import { MemoryStore } from '../packages/relic-server/src/store.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const viewer = fileURLToPath(
