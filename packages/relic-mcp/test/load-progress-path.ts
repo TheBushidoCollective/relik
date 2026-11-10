@@ -1035,6 +1035,9 @@ const launch = createBrowserHeadlessLaunch(
           : arg
     ),
     '--autoplay-policy=no-user-gesture-required',
+    '--use-gl=angle',
+    '--use-angle=swiftshader',
+    '--enable-unsafe-swiftshader',
     '--disable-service-workers',
   ],
   profileDir
