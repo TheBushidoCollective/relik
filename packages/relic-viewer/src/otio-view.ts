@@ -2669,16 +2669,36 @@ export async function mountOtioView(
       root.dataset['buffering'] = bufferingValue;
     const bounds = playbackFrames();
     // Until the session answers the latest focus, transport would act on the
-    // previous scope.
+    // previous scope, and its time still belongs to the previous domain.
+    const pending = scopeRequest !== scopeSettled;
     const unavailable =
-      focusUnavailable !== null ||
-      bounds.end <= bounds.start ||
-      scopeRequest !== scopeSettled;
+      focusUnavailable !== null || bounds.end <= bounds.start || pending;
     const availability = playback?.availability();
-    // A composition or stack whose archive has no usable program: the
-    // playhead still moves for selection and comments, but nothing plays.
-    const compositeUnavailable = availability?.state === 'unavailable';
-    paintProgram(availability, compositeUnavailable);
+    // Legacy archives, and a session still opening, keep the canvas as before.
+    const legacy =
+      availability === undefined || availability.program === 'legacy';
+    const compositeFocus =
+      !focusedNode ||
+      schemaIs(focusedNode, 'Stack') ||
+      schemaIs(focusedNode, 'Timeline');
+    // The rendered program is faithful for any composite focus. The canvas
+    // shows original media only once the session has opened the focused
+    // track or item, never a previous focus's last frame. Without a program a
+    // composite focus has nothing to show: the playhead still moves for
+    // selection and comments, but nothing plays.
+    const showVideo = availability?.state === 'program' && compositeFocus;
+    const showCanvas =
+      legacy ||
+      (availability?.state === 'focus-track' && !pending && !compositeFocus);
+    const compositeUnavailable =
+      availability?.program === 'unavailable' && compositeFocus;
+    const awaitingFocus =
+      !legacy &&
+      !showVideo &&
+      !showCanvas &&
+      !compositeUnavailable &&
+      focusUnavailable === null;
+    paintProgram(availability, showVideo, showCanvas);
     const localFrame = otioLocalTime(domain, state.time).value;
     const minimum = String(bounds.start);
     const maximum = String(bounds.last);
@@ -2714,32 +2734,35 @@ export async function mountOtioView(
       if (describedBy) play.setAttribute('aria-describedby', describedBy);
       else play.removeAttribute('aria-describedby');
     }
-    const clockLabel = formatOtioTime(
-      focusedNode ? otioLocalTime(domain, state.time) : state.time,
-      !focusedNode && timelineId
-        ? doc.global_start_times?.[timelineId]
-        : undefined
-    );
-    if (clock.textContent !== clockLabel) clock.textContent = clockLabel;
-    const clockValue = String(state.time.value);
-    const clockRate = String(state.time.rate);
-    if (clock.dataset['value'] !== clockValue)
-      clock.dataset['value'] = clockValue;
-    if (clock.dataset['rate'] !== clockRate) clock.dataset['rate'] = clockRate;
-    const seekValue = String(localFrame);
-    if (seek.value !== seekValue) seek.value = seekValue;
-    const fraction =
-      domain.range.duration.value > 0
-        ? otioRangeGeometry(domain, {
-            start_time: state.time,
-            duration: { value: 0, rate },
-          })?.left
-        : undefined;
-    if (playhead.hidden !== (fraction === undefined))
-      playhead.hidden = fraction === undefined;
-    if (fraction !== undefined) {
-      const position = `calc(var(--otio-label-width) + (100% - var(--otio-label-width)) * ${fraction})`;
-      if (playhead.style.left !== position) playhead.style.left = position;
+    if (!pending) {
+      const clockLabel = formatOtioTime(
+        focusedNode ? otioLocalTime(domain, state.time) : state.time,
+        !focusedNode && timelineId
+          ? doc.global_start_times?.[timelineId]
+          : undefined
+      );
+      if (clock.textContent !== clockLabel) clock.textContent = clockLabel;
+      const clockValue = String(state.time.value);
+      const clockRate = String(state.time.rate);
+      if (clock.dataset['value'] !== clockValue)
+        clock.dataset['value'] = clockValue;
+      if (clock.dataset['rate'] !== clockRate)
+        clock.dataset['rate'] = clockRate;
+      const seekValue = String(localFrame);
+      if (seek.value !== seekValue) seek.value = seekValue;
+      const fraction =
+        domain.range.duration.value > 0
+          ? otioRangeGeometry(domain, {
+              start_time: state.time,
+              duration: { value: 0, rate },
+            })?.left
+          : undefined;
+      if (playhead.hidden !== (fraction === undefined))
+        playhead.hidden = fraction === undefined;
+      if (fraction !== undefined) {
+        const position = `calc(var(--otio-label-width) + (100% - var(--otio-label-width)) * ${fraction})`;
+        if (playhead.style.left !== position) playhead.style.left = position;
+      }
     }
     // A rendered program has no separate tracks: hide, mute and solo act on
     // original media only, so they are available in legacy and track focus.
@@ -2806,6 +2829,7 @@ export async function mountOtioView(
     }
     const programKey = [
       availability?.state ?? '',
+      String(awaitingFocus),
       ...(availability?.reasons ?? []).map(
         (reason) => `${reason.code}:${reason.node_id ?? ''}:${reason.message}`
       ),
@@ -2901,6 +2925,11 @@ export async function mountOtioView(
       previewStatus.append(...programStatusLines(availability.reasons));
       root.dataset['previewState'] = 'unavailable';
       if (timelineSettled) root.dataset['ready'] = 'diagnostic';
+    } else if (awaitingFocus) {
+      previewStatus.hidden = false;
+      previewStatus.append(element('p', 'otio-buffering', 'Buffering'));
+      root.dataset['previewState'] = 'buffering';
+      root.dataset['ready'] = 'false';
     }
     // Black/silence notices describe output, and an unavailable composite has
     // none; an unplayable focus range still blocks selection, so it stays.
@@ -2924,7 +2953,8 @@ export async function mountOtioView(
   /** Which preview surface is live, and the observable program state. */
   function paintProgram(
     availability: OtioProgramAvailability | undefined,
-    compositeUnavailable: boolean
+    showVideo: boolean,
+    showCanvas: boolean
   ): void {
     const programState = availability?.state;
     if (programState === undefined) delete root.dataset['otioProgramState'];
@@ -2934,13 +2964,8 @@ export async function mountOtioView(
     if (reason === undefined) delete root.dataset['otioProgramReason'];
     else if (root.dataset['otioProgramReason'] !== reason)
       root.dataset['otioProgramReason'] = reason;
-    const programHidden = programState !== 'program';
-    if (programVideo.hidden !== programHidden)
-      programVideo.hidden = programHidden;
-    // The canvas carries legacy playback and focused original media only. It
-    // never stands in for a composite the archive could not render.
-    const canvasHidden = !programHidden || compositeUnavailable;
-    if (canvas.hidden !== canvasHidden) canvas.hidden = canvasHidden;
+    if (programVideo.hidden !== !showVideo) programVideo.hidden = !showVideo;
+    if (canvas.hidden !== !showCanvas) canvas.hidden = !showCanvas;
     const muteHidden = availability?.muteAll !== true;
     if (programMute.hidden !== muteHidden) programMute.hidden = muteHidden;
   }
@@ -3092,7 +3117,7 @@ export async function mountOtioView(
           zip: parsed.zip,
           timelineId: id,
           timelineIds: doc.timeline_ids,
-          mediaPaths: otioDocumentMediaPaths(doc),
+          mediaPaths: () => otioDocumentMediaPaths(doc),
           timelineRange,
         });
         if (stale()) return;

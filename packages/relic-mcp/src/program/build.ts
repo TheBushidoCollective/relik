@@ -15,9 +15,11 @@
  * rendered timeline (STORED).
  */
 
+import { createHash } from 'node:crypto';
 import {
   indexOtioZip,
   MAX_EXPANDED_ZIP_BYTES,
+  MAX_OTIO_PROGRAM_MANIFEST_BYTES,
   MAX_OTIO_PROGRAM_FPS,
   otioDocumentMediaPaths,
   type OtioMediaEntry,
@@ -26,7 +28,6 @@ import {
   OTIO_PROGRAM_MANIFEST_ENTRY,
   OTIO_PROGRAM_PROTOCOL,
   OTIO_PROGRAM_SCHEMA,
-  otioBundleMediaIndex,
   otioProgramEntryName,
   parseOtioProgramManifest,
   readOtioDocument,
@@ -131,6 +132,7 @@ function hasReservedEntries(index: OtioZipIndex): boolean {
 function isSafeMediaPath(rest: string): boolean {
   if (rest.length === 0 || rest.startsWith('/') || rest.includes('\\'))
     return false;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: reject control characters in archive paths.
   if (/[\u0000-\u001f\u007f]/.test(rest)) return false;
   return rest
     .split('/')
@@ -172,19 +174,55 @@ function isSizeError(error: unknown): boolean {
   );
 }
 
-/** Every regular entry, decompressed, after the canonical-name guard. */
-async function baseEntries(index: OtioZipIndex): Promise<BaseEntry[]> {
-  const out: BaseEntry[] = [];
+/**
+ * Reads every archive entry through the bounded reader, which refuses any entry
+ * that does not decompress to exactly its declared size. Nothing is skipped: one
+ * unreadable entry refuses the publish. Returns every entry's bytes for the
+ * rebuild, and the digest of each media entry, from this single read.
+ */
+async function readArchiveEntries(
+  index: OtioZipIndex
+): Promise<{ entries: BaseEntry[]; digests: Map<string, string> }> {
+  const entries: BaseEntry[] = [];
+  const digests = new Map<string, string>();
   for (const [name, info] of index.entries) {
     if (info.isDirectory) continue;
     assertCanonicalEntry(name);
-    out.push({
-      name,
-      data: await index.readEntry(name),
-      method: name.startsWith('media/') ? 0 : 8,
-    });
+    let data: Uint8Array;
+    try {
+      data = await index.readEntry(name);
+    } catch {
+      refuse(
+        'archive-unreadable',
+        'an archive entry does not decompress to its declared size'
+      );
+    }
+    const isMedia = name.startsWith('media/');
+    entries.push({ name, data, method: isMedia ? 0 : 8 });
+    if (isMedia) {
+      digests.set(name, createHash('sha256').update(data).digest('hex'));
+    }
   }
-  return out;
+  return { entries, digests };
+}
+
+/** The media index the format reads: each media entry under its raw archive name. */
+function mediaIndexFrom(
+  index: OtioZipIndex,
+  digests: ReadonlyMap<string, string>
+): Record<string, OtioMediaEntry> {
+  const media = Object.create(null) as Record<string, OtioMediaEntry>;
+  for (const [name, info] of index.entries) {
+    const sha = digests.get(name);
+    if (info.isDirectory || sha === undefined) continue;
+    media[name] = {
+      key: name,
+      bundle_path: name,
+      size: info.uncompressedSize,
+      sha256: sha,
+    };
+  }
+  return media;
 }
 
 /**
@@ -207,6 +245,24 @@ function withinProgramBounds(program: {
   return seconds >= den / num;
 }
 
+/** No renderer is configured: every timeline is unavailable, and the manifest says why. */
+function noRendererOutput(timelineIds: readonly string[]): ProgramRenderOutput {
+  const message =
+    'this publisher has no program renderer, so this timeline has no program';
+  return {
+    browser: 'none',
+    outcomes: timelineIds.map(() => ({
+      status: 'unavailable' as const,
+      reasons: [{ code: 'unsupported-browser' as const, message }],
+    })),
+  };
+}
+
+/** True for a name that publishes as an OTIO archive, which always carries a manifest. */
+export function isOtioBundleName(name: string): boolean {
+  return archiveKind(name) === 'otioz';
+}
+
 export async function buildProgramArchive(
   input: ProgramBuildInput
 ): Promise<ProgramBuildResult> {
@@ -220,12 +276,6 @@ export async function buildProgramArchive(
 
   if (input.policy.invalid !== undefined) {
     refuse('invalid-config', input.policy.invalid);
-  }
-  if (input.renderer === undefined) {
-    refuse(
-      'renderer-not-configured',
-      'this publisher has no program renderer, so an OTIO archive cannot be published with its manifest'
-    );
   }
 
   let index: OtioZipIndex;
@@ -249,8 +299,8 @@ export async function buildProgramArchive(
     );
   }
 
-  const base = await baseEntries(index);
-  const mediaIndex = await otioBundleMediaIndex(index, { digests: true });
+  const { entries: base, digests } = await readArchiveEntries(index);
+  const mediaIndex = mediaIndexFrom(index, digests);
   const media: readonly OtioMediaEntry[] = Object.values(mediaIndex);
   const doc = readOtioDocument(index.contentOtioBytes, { mediaIndex });
   if (doc.document_sha256 !== index.contentSha256) {
@@ -262,7 +312,29 @@ export async function buildProgramArchive(
   const timelineIds = doc.timeline_ids;
   // The media the document references, exactly. The manifest and its self-check
   // must agree with this set and no other.
-  const referencedPaths = otioDocumentMediaPaths(doc);
+  let referencedPaths: readonly string[];
+  try {
+    referencedPaths = otioDocumentMediaPaths(doc);
+  } catch {
+    refuse(
+      'media-set-unbindable',
+      'the document references more media than a program manifest can bind, so the publish is refused'
+    );
+  }
+  // A ZIP name field holds at most 65535 bytes. Lone surrogates are not well-formed names.
+  for (const path of referencedPaths) {
+    if (
+      new TextEncoder().encode(path).length > 65535 ||
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+        path
+      )
+    ) {
+      refuse(
+        'unsafe-path',
+        'a referenced media name is not a safe archive path'
+      );
+    }
+  }
   if (timelineIds.length === 0) {
     refuse(
       'no-timelines',
@@ -281,15 +353,18 @@ export async function buildProgramArchive(
 
   let output: ProgramRenderOutput;
   try {
-    output = await input.renderer({
-      contentText,
-      documentSha256: index.contentSha256,
-      timelineIds,
-      media,
-      readMedia: (bundlePath) => index.readEntry(bundlePath),
-      maxBytes: budget,
-      forceEncoderAbsent: input.policy.forceEncoderAbsent,
-    });
+    output =
+      input.renderer === undefined
+        ? noRendererOutput(timelineIds)
+        : await input.renderer({
+            contentText,
+            documentSha256: index.contentSha256,
+            timelineIds,
+            media,
+            readMedia: (bundlePath) => index.readEntry(bundlePath),
+            maxBytes: budget,
+            forceEncoderAbsent: input.policy.forceEncoderAbsent,
+          });
   } catch (error) {
     if (error instanceof ProgramStorageError) {
       // Storage this publisher made could not be released or enforced. Degrading
@@ -425,6 +500,12 @@ export async function buildProgramArchive(
   // Build the archive and prove it verifies before it can leave this function.
   const attempt = async (plan: readonly Decision[]): Promise<Uint8Array> => {
     const manifest = stringifyOtioProgramManifest(manifestFor(plan));
+    if (manifest.length > MAX_OTIO_PROGRAM_MANIFEST_BYTES) {
+      refuse(
+        'manifest-size-cap',
+        'the program manifest exceeds the 16 MiB manifest cap, so the publish is refused rather than dropping the program'
+      );
+    }
     parseOtioProgramManifest(manifest);
     const programs: BaseEntry[] = plan.flatMap((d) =>
       d.rendered === undefined
@@ -469,6 +550,7 @@ export async function buildProgramArchive(
   try {
     bytes = await attempt(decisions);
   } catch (first) {
+    if (first instanceof PublishError) throw first;
     if (!isSizeError(first)) {
       // An output that fails verification is a defect in this publisher, not a
       // rendering limit. It is never reported as focus-only.
@@ -490,6 +572,7 @@ export async function buildProgramArchive(
     try {
       bytes = await attempt(finalPlan);
     } catch (second) {
+      if (second instanceof PublishError) throw second;
       if (isSizeError(second)) {
         refuse('manifest-unfit', BUILD_MESSAGES.manifestWontFit);
       }

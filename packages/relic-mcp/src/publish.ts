@@ -235,7 +235,7 @@ export interface PublishResult {
   readonly key_phrase: string;
   readonly cover: CoverReport;
   /** The program: rendered per timeline, or focus-only with the reasons. */
-  readonly program: ProgramReport;
+  readonly program?: ProgramReport;
 }
 
 export interface PublishDeps {
@@ -653,7 +653,9 @@ export async function publish(
       disclosure_url: String(grant['disclosure_url']),
       key_phrase: keyToMnemonic(key).join(' '),
       cover: coverReport,
-      program: programBuild.report,
+      ...(programBuild.report.status === 'not_applicable'
+        ? {}
+        : { program: programBuild.report }),
     };
   }
 

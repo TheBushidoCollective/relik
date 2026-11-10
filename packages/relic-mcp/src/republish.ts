@@ -41,9 +41,8 @@ import {
   readSource,
   reportComplete,
 } from './publish.ts';
-import type { ProgramPolicy } from './program/policy.ts';
 import type { ProgramReport } from './program/report.ts';
-import { buildProgramArchive } from './program/build.ts';
+import { buildProgramArchive, isOtioBundleName } from './program/build.ts';
 import {
   loadPublishState,
   type PublishState,
@@ -126,7 +125,7 @@ export interface RepublishResult {
    */
   readonly cover: CoverReport;
   /** The program: rendered per timeline, or focus-only with the reasons. */
-  readonly program: ProgramReport;
+  readonly program?: ProgramReport;
   readonly notify: boolean;
 }
 
@@ -406,13 +405,15 @@ export async function republish(
 
   // The program and the server's cap are read after the comment gate, so a
   // refused republish never reaches the network for them. The program goes in
-  // before encryption, so the grant pins the exact bytes that get encrypted.
-  const challenge = await postJson(
-    deps,
-    `${deps.serviceOrigin}/api/challenge`,
-    {}
-  );
-  const sizeLimit = Number(challenge['size_limit_bytes']);
+  // before encryption. A non-OTIO republish makes no cap request.
+  const otio = isOtioBundleName(source.basename);
+  const sizeLimit = otio
+    ? Number(
+        (await postJson(deps, `${deps.serviceOrigin}/api/challenge`, {}))[
+          'size_limit_bytes'
+        ]
+      )
+    : Number.MAX_SAFE_INTEGER;
   const programBuild = await buildProgramArchive({
     archive: source.bytes,
     sourceName: source.basename,
@@ -422,7 +423,7 @@ export async function republish(
     clientName: deps.clientName,
   });
   const payload = programBuild.bytes;
-  if (payload.length > sizeLimit) {
+  if (otio && payload.length > sizeLimit) {
     throw new PublishError(
       'local_size_precheck_failed',
       `${source.basename} with its program is ${payload.length} bytes, over the ` +
@@ -590,6 +591,8 @@ export async function republish(
     ...(acknowledgements.length > 0 ? { acknowledgements } : {}),
     cover: coverReport,
     notify: input.notify !== false,
-    program: programBuild.report,
+    ...(programBuild.report.status === 'not_applicable'
+      ? {}
+      : { program: programBuild.report }),
   };
 }
