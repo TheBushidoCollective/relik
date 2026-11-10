@@ -760,7 +760,7 @@ body {
      width while the actions lost their labels, which pushed Report off the
      row at 420px. Its accessible name carries the meaning when the text
      goes. */
-  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list, .card-actions) span) {
+  .action span:not(.action-count, .decision-tally, .decision-tally > span):not(:is(.share-panel, .decision-panel, .copy-panel, .band-more-list, .card-actions, .large-open) span) {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -6314,7 +6314,12 @@ mark[data-concealed] {
   min-width: 0;
 }
 
+/* One column as wide as the widest row, so every row, and the line number
+   stuck to its left edge, spans the whole horizontal scroll. */
 .text-window-page {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr);
+  align-content: start;
   flex: 1;
   min-width: 0;
   margin: 0;
@@ -6325,13 +6330,14 @@ mark[data-concealed] {
   tab-size: 4;
   white-space: pre;
   background: var(--surface);
+  /* A revealed quote scrolls clear of the sticky line numbers: 8ch number,
+     2ch padding, 1ch margin and the 1px rule. */
+  scroll-padding-inline: calc(11ch + 1px) 0.75rem;
 }
 
 .text-window-row {
   display: block;
   min-height: 20px;
-  width: max-content;
-  min-width: 100%;
 }
 
 .text-window-row::before {

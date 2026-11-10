@@ -469,10 +469,26 @@ export function confirmLargeOpen(
   dialog.setAttribute('aria-describedby', detail.id);
   const actions = document.createElement('div');
   actions.className = 'large-open-actions';
+  // Nothing beyond record zero has been fetched while the reader decides, so
+  // the card behind the dialog says Opening and drops the transfer size; the
+  // dialog alone states the size being asked about. The marker keeps a late
+  // progress frame from putting Fetching back.
+  const plate = document.querySelector<HTMLElement>(
+    'main.stage-loading[data-load-plate]'
+  );
+  const phase = plate?.querySelector<HTMLElement>('.load-phase');
+  const transfer = plate?.querySelector<HTMLElement>('[data-load-transfer]');
+  const heldTransfer = transfer?.hidden ?? false;
+  if (plate) plate.dataset['largeOpenPending'] = '';
+  if (phase) phase.textContent = LOAD_OPENING;
+  if (transfer) transfer.hidden = true;
   let settled = false;
   const finish = (accepted: boolean) => {
     if (settled) return;
     settled = true;
+    if (plate) delete plate.dataset['largeOpenPending'];
+    if (transfer) transfer.hidden = heldTransfer;
+    if (accepted && phase) phase.textContent = PHASE_FETCHING;
     dialog.remove();
     opener?.focus?.();
     resolve(accepted);
@@ -7644,7 +7660,16 @@ export function buildThread(
     if (entry.anchor.kind === 'text' || entry.anchor.kind === 'quote') {
       const windowed = textWindowFor(host);
       if (windowed) {
-        void windowed.reveal(commentId).then(() => setActiveMark(commentId));
+        // The window paints a quote only after locating it, so the card opens
+        // over the mark once the reveal settles, as on a document painted
+        // whole. A later row press or card supersedes this one.
+        const generation = ++cardGeneration;
+        void windowed.reveal(commentId).then(() => {
+          setActiveMark(commentId);
+          if (generation !== cardGeneration) return;
+          const box = anchorBoxFor(commentId);
+          if (box !== undefined) openCard(entry, box, true);
+        });
         return;
       }
     }
@@ -9410,7 +9435,12 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
   const applyProgress = (p: LoadProgress) => {
     plate.dataset['loadPhase'] = p.phase;
     if (phaseEl) {
-      if (p.phase === 'opening') {
+      // A pending large-open question holds the card at Opening; a progress
+      // frame landing behind the dialog must not claim the body is fetching.
+      if (
+        p.phase === 'opening' ||
+        plate.dataset['largeOpenPending'] !== undefined
+      ) {
         phaseEl.textContent = LOAD_OPENING;
       } else if (p.phase === 'fetching') {
         phaseEl.textContent = PHASE_FETCHING;

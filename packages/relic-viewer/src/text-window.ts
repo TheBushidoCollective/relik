@@ -220,14 +220,18 @@ export function renderTextWindow(
   const positions = new Map<string, { start: number; end: number }>();
   const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
   let pendingPaint: Promise<void> | undefined;
+  // Rows the page can show, so a resize knows whether the window must change.
+  const rowsInView = (): number =>
+    Math.max(
+      1,
+      Math.min(WINDOW_ROWS, Math.floor(page.clientHeight / 20) || 40)
+    );
+  let paintedRows = 0;
 
   const paintOnce = async (request: number): Promise<void> => {
     if (!index || controller.signal.aborted) return;
     first = Math.max(0, Math.min(index.rowCount - 1, first));
-    const visibleRows = Math.max(
-      1,
-      Math.min(WINDOW_ROWS, Math.floor(page.clientHeight / 20) || 40)
-    );
+    const visibleRows = rowsInView();
     const rows = await index.rows(first, visibleRows);
     const start = rows[0]!.start;
     const bytes = await content.read(start, rows[rows.length - 1]!.end);
@@ -278,6 +282,7 @@ export function renderTextWindow(
       fragment.appendChild(node);
     }
     page.replaceChildren(fragment);
+    paintedRows = visibleRows;
     scroll.value = String(first);
     line.value = String(rows[0]!.line);
     status.textContent = `${rows[0]!.line.toLocaleString()} / ${index.lineCount.toLocaleString()}`;
@@ -333,13 +338,7 @@ export function renderTextWindow(
       move(0);
     } else if (event.key === 'End') {
       event.preventDefault();
-      move(
-        Math.max(
-          0,
-          (index?.rowCount ?? 1) -
-            Math.max(1, Math.floor(page.clientHeight / 20) || 40)
-        )
-      );
+      move(Math.max(0, (index?.rowCount ?? 1) - rowsInView()));
     }
   });
   let wheelRemainder = 0;
@@ -406,6 +405,17 @@ export function renderTextWindow(
     }
   );
   void ready.catch(failed);
+  // The window holds only the rows that fit, so a page that grows or shrinks
+  // (a resized viewport, a sidebar closing) needs a new window.
+  if (typeof ResizeObserver === 'function') {
+    const resized = new ResizeObserver(() => {
+      if (index && paintedRows !== rowsInView()) move(first);
+    });
+    resized.observe(page);
+    controller.signal.addEventListener('abort', () => resized.disconnect(), {
+      once: true,
+    });
+  }
   const handle: TextWindowHandle = {
     ready,
     setMarks(next) {
@@ -446,6 +456,12 @@ export function renderTextWindow(
       if (!at || !index || controller.signal.aborted) return;
       first = await index.rowAtByte(at.start);
       await paint();
+      if (controller.signal.aborted) return;
+      // A long line can hold the quote beyond the page's right edge. The
+      // page's scroll padding keeps it clear of the sticky line numbers.
+      [...page.querySelectorAll<HTMLElement>('mark')]
+        .find((mark) => mark.dataset['commentId'] === id)
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       page.focus();
     },
     dispose() {

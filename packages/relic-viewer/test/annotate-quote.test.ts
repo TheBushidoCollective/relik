@@ -556,7 +556,7 @@ describe('quote anchor adapter and context-aware resolver', () => {
     );
 
     test('marks set before the renderer loads survive into its first paint', async () => {
-      const source = 'earlier source\n'.repeat(90) + 'alpha beta gamma\nend';
+      const source = `${'earlier source\n'.repeat(90)}alpha beta gamma\nend`;
       const root = new TestElement('div');
       const handle = mountTextWindow(
         root as unknown as HTMLElement,
@@ -624,7 +624,7 @@ describe('quote anchor adapter and context-aware resolver', () => {
     );
 
     test('cleanup after mounting stops the rendered window', async () => {
-      const source = 'earlier source\n'.repeat(90) + 'alpha beta gamma\nend';
+      const source = `${'earlier source\n'.repeat(90)}alpha beta gamma\nend`;
       const root = new TestElement('div');
       const handle = mountTextWindow(
         root as unknown as HTMLElement,
@@ -648,6 +648,88 @@ describe('quote anchor adapter and context-aware resolver', () => {
       expect(painted).toBe(0);
       expect(page.textContent).toBe('alpha beta gamma\nend');
       handle.dispose();
+    });
+
+    test('reveal scrolls only the revealed quote into view', async () => {
+      const source = `${'earlier source\n'.repeat(90)}${'x'.repeat(400)} far quote\nend`;
+      const root = new TestElement('div');
+      const handle = mountTextWindow(
+        root as unknown as HTMLElement,
+        contentFromBytes(new TextEncoder().encode(source))
+      );
+      try {
+        await handle.ready;
+        handle.setMarks([
+          { id: 'far', anchor: { kind: 'quote', exact: 'far quote' } },
+          { id: 'near', anchor: { kind: 'quote', exact: 'earlier' } },
+        ]);
+        await handle.reveal('far');
+        const page = root.querySelector('.text-window-page')!;
+        const marks = page.querySelectorAll('mark.relic-text-mark');
+        expect(
+          marks.map((mark) => [mark.dataset.commentId, mark.scrolledIntoView])
+        ).toEqual([['far', true]]);
+      } finally {
+        handle.dispose();
+      }
+    });
+
+    test('a page that changes height repaints the rows that now fit', async () => {
+      const observers: (() => void)[] = [];
+      let disconnected = 0;
+      const previous = Object.getOwnPropertyDescriptor(
+        globalThis,
+        'ResizeObserver'
+      );
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        configurable: true,
+        writable: true,
+        value: class {
+          constructor(callback: () => void) {
+            observers.push(callback);
+          }
+          observe(): void {}
+          disconnect(): void {
+            disconnected++;
+          }
+        },
+      });
+      const root = new TestElement('div');
+      const handle = mountTextWindow(
+        root as unknown as HTMLElement,
+        contentFromBytes(
+          new TextEncoder().encode(
+            Array.from({ length: 30 }, (_, n) => `line ${n + 1}\n`).join('')
+          )
+        )
+      );
+      try {
+        await handle.ready;
+        const page = root.querySelector('.text-window-page')!;
+        expect(page.querySelectorAll('.text-window-row')).toHaveLength(2);
+        expect(observers).toHaveLength(1);
+        let painted = 0;
+        root.addEventListener('relic:text-window-paint', () => painted++);
+        // Same height: nothing to repaint.
+        observers[0]!();
+        await handle.reveal('none');
+        expect(painted).toBe(0);
+        const { promise, resolve } = Promise.withResolvers<void>();
+        root.addEventListener('relic:text-window-paint', () => resolve(), {
+          once: true,
+        });
+        page.clientHeight = 200;
+        observers[0]!();
+        await promise;
+        expect(page.querySelectorAll('.text-window-row')).toHaveLength(10);
+        expect(page.textContent.startsWith('line 1\n')).toBe(true);
+      } finally {
+        handle.dispose();
+        if (previous)
+          Object.defineProperty(globalThis, 'ResizeObserver', previous);
+        else delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+      }
+      expect(disconnected).toBe(1);
     });
   });
 
