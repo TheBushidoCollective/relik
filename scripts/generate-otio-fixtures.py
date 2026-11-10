@@ -788,6 +788,7 @@ def build_scheduled_audio_timeline() -> Timeline:
 
     def group(identifier, clips):
         stack = Stack(name=identifier)
+        stack.source_range = TimeRange(RationalTime(4, rate), RationalTime(60, rate))
         stack.metadata["relic"] = {"id": identifier}
         track = Track(name=identifier + "-audio", kind=TrackKind.Audio)
         track.metadata["relic"] = {"id": identifier + "-audio"}
@@ -798,9 +799,9 @@ def build_scheduled_audio_timeline() -> Timeline:
     outer = Track(name="Nested audio dissolves", kind=TrackKind.Video)
     outer.metadata["relic"] = {"id": "scheduled-outer"}
     outer.extend([
-        group("scheduled-group-a", [clip("scheduled-a1", 30, 56), fade("scheduled-inner-a", 3, 2), clip("scheduled-a2", 100, 4)]),
+        group("scheduled-group-a", [clip("scheduled-a1", 26, 60), fade("scheduled-inner-a", 3, 2), clip("scheduled-a2", 100, 6)]),
         fade("scheduled-outer-fade", 4, 2),
-        group("scheduled-group-b", [clip("scheduled-b1", 20, 4), fade("scheduled-inner-b", 3, 2), clip("scheduled-b2", 50, 56)]),
+        group("scheduled-group-b", [clip("scheduled-b1", 16, 8), fade("scheduled-inner-b", 3, 2), clip("scheduled-b2", 50, 56)]),
     ])
     cuts = Track(name="Stereo hard cuts", kind=TrackKind.Audio)
     cuts.metadata["relic"] = {"id": "scheduled-cuts"}

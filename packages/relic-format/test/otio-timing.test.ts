@@ -2939,4 +2939,43 @@ describe('interval audio schedule', () => {
       }
     }
   });
+  test('does not invent child media outside an untrimmed nested stack', async () => {
+    const text = await Bun.file(
+      new URL(
+        './fixtures/otio/scheduled-audio.otiod/content.otio',
+        import.meta.url
+      )
+    ).text();
+    const authored = JSON.parse(text);
+    const outer = authored.tracks.children[0];
+    const incoming = outer.children[2];
+    const doc = readOtioDocument(text);
+    const at = { value: 57, rate: 30 };
+    expect(
+      evaluateOtioAt(doc, 'scheduled-audio', at).audio_contributions.map(
+        (item) => item.node_id
+      )
+    ).toContain('scheduled-b1');
+    expect(
+      audioScheduleForOtioRange(doc, 'scheduled-audio', {
+        start_time: at,
+        duration: { value: 1, rate: 30 },
+      }).some((span) => span.node_id === 'scheduled-b1')
+    ).toBe(true);
+    incoming.source_range = null;
+    const withoutHandles = readOtioDocument(JSON.stringify(authored));
+    expect(
+      evaluateOtioAt(
+        withoutHandles,
+        'scheduled-audio',
+        at
+      ).audio_contributions.map((item) => item.node_id)
+    ).not.toContain('scheduled-b1');
+    expect(
+      audioScheduleForOtioRange(withoutHandles, 'scheduled-audio', {
+        start_time: at,
+        duration: { value: 1, rate: 30 },
+      }).some((span) => span.node_id === 'scheduled-b1')
+    ).toBe(false);
+  });
 });

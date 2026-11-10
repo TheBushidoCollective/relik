@@ -470,10 +470,11 @@ oracle = {
     "right": "((sample_index * 257 + 5345) % 16001) - 8000",
     "unit_frames": 1600,
     "source_edits": {
-        "scheduled-a1": [30, 56], "scheduled-a2": [100, 4],
-        "scheduled-b1": [20, 4], "scheduled-b2": [50, 56],
+        "scheduled-a1": [26, 60], "scheduled-a2": [100, 6],
+        "scheduled-b1": [16, 8], "scheduled-b2": [50, 56],
         "scheduled-cut-a": [10, 30], "scheduled-cut-b": [60, 30]
     },
+    "nested_stack_source_range": [4, 60],
     "transition_offsets": {
         "scheduled-inner-a": [3, 2], "scheduled-outer-fade": [4, 2],
         "scheduled-inner-b": [3, 2]

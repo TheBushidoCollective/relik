@@ -9,16 +9,16 @@
   "unit_frames": 1600,
   "source_edits": {
     "scheduled-a1": [
-      30,
-      56
+      26,
+      60
     ],
     "scheduled-a2": [
       100,
-      4
+      6
     ],
     "scheduled-b1": [
-      20,
-      4
+      16,
+      8
     ],
     "scheduled-b2": [
       50,
@@ -33,6 +33,10 @@
       30
     ]
   },
+  "nested_stack_source_range": [
+    4,
+    60
+  ],
   "transition_offsets": {
     "scheduled-inner-a": [
       3,
