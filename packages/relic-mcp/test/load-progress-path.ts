@@ -13,6 +13,7 @@
  * 8. Noscript plate and hidden loading stage when scripts disabled
  * 9. Static plate when viewer.js is blocked
  * 10. Version switching preserving stage until ready
+ * 11. JSX component relic: rendered frame, comparison, and unavailable compiler (run with --only=jsx)
  *
  * Output: prints LOAD_PROGRESS_PATH_OK with the fixture and run counts.
  */
@@ -21,7 +22,14 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1003,6 +1011,56 @@ const repubRes = await callMcp('relic_republish', {
 });
 assert.equal(repubRes['version'], 2, 'md republish must advance to version 2');
 
+// JSX comparison relic, kept outside `fixtures` (the run 1-9 set). v2 is
+// published by republishing the same file, so both versions share one link.
+const compareDir = join(scratch, 'compare-src');
+await mkdir(compareDir, { recursive: true });
+const comparePath = join(compareDir, 'Compare.jsx');
+const compareJsx = (heading: string, items: string[]): string =>
+  [
+    'export default function Compare() {',
+    '  return (',
+    '    <div style={{ padding: "32px", fontFamily: "sans-serif" }}>',
+    `      <h1>${heading}</h1>`,
+    '      <ul>',
+    ...items.map((item) => `        <li>${item}</li>`),
+    '      </ul>',
+    '    </div>',
+    '  );',
+    '}',
+    '',
+  ].join('\n');
+await writeFile(
+  comparePath,
+  compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+);
+const compareRes = await callMcp('relic_publish', {
+  path: comparePath,
+  cover: false,
+  title: '',
+});
+const compareRelicId = String(compareRes['relic_id'] ?? '');
+const compareUrl = String(compareRes['url'] ?? compareRes['share_url'] ?? '');
+assert.ok(
+  compareRelicId !== '' && compareUrl.includes('#'),
+  'JSX compare publish must return a relic id and key'
+);
+await writeFile(
+  comparePath,
+  compareJsx('Relik JSX version two', ['Alpha', 'Gamma'])
+);
+const compareRepub = await callMcp('relic_republish', {
+  path: comparePath,
+  relic_id: compareRelicId,
+  notify: false,
+  cover: false,
+});
+assert.equal(
+  compareRepub['version'],
+  2,
+  'JSX compare republish must advance to version 2'
+);
+
 // --- Chrome Launch ----------------------------------------------------------
 
 const defaultOwnedShell =
@@ -1055,6 +1113,8 @@ interface OpenRunOptions {
   colorScheme?: 'light' | 'dark';
   disableScripts?: boolean;
   blockViewerJs?: boolean;
+  blockUrlPattern?: string;
+  bypassServiceWorker?: boolean;
   onBeforeNavigate?: (sessionId: string) => Promise<void>;
 }
 interface RenderEvent {
@@ -1106,6 +1166,7 @@ interface RunOutcome {
     loadingFinished: boolean;
     loadingFailed?: { errorText: string; canceled: boolean } | undefined;
   };
+  blockedRequests: number;
   close: () => Promise<void>;
 }
 
@@ -1133,6 +1194,13 @@ async function runRelicPage(
     { cacheDisabled: true },
     sessionId
   );
+  if (options.bypassServiceWorker) {
+    await cdp.send(
+      'Network.setBypassServiceWorker',
+      { bypass: true },
+      sessionId
+    );
+  }
 
   const vp = options.viewport ?? { width: 1440, height: 900, mobile: false };
   await cdp.send(
@@ -1177,6 +1245,34 @@ async function runRelicPage(
     cdp.onEvent((e) => {
       if (e.method === 'Fetch.requestPaused' && e.sessionId === sessionId) {
         const reqId = (e.params as { requestId: string }).requestId;
+        void cdp
+          .send(
+            'Fetch.failRequest',
+            { requestId: reqId, errorReason: 'BlockedByClient' },
+            sessionId
+          )
+          .catch(() => {});
+      }
+    });
+  }
+
+  // Count and fail every request matching blockUrlPattern (the compiler chunk).
+  let blockedRequests = 0;
+  let stopBlock: (() => void) | undefined;
+  if (options.blockUrlPattern !== undefined) {
+    await cdp.send(
+      'Fetch.enable',
+      {
+        patterns: [
+          { urlPattern: options.blockUrlPattern, requestStage: 'Request' },
+        ],
+      },
+      sessionId
+    );
+    stopBlock = cdp.onEvent((e) => {
+      if (e.method === 'Fetch.requestPaused' && e.sessionId === sessionId) {
+        const reqId = (e.params as { requestId: string }).requestId;
+        blockedRequests++;
         void cdp
           .send(
             'Fetch.failRequest',
@@ -1415,12 +1511,126 @@ async function runRelicPage(
     firstProgressShot,
     readyShot,
     storageRequest: storageReq,
+    blockedRequests,
     close: async () => {
       stopContextListener();
+      stopBlock?.();
       stopNetListener();
       await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
     },
   };
+}
+
+// Evaluates in the page's main world and fails loudly on a script error.
+async function evalMain<T = unknown>(
+  sessionId: string,
+  expression: string
+): Promise<T> {
+  const res = (await cdp.send(
+    'Runtime.evaluate',
+    { expression, returnByValue: true },
+    sessionId
+  )) as { result?: { value?: T }; exceptionDetails?: unknown };
+  assert.equal(
+    res.exceptionDetails,
+    undefined,
+    `evaluate failed: ${expression.slice(0, 120)}`
+  );
+  return res.result?.value as T;
+}
+
+async function waitUntil(
+  check: () => Promise<boolean>,
+  timeoutMs: number,
+  label: string
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await check()) return;
+    await Bun.sleep(50);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+// Text of each usercontent frame inside `container`, read from an isolated
+// world the way html-image-comments-path.ts does. Frames outside the container
+// are ignored, so a stale frame cannot satisfy a check.
+async function usercontentTexts(
+  sessionId: string,
+  container: string
+): Promise<string[]> {
+  const tree = (await cdp.send('Page.getFrameTree', {}, sessionId)) as {
+    frameTree: { childFrames?: Array<{ frame: { id: string } }> };
+  };
+  const texts: string[] = [];
+  for (const child of tree.frameTree.childFrames ?? []) {
+    const frameId = child.frame.id;
+    const owner = (await cdp
+      .send('DOM.getFrameOwner', { frameId }, sessionId)
+      .catch(() => null)) as { backendNodeId: number } | null;
+    if (!owner) continue;
+    const resolved = (await cdp
+      .send(
+        'DOM.resolveNode',
+        { backendNodeId: owner.backendNodeId },
+        sessionId
+      )
+      .catch(() => null)) as { object?: { objectId?: string } } | null;
+    const objectId = resolved?.object?.objectId;
+    if (!objectId) continue;
+    const inside = (await cdp
+      .send(
+        'Runtime.callFunctionOn',
+        {
+          objectId,
+          functionDeclaration: `function () { return this.closest(${JSON.stringify(container)}) !== null; }`,
+          returnByValue: true,
+        },
+        sessionId
+      )
+      .catch(() => null)) as { result?: { value?: boolean } } | null;
+    if (inside?.result?.value !== true) continue;
+    const world = (await cdp.send(
+      'Page.createIsolatedWorld',
+      { frameId, worldName: 'jsx-component-proof' },
+      sessionId
+    )) as { executionContextId: number };
+    const read = (await cdp
+      .send(
+        'Runtime.evaluate',
+        {
+          expression: 'document.body ? document.body.textContent || "" : ""',
+          contextId: world.executionContextId,
+          returnByValue: true,
+        },
+        sessionId
+      )
+      .catch(() => null)) as { result?: { value?: string } } | null;
+    texts.push(read?.result?.value ?? '');
+  }
+  return texts;
+}
+
+// The one dist chunk carrying the lazily loaded compiler. Its markers are
+// Sucrase option names; the shell-budget test asserts they sit in one chunk.
+async function findCompilerChunk(dir: string): Promise<string> {
+  const carriers: string[] = [];
+  for (const name of await readdir(dir)) {
+    if (!/^chunk-[^/]+\.js$/.test(name)) continue;
+    const text = await readFile(join(dir, name), 'utf8');
+    if (
+      text.includes('enableLegacyTypeScriptModuleInterop') &&
+      text.includes('jsxFragmentPragma')
+    ) {
+      carriers.push(name);
+    }
+  }
+  assert.equal(
+    carriers.length,
+    1,
+    `expected one compiler chunk in ${dir}, found ${carriers.length}`
+  );
+  return carriers[0]!;
 }
 
 // Check filtering args
@@ -2607,6 +2817,212 @@ try {
     console.log(
       `  ✓ Version switch smoothly preserved stage, showed status pill, and rendered v1 (${dur}ms)`
     );
+  }
+
+  // =========================================================================
+  // RUN 10: JSX component relic (frame, comparison, compiler unreachable)
+  // =========================================================================
+  if (
+    !onlyFilter ||
+    onlyFilter === '10' ||
+    onlyFilter === 'run10' ||
+    onlyFilter === 'jsx'
+  ) {
+    console.log(
+      '\n--- Run 10: JSX component relic (frame, comparison, compiler unreachable) ---'
+    );
+    const t0 = Date.now();
+    const viewport = { width: 1440, height: 900 };
+    const summaryExpr = `Array.from(document.querySelectorAll('.diff-summary span')).map((s) => s.textContent || '')`;
+
+    // Steps 1 and 2 share one page: open v2, then open its comparison.
+    const jsxRun = await runRelicPage(compareUrl, {
+      viewport,
+      colorScheme: 'light',
+    });
+    runsExecuted++;
+    const jsxSid = jsxRun.sessionId;
+
+    // Step 1: v2 renders in one sandboxed frame, without the source notice.
+    await waitUntil(
+      () =>
+        evalMain<boolean>(
+          jsxSid,
+          `Boolean(document.querySelector('main.stage.stage-sandboxed-jsx[data-render-state="ready"]'))`
+        ),
+      30_000,
+      'JSX stage to reach render state ready'
+    );
+    const sandboxFrames = await evalMain<number>(
+      jsxSid,
+      `document.querySelectorAll('iframe.usercontent-frame[sandbox="allow-scripts"]').length`
+    );
+    assert.equal(
+      sandboxFrames,
+      1,
+      `JSX step 1: expected one sandboxed frame, found ${sandboxFrames}`
+    );
+    const stageText = await evalMain<string>(
+      jsxSid,
+      `document.querySelector('main.stage')?.textContent || ''`
+    );
+    assert.ok(
+      !stageText.includes('do not compile'),
+      'JSX step 1: the component must render, not show the do-not-compile notice'
+    );
+    let v2Texts: string[] = [];
+    await waitUntil(
+      async () => {
+        v2Texts = await usercontentTexts(jsxSid, 'main.stage');
+        return v2Texts.some((t) => t.includes('version two'));
+      },
+      15_000,
+      'version two inside the rendered frame'
+    );
+    assert.ok(
+      !v2Texts.some((t) => t.includes('This component could not be rendered.')),
+      'JSX step 1: the frame reports a render failure'
+    );
+    const v2Shot = (await cdp.send(
+      'Page.captureScreenshot',
+      { format: 'png' },
+      jsxSid
+    )) as { data: string };
+    await writeFile(
+      join(proofDir, '10-jsx-v2-frame.png'),
+      Buffer.from(v2Shot.data, 'base64')
+    );
+    console.log('JSX_STEP_1_FRAME_OK');
+
+    // Step 2: the comparison frames both versions, each in its own pane.
+    await evalMain(
+      jsxSid,
+      `(() => {
+        const button = document.querySelector('.action-history');
+        if (!button) throw new Error('action-history button missing');
+        button.click();
+        return true;
+      })()`
+    );
+    await waitUntil(
+      async () =>
+        (await evalMain<number>(
+          jsxSid,
+          `document.querySelectorAll('.compare-pane iframe.usercontent-frame').length`
+        )) === 2,
+      30_000,
+      'two comparison panes'
+    );
+    await waitUntil(
+      async () => {
+        const texts = await evalMain<string[]>(jsxSid, summaryExpr);
+        return (
+          texts.length > 0 &&
+          texts.every((t) => t !== 'Rendering both versions.')
+        );
+      },
+      30_000,
+      'comparison summary to settle'
+    );
+    const summaryTexts = await evalMain<string[]>(jsxSid, summaryExpr);
+    assert.ok(
+      !summaryTexts.some((t) =>
+        t.includes('could not read their rendered structure')
+      ),
+      `JSX step 2: comparison could not read rendered structure: ${summaryTexts.join(' | ')}`
+    );
+    let cmpTexts: string[] = [];
+    await waitUntil(
+      async () => {
+        cmpTexts = await usercontentTexts(jsxSid, '.compare-pane');
+        return (
+          cmpTexts.length === 2 &&
+          cmpTexts.some((t) => t.includes('version one')) &&
+          cmpTexts.some((t) => t.includes('version two'))
+        );
+      },
+      30_000,
+      'both comparison frames to show their versions'
+    );
+    const cmpShot = (await cdp.send(
+      'Page.captureScreenshot',
+      { format: 'png' },
+      jsxSid
+    )) as { data: string };
+    await writeFile(
+      join(proofDir, '10-jsx-compare.png'),
+      Buffer.from(cmpShot.data, 'base64')
+    );
+    console.log('JSX_STEP_2_COMPARE_OK panes=2');
+    await jsxRun.close();
+
+    // Step 3: the compiler chunk is blocked, so routing cannot load it and the
+    // reader gets the explicit unavailable card, not damaged content or source.
+    const compilerChunk = await findCompilerChunk(viewerDist);
+    const blockedRun = await runRelicPage(compareUrl, {
+      viewport,
+      colorScheme: 'light',
+      blockUrlPattern: `*${compilerChunk}*`,
+      bypassServiceWorker: true,
+    });
+    runsExecuted++;
+    const deadState = await evalMain<{
+      dead: boolean;
+      accession: string;
+      body: string;
+      stageCode: boolean;
+    }>(
+      blockedRun.sessionId,
+      `(() => ({
+        dead: document.querySelector('main.stage.stage-dead') !== null,
+        accession: document.querySelector('.accession')?.textContent || '',
+        body: document.body?.textContent || '',
+        stageCode: document.querySelector('.stage-code') !== null,
+      }))()`
+    );
+    assert.ok(
+      blockedRun.blockedRequests >= 1,
+      `JSX step 3: compiler chunk ${compilerChunk} was never requested, so nothing was blocked`
+    );
+    assert.ok(
+      deadState.dead,
+      'JSX step 3: blocked compiler must show the dead card'
+    );
+    assert.ok(
+      deadState.accession.includes('service_unreachable'),
+      `JSX step 3: expected accession service_unreachable, found "${deadState.accession}"`
+    );
+    assert.ok(
+      deadState.body.includes('Something went wrong reaching the service.'),
+      'JSX step 3: card must say the service could not be reached'
+    );
+    assert.ok(
+      !deadState.body.includes('content_damaged'),
+      'JSX step 3: blocked compiler must not read as damaged content'
+    );
+    assert.equal(
+      deadState.stageCode,
+      false,
+      'JSX step 3: blocked compiler must not fall back to the source view'
+    );
+    if (blockedRun.readyShot) {
+      await writeFile(
+        join(proofDir, '10-jsx-compiler-unreachable.png'),
+        blockedRun.readyShot
+      );
+    }
+    console.log(
+      `JSX_STEP_3_COMPILER_UNREACHABLE_OK blocked=${blockedRun.blockedRequests}`
+    );
+    await blockedRun.close();
+    console.log('JSX_COMPONENT_PATH_OK');
+
+    const dur = Date.now() - t0;
+    runSummary.push({
+      name: 'Run 10: JSX component relic frame, comparison, compiler unreachable',
+      durationMs: dur,
+      status: 'pass',
+    });
   }
 
   // =========================================================================
