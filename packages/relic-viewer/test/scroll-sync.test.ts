@@ -275,6 +275,15 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
   const prevDoc = (globalThis as Record<string, unknown>).document;
   const prevRaf = (globalThis as Record<string, unknown>).requestAnimationFrame;
   const prevWin = (globalThis as Record<string, unknown>).window;
+  const prevCustomEvent = (globalThis as Record<string, unknown>).CustomEvent;
+  (globalThis as Record<string, unknown>).CustomEvent = class {
+    readonly type: string;
+    readonly detail: unknown;
+    constructor(type: string, options?: { detail?: unknown }) {
+      this.type = type;
+      this.detail = options?.detail;
+    }
+  };
   const body = new ElementStub('BODY');
   let rafQueue: (() => void)[] = [];
   const flushFrames = (): void => {
@@ -312,6 +321,9 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
     (globalThis as Record<string, unknown>).document = prevDoc;
     (globalThis as Record<string, unknown>).window = prevWin;
     (globalThis as Record<string, unknown>).requestAnimationFrame = prevRaf;
+    if (prevCustomEvent === undefined)
+      delete (globalThis as Record<string, unknown>).CustomEvent;
+    else (globalThis as Record<string, unknown>).CustomEvent = prevCustomEvent;
   }
 }
 
