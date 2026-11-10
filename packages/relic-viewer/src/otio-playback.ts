@@ -1162,6 +1162,7 @@ export function createOtioPlayback(
   };
   let pcmClockSession: PcmClockSession | null = null;
   let pcmBootstrapChain: Promise<void> = Promise.resolve();
+  const pcmQuarantinedContexts = new Map<AudioContext, Promise<void>>();
   let pcmBootstrapToken = 0;
   let pcmBootstrapAbort = new AbortController();
   let pcmIntentionalTransition: AudioContextState | null = null;
@@ -1200,6 +1201,26 @@ export function createOtioPlayback(
       clearTimeout(timer);
     }
   }
+  async function beforePcmAbortDeadline<T>(
+    operation: Promise<T>,
+    requestMs: number,
+    signal: AbortSignal
+  ): Promise<T> {
+    const cancelled = Promise.withResolvers<never>();
+    const onAbort = () =>
+      cancelled.reject(new Error('transport clock bootstrap cancelled'));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      return await beforePcmDeadline(
+        Promise.race([operation, cancelled.promise]),
+        requestMs
+      );
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
   let coldFirstTick = false;
   let coldFirstPaint = false;
   let graphicsLost = false;
@@ -2833,6 +2854,20 @@ export function createOtioPlayback(
     );
   }
 
+  function quarantinePcmContext(
+    context: AudioContext,
+    cleanup: Promise<void>
+  ): void {
+    pcmQuarantinedContexts.set(context, cleanup);
+    void cleanup.then(
+      () => {
+        if (pcmQuarantinedContexts.get(context) === cleanup)
+          pcmQuarantinedContexts.delete(context);
+      },
+      () => undefined
+    );
+  }
+
   function acquirePcmClockSession(
     context: AudioContext
   ): Promise<PcmClockSession> {
@@ -2840,6 +2875,10 @@ export function createOtioPlayback(
     const generation = renderGeneration;
     const wall = pcmRequestWall;
     const operation = pcmBootstrapChain.then(() => {
+      if (pcmQuarantinedContexts.has(context))
+        throw new Error(
+          'audio context is quarantined pending bootstrap cleanup'
+        );
       if (
         isDisposed ||
         !isPlaying ||
@@ -2867,7 +2906,17 @@ export function createOtioPlayback(
       existing.context === context &&
       existing.routeVersion === pcmRouteVersion
     ) {
-      await existing.sealed;
+      try {
+        await beforePcmAbortDeadline(
+          existing.sealed,
+          pcmRequestWall,
+          pcmBootstrapAbort.signal
+        );
+      } catch (error) {
+        retirePcmClockSession();
+        quarantinePcmContext(context, existing.gate.dispose());
+        throw error;
+      }
       if (pcmClockSession !== existing || existing.retired)
         throw new Error('transport clock session retired');
       if (!existing.renewalFailed) return existing;
@@ -2883,6 +2932,32 @@ export function createOtioPlayback(
     let initialState: AudioContextState = context.state;
     let succeeded = false;
     let leaseMatches = false;
+    let transitionAttempted = false;
+    const pendingNative = new Set<Promise<void>>();
+    const trackNative = <T>(operation: Promise<T>): Promise<T> => {
+      const settled = operation.then(
+        () => undefined,
+        () => undefined
+      );
+      pendingNative.add(settled);
+      void settled.then(() => pendingNative.delete(settled));
+      return operation;
+    };
+    const bounded = async <T>(operation: Promise<T>): Promise<T> => {
+      const cancelled = Promise.withResolvers<never>();
+      const onAbort = () =>
+        cancelled.reject(new Error('transport clock bootstrap cancelled'));
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        return await beforePcmDeadline(
+          Promise.race([operation, cancelled.promise]),
+          requestWall
+        );
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+      }
+    };
     const onLeaseRevoked = () => {
       if (token === pcmBootstrapToken && !isDisposed)
         failScheduledAudio('audio clock lease revoked');
@@ -2903,13 +2978,15 @@ export function createOtioPlayback(
         throw new Error('transport clock bootstrap cancelled');
     };
     const suspend = async () => {
+      transitionAttempted = true;
       pcmIntentionalTransition = 'suspended';
-      await (lease ? lease.suspend() : context.suspend());
+      await bounded(trackNative(lease ? lease.suspend() : context.suspend()));
     };
     const resume = async () => {
+      transitionAttempted = true;
       pcmIntentionalTransition = 'running';
       try {
-        await (lease ? lease.resume() : context.resume());
+        await bounded(trackNative(lease ? lease.resume() : context.resume()));
       } finally {
         pcmIntentionalTransition = null;
       }
@@ -2928,13 +3005,20 @@ export function createOtioPlayback(
       if (options.audioContext) {
         if (!options.acquireAudioClockLease)
           throw new Error('audio clock lease unavailable');
-        lease = await options.acquireAudioClockLease(signal);
+        const acquisition = options
+          .acquireAudioClockLease(signal)
+          .then((value) => {
+            lease = value;
+            leaseMatches = value.context === context;
+            if (leaseMatches) initialState = context.state;
+            return value;
+          });
+        lease = await bounded(trackNative(acquisition));
         leaseMatches = lease.context === context;
         if (!leaseMatches)
           throw new Error('audio clock lease context mismatch');
         lease.signal.addEventListener('abort', onLeaseRevoked, { once: true });
         valid();
-        initialState = context.state;
       }
       for (let attempt = 0; attempt < 2; attempt++) {
         valid();
@@ -2967,7 +3051,7 @@ export function createOtioPlayback(
               : undefined
           );
           try {
-            gate = await beforePcmDeadline(construction, requestWall);
+            gate = await bounded(trackNative(construction));
           } catch (error) {
             void construction.then(
               (lateGate) => pcmGateRetirements.retire(lateGate, release),
@@ -2982,7 +3066,7 @@ export function createOtioPlayback(
           gate.node.connect(masterGain);
           await resume();
           valid();
-          await beforePcmDeadline(gate.ready(), requestWall);
+          await bounded(gate.ready());
           valid();
           if (clockFault) throw clockFault;
           await suspend();
@@ -2991,10 +3075,7 @@ export function createOtioPlayback(
           const nonce = ++pcmCheckpointNonce;
           if (!Number.isSafeInteger(nonce))
             throw new Error('clock checkpoint nonce exhausted');
-          const snapshot = await beforePcmDeadline(
-            gate.checkpoint(nonce),
-            requestWall
-          );
+          const snapshot = await bounded(gate.checkpoint(nonce));
           valid();
           const after = frozenFrame();
           if (
@@ -3013,7 +3094,7 @@ export function createOtioPlayback(
           const acceptance = gate.acceptAnchor(snapshot);
           await resume();
           valid();
-          await beforePcmDeadline(acceptance, requestWall);
+          await bounded(acceptance);
           valid();
           if (clockFault) throw clockFault;
           const session: PcmClockSession = {
@@ -3037,27 +3118,40 @@ export function createOtioPlayback(
         }
       }
       throw new Error('transport clock checkpoint mismatch');
+    } catch (error) {
+      if (token === pcmBootstrapToken) retirePcmClockSession();
+      throw error;
     } finally {
-      if (lease) {
+      const cleanup = (async () => {
+        await Promise.all([...pendingNative]);
         try {
-          if (leaseMatches && !succeeded && !lease.signal.aborted) {
-            if (initialState === 'running' && context.state === 'suspended')
-              await resume();
-            else if (
-              initialState === 'suspended' &&
-              context.state === 'running'
-            )
-              await suspend();
+          if (lease) {
+            try {
+              if (
+                leaseMatches &&
+                transitionAttempted &&
+                !succeeded &&
+                !lease.signal.aborted
+              ) {
+                if (initialState === 'running' && context.state === 'suspended')
+                  await lease.resume();
+                else if (
+                  initialState === 'suspended' &&
+                  context.state === 'running'
+                )
+                  await lease.suspend();
+              }
+            } finally {
+              lease.signal.removeEventListener('abort', onLeaseRevoked);
+              await lease.release();
+            }
           }
         } finally {
-          lease.signal.removeEventListener('abort', onLeaseRevoked);
-          try {
-            await lease.release();
-          } finally {
-            pcmIntentionalTransition = null;
-          }
+          pcmIntentionalTransition = null;
         }
-      } else pcmIntentionalTransition = null;
+      })();
+      quarantinePcmContext(context, cleanup);
+      if (succeeded) await beforePcmDeadline(cleanup, requestWall);
     }
   }
 
@@ -6864,6 +6958,12 @@ export function createOtioPlayback(
       const playGeneration = renderGeneration;
       const requestEpoch = ++playRequestEpoch;
       const ctx = getAudioContext();
+      if (ctx && pcmQuarantinedContexts.has(ctx)) {
+        failScheduledAudio(
+          'audio context is quarantined pending bootstrap cleanup'
+        );
+        return;
+      }
       let selection: PcmSelection;
       try {
         if (stale(playGeneration) || requestEpoch !== playRequestEpoch) return;
@@ -6903,8 +7003,23 @@ export function createOtioPlayback(
         }
         audioBackend = 'native';
         if (ctx?.state === 'suspended') {
+          let resumeSettled = false;
           try {
-            await beforePcmDeadline(ctx.resume(), pcmRequestWall);
+            const resuming = ctx.resume();
+            const settled = resuming.then(
+              () => {
+                resumeSettled = true;
+              },
+              () => {
+                resumeSettled = true;
+              }
+            );
+            try {
+              await beforePcmDeadline(resuming, pcmRequestWall);
+            } catch (error) {
+              if (!resumeSettled) quarantinePcmContext(ctx, settled);
+              throw error;
+            }
           } catch (error) {
             if (!stale(playGeneration) && requestEpoch === playRequestEpoch)
               failScheduledAudio(
@@ -6952,7 +7067,7 @@ export function createOtioPlayback(
       if (isDisposed) return;
       pcmPlayIntent = false;
       playRequestEpoch++;
-      if (!pcmRun && pcmClockSession === null) {
+      if (!pcmRun) {
         pcmBootstrapToken++;
         pcmBootstrapAbort.abort();
         pcmBootstrapAbort = new AbortController();
@@ -7236,9 +7351,21 @@ export function createOtioPlayback(
           clearTimeout(timer);
         }
       }
-      await pcmBootstrapChain;
+      await beforePcmDeadline(pcmBootstrapChain, presentClockMs());
+      if (audioContext && pcmQuarantinedContexts.has(audioContext))
+        throw new Error(
+          'audio context is quarantined pending bootstrap cleanup'
+        );
       const session = pcmClockSession;
-      if (session) await session.sealed;
+      if (session) {
+        try {
+          await beforePcmDeadline(session.sealed, presentClockMs());
+        } catch (error) {
+          retirePcmClockSession();
+          quarantinePcmContext(session.context, session.gate.dispose());
+          throw error;
+        }
+      }
       retirePcmClockSession();
       pcmAdmission = null;
       pcmResumeFrame = null;

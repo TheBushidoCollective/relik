@@ -1751,6 +1751,9 @@ describe('otio playback controller', () => {
       checkpointOffsets?: number[];
       noLease?: boolean;
       leaseGate?: Promise<void>;
+      ownedContext?: boolean;
+      suspendGate?: Promise<void>;
+      resumeGate?: Promise<void>;
       imageCuts?: boolean;
       resolveMedia?: (
         path: OtioBundleEntryName
@@ -1760,12 +1763,15 @@ describe('otio playback controller', () => {
     let wall = 2000;
     let renderFrame = 48000;
     let outputFrame = 48000;
+    let outputWallOffset = 1000;
     const checkpointOffsets = [...(clockOptions?.checkpointOffsets ?? [])];
     let suspensions = 0;
+    let resumes = 0;
     let leaseReleases = 0;
     let timerId = 0;
     const timers = new Map<number, { at: number; callback: () => void }>();
     const descriptors = propertyDescriptors(globalThis, [
+      'AudioContext',
       'Worker',
       'AudioWorkletNode',
       'location',
@@ -1851,7 +1857,7 @@ describe('otio playback controller', () => {
       getOutputTimestamp() {
         return {
           contextTime: outputFrame / this.sampleRate,
-          performanceTime: 1000 + outputFrame / 48,
+          performanceTime: outputWallOffset + outputFrame / 48,
         };
       }
       createGain() {
@@ -1884,13 +1890,18 @@ describe('otio playback controller', () => {
       }
       async suspend() {
         suspensions++;
+        await clockOptions?.suspendGate;
         this.state = 'suspended';
       }
       async resume() {
+        resumes++;
+        await clockOptions?.resumeGate;
         if (this.state === 'suspended') {
           renderFrame += 256;
           outputFrame += 256;
           wall += 256 / 48;
+          if (clockOptions?.suspendGate || clockOptions?.resumeGate)
+            outputWallOffset = wall - outputFrame / 48;
         }
         this.state = 'running';
       }
@@ -2159,6 +2170,16 @@ describe('otio playback controller', () => {
       );
     const timelineId = audioOnly.timeline_ids[0]!;
     const audioContext = new FakeContext();
+    if (clockOptions?.ownedContext) {
+      Object.defineProperty(globalThis, 'AudioContext', {
+        configurable: true,
+        value: class {
+          constructor() {
+            return audioContext;
+          }
+        },
+      });
+    }
     const playback = createOtioPlayback({
       document: audioOnly,
       timelineId,
@@ -2167,8 +2188,10 @@ describe('otio playback controller', () => {
         clockOptions?.resolveMedia
           ? clockOptions.resolveMedia(path)
           : (custom?.audio ?? new Blob([bytes])),
-      audioContext: audioContext as unknown as AudioContext,
-      ...(clockOptions?.noLease
+      ...(!clockOptions?.ownedContext
+        ? { audioContext: audioContext as unknown as AudioContext }
+        : {}),
+      ...(clockOptions?.noLease || clockOptions?.ownedContext
         ? {}
         : {
             acquireAudioClockLease: async () => {
@@ -2204,8 +2227,10 @@ describe('otio playback controller', () => {
       deliver = true
     ) {
       wall = nextWall;
-      renderFrame = nextRender;
-      outputFrame = nextOutput;
+      if (audioContext.state === 'running') {
+        renderFrame = nextRender;
+        outputFrame = nextOutput;
+      }
       for (const [id, timer] of timers) {
         if (timer.at <= wall) {
           timers.delete(id);
@@ -2224,7 +2249,7 @@ describe('otio playback controller', () => {
       const pending = playback.play().finally(() => {
         settled = true;
       });
-      for (let i = 0; i < 35 && !settled; i++) {
+      for (let i = 0; i < 50 && !settled; i++) {
         await flush();
         const currentVideo = video as MockMedia | null;
         if (
@@ -2266,6 +2291,9 @@ describe('otio playback controller', () => {
       audioContext,
       get suspensions() {
         return suspensions;
+      },
+      get resumes() {
+        return resumes;
       },
       get leaseReleases() {
         return leaseReleases;
@@ -2392,6 +2420,145 @@ describe('otio playback controller', () => {
       fixture.restore();
     }
   });
+
+  test('late lease acquisition remains quarantined and releases its authority once', async () => {
+    const leaseGate = Promise.withResolvers<void>();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      leaseGate: leaseGate.promise,
+    });
+    try {
+      const pending = fixture.playback.play();
+      await fixture.flush();
+      await fixture.advance(
+        fixture.wall + 351,
+        fixture.renderFrame,
+        fixture.outputFrame
+      );
+      await pending;
+      await fixture.playback.play();
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) => item.message.includes('quarantined'))
+      ).toBe(true);
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.leaseReleases).toBe(0);
+      // The owner changes state before the late lease is granted.
+      fixture.audioContext.state = 'suspended';
+      leaseGate.resolve();
+      await fixture.flush();
+      expect(fixture.leaseReleases).toBe(1);
+      expect(fixture.audioContext.state).toBe('suspended');
+      expect(fixture.resumes).toBe(0);
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.commands.some((item) => item.type === 'arm')).toBe(false);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      leaseGate.resolve();
+      fixture.restore();
+    }
+  });
+
+  test('pause cancels a pending resume without allowing late playback', async () => {
+    const gate = Promise.withResolvers<void>();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      resumeGate: gate.promise,
+    });
+    try {
+      const pending = fixture.playback.play();
+      for (let i = 0; i < 4 && fixture.resumes === 0; i++)
+        await fixture.flush();
+      expect(fixture.resumes).toBe(1);
+      fixture.playback.pause();
+      await fixture.flush();
+      await pending;
+      await fixture.playback.play();
+      expect(fixture.resumes).toBe(1);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) => item.message.includes('quarantined'))
+      ).toBe(true);
+      gate.resolve();
+      await fixture.flush();
+      expect(fixture.playback.getState().playing).toBe(false);
+      expect(fixture.commands.some((item) => item.type === 'arm')).toBe(false);
+      expect(fixture.leaseReleases).toBe(1);
+    } finally {
+      gate.resolve();
+      fixture.restore();
+    }
+  });
+
+  test.each([
+    { ownedContext: false, transition: 'suspend' },
+    { ownedContext: false, transition: 'resume' },
+    { ownedContext: true, transition: 'suspend' },
+    { ownedContext: true, transition: 'resume' },
+  ] as const)(
+    'late $transition quarantines the context (owned=$ownedContext)',
+    async ({ ownedContext, transition }) => {
+      const gate = Promise.withResolvers<void>();
+      const fixture = independentPcmFixture(false, false, undefined, {
+        ownedContext,
+        ...(transition === 'suspend'
+          ? { suspendGate: gate.promise }
+          : { resumeGate: gate.promise }),
+      });
+      try {
+        const pending = fixture.playback.play();
+        for (
+          let i = 0;
+          i < 4 &&
+          (transition === 'suspend' ? fixture.suspensions : fixture.resumes) ===
+            0;
+          i++
+        )
+          await fixture.flush();
+        expect(
+          transition === 'suspend' ? fixture.suspensions : fixture.resumes
+        ).toBe(1);
+        await fixture.advance(
+          fixture.wall + 351,
+          fixture.renderFrame,
+          fixture.outputFrame
+        );
+        await pending;
+        expect(fixture.playback.getState().playing).toBe(false);
+        expect(fixture.commands.some((item) => item.type === 'arm')).toBe(
+          false
+        );
+        const before = {
+          suspend: fixture.suspensions,
+          resume: fixture.resumes,
+        };
+        await fixture.playback.play();
+        expect(fixture.suspensions).toBe(before.suspend);
+        expect(fixture.resumes).toBe(before.resume);
+        expect(
+          fixture.playback
+            .getState()
+            .diagnostics.some((item) => item.message.includes('quarantined'))
+        ).toBe(true);
+        await expect(
+          fixture.playback.prepareAudioContextChange()
+        ).rejects.toThrow('quarantined');
+        gate.resolve();
+        await fixture.flush();
+        expect(fixture.playback.getState().playing).toBe(false);
+        expect(fixture.commands.some((item) => item.type === 'arm')).toBe(
+          false
+        );
+        if (!ownedContext) expect(fixture.leaseReleases).toBe(1);
+        await fixture.flush();
+        await fixture.start();
+        expect(fixture.playback.getState().playing).toBe(true);
+      } finally {
+        gate.resolve();
+        fixture.restore();
+      }
+    }
+  );
 
   test('PCM admits the scheduled-audio fixture without charging disjoint spans in full', async () => {
     const fixtureRoot = new URL(
