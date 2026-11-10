@@ -271,8 +271,9 @@ describe('the stale-shell heal decision', () => {
 
 describe('late heals after the reader has moved on', () => {
   test('an exit taken before the probe means no probe and no reload', async () => {
-    // Compare exit and version selection both advance the lifecycle before any
-    // await, so a late compiler failure from the old state finds it stale.
+    // A heal already started on the open or key-entry surface must not reload
+    // after the reader has left that state. The lifecycle is advanced before
+    // any await, so the late check finds the token stale.
     const life = createLifecycle();
     const token = life.token();
     life.advance();

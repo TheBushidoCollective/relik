@@ -439,21 +439,39 @@ function healForRelic(
   });
 }
 
-/** The reload instruction shown beside a compiler failure on a comparison. */
+/** The reload instruction, shown when this browser still holds the key. */
 const MANUAL_RELOAD_HINT = 'Reload this page to try again.';
+
+/** The instruction shown instead when the vault cannot reopen the relic. */
+const REOPEN_LINK_HINT = 'Reopen the original link to try again.';
+
+/**
+ * Whether this browser still holds the relic's key, so a reload can reopen it.
+ * A vault that fails to read counts as not holding it.
+ */
+function vaultHoldsKey(relicId: string, deps: ViewerDeps): boolean {
+  try {
+    return deps.keyVault.recall(relicId) !== undefined;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * What a reader is shown when a historical version or comparison cannot load.
- * A compiler failure is named with the way out, a reload, because the page may
- * hold drafts that an automatic reload would discard.
+ * A compiler failure is named with the way out: a reload when the vault holds
+ * the key, otherwise reopening the original link, because a reload would not
+ * reopen the relic.
  */
-function failureText(res: {
-  readonly detail: string;
-  readonly jsxCompilerUnavailable?: true | undefined;
-}): string {
-  return res.jsxCompilerUnavailable === true
-    ? `${res.detail} ${MANUAL_RELOAD_HINT}`
-    : res.detail;
+function failureText(
+  res: {
+    readonly detail: string;
+    readonly jsxCompilerUnavailable?: true | undefined;
+  },
+  keyKept: boolean
+): string {
+  if (res.jsxCompilerUnavailable !== true) return res.detail;
+  return `${res.detail} ${keyKept ? MANUAL_RELOAD_HINT : REOPEN_LINK_HINT}`;
 }
 
 function decodeText(content: Uint8Array): string {
@@ -3270,12 +3288,16 @@ export function renderComparison(
     scaffold.result.setAttribute('aria-busy', 'false');
 
     if (leftRes.kind === 'unavailable') {
-      scaffold.result.replaceChildren(notice(failureText(leftRes)));
+      scaffold.result.replaceChildren(
+        notice(failureText(leftRes, vaultHoldsKey(relicId, deps)))
+      );
       changesSidebar.setChanges(0, undefined);
       return;
     }
     if (rightRes.kind === 'unavailable') {
-      scaffold.result.replaceChildren(notice(failureText(rightRes)));
+      scaffold.result.replaceChildren(
+        notice(failureText(rightRes, vaultHoldsKey(relicId, deps)))
+      );
       changesSidebar.setChanges(0, undefined);
       return;
     }
@@ -9540,12 +9562,8 @@ export function renderReady(
       return;
     }
 
-    let versionPill = document.querySelector
-      ? (document.querySelector(
-          'div.render-status[data-version-progress]'
-        ) as HTMLElement | null)
-      : null;
-    if (!versionPill && document.createElement) {
+    let versionPill: HTMLElement | null = null;
+    if (document.createElement) {
       versionPill = document.createElement('div');
       versionPill.className = 'render-status';
       versionPill.dataset['versionProgress'] = '';
@@ -9561,10 +9579,6 @@ export function renderReady(
       } else if (document.body?.appendChild) {
         document.body.appendChild(versionPill);
       }
-    } else if (versionPill) {
-      const label =
-        versionPill.querySelector?.('.render-status-label') ?? versionPill;
-      label.textContent = `Opening version ${v}`;
     }
 
     const res = await loadHistoricalVersion(relicId, v, view, deps, (p) => {
@@ -9593,7 +9607,8 @@ export function renderReady(
       // use, but it does not repaint over the reader's newer choice.
       if (lifecycle.isCurrent(selection)) showSingle(res.view);
     } else if (res.kind === 'unavailable') {
-      if (lifecycle.isCurrent(selection)) toast(failureText(res));
+      if (lifecycle.isCurrent(selection))
+        toast(failureText(res, vaultHoldsKey(relicId, deps)));
     }
   };
 
@@ -10826,6 +10841,7 @@ export async function boot(
     try {
       state = await load(relicId, deps, (p) => plate.paint(p), resume);
     } catch {
+      if (thisOpen !== openGeneration) return;
       plate.remove();
       renderDead(
         {
@@ -10842,6 +10858,9 @@ export async function boot(
       );
       return;
     }
+    // A newer open has started (a second Retry, say): this result must not
+    // repaint over it.
+    if (thisOpen !== openGeneration) return;
 
     if (state.kind === 'dead' && state.jsxCompilerUnavailable === true) {
       const reloading = await healForRelic(
