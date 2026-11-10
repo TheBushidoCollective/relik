@@ -721,7 +721,14 @@ export async function readSource(
   ) {
     throw new PublishError(
       'local_size_precheck_failed',
-      `${resolvedPath} size (${stat.size} bytes) exceeds the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap`
+      `${resolvedPath} size (${stat.size} bytes) exceeds the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap`,
+      {
+        size_limit_bytes: PLAINTEXT_CAP_BYTES,
+        ...(Number.isSafeInteger(stat.size) && stat.size >= 0
+          ? { declared_size_bytes: stat.size }
+          : {}),
+        size_basis: 'plaintext',
+      }
     );
   }
   const base = files.basename(resolvedPath).toLowerCase();
