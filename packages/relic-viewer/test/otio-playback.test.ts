@@ -1785,8 +1785,8 @@ describe('otio playback controller', () => {
   ) {
     let wall = 2000;
     const sampleRate = clockOptions?.sampleRate ?? 48000;
-    let renderFrame = sampleRate;
-    let outputFrame = sampleRate;
+    let renderFrame: number = sampleRate;
+    let outputFrame: number = sampleRate;
     let outputWallOffset = 1000;
     let suspensions = 0;
     let resumes = 0;
@@ -1852,6 +1852,16 @@ describe('otio playback controller', () => {
     const callbackQueue: Array<() => void> = [];
     let holdPcm = false;
     const heldPcm: Array<() => void> = [];
+    let holdClose = false;
+    const heldCloses: Array<() => void> = [];
+    let liveStreams = 0;
+    let peakStreams = 0;
+    const workerEvents: Array<{
+      kind: string;
+      generation: number;
+      streamId: string;
+      firstFrame?: number;
+    }> = [];
     const audioParam = () => ({
       value: 1,
       setValueAtTime(value: number) {
@@ -1993,6 +2003,7 @@ describe('otio playback controller', () => {
       onerror: (() => void) | null = null;
       onmessageerror: (() => void) | null = null;
       private channels = 1;
+      private streams = new Set<string>();
       postMessage(message: Record<string, unknown>) {
         if (message.kind === 'cancel') return;
         const base = {
@@ -2001,7 +2012,19 @@ describe('otio playback controller', () => {
           streamId: message.streamId,
           requestId: message.requestId,
         };
+        const streamId = message.streamId as string;
+        workerEvents.push({
+          kind: message.kind as string,
+          generation: message.generation as number,
+          streamId,
+          ...(message.kind === 'pull'
+            ? { firstFrame: message.firstFrame as number }
+            : {}),
+        });
         if (message.kind === 'open') {
+          this.streams.add(streamId);
+          liveStreams++;
+          peakStreams = Math.max(peakStreams, liveStreams);
           const header = message.header as { channels: number };
           this.channels = header.channels;
           queueMicrotask(() =>
@@ -2009,6 +2032,15 @@ describe('otio playback controller', () => {
               data: { ...base, kind: 'ready', header },
             } as MessageEvent)
           );
+        } else if (message.kind === 'close') {
+          const deliver = () => {
+            if (this.streams.delete(streamId)) liveStreams--;
+            this.onmessage?.({
+              data: { ...base, kind: 'closed' },
+            } as MessageEvent);
+          };
+          if (holdClose) heldCloses.push(deliver);
+          else queueMicrotask(deliver);
         } else if (message.kind === 'pull') {
           const firstFrame = message.firstFrame as number;
           const frameCount = message.frameCount as number;
@@ -2025,7 +2057,10 @@ describe('otio playback controller', () => {
           else queueMicrotask(deliver);
         }
       }
-      terminate() {}
+      terminate() {
+        liveStreams -= this.streams.size;
+        this.streams.clear();
+      }
     }
     class FakeGate extends FakeNode {
       readonly machine = new OtioTransportGateState();
@@ -2405,6 +2440,21 @@ describe('otio playback controller', () => {
         sourceStartAdvance = frames;
       },
       pulls,
+      workerEvents,
+      get peakStreams() {
+        return peakStreams;
+      },
+      get liveStreams() {
+        return liveStreams;
+      },
+      get heldCloseCount() {
+        return heldCloses.length;
+      },
+      holdCloseResponses(value: boolean) {
+        holdClose = value;
+        if (!value)
+          for (const deliver of heldCloses.splice(0)) queueMicrotask(deliver);
+      },
       gates,
       holdPcmResponses(value: boolean) {
         holdPcm = value;
@@ -2784,9 +2834,16 @@ describe('otio playback controller', () => {
     }
   });
 
-  test.each(['shared', 'disjoint'] as const)(
-    'eight simultaneous voices stage before closure with %s source identities',
-    async (identity) => {
+  test.each([
+    ['shared', 44100, false],
+    ['shared', 48000, false],
+    ['disjoint', 44100, false],
+    ['disjoint', 48000, false],
+    ['disjoint', 44100, true],
+    ['disjoint', 48000, true],
+  ] as const)(
+    'eight voices with %s identities at %i Hz, cancel=%s',
+    async (identity, sampleRate, cancel) => {
       const time = (value: number) => ({
         OTIO_SCHEMA: 'RationalTime.1',
         value,
@@ -2824,23 +2881,110 @@ describe('otio playback controller', () => {
           },
         })
       );
-      const audio = new Blob([
-        await Bun.file(
-          new URL(
-            '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/media/indexed-stereo.wav',
-            import.meta.url
-          )
-        ).arrayBuffer(),
-      ]);
+      const bytes = new Uint8Array(44 + sampleRate * 4);
+      const view = new DataView(bytes.buffer);
+      for (const [offset, text] of [
+        [0, 'RIFF'],
+        [8, 'WAVE'],
+        [12, 'fmt '],
+        [36, 'data'],
+      ] as const)
+        for (let i = 0; i < text.length; i++)
+          bytes[offset + i] = text.charCodeAt(i);
+      view.setUint32(4, bytes.length - 8, true);
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      view.setUint32(40, bytes.length - 44, true);
+      const audio = new Blob([bytes]);
       const fixture = independentPcmFixture(
         false,
         false,
         { document, audio },
-        { proofBudget: true }
+        { proofBudget: true, sampleRate }
       );
       try {
+        if (identity === 'disjoint') fixture.holdCloseResponses(true);
         await fixture.start();
+        if (identity === 'disjoint') {
+          for (let i = 0; i < 20 && !fixture.heldCloseCount; i++)
+            await fixture.flush();
+          expect(fixture.heldCloseCount).toBeGreaterThan(0);
+          const opens = fixture.workerEvents.filter(
+            (event) => event.kind === 'open'
+          ).length;
+          expect(fixture.liveStreams).toBe(10);
+          await fixture.flush();
+          expect(
+            fixture.workerEvents.filter((event) => event.kind === 'open')
+          ).toHaveLength(opens);
+          expect(
+            fixture.audioContext.sources.some(
+              (source) => source.started && !source.carrier
+            )
+          ).toBe(true);
+          const oldGeneration = fixture.workerEvents.find(
+            (event) => event.kind === 'open'
+          )!.generation;
+          const evicted = fixture.workerEvents.find(
+            (event) =>
+              event.kind === 'close' && event.generation === oldGeneration
+          )!;
+          expect(evicted).toBeDefined();
+          const advanceFrames = 128;
+          await fixture.advance(
+            fixture.wall + (advanceFrames * 1000) / sampleRate,
+            fixture.renderFrame + advanceFrames,
+            fixture.outputFrame + advanceFrames
+          );
+          expect(
+            fixture.workerEvents.filter((event) => event.kind === 'open')
+          ).toHaveLength(opens);
+          if (cancel) {
+            fixture.playback.dispose();
+            fixture.holdCloseResponses(false);
+            for (let i = 0; i < 20; i++) await fixture.flush();
+            expect(
+              fixture.workerEvents.filter((event) => event.kind === 'open')
+            ).toHaveLength(opens);
+            expect(fixture.liveStreams).toBe(0);
+            expect(fixture.peakStreams).toBeLessThanOrEqual(10);
+            return;
+          }
+          fixture.holdCloseResponses(false);
+        }
         for (let i = 0; i < 20; i++) await fixture.flush();
+        if (identity === 'disjoint') {
+          const oldGeneration = fixture.workerEvents.find(
+            (event) => event.kind === 'open'
+          )!.generation;
+          const closed = new Set(
+            fixture.workerEvents
+              .filter(
+                (event) =>
+                  event.kind === 'close' && event.generation === oldGeneration
+              )
+              .map((event) => event.streamId)
+          );
+          const reopened = fixture.workerEvents
+            .filter(
+              (event) =>
+                event.kind === 'open' &&
+                event.generation === oldGeneration &&
+                !closed.has(event.streamId)
+            )
+            .slice(8 - closed.size);
+          const resumed = fixture.workerEvents.find(
+            (event) =>
+              event.kind === 'pull' &&
+              reopened.some((item) => item.streamId === event.streamId)
+          );
+          expect(resumed?.firstFrame).toBe(Math.floor(sampleRate * 0.4));
+        }
         const proof = globalThis as typeof globalThis & {
           __otioProofPcmSnapshot: () => {
             streams: number;
@@ -2852,6 +2996,7 @@ describe('otio playback controller', () => {
         };
         const snapshot = proof.__otioProofPcmSnapshot();
         expect(snapshot.streams).toBeLessThanOrEqual(10);
+        expect(fixture.peakStreams).toBeLessThanOrEqual(10);
         expect(snapshot.nodes).toBeLessThanOrEqual(128);
         expect(snapshot.bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
         expect(snapshot.candidateBoundaryFrame).toBe(
@@ -3534,6 +3679,7 @@ describe('otio playback controller', () => {
   test.each([
     'recovery-phase-mismatch',
     'recovery-impossible-guard',
+    'recovery-delayed-staging',
     'excess-source-work',
   ] as const)(
     'handoff rejects injected %s without arming successor',
@@ -3561,7 +3707,10 @@ describe('otio playback controller', () => {
           await fixture.flush();
         }
         proof.__otioProofPcm = true;
-        proof.__otioProofPcmFault = 'withhold-future-video';
+        proof.__otioProofPcmFault =
+          fault === 'recovery-delayed-staging'
+            ? fault
+            : 'withhold-future-video';
         const cutFrame = f0 + 24000;
         const cutWall = 1000 + cutFrame / 48;
         await fixture.advance(cutWall, cutFrame + 128, cutFrame);
@@ -3570,7 +3719,12 @@ describe('otio playback controller', () => {
         if (fault === 'excess-source-work')
           fixture.advanceNextSourceStart(1024);
         fixture.videos[1]!.triggerRvfc(cutWall, 1 / 30);
-        for (let i = 0; i < 30 && fixture.playback.getState().playing; i++)
+        for (
+          let i = 0;
+          i < (fault === 'recovery-delayed-staging' ? 400 : 30) &&
+          fixture.playback.getState().playing;
+          i++
+        )
           await fixture.advance(
             fixture.wall + 1,
             fixture.renderFrame + 48,

@@ -1101,7 +1101,9 @@ export function createOtioPlayback(
       | 'invalidate-next-reserved-tag'
       | 'withhold-future-video'
       | 'recovery-phase-mismatch'
-      | 'recovery-impossible-guard';
+      | 'recovery-impossible-guard'
+      | 'recovery-earlier-feasible'
+      | 'recovery-delayed-staging';
   };
   function coldProof(
     event: string,
@@ -1231,7 +1233,9 @@ export function createOtioPlayback(
   let audioBackend: 'native' | 'pcm' = 'native';
   let pcmGeneration = 0;
   let pcmStreamCredits = 0;
-  const pcmStreamWaiters = new Set<() => void>();
+  let pcmDecodeChain: Promise<void> = Promise.resolve();
+  let pcmStreamSerial = 0;
+  const pcmStreamOwners = new Set<PcmRun>();
   const pcmSlotWaiters = new Set<() => void>();
   const pcmBudget = new OtioPcmBudget();
   const pcmGateRetirements = new OtioPcmGateRetirements(pcmBudget);
@@ -3287,22 +3291,20 @@ export function createOtioPlayback(
   function releasePcmStream(run: PcmRun, streamId: string): void {
     if (!run.streamCredits.delete(streamId)) return;
     pcmStreamCredits--;
-    for (const wake of pcmStreamWaiters) queueMicrotask(wake);
     pcmRecoveryWake?.();
   }
 
   function closePcmProvider(run: PcmRun): void {
     run.provider.dispose();
     for (const streamId of run.streamCredits) releasePcmStream(run, streamId);
-    for (const wake of pcmStreamWaiters) queueMicrotask(wake);
     run.streams.clear();
+    pcmStreamOwners.delete(run);
   }
 
   function releasePcmResources(run: PcmRun): void {
     if (run.resourcesReleased) return;
     run.resourcesReleased = true;
     run.stopped = true;
-    for (const wake of pcmStreamWaiters) queueMicrotask(wake);
     clearTimeout(run.stopWatchdog ?? undefined);
     run.context.removeEventListener('statechange', run.onContextState);
     run.scheduler.dispose();
@@ -3428,7 +3430,9 @@ export function createOtioPlayback(
     if (run.stopping || run.stopped)
       throw new Error('PCM generation is draining');
     if (run.loading) return run.loading;
-    const work = (async () => {
+    const work = pcmDecodeChain.then(async () => {
+      if (run.stopping || run.stopped)
+        throw new Error('PCM generation is draining');
       const from = run.preparedThrough;
       if (target <= from) return;
       const pending: PcmChunk[] = [];
@@ -3446,7 +3450,7 @@ export function createOtioPlayback(
           throw new Error('PCM stream budget exceeded');
         for (const [path, streamId] of run.streams) {
           if (!needed.has(path)) {
-            run.provider.cancel(streamId);
+            await run.provider.close(streamId);
             releasePcmStream(run, streamId);
             run.streams.delete(path);
           }
@@ -3461,18 +3465,28 @@ export function createOtioPlayback(
           if (!streamId) {
             const asset = run.admission.assets.get(path);
             if (!asset || run.stopped) throw new Error('PCM asset unavailable');
-            streamId = `stream-${run.streams.size}-${run.generation}-${run.preparedThrough}`;
+            streamId = `stream-${run.generation}-${++pcmStreamSerial}`;
             while (pcmStreamCredits >= OTIO_PCM_MAX_STREAMS) {
               if (run.stopped || run.stopping)
                 throw new Error('PCM generation cancelled');
-              const available = Promise.withResolvers<void>();
-              const wake = () => available.resolve();
-              pcmStreamWaiters.add(wake);
-              try {
-                await available.promise;
-              } finally {
-                pcmStreamWaiters.delete(wake);
+              let evicted = false;
+              for (const other of pcmStreamOwners) {
+                if (other === run) continue;
+                const entry = other.streams.entries().next().value;
+                if (!entry) continue;
+                const [otherPath, otherStream] = entry;
+                other.streams.delete(otherPath);
+                try {
+                  await other.provider.close(otherStream);
+                } catch (error) {
+                  closePcmProvider(other);
+                  throw error;
+                }
+                releasePcmStream(other, otherStream);
+                evicted = true;
+                break;
               }
+              if (!evicted) throw new Error('PCM stream budget unavailable');
             }
             if (run.stopped || run.stopping)
               throw new Error('PCM generation cancelled');
@@ -3544,7 +3558,8 @@ export function createOtioPlayback(
       } finally {
         for (const chunk of pending) chunk.prepared.cancel();
       }
-    })();
+    });
+    pcmDecodeChain = work.catch(() => undefined);
     run.loading = work;
     try {
       await work;
@@ -3708,6 +3723,7 @@ export function createOtioPlayback(
       stopped: false,
     };
     session.slots[slot] = run;
+    pcmStreamOwners.add(run);
     if (staged) {
       staged.created(run);
       if (!staged.valid()) {
@@ -3909,6 +3925,16 @@ export function createOtioPlayback(
     if (run.handoffStarted || !pcmPlayIntent || pcmRun !== run) return;
     run.handoffStarted = true;
     const request = playRequestEpoch;
+    const requestPerformanceBefore =
+      coldProofGlobal.__otioProofPcm === true ? performance.now() : null;
+    const requestWall = presentClockMs();
+    if (coldProofGlobal.__otioProofPcm === true)
+      pcmProof('recovery-request', run.generation, {
+        boundaryFrame: closedFrame,
+        requestPerformanceBefore,
+        requestPerformanceAfter: performance.now(),
+        requestClockNow: requestWall,
+      });
     isBuffering = true;
     pcmProof('recovery-render-closed', run.generation, {
       boundaryFrame: closedFrame,
@@ -3924,7 +3950,8 @@ export function createOtioPlayback(
       run.routeVersion,
       run.outputClock,
       run,
-      closedFrame
+      closedFrame,
+      requestWall
     ).catch((error: unknown) => {
       if (!isDisposed && pcmPlayIntent && request === playRequestEpoch)
         failScheduledAudio(
@@ -4580,7 +4607,8 @@ export function createOtioPlayback(
     previousRouteVersion: number,
     previousClock: OutputClock,
     oldRun: PcmRun,
-    closedFrame: number
+    closedFrame: number,
+    requestWall: number
   ): Promise<void> {
     const admission = pcmAdmission;
     const context = audioContext;
@@ -4605,7 +4633,6 @@ export function createOtioPlayback(
       );
       return;
     }
-    const requestWall = presentClockMs();
     const gapUpper = closedFrame + Math.floor(0.02 * admission.rate);
     const scopeAtStart = scopeEpoch;
     const alive = () =>
@@ -4617,12 +4644,36 @@ export function createOtioPlayback(
       previousRouteVersion === pcmRouteVersion &&
       audioContext === previousContext;
     const deadline = requestWall + 350;
+    if (
+      coldProofGlobal.__otioProofPcm === true &&
+      coldProofGlobal.__otioProofPcmFault === 'recovery-delayed-staging' &&
+      (proofHost === 'localhost' ||
+        proofHost === '127.0.0.1' ||
+        proofHost.endsWith('.localhost') ||
+        proofHost === '[::1]')
+    ) {
+      pcmProof('recovery-fault', oldRun.generation, {
+        code: 'recovery-delayed-staging',
+        boundaryFrame: closedFrame,
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 360));
+    }
     let readiness: PcmVideoHold | null = null;
     let handoffOwner: {
       run: PcmRun;
       anchor: { wallMs: number; time: OtioRationalTime } | null;
     } | null = null;
     while (alive()) {
+      if (presentClockMs() > deadline) {
+        pcmProof('recovery-timeout', oldRun.generation, {
+          boundaryFrame: closedFrame,
+          requestWall,
+          deadline,
+          observedWall: presentClockMs(),
+        });
+        failScheduledAudio('PCM recovery deadline expired');
+        return;
+      }
       if (
         context.state !== 'running' ||
         graphicsLost ||
@@ -4883,6 +4934,16 @@ export function createOtioPlayback(
       } | null = null;
       let contextAfter = 0;
       let readEnd = 0;
+      let bridgeObservation: {
+        readBegin: number;
+        readEnd: number;
+        contextBefore: number;
+        contextAfter: number;
+        contextTime: number;
+        performanceTime: number;
+        offsetMin: number;
+        offsetMax: number;
+      } | null = null;
       while (
         alive() &&
         pcmRun === oldRun &&
@@ -4926,6 +4987,16 @@ export function createOtioPlayback(
             performanceTime: stamp.performanceTime,
             mappingAllowanceMs: observation.offsetMax - observation.offsetMin,
           };
+          bridgeObservation = {
+            readBegin,
+            readEnd,
+            contextBefore,
+            contextAfter,
+            contextTime: stamp.contextTime,
+            performanceTime: stamp.performanceTime,
+            offsetMin: observation.offsetMin,
+            offsetMax: observation.offsetMax,
+          };
           break;
         }
         if (
@@ -4967,6 +5038,14 @@ export function createOtioPlayback(
         (bridge.contextTime + (phaseDeadline - bridge.performanceTime) / 1000) *
           admission.rate
       );
+      const firstBatchInputs =
+        coldProofGlobal.__otioProofPcm === true
+          ? run.chunks.map(({ timelineStart, count, sourceStart }) => ({
+              timelineStart,
+              count,
+              sourceStart,
+            }))
+          : undefined;
       const firstBatch = run.chunks.reduce(
         (max, chunk) =>
           chunk.timelineStart === run!.startFrame
@@ -4978,7 +5057,7 @@ export function createOtioPlayback(
         Math.floor(
           (contextAfter + OTIO_PCM_MAX_HORIZON_SECONDS) * admission.rate
         ) - firstBatch;
-      const upper = Math.min(
+      let upper = Math.min(
         proofFault === 'recovery-impossible-guard' ? closedFrame : gapUpper,
         wallUpper,
         horizonUpper,
@@ -4995,6 +5074,15 @@ export function createOtioPlayback(
         upper < closedFrame
       )
         throw new Error('recovery render handoff has no feasible frame');
+      if (proofFault === 'recovery-earlier-feasible') {
+        if (upper - 1 < earliest.contextFrame || upper - 1 < closedFrame)
+          throw new Error('earlier feasible recovery fault unavailable');
+        upper--;
+        pcmProof('recovery-fault', run.generation, {
+          code: proofFault,
+          boundaryFrame: closedFrame,
+        });
+      }
       const epochWall =
         bridge.performanceTime +
         1000 * (upper / admission.rate - bridge.contextTime);
@@ -5046,6 +5134,25 @@ export function createOtioPlayback(
       const visualFrame = Math.floor(
         (handoffHold.through.value * admission.rate) / handoffHold.through.rate
       );
+      pcmProof('recovery-selection-inputs', run.generation, {
+        oldGeneration: oldRun.generation,
+        boundaryFrame: closedFrame,
+        phaseSamples: samples,
+        vsyncSeconds: vsyncTracker.medianSeconds,
+        bridge,
+        bridgeObservation,
+        contextAfterSeconds: contextAfter,
+        readEndWallMs: readEnd,
+        sampleRate: admission.rate,
+        firstBatchFrames: firstBatch,
+        firstBatchInputs,
+        clockCoverageEnd: run.gate.clockCoverageEnd,
+        scheduledThrough: run.scheduledThrough,
+        visualThrough: handoffHold.through,
+        compositionStartFrame: run.startFrame,
+        horizonSeconds: OTIO_PCM_MAX_HORIZON_SECONDS,
+        guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+      });
       const through = Math.min(
         upper + Math.min(run.scheduledThrough, visualFrame) - run.startFrame,
         run.gate.clockCoverageEnd ?? 0
