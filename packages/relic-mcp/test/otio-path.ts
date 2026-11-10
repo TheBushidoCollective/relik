@@ -14663,7 +14663,13 @@ async function runScheduledPcmProof(
         try {
           await waitReady(isolated);
           const result = await isolated.evaluate<
-            MovingTrace & { held: number; released: number }
+            MovingTrace & {
+              held: number;
+              released: number;
+              playing: string;
+              buffering: string;
+              diagnostic: string;
+            }
           >(`(async()=>{
             const sleep=ms=>{const {promise,resolve}=Promise.withResolvers();setTimeout(resolve,ms);return promise;};
             const root=document.querySelector('.otio-view'),button=document.querySelector('button.otio-play');
@@ -14681,10 +14687,16 @@ async function runScheduledPcmProof(
             while(!globalThis.__otioProofTrace.hasPcmEvent('recovery-fault') &&
               !globalThis.__otioProofTrace.hasTraceEvent('recovery-overrun-injected') &&
               performance.now()<faultDeadline) await sleep(10);
-            await sleep(300); globalThis.__otioProofPcmFault=null;
+            await sleep(300);
+            const playing=root.dataset.playing ?? '', buffering=root.dataset.buffering ?? '';
+            const diagnostic=Array.from(document.querySelectorAll('.otio-diagnostic'))
+              .filter(node=>{const style=getComputedStyle(node); return node.getClientRects().length>0 &&
+                style.visibility!=='hidden' && style.display!=='none' && Number(style.opacity)>0;})
+              .map(node=>node.textContent ?? '').join(' ');
+            globalThis.__otioProofPcmFault=null;
             const trace=await globalThis.__otioProofTrace.stop();
             if(root.dataset.playing==='true') button.click();
-            return {start,playEdge,trace,held,released};
+            return {start,playEdge,trace,held,released,playing,buffering,diagnostic};
           })()`);
           await writeFile(
             join(shotDir, `${fault}-${rate}.json`),
@@ -14696,6 +14708,21 @@ async function runScheduledPcmProof(
               !result.trace.audioOverflow &&
               !result.trace.eventsOverflow,
             `${fault} control did not hold and release real PCM cleanly`
+          );
+          assert.equal(
+            result.playing,
+            'false',
+            `${fault} left playback active`
+          );
+          assert.equal(
+            result.buffering,
+            'false',
+            `${fault} left playback buffering`
+          );
+          assert.match(
+            result.diagnostic,
+            /Scheduled audio stopped:/,
+            `${fault} did not render its interruption diagnostic`
           );
           const events = result.trace.events
             .filter((event) => event.kind === 'scheduled-pcm')
