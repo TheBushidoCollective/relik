@@ -513,13 +513,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return listComments(second);
       }
       if (fourth === undefined && request.method === 'POST') {
-        return postComment(second, request, ip, now);
+        return postComment(second, request, now);
       }
       if (fourth !== undefined && request.method === 'DELETE') {
         return deleteComment(second, fourth, request, now);
       }
       if (fourth !== undefined && request.method === 'PATCH') {
-        return patchComment(second, fourth, request, ip, now);
+        return patchComment(second, fourth, request, now);
       }
       return new Response('Method not allowed', { status: 405 });
     }
@@ -2734,7 +2734,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
   async function postComment(
     rawId: string,
     request: Request,
-    ip: string,
     now: number
   ): Promise<Response> {
     if (config.killSwitchEngaged) {
@@ -2746,17 +2745,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
       relicId = parseRelicId(rawId);
     } catch {
       return refuse('invalid_relic_id');
-    }
-
-    const verdict = limiter.check(
-      rateLimitKey('comment', ip),
-      config.commentRateLimit,
-      now
-    );
-    if (!verdict.allowed) {
-      return refuse('comment_rate_limited', {
-        retry_after_seconds: verdict.retryAfterSeconds,
-      });
     }
 
     if ((await store.getTombstone(relicId)) !== undefined) {
@@ -2974,7 +2962,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
     rawId: string,
     commentId: string,
     request: Request,
-    ip: string,
     now: number
   ): Promise<Response> {
     if (config.killSwitchEngaged) {
@@ -2986,19 +2973,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
       relicId = parseRelicId(rawId);
     } catch {
       return refuse('invalid_relic_id');
-    }
-
-    // One budget for every comment write from one address, so an edit
-    // cannot become the cheap way around the posting limit.
-    const verdict = limiter.check(
-      rateLimitKey('comment', ip),
-      config.commentRateLimit,
-      now
-    );
-    if (!verdict.allowed) {
-      return refuse('comment_rate_limited', {
-        retry_after_seconds: verdict.retryAfterSeconds,
-      });
     }
 
     if ((await store.getTombstone(relicId)) !== undefined) {

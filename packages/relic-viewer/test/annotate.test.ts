@@ -124,6 +124,14 @@ export class Node {
     for (const child of children) this.appendChild(child);
   }
 
+  before(node: Node): void {
+    const parent = this.parent;
+    if (!parent || node === this) return;
+    node.remove();
+    node.parent = parent;
+    parent.children.splice(parent.children.indexOf(this), 0, node);
+  }
+
   replaceChildren(...children: Node[]): void {
     for (const held of [...this.children]) held.parent = undefined;
     this.children.length = 0;
@@ -447,6 +455,7 @@ interface Seed {
   readonly id: string;
   readonly body: string;
   readonly anchor: CommentAnchor;
+  readonly version?: number;
   /** Defaults to the reader's own address, so a seed is editable by default. */
   readonly author?: string;
   readonly editedAt?: string;
@@ -496,6 +505,7 @@ export async function mount(
               comment_id: seed.id,
               author: seed.author ?? 'ada@example.com',
               created_at: '2026-08-24T00:00:00Z',
+              ...(seed.version !== undefined ? { version: seed.version } : {}),
               edited_at: seed.editedAt ?? null,
               resolved_at:
                 seed.resolvedBy === undefined ? null : '2026-08-25T00:00:00Z',

@@ -443,6 +443,10 @@ body {
 .otio-transport { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; min-height: 46px; padding: .55rem .75rem; border-bottom: 1px solid var(--rule-strong); background: var(--surface); }
 .otio-transport button { padding: .3rem .45rem; border: 1px solid var(--rule-strong); border-radius: 0; background: transparent; color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-transport .otio-play { background: var(--patina); border-color: var(--patina); color: var(--surface); min-width: 44px; }
+.otio-focus-context { display: flex; align-items: center; gap: .35rem .65rem; flex: 1 0 100%; min-width: 0; padding-bottom: .35rem; border-bottom: 1px solid var(--rule); }
+.otio-focus-title { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; color: var(--patina-ink); font: 600 .68rem/1.5 var(--sans); }
+.otio-transport .otio-back-composition { flex: none; color: var(--patina-ink); }
+.otio-frame-icon { display: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .otio-time { font: .7rem var(--mono); font-variant-numeric: tabular-nums; }
 .otio-seek { min-width: 65px; width: 100px; flex: 1; accent-color: var(--patina); cursor: pointer; }
 .otio-transport .otio-inspector-toggle { display: none; }
@@ -464,7 +468,8 @@ body {
 .otio-track-label { position: sticky; left: 0; z-index: 6; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .4rem .45rem; border-right: 1px solid var(--rule-strong); background: var(--surface); }
 .otio-track-code { flex: 0 0 auto; color: var(--ink-soft); font: .6rem var(--mono); }
 .otio-track-name { flex: 1; min-width: 0; line-height: 1.35; }
-.otio-track-name strong { display: block; font: 500 .65rem var(--sans); overflow-wrap: anywhere; }
+.otio-track-activate { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; font: 500 .65rem/1.35 var(--sans); overflow-wrap: anywhere; cursor: pointer; }
+.otio-track-activate[aria-pressed="true"] { color: var(--patina-ink); text-decoration: underline; text-underline-offset: .2em; }
 .otio-track-name small { display: block; color: var(--ink-soft); font: .48rem var(--mono); overflow-wrap: anywhere; }
 .otio-track-row:not([data-depth="0"]) .otio-track-label { padding-left: calc(.45rem + min(var(--otio-depth, 0), 4) * .35rem); background: var(--ground); }
 .otio-track-toggle, .otio-disclosure { flex: 0 0 auto; border: 0; border-radius: 0; background: transparent; color: var(--ink-soft); padding: .2rem; font: .53rem var(--sans); cursor: pointer; }
@@ -481,6 +486,9 @@ body {
 .otio-item.is-compound { border-top-color: var(--patina); }
 .otio-item.is-transition { z-index: 2; padding: 0; font-size: 0; top: 10px; bottom: auto; height: 12px; background: linear-gradient(135deg, transparent 48%, var(--patina) 49%, var(--patina) 51%, transparent 52%); }
 .otio-item.has-diagnostic { border-color: var(--oxide); color: var(--oxide); }
+.otio-item[aria-pressed="true"] { border-color: var(--patina); box-shadow: inset 0 0 0 1px var(--patina); background-color: var(--diff-added); color: var(--patina-ink); opacity: 1; }
+.otio-item[aria-pressed="true"][data-enabled="false"] { border-style: dashed; }
+.otio-focus-status { color: #e6e9e7; font: .75rem/1.6 var(--mono); }
 .otio-timeline-marker { position: absolute; top: 0; height: 5px; min-width: 7px; z-index: 4; padding: 0; border: 1px solid var(--ink); border-radius: 0; background: var(--otio-marker-color, var(--patina)); cursor: pointer; }
 .otio-timeline-marker.is-point { top: 1px; width: 7px; height: 7px; z-index: 5; transform: translateX(-50%) rotate(45deg); }
 .otio-selection { position: absolute; top: 1px; bottom: 1px; z-index: 3; min-width: 4px; border: 2px dashed var(--patina); background: color-mix(in srgb, var(--patina) 22%, transparent); pointer-events: none; }
@@ -498,7 +506,33 @@ body {
 .otio-selection-readout .otio-comment-selection { background: var(--patina); color: var(--surface); border-color: var(--patina); }
 .otio-feedback-target { margin: .2rem 0 .45rem; padding: .35rem .55rem; border-left: 2px solid var(--patina); background: var(--diff-added); color: var(--ink); font: .66rem/1.6 var(--mono); overflow-wrap: anywhere; }
 .otio-feedback-target span { display: block; margin-top: .15rem; color: var(--ink-soft); font-size: .6rem; }
+.popover-card.is-otio-composer.is-focused-otio-composer { display: flex; flex-direction: column; overflow: hidden; padding: .2rem .4rem; }
+.popover-card.is-otio-composer.is-focused-otio-composer .popover-bounded-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.popover-card.is-otio-composer.is-focused-otio-composer .popover-field { flex: 0 1 3rem; height: 3rem; min-height: calc(1.3em + .4rem + 2px); padding: .2rem .3rem; font-size: .85rem; line-height: 1.3; }
+.popover-card.is-otio-composer.is-focused-otio-composer .popover-tools { flex: none; margin-top: .15rem; padding-top: .15rem; }
 .otio-view button:focus-visible, .otio-view input:focus-visible, .otio-view select:focus-visible, .otio-track-rail:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+/* Composition and focused states share the current viewer's bounded layout. */
+.stage-wrap:has(.is-bounded-otio) { overflow: hidden; }
+.stage-otio:has(.is-bounded-otio) { display: flex; height: 100%; min-height: 0; padding: 0; }
+.otio-view.is-bounded-otio { position: relative; display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.is-bounded-otio .otio-monitor-row { flex: 1 1 0; min-height: 20%; grid-template-rows: minmax(0, 1fr); }
+.is-bounded-otio .otio-preview { min-height: 0; overflow: hidden; }
+.is-bounded-otio .otio-canvas { height: 100%; max-height: none; min-height: 0; }
+.is-bounded-otio .otio-inspector { min-height: 0; overflow: auto; }
+.is-bounded-otio .otio-transport, .is-bounded-otio .otio-timeline-heading, .is-bounded-otio .otio-selection-readout { flex: none; }
+.is-bounded-otio .otio-timeline-scroll { flex: 0 1 auto; min-height: 0; max-height: min(240px, 30%); overflow: auto; }
+@container viewer (max-width: 44rem) {
+  .is-bounded-otio .otio-monitor-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .otio-transport .otio-previous-frame, .otio-transport .otio-next-frame { display: inline-grid; place-items: center; width: 32px; min-height: 28px; padding: .25rem; font-size: 0; }
+  .otio-frame-icon { display: block; }
+  .otio-track-select { flex: 1 1 7rem; width: 7rem; max-width: 160px; }
+  .is-bounded-otio .otio-inspector { position: absolute; inset: 0 0 auto; max-height: 60%; z-index: 9; }
+  .is-bounded-otio .otio-selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }
+  .is-element-focused .otio-selection-label { display: none; }
+  .is-bounded-otio .otio-selection-label { grid-column: 1 / -1; min-width: 0; }
+  .is-bounded-otio .otio-selection-readout label { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+  .is-bounded-otio .otio-selection-readout input { width: 100%; min-width: 0; }
+}
 
 /* ---------- the viewer's breakpoints, against the device frame ---------- */
 @container viewer (max-width: 64rem) {
@@ -709,8 +743,8 @@ const PDF_HTML = `<div class="pdf-page-inner">
 /* OTIO standard sample: Relik Feature Editorial, 24 fps, 240 frames, global start 86400. */
 const OTIO_TRACKS = [
   { key: 'v1', code: 'V1', name: 'Video 1', id: 'track-v1-main', ptr: '/tracks/children/0', kind: 'Video', depth: 0, nest: true, items: [
-    { name: 'Primary Grade A', id: 'clip-v1-primary-a', schema: 'Clip.2', s: 0, e: 72 },
-    { name: 'Secondary Grade B', id: 'clip-v1-secondary-b', schema: 'Clip.2', s: 72, e: 168 },
+    { name: 'Primary Grade A', id: 'clip-v1-primary-a', schema: 'Clip.2', s: 0, e: 72, visibleStart: 0, visibleEnd: 84 },
+    { name: 'Secondary Grade B', id: 'clip-v1-secondary-b', schema: 'Clip.2', s: 72, e: 168, visibleStart: 60, visibleEnd: 168 },
     { name: 'Slug V1', id: 'gap-v1-slug', schema: 'Gap.1', s: 168, e: 192, gap: true },
     { name: 'VFX Submaster Stack', id: 'stack-vfx-submaster', schema: 'Stack.1', s: 192, e: 240, compound: true },
     { name: 'SMPTE_Dissolve_1', id: 'transition-v1-dissolve', schema: 'Transition.1', s: 60, e: 84, transition: true } ],
@@ -918,17 +952,20 @@ class Layer {
     else if (this.placed) return;
     else a = this.stored;
     if (!a) return;
+    const viewport = this.opts.viewport?.();
+    p.classList.toggle('is-focused-otio-composer', !!viewport);
     p.style.maxHeight = '';
     delete p.dataset.capped;
     p.style.left = '0px';
     p.style.top = '0px';
     const w = p.offsetWidth, ht = p.offsetHeight;
     const prefer = this.opts.prefer || 'above';
-    if (reveal && this.opts.reveal) {
+    if (reveal && this.opts.reveal && !viewport) {
       const next = revealScrollTop(a, ht, { scrollTop: host.scrollTop, clientHeight: host.clientHeight, scrollHeight: host.scrollHeight }, GAP, MARGIN, prefer);
       if (Math.abs(next - host.scrollTop) > 0.5) host.scrollTop = next;
     }
-    const placed = placePopover(a, { width: w, height: ht }, hostBox(host), GAP, MARGIN, prefer);
+    const bounds = viewport ? { scrollLeft: viewport.left, scrollTop: viewport.top, clientWidth: viewport.width, clientHeight: viewport.height } : hostBox(host);
+    const placed = placePopover(a, { width: w, height: ht }, bounds, GAP, MARGIN, prefer);
     p.style.left = `${placed.left}px`;
     p.style.top = `${placed.top}px`;
     p.dataset.side = placed.side;
@@ -941,6 +978,7 @@ class Layer {
   track() {
     const p = this.current();
     if (!p || !this.opts.follow) return;
+    if (this.opts.viewport?.()) { this.place(false); return; }
     const a = this.opts.follow();
     if (!a) return;
     this.stored = a;
@@ -1021,7 +1059,8 @@ function quoteLabel(quote) {
 function otioLabel(a) {
   const track = OTIO_BY_KEY[a.track];
   const span = a.dur === 0 ? `point ${a.start} @ 24` : `${a.start} @ 24, duration ${a.dur} @ 24`;
-  return `v${a.version || 2} · Relik Feature Editorial · ${track ? track.name : 'Composition'} · ${span}`;
+  const item = a.item ? track?.items.find((node) => node.id === a.item) : null;
+  return `v${a.version || 2} · Relik Feature Editorial · ${track ? track.name : 'Composition'}${item ? ` · ${item.name || item.schema}` : ''} · ${span}`;
 }
 function targetLabel(a) {
   if (!a) return WHOLE;
@@ -1393,7 +1432,14 @@ class Viewer {
   openComposer(anchor, box, o = {}) {
     const focus = o.focus !== false;
     const layer = this.layerFor(anchor);
+    const viewport = anchor.kind === 'otio' ? () => {
+      const transport = this.host.querySelector('.otio-view.is-element-focused .otio-transport');
+      if (!transport) return undefined;
+      const host = this.host.getBoundingClientRect(), bottom = transport.getBoundingClientRect().bottom;
+      return { left: this.host.scrollLeft, top: bottom - host.top + this.host.scrollTop, width: this.host.clientWidth, height: Math.max(0, host.bottom - bottom) };
+    } : undefined;
     const held = this.composing;
+    if (anchor.kind === 'otio' && !focus && this.hasDraft() && !(held && layer.current() === held.panel && family(held.anchor.kind) === family(anchor.kind))) return held;
     if (held && layer.current() === held.panel && family(held.anchor.kind) === family(anchor.kind)) {
       held.anchor = anchor;
       held.target.textContent = targetLabel(anchor);
@@ -1414,9 +1460,9 @@ class Viewer {
     const post = h('button', { type: 'button', class: 'popover-action is-primary' }, 'Post');
     const cancel = h('button', { type: 'button', class: 'popover-action is-quiet' }, 'Cancel');
     const panel = h('div', { class: `popover popover-card popover-composer${anchor.kind === 'otio' ? ' is-otio-composer' : ''}`, role: 'dialog', 'aria-label': 'Comment', 'data-anchor-kind': kindAttr(anchor.kind) },
-      h('div', { class: 'popover-bounded-body' }, target, h('p', { class: 'popover-disclosure' }, IDENTITY), note),
+      h('div', { class: 'popover-bounded-body', tabindex: anchor.kind === 'otio' ? '0' : null }, target, h('p', { class: 'popover-disclosure' }, IDENTITY), note),
       field, h('div', { class: 'popover-tools' }, post, cancel));
-    const state = { anchor, panel, field, target, note, post, cancel, layer, opts: { follow: () => this.measure(PENDING), reveal: true, prefer: preferFor(anchor.kind) } };
+    const state = { anchor, panel, field, target, note, post, cancel, layer, opts: { follow: () => this.measure(PENDING), reveal: true, prefer: preferFor(anchor.kind), ...(viewport ? { viewport } : {}) } };
     this.composing = state;
     post.addEventListener('click', () => this.post());
     cancel.addEventListener('click', () => this.closePanel({ restore: true }));
@@ -2140,18 +2186,46 @@ function frameAdapter(v, o, isSvg) {
 /* ---------- OTIO ---------- */
 function otioAdapter(v, o) {
   const version = o.version || 2;
-  let mode = 'range', selected = null, inspected = OTIO_BY_KEY.v1;
+  let mode = 'range', selected = null, inspected = OTIO_BY_KEY.v1, focused = null;
+  let frame = 0, playing = false;
   const context = h('div', { class: 'otio-context', role: 'tabpanel' });
+  const previewImage = h('img', { class: 'otio-canvas', src: PRIMARY_A, alt: 'OTIO composition preview', width: '640', height: '360' });
+  const scopeText = h('span', null, 'Composition · browser-managed SDR');
+  const focusStatus = h('p', { class: 'otio-focus-status', hidden: true });
   const monitor = h('div', { class: 'otio-monitor-row', 'data-inspector-open': 'false' },
-    h('div', { class: 'otio-preview' }, h('img', { class: 'otio-canvas', src: PRIMARY_A, alt: 'OTIO composition preview', width: '640', height: '360' }), h('span', { class: 'otio-preview-scope' }, h('span', null, 'Composition · browser-managed SDR'))),
+    h('div', { class: 'otio-preview' }, previewImage, h('span', { class: 'otio-preview-scope' }, scopeText), focusStatus),
     h('aside', { class: 'otio-inspector', 'aria-label': 'OTIO source context' }, h('div', { class: 'otio-inspector-tabs', role: 'tablist' }, ['Inspector', 'Markers', 'Media'].map((t, i) => h('button', { type: 'button', class: 'otio-inspector-tab', role: 'tab', 'aria-selected': String(i === 0) }, t))), context));
   const inspectorToggle = h('button', { type: 'button', class: 'otio-inspector-toggle', 'aria-expanded': 'false', onclick: () => { const open = monitor.dataset.inspectorOpen !== 'true'; monitor.dataset.inspectorOpen = String(open); inspectorToggle.setAttribute('aria-expanded', String(open)); } }, 'Inspector');
   const transport = h('div', { class: 'otio-transport', 'aria-label': 'OTIO playback' },
     h('button', { type: 'button', class: 'otio-previous-frame' }, 'Previous frame'), h('button', { type: 'button', class: 'otio-play' }, 'Play'), h('button', { type: 'button', class: 'otio-next-frame' }, 'Next frame'),
     h('output', { class: 'otio-time' }, tcOtio(0)), h('input', { class: 'otio-seek', type: 'range', min: '0', max: String(OTIO_FRAMES - 1), step: '1', value: '0', 'aria-label': 'Timeline frame' }), inspectorToggle);
+  for (const [cls, path] of [['otio-previous-frame', 'M4 3v10M12 4l-6 4 6 4'], ['otio-next-frame', 'M12 3v10M4 4l6 4-6 4']])
+    transport.querySelector(`.${cls}`).insertAdjacentHTML('beforeend', `<svg class="otio-frame-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="${path}"/></svg>`);
+  const focusTitle = h('span', { class: 'otio-focus-title' });
+  const focusContext = h('div', { class: 'otio-focus-context', hidden: true }, focusTitle,
+    h('button', { type: 'button', class: 'otio-back-composition', onclick: () => { setFocus(null); clearSelection(); } }, 'Back to composition'));
+  transport.prepend(focusContext);
+  const seek = transport.querySelector('.otio-seek');
+  const play = transport.querySelector('.otio-play');
+  transport.querySelector('.otio-previous-frame').onclick = () => seekFrame(frame - 1);
+  transport.querySelector('.otio-next-frame').onclick = () => seekFrame(frame + 1);
+  seek.oninput = () => seekFrame(Number(seek.value));
+  play.onclick = () => {
+    playing = !playing; play.textContent = playing ? 'Pause' : 'Play';
+    if (!playing) return;
+    if (frame >= Number(seek.max)) seekFrame(Number(seek.min));
+    let previous = performance.now();
+    const tick = (now) => {
+      if (!playing || !root.isConnected) return;
+      if (now - previous >= 1000 / 24) { seekFrame(frame + 1); previous = now; }
+      if (frame >= Number(seek.max)) { playing = false; play.textContent = 'Play'; return; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
   const modeButtons = ['point', 'range', 'track'].map((m) => h('button', { type: 'button', class: 'otio-mode', 'data-otio-mode': m, 'aria-pressed': String(m === mode), onclick: () => setMode(m) }, m[0].toUpperCase() + m.slice(1)));
   const trackSelect = h('select', { class: 'otio-track-select', 'aria-label': 'Comment track' }, OTIO_TRACKS.map((t) => h('option', { value: t.key }, `${t.code} · ${t.name} · ${t.ptr}`)));
-  trackSelect.addEventListener('change', () => select(trackSelect.value, selected ? selected.start : 0, selected ? selected.end : 1, false));
+  trackSelect.addEventListener('change', () => { setFocus(null); select(trackSelect.value, selected ? selected.start : 0, selected ? selected.end : 1, false); });
   const heading = h('div', { class: 'otio-timeline-heading' }, h('h2', { class: 'otio-timeline-name' }, 'Relik Feature Editorial'), h('div', { class: 'otio-selection-tools' }, modeButtons, trackSelect));
   const ticks = h('div', { class: 'otio-ruler-ticks' });
   for (let s = 0; s <= 10; s += 1) ticks.append(h('span', { style: `left:${s * 10}%` }, `00:00:${String(s).padStart(2, '0')}:00`));
@@ -2162,17 +2236,18 @@ function otioAdapter(v, o) {
   const compositionRail = h('div', { class: 'otio-track-rail', tabindex: '0', 'data-track-id': '', 'aria-label': 'Composition' });
   rows.append(h('div', { class: 'otio-track-row otio-composition-row', 'data-depth': '0', 'data-enabled': 'true' }, h('div', { class: 'otio-track-label' }, h('span', { class: 'otio-track-name' }, h('strong', null, 'Composition'))), h('div', { class: 'otio-track-body' }, compositionRail, h('div', { class: 'otio-comment-band' }))));
   for (const t of OTIO_TRACKS) {
-    const label = h('div', { class: 'otio-track-label' }, h('span', { class: 'otio-track-code' }, t.code), h('span', { class: 'otio-track-name' }, h('strong', null, t.name), h('small', null, t.ptr)));
+    const title = h('button', { type: 'button', class: 'otio-track-activate', 'data-focus-node-id': t.id, 'aria-pressed': 'false', onclick: () => activate(t) }, t.name);
+    const label = h('div', { class: 'otio-track-label' }, h('span', { class: 'otio-track-code' }, t.code), h('span', { class: 'otio-track-name' }, title, h('small', null, t.ptr)));
     if (t.nest) label.append(h('button', { type: 'button', class: 'otio-disclosure', 'aria-expanded': 'true', 'aria-label': `Collapse ${t.code} ${t.name}`, html: '<svg viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>' }));
     label.append(h('button', { type: 'button', class: 'otio-track-toggle', 'aria-pressed': 'false', 'aria-label': `${t.kind === 'Audio' ? 'Mute' : 'Hide'} ${t.code} ${t.name}` }, t.kind === 'Audio' ? 'Mute' : 'Hide'));
     if (t.kind === 'Audio') label.append(h('button', { type: 'button', class: 'otio-track-toggle otio-track-solo', 'aria-pressed': 'false', 'aria-label': `Solo ${t.code} ${t.name}` }, 'Solo'));
     const rail = h('div', { class: 'otio-track-rail', tabindex: '0', 'data-track-id': t.id, 'data-track-key': t.key, 'aria-label': `${t.code} · ${t.name} · ${t.ptr}` });
     for (const item of t.items) {
-      const button = h('button', { type: 'button', class: `otio-item${item.gap ? ' is-gap' : ''}${item.compound ? ' is-compound' : ''}${item.transition ? ' is-transition' : ''}${item.diagnostic ? ' has-diagnostic' : ''}`, 'data-item-id': item.id, 'data-schema': item.schema, 'data-enabled': item.disabled ? 'false' : 'true', title: `${item.name || item.schema} · ${item.schema}`, style: `left:${pctLeft(item.s)};width:${((Math.min(item.e, OTIO_FRAMES) - item.s) / OTIO_FRAMES) * 100}%` }, item.name || item.schema);
-      button.addEventListener('click', () => { inspected = { ...item, track: t }; paintInspector(); });
+      const button = h('button', { type: 'button', class: `otio-item${item.gap ? ' is-gap' : ''}${item.compound ? ' is-compound' : ''}${item.transition ? ' is-transition' : ''}${item.diagnostic ? ' has-diagnostic' : ''}`, 'data-item-id': item.id, 'data-focus-node-id': item.id, 'aria-pressed': 'false', 'aria-label': `${item.name || item.schema} · ${item.schema}`, 'data-schema': item.schema, 'data-enabled': item.disabled ? 'false' : 'true', title: `${item.name || item.schema} · ${item.schema}`, style: `left:${pctLeft(item.s)};width:${((Math.min(item.e, OTIO_FRAMES) - item.s) / OTIO_FRAMES) * 100}%` }, item.name || item.schema);
+      button.addEventListener('click', (e) => { if (!e.detail || rail.dataset.suppressClick !== 'true') activate({ ...item, track: t }); });
       rail.append(button);
     }
-    for (const m of t.markers || []) rail.append(h('button', { type: 'button', class: `otio-timeline-marker${m.s === m.e ? ' is-point' : ''}`, title: `${m.name} · ${t.name}`, 'aria-label': `${m.name} · ${t.name}`, style: `--otio-marker-color:${m.color};left:${pctLeft(m.s)};${m.s === m.e ? '' : `width:${((m.e - m.s) / OTIO_FRAMES) * 100}%`}` }));
+    for (const [index, m] of (t.markers || []).entries()) rail.append(h('button', { type: 'button', class: `otio-timeline-marker${m.s === m.e ? ' is-point' : ''}`, 'data-owner-id': t.id, 'data-marker-index': String(index), title: `${m.name} · ${t.name}`, 'aria-label': `${m.name} · ${t.name}`, onclick: () => { setFocus(t); mode = m.s === m.e ? 'point' : 'range'; select(t.key, m.s, m.e, false, t.id); aim(false); }, style: `--otio-marker-color:${m.color};left:${pctLeft(m.s)};${m.s === m.e ? '' : `width:${((m.e - m.s) / OTIO_FRAMES) * 100}%`}` }));
     const band = h('div', { class: 'otio-comment-band' });
     rails[t.key] = rail; bands[t.key] = band;
     rows.append(h('div', { class: 'otio-track-row', 'data-depth': String(t.depth), 'data-enabled': 'true', 'data-track-key': t.key, style: t.depth ? `--otio-depth:${t.depth}` : null }, label, h('div', { class: 'otio-track-body' }, rail, band)));
@@ -2183,16 +2258,53 @@ function otioAdapter(v, o) {
   const readLabel = h('span', { class: 'otio-selection-label' }, 'Composition');
   const inputIn = h('input', { class: 'otio-selection-in', type: 'number', min: '0', step: '1', 'aria-label': 'Selection in frame' });
   const inputOut = h('input', { class: 'otio-selection-out', type: 'number', min: '0', step: '1', 'aria-label': 'Selection out frame' });
+  inputIn.onchange = inputOut.onchange = () => {
+    const start = clamp(Number(inputIn.value), 0, OTIO_FRAMES - 1);
+    const end = mode === 'point' ? start : clamp(Number(inputOut.value), start + 1, OTIO_FRAMES);
+    select(selected?.track || 'v1', start, end, false);
+    aim(false);
+  };
   const readout = h('div', { class: 'otio-selection-readout' }, readLabel, h('label', null, 'In ', inputIn), h('label', null, 'Out ', inputOut),
     h('button', { type: 'button', class: 'otio-comment-selection', onclick: () => { if (!selected) select('v1', 0, 1, false); aim(true); } }, 'Comment'),
     h('button', { type: 'button', class: 'otio-clear-selection', onclick: () => clearSelection() }, 'Clear'));
-  const root = h('section', { class: 'otio-view', 'data-ready': 'true' }, monitor, transport, heading, scroll, readout, h('div', { class: 'otio-diagnostics', role: 'status' }));
+  const root = h('section', { class: 'otio-view is-bounded-otio', 'data-ready': 'true' }, monitor, transport, heading, scroll, readout, h('div', { class: 'otio-diagnostics', role: 'status' }));
   const stage = h('main', { class: 'stage stage-otio' }, root);
   let selectionEl = null;
 
   function placePlayhead() {
     const labelWidth = rulerLabel.offsetWidth;
-    playhead.style.left = `${labelWidth}px`;
+    playhead.style.left = `calc(${labelWidth}px + (100% - ${labelWidth}px) * ${frame / OTIO_FRAMES})`;
+  }
+  function seekFrame(value) {
+    frame = clamp(value, Number(seek.min), Number(seek.max));
+    seek.value = String(frame);
+    transport.querySelector('.otio-time').textContent = tcOtio(frame);
+    placePlayhead();
+  }
+  function setFocus(node, target) {
+    playing = false; play.textContent = 'Play'; focused = node;
+    focusContext.hidden = !node;
+    focusTitle.textContent = node ? node.name || node.schema : '';
+    root.classList.toggle('is-element-focused', !!node);
+    if (node) v.host.scrollTop = 0;
+    root.dataset.scopeNodeId = node?.id || '';
+    scopeText.textContent = `${node ? node.name || node.schema : 'Composition'} · browser-managed SDR`;
+    const handles = node?.track && target && (target.start < node.s || target.start >= node.e || target.start + target.dur > node.e);
+    seek.min = String(handles ? node.visibleStart ?? node.s : node?.s || 0);
+    seek.max = String(Math.min(handles ? node.visibleEnd ?? node.e : node?.e || OTIO_FRAMES, OTIO_FRAMES) - 1);
+    for (const el of root.querySelectorAll('[data-focus-node-id]')) el.setAttribute('aria-pressed', String(el.dataset.focusNodeId === node?.id));
+    const noPicture = node && (node.gap || node.disabled || node.track?.kind === 'Audio' || node.kind === 'Audio');
+    previewImage.hidden = !!noPicture;
+    focusStatus.hidden = !noPicture;
+    focusStatus.textContent = node?.gap ? `${node.name || node.schema} · No media · black/silence` : node?.disabled ? `${node.name} · Disabled · black/silence` : node?.name || '';
+    if (node) seekFrame(Number(seek.min));
+  }
+  function activate(node) {
+    setFocus(node); mode = 'range';
+    const track = node.track || node;
+    select(track.key, node.s || 0, Math.min(node.e || OTIO_FRAMES, OTIO_FRAMES), false, node.track ? node.id : null);
+    revealSelection();
+    inspected = node; paintInspector(); aim(false);
   }
   function paintInspector() {
     const node = inspected;
@@ -2205,10 +2317,12 @@ function otioAdapter(v, o) {
   function setMode(m) {
     mode = m;
     for (const b of modeButtons) b.setAttribute('aria-pressed', String(b.dataset.otioMode === m));
-    if (selected) select(selected.track, m === 'track' ? 0 : selected.start, m === 'point' ? selected.start : m === 'track' ? OTIO_FRAMES : Math.max(selected.start + 1, selected.end), false);
+    if (m === 'track' && focused) setFocus(OTIO_BY_KEY[selected.track]);
+    if (selected) { select(selected.track, m === 'track' ? 0 : selected.start, m === 'point' ? selected.start : m === 'track' ? OTIO_FRAMES : Math.max(selected.start + 1, selected.end), false, m === 'track' ? null : selected.item); if (focused) aim(false); }
   }
-  function select(trackKey, start, end, focusRail) {
-    selected = { track: trackKey, start, end };
+  function select(trackKey, start, end, focusRail, item) {
+    if (focused && (trackKey !== (focused.track || focused).key || (focused.s !== undefined && (start < Number(seek.min) || end > Number(seek.max) + 1)))) setFocus(null);
+    selected = { track: trackKey, start, end, item: item === undefined ? focused?.track ? focused.id : null : item };
     trackSelect.value = trackKey;
     for (const r of Object.values(rails)) r.removeAttribute('data-selected');
     rails[trackKey]?.setAttribute('data-selected', 'true');
@@ -2218,7 +2332,7 @@ function otioAdapter(v, o) {
     inputIn.value = String(start);
     inputOut.value = String(end);
     readLabel.textContent = targetLabel(anchorOf());
-    inspected = OTIO_BY_KEY[trackKey];
+    inspected = selected.item && selected.item !== OTIO_BY_KEY[trackKey].id ? { ...OTIO_BY_KEY[trackKey].items.find((node) => node.id === selected.item), track: OTIO_BY_KEY[trackKey] } : OTIO_BY_KEY[trackKey];
     paintInspector();
     if (focusRail) rails[trackKey]?.focus({ preventScroll: true });
   }
@@ -2231,7 +2345,7 @@ function otioAdapter(v, o) {
     inputIn.value = ''; inputOut.value = '';
   }
   function anchorOf() {
-    return { kind: 'otio', track: selected.track, start: selected.start, dur: selected.end - selected.start, version };
+    return { kind: 'otio', track: selected.track, item: selected.item, start: selected.start, dur: selected.end - selected.start, version };
   }
   function visibleTrackArea() {
     const label = rulerLabel.getBoundingClientRect();
@@ -2244,13 +2358,18 @@ function otioAdapter(v, o) {
     if (!nonEmpty(r)) return undefined;
     const area = visibleTrackArea();
     const left = Math.max(r.left, area.left), right = Math.min(r.right, area.right);
-    if (right <= left) return undefined;
-    return toContent({ left, top: r.top, width: right - left, height: r.height }, v.host);
+    const timeline = scroll.getBoundingClientRect(), host = v.host.getBoundingClientRect();
+    const top = Math.max(r.top, timeline.top, host.top), bottom = Math.min(r.bottom, timeline.bottom, host.bottom);
+    if (right <= left || bottom <= top) return undefined;
+    return toContent({ left, top, width: right - left, height: bottom - top }, v.host);
   }
   function revealSelection() {
     if (!selectionEl) return;
     const area = visibleTrackArea();
     const r = selectionEl.getBoundingClientRect();
+    const timeline = scroll.getBoundingClientRect();
+    if (r.top < timeline.top) scroll.scrollTop -= timeline.top - r.top;
+    else if (r.bottom > timeline.bottom) scroll.scrollTop += r.bottom - timeline.bottom;
     if (r.left < area.left + 16) scroll.scrollLeft -= area.left + 16 - r.left;
     else if (r.right > area.right - 16) scroll.scrollLeft += Math.min(r.right - (area.right - 16), r.left - (area.left + 16));
   }
@@ -2265,6 +2384,9 @@ function otioAdapter(v, o) {
   for (const [key, rail] of Object.entries(rails)) {
     rail.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('[data-comment-id], .otio-timeline-marker')) return;
+      rail.dataset.suppressClick = 'false';
+      const itemId = e.target.closest('.otio-item')?.dataset.itemId;
+      let dragging = false;
       const from = Math.min(OTIO_FRAMES - 1, frameAt(rail, e.clientX));
       rail.setPointerCapture(e.pointerId);
       const update = (moved, final) => {
@@ -2276,13 +2398,15 @@ function otioAdapter(v, o) {
         select(key, start, end, false);
         if (final) aim(false);
       };
-      update(e, false);
-      const move = (m) => update(m, false);
-      const done = (m) => { rail.removeEventListener('pointermove', move); rail.removeEventListener('pointerup', done); update(m, true); };
+      const move = (m) => { if (!dragging && Math.abs(m.clientX - e.clientX) < 5) return; dragging = true; update(m, false); };
+      const finish = () => { rail.removeEventListener('pointermove', move); rail.removeEventListener('pointerup', done); rail.removeEventListener('pointercancel', cancel); if (rail.hasPointerCapture(e.pointerId)) rail.releasePointerCapture(e.pointerId); rail.dataset.suppressClick = 'true'; };
+      const done = (m) => { finish(); if (itemId && !dragging && Math.abs(m.clientX - e.clientX) < 5) { const t = OTIO_BY_KEY[key]; activate({ ...t.items.find((item) => item.id === itemId), track: t }); } else update(m, true); };
+      const cancel = () => finish();
       rail.addEventListener('pointermove', move);
       rail.addEventListener('pointerup', done);
+      rail.addEventListener('pointercancel', cancel);
     });
-    rail.addEventListener('keydown', (e) => keyOnRail(key, e.key, e.shiftKey, e));
+    rail.addEventListener('keydown', (e) => { if (e.target === rail) keyOnRail(key, e.key, e.shiftKey, e); });
   }
   function keyOnRail(key, k, shift, e) {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].includes(k)) return;
@@ -2317,6 +2441,17 @@ function otioAdapter(v, o) {
       bands[a.track]?.append(h('button', { type: 'button', class: `otio-comment-mark${point ? ' is-point' : ''}${c.id === v.activeId ? ' is-active' : ''}${c.resolved ? ' is-resolved' : ''}`, 'data-comment-id': c.id, 'aria-label': `${targetLabel(a)}: ${c.body}`, style: `--otio-comment-lane:${laneOf[c.id]};left:${pctLeft(a.start)};${point ? '' : `width:${(a.dur / OTIO_FRAMES) * 100}%`}` }));
     }
   };
+  function revealComment(id) {
+    const comment = v.comments.find((entry) => entry.id === id);
+    if (!comment) return;
+    const anchor = comment.anchor, track = OTIO_BY_KEY[anchor.track];
+    const item = track.items.find((node) => node.id === anchor.item);
+    setFocus(item ? { ...item, track } : track, anchor);
+    mode = anchor.dur === 0 ? 'point' : 'range';
+    select(anchor.track, anchor.start, anchor.start + anchor.dur, false, anchor.item || null);
+    seekFrame(anchor.start);
+    revealSelection();
+  }
   paintInspector();
   requestAnimationFrame(placePlayhead);
   return {
@@ -2327,9 +2462,11 @@ function otioAdapter(v, o) {
       return measureEl(el);
     },
     tools(el) { el.append(h('span', { class: 'thread-hint' }, 'Point or range on a named track')); },
-    reveal(id) { const el = root.querySelector(`.otio-comment-mark[data-comment-id="${id}"]`); if (!el) return; const area = visibleTrackArea(); const r = el.getBoundingClientRect(); if (r.left < area.left + 16) scroll.scrollLeft -= area.left + 16 - r.left; else if (r.right > area.right - 16) scroll.scrollLeft += r.right - (area.right - 16); },
-    gestureTarget: (t) => !!t.closest('.otio-track-rail'),
+    reveal: revealComment,
+    markPressed(mark) { if (!mark.cluster) revealComment(mark.id); },
+    gestureTarget: (t) => !!t.closest('.otio-track-rail') || (!!focused && !!t.closest('.otio-transport')),
     setMode,
+    activate(id) { const track = OTIO_TRACKS.find((t) => t.items.some((node) => node.id === id)); const item = track?.items.find((node) => node.id === id); if (item) activate({ ...item, track }); },
     gesture(trackKey, start, end, m) { setMode(m || mode); select(trackKey, start, m === 'point' ? start : end, false); aim(false); },
     comment(trackKey, start, end, m) { setMode(m || mode); select(trackKey, start, m === 'point' ? start : end, true); aim(true); },
     key(trackKey, k) { rails[trackKey].focus({ preventScroll: true }); keyOnRail(trackKey, k, false); },
@@ -2405,6 +2542,10 @@ const STATES = [
   S('OTIO', 'otio-12', '12', 'otio', 'Sidebar open beside the stage (wider than 44rem): a range on V1 still opens the stage composer, and the sidebar chip keeps "Commenting on the whole document"', async (v) => { if (wide()) v.setSidebar(true); await settle(1); await toTimeline(v); v.adapter.gesture('v1', 96, 132, 'range'); }),
   S('OTIO', 'otio-13', '13', 'otio', 'A reader with no verified address: the range goes to the sidebar, which opens to verify the address; no stage composer', async (v) => { await toTimeline(v); v.adapter.gesture('v1', 96, 132, 'range'); }, { opts: { session: 'anonymous' } }),
   S('OTIO', 'otio-14', '14', 'otio', 'The window is resized while a draft is open: the panel is placed again and the draft stays', async (v) => { await toTimeline(v); v.adapter.comment('v5', 0, 0, 'point'); v.type('Duplicate Video 2 point, not the other track.'); await settle(1); const w = v.device.style.width; v.device.style.width = `${Math.round(v.device.offsetWidth * 0.82)}px`; await settle(2); v.layer.reposition(); await settle(1); v.device.style.width = w; await settle(2); v.layer.reposition(); }),
+  S('OTIO', 'otio-focus-item', '15', 'otio', 'Primary Grade A · Back to composition', async (v) => { await toTimeline(v); v.adapter.activate('clip-v1-primary-a'); }),
+  S('OTIO', 'otio-focus-audio', '16', 'otio', 'Interview Mic 1 · Back to composition', async (v) => { await toTimeline(v); v.adapter.activate('clip-a1-interview'); }),
+  S('OTIO', 'otio-focus-draft', '17', 'otio', 'An open draft survives switching between valid targets', async (v) => { await toTimeline(v); v.adapter.activate('clip-v1-primary-a'); v.type('Primary grade range, before the dissolve.'); v.adapter.activate('clip-v1-secondary-b'); }),
+  S('OTIO', 'otio-focus-posted', '18', 'otio', 'Primary Grade A · Post', async (v) => { await toTimeline(v); v.adapter.activate('clip-v1-primary-a'); v.type('Primary grade range, before the dissolve.'); v.post({ instant: true }); }),
 
   /* ---------- video ---------- */
   S('Video', 'video-1', 'V1', 'video', 'Span dragged from 0:04 to 0:07: the composer opens at the scrubber, below by preference; at 1440 the picture leaves no room below in view, so it opens above', async (v) => { v.adapter.span(4, 7); }),

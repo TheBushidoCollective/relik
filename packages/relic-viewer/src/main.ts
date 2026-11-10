@@ -6849,6 +6849,31 @@ export function buildThread(
     if (sticky) stickyId = firstId;
     setActiveMark(firstId);
   };
+  const focusedOtioViewport = (): AnchorBox | undefined => {
+    if (!host) return undefined;
+    const transport = host.querySelector<HTMLElement>(
+      '.otio-view.is-element-focused .otio-transport'
+    );
+    if (!transport) return undefined;
+    const bounds = host.getBoundingClientRect();
+    const top = Math.max(
+      bounds.top + host.clientTop,
+      transport.getBoundingClientRect().bottom
+    );
+    return anchorFromClientRect(
+      {
+        left: bounds.left + host.clientLeft,
+        top,
+        width: host.clientWidth,
+        height: Math.max(
+          0,
+          bounds.top + host.clientTop + host.clientHeight - top
+        ),
+      },
+      bounds,
+      host
+    );
+  };
   /**
    * Writing a new comment on the thing it is about.
    *
@@ -6870,8 +6895,18 @@ export function buildThread(
     const layer = popover;
     const opener = cipher;
     if (layer === undefined || opener === undefined) return;
-    cardId = PENDING_MARK_ID;
     const focus = options.focus ?? true;
+    const held = composing;
+    if (
+      anchor.kind === 'otio' &&
+      !focus &&
+      holdsUnsavedText() &&
+      (!held ||
+        layer.current() !== held.panel ||
+        familyOf(held.anchor.kind) !== familyOf(anchor.kind))
+    )
+      return;
+    cardId = PENDING_MARK_ID;
 
     if (!returnFocusTarget) {
       const active =
@@ -6888,7 +6923,6 @@ export function buildThread(
       options.reanchor ??
       (isDoc ? () => anchorBoxFor(PENDING_MARK_ID) : undefined);
 
-    const held = composing;
     if (
       held !== undefined &&
       layer.current() === held.panel &&
@@ -6896,6 +6930,10 @@ export function buildThread(
     ) {
       held.anchor = anchor;
       held.target.textContent = markTargetLabel(anchor);
+      held.panel.classList.toggle(
+        'is-focused-otio-composer',
+        anchor.kind === 'otio' && focusedOtioViewport() !== undefined
+      );
       if (isDoc) {
         paintMarks(lastEntries);
       } else if (anchor.kind === 'time' && host !== undefined) {
@@ -6905,6 +6943,7 @@ export function buildThread(
         ...(followFn !== undefined ? { follow: followFn } : {}),
         reveal: true,
         prefer: preferFor(anchor.kind),
+        ...(anchor.kind === 'otio' ? { viewport: focusedOtioViewport } : {}),
       });
       reanchor = followFn;
       if (focus) held.field.focus({ preventScroll: true });
@@ -7026,6 +7065,11 @@ export function buildThread(
     panel.classList.add('popover-composer');
     if (anchor.kind === 'otio') {
       panel.classList.add('is-otio-composer');
+      panel.classList.toggle(
+        'is-focused-otio-composer',
+        focusedOtioViewport() !== undefined
+      );
+      boundedBody.tabIndex = 0;
     }
     panel.dataset['anchorKind'] = anchor.kind;
     panel.appendChild(composer.field);
@@ -7049,6 +7093,7 @@ export function buildThread(
       ...(followFn !== undefined ? { follow: followFn } : {}),
       reveal: true,
       prefer: preferFor(anchor.kind),
+      ...(anchor.kind === 'otio' ? { viewport: focusedOtioViewport } : {}),
     });
     reanchor = followFn;
 
@@ -7077,6 +7122,16 @@ export function buildThread(
       unplaceable.has(id)
     )
       return;
+    if (
+      sticky &&
+      host &&
+      entry.kind === 'open' &&
+      entry.anchor?.kind === 'otio' &&
+      sealedOtioAnchorMatchesEntryVersion(entry)
+    ) {
+      otioControllerFor(host)?.reveal(entry.anchor, id);
+      box = anchorBoxFor(id) ?? box;
+    }
     const at = box ?? anchorBoxFor(id);
     if (at === undefined) return;
     openCard(entry, at, sticky);
@@ -7350,6 +7405,14 @@ export function buildThread(
     // A press on another mark is that mark's business: it opens its own
     // card, and closing here first would make the two fight.
     if (event.target.closest('[data-comment-id]') !== null) return;
+    if (
+      composing?.anchor.kind === 'otio' &&
+      event.target
+        .closest('.otio-transport')
+        ?.closest('.otio-view')
+        ?.classList.contains('is-element-focused')
+    )
+      return;
     if (holdsUnsavedText()) return;
     closeCard();
   });

@@ -77,7 +77,7 @@ Extension members, which are the fields a client extracts:
 
 - **`code`** the bare token from this section's refusal tables. `type` is `https://<relic-domain>/problems/` concatenated with `code`, generated from one table so the two can never disagree. `code` exists alongside `type` because a bare token survives a domain change and a URI tail invites clients to parse it. The `problems/` prefix these two members share needs no append to `format.md` 1.5's reserved table: an ID is exactly one path segment at the root, every one of these URIs carries a second segment, and nothing is ever served at `/problems` as a bare segment.
 - **`id_validation_failure`** on `invalid_relic_id`, one of `alphabet`, `length`, or `reserved`, naming which of `format.md` 1.3's three checks the submitted ID failed.
-- **`retry_after_seconds`** integer, on `429`, on `503`, and on `relic_not_yet_published` (1.6). It mirrors the `Retry-After` header, which stays authoritative. The `429` definition only says a response "MAY include a Retry-After header indicating how long to wait before making a new request" ([RFC 6585 §4](https://www.rfc-editor.org/rfc/rfc6585.html)); Relic always sends both. Comment writes, auth sign-in requests, and sign-in code submissions reuse it on `comment_rate_limited` and `auth_rate_limited` (1.9, 1.16).
+- **`retry_after_seconds`** integer, on `429`, on `503`, and on `relic_not_yet_published` (1.6). It mirrors the authoritative `Retry-After` header. Auth sign-in requests and sign-in code submissions use it on `auth_rate_limited` (1.9, 1.16).
 - **`size_limit_bytes`**, **`declared_size_bytes`**, **`size_basis`** on `size_over_cap`. `size_basis` is `plaintext` or `ciphertext`. `format.md` 3.11 requires the published number be a plaintext number a user can check with `ls`, and `shape` picks the enforced side, so without this field a client can't tell a user which number to compare.
 - **`relic_id`** the normalized ID, echoed on every relic-scoped error.
 - **`download_cap`** on `download_cap_exhausted`. The cap value is published policy, so echoing it leaks nothing.
@@ -135,12 +135,13 @@ Comments exist. The endpoints are `GET`, `POST`, and `PATCH /api/relics/{id}/com
 |---|---|---|
 | Comment body is missing, empty, not base64url, or over the transport cap | `400` | `invalid_comment` |
 | No such comment on this relic | `404` | `comment_not_found` |
-| Comment write rate limited | `429` | `comment_rate_limited` |
 | Presenting a session that is missing, spent, or expired, or a publish token that does not match | `401` | `invalid_session` |
 | Deleting a comment you did not author | `403` | `comment_forbidden` |
 | Editing or resolving a comment that is not yours, or resolving one you may not settle | `403` | `comment_forbidden` |
 | A patch request with neither `ciphertext` nor `resolved` present | `400` | `nothing_to_change` |
 | Sign-in request rate limited | `429` | `auth_rate_limited` |
+
+Comment creation, edits, and resolution changes have no comment-write rate limit. Authentication, authorization, payload caps, the kill switch, and notification limits remain in force. A valid actor can create unbounded comment storage and readback work.
 
 **The server cannot read a comment, so `invalid_comment` is a transport check, not a content check.** `format.md` 3.13 puts the comment key behind the fragment and caps the plaintext at 4096 bytes of body and 64 bytes of display name, enforced in `@relic/format` before encryption. Ciphertext is opaque here. The one property this server can test is that the body is unpadded base64url and under a character cap that exists only to stop an unbounded write from reaching the store. A well-formed ciphertext of a body that already failed the plaintext cap is accepted, because rejecting it would require decrypting it.
 
@@ -218,7 +219,7 @@ The unsubscribe key must never be deleted; it is generated once and stored perma
 
 ### 1.13 Client IP derivation and trusted proxy hops
 
-Every IP-keyed rate limit (publish, mint, comment writes, auth sign-in requests, auth sign-in code submissions, cover uploads, shares, and stop links) relies on an authenticated client IP rather than caller-supplied headers.
+Every IP-keyed rate limit (publish, mint, auth sign-in requests, auth sign-in code submissions, cover uploads, shares, and stop links) relies on an authenticated client IP rather than caller-supplied headers.
 
 In production on relik.link, traffic arrives through a Google Cloud Global External Application Load Balancer in front of Cloud Run. The load balancer terminates public TLS and appends two IP addresses to the `X-Forwarded-For` header in order: the connecting client IP, followed by the load balancer forwarding rule IP (`<existing-value>, <client-ip>, <lb-ip>`).
 

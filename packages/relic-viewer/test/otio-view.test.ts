@@ -6,7 +6,10 @@ import {
   readOtioDocument,
 } from '@relic/format';
 import { otioAdapter, otioTargetLabel } from '../src/annotate-otio.ts';
-import { otioControllerFor } from '../src/otio-bridge.ts';
+import {
+  otioControllerFor,
+  type OtioUiController,
+} from '../src/otio-bridge.ts';
 import {
   createOtioSelection,
   formatOtioTime,
@@ -294,9 +297,90 @@ function structuralContent(): Uint8Array {
   );
 }
 
+function focusedSelectionContent(timelineRange = range(0, 96)): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      name: 'Relik Feature Editorial',
+      metadata: { relic: { id: 'focused-timeline' } },
+      source_range: timelineRange,
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Video 1',
+            kind: 'Video',
+            metadata: { relic: { id: 'focused-video' } },
+            source_range: range(0, 96),
+            children: [
+              {
+                ...clip('focused-a', 'Primary Grade A'),
+                markers: [
+                  {
+                    OTIO_SCHEMA: 'Marker.2',
+                    name: 'Grade Correction Required',
+                    marked_range: range(54, 0),
+                  },
+                  {
+                    OTIO_SCHEMA: 'Marker.2',
+                    name: 'SMPTE_Dissolve_1',
+                    marked_range: range(74, 0),
+                  },
+                ],
+              },
+              {
+                OTIO_SCHEMA: 'Transition.1',
+                name: 'SMPTE_Dissolve_1',
+                metadata: { relic: { id: 'focused-transition' } },
+                transition_type: 'SMPTE_Dissolve',
+                in_offset: { value: 6, rate: 24 },
+                out_offset: { value: 6, rate: 24 },
+              },
+              clip('focused-b', 'Secondary Grade B'),
+              {
+                OTIO_SCHEMA: 'Gap.1',
+                name: 'Slug V1',
+                metadata: { relic: { id: 'focused-gap' } },
+                source_range: range(0, 24),
+              },
+              {
+                ...clip('focused-disabled', 'Disabled Duplicate Picture'),
+                enabled: false,
+              },
+            ],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Dialogue DX',
+            kind: 'Audio',
+            metadata: { relic: { id: 'focused-audio' } },
+            children: [clip('focused-dialogue', 'Interview Mic 1')],
+          },
+          {
+            OTIO_SCHEMA: 'Track.1',
+            name: 'Unplaced',
+            kind: 'Video',
+            metadata: { relic: { id: 'focused-unplaced-track' } },
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'Unplaced',
+                metadata: { relic: { id: 'focused-unplaced' } },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+}
+
 class ViewElement {
+  id = '';
   className = '';
   textContent = '';
+  disabled = false;
   hidden = false;
   tabIndex = 0;
   type = '';
@@ -325,12 +409,14 @@ class ViewElement {
   layout?: DOMRect;
   readonly dataset: Record<string, string> = {};
   readonly listeners = new Map<string, Set<(event: Event) => void>>();
+  private readonly capturedPointers = new Set<number>();
   readonly attributes = new Map<string, string>();
   readonly style = {
     setProperty: (): void => {},
     position: '',
     width: '',
     height: '',
+    minHeight: '',
     overflow: '',
     clipPath: '',
     pointerEvents: '',
@@ -411,10 +497,16 @@ class ViewElement {
   }
 
   dispatchEvent(event: Event): boolean {
-    Object.defineProperty(event, 'target', { configurable: true, value: this });
+    if (!event.target)
+      Object.defineProperty(event, 'target', {
+        configurable: true,
+        value: this,
+      });
     for (const listener of this.listeners.get(event.type) ?? [])
       listener(event);
-    return true;
+    if (event.bubbles && !event.cancelBubble)
+      this.parentElement?.dispatchEvent(event);
+    return !event.defaultPrevented;
   }
 
   querySelector(selector?: string): ViewElement | null {
@@ -451,6 +543,8 @@ class ViewElement {
   }
 
   matches(selector: string): boolean {
+    if (selector.includes(','))
+      return selector.split(',').some((part) => this.matches(part.trim()));
     if (selector.startsWith('.'))
       return this.className.split(/\s+/).includes(selector.slice(1));
     const attribute = selector.match(/^\[data-([a-z-]+)\]$/);
@@ -498,7 +592,17 @@ class ViewElement {
     });
   }
 
-  setPointerCapture(): void {}
+  setPointerCapture(pointerId: number): void {
+    this.capturedPointers.add(pointerId);
+  }
+
+  hasPointerCapture(pointerId: number): boolean {
+    return this.capturedPointers.has(pointerId);
+  }
+
+  releasePointerCapture(pointerId: number): void {
+    this.capturedPointers.delete(pointerId);
+  }
 
   pause(): void {}
 
@@ -573,7 +677,9 @@ function installProjectionDom(): () => void {
     'document',
     'window',
     'MutationObserver',
+    'ResizeObserver',
     'DOMRect',
+    'Element',
   ] as const;
   const previous = new Map<string, PropertyDescriptor | undefined>();
   for (const name of globals) {
@@ -596,18 +702,26 @@ function installProjectionDom(): () => void {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     writable: true,
-    value: {
+    value: Object.assign(new EventTarget(), {
       innerWidth: 1440,
       innerHeight: 900,
       matchMedia: () => ({ matches: false }),
-      addEventListener: (): void => {},
-      removeEventListener: (): void => {},
-    },
+    }),
   });
   Object.defineProperty(globalThis, 'MutationObserver', {
     configurable: true,
     writable: true,
     value: undefined,
+  });
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+  Object.defineProperty(globalThis, 'Element', {
+    configurable: true,
+    writable: true,
+    value: ViewElement,
   });
   Object.defineProperty(globalThis, 'DOMRect', {
     configurable: true,
@@ -1435,6 +1549,13 @@ describe('OTIO track selection contract', () => {
     expect(anchor.range).toEqual(range(12, 0));
     expect(anchor.snapshot.track).toBe('Video 2');
     expect(otioTargetLabel(anchor)).toContain('point 12 @ 24');
+    expect(otioTargetLabel(anchor)).toContain('Picture-in-Picture Alpha');
+    expect(
+      otioTargetLabel({
+        ...anchor,
+        snapshot: { ...anchor.snapshot, item: null },
+      })
+    ).toContain('overlay');
   });
 
   test('a one-frame range stays one frame; mixed rational coordinates stay exact', () => {
@@ -1480,6 +1601,81 @@ describe('OTIO track selection contract', () => {
     );
     expect(multi.range).toEqual(range(12, 24));
     expect(multi.item_id).toBeUndefined();
+  });
+
+  test('explicit identity retains transitions, gaps, compounds and exact source coordinates', () => {
+    const doc = readOtioDocument(focusedSelectionContent());
+    const transition = doc.nodes['focused-transition']!;
+    const focused = createOtioSelection(
+      doc,
+      'focused-timeline',
+      'focused-video',
+      2,
+      transition.timeline_range!,
+      transition.id
+    );
+    expect(focused.item_id).toBe('focused-transition');
+    expect(focused.snapshot.item).toBe('SMPTE_Dissolve_1');
+    const gap = createOtioSelection(
+      doc,
+      'focused-timeline',
+      'focused-video',
+      2,
+      doc.nodes['focused-gap']!.timeline_range!,
+      'focused-gap'
+    );
+    expect(gap.item_id).toBe('focused-gap');
+    const compound = Object.values(document.nodes).find(
+      (node) => node.name === 'VFX Submaster Stack'
+    )!;
+    expect(
+      createOtioSelection(
+        document,
+        'timeline',
+        'video-first',
+        1,
+        compound.timeline_range!,
+        compound.id
+      ).item_id
+    ).toBe(compound.id);
+    const exact = {
+      start_time: { value: 1001, rate: 30000 },
+      duration: { value: 1, rate: 30000 / 1001 },
+    };
+    expect(
+      createOtioSelection(
+        document,
+        'timeline',
+        'video-first',
+        1,
+        exact,
+        'primary'
+      ).range
+    ).toEqual(exact);
+  });
+
+  test('explicit null suppresses inference and invalid explicit targets are rejected', () => {
+    const track = createOtioSelection(
+      document,
+      'timeline',
+      'video-first',
+      1,
+      range(0, 12),
+      null
+    );
+    expect(track.item_id).toBeUndefined();
+    expect(track.snapshot.item).toBeNull();
+    for (const id of ['missing', 'overlay', 'secondary'])
+      expect(() =>
+        createOtioSelection(
+          document,
+          'timeline',
+          'video-first',
+          1,
+          range(0, 12),
+          id
+        )
+      ).toThrow('Selection unavailable.');
   });
 
   test('whole-track selection uses exposed core windows rather than the composition duration', () => {
@@ -1619,5 +1815,812 @@ describe('OTIO eager-shell bridge', () => {
         content: {} as HTMLElement,
       })
     ).toBe(false);
+  });
+});
+
+describe('OTIO focused element activation', () => {
+  let restoreDom: () => void;
+  let root: ViewElement;
+  let controller: OtioUiController;
+  let aims: Array<{ readonly anchor: OtioAnchorV1; readonly focus: boolean }>;
+
+  beforeEach(async () => {
+    restoreDom = installProjectionDom();
+    root = new ViewElement('div');
+    await mountOtioView(root as unknown as HTMLElement, {
+      content: focusedSelectionContent(),
+      revision: 2,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement)!;
+    aims = [];
+    root.addEventListener('relic:otio-aim', (event) => {
+      aims.push((event as CustomEvent<(typeof aims)[number]>).detail);
+    });
+  });
+  afterEach(() => {
+    controller.dispose();
+    restoreDom();
+  });
+
+  function item(id: string): ViewElement {
+    const control = findViewElement(
+      root,
+      (node) => node.matches('.otio-item') && node.dataset['itemId'] === id
+    );
+    if (!control) throw new Error(`Expected item ${id}`);
+    return control;
+  }
+  function pointer(type: string, x: number): Event {
+    return Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+      button: 0,
+      clientX: x,
+      clientY: 10,
+      pointerId: 7,
+    });
+  }
+
+  function settleFocusRendering(): Promise<void> {
+    const completion = Promise.withResolvers<void>();
+    setImmediate(completion.resolve);
+    return completion.promise;
+  }
+
+  test('click and keyboard button activation use explicit editorial identity without composer focus', () => {
+    const first = item('focused-a');
+    first.focus();
+    first.dispatchEvent(Object.assign(new Event('click'), { detail: 0 }));
+    expect(aims).toHaveLength(1);
+    expect(aims[0]?.focus).toBe(false);
+    expect(aims[0]?.anchor.item_id).toBe('focused-a');
+    expect(aims[0]?.anchor.range).toEqual(
+      controller.document.nodes['focused-a']!.timeline_range!
+    );
+    expect(aims[0]?.anchor.range.duration.value).toBe(24);
+    expect(first.getAttribute('aria-pressed')).toBe('true');
+    expect(globalThis.document.activeElement as unknown).toBe(first);
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(root.querySelector('.otio-focus-title')?.textContent).toContain(
+      'Primary Grade A'
+    );
+    expect(
+      findViewElement(root, (node) => node.tagName === 'h3')?.textContent
+    ).toBe('Primary Grade A');
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(aims.at(-1)?.focus).toBe(true);
+    const second = item('focused-b');
+    second.dispatchEvent(Object.assign(new Event('click'), { detail: 0 }));
+    expect(first.getAttribute('aria-pressed')).toBe('false');
+    expect(second.getAttribute('aria-pressed')).toBe('true');
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-b');
+    expect(otioTargetLabel(aims.at(-1)!.anchor)).toContain('Secondary Grade B');
+  });
+
+  test('pointer click waits for release and a drag from the item keeps the rail range', () => {
+    const first = item('focused-a');
+    const rail = first.parentElement!;
+    rail.layout = new DOMRect(100, 0, 480, 54);
+    first.dispatchEvent(pointer('pointerdown', 160));
+    expect(aims).toHaveLength(0);
+    rail.dispatchEvent(pointer('pointerup', 160));
+    expect(aims).toHaveLength(1);
+    expect(aims[0]?.anchor.item_id).toBe('focused-a');
+    first.dispatchEvent(pointer('pointerdown', 160));
+    rail.dispatchEvent(pointer('pointermove', 280));
+    rail.dispatchEvent(pointer('pointerup', 280));
+    first.dispatchEvent(Object.assign(new Event('click'), { detail: 1 }));
+    expect(aims).toHaveLength(2);
+    expect(aims[1]?.anchor.range).toEqual(range(12, 24));
+    expect(aims[1]?.anchor.item_id).toBeUndefined();
+    expect(root.dataset['scopeNodeId']).toBe('');
+    expect(rail.hasPointerCapture(7)).toBe(false);
+  });
+
+  test('cancelling a captured drag restores the prior target and prevents activation', () => {
+    const first = item('focused-a');
+    first.dispatchEvent(new Event('click'));
+    const before = aims[0]!.anchor;
+    const rail = first.parentElement!;
+    rail.layout = new DOMRect(100, 0, 480, 54);
+    first.dispatchEvent(pointer('pointerdown', 160));
+    rail.dispatchEvent(pointer('pointermove', 280));
+    rail.dispatchEvent(pointer('pointercancel', 280));
+    first.dispatchEvent(Object.assign(new Event('click'), { detail: 1 }));
+    expect(aims).toHaveLength(1);
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(rail.listeners.get('pointermove')?.size).toBe(0);
+    root
+      .querySelector('.otio-comment-selection')!
+      .dispatchEvent(new Event('click'));
+    expect(aims.at(-1)?.anchor).toEqual(before);
+  });
+
+  test('point and range adjustments retain the focused item while back restores composition', () => {
+    item('focused-b').dispatchEvent(new Event('click'));
+    const point = findViewElement(
+      root,
+      (node) => node.dataset['otioMode'] === 'point'
+    )!;
+    point.dispatchEvent(new Event('click'));
+    const input = root.querySelector('.otio-selection-in')!;
+    input.value = '30';
+    input.dispatchEvent(new Event('change'));
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-b');
+    expect(aims.at(-1)?.anchor.range).toEqual(range(30, 0));
+    expect(root.querySelector('.otio-seek')?.min).toBe('24');
+    expect(root.querySelector('.otio-seek')?.max).toBe('47');
+    root
+      .querySelector('.otio-back-composition')!
+      .dispatchEvent(new Event('click'));
+    expect(root.dataset['scopeNodeId']).toBe('');
+    expect(root.querySelector('.otio-focus-context')?.hidden).toBe(true);
+    expect(root.querySelector('.otio-selection')).toBeNull();
+    expect(root.querySelector('.otio-selection-label')?.textContent).toBe(
+      'Composition'
+    );
+  });
+
+  test('markers use owner scope and retain zero duration', () => {
+    const mark = findViewElement(
+      root,
+      (node) =>
+        node.matches('.otio-timeline-marker') &&
+        node.dataset['ownerId'] === 'focused-a'
+    )!;
+    mark.dispatchEvent(new Event('click'));
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-a');
+    expect(aims.at(-1)?.anchor.range).toEqual(range(6, 0));
+  });
+
+  test('transitions, audio, disabled items and gaps keep their own identities', () => {
+    for (const id of [
+      'focused-transition',
+      'focused-dialogue',
+      'focused-disabled',
+      'focused-gap',
+    ]) {
+      item(id).dispatchEvent(new Event('click'));
+      expect(root.dataset['scopeNodeId']).toBe(id);
+      expect(aims.at(-1)?.anchor.item_id).toBe(id);
+      expect(aims.at(-1)?.anchor.track_id).toBe(
+        id === 'focused-dialogue' ? 'focused-audio' : 'focused-video'
+      );
+    }
+    expect(root.querySelector('.otio-focus-status')?.textContent).toContain(
+      'No media'
+    );
+  });
+
+  test('unplaced items remain inspectable and refuse anchoring and playback', () => {
+    item('focused-unplaced').dispatchEvent(new Event('click'));
+    expect(aims).toHaveLength(0);
+    expect(root.dataset['scopeAvailable']).toBe('false');
+    expect(root.querySelector('.otio-comment-selection')?.disabled).toBe(true);
+    expect(root.querySelector('.otio-play')?.disabled).toBe(true);
+    expect(root.querySelector('.otio-focus-status')?.textContent).toContain(
+      'Selection unavailable'
+    );
+  });
+
+  test('painting comments leaves playback alone; reveal restores item scope and prior revisions remain read-only', async () => {
+    const doc = controller.document;
+    const anchor = createOtioSelection(
+      doc,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    item('focused-b').dispatchEvent(new Event('click'));
+    expect(controller.paint(anchor, 'focused-comment')).toBe(true);
+    expect(root.dataset['scopeNodeId']).toBe('focused-b');
+    controller.reveal(anchor, 'focused-comment');
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    const earlier = { ...anchor, relic_version: 1 };
+    await controller.project(earlier, focusedSelectionContent());
+    controller.reveal(earlier);
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(root.querySelector('.otio-comment-selection')?.disabled).toBe(true);
+    expect(root.querySelector('.otio-selection-in')?.disabled).toBe(true);
+  });
+
+  test('review regression: a saved item anchor in transition handles reveals its exact frame', async () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(26, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('26');
+    expect(root.querySelector('.otio-seek')?.max).toBe('29');
+    expect(aims).toHaveLength(0);
+    expect(root.querySelector('.otio-selection')?.dataset['start']).toBe('26');
+    expect(anchor.range).toEqual(range(26, 0));
+  });
+
+  test('review regression: pre-handles and ranges extending into post-handles stay exposed', async () => {
+    for (const [id, selectedRange, start, end] of [
+      ['focused-b', range(20, 0), '18', '47'],
+      ['focused-a', range(22, 6), '0', '29'],
+    ] as const) {
+      const anchor = createOtioSelection(
+        controller.document,
+        'focused-timeline',
+        'focused-video',
+        2,
+        selectedRange,
+        id
+      );
+      controller.reveal(anchor);
+      await settleFocusRendering();
+      expect(root.dataset['frame']).toBe(
+        String(selectedRange.start_time.value)
+      );
+      expect(root.querySelector('.otio-seek')?.min).toBe(start);
+      expect(root.querySelector('.otio-seek')?.max).toBe(end);
+      expect(anchor.range).toEqual(selectedRange);
+    }
+  });
+
+  test('review regression: a visible handle can be revealed after its editorial body is trimmed out', async () => {
+    controller.dispose();
+    root = new ViewElement('div');
+    await mountOtioView(root as unknown as HTMLElement, {
+      content: focusedSelectionContent(range(26, 4)),
+      revision: 2,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement)!;
+    expect(controller.document.nodes['focused-a']!.timeline_range).toBeNull();
+    expect(
+      controller.document.nodes['focused-a']!.visible_timeline_range
+    ).toEqual(range(0, 4));
+    item('focused-a').dispatchEvent(new Event('click'));
+    expect(root.dataset['scopeAvailable']).toBe('false');
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(0, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    await settleFocusRendering();
+    expect(root.dataset['scopeAvailable']).toBe('true');
+    expect(root.querySelector('.otio-seek')?.max).toBe('3');
+    expect(root.querySelector('.otio-comment-selection')?.disabled).toBe(false);
+    expect(root.querySelector('.otio-selection-in')?.disabled).toBe(false);
+  });
+
+  test('review regression: a marker in transition handles keeps its exposed owner time', async () => {
+    const mark = findViewElement(
+      root,
+      (node) =>
+        node.matches('.otio-timeline-marker') &&
+        node.title.startsWith('SMPTE_Dissolve_1')
+    )!;
+    mark.dispatchEvent(new Event('click'));
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('26');
+    expect(aims.at(-1)?.anchor.range).toEqual(range(26, 0));
+    expect(aims.at(-1)?.anchor.item_id).toBe('focused-a');
+  });
+
+  test('review regression: a newer manual seek wins over a pending focused reveal', async () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    const seek = root.querySelector('.otio-seek')!;
+    seek.value = '12';
+    seek.dispatchEvent(new Event('input'));
+    expect(root.dataset['frame']).toBe('12');
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('12');
+    expect(seek.value).toBe('12');
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+  });
+
+  test('review regression: frame stepping invalidates a pending focused reveal seek', async () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    controller.reveal(anchor);
+    root.querySelector('.otio-next-frame')!.dispatchEvent(new Event('click'));
+    expect(root.dataset['frame']).toBe('1');
+    await settleFocusRendering();
+    expect(root.dataset['frame']).toBe('1');
+  });
+
+  test('disposing a captured gesture removes listeners and ignores stale activation', () => {
+    const first = item('focused-a');
+    const rail = first.parentElement!;
+    first.dispatchEvent(pointer('pointerdown', 0));
+    controller.dispose();
+    expect(rail.listeners.get('pointerup')?.size).toBe(0);
+    first.dispatchEvent(new Event('click'));
+    expect(aims).toHaveLength(0);
+  });
+});
+
+describe('OTIO media and timeline divider', () => {
+  let restoreDom: () => void;
+  let root: ViewElement;
+  let controller: OtioUiController;
+  let handle: ViewElement;
+  let monitor: ViewElement;
+  let scroll: ViewElement;
+  let resizeObserver: {
+    fire: () => void;
+    disconnected: boolean;
+    targets: Set<Element>;
+  };
+  let defaultTimelineHeight: number;
+
+  beforeEach(async () => {
+    restoreDom = installProjectionDom();
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      writable: true,
+      value: class {
+        disconnected = false;
+        readonly targets = new Set<Element>();
+        constructor(private readonly callback: () => void) {
+          resizeObserver = this;
+        }
+        observe(target: Element): void {
+          this.targets.add(target);
+        }
+        disconnect(): void {
+          this.disconnected = true;
+        }
+        fire(): void {
+          if (!this.disconnected) this.callback();
+        }
+      },
+    });
+    root = new ViewElement('div');
+    defaultTimelineHeight = 180;
+    await mountOtioView(root as unknown as HTMLElement, {
+      content: focusedSelectionContent(),
+      revision: 2,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement)!;
+    handle = root.querySelector('.otio-resize-handle')!;
+    monitor = root.querySelector('.otio-monitor-row')!;
+    scroll = root.querySelector('.otio-timeline-scroll')!;
+    root.querySelector('.otio-track-grid')!.layout = new DOMRect(
+      0,
+      0,
+      1280,
+      400
+    );
+    monitor.getBoundingClientRect = () =>
+      new DOMRect(0, 0, root.clientWidth, availableHeight() - timelineHeight());
+    scroll.getBoundingClientRect = () =>
+      new DOMRect(
+        0,
+        root.clientHeight - timelineHeight() - 84,
+        root.clientWidth,
+        timelineHeight()
+      );
+    geometry(800);
+  });
+  afterEach(() => {
+    controller.dispose();
+    restoreDom();
+  });
+
+  function availableHeight(): number {
+    return Math.max(
+      0,
+      root.clientHeight -
+        handle.getBoundingClientRect().height -
+        [
+          '.otio-transport',
+          '.otio-timeline-heading',
+          '.otio-selection-readout',
+          '.otio-diagnostics',
+        ].reduce(
+          (height, selector) =>
+            height +
+            root.querySelector(selector)!.getBoundingClientRect().height,
+          0
+        )
+    );
+  }
+  function timelineHeight(): number {
+    return scroll.style.height
+      ? Number.parseFloat(scroll.style.height)
+      : defaultTimelineHeight;
+  }
+  function geometry(height: number, width = 1280, short = false): void {
+    root.clientHeight = height;
+    root.clientWidth = width;
+    root.layout = new DOMRect(0, 0, width, height);
+    handle.layout = new DOMRect(0, 0, width, short ? 24 : 16);
+    for (const [selector, rowHeight] of [
+      ['.otio-transport', short ? 90 : 52],
+      ['.otio-timeline-heading', short ? 72 : 48],
+      ['.otio-selection-readout', short ? 66 : 68],
+      ['.otio-diagnostics', 16],
+    ] as const)
+      root.querySelector(selector)!.layout = new DOMRect(
+        0,
+        0,
+        width,
+        rowHeight
+      );
+    resizeObserver.fire();
+  }
+  function pointer(
+    type: string,
+    y: number,
+    options: {
+      pointerId?: number;
+      pointerType?: string;
+      button?: number;
+      isPrimary?: boolean;
+    } = {}
+  ): Event {
+    return Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+      clientY: y,
+      pointerId: 7,
+      pointerType: 'mouse',
+      button: 0,
+      isPrimary: true,
+      ...options,
+    });
+  }
+  function key(name: string, shiftKey = false): Event {
+    const event = Object.assign(
+      new Event('keydown', { bubbles: true, cancelable: true }),
+      { key: name, shiftKey }
+    );
+    handle.dispatchEvent(event);
+    return event;
+  }
+  function drag(from: number, to: number): void {
+    handle.dispatchEvent(pointer('pointerdown', from));
+    handle.dispatchEvent(pointer('pointermove', to));
+    handle.dispatchEvent(pointer('pointerup', to));
+  }
+
+  test('exposes the horizontal separator and keeps the content-sized default untouched', () => {
+    expect(handle.tabIndex).toBe(0);
+    expect(handle.getAttribute('role')).toBe('separator');
+    expect(handle.getAttribute('aria-orientation')).toBe('horizontal');
+    expect(handle.getAttribute('aria-label')).toBe(
+      'Resize media preview and timeline'
+    );
+    expect(handle.getAttribute('aria-controls')).toBe(monitor.id);
+    expect(handle.getAttribute('aria-description')).toContain('Arrow up');
+    expect(handle.getAttribute('aria-valuenow')).toBe('70');
+    expect(handle.getAttribute('aria-valuetext')).toBe(
+      'Media preview 70%; timeline 30%'
+    );
+    expect(handle.getAttribute('aria-disabled')).toBe('false');
+    expect(root.children.slice(0, 3).map((node) => node.className)).toEqual([
+      'otio-monitor-row',
+      'otio-resize-handle',
+      'otio-transport',
+    ]);
+    expect(scroll.style.height).toBe('');
+    expect(root.classList.contains('is-resized')).toBe(false);
+    geometry(1000);
+    expect(scroll.style.height).toBe('');
+    expect(handle.getAttribute('aria-valuenow')).toBe('78');
+  });
+
+  test('captures a drag, grows tracks upward and restores preview downward without scrolling or bubbling', () => {
+    const escaped: string[] = [];
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'click'])
+      root.addEventListener(type, () => escaped.push(type));
+    scroll.scrollTop = 47;
+    scroll.scrollLeft = 112;
+    const down = pointer('pointerdown', 400);
+    handle.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    expect(handle.hasPointerCapture(7)).toBe(true);
+    expect(root.classList.contains('is-resizing')).toBe(true);
+    handle.dispatchEvent(pointer('pointermove', 280));
+    expect(timelineHeight()).toBe(300);
+    expect(handle.getAttribute('aria-valuenow')).toBe('50');
+    handle.dispatchEvent(pointer('pointerup', 280));
+    handle.dispatchEvent(
+      new Event('click', { bubbles: true, cancelable: true })
+    );
+    expect(handle.hasPointerCapture(7)).toBe(false);
+    expect(root.classList.contains('is-resizing')).toBe(false);
+    expect(root.classList.contains('is-resized')).toBe(true);
+    expect(escaped).toEqual([]);
+    expect(scroll.scrollTop).toBe(47);
+    expect(scroll.scrollLeft).toBe(112);
+    drag(400, 520);
+    expect(timelineHeight()).toBe(180);
+    expect(handle.getAttribute('aria-valuenow')).toBe('70');
+  });
+
+  test('clamps both panes and keeps the accessible value inside its stated limits', () => {
+    drag(400, -1000);
+    expect(timelineHeight()).toBeCloseTo(440, 10);
+    expect(monitor.getBoundingClientRect().height).toBeCloseTo(160, 10);
+    expect(handle.getAttribute('aria-valuenow')).toBe(
+      handle.getAttribute('aria-valuemin')
+    );
+    drag(400, 2000);
+    expect(timelineHeight()).toBe(96);
+    expect(monitor.getBoundingClientRect().height).toBe(504);
+    expect(handle.getAttribute('aria-valuenow')).toBe(
+      handle.getAttribute('aria-valuemax')
+    );
+  });
+
+  test('a content-sized timeline below the normal floor keeps arrow direction consistent', () => {
+    defaultTimelineHeight = 52;
+    root.querySelector('.otio-track-grid')!.layout = new DOMRect(
+      0,
+      0,
+      1280,
+      52
+    );
+    resizeObserver.fire();
+    key('ArrowDown');
+    expect(timelineHeight()).toBe(52);
+    key('ArrowUp');
+    expect(timelineHeight()).toBe(68);
+    key('ArrowDown');
+    expect(timelineHeight()).toBe(52);
+    key('End');
+    expect(timelineHeight()).toBe(52);
+  });
+
+  test('uses the same capture path for touch and ignores other buttons and fingers', () => {
+    handle.dispatchEvent(pointer('pointerdown', 400, { button: 2 }));
+    handle.dispatchEvent(
+      pointer('pointerdown', 400, { pointerType: 'touch', isPrimary: false })
+    );
+    expect(handle.hasPointerCapture(7)).toBe(false);
+    expect(scroll.style.height).toBe('');
+    handle.dispatchEvent(
+      pointer('pointerdown', 400, { pointerId: 11, pointerType: 'touch' })
+    );
+    handle.dispatchEvent(pointer('pointermove', 200, { pointerId: 12 }));
+    handle.dispatchEvent(pointer('pointerup', 200, { pointerId: 12 }));
+    expect(scroll.style.height).toBe('');
+    expect(handle.hasPointerCapture(11)).toBe(true);
+    handle.dispatchEvent(
+      pointer('pointermove', 300, { pointerId: 11, pointerType: 'touch' })
+    );
+    handle.dispatchEvent(
+      pointer('pointerup', 300, { pointerId: 11, pointerType: 'touch' })
+    );
+    expect(timelineHeight()).toBe(280);
+    expect(handle.hasPointerCapture(11)).toBe(false);
+  });
+
+  test('a click leaves the default intact and a drag returning to its origin restores its size', () => {
+    drag(400, 401);
+    expect(scroll.style.height).toBe('');
+    expect(root.classList.contains('is-resized')).toBe(false);
+    handle.dispatchEvent(pointer('pointerdown', 400));
+    handle.dispatchEvent(pointer('pointermove', 300));
+    expect(timelineHeight()).toBe(280);
+    handle.dispatchEvent(pointer('pointerup', 400));
+    expect(timelineHeight()).toBe(180);
+  });
+
+  test('supports arrows, larger Shift steps and Home/End without moving keyboard focus or seeking', () => {
+    const escaped: string[] = [];
+    root.addEventListener('keydown', (event) =>
+      escaped.push((event as KeyboardEvent).key)
+    );
+    handle.focus();
+    const frame = root.dataset['frame'];
+    expect(key('ArrowUp').defaultPrevented).toBe(true);
+    expect(timelineHeight()).toBe(196);
+    key('ArrowUp', true);
+    expect(timelineHeight()).toBe(260);
+    key('ArrowDown');
+    expect(timelineHeight()).toBe(244);
+    key('ArrowDown', true);
+    expect(timelineHeight()).toBe(180);
+    key('Home');
+    expect(timelineHeight()).toBeCloseTo(440, 10);
+    key('End');
+    expect(timelineHeight()).toBe(96);
+    expect(globalThis.document.activeElement as unknown).toBe(handle);
+    expect(root.dataset['frame']).toBe(frame);
+    expect(escaped).toEqual([]);
+    expect(key('ArrowLeft').defaultPrevented).toBe(false);
+    expect(escaped).toEqual(['ArrowLeft']);
+    expect(timelineHeight()).toBe(96);
+  });
+
+  test('retains the chosen ratio across viewport and control-row changes while scaling short-screen limits', () => {
+    drag(400, 280);
+    geometry(1000);
+    expect(availableHeight()).toBe(800);
+    expect(timelineHeight()).toBe(400);
+    expect(resizeObserver.targets.has(root as unknown as Element)).toBe(true);
+    expect(resizeObserver.targets.has(monitor as unknown as Element)).toBe(
+      true
+    );
+    expect(resizeObserver.targets.has(scroll as unknown as Element)).toBe(true);
+    root.querySelector('.otio-transport')!.layout = new DOMRect(0, 0, 1280, 92);
+    resizeObserver.fire();
+    expect(availableHeight()).toBe(760);
+    expect(timelineHeight()).toBe(380);
+    geometry(420, 320, true);
+    expect(availableHeight()).toBe(152);
+    expect(timelineHeight()).toBe(76);
+    key('Home');
+    expect(timelineHeight()).toBeCloseTo(91.2);
+    expect(monitor.getBoundingClientRect().height).toBeCloseTo(60.8);
+    key('End');
+    expect(timelineHeight()).toBe(38);
+    expect(monitor.getBoundingClientRect().height).toBe(114);
+  });
+
+  test('temporary clamping on a short screen preserves the requested ratio when space returns', () => {
+    key('Home');
+    const fraction = timelineHeight() / availableHeight();
+    geometry(420, 320, true);
+    expect(timelineHeight()).toBeCloseTo(91.2);
+    geometry(1000);
+    expect(timelineHeight()).toBeCloseTo(800 * fraction);
+    expect(timelineHeight()).toBeGreaterThan(440);
+  });
+
+  test('cancellation, capture loss and window blur restore the prior layout and remove gesture listeners', () => {
+    handle.dispatchEvent(pointer('pointerdown', 400));
+    handle.dispatchEvent(pointer('pointermove', 280));
+    handle.dispatchEvent(pointer('pointercancel', 280, { pointerId: 8 }));
+    expect(handle.hasPointerCapture(7)).toBe(true);
+    handle.dispatchEvent(pointer('pointercancel', 280));
+    expect(scroll.style.height).toBe('');
+    expect(root.classList.contains('is-resized')).toBe(false);
+    drag(400, 320);
+    expect(timelineHeight()).toBe(260);
+    for (const cancel of ['lostpointercapture', 'blur']) {
+      handle.dispatchEvent(pointer('pointerdown', 400));
+      handle.dispatchEvent(pointer('pointermove', 280));
+      if (cancel === 'blur') window.dispatchEvent(new Event('blur'));
+      else handle.dispatchEvent(pointer(cancel, 280));
+      expect(timelineHeight()).toBe(260);
+      expect(handle.hasPointerCapture(7)).toBe(false);
+      for (const type of [
+        'pointermove',
+        'pointerup',
+        'pointercancel',
+        'lostpointercapture',
+      ])
+        expect(handle.listeners.get(type)?.size).toBe(0);
+    }
+  });
+
+  test('keeps focused comment identity, selection, frame, draft and existing marks while notifying popover tracking', async () => {
+    const anchor = createOtioSelection(
+      controller.document,
+      'focused-timeline',
+      'focused-video',
+      2,
+      range(6, 0),
+      'focused-a'
+    );
+    controller.paint(anchor, 'divider-comment');
+    controller.reveal(anchor, 'divider-comment');
+    const settled = Promise.withResolvers<void>();
+    setImmediate(settled.resolve);
+    await settled.promise;
+    const mark = root.querySelector('.otio-comment-mark');
+    const frame = root.dataset['frame'];
+    const selection = root.querySelector('.otio-selection');
+    const input = root.querySelector('.otio-selection-in')!.value;
+    const draft = new ViewElement('textarea');
+    draft.value = 'Keep this comment draft.';
+    draft.focus();
+    let aims = 0;
+    let popoverTracks = 0;
+    root.addEventListener('relic:otio-aim', () => aims++);
+    root.addEventListener('scroll', () => popoverTracks++);
+    drag(400, 280);
+    expect(root.classList.contains('is-element-focused')).toBe(true);
+    expect(root.dataset['scopeNodeId']).toBe('focused-a');
+    expect(root.dataset['frame']).toBe(frame);
+    expect(root.querySelector('.otio-selection')).toBe(selection);
+    expect(root.querySelector('.otio-selection-in')!.value).toBe(input);
+    expect(root.querySelector('.otio-comment-mark')).toBe(mark);
+    expect(globalThis.document.activeElement as unknown).toBe(draft);
+    expect(draft.value).toBe('Keep this comment draft.');
+    expect(aims).toBe(0);
+    expect(popoverTracks).toBeGreaterThan(0);
+  });
+
+  test('disables resizing when fixed controls consume the viewport and resumes when space returns', () => {
+    geometry(180, 320, true);
+    expect(availableHeight()).toBe(0);
+    expect(handle.getAttribute('aria-disabled')).toBe('true');
+    key('ArrowUp');
+    drag(400, 300);
+    expect(scroll.style.height).toBe('');
+    expect(handle.hasPointerCapture(7)).toBe(false);
+    geometry(800);
+    expect(handle.getAttribute('aria-disabled')).toBe('false');
+    key('ArrowUp');
+    expect(timelineHeight()).toBe(196);
+  });
+
+  test('disposal releases active capture, disconnects observation and removes keyboard, pointer and window handlers', () => {
+    handle.dispatchEvent(pointer('pointerdown', 400));
+    handle.dispatchEvent(pointer('pointermove', 280));
+    controller.dispose();
+    expect(handle.hasPointerCapture(7)).toBe(false);
+    expect(root.classList.contains('is-resizing')).toBe(false);
+    expect(resizeObserver.disconnected).toBe(true);
+    for (const type of [
+      'pointerdown',
+      'pointermove',
+      'pointerup',
+      'keydown',
+      'click',
+    ])
+      expect(handle.listeners.get(type)?.size).toBe(0);
+    const height = scroll.style.height;
+    key('ArrowUp');
+    drag(400, 200);
+    root.clientHeight = 1000;
+    window.dispatchEvent(new Event('resize'));
+    window.dispatchEvent(new Event('blur'));
+    expect(scroll.style.height).toBe(height);
+  });
+
+  test('hides the divider when the OTIO is only a structural inspector', async () => {
+    controller.dispose();
+    root = new ViewElement('div');
+    await mountOtioView(root as unknown as HTMLElement, {
+      content: new TextEncoder().encode(
+        JSON.stringify({
+          OTIO_SCHEMA: 'SerializableCollection.1',
+          name: 'Structural only',
+          children: [],
+        })
+      ),
+      revision: 2,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement)!;
+    expect(controller.document.timeline_ids).toEqual([]);
+    expect(root.dataset['ready']).toBe('structural');
+    expect(root.querySelector('.otio-resize-handle')!.hidden).toBe(true);
+  });
+
+  test('keeps the divider for an empty timeline rather than treating it as a structural-only collection', async () => {
+    controller.dispose();
+    root = new ViewElement('div');
+    await mountOtioView(root as unknown as HTMLElement, {
+      content: structuralContent(),
+      revision: 2,
+    });
+    controller = otioControllerFor(root as unknown as HTMLElement)!;
+    expect(controller.document.timeline_ids).toHaveLength(1);
+    expect(root.querySelector('.otio-resize-handle')!.hidden).toBe(false);
+    expect(root.querySelector('.otio-transport')!.hidden).toBe(false);
   });
 });

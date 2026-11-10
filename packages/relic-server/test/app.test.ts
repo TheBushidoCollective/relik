@@ -4007,6 +4007,35 @@ describe('comment edits and resolutions', () => {
     resolved_by: string | null;
   };
 
+  test('comment posts and edits remain available beyond the former quota', async () => {
+    const { id, grant } = await publish();
+    const token = grant['publish_token'] as string;
+    const reader = await createSession('reader@example.com');
+    const ids: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const author = i % 2 === 0 ? { publishToken: token } : { cookie: reader };
+      ids.push((await postAs(id, author)).commentId);
+    }
+    expect(await listThread(id)).toHaveLength(40);
+    for (let i = 0; i < 40; i++) {
+      const response = await patch(id, ids[0] as string, {
+        publishToken: token,
+        ciphertext: i % 2 === 0 ? 'YWJjZA' : 'ZWZnaA',
+        resolved: i % 2 === 0,
+      });
+      expect(response.status).toBe(200);
+    }
+    const rows = await listThread(id);
+    const edited = rows.find((row) => row.comment_id === ids[0]);
+    expect(edited?.ciphertext).toBe('ZWZnaA');
+    expect(edited?.resolved_at).toBeNull();
+    const forbidden = await patch(id, ids[0] as string, {
+      cookie: reader,
+      ciphertext: 'YWJjZA',
+    });
+    expect(forbidden.status).toBe(403);
+  });
+
   test('a fresh thread lists all three fields as null', async () => {
     const { id } = await publish();
     const alice = await createSession('alice@example.com');
