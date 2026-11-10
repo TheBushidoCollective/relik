@@ -9,6 +9,8 @@ export type ObjectUploader = (
 
 export const UPLOAD_IDLE_TIMEOUT_MS = 120_000;
 const UPLOAD_CHUNK_BYTES = 1024 * 1024;
+// Node's setTimeout clamps larger delays to 1 ms.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /**
  * Send a signed object PUT without a whole-transfer deadline. At most one
@@ -17,8 +19,14 @@ const UPLOAD_CHUNK_BYTES = 1024 * 1024;
 export function createNodeUploader(
   idleTimeoutMs = UPLOAD_IDLE_TIMEOUT_MS
 ): ObjectUploader {
-  if (!Number.isSafeInteger(idleTimeoutMs) || idleTimeoutMs <= 0) {
-    throw new RangeError('upload idle timeout must be a positive safe integer');
+  if (
+    !Number.isSafeInteger(idleTimeoutMs) ||
+    idleTimeoutMs <= 0 ||
+    idleTimeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `upload idle timeout must be an integer between 1 and ${MAX_TIMER_DELAY_MS} ms`
+    );
   }
 
   return (url, headers, body) =>

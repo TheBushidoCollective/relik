@@ -1,108 +1,79 @@
 import { describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import {
   contentDigest,
   type PublishDeps,
   PublishError,
   putContainer,
 } from '../src/publish.ts';
-import { createNodeUploader } from '../src/upload.ts';
 
-async function listen(server: Server): Promise<string> {
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
+async function runNodeUploadScenario(scenario: string): Promise<void> {
+  const source = await Bun.file(
+    new URL('../src/upload.ts', import.meta.url)
+  ).text();
+  const javascript = new Bun.Transpiler({
+    loader: 'ts',
+    target: 'node',
+  }).transformSync(source);
+  const fixture = fileURLToPath(
+    new URL('./upload-node-fixture.mjs', import.meta.url)
+  );
+  const child = Bun.spawn(['node', fixture, scenario], {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, NODE_OPTIONS: '' },
   });
-  const address = server.address();
-  if (address === null || typeof address === 'string')
-    throw new Error('server did not bind');
-  return `http://127.0.0.1:${address.port}/signed?token=test`;
-}
-
-async function close(server: Server): Promise<void> {
-  server.closeAllConnections();
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
+  let timedOut = false;
+  // Socket timeouts use the real clock; this watchdog kills a wedged Node child.
+  const watchdog = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGKILL');
+  }, 20_000);
+  const stdout = new Response(child.stdout).text();
+  const stderr = new Response(child.stderr).text();
+  try {
+    child.stdin.write(javascript);
+    await child.stdin.end();
+    const [code, output, errors] = await Promise.all([
+      child.exited,
+      stdout,
+      stderr,
+    ]);
+    if (timedOut || code !== 0) {
+      throw new Error(
+        `Node upload scenario ${scenario} ${timedOut ? 'timed out' : `exited ${code}`}\n${output}${errors}`
+      );
+    }
+  } finally {
+    clearTimeout(watchdog);
+    if (child.exitCode === null) {
+      child.kill('SIGKILL');
+      await child.exited;
+    }
+  }
 }
 
 describe('object upload', () => {
   test('a slow, active upload can outlast the idle timeout and carries the signed length', async () => {
-    const body = new Uint8Array(12 * 1024 * 1024);
-    for (let i = 0; i < body.length; i += 4096) body[i] = i % 251;
-    const expected = createHash('sha256').update(body).digest('hex');
-    let received = 0;
-    let contentLength: string | undefined;
-    let actual = '';
-    const server = createServer((req, res) => {
-      contentLength = req.headers['content-length'];
-      const hash = createHash('sha256');
-      req.on('data', (chunk: Buffer) => {
-        received += chunk.length;
-        hash.update(chunk);
-        // Real socket idle behavior is the subject, so fake clocks cannot
-        // stand in for the paced network reads.
-        req.pause();
-        setTimeout(() => req.resume(), 15);
-      });
-      req.on('end', () => {
-        actual = hash.digest('hex');
-        res.writeHead(200).end();
-      });
-    });
-    const url = await listen(server);
-    try {
-      const idleMs = 600;
-      const start = Date.now();
-      const result = await createNodeUploader(idleMs)(
-        url,
-        { 'content-length': String(body.length) },
-        body
-      );
-      expect(Date.now() - start).toBeGreaterThan(idleMs);
-      expect(result.status).toBe(200);
-      expect(received).toBe(body.length);
-      expect(contentLength).toBe(String(body.length));
-      expect(actual).toBe(expected);
-    } finally {
-      await close(server);
-    }
-  }, 20_000);
+    await runNodeUploadScenario('slowActive');
+  }, 25_000);
 
-  test('a stalled upload rejects at the idle timeout', async () => {
-    const server = createServer((req: IncomingMessage) => req.pause());
-    const url = await listen(server);
-    try {
-      const body = new Uint8Array(32 * 1024 * 1024);
-      await expect(
-        createNodeUploader(150)(
-          url,
-          { 'content-length': String(body.length) },
-          body
-        )
-      ).rejects.toThrow('upload idle');
-    } finally {
-      await close(server);
-    }
-  }, 10_000);
+  test('a stalled upload rejects at the idle timeout and closes the connection', async () => {
+    await runNodeUploadScenario('stalledUpload');
+  }, 25_000);
 
   test('surfaces an early server refusal rather than continuing to send', async () => {
-    const server = createServer((_req, res) => res.writeHead(403).end());
-    const url = await listen(server);
-    try {
-      const body = new Uint8Array(8 * 1024 * 1024);
-      expect(
-        await createNodeUploader(1_000)(
-          url,
-          { 'content-length': String(body.length) },
-          body
-        )
-      ).toEqual({ status: 403 });
-    } finally {
-      await close(server);
-    }
-  });
+    await runNodeUploadScenario('earlyRefusal');
+  }, 25_000);
+
+  test('a stalled success response rejects at the idle timeout and closes the connection', async () => {
+    await runNodeUploadScenario('stalledResponse');
+  }, 25_000);
+
+  test('rejects timeouts that Node would clamp to one millisecond', async () => {
+    await runNodeUploadScenario('timeoutValidation');
+  }, 25_000);
 
   test('wraps transport errors and non-success responses as upload_failed', async () => {
     const failing = {
